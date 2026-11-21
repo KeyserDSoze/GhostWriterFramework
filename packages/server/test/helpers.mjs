@@ -4,6 +4,7 @@ import path from "node:path";
 import { NarrariumServerClient } from "narrarium-engine";
 import { createFakeAutopilotAi } from "narrarium-engine/testing";
 import { startNarrariumServer } from "../dist/testing.mjs";
+import { integrityFor } from "./release-fixtures.mjs";
 
 /** No registry access in tests: by default npm "has" nothing newer. */
 export const noRelease = async (installedVersion) => ({ packageName: "narrarium-server", installedVersion, available: false, signed: false, reason: "not_published", message: "Not published." });
@@ -17,7 +18,7 @@ export function npmMetadata(version, { attested = true, signed = true, name = "n
     version,
     repository: { type: "git", url: repository, directory },
     dist: {
-      integrity: `sha512-${"A".repeat(86)}==`,
+      integrity: integrityFor(version),
       ...(signed ? { signatures: [{ keyid: "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U", sig: `MEUCIQ${"a".repeat(60)}` }] } : {}),
       ...(attested ? { attestations: { url: `https://registry.npmjs.org/-/npm/v1/attestations/${name}@${version}`, provenance: { predicateType } } } : {}),
     },

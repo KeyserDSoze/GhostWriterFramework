@@ -12,11 +12,14 @@ export { lockDataRoot, atomicJson, readJson } from "./files.js";
 export * from "./limits.js";
 export { bridgeToApi, forwardedHeaders } from "./gateway.js";
 export * from "./npm-release.js";
+export * from "./der.js";
 export * from "./runtime-install.js";
+export * from "./data-root.js";
 export * from "./tunnel.js";
+export * from "./process-identity.js";
 export * from "./autostart.js";
 export * from "./network.js";
 export * from "./admin-client.js";
-export { main as cliMain, parseCommand, doctorChecks, HELP } from "./cli-main.js";
+export { main as cliMain, parseCommand, doctorChecks, prepareRuntime, HELP, type CliDependencies } from "./cli-main.js";
 // The engine's own copy of these classes (the one the server's `instanceof` checks see), for tests that must build them.
 export { AiProviderError, AiReplyRejectedError, AutopilotStateCorruptError } from "narrarium-engine";

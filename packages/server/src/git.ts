@@ -1,6 +1,6 @@
 import { execFile, type ExecFileException } from "node:child_process";
 import { rmSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -170,8 +170,14 @@ function batches(paths: string[], limit = MAX_ARGUMENT_CHARACTERS): string[][] {
   return groups;
 }
 
+/** The longest a revision is believed without looking again, whatever the files say (a file system with coarse time stamps may hide a change). */
+const HEAD_CACHE_MAX_AGE_MS = 30_000;
+
 /** A working tree used by the server: commits every autopilot step, optionally synced with GitHub. */
 export class GitRepository {
+  /** `git rev-parse HEAD`, kept while the files it is read from have not changed (see `headKey`). */
+  private headCache: { key: string; head: string | undefined; at: number } | undefined;
+
   constructor(
     readonly dir: string,
     private readonly remote?: { owner: string; repo: string; branch: string; token: () => string | undefined; url?: string },
@@ -192,12 +198,14 @@ export class GitRepository {
   }
 
   async init(): Promise<void> {
+    this.headCache = undefined;
     await this.run(["init", "--quiet", this.dir]);
     await this.git(["config", "--replace-all", "core.symlinks", "false"]);
   }
 
   /** Clone the book branch; when the branch does not exist yet it is created from the default branch. */
   async clone(): Promise<void> {
+    this.headCache = undefined;
     if (!this.remote) throw new GitError("This book has no GitHub repository.");
     const token = this.remote.token();
     const { branch } = this.remote;
@@ -211,12 +219,38 @@ export class GitRepository {
     await this.git(["config", "--replace-all", "core.symlinks", "false"]);
   }
 
-  async head(): Promise<string | undefined> {
+  /**
+   * What the revision depends on, as a fingerprint that costs a few reads instead of a process: the `HEAD` file, the file of the branch it
+   * points to and the packed references. `undefined` when the layout is not one this understands (then nothing is kept).
+   */
+  private async headKey(): Promise<string | undefined> {
+    const gitDirectory = path.join(this.dir, ".git");
     try {
-      return (await this.git(["rev-parse", "HEAD"])).stdout.trim() || undefined;
+      const head = (await readFile(path.join(gitDirectory, "HEAD"), "utf8")).trim();
+      const mark = async (file: string) => stat(file).then((info) => `${info.ino}:${info.size}:${info.mtimeMs}`, () => "-");
+      const branch = /^ref: (refs\/[A-Za-z0-9._/@+-]+)$/.exec(head)?.[1];
+      if (branch) {
+        // The newer reference storage keeps its references elsewhere: its files say nothing about them.
+        if (await lstat(path.join(gitDirectory, "reftable")).then(() => true, () => false)) return undefined;
+        return [head, await mark(path.join(gitDirectory, "HEAD")), await mark(path.join(gitDirectory, ...branch.split("/"))), await mark(path.join(gitDirectory, "packed-refs"))].join("|");
+      }
+      return /^[0-9a-f]{40,64}$/.test(head) ? head : undefined;
     } catch {
       return undefined;
     }
+  }
+
+  async head(): Promise<string | undefined> {
+    const key = await this.headKey();
+    if (key !== undefined && this.headCache?.key === key && Date.now() - this.headCache.at < HEAD_CACHE_MAX_AGE_MS) return this.headCache.head;
+    let head: string | undefined;
+    try {
+      head = (await this.git(["rev-parse", "HEAD"])).stdout.trim() || undefined;
+    } catch {
+      head = undefined;
+    }
+    this.headCache = key === undefined ? undefined : { key, head, at: Date.now() };
+    return head;
   }
 
   /** Stage and commit these paths (relative, `/`-separated, normalized by the caller). A failure leaves nothing staged. */
@@ -233,6 +267,7 @@ export class GitRepository {
       await this.unstage(paths);
       throw error;
     }
+    this.headCache = undefined;
     return this.head();
   }
 
@@ -261,6 +296,7 @@ export class GitRepository {
         throw new GitError("The book changed on GitHub in a way that conflicts with the server's work. Resolve it from the web app, then resume.", error instanceof GitError ? error.stderr : "");
       }
     }
+    this.headCache = undefined;
     return { changed: (await this.head()) !== before };
   }
 

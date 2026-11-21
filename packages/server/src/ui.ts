@@ -58,7 +58,7 @@ export const ADMIN_HTML = `<!doctype html>
 
     <section class="card wide" id="clients">
       <h2 data-i18n="clientsTitle">Clients</h2>
-      <div class="table-wrap"><table><thead><tr><th data-i18n="name">Name</th><th data-i18n="permissions">Permissions</th><th data-i18n="created">Created</th><th data-i18n="lastSeen">Last seen</th><th></th></tr></thead><tbody id="client-rows"></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th data-i18n="name">Name</th><th data-i18n="permissions">Permissions</th><th data-i18n="source">Source</th><th data-i18n="verification">Code</th><th data-i18n="created">Created</th><th data-i18n="lastSeen">Last seen</th><th></th></tr></thead><tbody id="client-rows"></tbody></table></div>
       <form id="token-form" class="inline" autocomplete="off">
         <input id="token-label" maxlength="80" required data-i18n-placeholder="clientName" placeholder="Client name">
         <label class="check"><input type="checkbox" id="token-update"> <span data-i18n="allowUpdates">Also allow updating the server</span></label>
@@ -152,7 +152,7 @@ code,pre{font-family:ui-monospace,monospace;font-size:13px}pre.code{background:v
 .chip{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:0 6px;margin:1px 2px;font-size:12px}.chip.update{border-color:var(--warn);color:var(--warn)}
 .list{list-style:none;margin:0;padding:0}.list li{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}
 .toast{position:fixed;right:16px;bottom:16px;background:var(--fg);color:var(--bg);padding:10px 14px;border-radius:10px;max-width:420px;z-index:5}
-.revoked{opacity:.55}
+.revoked{opacity:.55}.agent{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width:640px){main{padding:12px}.top{padding:12px}.facts{grid-template-columns:1fr}}
 `;
 
@@ -182,8 +182,10 @@ export const ADMIN_JS = String.raw`"use strict";
       approved: "Approved: {list}", none: "none", approve: "Approve", dismiss: "Dismiss", revoke: "Revoke", regenerate: "New token", revoked: "revoked", active: "active",
       pairCode: "Code for the client (valid until {t}):", pairWaiting: "Waiting for a client to type the code…", pairRequest: "{label} asks to connect.", pairApprove: "Approve",
       pairCancel: "Cancel", pairApproved: "Approved: the client receives its token now.", allowUpdatesShort: "allow updates", copied: "Copied.", saved: "Saved.",
+      source: "Source", verification: "Code", thisComputer: "this computer", pairFrom: "From {source}", pairVerify: "Your device should show the code {code}. If it does not, or the source is not yours, cancel.", pairReject: "Reject",
+      unknownSource: "unknown",
       sessionExpired: "Session expired: sign in again.", codeMismatch: "The two codes differ.", rotateConfirm: "Replace the admin code with a random one? You will sign in again.",
-      removeConfirm: "Remove the Cloudflare token and stop the connector?", revokeConfirm: "Revoke this client? It stops working immediately.", regenerateConfirm: "Create a new token for this client? The old one stops working.",
+      removeConfirm: "Remove the Cloudflare token and stop the connector?", regenerateConfirm: "Create a new token for this client? The old one stops working.",
       tunnelEnabled: "Enabled", tunnelProcess: "Connector", tunnelBinary: "cloudflared", tunnelOther: "Other connectors", tunnelHostLabel: "Hostname", running: "running", stopped: "stopped",
       tunnelFailed: "stopped with an error", available: "available", missing: "missing", detected: "detected (left untouched)", maintenance: "restarting for an update",
       defaults: "Always allowed: {list}", status: { idle: "ready", running: "running", paused: "paused", "waiting-author": "waiting for the author", error: "stopped by an error", completed: "completed" },
@@ -212,8 +214,10 @@ export const ADMIN_JS = String.raw`"use strict";
       approved: "Approvati: {list}", none: "nessuno", approve: "Approva", dismiss: "Ignora", revoke: "Revoca", regenerate: "Nuovo token", revoked: "revocato", active: "attivo",
       pairCode: "Codice per il client (valido fino alle {t}):", pairWaiting: "In attesa che un client digiti il codice…", pairRequest: "{label} chiede di collegarsi.", pairApprove: "Approva",
       pairCancel: "Annulla", pairApproved: "Approvato: il client riceve ora il suo token.", allowUpdatesShort: "consenti aggiornamenti", copied: "Copiato.", saved: "Salvato.",
+      source: "Origine", verification: "Codice", thisComputer: "questo computer", pairFrom: "Da {source}", pairVerify: "Il tuo dispositivo deve mostrare il codice {code}. Se non lo mostra, o l'origine non è tua, annulla.", pairReject: "Rifiuta",
+      unknownSource: "sconosciuta",
       sessionExpired: "Sessione scaduta: accedi di nuovo.", codeMismatch: "I due codici sono diversi.", rotateConfirm: "Sostituire il codice amministratore con uno casuale? Dovrai accedere di nuovo.",
-      removeConfirm: "Rimuovere il token Cloudflare e fermare il connettore?", revokeConfirm: "Revocare questo client? Smette subito di funzionare.", regenerateConfirm: "Creare un nuovo token per questo client? Quello vecchio smette di funzionare.",
+      removeConfirm: "Rimuovere il token Cloudflare e fermare il connettore?", regenerateConfirm: "Creare un nuovo token per questo client? Quello vecchio smette di funzionare.",
       tunnelEnabled: "Attivo", tunnelProcess: "Connettore", tunnelBinary: "cloudflared", tunnelOther: "Altri connettori", tunnelHostLabel: "Hostname", running: "in esecuzione", stopped: "fermo",
       tunnelFailed: "fermo per un errore", available: "disponibile", missing: "mancante", detected: "rilevati (non toccati)", maintenance: "riavvio per aggiornamento",
       defaults: "Sempre consentite: {list}", status: { idle: "pronto", running: "in esecuzione", paused: "in pausa", "waiting-author": "aspetta l'autore", error: "fermo per un errore", completed: "completato" },
@@ -294,16 +298,19 @@ export const ADMIN_JS = String.raw`"use strict";
     if (!quiet || !editing()) renderNetwork();
     renderTunnel(); renderBooks();
   }
+  function sourceName(source) { return !source ? t("unknownSource") : source === "local" ? t("thisComputer") : source; }
   function renderPairing() {
     var box = $("pairing-box"); box.textContent = ""; var p = state.pairing;
     if (pairCode && (!p || p.expiresAt < Date.now())) pairCode = null;
     if (pairCode) { box.appendChild(el("p", "muted", t("pairCode", { t: new Date(pairCode.expiresAt).toLocaleTimeString(lang === "it" ? "it-IT" : "en-GB") }))); box.appendChild(el("p", "pair-code", pairCode.code.replace(/(\d{3})(\d{3})(\d{3})/, "$1 $2 $3"))); }
     if (p && p.requested && !p.approved) {
       var row = el("div", "notice"); row.appendChild(el("p", "", t("pairRequest", { label: p.label || "?" })));
+      row.appendChild(el("p", "muted small", [t("pairFrom", { source: sourceName(p.source) }), p.userAgent || "", p.requestedAt ? when(p.requestedAt) : ""].filter(Boolean).join(" · ")));
+      if (p.verification) { var check = el("p", "", ""); check.appendChild(el("span", "pair-code", p.verification)); check.appendChild(document.createTextNode(" ")); check.appendChild(el("span", "muted small", t("pairVerify", { code: p.verification }))); row.appendChild(check); }
       var allow = el("label", "check"); var box2 = document.createElement("input"); box2.type = "checkbox"; allow.appendChild(box2); allow.appendChild(el("span", "", t("allowUpdatesShort"))); row.appendChild(allow);
       var actions = el("div", "row"); var approve = el("button", "", t("pairApprove")); approve.type = "button";
       approve.addEventListener("click", function () { call("POST", "/admin/api/pairing/approve", { id: p.id, allowUpdate: box2.checked }).then(function () { pairCode = null; toast(t("pairApproved")); refresh(); }, fail); });
-      var cancel = el("button", "ghost", t("pairCancel")); cancel.type = "button";
+      var cancel = el("button", "ghost danger", t("pairReject")); cancel.type = "button";
       cancel.addEventListener("click", function () { call("POST", "/admin/api/pairing/cancel", {}).then(function () { pairCode = null; refresh(); }, fail); });
       actions.appendChild(approve); actions.appendChild(cancel); row.appendChild(actions); box.appendChild(row);
     } else if (p && !p.approved) box.appendChild(el("p", "muted", t("pairWaiting")));
@@ -313,13 +320,17 @@ export const ADMIN_JS = String.raw`"use strict";
     state.clients.slice().reverse().forEach(function (client) {
       var tr = el("tr", client.revoked ? "revoked" : ""); tr.appendChild(el("td", "", client.label));
       var scopes = el("td"); client.scopes.forEach(function (scope) { scopes.appendChild(el("span", "chip" + (scope === "update" ? " update" : ""), scope)); }); tr.appendChild(scopes);
+      var where = el("td"); where.appendChild(el("div", "", sourceName(client.source)));
+      if (client.userAgent) { var agent = el("div", "muted small agent", client.userAgent); agent.title = client.userAgent; where.appendChild(agent); }
+      tr.appendChild(where);
+      tr.appendChild(el("td", "", client.verification ? client.verification : "—"));
       tr.appendChild(el("td", "", when(client.createdAt))); tr.appendChild(el("td", "", client.revoked ? t("revoked") : when(client.lastSeenAt)));
       var actions = el("td");
       if (!client.revoked) {
         var regenerate = el("button", "ghost small", t("regenerate")); regenerate.type = "button";
         regenerate.addEventListener("click", function () { if (!confirm(t("regenerateConfirm"))) return; call("POST", "/admin/api/token", { label: client.label, scopes: client.scopes, replaceId: client.id }).then(function (result) { showToken(result.token); refresh(); }, fail); });
         var revoke = el("button", "ghost small danger", t("revoke")); revoke.type = "button";
-        revoke.addEventListener("click", function () { if (!confirm(t("revokeConfirm"))) return; call("POST", "/admin/api/revoke", { id: client.id }).then(function () { refresh(); }, fail); });
+        revoke.addEventListener("click", function () { call("POST", "/admin/api/revoke", { id: client.id }).then(function () { toast(t("revoked")); refresh(); }, fail); });
         actions.appendChild(regenerate); actions.appendChild(document.createTextNode(" ")); actions.appendChild(revoke);
       }
       tr.appendChild(actions); body.appendChild(tr);

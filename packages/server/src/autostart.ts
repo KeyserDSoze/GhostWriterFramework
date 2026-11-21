@@ -14,9 +14,14 @@ export interface AutostartResult {
 export const SYSTEMD_UNIT = "narrarium-server.service";
 export const LAUNCHD_LABEL = "net.narrarium.server";
 
-/** Every value written into a unit or a plist goes through here: a control character (a line break above all) would start a new directive. */
+/**
+ * Every value written into a unit or a plist goes through here: a control character (a line break above all) would start a new
+ * directive, and a character that XML 1.0 does not allow (U+FFFE, U+FFFF, half of a surrogate pair) would make a plist that launchd
+ * does not read.
+ */
 function plain(value: string, what: string): string {
   if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value)) throw new Error(`The ${what} contains a control character, so it cannot be written into the autostart file.`);
+  if (/[\uFFFE\uFFFF]/u.test(value) || (value as { isWellFormed?: () => boolean }).isWellFormed?.() === false) throw new Error(`The ${what} contains a character that cannot be written into the autostart file.`);
   return value;
 }
 
@@ -32,11 +37,12 @@ function systemdAssignment(name: string, value: string): string {
 
 /**
  * The PATH of the shell that ran `setup` (npm, git and cloudflared installed through nvm or Homebrew are found there and
- * nowhere else), led by the folder of the node that runs the supervisor.
+ * nowhere else), led by the folder of the node that runs the supervisor. Only absolute entries are kept: a relative one (`.`, `bin`)
+ * would be looked up in whatever folder the service happens to start in.
  */
 function supervisorSearchPath(nodeBinary: string, searchPath: string | undefined): string {
   const nodeDirectory = path.dirname(nodeBinary);
-  const entries = plain(searchPath ?? "", "PATH").split(":").filter(Boolean);
+  const entries = plain(searchPath ?? "", "PATH").split(":").filter((entry) => entry.startsWith("/"));
   return (entries.includes(nodeDirectory) ? entries : [nodeDirectory, ...entries]).join(":");
 }
 

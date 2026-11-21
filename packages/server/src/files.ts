@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import * as fs from "node:fs/promises";
 import path from "node:path";
+import { processAlive, processIdentity } from "./process-identity.js";
 
 export const MAX_DATA_FILE_BYTES = 64 * 1024 * 1024;
 
@@ -54,11 +55,15 @@ export async function renameReplacing(from: string, to: string): Promise<void> {
   }
 }
 
-async function syncDirectory(directory: string): Promise<void> {
+/** Flush a directory (what was created, renamed or removed in it) to disk. Windows cannot open a directory: nothing to do there. */
+export async function syncDirectory(directory: string): Promise<void> {
   if (process.platform === "win32") return;
   const handle = await fs.open(directory, "r");
   try {
     await handle.sync();
+  } catch (error) {
+    // Some file systems (network and FUSE mounts) cannot flush a folder: there is nothing more to ask of them. A real I/O error is raised.
+    if (!["EINVAL", "ENOTSUP", "EOPNOTSUPP", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
   } finally {
     await handle.close();
   }
@@ -128,48 +133,187 @@ export async function readPrivateText(file: string, max = 4096): Promise<string 
   }
 }
 
-function processAlive(pid: number): boolean {
+const HELD_LOCKS = new Set<string>();
+
+/** What a lock file says: who holds it, and when that process started (so that a reused number is not mistaken for the holder). */
+interface LockRecord {
+  pid: number;
+  /** The start of the holder's process (see `processIdentity`); absent in the lock files of earlier versions, which held the number only. */
+  start?: string;
+  token?: string;
+  /** The file holds a bare number (an earlier version). */
+  legacy?: boolean;
+  /** The file is empty, cut short or not a lock file: it is judged by its age. */
+  damaged?: boolean;
+}
+
+export interface LockOptions {
+  /** `kernel`: a `flock` (Linux) or a named mutex (Windows) that a crashed process cannot leave behind. `pidfile`: a lock file (macOS, anywhere else). Default: by system. */
+  method?: "kernel" | "pidfile";
+  /** How often a pid-file lock checks that it is still its own (default two seconds). */
+  checkMs?: number;
+  /** How old an unreadable lock file must be before it is taken over (default ten seconds): a fresh one may be being written. */
+  damagedAfterMs?: number;
+}
+
+async function readLockRecord(file: string): Promise<LockRecord | undefined> {
+  let text: string;
   try {
-    process.kill(pid, 0);
-    return true;
+    text = (await fs.readFile(file, "utf8")).trim();
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (/^\d{1,10}$/.test(text)) return { pid: Number(text), legacy: true };
+  try {
+    const value = JSON.parse(text) as { version?: unknown; pid?: unknown; start?: unknown; token?: unknown };
+    if (value.version === 1 && Number.isSafeInteger(value.pid) && (value.pid as number) > 0 && typeof value.token === "string") {
+      return { pid: value.pid as number, token: value.token, ...(typeof value.start === "string" && value.start ? { start: value.start } : {}) };
+    }
+  } catch {
+    // Not JSON: damaged.
+  }
+  return { pid: 0, damaged: true };
+}
+
+/**
+ * Whether the process a lock names is still the one that wrote it. A number that is alive proves nothing (numbers are given again);
+ * the process must have started when the lock says. When the system cannot say who a process is, a live number is believed.
+ */
+async function holderIsRunning(record: LockRecord): Promise<boolean> {
+  if (!record.pid || !processAlive(record.pid)) return false;
+  const current = await processIdentity(record.pid).catch(() => undefined);
+  if (!current) return true;
+  if (record.start) return current.start === record.start;
+  // An earlier version's file has the number only: a program that is not node cannot be a narrarium-server.
+  return /node/i.test(current.name);
+}
+
+/**
+ * Hard-link `from` to `to`: the lock appears with its whole content or not at all, and only one of several that try wins.
+ * Where links are not available a plain exclusive create is the next best thing.
+ */
+async function createLock(lock: string, record: Required<Pick<LockRecord, "pid" | "token">> & { start?: string }): Promise<boolean> {
+  const content = `${JSON.stringify({ version: 1, pid: record.pid, ...(record.start ? { start: record.start } : {}), token: record.token })}\n`;
+  const temporary = `${lock}.${randomUUID()}.tmp`;
+  await fs.writeFile(temporary, content, { flag: "wx", mode: 0o600 });
+  try {
+    try {
+      await fs.link(temporary, lock);
+      return true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") return false;
+      if (!["EPERM", "ENOSYS", "EXDEV", "EOPNOTSUPP", "EMLINK"].includes(code ?? "")) throw error;
+    }
+    try {
+      await fs.writeFile(lock, content, { flag: "wx", mode: 0o600 });
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw error;
+    }
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => undefined);
   }
 }
 
-const HELD_LOCKS = new Set<string>();
-
-/** Lock file with the owner's pid, taken over only from a dead process (macOS and other systems). */
-async function pidLock(root: string): Promise<() => Promise<void>> {
+/**
+ * Lock file with the owner's pid and the time that process started, for systems that have no kernel lock to use. The lock is created
+ * whole (never an empty file another server could take for a stale one), a lock whose holder is gone or is another program with the
+ * same number is taken over by one server at a time (a second lock, a folder, guards the taking over), and the holder looks at its
+ * own lock every few seconds: if it is gone or is somebody else's, `onLost` says so.
+ */
+async function pidLock(root: string, onLost: () => void, options: LockOptions): Promise<() => Promise<void>> {
   const lock = path.join(root, "server.lock");
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const handle = await fs.open(lock, "wx", 0o600);
-      await handle.writeFile(String(process.pid));
-      await handle.close();
-      return async () => {
-        await fs.rm(lock, { force: true });
-      };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const pid = Number((await fs.readFile(lock, "utf8").catch(() => "")).trim());
-      if (pid && pid !== process.pid && processAlive(pid)) throw new Error(`Another narrarium-server (pid ${pid}) is already using ${root}.`);
-      await fs.rm(lock, { force: true });
+  const guard = `${lock}.takeover`;
+  const token = randomUUID();
+  const start = (await processIdentity(process.pid).catch(() => undefined))?.start;
+  const mine = { pid: process.pid, token, ...(start ? { start } : {}) };
+  const damagedAfterMs = options.damagedAfterMs ?? 10_000;
+  const alreadyUsed = (holder: LockRecord) => new Error(`Another narrarium-server (pid ${holder.pid}) is already using ${root}.`);
+
+  const acquire = async (): Promise<void> => {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (await createLock(lock, mine)) return;
+      const holder = await readLockRecord(lock).catch(() => undefined);
+      if (!holder) continue;
+      if (holder.damaged) {
+        const age = Date.now() - (await fs.stat(lock).then((info) => info.mtimeMs, () => 0));
+        if (age < damagedAfterMs) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          continue;
+        }
+      } else if (await holderIsRunning(holder)) {
+        throw alreadyUsed(holder);
+      }
+      // The holder is gone (or never was one). One server at a time takes the lock over, and looks again inside: what it found
+      // may have been replaced by a server that started a moment ago.
+      try {
+        await fs.mkdir(guard, { mode: 0o700 });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const age = Date.now() - (await fs.stat(guard).then((info) => info.mtimeMs, () => Date.now()));
+        if (age > 10_000) await fs.rmdir(guard).catch(() => undefined);
+        await new Promise((resolve) => setTimeout(resolve, 20 + Math.floor(Math.random() * 60)));
+        continue;
+      }
+      let wait = false;
+      try {
+        const current = await readLockRecord(lock).catch(() => undefined);
+        if (current?.damaged && Date.now() - (await fs.stat(lock).then((info) => info.mtimeMs, () => 0)) < damagedAfterMs) {
+          // Replaced by a file that is being written right now: not ours to take.
+          wait = true;
+        } else {
+          if (current && !current.damaged && await holderIsRunning(current)) throw alreadyUsed(current);
+          if (current) await fs.rm(lock, { force: true });
+          if (await createLock(lock, mine)) return;
+        }
+      } finally {
+        await fs.rmdir(guard).catch(() => undefined);
+      }
+      if (wait) await new Promise((resolve) => setTimeout(resolve, 100));
     }
-  }
-  throw new Error(`Could not lock ${root}.`);
+    throw new Error(`Could not lock ${root}.`);
+  };
+  await acquire();
+
+  let released = false;
+  let lost = false;
+  const check = async () => {
+    if (released || lost) return;
+    let holder: LockRecord | undefined;
+    try {
+      holder = await readLockRecord(lock);
+    } catch {
+      return;
+    }
+    if (holder?.token === token || released || lost) return;
+    lost = true;
+    clearInterval(timer);
+    onLost();
+  };
+  const timer = setInterval(() => void check(), options.checkMs ?? 2_000);
+  timer.unref();
+  return async () => {
+    released = true;
+    clearInterval(timer);
+    const holder = await readLockRecord(lock).catch(() => undefined);
+    if (holder?.token === token) await fs.rm(lock, { force: true });
+  };
 }
 
 /**
  * One server per data folder. Linux uses a kernel `flock`, Windows a named mutex, so a crashed
  * process never leaves a stale lock; other systems use a pid lock file.
  */
-export async function lockDataRoot(root: string, onLost: () => void = () => { process.exitCode = 1; }): Promise<() => Promise<void>> {
+export async function lockDataRoot(root: string, onLost: () => void = () => { process.exitCode = 1; }, options: LockOptions = {}): Promise<() => Promise<void>> {
   const resolved = await ensurePrivateDirectory(root);
   const real = await fs.realpath(resolved);
   if (HELD_LOCKS.has(real)) throw new Error(`Another narrarium-server in this process is already using ${root}.`);
   let release: () => Promise<void>;
-  if (process.platform === "win32" || process.platform === "linux") {
+  const method = options.method ?? (process.platform === "win32" || process.platform === "linux" ? "kernel" : "pidfile");
+  if (method === "kernel" && (process.platform === "win32" || process.platform === "linux")) {
     let child: ChildProcess;
     if (process.platform === "win32") {
       const name = `Global\\Narrarium-${createHash("sha256").update(real.toLowerCase()).digest("hex")}`;
@@ -213,14 +357,15 @@ export async function lockDataRoot(root: string, onLost: () => void = () => { pr
     });
     release = async () => {
       released = true;
-      if (child.exitCode !== null) return;
+      // A helper that was killed (a signal, not an exit code) is gone too: its exit event has passed, so waiting for it would never end.
+      if (child.exitCode !== null || child.signalCode !== null) return;
       await new Promise<void>((done) => {
         child.once("exit", () => done());
         child.stdin?.end();
       });
     };
   } else {
-    release = await pidLock(real);
+    release = await pidLock(real, onLost, options);
   }
   HELD_LOCKS.add(real);
   return async () => {

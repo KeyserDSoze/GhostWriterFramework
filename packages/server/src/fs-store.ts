@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, rm, writeFile, type FileHandle } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rm, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { BookConflictError, assertSafeBookPath, isSafeBookPath, isTextBookPath, type BookCommitResult, type BookFileChange, type BookFileContent, type BookFileEntry, type BookStore } from "narrarium-engine";
 import { HttpError } from "./errors.js";
-import { renameReplacing } from "./files.js";
+import { renameReplacing, syncDirectory } from "./files.js";
 
 const SKIPPED_DIRECTORIES = new Set([".git", "node_modules", ".astro", "dist"]);
 /** Larger files are neither listed, read nor replaced: no client could ever sync them. */
@@ -213,6 +213,14 @@ export class FileBookStore implements BookStore {
     return this.mutex.run("write", () => this.apply(prepared, message));
   }
 
+  /**
+   * Run `action` while no commit and no other exclusive action is running on this working copy: whatever else changes its files (git's
+   * own pull, rebase and push; a replacement of the whole folder) takes its turn here, so that it never overlaps a commit or another one.
+   */
+  exclusive<T>(action: () => Promise<T>): Promise<T> {
+    return this.mutex.run("write", action);
+  }
+
   /** Everything that can be checked without looking at the disk: count, paths (normalized once), duplicates, sizes. */
   private prepare(changes: BookFileChange[]): PreparedChange[] {
     if (changes.length > MAX_COMMIT_CHANGES) throw new HttpError(413, "too_many_changes", `A commit may change at most ${MAX_COMMIT_CHANGES} files: send the rest in another commit.`);
@@ -257,18 +265,29 @@ export class FileBookStore implements BookStore {
 
     let reached = 0;
     const created: string[] = [];
+    // Folders that gained or lost an entry: each is flushed once, after the files in it are in place.
+    const touched = new Set<string>();
     try {
       for (const target of targets) {
         reached += 1;
         this.hashes.delete(target.path);
+        const folder = path.dirname(target.location.full);
         if (target.content === null) {
           await rm(target.location.full, { force: true });
+          touched.add(folder);
         } else {
-          const first = await mkdir(path.dirname(target.location.full), { recursive: true });
-          if (first) created.push(first);
+          const first = await mkdir(folder, { recursive: true });
+          if (first) {
+            created.push(first);
+            // A folder that was just made is an entry of its parent, and so is every one below it on the way to the file.
+            touched.add(path.dirname(first));
+            for (let directory = folder; directory !== path.dirname(first); directory = path.dirname(directory)) touched.add(directory);
+          }
           await this.replaceFile(target.location.full, target.content);
+          touched.add(folder);
         }
       }
+      await this.flushFolders(touched);
       const revision = await this.options.afterWrite?.(targets.map((target) => target.path), message);
       return { revision };
     } catch (error) {
@@ -277,11 +296,17 @@ export class FileBookStore implements BookStore {
     }
   }
 
-  /** Write through a private temporary file in the same folder, then rename: readers never see a partial file. */
+  /** Write through a private temporary file in the same folder, flush it, then rename: readers never see a partial file, and a power cut never leaves an empty one. */
   private async replaceFile(full: string, content: string | Uint8Array): Promise<void> {
     const temporary = path.join(path.dirname(full), `.${randomUUID()}.tmp`);
     try {
-      await writeFile(temporary, content, { flag: "wx", mode: 0o644 });
+      const handle = await open(temporary, "wx", 0o644);
+      try {
+        await handle.writeFile(content);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
       await renameReplacing(temporary, full);
     } catch (error) {
       await rm(temporary, { force: true }).catch(() => undefined);
@@ -289,8 +314,14 @@ export class FileBookStore implements BookStore {
     }
   }
 
+  /** Flush folders whose entries changed (the new names, the removals) so that they survive a power cut with the files in them. */
+  private async flushFolders(folders: Iterable<string>): Promise<void> {
+    for (const folder of folders) await syncDirectory(folder);
+  }
+
   /** Undo a failed commit: every file back to what it held, the folders it created removed. */
   private async putBack(targets: Target[], created: string[]): Promise<void> {
+    const touched = new Set<string>();
     for (const target of targets) {
       this.hashes.delete(target.path);
       try {
@@ -298,11 +329,16 @@ export class FileBookStore implements BookStore {
         if (location.unsafe) continue;
         if (target.original === null) await rm(location.full, { force: true });
         else await this.replaceFile(location.full, target.original);
+        touched.add(path.dirname(location.full));
       } catch {
         // Keep going: the other files must still be put back.
       }
     }
-    for (const directory of created.reverse()) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    for (const directory of created.reverse()) {
+      await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+      touched.add(path.dirname(directory));
+    }
+    for (const folder of touched) await syncDirectory(folder).catch(() => undefined);
   }
 
   /** Revision of the current content when the store has no git history. */

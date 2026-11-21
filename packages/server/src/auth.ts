@@ -15,6 +15,10 @@ const sameSecret = (left: string, right: string) => sameHash(hash(left), hash(ri
 
 export const MAX_CLIENTS = 100;
 export const ADMIN_SESSION_MS = 30 * 60_000;
+/** Admin sessions one source may hold: past this, its own least recently used one is closed. */
+export const MAX_ADMIN_SESSIONS_PER_SOURCE = 10;
+/** Admin sessions in all: past this, the least recently used one is closed. */
+export const MAX_ADMIN_SESSIONS = 50;
 export const PAIRING_MS = 5 * 60_000;
 export const ATTEMPT_WINDOW_MS = 5 * 60_000;
 /** Wrong admin codes one source may send per window; a success clears its count, and the next attempt is refused until the window ends. */
@@ -26,6 +30,8 @@ export const PAIRING_GUESSES_PER_SOURCE = 5;
 /** ...and wrong codes from everybody together after which the pairing is cancelled. */
 export const PAIRING_GUESSES_TOTAL = 50;
 export const ADMIN_CODE_FILE = "admin-code.txt";
+/** Longest user agent kept (what a browser sends is well under this). */
+export const MAX_USER_AGENT_CHARACTERS = 200;
 
 export interface ClientRecord {
   id: string;
@@ -34,6 +40,10 @@ export interface ClientRecord {
   scopes: ServerScope[];
   createdAt: string;
   revoked: boolean;
+  /** Where the client was made from: the source (as the rate limits see it) of its pairing request, or of the admin session that issued its token. */
+  source?: string;
+  /** The user agent that came with that request, cleaned and cut. */
+  userAgent?: string;
 }
 
 interface PairingRecord {
@@ -43,7 +53,10 @@ interface PairingRecord {
   /** Wrong codes tried so far, from all sources together. */
   attempts: number;
   requestHash?: string;
+  requestedAt?: string;
   label?: string;
+  source?: string;
+  userAgent?: string;
   scopes: ServerScope[];
   issued?: EncryptedSecret;
 }
@@ -55,7 +68,59 @@ interface AuthState {
   pairing?: PairingRecord;
 }
 
-export type PublicClient = Omit<ClientRecord, "hash"> & { lastSeenAt?: string };
+/** Who asked, as far as the server can tell: shown to the owner next to the client, never trusted for anything. */
+export interface RequestOrigin {
+  source?: string;
+  userAgent?: string;
+}
+
+export type PublicClient = Omit<ClientRecord, "hash"> & {
+  lastSeenAt?: string;
+  /** Four digits the device can show too (see `pairingVerification`). */
+  verification: string;
+};
+
+export interface PublicPairing {
+  id: string;
+  label?: string;
+  expiresAt: number;
+  requested: boolean;
+  approved: boolean;
+  requestedAt?: string;
+  source?: string;
+  userAgent?: string;
+  verification?: string;
+}
+
+/**
+ * Four digits derived from a secret's SHA-256 (hex): the nonce of a pairing request (`"request"`), or the token that
+ * was issued (`"client"`). Both sides can compute them (the formula is public), so the owner can compare what the panel
+ * shows with what the device shows, and see at once that the device that holds a token is not the one in front of them.
+ */
+export function pairingVerification(kind: "request" | "client", secretHash: string): string {
+  const digest = createHash("sha256").update(`narrarium-pairing-verification\n${kind}\n${secretHash}`).digest();
+  return String(digest.readUInt32BE(0) % 10_000).padStart(4, "0");
+}
+
+/** A user agent safe to keep and to show: no control or direction-changing characters, one space between words, cut short. */
+export function cleanUserAgent(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/gu, " ").replace(/\s+/gu, " ").trim();
+  return text ? Array.from(text).slice(0, MAX_USER_AGENT_CHARACTERS).join("").trim() : undefined;
+}
+
+/** The address (or "local") of a source, as `sourceOf` writes it: short and free of control characters. */
+function cleanSource(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.replace(/[^\x20-\x7e]/g, "").trim().slice(0, 64);
+  return text || undefined;
+}
+
+function originFields(origin: RequestOrigin | undefined): RequestOrigin {
+  const source = cleanSource(origin?.source);
+  const userAgent = cleanUserAgent(origin?.userAgent);
+  return { ...(source ? { source } : {}), ...(userAgent ? { userAgent } : {}) };
+}
 
 export function isScope(value: unknown): value is ServerScope {
   return typeof value === "string" && (SERVER_SCOPES as readonly string[]).includes(value);
@@ -95,7 +160,7 @@ function parseState(value: unknown): AuthState {
     if (!client || typeof client.id !== "string" || typeof client.label !== "string" || client.label.length > 80 || typeof client.hash !== "string" || client.hash.length !== 64 || typeof client.createdAt !== "string" || typeof client.revoked !== "boolean") {
       throw new Error("authorization.json contains an invalid client.");
     }
-    return { id: client.id, label: client.label, hash: client.hash, scopes: parseScopes(client.scopes), createdAt: client.createdAt, revoked: client.revoked };
+    return { id: client.id, label: client.label, hash: client.hash, scopes: parseScopes(client.scopes), createdAt: client.createdAt, revoked: client.revoked, ...originFields(client) };
   });
   const pairing = record.pairing;
   if (pairing !== undefined && (!pairing || typeof pairing.id !== "string" || typeof pairing.hash !== "string" || typeof pairing.expiresAt !== "number" || typeof pairing.attempts !== "number" || !Array.isArray(pairing.scopes) || (pairing.issued !== undefined && !isEncryptedSecret(pairing.issued)))) {
@@ -105,8 +170,13 @@ function parseState(value: unknown): AuthState {
     version: 1,
     adminHash: record.adminHash,
     clients,
-    ...(pairing ? { pairing: { ...pairing, scopes: pairing.scopes.filter(isScope) } } : {}),
+    ...(pairing ? { pairing: parsePairing(pairing) } : {}),
   };
+}
+
+function parsePairing(pairing: PairingRecord): PairingRecord {
+  const { source: _source, userAgent: _userAgent, requestedAt, ...rest } = pairing;
+  return { ...rest, scopes: pairing.scopes.filter(isScope), ...originFields(pairing), ...(typeof requestedAt === "string" ? { requestedAt: requestedAt.slice(0, 40) } : {}) };
 }
 
 /** The admin code lives in a 0600 file: created at first start, read back at every start. */
@@ -125,7 +195,8 @@ async function adminCodeFromFile(file: string): Promise<string> {
 
 /** Admin code, admin sessions, client tokens with scopes and pairing of new clients. */
 export class Auth {
-  private sessions = new Map<string, { csrf: string; until: number }>();
+  /** Least recently used first: a session that is used moves to the end, so the first one is always the one to close. */
+  private readonly sessions = new Map<string, { csrf: string; until: number; source: string }>();
   private readonly lastSeen = new Map<string, string>();
   private tail: Promise<unknown> = Promise.resolve();
   /** Wrong admin codes per source. In memory only: nothing anonymous is ever written to disk. */
@@ -225,26 +296,74 @@ export class Auth {
     this.logins.reset(source);
     const cookie = secret();
     const csrf = secret();
-    if (this.sessions.size >= 20) this.sessions.clear();
-    this.sessions.set(cookie, { csrf, until: Date.now() + ADMIN_SESSION_MS });
+    this.makeRoomForSession(source);
+    this.sessions.set(cookie, { csrf, until: Date.now() + ADMIN_SESSION_MS, source });
     return { cookie, csrf };
+  }
+
+  /**
+   * Expired sessions go first. Then a source over its own limit closes its own least recently used sessions, and a full table
+   * closes the least recently used one: signing in many times can end the sessions of the one who does it, never everybody's.
+   */
+  private makeRoomForSession(source: string): void {
+    const now = Date.now();
+    for (const [cookie, session] of this.sessions) if (session.until < now) this.sessions.delete(cookie);
+    let own = 0;
+    for (const session of this.sessions.values()) if (session.source === source) own += 1;
+    for (const [cookie, session] of this.sessions) {
+      if (own < MAX_ADMIN_SESSIONS_PER_SOURCE) break;
+      if (session.source !== source) continue;
+      this.sessions.delete(cookie);
+      own -= 1;
+    }
+    while (this.sessions.size >= MAX_ADMIN_SESSIONS) {
+      const oldest = this.sessions.keys().next();
+      if (oldest.done) break;
+      this.sessions.delete(oldest.value);
+    }
+  }
+
+  /** Admin sessions held now (expired ones are dropped when somebody signs in). */
+  get sessionCount(): number {
+    return this.sessions.size;
   }
 
   adminSession(cookie: string | undefined, csrf?: string): void {
     const session = cookie ? this.sessions.get(cookie) : undefined;
-    if (!session || session.until < Date.now()) throw new HttpError(401, "admin_session", "Sign in to the admin panel again.");
+    if (!cookie || !session || session.until < Date.now()) {
+      if (cookie) this.sessions.delete(cookie);
+      throw new HttpError(401, "admin_session", "Sign in to the admin panel again.");
+    }
     if (csrf !== undefined && !sameSecret(session.csrf, csrf)) throw new HttpError(403, "csrf", "This admin request is not authorized.");
+    this.sessions.delete(cookie);
+    this.sessions.set(cookie, session);
   }
 
   logout(cookie: string | undefined): void {
     if (cookie) this.sessions.delete(cookie);
   }
 
-  list(): { clients: PublicClient[]; pairing: { id: string; label?: string; expiresAt: number; requested: boolean; approved: boolean } | null } {
+  list(): { clients: PublicClient[]; pairing: PublicPairing | null } {
     const pairing = this.state.pairing && this.state.pairing.expiresAt > Date.now() ? this.state.pairing : undefined;
     return {
-      clients: this.state.clients.map(({ hash: _hash, ...client }) => ({ ...client, ...(this.lastSeen.has(client.id) ? { lastSeenAt: this.lastSeen.get(client.id) } : {}) })),
-      pairing: pairing ? { id: pairing.id, ...(pairing.label ? { label: pairing.label } : {}), expiresAt: pairing.expiresAt, requested: Boolean(pairing.requestHash), approved: Boolean(pairing.issued) } : null,
+      clients: this.state.clients.map(({ hash: tokenHash, ...client }) => ({
+        ...client,
+        verification: pairingVerification("client", tokenHash),
+        ...(this.lastSeen.has(client.id) ? { lastSeenAt: this.lastSeen.get(client.id) } : {}),
+      })),
+      pairing: pairing ? {
+        id: pairing.id,
+        ...(pairing.label ? { label: pairing.label } : {}),
+        expiresAt: pairing.expiresAt,
+        requested: Boolean(pairing.requestHash),
+        approved: Boolean(pairing.issued),
+        ...(pairing.requestHash ? {
+          ...(pairing.requestedAt ? { requestedAt: pairing.requestedAt } : {}),
+          ...(pairing.source ? { source: pairing.source } : {}),
+          ...(pairing.userAgent ? { userAgent: pairing.userAgent } : {}),
+          verification: pairingVerification("request", pairing.requestHash),
+        } : {}),
+      } : null,
     };
   }
 
@@ -257,8 +376,11 @@ export class Auth {
     state.clients.push(client);
   }
 
-  /** Issue a token (shown once). With `replaceId` the secret of an existing client is rotated. */
-  async issue(label: string, scopes: ServerScope[], replaceId?: string): Promise<{ token: string; clientId: string }> {
+  /**
+   * Issue a token (shown once). With `replaceId` the secret of an existing client is rotated: the client keeps the place it came
+   * from. `origin` says who asked (the admin session, for a token made in the panel) and is shown next to the client.
+   */
+  async issue(label: string, scopes: ServerScope[], replaceId?: string, origin?: RequestOrigin): Promise<{ token: string; clientId: string }> {
     const name = label.trim();
     if (!name || name.length > 80) throw new HttpError(422, "label", "The client name must have 1-80 characters.");
     const checked = parseScopes(scopes);
@@ -267,7 +389,9 @@ export class Auth {
       if (replaceId && index === -1) throw new HttpError(404, "client_missing", "Client not found.");
       const token = `nrs_${secret()}`;
       const clientId = replaceId ?? randomUUID();
-      const client: ClientRecord = { id: clientId, label: name, hash: hash(token), scopes: checked, createdAt: new Date().toISOString(), revoked: false };
+      const previous = index >= 0 ? state.clients[index] : undefined;
+      const where = previous?.source || previous?.userAgent ? originFields(previous) : originFields(origin);
+      const client: ClientRecord = { id: clientId, label: name, hash: hash(token), scopes: checked, createdAt: new Date().toISOString(), revoked: false, ...where };
       if (index >= 0) state.clients[index] = client;
       else Auth.append(state, client);
       return { token, clientId };
@@ -279,6 +403,19 @@ export class Auth {
       const client = state.clients.find((entry) => entry.id === id);
       if (!client) return false;
       client.revoked = true;
+      return true;
+    });
+  }
+
+  /**
+   * A client disconnects itself: the token it presented is revoked, and only that one. The match is on the token's hash as well
+   * as the client's id, so a request that started before its token was replaced cannot revoke the replacement.
+   */
+  async revokeOwn(client: ClientRecord): Promise<boolean> {
+    return this.change((state) => {
+      const entry = state.clients.find((candidate) => candidate.id === client.id && candidate.hash === client.hash && !candidate.revoked);
+      if (!entry) return false;
+      entry.revoked = true;
       return true;
     });
   }
@@ -316,10 +453,10 @@ export class Auth {
    * refused for the rest of it; wrong guesses from all sources together cancel the pairing at `PAIRING_GUESSES_TOTAL`.
    * Nothing happens (and nothing is written) when no pairing takes a code.
    */
-  async requestPairing(code: string, nonce: string, label: string, source: string = LOCAL_SOURCE): Promise<{ id: string }> {
+  async requestPairing(code: string, nonce: string, label: string, source: string = LOCAL_SOURCE, userAgent?: string): Promise<{ id: string; verification: string }> {
     const invalid = () => new HttpError(401, "pairing_invalid", "The code is wrong, expired or already used, or there were too many attempts.");
     if (!takesCode(this.state.pairing)) throw invalid();
-    const id = await this.change((state) => {
+    const requested = await this.change((state) => {
       const pairing = state.pairing;
       if (!takesCode(pairing) || this.guessesBy(pairing.id, source) >= PAIRING_GUESSES_PER_SOURCE) return undefined;
       if (!sameHash(pairing.hash, hash(code))) {
@@ -329,11 +466,15 @@ export class Auth {
         return undefined;
       }
       pairing.requestHash = hash(nonce);
+      pairing.requestedAt = new Date().toISOString();
       pairing.label = label;
-      return pairing.id;
+      delete pairing.source;
+      delete pairing.userAgent;
+      Object.assign(pairing, originFields({ source, userAgent }));
+      return { id: pairing.id, verification: pairingVerification("request", pairing.requestHash) };
     });
-    if (!id) throw invalid();
-    return { id };
+    if (!requested) throw invalid();
+    return requested;
   }
 
   /** The owner approves the pending request; `allowUpdate` also lets the client update the server. */
@@ -345,7 +486,7 @@ export class Auth {
       }
       const token = `nrs_${secret()}`;
       const scopes: ServerScope[] = options.allowUpdate ? [...pairing.scopes.filter((scope) => scope !== "update"), "update"] : pairing.scopes.filter((scope) => scope !== "update");
-      Auth.append(state, { id: randomUUID(), label: pairing.label, hash: hash(token), scopes, createdAt: new Date().toISOString(), revoked: false });
+      Auth.append(state, { id: randomUUID(), label: pairing.label, hash: hash(token), scopes, createdAt: new Date().toISOString(), revoked: false, ...originFields(pairing) });
       pairing.issued = this.vault.encrypt(token);
     });
   }
@@ -356,7 +497,7 @@ export class Auth {
     });
   }
 
-  async pollPairing(id: string, nonce: string): Promise<{ pending: true } | { token: string }> {
+  async pollPairing(id: string, nonce: string): Promise<{ pending: true } | { token: string; verification: string }> {
     const invalid = () => new HttpError(401, "pairing_invalid", "This pairing is not valid or expired.");
     const matches = (pairing: PairingRecord | undefined): pairing is PairingRecord => pairing !== undefined && pairing.id === id && pairing.expiresAt >= Date.now() && pairing.requestHash !== undefined && sameHash(pairing.requestHash, hash(nonce));
     // Looking costs nothing: only collecting the token changes (and writes) anything.
@@ -369,7 +510,7 @@ export class Auth {
       if (!pairing.issued) return { pending: true as const };
       const token = this.vault.decrypt(pairing.issued);
       delete state.pairing;
-      return { token };
+      return { token, verification: pairingVerification("client", hash(token)) };
     });
   }
 }

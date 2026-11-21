@@ -1,6 +1,7 @@
 import path from "node:path";
 import { installOutboundNetwork } from "./network.js";
-import { SUPERVISED_ENV, defaultDataRoot } from "./runtime-install.js";
+import { resolveDataRoot } from "./data-root.js";
+import { SUPERVISED_ENV } from "./runtime-install.js";
 import { startNarrariumServer, type RunningNarrariumServer } from "./server.js";
 import { SERVER_VERSION } from "./version.js";
 
@@ -32,8 +33,8 @@ if (!valid || !dataRoot) {
     })();
     return stopped;
   };
-  process.once("SIGINT", () => void stop());
-  process.once("SIGTERM", () => void stop());
+  // A closed terminal (SIGHUP) and Ctrl+Break (Windows) end the server as cleanly as Ctrl+C does: nothing it started is left running.
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const) process.once(signal, () => void stop());
 
   /** One line on stderr: when, what, and a few frames of the stack; never anything from a request. */
   const report = (kind: string, reason: unknown) => {
@@ -57,12 +58,18 @@ if (!valid || !dataRoot) {
   try {
     server = await startNarrariumServer({
       dataDir: dataRoot,
+      // Without its lock this server may be one of two on the same folder: it has stopped, and the process ends with an error, so that
+      // a supervisor or a service manager starts a server that takes the lock again (or reports that another one has it).
+      onLockLost: () => {
+        process.exitCode = 1;
+        void stop().catch(() => undefined).finally(() => process.exit(1));
+      },
       log: (line) => {
         if (verbose || line.startsWith("Error") || line.startsWith("Admin error") || line.startsWith("Update") || line.startsWith("The data folder")) process.stdout.write(`[${new Date().toISOString()}] ${line}\n`);
       },
     });
     restoreNetwork = installOutboundNetwork(server.allowedBases);
-    const rootFlag = path.resolve(defaultDataRoot()) === dataRoot ? "" : ` --data-root "${dataRoot}"`;
+    const rootFlag = path.resolve(resolveDataRoot()) === dataRoot ? "" : ` --data-root "${dataRoot}"`;
     const lines = [
       `Narrarium personal server ${SERVER_VERSION}${process.env[SUPERVISED_ENV] === "1" ? " (supervised)" : ""}`,
       `  API:          ${server.url}`,

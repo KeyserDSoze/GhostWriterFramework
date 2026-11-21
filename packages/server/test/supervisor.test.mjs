@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { RuntimeInstaller, UPDATE_MESSAGES, superviseServer } from "../dist/testing.mjs";
 import { npmMetadata, until } from "./helpers.mjs";
+import { forgingRegistry, integrityFor, lockfile } from "./release-fixtures.mjs";
 
 /** npm as the installer sees it: metadata, installs into the staging prefix, signature audit. */
 function fakeNpm(options = {}) {
@@ -33,6 +34,7 @@ function fakeNpm(options = {}) {
       await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "narrarium-server", version }));
       await writeFile(path.join(root, "dist", "cli.mjs"), "// cli\n");
       await writeFile(path.join(root, "dist", "server.mjs"), state.content(version));
+      await writeFile(path.join(args[args.indexOf("--prefix") + 1], "package-lock.json"), lockfile(version, integrityFor(version)));
       return { code: 0, stdout: "", stderr: "" };
     }
     if (args[0] === "audit") {
@@ -81,7 +83,7 @@ async function withRuntime(run, npmOptions) {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), "narrarium-runtime-test-"));
   const npm = fakeNpm(npmOptions);
   try {
-    await run(new RuntimeInstaller({ dataRoot, npmBinary: "npm", runner: npm.runner }), npm, dataRoot);
+    await run(new RuntimeInstaller({ dataRoot, npmBinary: "npm", runner: npm.runner, fetch: forgingRegistry().fetch }), npm, dataRoot);
   } finally {
     await rm(dataRoot, { recursive: true, force: true });
   }

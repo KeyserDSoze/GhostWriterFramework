@@ -27,7 +27,7 @@ import {
 } from "narrarium-engine";
 import { Auth, assertScope, isScope, parseScopes, type ClientRecord } from "./auth.js";
 import { BookRegistry } from "./books.js";
-import { DEFAULT_ORIGINS, DataDirectory, normalizeOrigin } from "./config.js";
+import { DEFAULT_ORIGINS, DataDirectory, normalizeOrigin, publicLabel } from "./config.js";
 import { HttpError, retryAfter } from "./errors.js";
 import { MAX_COMMIT_CHANGES } from "./fs-store.js";
 import { lockDataRoot, unsafeKeys } from "./files.js";
@@ -67,6 +67,10 @@ export interface NarrariumServerOptions {
   tunnel?: Omit<CloudflareTunnelManagerOptions, "root">;
   /** Limits of the listeners (tests). */
   limits?: ServerLimits;
+  /** Take the lock of the data folder (tests; default: `lockDataRoot`). Its second argument is what to call when the lock is lost. */
+  lock?: typeof lockDataRoot;
+  /** Called once a server that lost its data folder lock has stopped (the process should exit: another server may have the folder now). */
+  onLockLost?: () => void;
   log?: (line: string) => void;
 }
 
@@ -102,6 +106,8 @@ const REQUEST_TIMEOUT_MS = 300_000;
 const MINUTE_MS = 60_000;
 const INFO_PER_MINUTE = 120;
 const PAIRING_RESULTS_PER_MINUTE = 120;
+/** Identity challenges of the local command line, per source: one per command, so this is generous. */
+const ADMIN_IDENTITY_PER_MINUTE = 60;
 const FAILED_AUTHENTICATIONS_PER_MINUTE = 60;
 /** Per client, and generous: the web app reads a book with one request per file. */
 const AUTHENTICATED_PER_MINUTE = 6000;
@@ -241,6 +247,10 @@ function refuseOver(verdict: LimitVerdict): void {
   if (!verdict.allowed) throw new HttpError(429, "rate_limit", "Too many requests: wait a moment and try again.", retryAfter(verdict.retryAfterMs));
 }
 
+function lockLostError(): HttpError {
+  return new HttpError(503, "lock_lost", "This server lost the lock of its data folder and is stopping: another server may be using the folder now.");
+}
+
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "invalid_request", "Expected a JSON object.");
   return value as Record<string, unknown>;
@@ -313,14 +323,23 @@ async function listen(server: http.Server, port: number): Promise<number> {
  */
 export async function startNarrariumServer(options: NarrariumServerOptions): Promise<RunningNarrariumServer> {
   const log = options.log ?? (() => undefined);
-  const releaseLock = await lockDataRoot(options.dataDir, () => log("The data folder lock was lost: stopping."));
+  // A server that lost its lock may now be one of two on the same folder: it stops serving and writing at once, closes, and says so.
+  let lockLost = false;
+  let stopForLostLock: (() => Promise<void>) | undefined;
+  const releaseLock = await (options.lock ?? lockDataRoot)(options.dataDir, () => {
+    if (lockLost) return;
+    lockLost = true;
+    log("The data folder lock was lost: stopping.");
+    if (stopForLostLock) void stopForLostLock().catch(() => undefined).finally(() => options.onLockLost?.());
+  });
   const closers: Array<() => Promise<void> | void> = [];
   try {
     const data = await DataDirectory.open(options.dataDir, { label: options.label, origins: options.origins });
     const auth = await Auth.open(data.root, data.vault);
     const supervised = options.supervised ?? process.env[SUPERVISED_ENV] === "1";
-    const checkRelease = options.checkRelease ?? ((version: string) => checkNpmServerRelease(version));
     const installer = new RuntimeInstaller({ dataRoot: data.root });
+    // Nothing below the highest version ever installed here is offered (the supervisor refuses it as well).
+    const checkRelease = options.checkRelease ?? ((version: string) => checkNpmServerRelease(version, undefined, { highestInstalled: () => installer.highestVersion() }));
     const gitAvailable = Boolean(await gitVersion());
 
     const bodyIdleMs = typeof options.limits?.bodyIdleMs === "number" && options.limits.bodyIdleMs > 0 ? options.limits.bodyIdleMs : BODY_IDLE_MS;
@@ -328,6 +347,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     // Every limit is counted per source (or per client), never for everybody at once.
     const infoLimit = new WindowLimiter({ max: INFO_PER_MINUTE, windowMs: MINUTE_MS });
     const pairingResultLimit = new WindowLimiter({ max: PAIRING_RESULTS_PER_MINUTE, windowMs: MINUTE_MS });
+    const adminIdentityLimit = new WindowLimiter({ max: ADMIN_IDENTITY_PER_MINUTE, windowMs: MINUTE_MS });
     const failedAuthenticationLimit = new WindowLimiter({ max: FAILED_AUTHENTICATIONS_PER_MINUTE, windowMs: MINUTE_MS });
     const clientLimit = new WindowLimiter({ max: AUTHENTICATED_PER_MINUTE, windowMs: MINUTE_MS });
     const anonymousApi = new ConcurrencyLimiter(ANONYMOUS_IN_FLIGHT);
@@ -387,7 +407,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     await books.load();
     closers.push(() => books.close());
 
-    const tunnel = new CloudflareTunnelManager({ root: data.root, ...options.tunnel });
+    const tunnel = new CloudflareTunnelManager({ root: data.root, vault: data.vault, ...options.tunnel });
     closers.push(() => tunnel.close());
     // A connector problem is shown in the admin panel; it never prevents the server from starting.
     await tunnel.start().catch(() => undefined);
@@ -398,7 +418,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverVersion: SERVER_VERSION,
       engineVersion: ENGINE_VERSION,
       serverId: data.config.serverId,
-      label: data.config.label,
+      label: publicLabel(data.config.label),
       git: gitAvailable,
       features: ["autopilot", "director", "sync", "pairing", "updates", ...(gitAvailable ? ["github"] : [])],
       publicKey: data.publicKey,
@@ -453,6 +473,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       entry.check.then(
         (result) => {
           entry.expiresAt = Date.now() + (result.reason === "unavailable" ? RELEASE_UNREACHABLE_CACHE_MS : RELEASE_CACHE_MS);
+          // A release npm announces and the server refuses to offer is worth a line in the log: it is either a mistake or an attack.
+          if (result.reason === "no_trusted_release") log(`Update not offered: ${result.message}`);
         },
         () => {
           if (cachedRelease === entry) cachedRelease = undefined;
@@ -693,6 +715,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       void (async () => {
         common(response);
         response.setHeader("content-security-policy", "default-src 'none'; frame-ancestors 'none'");
+        if (lockLost) throw lockLostError();
         const hosts = new Set([`127.0.0.1:${apiPort}`, `localhost:${apiPort}`, `[::1]:${apiPort}`, ...(hostOf(data.config.publicUrl) ? [hostOf(data.config.publicUrl)!] : [])]);
         if (!hosts.has(String(request.headers.host ?? "").toLowerCase())) throw new HttpError(421, "host_not_allowed", "Unexpected Host header. Set the public address of the server in its admin panel (Approved network).");
         const origin = typeof request.headers.origin === "string" ? request.headers.origin.replace(/\/+$/, "") : "";
@@ -737,7 +760,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           const nonce = typeof body.nonce === "string" ? body.nonce : "";
           const label = typeof body.label === "string" ? body.label.trim() : "";
           if (!/^\d{9}$/.test(code) || !/^[a-f0-9]{64}$/.test(nonce) || !label || label.length > 80) throw new HttpError(400, "invalid_request", "Send the nine-digit code, a nonce and a client name.");
-          sendJson(response, 200, await auth.requestPairing(code, nonce, label, source));
+          sendJson(response, 200, await auth.requestPairing(code, nonce, label, source, header(request, "user-agent")));
           return;
         }
         const pairing = /^\/api\/v1\/pairings\/([0-9a-f-]{36})\/result$/.exec(url.pathname);
@@ -759,11 +782,12 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         }
         releaseAnonymous();
         refuseOver(clientLimit.hit(client.id));
-        // Disconnecting a device revokes its own token, whatever its permissions.
+        // Disconnecting a device revokes the token it presented, whatever its permissions, and no other client's (nothing the
+        // caller sends names a client). A token that was replaced after this request started revokes nothing.
         if (request.method === "DELETE" && url.pathname === "/api/v1/session") {
-          await auth.revoke(client.id);
+          const revoked = await auth.revokeOwn(client);
           dropStaleStreams();
-          sendJson(response, 200, { revoked: true });
+          sendJson(response, 200, { revoked });
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/events") {
@@ -818,6 +842,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     const admin = http.createServer((request, response) => {
       void (async () => {
         common(response);
+        if (lockLost) throw lockLostError();
         response.setHeader("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
         const localOrigins = [`http://127.0.0.1:${adminPort}`, `http://localhost:${adminPort}`];
         const publicAdmin = data.config.allowRemoteAdmin ? (data.config.adminPublicUrl ?? data.config.publicUrl) : undefined;
@@ -840,6 +865,18 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         if (request.method === "GET" && (path === "/" || path === "/admin.js" || path === "/admin.css")) {
           response.writeHead(200, { "content-type": path === "/" ? "text/html; charset=utf-8" : path === "/admin.css" ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8" });
           response.end(path === "/" ? ADMIN_HTML : path === "/admin.css" ? ADMIN_CSS : ADMIN_JS);
+          return;
+        }
+        // The command line proves it talks to this server before it sends the admin code: it brings a nonce, this signs it.
+        if (request.method === "GET" && path.split("?")[0] === "/admin/api/identity") {
+          const source = sourceOf(request, tunnelTrusted());
+          const releaseAnonymous = anonymousAdmin.enter(source);
+          if (!releaseAnonymous) throw anonymousRefusal();
+          response.once("close", releaseAnonymous);
+          refuseOver(adminIdentityLimit.hit(source));
+          const nonce = new URL(path, "http://127.0.0.1").searchParams.get("nonce");
+          if (nonce === null || !/^[a-f0-9]{64}$/.test(nonce)) throw new HttpError(400, "invalid_nonce", "The nonce must be 64 hexadecimal characters.");
+          sendJson(response, 200, { name: SERVER_PACKAGE_NAME, serverId: data.config.serverId, publicKey: data.publicKey, fingerprint: data.fingerprint, nonce, signature: data.signIdentity(nonce) });
           return;
         }
         if (request.method === "POST" && !adminOrigins.includes(header(request, "origin") ?? "")) throw new HttpError(403, "admin_csrf", "This admin request does not come from the admin panel.");
@@ -906,7 +943,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         }
         if (path === "/admin/api/token" && request.method === "POST") {
           const replaceId = typeof body.replaceId === "string" ? body.replaceId : undefined;
-          sendJson(response, 200, await auth.issue(typeof body.label === "string" ? body.label : "", parseScopes(body.scopes), replaceId));
+          const origin = { source: sourceOf(request, tunnelTrusted()), userAgent: header(request, "user-agent") };
+          sendJson(response, 200, await auth.issue(typeof body.label === "string" ? body.label : "", parseScopes(body.scopes), replaceId, origin));
           if (replaceId) dropStaleStreams();
           return;
         }
@@ -1019,6 +1057,26 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     heartbeat.unref();
 
     let closed = false;
+    const close = async () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(heartbeat);
+      if (maintenanceTimer) clearInterval(maintenanceTimer);
+      if (bookTimer) clearTimeout(bookTimer);
+      for (const stream of streams.keys()) stream.end();
+      for (const stop of closers.reverse()) await stop();
+      await Promise.allSettled([...summariesInFlight]);
+      await Promise.all([api, admin].map((server) => new Promise<void>((resolve) => {
+        server.close(() => resolve());
+        server.closeAllConnections?.();
+      })));
+      await releaseLock();
+    };
+    stopForLostLock = close;
+    if (lockLost) {
+      await close();
+      throw new Error("The data folder lock was lost while the server was starting.");
+    }
     return {
       url: `http://127.0.0.1:${apiPort}`,
       port: apiPort,
@@ -1030,21 +1088,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       tunnel,
       servers: { api, admin },
       allowedBases: () => [...data.config.allowedAiBases],
-      async close() {
-        if (closed) return;
-        closed = true;
-        clearInterval(heartbeat);
-        if (maintenanceTimer) clearInterval(maintenanceTimer);
-        if (bookTimer) clearTimeout(bookTimer);
-        for (const stream of streams.keys()) stream.end();
-        for (const close of closers.reverse()) await close();
-        await Promise.allSettled([...summariesInFlight]);
-        await Promise.all([api, admin].map((server) => new Promise<void>((resolve) => {
-          server.close(() => resolve());
-          server.closeAllConnections?.();
-        })));
-        await releaseLock();
-      },
+      close,
     };
   } catch (error) {
     for (const close of closers.reverse()) await Promise.resolve(close()).catch(() => undefined);

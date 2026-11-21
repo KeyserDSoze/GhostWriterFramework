@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { PACKAGE_NAME, RuntimeInstaller, npmInvocation, sanitizedNpmEnvironment } from "../dist/testing.mjs";
 import { npmMetadata } from "./helpers.mjs";
+import { forgingRegistry, integrityFor, lockfile } from "./release-fixtures.mjs";
 
 const posix = process.platform !== "win32";
 const SYSTEM_VARIABLES = ["PATH", "Path", "SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "TEMP", "TMP"];
@@ -41,6 +42,7 @@ function recordingNpm() {
       await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({ name: PACKAGE_NAME, version }));
       await writeFile(path.join(packageRoot, "dist", "cli.mjs"), "// cli\n");
       await writeFile(path.join(packageRoot, "dist", "server.mjs"), `// narrarium-server ${version}\n`);
+      await writeFile(path.join(flag("--prefix"), "package-lock.json"), lockfile(version, integrityFor(version)));
       return { code: 0, stdout: "", stderr: "" };
     }
     if (args[0] === "audit") return { code: 0, stdout: "", stderr: "" };
@@ -74,7 +76,7 @@ test("C13: every npm call gets empty configuration files, a private cache and ho
       Npm_Config_Cache: path.join(ownerHome, "cache"),
     };
     const npm = recordingNpm();
-    const installer = new RuntimeInstaller({ dataRoot, npmBinary: "npm", runner: npm.runner, environment: owner });
+    const installer = new RuntimeInstaller({ dataRoot, npmBinary: "npm", runner: npm.runner, environment: owner, fetch: forgingRegistry().fetch });
     await installer.installVersion();
     assert.deepEqual(npm.calls.map((call) => call.args[0]), ["view", "view", "install", "audit"], "the whole flow ran");
 

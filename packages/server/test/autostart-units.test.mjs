@@ -115,3 +115,22 @@ test("C22: the generators stay usable without an explicit PATH (the process's ow
   const plist = renderLaunchAgent(active, dataRoot, node);
   assert.match(plist, /<key>ThrottleInterval<\/key>/);
 });
+
+test("C22: the PATH carried into the unit and the agent keeps absolute entries only (a relative one would be looked up in whatever folder the service starts in)", () => {
+  const unit = renderUserService(active, dataRoot, node, "/usr/bin:bin:.:./tools:..:/opt/tools:~/bin:$HOME/bin:/usr/local/bin");
+  assert.equal(line(unit, "Environment"), environmentLine(`${nodeDirectory}:/usr/bin:/opt/tools:/usr/local/bin`), "only the absolute entries (and the folder of node)");
+  const plist = renderLaunchAgent(active, dataRoot, node, "bin:/usr/bin:.:/opt/homebrew/bin");
+  assert.ok(plist.includes(`<string>${nodeDirectory}:/usr/bin:/opt/homebrew/bin</string>`), "the same for the launch agent");
+  const nothing = renderUserService(active, dataRoot, node, "bin:.:");
+  assert.equal(line(nothing, "Environment"), environmentLine(nodeDirectory), "nothing absolute: only the folder of node");
+});
+
+test("C22: a character that cannot be written into an XML file (or into a unit) at all is refused up front", () => {
+  for (const bad of ["\uFFFE", "\uFFFF", "\uD800", "\uDFFF", "a\uD83Db"]) {
+    const label = JSON.stringify(bad);
+    assert.throws(() => renderLaunchAgent(active, `${dataRoot}${bad}x`, node, SEARCH_PATH), /control character|cannot be written/i, `data folder ${label}`);
+    assert.throws(() => renderUserService(active, `${dataRoot}${bad}x`, node, SEARCH_PATH), /control character|cannot be written/i, `data folder ${label}`);
+  }
+  // Characters outside the basic plane that are valid are fine, in a pair.
+  assert.doesNotThrow(() => renderLaunchAgent(active, `${dataRoot}-\u{1F4D6}`, node, SEARCH_PATH));
+});

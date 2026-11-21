@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, readdir, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import {
   AiUnavailableError,
@@ -16,7 +16,7 @@ import {
   type ServerBookSummary,
   type ServerBookSync,
 } from "narrarium-engine";
-import { assertBookId, assertBookToken, type DataDirectory, type StoredBook } from "./config.js";
+import { assertBookId, assertBookToken, assertNewBookId, publicLabel, type DataDirectory, type StoredBook } from "./config.js";
 import { HttpError } from "./errors.js";
 import { renameReplacing } from "./files.js";
 import { FileBookStore, KeyedMutex } from "./fs-store.js";
@@ -61,6 +61,22 @@ function validStorage(storage: unknown): StoredBook["storage"] {
     return { kind: "github", owner: value.owner, repo: value.repo, branch: value.branch };
   }
   throw new HttpError(400, "invalid_storage", "The book storage must be `local` or a GitHub owner, repository and branch.");
+}
+
+/** Steps that each can be undone: when one fails, the ones that went through are undone, the last first, and the registration leaves no trace. */
+class Transaction {
+  private readonly undo: Array<() => Promise<void>> = [];
+
+  onRollback(step: () => Promise<void>): void {
+    this.undo.push(step);
+  }
+
+  async rollback(log: (line: string) => void): Promise<void> {
+    for (const step of this.undo.reverse()) {
+      await step().catch((error) => log(`A registration could not be undone completely: ${error instanceof Error ? error.message : String(error)}`));
+    }
+    this.undo.length = 0;
+  }
 }
 
 /** Books hosted by the server, each with its working copy and its autopilot session. */
@@ -162,17 +178,18 @@ export class BookRegistry {
         store,
         ai: this.ai,
         host: "server",
-        hostLabel: this.data.config.label,
+        hostLabel: publicLabel(this.data.config.label),
         hostId: this.data.config.serverId,
+        // Git's own work on the working copy (a pull may rewrite files) takes its turn among the commits and the syncs of the book.
         hooks: book.storage.kind === "github" && git ? {
           beforeStep: async () => {
             await this.refreshToken(book.bookId);
-            const result = await git.pull();
+            const result = await store.exclusive(() => git.pull());
             if (result.changed) this.options.onBookChanged(book.bookId);
           },
           afterCommit: async () => {
             await this.refreshToken(book.bookId);
-            await git.push();
+            await store.exclusive(() => git.push());
             runtime.lastSync = { at: new Date().toISOString(), ok: true, message: "Pushed to GitHub.", head: await git.head() };
           },
         } : undefined,
@@ -227,6 +244,7 @@ export class BookRegistry {
     // A new book needs a free place; one that is already hosted (or being registered right now) never does.
     const isNew = !this.runtimes.has(bookId) && !this.arriving.has(bookId);
     if (isNew) {
+      assertNewBookId(bookId);
       if (this.runtimes.size + this.arriving.size >= MAX_BOOKS) throw new HttpError(409, "too_many_books", `This server hosts at most ${MAX_BOOKS} books: remove one before adding another.`);
       this.arriving.add(bookId);
     }
@@ -252,14 +270,41 @@ export class BookRegistry {
     const now = new Date().toISOString();
     const book: StoredBook = { bookId, title, storage, createdAt: existing?.book.createdAt ?? now, updatedAt: now };
     if (existing && !unchanged) return this.move(existing, book, request, token);
+    return existing ? this.update(existing, book, request) : this.create(book, request, token);
+  }
 
-    if (request.githubToken !== undefined) await this.data.setBookToken(bookId, request.githubToken);
+  /**
+   * Store a registration: the token (when one was sent) and the entry in the list of books. If the second fails the first is put
+   * back (through `transaction`), so a registration that did not happen leaves neither a token nor an entry.
+   */
+  private async persist(book: StoredBook, request: RegisterBookRequest, transaction: Transaction): Promise<void> {
+    const { bookId } = book;
+    if (request.githubToken !== undefined) {
+      // A stored token that cannot be read (a damaged entry) must not stop a new one from replacing it.
+      const previous = await this.data.bookToken(bookId).catch(() => undefined);
+      await this.data.setBookToken(bookId, request.githubToken);
+      transaction.onRollback(() => this.data.setBookToken(bookId, previous ?? null));
+    }
+    const previousEntry = (await this.data.books()).find((entry) => entry.bookId === bookId);
     await this.data.saveBook(book);
+    transaction.onRollback(() => (previousEntry ? this.data.saveBook(previousEntry) : this.data.forgetBook(bookId)));
+  }
+
+  /** A book that is hosted already, with the storage it had: its token and entry are updated together, its runtime (and a run in progress) kept. */
+  private async update(existing: BookRuntime, book: StoredBook, request: RegisterBookRequest): Promise<ServerBookSummary> {
+    const { bookId } = book;
+    const transaction = new Transaction();
+    try {
+      await this.persist(book, request, transaction);
+    } catch (error) {
+      await transaction.rollback(this.options.log);
+      throw error;
+    }
     // The same book again keeps its runtime: its session, its listeners and a run in progress.
-    const runtime = existing ?? this.instantiate(book);
+    const runtime = existing;
     runtime.book = book;
     try {
-      if (storage.kind === "github") await this.refreshToken(bookId);
+      if (book.storage.kind === "github") await this.refreshToken(bookId);
       // A running book is never cloned or synced from here: the run owns its folder.
       if (!runtime.session.running) await this.prepareRepository(runtime);
       runtime.error = undefined;
@@ -269,6 +314,65 @@ export class BookRegistry {
     } finally {
       this.options.onBookChanged(bookId);
     }
+    return this.summary(runtime);
+  }
+
+  /**
+   * A new book is registered completely or not at all. The clone (the step that fails for reasons outside the server) comes first, in
+   * a folder of its own; then the token and the entry are stored, the clone is put in place and the runtime is made. If any of it
+   * fails the registration is undone: no token, no entry, no runtime, and no folder that this call made.
+   */
+  private async create(book: StoredBook, request: RegisterBookRequest, token: string | undefined): Promise<ServerBookSummary> {
+    const { bookId, storage } = book;
+    const directory = this.data.bookDirectory(bookId);
+    const parent = path.dirname(directory);
+    const folderExisted = existsSync(directory);
+    const parentExisted = existsSync(parent);
+    const transaction = new Transaction();
+    let staged: { directory: string; head: string | undefined } | undefined;
+    let runtime: BookRuntime | undefined;
+    try {
+      // A working copy that is already there (put there by its owner, or left by a crash) is used as it is; otherwise a GitHub book is cloned.
+      if (storage.kind === "github" && this.options.gitAvailable && !existsSync(path.join(directory, ".git"))) {
+        try {
+          staged = await this.stage(bookId, storage, () => token);
+        } catch (error) {
+          throw new HttpError(502, "repository_unavailable", error instanceof Error ? error.message : String(error));
+        }
+      }
+      await this.persist(book, request, transaction);
+      if (staged) {
+        const trashed = await this.swapIn(bookId, staged.directory);
+        transaction.onRollback(async () => {
+          await rm(directory, { recursive: true, force: true });
+          if (trashed) await renameReplacing(trashed, directory);
+        });
+      }
+      runtime = this.instantiate(book);
+      const made = runtime;
+      transaction.onRollback(async () => {
+        made.unsubscribe();
+        this.runtimes.delete(bookId);
+        this.tokenCache.delete(bookId);
+      });
+      if (storage.kind === "github") await this.refreshToken(bookId);
+      if (staged) runtime.lastSync = { at: new Date().toISOString(), ok: true, message: "Cloned from GitHub.", head: staged.head };
+      else {
+        try {
+          await this.prepareRepository(runtime);
+        } catch (error) {
+          throw new HttpError(502, "repository_unavailable", error instanceof Error ? error.message : String(error));
+        }
+      }
+      runtime.error = undefined;
+    } catch (error) {
+      await transaction.rollback(this.options.log);
+      if (staged) await rm(staged.directory, { recursive: true, force: true }).catch(() => undefined);
+      if (!folderExisted) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+      if (!parentExisted) await rmdir(parent).catch(() => undefined);
+      throw error;
+    }
+    this.options.onBookChanged(bookId);
     return this.summary(runtime);
   }
 
@@ -282,7 +386,7 @@ export class BookRegistry {
         return;
       }
       const staged = await this.stage(book.bookId, book.storage, () => this.tokenCache.get(book.bookId));
-      await this.swapIn(book.bookId, staged.directory);
+      await runtime.store.exclusive(() => this.swapIn(book.bookId, staged.directory));
       runtime.lastSync = { at: new Date().toISOString(), ok: true, message: "Cloned from GitHub.", head: staged.head };
     } else {
       await mkdir(directory, { recursive: true });
@@ -315,8 +419,8 @@ export class BookRegistry {
     }
   }
 
-  /** Put a staged working copy in place; the copy it replaces goes to the trash, never to waste. */
-  private async swapIn(bookId: string, staged: string): Promise<void> {
+  /** Put a staged working copy in place; the copy it replaces goes to the trash, never to waste (and its place in the trash is returned). */
+  private async swapIn(bookId: string, staged: string): Promise<string | undefined> {
     const directory = this.data.bookDirectory(bookId);
     const trashed = await this.data.moveToTrash(bookId);
     try {
@@ -326,9 +430,13 @@ export class BookRegistry {
       await rm(staged, { recursive: true, force: true }).catch(() => undefined);
       throw error;
     }
+    return trashed;
   }
 
-  /** Change where a book is stored: the new copy is built first, and a failure leaves the old copy and the registration as they were. */
+  /**
+   * Change where a book is stored: the new copy is built first, the token and the entry are stored, and only then is the new copy put in
+   * place. A failure at any step leaves the old copy, the old registration and the old token as they were.
+   */
   private async move(existing: BookRuntime, book: StoredBook, request: RegisterBookRequest, token: string | undefined): Promise<ServerBookSummary> {
     const { bookId } = book;
     let staged: { directory: string; head: string | undefined };
@@ -341,9 +449,21 @@ export class BookRegistry {
       await rm(staged.directory, { recursive: true, force: true }).catch(() => undefined);
       throw new HttpError(409, "busy", "Pause the autopilot before changing where the book is stored.");
     }
-    await this.swapIn(bookId, staged.directory);
-    if (request.githubToken !== undefined) await this.data.setBookToken(bookId, request.githubToken);
-    await this.data.saveBook(book);
+    const directory = this.data.bookDirectory(bookId);
+    const transaction = new Transaction();
+    try {
+      await this.persist(book, request, transaction);
+      // No commit of the old copy is in flight while it moves to the trash.
+      const trashed = await existing.store.exclusive(() => this.swapIn(bookId, staged.directory));
+      transaction.onRollback(async () => {
+        await rm(directory, { recursive: true, force: true });
+        if (trashed) await renameReplacing(trashed, directory);
+      });
+    } catch (error) {
+      await transaction.rollback(this.options.log);
+      await rm(staged.directory, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
     const runtime = this.instantiate(book);
     if (book.storage.kind === "github") await this.refreshToken(bookId);
     runtime.lastSync = book.storage.kind === "github" ? { at: new Date().toISOString(), ok: true, message: "Cloned from GitHub.", head: staged.head } : null;
@@ -356,7 +476,8 @@ export class BookRegistry {
     return this.locks.run(bookId, async () => {
       const runtime = this.get(bookId);
       if (runtime.session.running) throw new HttpError(409, "busy", "Pause the autopilot before removing the book from the server.");
-      await this.data.removeBook(bookId);
+      // No commit or sync of the book is in the middle of its folder while that folder goes to the trash.
+      await runtime.store.exclusive(() => this.data.removeBook(bookId));
       runtime.unsubscribe();
       this.runtimes.delete(bookId);
       this.tokenCache.delete(bookId);
@@ -365,12 +486,16 @@ export class BookRegistry {
 
   async syncGitHub(bookId: string): Promise<ServerBookSummary> {
     const runtime = this.get(bookId);
-    if (runtime.book.storage.kind !== "github" || !runtime.git) throw new HttpError(400, "not_github", "This book is not linked to GitHub.");
+    const { git } = runtime;
+    if (runtime.book.storage.kind !== "github" || !git) throw new HttpError(400, "not_github", "This book is not linked to GitHub.");
     await this.refreshToken(bookId);
     try {
-      const pulled = await runtime.git.pull();
-      await runtime.git.push();
-      runtime.lastSync = { at: new Date().toISOString(), ok: true, message: pulled.changed ? "Pulled and pushed." : "Up to date.", head: await runtime.git.head() };
+      // One at a time per book, and never during a commit: a pull rewrites files, two pulls fight over git's index lock.
+      await runtime.store.exclusive(async () => {
+        const pulled = await git.pull();
+        await git.push();
+        runtime.lastSync = { at: new Date().toISOString(), ok: true, message: pulled.changed ? "Pulled and pushed." : "Up to date.", head: await git.head() };
+      });
     } catch (error) {
       runtime.lastSync = { at: new Date().toISOString(), ok: false, message: error instanceof Error ? error.message : String(error) };
       throw new HttpError(409, "sync_failed", runtime.lastSync.message);

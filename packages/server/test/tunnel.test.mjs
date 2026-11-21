@@ -56,15 +56,17 @@ async function withTunnel(run, { version, findBinary = () => "/opt/cloudflared/b
   }
 }
 
-test("the connector token is stored privately and passed only as a file to `cloudflared tunnel run`", async () => {
+test("the connector token is stored encrypted and passed only in the environment of `cloudflared tunnel run`", async () => {
   await withTunnel(async (manager, fake, root) => {
     assert.equal((await manager.start()).enabled, false, "nothing runs before it is configured");
     assert.equal(fake.running.length, 0);
     const configured = await manager.configure({ token: `  ${TOKEN}\n`.trim(), hostname: "https://books.example.com" });
     assert.equal(configured.configured, true);
-    const tokenPath = path.join(root, "private", "cloudflare-tunnel-token");
-    assert.equal(await readFile(tokenPath, "utf8"), TOKEN);
-    if (process.platform !== "win32") assert.equal((await stat(tokenPath)).mode & 0o777, 0o600);
+    const legacyPath = path.join(root, "private", "cloudflare-tunnel-token");
+    await assert.rejects(() => stat(legacyPath), { code: "ENOENT" }, "no clear-text token file");
+    const secretPath = path.join(root, "private", "cloudflare-tunnel-token.json");
+    assert.equal((await readFile(secretPath, "utf8")).includes(TOKEN), false, "the vault's copy is encrypted");
+    if (process.platform !== "win32") assert.equal((await stat(secretPath)).mode & 0o777, 0o600);
     const saved = await readFile(path.join(root, "private", "cloudflare-tunnel.json"), "utf8");
     assert.equal(saved.includes(TOKEN), false, "the state file never contains the token");
 
@@ -74,9 +76,10 @@ test("the connector token is stored privately and passed only as a file to `clou
     assert.equal(status.binaryAvailable, true);
     const run = fake.calls.find((call) => call.args[0] === "tunnel");
     assert.equal(run.command, "/opt/cloudflared/bin/cloudflared");
-    assert.deepEqual(run.args, ["tunnel", "run", "--no-autoupdate", "--token-file", tokenPath]);
+    assert.deepEqual(run.args, ["tunnel", "--no-autoupdate", "run"]);
     assert.equal(run.options.shell, false);
-    assert.equal(JSON.stringify(run.args).includes(TOKEN) || JSON.stringify(run.options.env).includes(TOKEN), false, "the token is neither in argv nor in the environment");
+    assert.equal(JSON.stringify(run.args).includes(TOKEN), false, "the token is not in argv");
+    assert.equal(run.options.env.TUNNEL_TOKEN, TOKEN, "it reaches cloudflared through its environment");
     assert.equal(run.options.env.HOME, path.join(root, "private", "cloudflared-home"));
     assert.equal(JSON.parse(await readFile(path.join(root, "private", "cloudflare-tunnel.json"), "utf8")).pid, fake.running[0].pid);
 
@@ -95,7 +98,7 @@ test("the connector token is stored privately and passed only as a file to `clou
     const removed = await manager.remove();
     assert.equal(removed.enabled, false);
     assert.equal(removed.configured, false);
-    await assert.rejects(() => stat(tokenPath), { code: "ENOENT" });
+    await assert.rejects(() => stat(secretPath), { code: "ENOENT" });
     await assert.rejects(() => stat(path.join(root, "private", "cloudflare-tunnel.json")), { code: "ENOENT" });
   });
 });
@@ -118,7 +121,7 @@ test("an old or missing cloudflared is reported and never started", async () => 
   }, { findBinary: () => undefined });
 });
 
-test("other connectors are detected and left alone; a connector from a previous start is not duplicated", async () => {
+test("other connectors are detected and left alone; a stale process id of a previous start never blocks the connector", async () => {
   await withTunnel(async (manager, fake) => {
     await manager.configure({ token: TOKEN });
     const status = await manager.start();
@@ -127,12 +130,16 @@ test("other connectors are detected and left alone; a connector from a previous 
     assert.equal(fake.running.length, 1);
   }, { others: [4242] });
 
+  // A process id of an earlier run that now belongs to some other program (here: this very process) is not "a connector still
+  // running": it is left alone, forgotten, and the connector starts.
   await withTunnel(async (manager, fake, root) => {
     await writeFile(path.join(root, "private", "cloudflare-tunnel-token"), TOKEN, { mode: 0o600 });
     await writeFile(path.join(root, "private", "cloudflare-tunnel.json"), JSON.stringify({ version: 1, enabled: true, pid: process.pid }));
     const status = await manager.start();
-    assert.equal(status.lastErrorCode, "previous");
-    assert.equal(fake.running.length, 0);
+    assert.equal(status.process, "running", JSON.stringify(status));
+    assert.equal(status.lastErrorCode, undefined);
+    assert.equal(fake.running.length, 1);
+    assert.equal(JSON.parse(await readFile(path.join(root, "private", "cloudflare-tunnel.json"), "utf8")).pid, fake.running[0].pid);
   });
 
   await withTunnel(async (manager, fake, root) => {

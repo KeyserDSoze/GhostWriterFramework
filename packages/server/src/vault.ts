@@ -44,9 +44,40 @@ async function dpapi(value: Buffer, protect: boolean): Promise<Buffer> {
   });
 }
 
+/** Files of `private/` that hold something this vault encrypted: without the key they can never be read again. */
+const ENCRYPTED_FILES = ["identity.json", "ai.json", "book-tokens.json", "cloudflare-tunnel-token.json", "authorization.json"];
+
+function holdsEncryptedSecret(value: unknown, depth = 0): boolean {
+  if (depth > 8 || value === null || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.iv === "string" && typeof record.data === "string") return true;
+  return Object.values(record).some((entry) => holdsEncryptedSecret(entry, depth + 1));
+}
+
+/** The files of the private folder that hold encrypted secrets (one that cannot be read or understood is counted: when in doubt, it may). */
+async function encryptedFilesIn(directory: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const name of ENCRYPTED_FILES) {
+    let text: string;
+    try {
+      text = await fs.readFile(path.join(directory, name), "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") found.push(name);
+      continue;
+    }
+    try {
+      if (holdsEncryptedSecret(JSON.parse(text))) found.push(name);
+    } catch {
+      found.push(name);
+    }
+  }
+  return found;
+}
+
 /**
  * AES-256-GCM vault for AI keys, GitHub tokens and the server's identity key. The 32-byte key lives
- * in `private/master.key` (0600; DPAPI-protected on Windows) and is never regenerated silently.
+ * in `private/master.key` (0600; DPAPI-protected on Windows). It is never regenerated silently: a missing key is created only when
+ * nothing encrypted exists, and a copy is kept next to it (`master.key.bak`, never overwritten) for the day the key file is lost.
  */
 export class Vault {
   private constructor(private readonly key: Buffer) {}
@@ -59,28 +90,39 @@ export class Vault {
       throw new Error("The private folder of the server is not safe (it must be a 0700 directory).");
     }
     const file = path.join(directory, "master.key");
+    const backup = `${file}.bak`;
     let key: Buffer;
+    let stored: Buffer;
     try {
       const stat = await fs.lstat(file);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || (process.platform !== "win32" && (stat.mode & 0o077) !== 0)) {
         throw new Error("The vault key file is not private (it must be a 0600 regular file).");
       }
-      const stored = await fs.readFile(file);
+      stored = await fs.readFile(file);
       key = process.platform === "win32" ? await dpapi(stored, false) : stored;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      key = randomBytes(32);
-      await fs.writeFile(file, process.platform === "win32" ? await dpapi(key, true) : key, { flag: "wx", mode: 0o600, flush: true });
-      if (process.platform !== "win32") {
-        const handle = await fs.open(directory, "r");
-        try {
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
+      // A key that is gone while something encrypted with it is still here: a new one would make that unreadable for good.
+      const locked = await encryptedFilesIn(directory);
+      if (locked.length) {
+        const copy = await fs.stat(backup).then(() => true, () => false);
+        throw new Error(`The vault key (private/master.key) is missing, but encrypted secrets are still there (${locked.join(", ")}). The server will not create a new key: it would make them unreadable for good. ${copy ? "private/master.key.bak is a copy of the key: copy it over private/master.key and start again. " : "Put master.key back from a backup and start again. "}To start with no secrets instead, move those files out of the private folder first (devices must then pair again, and the AI configuration and the GitHub tokens must be sent again).`);
       }
+      key = randomBytes(32);
+      stored = process.platform === "win32" ? await dpapi(key, true) : key;
+      await fs.writeFile(file, stored, { flag: "wx", mode: 0o600, flush: true });
     }
     if (key.length !== 32) throw new Error("The vault key is damaged; it is never regenerated automatically.");
+    // The copy is made once and never replaced; losing it costs nothing, so a failure to write it does not stop the server.
+    await fs.writeFile(backup, stored, { flag: "wx", mode: 0o600, flush: true }).catch(() => undefined);
+    if (process.platform !== "win32") {
+      const handle = await fs.open(directory, "r");
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    }
     return new Vault(key);
   }
 

@@ -6,6 +6,7 @@ import { remoteBookStore, syncBookStores } from "narrarium-engine";
 import { MemoryBookStore, seedBookFiles } from "narrarium-engine/testing";
 import { BOOTSTRAP_VERSIONS, SERVER_VERSION, UPDATE_MESSAGES, checkNpmServerRelease, compareSemver, isExactSemver, trustedNpmReleaseMetadata } from "../dist/testing.mjs";
 import { adminLogin, gatedAi, npmMetadata, releaseAvailable, until, withServer } from "./helpers.mjs";
+import { forgeRelease } from "./release-fixtures.mjs";
 
 const ALL_SCOPES = ["read", "write", "run", "update"];
 
@@ -49,6 +50,8 @@ test("the npm check never offers an untrusted, older or unreadable release", asy
   const seen = [];
   const answer = (status, body, headers = {}) => async (url, init) => {
     seen.push({ url, init });
+    // The attestation of a newer release is read too (and must name the publishing workflow).
+    if (String(url).includes("/-/npm/v1/attestations/")) return new Response(JSON.stringify(forgeRelease(String(url).split("@").pop()).attestations));
     return new Response(typeof body === "string" ? body : JSON.stringify(body), { status, headers });
   };
   const newer = await checkNpmServerRelease("0.1.0", answer(200, npmMetadata("0.2.0")));

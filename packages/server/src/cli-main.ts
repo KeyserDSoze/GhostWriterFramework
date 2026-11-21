@@ -7,7 +7,8 @@ import { readAdminCode, readAdminCodeFile, requestLocalClientToken, rotateLocalA
 import { autostartStatus, configureAutostart } from "./autostart.js";
 import { loadServerConfig } from "./config.js";
 import { compareSemver } from "./npm-release.js";
-import { PACKAGE_NAME, RuntimeInstaller, assertExactSemver, assertSupportedNode, defaultDataRoot, sanitizedNpmEnvironment, superviseServer } from "./runtime-install.js";
+import { resolveDataRoot } from "./data-root.js";
+import { PACKAGE_NAME, RollbackRefusedError, RuntimeInstaller, assertExactSemver, assertSupportedNode, sanitizedNpmEnvironment, superviseServer } from "./runtime-install.js";
 import { parseCloudflaredVersion } from "./tunnel.js";
 import { SERVER_VERSION } from "./version.js";
 
@@ -23,6 +24,7 @@ Usage:
   npx ${PACKAGE_NAME} set-admin-code [--data-root DIR] [--code-file FILE-0600]
   npx ${PACKAGE_NAME} client-token [--data-root DIR] [--label NAME] [--scope read,write,run[,update]]
   npx ${PACKAGE_NAME} update [--data-root DIR] [--to VERSION]
+  npx ${PACKAGE_NAME} rollback [--data-root DIR] --to VERSION
   npx ${PACKAGE_NAME} --version
 
 start         Run the server under the update supervisor (default). --direct runs it without the supervisor.
@@ -30,11 +32,14 @@ setup         Install the verified runtime in the data folder; --autostart also 
 admin-code    Show the code that opens the admin panel (${"http://127.0.0.1:" + DEFAULT_ADMIN_PORT}).
 client-token  Create a client token to paste in Narrarium → Settings → Personal server.
 update        Install the latest verified version (or --to VERSION); a running server keeps its version until restarted.
+              A version older than the highest ever installed in the data folder is refused.
+rollback      Go back to a version that is already installed on this computer (nothing is downloaded). Updates from npm
+              stay as strict as before: nothing below the highest version is installed.
 
-The data folder is ${defaultDataRoot()} unless --data-root or NARRARIUM_SERVER_HOME says otherwise.
+The data folder is ${resolveDataRoot()} unless --data-root or NARRARIUM_SERVER_HOME says otherwise.
 `;
 
-const COMMANDS = ["start", "setup", "status", "doctor", "admin-code", "rotate-admin-code", "set-admin-code", "client-token", "update"] as const;
+const COMMANDS = ["start", "setup", "status", "doctor", "admin-code", "rotate-admin-code", "set-admin-code", "client-token", "update", "rollback"] as const;
 type Command = (typeof COMMANDS)[number];
 
 export interface ParsedCommand {
@@ -86,17 +91,14 @@ export function parseCommand(argv: readonly string[]): ParsedCommand {
     else if (flag === "--autostart" && allowed(["setup"])) parsed.autostart = true;
     else if (flag === "--code-file" && allowed(["set-admin-code"])) parsed.codeFile = value(++index, flag);
     else if (flag === "--scope" && allowed(["client-token"])) parsed.scopes = value(++index, flag).split(",").map((scope) => scope.trim());
-    else if (flag === "--to" && allowed(["update"])) {
+    else if (flag === "--to" && allowed(["update", "rollback"])) {
       const version = value(++index, flag);
       assertExactSemver(version);
       parsed.requestedVersion = version;
     } else throw new Error(`Option not allowed for ${parsed.command}: ${flag}`);
   }
+  if (parsed.command === "rollback" && !parsed.requestedVersion) throw new Error("rollback needs --to VERSION: the installed version to go back to.");
   return parsed;
-}
-
-function output(line = ""): void {
-  process.stdout.write(`${line}\n`);
 }
 
 function probe(command: string, args: readonly string[]): { ok: boolean; output: string } {
@@ -177,24 +179,66 @@ function runDirect(dataRoot: string, verbose: boolean): Promise<number> {
   });
 }
 
-export async function main(argv: readonly string[] = process.argv.slice(2), environment: NodeJS.ProcessEnv = process.env): Promise<number> {
+/**
+ * What `start` does before it supervises: a verified runtime must exist, and this CLI's own version replaces an older
+ * active one. It never installs an older version than the data folder has run: that is refused (`RollbackRefusedError`),
+ * not hidden behind the direct mode. Any other failure keeps the runtime that exists, or falls back to the direct mode.
+ */
+export async function prepareRuntime(installer: RuntimeInstaller, version: string, say: (line: string) => void): Promise<"supervised" | "direct"> {
+  try {
+    const active = await installer.activeRuntime().catch(() => undefined);
+    if (!active || compareSemver(version, active.version) > 0) {
+      say(active ? `Installing the verified runtime ${version} (was ${active.version})…` : `Preparing the verified runtime ${version} in ${installer.dataRoot}…`);
+      await installer.installVersion(version, { bootstrapRegistryRelease: true });
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (await installer.activeRuntime().catch(() => undefined)) {
+      say(`Keeping the installed runtime: ${reason}`);
+      return "supervised";
+    }
+    if (error instanceof RollbackRefusedError) throw error;
+    say(`The verified runtime could not be prepared (${reason}).`);
+    say("Starting directly instead: everything works, but the server cannot be updated remotely.");
+    return "direct";
+  }
+  return "supervised";
+}
+
+/** What `main` is given besides the command line (tests give it a fake npm, a fake registry and a place to read the output). */
+export interface CliDependencies {
+  createInstaller?: (dataRoot: string) => RuntimeInstaller;
+  stdout?: (text: string) => void;
+  stderr?: (text: string) => void;
+}
+
+/** The refusal to install something older, with what to do when the CLI itself is the older one. */
+function olderCli(error: unknown, command: string): unknown {
+  if (!(error instanceof RollbackRefusedError)) return error;
+  return new Error(`${error.message} This command is ${SERVER_VERSION}: run \`npx ${PACKAGE_NAME}@latest ${command}\` for the newest version${command === "start" ? ", or add --direct to run this copy without the supervisor" : ""}.`);
+}
+
+export async function main(argv: readonly string[] = process.argv.slice(2), environment: NodeJS.ProcessEnv = process.env, dependencies: CliDependencies = {}): Promise<number> {
+  const write = dependencies.stdout ?? ((text: string) => void process.stdout.write(text));
+  const writeError = dependencies.stderr ?? ((text: string) => void process.stderr.write(text));
+  const say = (line = "") => write(`${line}\n`);
   let parsed: ParsedCommand;
   try {
     parsed = parseCommand(argv);
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : "Invalid command."}\n`);
+    writeError(`${error instanceof Error ? error.message : "Invalid command."}\n`);
     return 2;
   }
   if (parsed.command === "help") {
-    output(HELP.trimEnd());
+    say(HELP.trimEnd());
     return 0;
   }
   if (parsed.command === "version") {
-    output(SERVER_VERSION);
+    say(SERVER_VERSION);
     return 0;
   }
-  const dataRoot = path.resolve(parsed.dataRoot ?? defaultDataRoot(environment));
-  const installer = new RuntimeInstaller({ dataRoot });
+  const dataRoot = path.resolve(parsed.dataRoot ?? resolveDataRoot(environment));
+  const installer = dependencies.createInstaller?.(dataRoot) ?? new RuntimeInstaller({ dataRoot });
   try {
     if (parsed.command === "start") {
       const required = doctorChecks(dataRoot).filter((check) => check.required && !check.ok);
@@ -203,98 +247,106 @@ export async function main(argv: readonly string[] = process.argv.slice(2), envi
       const running = await serverRunning(config.apiPort);
       if (running) throw new Error(`A narrarium-server ${running} already answers on port ${config.apiPort}. Stop it first or use --port.`);
       if (parsed.direct) return await runDirect(dataRoot, Boolean(parsed.verbose));
+      let mode: "supervised" | "direct";
       try {
-        const active = await installer.activeRuntime().catch(() => undefined);
-        if (!active || compareSemver(SERVER_VERSION, active.version) > 0) {
-          output(active ? `Installing the verified runtime ${SERVER_VERSION} (was ${active.version})…` : `Preparing the verified runtime ${SERVER_VERSION} in ${dataRoot}…`);
-          await installer.installVersion(SERVER_VERSION, { bootstrapRegistryRelease: true });
-        }
+        mode = await prepareRuntime(installer, SERVER_VERSION, say);
       } catch (error) {
-        if (!(await installer.activeRuntime().catch(() => undefined))) {
-          output(`The verified runtime could not be prepared (${error instanceof Error ? error.message : String(error)}).`);
-          output("Starting directly instead: everything works, but the server cannot be updated remotely.");
-          return await runDirect(dataRoot, Boolean(parsed.verbose));
-        }
-        output(`Keeping the installed runtime: ${error instanceof Error ? error.message : String(error)}`);
+        throw olderCli(error, "start");
       }
-      const exit = await superviseServer({ installer, currentVersion: SERVER_VERSION, childArgs: parsed.verbose ? ["--verbose"] : [], forwardSignals: true, log: (line) => output(`[supervisor] ${line}`) });
+      if (mode === "direct") return await runDirect(dataRoot, Boolean(parsed.verbose));
+      const exit = await superviseServer({ installer, currentVersion: SERVER_VERSION, childArgs: parsed.verbose ? ["--verbose"] : [], forwardSignals: true, log: (line) => say(`[supervisor] ${line}`) });
       if (exit.code !== null) return exit.code;
       return exit.signal ? 1 : 0;
     }
     if (parsed.command === "setup") {
       assertSupportedNode();
       const config = await loadServerConfig(dataRoot, { label: parsed.label, apiPort: parsed.apiPort, adminPort: parsed.adminPort });
-      const active = await installer.installVersion(SERVER_VERSION, { bootstrapRegistryRelease: true });
-      output(`Narrarium personal server ${active.version} installed in ${dataRoot}.`);
+      const active = await installer.installVersion(SERVER_VERSION, { bootstrapRegistryRelease: true }).catch((error) => {
+        throw olderCli(error, "setup");
+      });
+      say(`Narrarium personal server ${active.version} installed in ${dataRoot}.`);
       if (parsed.autostart) {
         const configured = await configureAutostart(active, dataRoot, environment);
-        output(configured.message);
-        output(`Service file: ${configured.servicePath}`);
+        say(configured.message);
+        say(`Service file: ${configured.servicePath}`);
       } else {
-        output(`Start it with: npx ${PACKAGE_NAME} start${parsed.dataRoot ? ` --data-root "${dataRoot}"` : ""}`);
+        say(`Start it with: npx ${PACKAGE_NAME} start${parsed.dataRoot ? ` --data-root "${dataRoot}"` : ""}`);
       }
-      output(`API: http://127.0.0.1:${config.apiPort} · admin panel: http://127.0.0.1:${config.adminPort} (open it on this computer).`);
-      output(`Admin code: npx ${PACKAGE_NAME} admin-code${parsed.dataRoot ? ` --data-root "${dataRoot}"` : ""}`);
+      say(`API: http://127.0.0.1:${config.apiPort} · admin panel: http://127.0.0.1:${config.adminPort} (open it on this computer).`);
+      say(`Admin code: npx ${PACKAGE_NAME} admin-code${parsed.dataRoot ? ` --data-root "${dataRoot}"` : ""}`);
       return 0;
     }
     if (parsed.command === "status") {
       const config = await loadServerConfig(dataRoot);
       const state = await installer.installerState().catch(() => undefined);
       const active = await installer.activeRuntime().catch(() => undefined);
+      const highest = await installer.highestVersion().catch(() => null);
       const running = await serverRunning(config.apiPort);
-      output(`Package:        ${PACKAGE_NAME} ${SERVER_VERSION}`);
-      output(`Data folder:    ${dataRoot}`);
-      output(`Active runtime: ${active?.version ?? state?.activeVersion ?? "not installed (run setup or start)"}`);
-      output(`Running:        ${running ? `yes, version ${running} on port ${config.apiPort}` : "no"}`);
-      output(`API:            http://127.0.0.1:${config.apiPort}`);
-      output(`Admin panel:    http://127.0.0.1:${config.adminPort}`);
-      output(`Autostart:      ${await autostartStatus(environment.HOME) ?? "not configured"}`);
+      say(`Package:        ${PACKAGE_NAME} ${SERVER_VERSION}`);
+      say(`Data folder:    ${dataRoot}`);
+      say(`Active runtime: ${active?.version ?? state?.activeVersion ?? "not installed (run setup or start)"}`);
+      say(`Highest ever:   ${highest === null ? "unreadable (see private/npm-highest.json)" : highest ? `${highest} (nothing older is installed from npm)` : "none yet"}`);
+      say(`Running:        ${running ? `yes, version ${running} on port ${config.apiPort}` : "no"}`);
+      say(`API:            http://127.0.0.1:${config.apiPort}`);
+      say(`Admin panel:    http://127.0.0.1:${config.adminPort}`);
+      say(`Autostart:      ${await autostartStatus(environment.HOME) ?? "not configured"}`);
       return 0;
     }
     if (parsed.command === "doctor") {
       const checks = doctorChecks(dataRoot);
-      for (const check of checks) output(`${check.ok ? "OK  " : check.required ? "FAIL" : "WARN"} ${check.name}: ${check.detail}`);
+      for (const check of checks) say(`${check.ok ? "OK  " : check.required ? "FAIL" : "WARN"} ${check.name}: ${check.detail}`);
       const active = await installer.activeRuntime().catch(() => undefined);
-      output(`${active ? "OK  " : "WARN"} Runtime: ${active?.version ?? "not installed yet (start installs it)"}`);
+      say(`${active ? "OK  " : "WARN"} Runtime: ${active?.version ?? "not installed yet (start installs it)"}`);
       return checks.every((check) => check.ok || !check.required) ? 0 : 1;
     }
     if (parsed.command === "admin-code") {
       const config = await loadServerConfig(dataRoot);
-      output(`Admin code (local secret): ${await readAdminCode(dataRoot)}`);
-      output(`Open http://127.0.0.1:${config.adminPort} on this computer and sign in with it. Never paste it in public places.`);
+      say(`Admin code (local secret): ${await readAdminCode(dataRoot)}`);
+      say(`Open http://127.0.0.1:${config.adminPort} on this computer and sign in with it. Never paste it in public places.`);
       return 0;
     }
     if (parsed.command === "rotate-admin-code") {
       const config = await loadServerConfig(dataRoot);
       const code = await rotateLocalAdminCode({ dataRoot, adminPort: config.adminPort });
-      output("The previous admin code no longer works.");
-      output(`New admin code: ${code}`);
+      say("The previous admin code no longer works.");
+      say(`New admin code: ${code}`);
       return 0;
     }
     if (parsed.command === "set-admin-code") {
       const config = await loadServerConfig(dataRoot);
       const code = parsed.codeFile ? await readAdminCodeFile(path.resolve(parsed.codeFile)) : await readSecretFromTerminal("New admin code (32-200 characters): ");
       await setLocalAdminCode({ dataRoot, adminPort: config.adminPort, code });
-      output("The new admin code is active; previous admin sessions ended.");
+      say("The new admin code is active; previous admin sessions ended.");
       return 0;
     }
     if (parsed.command === "client-token") {
       const config = await loadServerConfig(dataRoot);
       const result = await requestLocalClientToken({ dataRoot, adminPort: config.adminPort, label: parsed.label ?? "Narrarium", scopes: parsed.scopes ?? ["read", "write", "run"] });
-      output(`Client token (shown once): ${result.token}`);
-      output(`Paste it in Narrarium → Settings → Personal server with the address http://127.0.0.1:${config.apiPort}. Never share it.`);
+      say(`Client token (shown once): ${result.token}`);
+      say(`Paste it in Narrarium → Settings → Personal server with the address http://127.0.0.1:${config.apiPort}. Never share it.`);
       return 0;
     }
     if (parsed.command === "update") {
       assertSupportedNode();
       const previous = await installer.activeRuntime().catch(() => undefined);
       const active = await installer.installVersion(parsed.requestedVersion ?? "latest");
-      output(`Runtime ${previous?.version ?? "(none)"} → ${active.version}. A running server keeps its version until it restarts; under the supervisor, update from Narrarium or the admin panel instead.`);
+      say(`Runtime ${previous?.version ?? "(none)"} → ${active.version}. A running server keeps its version until it restarts; under the supervisor, update from Narrarium or the admin panel instead.`);
+      return 0;
+    }
+    if (parsed.command === "rollback") {
+      assertSupportedNode();
+      const previous = await installer.activeRuntime().catch(() => undefined);
+      const active = await installer.rollbackTo(parsed.requestedVersion as string);
+      const highest = await installer.highestVersion().catch(() => undefined);
+      say(`Runtime ${previous?.version ?? "(none)"} → ${active.version}: a copy that was already installed (nothing was downloaded). A running server keeps its version until it restarts.`);
+      if (highest && compareSemver(highest, active.version) > 0) {
+        say(`Nothing below ${highest} is installed from npm. Until a fixed release exists, start the server with \`npx ${PACKAGE_NAME}@${active.version} start\`: the CLI of a newer version installs itself at start.`);
+      }
       return 0;
     }
     return 2;
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : "Unexpected error."}\n`);
+    writeError(`${error instanceof Error ? error.message : "Unexpected error."}\n`);
     return 1;
   }
 }

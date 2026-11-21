@@ -4,13 +4,14 @@ import * as fs from "node:fs/promises";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
-import { NPM_SERVER_PACKAGE, isExactSemver, trustedNpmReleaseMetadata } from "./npm-release.js";
+import { NPM_SERVER_PACKAGE, compareSemver, inspectNpmRelease, integrityHex, isExactSemver, verifyNpmReleaseProvenance, type NpmReleaseMetadata } from "./npm-release.js";
 
 export const PACKAGE_NAME = NPM_SERVER_PACKAGE;
 export const MINIMUM_NODE: readonly [number, number, number] = [22, 14, 0];
 /** Set in the server process started by the supervisor: only then can a client request an update. */
 export const SUPERVISED_ENV = "NARRARIUM_SUPERVISED";
 const MAX_CONTROL_FILE_BYTES = 16 * 1024;
+const MAX_LOCKFILE_BYTES = 1024 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type UpdateOutcome = "completed" | "failed" | "limited" | "stopping";
@@ -49,6 +50,24 @@ export interface InstallerState {
   installedAt: string;
 }
 
+/** Where the highest version this data folder ever activated is recorded (next to the installer state). */
+export const HIGHEST_VERSION_FILE = path.join("private", "npm-highest.json");
+
+export interface HighestVersionRecord {
+  schemaVersion: 1;
+  packageName: typeof PACKAGE_NAME;
+  highestVersion: string;
+  recordedAt: string;
+}
+
+/** A version older than the highest one this data folder has run: never installed from npm (that would be a rollback). */
+export class RollbackRefusedError extends Error {
+  constructor(readonly version: string, readonly highest: string) {
+    super(`Version ${version} is older than ${highest}, the highest version installed in this data folder: it is never installed from npm. To go back to a copy that is already installed here, run \`npx ${PACKAGE_NAME} rollback --to ${version}\`.`);
+    this.name = "RollbackRefusedError";
+  }
+}
+
 export interface ActiveRuntime {
   schemaVersion: 1;
   packageName: typeof PACKAGE_NAME;
@@ -83,6 +102,8 @@ export interface RuntimeInstallerOptions {
   runner?: CommandRunner;
   /** The environment npm's own is derived from (default: this process's). */
   environment?: NodeJS.ProcessEnv;
+  /** How the registry's attestations are read (default: this process's `fetch`). */
+  fetch?: typeof fetch;
   now?: () => Date;
   uuid?: () => string;
 }
@@ -347,6 +368,7 @@ export class RuntimeInstaller {
   private readonly npm: string;
   private readonly npmPrefix: string[];
   private readonly environment: NodeJS.ProcessEnv;
+  private readonly fetchImpl: typeof fetch;
   private readonly now: () => Date;
   private readonly uuid: () => string;
 
@@ -358,6 +380,7 @@ export class RuntimeInstaller {
     this.npm = npm.command;
     this.npmPrefix = npm.prefix;
     this.environment = options.environment ?? process.env;
+    this.fetchImpl = options.fetch ?? ((input, init) => fetch(input, init));
     this.now = options.now ?? (() => new Date());
     this.uuid = options.uuid ?? randomUUID;
   }
@@ -401,7 +424,7 @@ export class RuntimeInstaller {
     return version;
   }
 
-  private async assertTrustedRelease(version: string, allowRegistryBootstrap = false): Promise<void> {
+  private async assertTrustedRelease(version: string, allowRegistryBootstrap = false): Promise<NpmReleaseMetadata> {
     const result = await this.runNpm(["view", `${PACKAGE_NAME}@${version}`, "--json"]);
     let metadata: unknown;
     try {
@@ -409,7 +432,77 @@ export class RuntimeInstaller {
     } catch {
       throw new Error("npm returned invalid package metadata.");
     }
-    trustedNpmReleaseMetadata(metadata, version, allowRegistryBootstrap);
+    return inspectNpmRelease(metadata, version, allowRegistryBootstrap);
+  }
+
+  /**
+   * The highest version this data folder ever activated, or `undefined` when it has activated nothing. It is the record
+   * (written at every activation, never lowered) or, for a folder that predates it, the version the runtime files show.
+   * A record that exists but cannot be trusted is an error: installing without it would be installing without the floor.
+   */
+  async highestVersion(): Promise<string | undefined> {
+    const recorded = await this.readHighestRecord();
+    let highest: string | undefined;
+    for (const version of [recorded?.highestVersion, await this.activeVersionEvidence(), await this.installStateEvidence()]) {
+      if (version !== undefined && (highest === undefined || compareSemver(version, highest) > 0)) highest = version;
+    }
+    return highest;
+  }
+
+  private async readHighestRecord(): Promise<HighestVersionRecord | undefined> {
+    const unusable = () => new Error(`The record of the highest version installed here (${HIGHEST_VERSION_FILE}) is not valid. Delete that file to rebuild it from the runtime that is installed, then try again.`);
+    let value: unknown;
+    try {
+      value = await readBoundedJson(path.join(this.dataRoot, HIGHEST_VERSION_FILE));
+    } catch {
+      throw unusable();
+    }
+    if (value === undefined) return undefined;
+    if (!isPlainObject(value) || !exactKeys(value, ["schemaVersion", "packageName", "highestVersion", "recordedAt"]) || value.schemaVersion !== 1 || value.packageName !== PACKAGE_NAME || !isExactSemver(value.highestVersion) || !validIso(value.recordedAt)) {
+      throw unusable();
+    }
+    return value as unknown as HighestVersionRecord;
+  }
+
+  /** What the runtime files say about what ran (never an error: an unreadable file is just no evidence). */
+  private async activeVersionEvidence(): Promise<string | undefined> {
+    try {
+      const value = await readBoundedJson(path.join(this.runtimeRoot, "active.json"));
+      return isPlainObject(value) && isExactSemver(value.version) ? value.version : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async installStateEvidence(): Promise<string | undefined> {
+    try {
+      return (await this.installerState())?.activeVersion;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Refuses a version below the highest one this folder has run (before anything is asked of npm). */
+  async assertNotRollback(version: string): Promise<void> {
+    assertExactSemver(version);
+    const highest = await this.highestVersion();
+    if (highest !== undefined && compareSemver(version, highest) < 0) throw new RollbackRefusedError(version, highest);
+  }
+
+  /** The integrity npm recorded for the package it installed in `staging`: the one that must be the one that was judged. */
+  private async stagedIntegrity(staging: string, version: string): Promise<string> {
+    let lock: unknown;
+    try {
+      lock = await readBoundedJson(path.join(staging, "package-lock.json"), MAX_LOCKFILE_BYTES);
+    } catch {
+      lock = undefined;
+    }
+    const packages = isPlainObject(lock) && isPlainObject(lock.packages) ? lock.packages : undefined;
+    const entry = packages?.[`node_modules/${PACKAGE_NAME}`];
+    if (!isPlainObject(entry) || entry.version !== version || integrityHex(entry.integrity) === undefined) {
+      throw new Error("npm's lockfile does not record the integrity of the package it installed: the package was not trusted.");
+    }
+    return entry.integrity as string;
   }
 
   async installVersion(requested: string | "latest" = "latest", options: InstallOptions = {}): Promise<ActiveRuntime> {
@@ -417,14 +510,22 @@ export class RuntimeInstaller {
     await ensureDataRoot(this.dataRoot);
     const version = requested === "latest" ? await this.latestVersion() : requested;
     assertExactSemver(version);
-    await this.assertTrustedRelease(version, options.bootstrapRegistryRelease === true);
+    await this.assertNotRollback(version);
+    const release = await this.assertTrustedRelease(version, options.bootstrapRegistryRelease === true);
+    // Who signed it is read from the attestation (not from the metadata) before anything is downloaded ...
+    if (release.attested) await verifyNpmReleaseProvenance(version, release.integrity, this.fetchImpl);
     await fs.mkdir(path.join(this.runtimeRoot, "versions"), { recursive: true, mode: 0o700 });
     const staging = path.join(this.runtimeRoot, `staging-${this.uuid()}`);
     const destination = path.join(this.runtimeRoot, "versions", version);
     await fs.mkdir(staging, { recursive: true, mode: 0o700 });
     try {
       await this.runNpm(["install", "--prefix", staging, "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact", "--package-lock=true", `${PACKAGE_NAME}@${version}`]);
+      // What was installed is what was judged: the metadata and the installation are two reads of the registry.
+      const installed = await this.stagedIntegrity(staging, version);
+      if (integrityHex(installed) !== integrityHex(release.integrity)) throw new Error("The package npm installed is not the one it announced: its integrity differs from the one reported before the download. Nothing was installed.");
       await this.runNpm(["audit", "signatures", "--prefix", staging]);
+      // ... and again, against what was really installed, now that npm has verified that the bundle is validly signed and about it.
+      if (release.attested) await verifyNpmReleaseProvenance(version, installed, this.fetchImpl);
       const stagedPackage = path.join(staging, "node_modules", PACKAGE_NAME);
       await this.validateInstalledPackage(stagedPackage, version);
       if (await regularFile(path.join(destination, "package.json"))) {
@@ -478,12 +579,47 @@ export class RuntimeInstaller {
     if (!await regularFile(path.join(root, "dist", "cli.mjs")) || !await regularFile(path.join(root, "dist", "server.mjs"))) throw new Error("The installed npm package is incomplete.");
   }
 
-  private async activate(version: string): Promise<void> {
+  /**
+   * Make an installed copy the active one. The record of the highest version is written first and never lowered, so a crash
+   * in between leaves the floor above the active runtime, never below it. Only `rollbackTo` may activate below the floor.
+   */
+  private async activate(version: string, mode: "install" | "rollback" = "install"): Promise<void> {
     const at = this.now().toISOString();
     await this.validateInstalledPackage(path.join(this.runtimeRoot, "versions", version), version);
+    const highest = await this.highestVersion();
+    if (mode === "install" && highest !== undefined && compareSemver(version, highest) < 0) throw new RollbackRefusedError(version, highest);
+    const record: HighestVersionRecord = { schemaVersion: 1, packageName: PACKAGE_NAME, highestVersion: highest !== undefined && compareSemver(highest, version) > 0 ? highest : version, recordedAt: at };
+    await writeControlJson(path.join(this.dataRoot, HIGHEST_VERSION_FILE), record);
     await writeControlJson(path.join(this.runtimeRoot, "active.json"), { schemaVersion: 1, packageName: PACKAGE_NAME, version, activatedAt: at });
     const state: InstallerState = { schemaVersion: 1, packageName: PACKAGE_NAME, channel: "latest", activeVersion: version, installedAt: at };
     await writeControlJson(path.join(this.dataRoot, "private", "npm-install.json"), state);
+  }
+
+  /** The versions installed here, oldest first. */
+  private async installedVersions(): Promise<string[]> {
+    const entries = await fs.readdir(path.join(this.runtimeRoot, "versions")).catch(() => [] as string[]);
+    return entries.filter(isExactSemver).sort(compareSemver);
+  }
+
+  /**
+   * Go back, on purpose, to a copy that is already installed: nothing is downloaded and npm is not run. This is the only
+   * way to activate a version below the highest one; the record of the highest version is not lowered by it, so updates
+   * stay as strict as before.
+   */
+  async rollbackTo(version: string): Promise<ActiveRuntime> {
+    assertSupportedNode();
+    assertExactSemver(version);
+    await ensureDataRoot(this.dataRoot);
+    const root = path.join(this.runtimeRoot, "versions", version);
+    if (!await regularFile(path.join(root, "package.json"))) {
+      const installed = await this.installedVersions();
+      throw new Error(`Version ${version} is not installed in this data folder, so there is nothing to go back to.${installed.length ? ` Installed: ${installed.slice(-20).join(", ")}.` : ""}`);
+    }
+    await this.validateInstalledPackage(root, version);
+    await this.activate(version, "rollback");
+    const active = await this.activeRuntime();
+    if (!active) throw new Error("The activated runtime cannot be read.");
+    return active;
   }
 
   async activeRuntime(): Promise<ActiveRuntime | undefined> {
@@ -661,6 +797,15 @@ export async function superviseServer(options: SupervisorOptions): Promise<Child
           prune();
           if (updateRestarts.length >= 3) {
             await writeUpdateFailure(installer, request, active.version, "limited");
+            ignoredRequests.add(request.requestId);
+            continue;
+          }
+          try {
+            await installer.assertNotRollback(request.version);
+          } catch (error) {
+            // Never stop a running server for a request that cannot be honoured.
+            log(`Update to ${request.version} refused: ${error instanceof Error ? error.message : String(error)}`);
+            await writeUpdateFailure(installer, request, active.version, "failed").catch(() => undefined);
             ignoredRequests.add(request.requestId);
             continue;
           }

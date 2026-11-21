@@ -76,8 +76,20 @@ jobs:
             console.log(`${entries[0].name}@${entries[0].version}: ${paths.join(", ")}`);
           ' "$RUNNER_TEMP/narrarium-server-pack.json"
 
+      # Installed servers accept a release only when its provenance names this workflow at this tag in this repository
+      # (NPM_RELEASE_IDENTITY, packages/server/src/npm-release.ts). Stop here if this run is anything else.
+      - name: Check the signing identity of this run
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/check-server-release-identity.mjs
+
       # npm Trusted Publisher: repository KeyserDSoze/GhostWriterFramework, workflow
       # publish-server-npm.yml, environment npm-publish. No NPM_TOKEN is used by this job.
       - name: Publish with provenance
         working-directory: packages/server
         run: npm publish --access public --provenance
+
+      - name: Verify the published release like an installed server
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/verify-published-server-release.mjs

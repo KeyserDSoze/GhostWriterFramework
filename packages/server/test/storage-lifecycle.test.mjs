@@ -384,24 +384,23 @@ test("C14: removing a book moves its working copy to the trash instead of deleti
   });
 });
 
-test("C14: a failed first clone leaves no half-built folder and the next registration retries it", async () => {
+test("C14: a failed first clone leaves no half-built folder, and nothing else (R13: the registration is all or nothing); the next registration retries it", async () => {
   const seeded = await seedOrigin({ "book.md": "---\ntitle: T\n---\n" });
   const missing = await temporary("narrarium-missing-");
   let remote = path.join(missing, "not-yet.git");
   try {
     await withServer(async (server, client) => {
       await assert.rejects(() => client.registerBook("late", { title: "Late", storage: GITHUB, githubToken: "ghp_x" }), (error) => error.status === 502 && error.code === "repository_unavailable");
-      const folder = path.dirname(server.data.bookDirectory("late"));
-      assert.deepEqual(await readdir(folder), [], "nothing is left of the failed clone");
-      const [failed] = await client.listBooks();
-      assert.equal(failed.bookId, "late", "the book stays registered, with the reason");
-      assert.ok(failed.error);
+      const booksFolder = path.join(server.data.root, "books");
+      assert.equal(await exists(path.join(booksFolder, "late")), false, "nothing is left of the failed clone, not even its folder");
+      assert.deepEqual(await client.listBooks(), [], "the book is not registered");
+      assert.equal(await server.data.bookToken("late"), undefined, "and the token of the failed attempt is not kept");
       remote = seeded.origin;
-      const retried = await client.registerBook("late", { title: "Late", storage: GITHUB });
+      const retried = await client.registerBook("late", { title: "Late", storage: GITHUB, githubToken: "ghp_x" });
       assert.equal(retried.lastSync.ok, true);
       assert.equal(retried.error, undefined);
       assert.equal(await exists(path.join(server.data.bookDirectory("late"), "book.md")), true);
-      assert.deepEqual(await readdir(folder), ["repo"]);
+      assert.deepEqual(await readdir(path.dirname(server.data.bookDirectory("late"))), ["repo"]);
     }, { githubRemoteUrl: () => remote });
   } finally {
     await remove(seeded.origin, seeded.seed, missing);

@@ -63,6 +63,21 @@ export function assertBookId(bookId: string): string {
   return bookId;
 }
 
+/** The names Windows keeps for devices: a file or folder called like this (with any extension) cannot be created there. */
+const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+/**
+ * The id of a book that is registered now. On top of `assertBookId` it refuses what a Windows computer cannot keep as a folder name
+ * (device names, a name that ends with a dot) and a hidden name (`.git`): books registered under such an id before keep working.
+ */
+export function assertNewBookId(bookId: string): string {
+  assertBookId(bookId);
+  if (bookId.startsWith(".") || /[. ]$/.test(bookId) || WINDOWS_DEVICE_NAME.test(bookId.split(".")[0])) {
+    throw new HttpError(400, "invalid_book", "Invalid book id: it may not start or end with a dot, nor be a name that Windows keeps for devices (con, prn, aux, nul, com1-9, lpt1-9), with or without an extension.");
+  }
+  return bookId;
+}
+
 /** Refuse a GitHub token that is too long to be one (clearing a token with `null` or "" is always fine). */
 export function assertBookToken(token: string | null | undefined): void {
   if (typeof token === "string" && token.trim().length > MAX_BOOK_TOKEN_CHARACTERS) {
@@ -93,16 +108,33 @@ export function normalizeOrigin(value: string, allowLoopbackHttp = true): string
   return url.origin;
 }
 
+/** What a server is called until its owner names it. Earlier versions added the computer's name (`narrarium-server@name`). */
+const DEFAULT_LABEL = "narrarium-server";
+
+/**
+ * The label for anybody who is not the owner: `GET /info`, and the autopilot state that is committed (and pushed to GitHub). A
+ * default label written by an earlier version carries the computer's name, which is not for them; a label the owner chose is
+ * shown as it is.
+ */
+export function publicLabel(label: string, hostname: string = os.hostname()): string {
+  return label === `${DEFAULT_LABEL}@${hostname}` ? DEFAULT_LABEL : label;
+}
+
 export function configPath(root: string): string {
   return path.join(root, "config.json");
 }
 
-function parseConfig(stored: unknown): ServerConfig {
+/**
+ * `existing`: the configuration comes from a file that was already there. Before `allowRemoteAdmin` was a setting, a configuration
+ * that did not mention it allowed the panel on its public address, so such a file keeps that (and is written with it); a new
+ * configuration starts with the panel reachable from this computer only, until the owner turns the public address on.
+ */
+function parseConfig(stored: unknown, existing: boolean): ServerConfig {
   const value = (stored && typeof stored === "object" ? stored : {}) as Partial<ServerConfig> & { port?: unknown };
   return {
     version: 2,
     serverId: typeof value.serverId === "string" && /^[0-9a-f-]{36}$/i.test(value.serverId) ? value.serverId : randomUUID(),
-    label: typeof value.label === "string" && value.label.trim() ? value.label.trim().slice(0, 80) : `narrarium-server@${os.hostname()}`,
+    label: typeof value.label === "string" && value.label.trim() ? value.label.trim().slice(0, 80) : DEFAULT_LABEL,
     apiPort: validPort(value.apiPort ?? value.port, DEFAULT_SERVER_PORT),
     adminPort: validPort(value.adminPort, DEFAULT_ADMIN_PORT),
     origins: stringList(value.origins, 20),
@@ -110,7 +142,7 @@ function parseConfig(stored: unknown): ServerConfig {
     pendingAiBases: stringList(value.pendingAiBases, 50),
     ...(typeof value.publicUrl === "string" && value.publicUrl ? { publicUrl: value.publicUrl } : {}),
     ...(typeof value.adminPublicUrl === "string" && value.adminPublicUrl ? { adminPublicUrl: value.adminPublicUrl } : {}),
-    allowRemoteAdmin: value.allowRemoteAdmin !== false,
+    allowRemoteAdmin: typeof value.allowRemoteAdmin === "boolean" ? value.allowRemoteAdmin : existing,
     maxConcurrentRuns: typeof value.maxConcurrentRuns === "number" && value.maxConcurrentRuns >= 1 && value.maxConcurrentRuns <= 8 ? Math.round(value.maxConcurrentRuns) : 2,
     createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString(),
   };
@@ -120,7 +152,7 @@ function parseConfig(stored: unknown): ServerConfig {
 export async function loadServerConfig(root: string, overrides: Partial<Pick<ServerConfig, "label" | "apiPort" | "adminPort">> & { origins?: string[] } = {}): Promise<ServerConfig> {
   await ensurePrivateDirectory(root);
   const stored = await readJson(configPath(root), 1024 * 1024);
-  const config = parseConfig(stored);
+  const config = parseConfig(stored, stored !== undefined);
   if (overrides.label?.trim()) config.label = overrides.label.trim().slice(0, 80);
   if (overrides.apiPort !== undefined) config.apiPort = validPort(overrides.apiPort, config.apiPort);
   if (overrides.adminPort !== undefined) config.adminPort = validPort(overrides.adminPort, config.adminPort);
@@ -190,7 +222,7 @@ export class DataDirectory {
     return this.locks.run("config", async () => {
       const next = structuredClone(this.currentConfig);
       change(next);
-      const checked = parseConfig(next);
+      const checked = parseConfig(next, true);
       await atomicJson(configPath(this.root), checked, 0o600);
       this.currentConfig = checked;
       return checked;
@@ -241,11 +273,16 @@ export class DataDirectory {
   async removeBook(bookId: string): Promise<void> {
     assertBookId(bookId);
     await this.moveToTrash(bookId);
+    await this.forgetBook(bookId);
+    await this.setBookToken(bookId, null);
+    await fs.rm(path.join(this.root, "books", bookId), { recursive: true, force: true });
+  }
+
+  /** Take a book out of the list of hosted books (its working copy and its token are not touched). */
+  async forgetBook(bookId: string): Promise<void> {
     await this.locks.run("books", async () => {
       await atomicJson(this.file("books.json"), { books: (await this.readBooks()).filter((entry) => entry.bookId !== bookId) }, 0o600);
     });
-    await this.setBookToken(bookId, null);
-    await fs.rm(path.join(this.root, "books", bookId), { recursive: true, force: true });
   }
 
   get trashDirectory(): string {
