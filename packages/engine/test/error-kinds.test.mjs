@@ -352,7 +352,8 @@ function integration(extra = {}) {
 const failBody = (status, message = "Incorrect API key provided: sk-test-SECRETKEY-0123456789 (?key=QUERYSECRET789).") => new Response(JSON.stringify({ error: { message } }), { status, headers: { "content-type": "application/json" } });
 
 async function realRun(fetch, extra = {}) {
-  const ai = createFetchAi(pickAiRuntimeConfig({ aiIntegrations: [integration(extra)] }), { fetch });
+  // A timeout under 30 s is raised to 30 s when a call is made: the run that times out in 20 ms lowers the minimum.
+  const ai = createFetchAi(pickAiRuntimeConfig({ aiIntegrations: [integration(extra)] }), { fetch, minimumTimeoutMs: 1 });
   const outcome = await run(ai);
   const everything = [outcome.store.files.get(STATE), outcome.store.files.get("autopilot/activity.json"), JSON.stringify(outcome.events), JSON.stringify(outcome.summary)].join("\n");
   return { ...outcome, everything };

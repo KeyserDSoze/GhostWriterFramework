@@ -1,4 +1,4 @@
-import type { AiUsage } from "../ai/types.js";
+import type { AiTimeoutPhase, AiUsage } from "../ai/types.js";
 
 /** Lifecycle of the autopilot of one book. */
 export type AutopilotStatus = "idle" | "running" | "paused" | "waiting-author" | "error" | "completed";
@@ -335,6 +335,13 @@ export interface AutopilotErrorDetail {
   attempt?: number;
   /** How many retries this kind of failure gets. */
   retries?: number;
+  /** For a timeout: how long the deadline that ran out was, in milliseconds. */
+  timeoutMs?: number;
+  /**
+   * For a timeout: which deadline ran out. `start`: the provider did not begin answering (the connection and the headers) within its provider
+   * timeout; `idle`: it went silent for the idle timeout while it answered; `total`: the call took longer than any call may (four hours).
+   */
+  timeoutPhase?: AiTimeoutPhase;
 }
 
 /** A failure the run could not get past: what it said, when, in which step, and what kind it was. */

@@ -72,7 +72,7 @@ export interface ChatRequest {
   url: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
-  /** The reply arrives as server-sent events. */
+  /** The reply is asked for as server-sent events: every request, the forced function included, unless the integration's `streamMode` is `off`. */
   stream: boolean;
   /** The structured reply is requested as a forced function call; otherwise the JSON schema travels in the system prompt. */
   useTools: boolean;
@@ -88,6 +88,8 @@ export interface ChatRequestOptions {
 /**
  * The only place a chat request is built: URL, headers, body, streaming and tool use for every provider and model
  * family, so that every host (browser and server) sends the same request for the same book and configuration.
+ * Streaming is the integration's choice (`streamMode`, `auto` unless it says `off`) and not the request's: a structured reply
+ * streams too, as the arguments of its forced function, so that a slow model is never a silent connection.
  * Pure: it calls nothing and changes nothing. Throws only when the integration cannot be called at all.
  */
 export function buildChatRequest(
@@ -98,7 +100,7 @@ export function buildChatRequest(
   const { integration, model } = candidate;
   const target = requestTarget(integration, model, options.githubModelsBaseUrl ?? GITHUB_MODELS_BASE_URL);
   const useTools = Boolean(request.json) && candidate.supportsToolCalls !== false;
-  const stream = Boolean(request.onText) && !request.json;
+  const stream = integration.streamMode !== "off";
   const system = request.json && !useTools ? `${request.system}\n\n${jsonInstruction(request.json)}` : request.system;
   const outputLimit = requestOutputLimit(request, candidate);
   const body: Record<string, unknown> = {

@@ -85,38 +85,42 @@ const FAMILIES = [
   { name: "reasoning", model: "o3-mini", limit: "max_completion_tokens", temperature: false, margin: 12_000 },
 ];
 
-test("buildChatRequest: golden matrix of provider × model family × text/json × stream", () => {
+// Streaming no longer depends on the request: `streamMode: "auto"` (the default) streams every request, the forced function
+// included, and "off" never does. So the matrix has a `streamMode` dimension, and whether a listener is given no longer matters.
+test("buildChatRequest: golden matrix of provider × model family × text/json × listener × streamMode", () => {
   assert.equal(typeof engine.buildChatRequest, "function", "exported");
   let cases = 0;
   for (const provider of PROVIDERS) {
     for (const family of FAMILIES) {
       for (const kind of ["text", "json"]) {
-        for (const stream of [false, true]) {
-          const model = provider.azure ? "deploy-1" : family.model;
-          const candidate = { integration: { id: "i", name: "I", ...provider.integration }, model, underlyingModel: provider.azure ? family.model : undefined };
-          const request = { system: "SYS", user: "USR", maxOutputTokens: 1000, temperature: 0.4, ...(kind === "json" ? { json: SCHEMA } : {}), ...(stream ? { onText: () => undefined } : {}) };
-          const built = engine.buildChatRequest(candidate, request);
-          const label = `${provider.name} / ${family.name} / ${kind} / ${stream ? "stream" : "plain"}`;
-          const streamed = stream && kind === "text";
-          const limit = (kind === "json" ? 4096 : 1000) + family.margin;
-          assert.deepEqual(built.body, {
-            model,
-            messages: [{ role: "system", content: "SYS" }, { role: "user", content: "USR" }],
-            [family.limit]: limit,
-            ...(family.temperature ? { temperature: 0.4 } : {}),
-            ...(kind === "json" ? { tools: [{ type: "function", function: SCHEMA }], tool_choice: "required" } : {}),
-            ...(streamed ? { stream: true, stream_options: { include_usage: true } } : {}),
-          }, label);
-          assert.equal(built.url, provider.url(model), label);
-          assert.deepEqual(built.headers, { "content-type": "application/json", accept: streamed ? "text/event-stream" : "application/json", ...provider.auth }, label);
-          assert.equal(built.stream, streamed, label);
-          assert.equal(built.useTools, kind === "json", label);
-          cases += 1;
+        for (const listener of [false, true]) {
+          for (const streamMode of ["auto", "off"]) {
+            const model = provider.azure ? "deploy-1" : family.model;
+            const candidate = { integration: { id: "i", name: "I", ...provider.integration, ...(streamMode === "off" ? { streamMode } : {}) }, model, underlyingModel: provider.azure ? family.model : undefined };
+            const request = { system: "SYS", user: "USR", maxOutputTokens: 1000, temperature: 0.4, ...(kind === "json" ? { json: SCHEMA } : {}), ...(listener ? { onText: () => undefined } : {}) };
+            const built = engine.buildChatRequest(candidate, request);
+            const label = `${provider.name} / ${family.name} / ${kind} / ${listener ? "listener" : "no listener"} / ${streamMode}`;
+            const streamed = streamMode === "auto";
+            const limit = (kind === "json" ? 4096 : 1000) + family.margin;
+            assert.deepEqual(built.body, {
+              model,
+              messages: [{ role: "system", content: "SYS" }, { role: "user", content: "USR" }],
+              [family.limit]: limit,
+              ...(family.temperature ? { temperature: 0.4 } : {}),
+              ...(kind === "json" ? { tools: [{ type: "function", function: SCHEMA }], tool_choice: "required" } : {}),
+              ...(streamed ? { stream: true, stream_options: { include_usage: true } } : {}),
+            }, label);
+            assert.equal(built.url, provider.url(model), label);
+            assert.deepEqual(built.headers, { "content-type": "application/json", accept: streamed ? "text/event-stream" : "application/json", ...provider.auth }, label);
+            assert.equal(built.stream, streamed, label);
+            assert.equal(built.useTools, kind === "json", label);
+            cases += 1;
+          }
         }
       }
     }
   }
-  assert.equal(cases, 40);
+  assert.equal(cases, 80);
 });
 
 test("buildChatRequest: a model without tools gets the JSON instruction in the system prompt, a key-less endpoint no auth, a proxy origin for GitHub Models", () => {
@@ -126,7 +130,7 @@ test("buildChatRequest: a model without tools gets the JSON instruction in the s
   assert.equal("tool_choice" in noTools.body, false);
   assert.match(noTools.body.messages[0].content, /^SYS\n\nReply with ONLY one JSON object/);
   assert.match(noTools.body.messages[0].content, /"ok"/);
-  assert.deepEqual(noTools.headers, { "content-type": "application/json", accept: "application/json" });
+  assert.deepEqual(noTools.headers, { "content-type": "application/json", accept: "text/event-stream" }, "a structured request streams too, so it accepts events");
 
   const proxied = engine.buildChatRequest({ integration: { id: "i", name: "I", provider: "github_models", apiKey: "k" }, model: "openai/gpt-4o" }, ASK, { githubModelsBaseUrl: "https://proxy.example/" });
   assert.equal(proxied.url, "https://proxy.example/inference/chat/completions");
@@ -270,7 +274,7 @@ test("onAttempt carries the effective request; onAttemptEnd reports the outcome,
   assert.deepEqual(attempts.map((attempt) => [attempt.integrationId, attempt.model, attempt.index]), [["a", "first", 0], ["b", "second", 1]]);
   assert.deepEqual(attempts[0].messages, [{ role: "system", content: "SYS" }, { role: "user", content: "USR" }]);
   assert.equal(attempts[0].maxOutputTokens, 300);
-  assert.equal(attempts[0].stream, false);
+  assert.equal(attempts[0].stream, true, "every chat request streams unless the integration's streamMode is off");
   assert.equal(attempts[0].tools, false);
   assert.equal(attempts[0].endpoint, "http://a.test/v1");
   assert.equal(typeof attempts[0].attemptId, "string");
@@ -311,8 +315,9 @@ test("an aborted attempt ends as cancelled and a timed out one as a timeout", as
   const ends = [];
   const hang = (_url, init) => new Promise((_resolve, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }));
   const controller = new AbortController();
+  // A timeout under 30 s is raised to 30 s when a call is made: these tests lower the minimum to count in milliseconds.
   const cfg = pickAiRuntimeConfig({ aiIntegrations: [integration("a", { requestTimeoutMs: 5000 })] });
-  const pending = createFetchAi(cfg, { fetch: hang, onAttemptEnd: (end) => ends.push(end) }).complete({ ...ASK, signal: controller.signal }).then(() => null, (error) => error);
+  const pending = createFetchAi(cfg, { fetch: hang, minimumTimeoutMs: 1, onAttemptEnd: (end) => ends.push(end) }).complete({ ...ASK, signal: controller.signal }).then(() => null, (error) => error);
   setTimeout(() => controller.abort(), 20);
   const aborted = await pending;
   assert.equal(aborted.name, "AbortError");
@@ -320,9 +325,9 @@ test("an aborted attempt ends as cancelled and a timed out one as a timeout", as
   assert.equal(ends[0].failureKind, "cancelled");
 
   const slow = pickAiRuntimeConfig({ aiIntegrations: [integration("a", { requestTimeoutMs: 30 })] });
-  const timedOut = await createFetchAi(slow, { fetch: hang, onAttemptEnd: (end) => ends.push(end) }).complete(ASK).then(() => null, (error) => error);
+  const timedOut = await createFetchAi(slow, { fetch: hang, minimumTimeoutMs: 1, onAttemptEnd: (end) => ends.push(end) }).complete(ASK).then(() => null, (error) => error);
   assert.ok(timedOut instanceof AiProviderError);
-  assert.match(timedOut.message, /timed out/);
+  assert.match(timedOut.message, /the provider did not start answering within 30 ms/, "the message says which deadline ran out");
   assert.equal(timedOut.retryable, true);
   assert.equal(ends[1].outcome, "failed");
   assert.equal(ends[1].failureKind, "timeout");

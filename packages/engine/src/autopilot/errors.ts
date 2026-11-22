@@ -1,6 +1,6 @@
 import { redactSecrets } from "../ai/redact.js";
 import { endpointOrigin } from "../ai/request.js";
-import { AiFallbackBlockedError, AiProviderError, AiPromptTooLargeError, AiReplyRejectedError, AiRoutingBudgetError, AiUnavailableError } from "../ai/types.js";
+import { AiFallbackBlockedError, AiProviderError, AiPromptTooLargeError, AiReplyRejectedError, AiRoutingBudgetError, AiUnavailableError, type AiTimeoutPhase } from "../ai/types.js";
 import { isBookConflictError } from "../book/store.js";
 import { FrontmatterError } from "../markdown/frontmatter.js";
 import { StructuredReplyError } from "../util/json.js";
@@ -11,6 +11,9 @@ import { AUTOPILOT_ERROR_KINDS, type AutopilotErrorDetail, type AutopilotErrorKi
 const MAX_DETAIL_CHARACTERS = 160;
 /** Retries are counted up to this, far above any the engine grants: a number from a file can never be bigger. */
 const MAX_RETRY_COUNT = 99;
+/** The longest deadline a detail read from a file can name: a day, far above the four hours the engine allows. */
+const MAX_TIMEOUT_MS = 86_400_000;
+const TIMEOUT_PHASES: readonly AiTimeoutPhase[] = ["start", "idle", "total"];
 
 const TIMEOUT_WORDS = /\btime[ds]?[ -]?out\b|deadline exceeded/i;
 const RATE_LIMIT_WORDS = /\brate[ _-]?limit|too many requests/i;
@@ -74,6 +77,17 @@ function httpStatus(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599 ? value : undefined;
 }
 
+/** A deadline in milliseconds: a whole number from one up to a day (a fraction is rounded). */
+function timeoutMilliseconds(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const milliseconds = Math.round(value);
+  return milliseconds >= 1 && milliseconds <= MAX_TIMEOUT_MS ? milliseconds : undefined;
+}
+
+function timeoutPhase(value: unknown): AiTimeoutPhase | undefined {
+  return TIMEOUT_PHASES.find((phase) => phase === value);
+}
+
 function detailOf(error: unknown): AutopilotErrorDetail {
   const source = record(error);
   const target = record(source.target);
@@ -82,12 +96,18 @@ function detailOf(error: unknown): AutopilotErrorDetail {
   const model = shortText(source.model) ?? shortText(target.model);
   const provider = shortText(source.provider) ?? shortText(target.provider);
   const integration = shortText(source.integrationId) ?? shortText(target.integrationId);
+  // The deadline that ran out, for a request of the engine's client that timed out.
+  const timeout = record(source.timeout);
+  const timeoutMs = timeoutMilliseconds(timeout.ms);
+  const phase = timeoutPhase(timeout.phase);
   return {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
     ...(model ? { model } : {}),
     ...(provider ? { provider } : {}),
     ...(integration ? { integration } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(phase ? { timeoutPhase: phase } : {}),
   };
 }
 
@@ -99,7 +119,8 @@ function detailOf(error: unknown): AutopilotErrorDetail {
  * is read by its words (a provider that does not say `timedOut` still says "timed out"), and what is still nothing is `unknown`.
  * A class, a status or a flag always decides before the words do. The detail holds the status, the origin of the integration's address
  * (never its path or query), the model, the provider and the integration, with no credential in any of them: whatever the error carries
- * is redacted, and the endpoint is cut down to its origin. It is empty for an error that knows none of this.
+ * is redacted, and the endpoint is cut down to its origin. For a timeout of the engine's client it also says which deadline ran out
+ * (`timeoutPhase`) and how long it was (`timeoutMs`). It is empty for an error that knows none of this.
  */
 export function classifyAutopilotError(error: unknown): { kind: AutopilotErrorKind; detail: AutopilotErrorDetail } {
   // It runs where a run has just failed: whatever the error is (a getter that throws, a proxy), it must not fail again.
@@ -147,6 +168,8 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
   const integration = shortText(source.integration);
   const attempt = retryCount(source.attempt);
   const retries = retryCount(source.retries);
+  const timeoutMs = timeoutMilliseconds(source.timeoutMs);
+  const phase = timeoutPhase(source.timeoutPhase);
   const detail: AutopilotErrorDetail = {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
@@ -155,6 +178,8 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
     ...(integration ? { integration } : {}),
     ...(attempt !== undefined ? { attempt } : {}),
     ...(retries !== undefined ? { retries } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(phase ? { timeoutPhase: phase } : {}),
   };
   return Object.keys(detail).length ? detail : undefined;
 }

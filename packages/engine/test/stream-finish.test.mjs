@@ -48,6 +48,7 @@ const usage = (prompt, completion) => data({ choices: [], usage: { prompt_tokens
 const DONE = "data: [DONE]\n\n";
 
 function client(integrations = 1) {
+  // The timeout below is under the 30 s minimum of a real call: the tests lower the minimum to keep their seconds.
   return createFetchAi(pickAiRuntimeConfig({
     costCurrency: "EUR",
     aiIntegrations: Array.from({ length: integrations }, (_, index) => ({
@@ -60,7 +61,7 @@ function client(integrations = 1) {
       requestTimeoutMs: 4000,
       chatModels: [{ id: `m${index}`, name: `m${index}`, capabilities: ["default"], pricing: { inputPerMTok: 1, outputPerMTok: 2 } }],
     })),
-  }));
+  }), { minimumTimeoutMs: 1 });
 }
 
 /** Serves `chunks` as the reply and returns what `complete()` produced: `value` or `error`. */

@@ -20,6 +20,18 @@ export interface AiChatModelConfig {
   pricing?: AiPricingConfig;
 }
 
+/**
+ * Whether requests ask for a streamed reply: `auto` (the default) streams every chat request, the forced function of a structured one
+ * included, so that a provider that answers slowly is never silent; `off` never streams, for a provider or a proxy that cannot.
+ */
+export type AiStreamMode = "auto" | "off";
+
+/** The longest silence the engine waits for between two pieces of a streamed reply, unless the integration says otherwise. */
+export const DEFAULT_IDLE_TIMEOUT_MS = 600_000;
+/** An integration's idle timeout is kept within these limits. */
+export const MIN_IDLE_TIMEOUT_MS = 30_000;
+export const MAX_IDLE_TIMEOUT_MS = 3_600_000;
+
 export interface AiIntegrationConfig {
   id: string;
   name: string;
@@ -27,7 +39,15 @@ export interface AiIntegrationConfig {
   endpoint?: string;
   apiKey: string;
   apiVersion?: string;
+  /**
+   * How long the provider has to begin answering (the connection and the headers), as the author wrote it. A call raises a value
+   * under `MIN_REQUEST_TIMEOUT_MS` to that minimum and says so; the configuration is never changed.
+   */
   requestTimeoutMs?: number;
+  /** The longest silence between two pieces of a streamed reply (`DEFAULT_IDLE_TIMEOUT_MS`; kept within 30 s and an hour). */
+  idleTimeoutMs?: number;
+  /** Absent: `auto`. */
+  streamMode?: AiStreamMode;
   chatModels?: AiChatModelConfig[];
   /** @deprecated legacy single-model fields, still honored. */
   modelWriting?: string;
@@ -100,6 +120,16 @@ function positive(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
+function streamMode(value: unknown): AiStreamMode | undefined {
+  return value === "auto" || value === "off" ? value : undefined;
+}
+
+/** An idle timeout as the engine keeps it: a whole number of milliseconds within 30 s and an hour. What is not a number is no value. */
+function idleTimeout(value: unknown): number | undefined {
+  const milliseconds = positive(value);
+  return milliseconds === undefined ? undefined : Math.min(MAX_IDLE_TIMEOUT_MS, Math.max(MIN_IDLE_TIMEOUT_MS, Math.round(milliseconds)));
+}
+
 function pricing(value: unknown): AiPricingConfig | undefined {
   const source = record(value);
   const output: AiPricingConfig = {};
@@ -161,6 +191,8 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
         pricing: pricing(model.pricing),
       });
     }
+    const idleTimeoutMs = idleTimeout(item.idleTimeoutMs);
+    const mode = streamMode(item.streamMode);
     integrations.push({
       id,
       name: text(item.name) ?? provider,
@@ -169,6 +201,8 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
       apiKey: typeof item.apiKey === "string" ? item.apiKey.trim() : "",
       apiVersion: text(item.apiVersion),
       requestTimeoutMs: positive(item.requestTimeoutMs),
+      ...(idleTimeoutMs !== undefined ? { idleTimeoutMs } : {}),
+      ...(mode ? { streamMode: mode } : {}),
       chatModels,
       modelWriting: text(item.modelWriting),
       modelReview: text(item.modelReview),
@@ -202,6 +236,10 @@ export interface RedactedAiIntegration {
   provider: AiProviderKind;
   endpoint?: string;
   hasApiKey: boolean;
+  /** The longest silence between two pieces of a streamed reply, when the integration sets one. */
+  idleTimeoutMs?: number;
+  /** Whether replies stream, when the integration says (absent: `auto`). */
+  streamMode?: AiStreamMode;
   models: Array<{ name: string; capabilities: string[] }>;
 }
 
@@ -214,6 +252,8 @@ export function redactAiRuntimeConfig(config: AiRuntimeConfig): { integrations: 
       provider: integration.provider,
       endpoint: integration.endpoint,
       hasApiKey: Boolean(integration.apiKey),
+      ...(integration.idleTimeoutMs !== undefined ? { idleTimeoutMs: integration.idleTimeoutMs } : {}),
+      ...(integration.streamMode ? { streamMode: integration.streamMode } : {}),
       models: (integration.chatModels ?? []).map((model) => ({ name: model.name, capabilities: model.capabilities })),
     })),
     routedTasks: Object.keys(config.taskRouting ?? {}).sort(),

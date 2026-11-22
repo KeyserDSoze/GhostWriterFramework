@@ -1,21 +1,44 @@
-import { isAbortError, linkedSignal } from "../util/abort.js";
+import { abortError, isAbortError } from "../util/abort.js";
 import { randomId } from "../util/hash.js";
 import { likelyTextTokens } from "./budget.js";
-import type { AiPricingConfig, AiRuntimeConfig } from "./config.js";
+import type { AiPricingConfig, AiRuntimeConfig, AiStreamMode } from "./config.js";
+import { resolveDeadlines, startClock, timeoutMessage, type DeadlineClock, type ExpiredDeadline, type ResolvedDeadlines } from "./deadlines.js";
 import { redactSecrets } from "./redact.js";
 import { effectiveAiBase, endpointOrigin, type ChatRequest } from "./request.js";
 import type { AiCandidate } from "./router.js";
 import { candidateBoundary, planAttempts, type PlannedAttempt } from "./routing.js";
 import { splitReasoningBlock, structuredFromReply } from "./structured.js";
-import { AiFallbackBlockedError, AiProviderError, AiReplyRejectedError, type AiPort, type AiProviderErrorDetails, type AiRequest, type AiResponse, type AiUsage } from "./types.js";
+import { AiFallbackBlockedError, AiProviderError, AiReplyRejectedError, type AiPort, type AiProviderErrorDetails, type AiRequest, type AiResponse, type AiTimeoutPhase, type AiUsage } from "./types.js";
 
-/** How long one candidate may take before it is given up, for every host (an integration's own timeout wins). */
-export const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
+// The deadlines of a call: how long a provider has to begin answering, the least it is given, and the most a call may take.
+export { DEFAULT_REQUEST_TIMEOUT_MS, MIN_REQUEST_TIMEOUT_MS, TOTAL_REQUEST_CAP_MS } from "./deadlines.js";
+
+/**
+ * Raw bytes of a stream include the JSON envelope of every piece (a few hundred bytes for a few characters), so a long reasoning phase is
+ * far larger than its text. A stream over this many bytes is a model that loops, and is stopped.
+ */
+export const MAX_STREAM_TRANSPORT_BYTES = 256_000_000;
+/** The characters of reasoning a stream may carry before it is taken for a loop and stopped. */
+export const MAX_STREAM_REASONING_CHARACTERS = 16_000_000;
+/** A host's progress listener is called at most this often. */
+const PROGRESS_INTERVAL_MS = 250;
 const MAX_RETRY_AFTER_MS = 300_000;
 
 export interface FetchAiMessage {
   role: "system" | "user";
   content: string;
+}
+
+/** The three deadlines of an attempt, in milliseconds, as they are applied (the routing time that is left included). */
+export interface FetchAiTimeouts {
+  /** How long the provider has to begin answering: the connection and the headers. For a request that does not stream it is the whole call. */
+  startMs: number;
+  /** The longest silence between two pieces of a stream (it applies to streamed replies only). */
+  idleMs: number;
+  /** The most the attempt may take, whatever the provider keeps sending. */
+  capMs: number;
+  /** The provider timeout the integration asked for, when the minimum raised it to `startMs`. */
+  raised?: { from: number };
 }
 
 export interface FetchAiAttempt {
@@ -37,8 +60,12 @@ export interface FetchAiAttempt {
   tools: boolean;
   /** The origin and path every request of this integration starts with (never a key). */
   endpoint: string | null;
-  /** How long this attempt may take. */
+  /** How long the provider has to begin answering (`timeouts.startMs`). */
   timeoutMs: number;
+  /** The three deadlines of this attempt. */
+  timeouts: FetchAiTimeouts;
+  /** What the integration says about streaming (`auto` unless it says `off`). */
+  streamMode: AiStreamMode;
 }
 
 export interface FetchAiAttemptEnd {
@@ -68,6 +95,14 @@ export interface FetchAiAttemptEnd {
   retryAfterMs?: number;
   /** The limit that ran out, for a timeout. */
   timeoutMs?: number;
+  /** Which deadline ran out, for a timeout. */
+  timeoutPhase?: AiTimeoutPhase;
+  /** The reply was read as a stream of events (and not as one JSON body). */
+  streamed: boolean;
+  /** Milliseconds from the start of the attempt to the first byte of the reply: of its body for a stream, of the response for a JSON body. Absent when nothing arrived. */
+  firstByteMs?: number;
+  /** For a structured request: whether the model delivered the result as a function call. Absent for any other request and when nothing arrived. */
+  toolCalled?: boolean;
   durationMs: number;
 }
 
@@ -92,6 +127,11 @@ export interface FetchAiOptions {
   githubModelsBaseUrl?: string;
   /** Used when an integration has no request timeout (default `DEFAULT_REQUEST_TIMEOUT_MS`). */
   defaultTimeoutMs?: number;
+  /**
+   * The shortest start or idle deadline an attempt is given (default `MIN_REQUEST_TIMEOUT_MS`, 30 s). It exists for tests that count in
+   * milliseconds: a host has no reason to lower it.
+   */
+  minimumTimeoutMs?: number;
   /** An attempt is about to be sent. Never breaks the call. */
   onAttempt?: (attempt: FetchAiAttempt) => void;
   /** An attempt ended, whether it worked or not: for costs and debug panels. Never breaks the call. */
@@ -164,8 +204,8 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
             continue;
           }
         }
-        let timeoutMs = integration.requestTimeoutMs ?? options.defaultTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-        if (tried > 0 && maxTotal !== undefined) timeoutMs = Math.max(1, Math.min(timeoutMs, Math.ceil(maxTotal - (Date.now() - startedAt))));
+        // The first candidate runs for its own deadlines whatever the total; a later one runs for the routing time that is left.
+        const deadlines = resolveDeadlines(integration, options, tried > 0 && maxTotal !== undefined ? maxTotal - (Date.now() - startedAt) : undefined);
 
         const identity = { attemptId: randomId("attempt"), label: request.label, capability: request.capability, provider: integration.provider, model: candidate.model, integrationId: integration.id, index: attempt.index };
         const sent = (attempt.built?.body.messages as FetchAiMessage[] | undefined) ?? [{ role: "system", content: request.system }, { role: "user", content: request.user }];
@@ -177,14 +217,17 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           stream: attempt.built?.stream ?? false,
           tools: attempt.built?.useTools ?? false,
           endpoint: effectiveAiBase(integration, options.githubModelsBaseUrl),
-          timeoutMs,
+          timeoutMs: deadlines.startMs,
+          timeouts: { startMs: deadlines.startMs, idleMs: deadlines.idleMs, capMs: deadlines.capMs, ...(deadlines.raisedFrom !== undefined ? { raised: { from: deadlines.raisedFrom } } : {}) },
+          streamMode: integration.streamMode === "off" ? "off" : "auto",
         });
         const attemptStarted = Date.now();
+        const trace: AttemptTrace = { startedAt: attemptStarted, streamed: false, toolSeen: false };
         lastSent = candidate;
         tried += 1;
         try {
           if (!attempt.built) throw attempt.buildError;
-          const response = await callCandidate(config, attempt, attempt.built, request, options, timeoutMs, secrets);
+          const response = await callCandidate(config, attempt, attempt.built, request, options, deadlines, secrets, trace);
           notify(options.onAttemptEnd, {
             ...identity,
             outcome: "ok",
@@ -194,12 +237,13 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
             costKnown: response.costKnown ?? false,
             currency: response.currency,
             text: response.text,
+            ...replyTrace(trace, Boolean(request.json)),
             durationMs: Date.now() - attemptStarted,
           });
           return withSpent(response, spent);
         } catch (error) {
           const cancelled = Boolean(request.signal?.aborted) && isAbortError(error);
-          notify(options.onAttemptEnd, failedAttempt(identity, error, cancelled, timeoutMs, Date.now() - attemptStarted, secrets));
+          notify(options.onAttemptEnd, failedAttempt(identity, error, cancelled, deadlines.startMs, Date.now() - attemptStarted, secrets, replyTrace(trace, Boolean(request.json))));
           if (cancelled) throw error;
           if (error instanceof AiProviderError && !error.target) {
             const origin = endpointOrigin(effectiveAiBase(integration, options.githubModelsBaseUrl));
@@ -273,7 +317,26 @@ function withSpent(response: AiResponse, spent: Spent): AiResponse {
   };
 }
 
-function failedAttempt(identity: Pick<FetchAiAttemptEnd, "attemptId" | "label" | "capability" | "provider" | "model" | "integrationId" | "index">, error: unknown, cancelled: boolean, timeoutMs: number, durationMs: number, secrets: readonly string[]): FetchAiAttemptEnd {
+/** What an attempt learned about its reply while it ran: the end hook says it, whether the attempt worked or not. */
+interface AttemptTrace {
+  startedAt: number;
+  /** The reply was read as a stream of events. */
+  streamed: boolean;
+  /** Milliseconds to the first byte of the reply (see `FetchAiAttemptEnd.firstByteMs`). */
+  firstByteMs?: number;
+  /** The reply carried a function call. */
+  toolSeen: boolean;
+}
+
+function replyTrace(trace: AttemptTrace, structured: boolean): Pick<FetchAiAttemptEnd, "streamed" | "firstByteMs" | "toolCalled"> {
+  return {
+    streamed: trace.streamed,
+    ...(trace.firstByteMs !== undefined ? { firstByteMs: trace.firstByteMs } : {}),
+    ...(structured && trace.firstByteMs !== undefined ? { toolCalled: trace.toolSeen } : {}),
+  };
+}
+
+function failedAttempt(identity: Pick<FetchAiAttemptEnd, "attemptId" | "label" | "capability" | "provider" | "model" | "integrationId" | "index">, error: unknown, cancelled: boolean, timeoutMs: number, durationMs: number, secrets: readonly string[], reply: Pick<FetchAiAttemptEnd, "streamed" | "firstByteMs" | "toolCalled">): FetchAiAttemptEnd {
   const provider = error instanceof AiProviderError ? error : undefined;
   const timedOut = provider?.timedOut === true;
   return {
@@ -288,7 +351,9 @@ function failedAttempt(identity: Pick<FetchAiAttemptEnd, "attemptId" | "label" |
     failureKind: cancelled ? "cancelled" : timedOut ? "timeout" : "provider",
     ...(provider?.status !== undefined ? { status: provider.status } : {}),
     ...(provider?.retryAfterMs !== undefined ? { retryAfterMs: provider.retryAfterMs } : {}),
-    ...(timedOut ? { timeoutMs } : {}),
+    ...(timedOut ? { timeoutMs: provider?.timeout?.ms ?? timeoutMs } : {}),
+    ...(timedOut && provider?.timeout ? { timeoutPhase: provider.timeout.phase } : {}),
+    ...reply,
     durationMs,
   };
 }
@@ -354,17 +419,56 @@ async function providerError(response: Response, provider: string, model: string
   );
 }
 
+/** What a host of the stream reader hears: the events, the bytes (it may stop the stream by throwing) and the end of every piece. */
+interface StreamHooks {
+  /** An event arrived: its `data:` lines, joined. */
+  onData: (data: string) => void;
+  /** Bytes arrived, comments that only keep the connection open included. */
+  onBytes: (count: number) => void;
+  /** A piece was read and every event in it delivered. */
+  onPiece: () => void;
+}
+
+/** The connection failed while a stream was being read (as opposed to a deadline, the author's cancel, or what the engine itself found wrong). */
+class StreamReadError extends Error {
+  constructor(readonly reason: unknown) {
+    super("The stream could not be read.");
+    this.name = "StreamReadError";
+  }
+}
+
+/** Stops reading without waiting for the other side: whatever it does with the cancel, the call must not hang on it. */
+function release(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    void reader.cancel().catch(() => undefined);
+  } catch {
+    // A reader that cannot be cancelled is of no use any more.
+  }
+}
+
+/** Lets a body go that nobody is going to read (a reply that arrived too late, or that the call gave up). */
+function discardBody(response: Response): void {
+  try {
+    void response.body?.cancel().catch(() => undefined);
+  } catch {
+    // A body that is locked or already read has nothing left to discard.
+  }
+}
+
 /**
  * Reads server-sent events; resolves `true` when the provider closed the stream with `[DONE]`. An event is its `data:`
  * lines joined with a newline, ended by a blank line; a value that is complete as it stands (one JSON object, or
  * `[DONE]`) is delivered at once, so servers that leave out the blank lines still stream.
+ * Every piece that arrives starts the idle deadline again, a comment (`: keep-alive`) too, and no read can hold the call past
+ * a deadline or the author's cancel. However it ends, but by the end of the stream, the reader is released.
  */
-async function readEventStream(response: Response, onData: (data: string) => void): Promise<boolean> {
+async function readEventStream(response: Response, clock: DeadlineClock, hooks: StreamHooks): Promise<boolean> {
   if (!response.body) throw new AiProviderError("The provider returned an empty stream.", undefined, true, { transient: true });
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let pending: string[] = [];
+  let exhausted = false;
   const complete = (value: string): boolean => {
     const text = value.trim();
     if (text === "[DONE]") return true;
@@ -387,11 +491,11 @@ async function readEventStream(response: Response, onData: (data: string) => voi
       for (const line of lines) {
         const single = line.trim();
         if (single === "[DONE]") return true;
-        if (single) onData(single);
+        if (single) hooks.onData(single);
       }
       return false;
     }
-    if (joined) onData(joined);
+    if (joined) hooks.onData(joined);
     return false;
   };
   const takeLine = (line: string): boolean => {
@@ -403,27 +507,68 @@ async function readEventStream(response: Response, onData: (data: string) => voi
   };
   try {
     for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      let piece: ReadableStreamReadResult<Uint8Array>;
+      try {
+        piece = await clock.guard(reader.read());
+      } catch (error) {
+        // A deadline or the author's cancel is told by the call; anything else here is the connection.
+        throw clock.interrupted() ? error : new StreamReadError(error);
+      }
+      if (piece.done) {
+        exhausted = true;
+        break;
+      }
+      clock.activity();
+      hooks.onBytes(piece.value.byteLength);
+      buffer += decoder.decode(piece.value, { stream: true });
       let newline = buffer.indexOf("\n");
       while (newline >= 0) {
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
-        if (takeLine(line)) {
-          await reader.cancel().catch(() => undefined);
-          return true;
-        }
+        if (takeLine(line)) return true;
         newline = buffer.indexOf("\n");
       }
+      hooks.onPiece();
     }
     buffer += decoder.decode();
     if (buffer.trim() && takeLine(buffer)) return true;
     return flush();
-  } catch (error) {
-    // The reply was given up (an error chunk, a failing listener): release the connection instead of leaving it open.
-    await reader.cancel().catch(() => undefined);
-    throw error;
+  } finally {
+    // The provider closed the stream, or the reply is given up (the end marker, an error chunk, a deadline, the author): let the connection go.
+    if (!exhausted) release(reader);
+  }
+}
+
+/**
+ * Reads the whole body of a reply that is one JSON value. Like the stream reader it starts the idle deadline again at every piece, cannot
+ * be held past a deadline or the author's cancel, and releases the body however it ends (`response.json()` would keep it locked).
+ */
+async function readJsonBody(response: Response, clock: DeadlineClock, onBytes: (count: number) => void): Promise<unknown> {
+  if (!response.body) return clock.guard(response.json());
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let body = "";
+  let exhausted = false;
+  try {
+    for (;;) {
+      let piece: ReadableStreamReadResult<Uint8Array>;
+      try {
+        piece = await clock.guard(reader.read());
+      } catch (error) {
+        throw clock.interrupted() ? error : new StreamReadError(error);
+      }
+      if (piece.done) {
+        exhausted = true;
+        break;
+      }
+      clock.activity();
+      onBytes(piece.value.byteLength);
+      body += decoder.decode(piece.value, { stream: true });
+    }
+    body += decoder.decode();
+    return JSON.parse(body);
+  } finally {
+    if (!exhausted) release(reader);
   }
 }
 
@@ -477,107 +622,248 @@ function reasoningLength(source: unknown): number {
   return (typeof content === "string" ? content.length : 0) + (typeof reasoning === "string" ? reasoning.length : 0);
 }
 
-async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, built: ChatRequest, request: AiRequest, options: FetchAiOptions, timeoutMs: number, secrets: readonly string[]): Promise<AiResponse> {
+/** A function call of a reply: its name and its arguments, as text. */
+interface FunctionCall {
+  name: string;
+  arguments: string;
+}
+
+/** The function calls of a message (`tool_calls`) whose arguments are text, in their order. */
+function callsOf(value: unknown): FunctionCall[] {
+  if (!Array.isArray(value)) return [];
+  const calls: FunctionCall[] = [];
+  for (const entry of value) {
+    const fn = entry && typeof entry === "object" ? (entry as { function?: unknown }).function : undefined;
+    if (!fn || typeof fn !== "object") continue;
+    const { name, arguments: args } = fn as { name?: unknown; arguments?: unknown };
+    if (typeof args === "string") calls.push({ name: typeof name === "string" ? name : "", arguments: args });
+  }
+  return calls;
+}
+
+/**
+ * The arguments of the call that is the reply: the first call to the function that was asked for that carries arguments, else the first
+ * that carries any, else the first. The other calls are ignored, never joined to it.
+ */
+function chosenArguments(calls: Iterable<FunctionCall>, wanted: string | undefined): string {
+  let first: string | undefined;
+  let firstWithArguments: string | undefined;
+  for (const call of calls) {
+    first ??= call.arguments;
+    if (!call.arguments.trim()) continue;
+    if (wanted && call.name === wanted) return call.arguments;
+    firstWithArguments ??= call.arguments;
+  }
+  return firstWithArguments ?? first ?? "";
+}
+
+interface StreamedChunk {
+  choices?: Array<{
+    delta?: { content?: string | null; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: unknown };
+    message?: { tool_calls?: unknown };
+    finish_reason?: string | null;
+  }>;
+  usage?: unknown;
+  error?: unknown;
+}
+
+async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, built: ChatRequest, request: AiRequest, options: FetchAiOptions, deadlines: ResolvedDeadlines, secrets: readonly string[], trace: AttemptTrace): Promise<AiResponse> {
   const { candidate } = attempt;
   const { integration, model } = candidate;
   const label = `${integration.provider} ${model}`;
   const redact = (text: string) => redactSecrets(text, secrets);
   const fetchImpl = options.fetch ?? fetch;
-  const timer = linkedSignal(request.signal, timeoutMs);
-  try {
-    let response: Response;
-    try {
-      response = await fetchImpl(built.url, {
-        method: "POST",
-        headers: built.headers,
-        body: JSON.stringify(built.body),
-        signal: timer.signal,
-      });
-    } catch (error) {
-      if (request.signal?.aborted) throw error;
-      const timedOut = timer.timedOut();
-      throw new AiProviderError(redact(`${label}: ${timedOut ? "request timed out" : error instanceof Error ? error.message : String(error)}`), undefined, true, { transient: true, ...(timedOut ? { timedOut: true } : {}) });
-    }
-    if (!response.ok) throw await providerError(response, integration.provider, model, redact);
+  const clock = startClock(request.signal, deadlines);
+  const structured = Boolean(request.json);
+  const wanted = request.json?.name;
+  const elapsed = () => Date.now() - trace.startedAt;
 
-    let text = "";
-    let toolArguments = "";
-    let usage: AiUsage | undefined;
-    let finishReason = "";
-    let reasoningCharacters = 0;
-    /** The response ended properly: a stream that closed with `[DONE]`, or a complete JSON body. */
-    let ended = true;
-    /** What the attempt used: the provider's count, else an estimate once the model has started to answer. */
-    const measure = (): { usage?: AiUsage; usageKnown?: boolean } => {
-      if (usage && usage.inputTokens + usage.outputTokens > 0) return { usage, usageKnown: true };
-      if (!text && !toolArguments && !reasoningCharacters) return {};
-      return {
-        usage: { inputTokens: attempt.inputTokens, outputTokens: likelyTextTokens(text) + likelyTextTokens(toolArguments) + Math.ceil(reasoningCharacters / 4), cachedInputTokens: 0 },
-        usageKnown: false,
-      };
+  let text = "";
+  let usage: AiUsage | undefined;
+  let finishReason = "";
+  let reasoningCharacters = 0;
+  /** The function calls of a streamed reply by their index, in the order they came. */
+  const calls = new Map<number, FunctionCall>();
+  /** The arguments of a call that came whole: in the message of a JSON reply, or in the last piece of a stream. */
+  let wholeArguments = "";
+  /** The response ended properly: a stream that closed with `[DONE]`, or a complete JSON body. */
+  let ended = true;
+  let bytes = 0;
+  let events = 0;
+  let lastProgressAt: number | undefined;
+  let response: Response | undefined;
+  /** Where the call is, to say what went wrong when something does. */
+  let stage: "send" | "stream" | "json" | "other" = "send";
+
+  const callArguments = (): string => wholeArguments || chosenArguments(calls.values(), wanted);
+  /** What the attempt used: the provider's count, else an estimate once the model has started to answer. */
+  const measure = (): { usage?: AiUsage; usageKnown?: boolean } => {
+    if (usage && usage.inputTokens + usage.outputTokens > 0) return { usage, usageKnown: true };
+    const args = callArguments();
+    if (!text && !args && !reasoningCharacters) return {};
+    return {
+      usage: { inputTokens: attempt.inputTokens, outputTokens: likelyTextTokens(text) + likelyTextTokens(args) + Math.ceil(reasoningCharacters / 4), cachedInputTokens: 0 },
+      usageKnown: false,
     };
-    const details = (extra: AiProviderErrorDetails = {}): AiProviderErrorDetails => {
-      const measured = measure();
-      return {
-        usage: measured.usage,
-        cost: estimateCost(measured.usage, candidate.pricing),
-        ...(measured.usageKnown === undefined ? {} : { usageKnown: measured.usageKnown, costKnown: measured.usageKnown && Boolean(candidate.pricing) }),
-        currency: config.costCurrency,
-        model,
-        provider: integration.provider,
-        integrationId: integration.id,
-        ...extra,
-      };
+  };
+  const details = (extra: AiProviderErrorDetails = {}): AiProviderErrorDetails => {
+    const measured = measure();
+    return {
+      usage: measured.usage,
+      cost: estimateCost(measured.usage, candidate.pricing),
+      ...(measured.usageKnown === undefined ? {} : { usageKnown: measured.usageKnown, costKnown: measured.usageKnown && Boolean(candidate.pricing) }),
+      currency: config.costCurrency,
+      model,
+      provider: integration.provider,
+      integrationId: integration.id,
+      ...extra,
     };
+  };
+  /** A stream that no model's answer explains: stopped, with what it used and what to do. */
+  const runaway = (what: string): AiProviderError => new AiProviderError(
+    redact(`${label}: ${what}. Nothing was applied: the provider may have used tokens. Lower the thinking effort of the model or choose another one.`),
+    undefined,
+    false,
+    details(),
+  );
+  const timeoutError = (expired: ExpiredDeadline, answering: boolean): AiProviderError => new AiProviderError(
+    redact(timeoutMessage(label, expired, deadlines, integration.name)),
+    undefined,
+    true,
+    {
+      ...(answering ? details() : {}),
+      transient: true,
+      timedOut: true,
+      timeout: { phase: expired.phase, ms: expired.ms, ...(expired.phase === "start" && deadlines.raisedFrom !== undefined ? { raisedFrom: deadlines.raisedFrom } : {}) },
+    },
+  );
+  const reportProgress = (): void => {
+    if (!request.onProgress) return;
+    const now = Date.now();
+    if (lastProgressAt !== undefined && now - lastProgressAt < PROGRESS_INTERVAL_MS) return;
+    lastProgressAt = now;
+    notify(request.onProgress, { bytes, events, characters: text.length + callArguments().length });
+  };
+  const addCalls = (value: unknown): void => {
+    if (!Array.isArray(value)) return;
+    for (const entry of value) {
+      if (!entry || typeof entry !== "object") continue;
+      const { index, function: fn } = entry as { index?: unknown; function?: { name?: unknown; arguments?: unknown } };
+      if (!fn || typeof fn !== "object") continue;
+      trace.toolSeen = true;
+      // A piece without an index belongs to the only call there is.
+      const key = typeof index === "number" && Number.isInteger(index) && index >= 0 ? index : 0;
+      let call = calls.get(key);
+      if (!call) {
+        call = { name: "", arguments: "" };
+        calls.set(key, call);
+      }
+      if (typeof fn.name === "string" && fn.name) call.name = fn.name;
+      if (typeof fn.arguments === "string") call.arguments += fn.arguments;
+    }
+  };
+  const take = (data: string): void => {
+    let chunk: StreamedChunk;
+    try {
+      chunk = JSON.parse(data);
+    } catch {
+      return;
+    }
+    if (!chunk || typeof chunk !== "object") return;
+    if (chunk.error) {
+      const failure = streamError(chunk.error, label, details(), redact);
+      if (failure) throw failure;
+    }
+    const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
+    const first = choices[0];
+    const delta = first?.delta;
+    reasoningCharacters += reasoningLength(delta);
+    if (reasoningCharacters > MAX_STREAM_REASONING_CHARACTERS) throw runaway(`the model's reasoning passed the safety limit of ${MAX_STREAM_REASONING_CHARACTERS / 1_000_000} million characters (a reasoning loop is likely)`);
+    if (delta?.content) {
+      text += delta.content;
+      // The text of a structured reply is no prose for the listener: its progress is `onProgress`.
+      if (!structured) request.onText?.(text);
+    }
+    addCalls(delta?.tool_calls);
+    // Some providers end the stream with the whole message instead of (or after) the pieces.
+    const whole = callsOf(first?.message?.tool_calls);
+    if (whole.length) {
+      trace.toolSeen = true;
+      const args = chosenArguments(whole, wanted);
+      if (args.trim()) wholeArguments = args;
+    }
+    const reason = choices.find((choice) => typeof choice?.finish_reason === "string" && choice.finish_reason)?.finish_reason;
+    if (reason) finishReason = reason;
+    if (chunk.usage) usage = normalizeUsage(chunk.usage);
+  };
+  const countBytes = (count: number, what: "stream" | "reply"): void => {
+    bytes += count;
+    trace.firstByteMs ??= elapsed();
+    if (bytes > MAX_STREAM_TRANSPORT_BYTES) throw runaway(`the ${what} passed the safety limit of ${MAX_STREAM_TRANSPORT_BYTES / 1_000_000} MB (a model that loops while reasoning looks like this)`);
+  };
+  const hooks: StreamHooks = {
+    onData: (data) => {
+      events += 1;
+      take(data);
+    },
+    onBytes: (count) => countBytes(count, "stream"),
+    onPiece: reportProgress,
+  };
+
+  try {
+    const sent = Promise.resolve(fetchImpl(built.url, {
+      method: "POST",
+      headers: built.headers,
+      body: JSON.stringify(built.body),
+      signal: clock.signal,
+    }));
+    // A reply that comes after the call was given up is dropped, and its body let go.
+    sent.then((late) => {
+      if (clock.interrupted()) discardBody(late);
+    }, () => undefined);
+    response = await clock.guard(sent);
+    stage = "other";
+    if (!response.ok) {
+      trace.firstByteMs ??= elapsed();
+      const failure = await clock.guard(providerError(response, integration.provider, model, redact));
+      // A provider that cannot stream says so with a 400: tell where to switch streaming off.
+      if (built.stream && (failure.status === 400 || failure.status === 422) && /stream/i.test(failure.message.replace(label, ""))) {
+        failure.message = redact(`${failure.message}${/[.!?]$/.test(failure.message) ? "" : "."} If this provider cannot stream its replies, set "Streaming" of the integration "${integration.name}" to "off".`);
+      }
+      throw failure;
+    }
+    // A streamed request: the start deadline is over, the silence between two pieces is what is watched now.
+    if (built.stream) clock.streaming();
     // A JSON body to a streaming request means the server ignored `stream`: its reply is read as a whole.
     const streamed = built.stream && !/\bjson\b/i.test(response.headers?.get?.("content-type") ?? "");
-    try {
-      if (streamed) {
-        ended = await readEventStream(response, (data) => {
-          let chunk: { choices?: Array<{ delta?: { content?: string | null; reasoning_content?: unknown; reasoning?: unknown }; finish_reason?: string | null }>; usage?: unknown; error?: unknown };
-          try {
-            chunk = JSON.parse(data);
-          } catch {
-            return;
-          }
-          if (!chunk || typeof chunk !== "object") return;
-          if (chunk.error) {
-            const failure = streamError(chunk.error, label, details(), redact);
-            if (failure) throw failure;
-          }
-          const delta = chunk.choices?.[0]?.delta;
-          reasoningCharacters += reasoningLength(delta);
-          if (delta?.content) {
-            text += delta.content;
-            request.onText?.(text);
-          }
-          const reason = chunk.choices?.find((choice) => typeof choice?.finish_reason === "string" && choice.finish_reason)?.finish_reason;
-          if (reason) finishReason = reason;
-          if (chunk.usage) usage = normalizeUsage(chunk.usage);
-        });
-      } else {
-        const payload = await response.json() as {
-          choices?: Array<{ message?: { content?: string | null; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: Array<{ function?: { arguments?: string } }> }; finish_reason?: string | null }>;
-          usage?: unknown;
-          error?: unknown;
-        } | null;
-        if (payload?.error) {
-          const failure = streamError(payload.error, label, details(), redact);
-          if (failure) throw failure;
-        }
-        const choice = payload?.choices?.[0];
-        text = typeof choice?.message?.content === "string" ? choice.message.content : "";
-        toolArguments = choice?.message?.tool_calls?.find((call) => typeof call.function?.arguments === "string")?.function?.arguments ?? "";
-        finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : "";
-        reasoningCharacters = reasoningLength(choice?.message);
-        usage = normalizeUsage(payload?.usage);
-        if (built.stream && text) request.onText?.(text);
+    trace.streamed = streamed;
+    if (streamed) {
+      stage = "stream";
+      ended = await readEventStream(response, clock, hooks);
+    } else {
+      stage = "json";
+      trace.firstByteMs ??= elapsed();
+      const payload = await readJsonBody(response, clock, (count) => countBytes(count, "reply")) as {
+        choices?: Array<{ message?: { content?: string | null; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: Array<{ function?: { arguments?: string } }> }; finish_reason?: string | null }>;
+        usage?: unknown;
+        error?: unknown;
+      } | null;
+      if (payload?.error) {
+        const failure = streamError(payload.error, label, details(), redact);
+        if (failure) throw failure;
       }
-    } catch (error) {
-      if (request.signal?.aborted || error instanceof AiProviderError) throw error;
-      const timedOut = timer.timedOut();
-      throw new AiProviderError(redact(`${label}: ${timedOut ? "request timed out" : "the reply could not be read"}.`), undefined, true, details({ transient: true, ...(timedOut ? { timedOut: true } : {}) }));
+      const choice = payload?.choices?.[0];
+      text = typeof choice?.message?.content === "string" ? choice.message.content : "";
+      wholeArguments = choice?.message?.tool_calls?.find((call) => typeof call.function?.arguments === "string")?.function?.arguments ?? "";
+      if (Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length) trace.toolSeen = true;
+      finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : "";
+      reasoningCharacters = reasoningLength(choice?.message);
+      usage = normalizeUsage(payload?.usage);
+      // A plain reply that came whole still reaches the listener of the text, once.
+      if (!structured && text) request.onText?.(text);
     }
+    stage = "other";
+
     const outcome = classifyFinishReason(finishReason, ended);
     const shown = redact(finishReason).replace(/\s+/g, " ").trim().slice(0, 60);
     if (outcome === "incomplete") throw new AiProviderError(`${label}: the stream ended before the reply was complete.`, undefined, true, details({ transient: true }));
@@ -588,6 +874,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     const inline = splitReasoningBlock(text);
     text = inline.reply;
     reasoningCharacters += inline.reasoningCharacters;
+    const toolArguments = callArguments();
     const answered = Boolean(text.trim() || toolArguments.trim());
     if (outcome === "truncated") {
       const reasoned = !answered && reasoningCharacters > 0;
@@ -600,6 +887,8 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     }
     if (!answered) throw new AiProviderError(`${label}: ${reasoningCharacters > 0 ? "the model finished after reasoning without a reply" : "the provider returned an empty reply"}.`, undefined, true, details());
 
+    // Measured before the arguments of a function become the text of the reply: they are counted once.
+    const measured = measure();
     let json: unknown;
     if (request.json) {
       try {
@@ -609,7 +898,6 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       }
       if (!text) text = toolArguments;
     }
-    const measured = measure();
     return {
       text,
       json,
@@ -622,7 +910,25 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       costKnown: measured.usageKnown === true && Boolean(candidate.pricing),
       currency: config.costCurrency,
     };
+  } catch (error) {
+    if (response && clock.interrupted()) discardBody(response);
+    // The author's cancel wins over everything, and is never a timeout.
+    if (request.signal?.aborted) throw request.signal.reason instanceof Error ? request.signal.reason : abortError();
+    const expired = clock.expired();
+    if (expired) throw timeoutError(expired, stage === "stream" || stage === "json");
+    if (error instanceof AiProviderError) throw error;
+    if (stage === "send") throw new AiProviderError(redact(`${label}: ${error instanceof Error ? error.message : String(error)}`), undefined, true, { transient: true });
+    if (stage === "stream" && error instanceof StreamReadError) {
+      throw new AiProviderError(
+        redact(`${label}: the connection with the provider was lost while it was answering, so the reply could not be read. Nothing was applied. If this happens every time, check the proxy or the tunnel between this app and the provider.`),
+        undefined,
+        true,
+        details({ transient: true }),
+      );
+    }
+    if (stage === "stream" || stage === "json") throw new AiProviderError(redact(`${label}: the reply could not be read.`), undefined, true, details({ transient: true }));
+    throw error;
   } finally {
-    timer.dispose();
+    clock.dispose();
   }
 }

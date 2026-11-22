@@ -11,6 +11,17 @@ export interface AiUsage {
   cachedInputTokens: number;
 }
 
+/**
+ * What has arrived of a streamed reply, for a host that wants to say "the model is answering (12 KB)". Only numbers, never the
+ * reply itself: `bytes` are the bytes received (comments that keep the connection open included), `events` the events of the stream,
+ * `characters` the characters of the reply so far (its text and the arguments of its function call, not the reasoning).
+ */
+export interface AiProgress {
+  bytes: number;
+  events: number;
+  characters: number;
+}
+
 export interface AiRequest {
   /** Router capability, e.g. `autopilot`, `director`, `reader-evaluation`, `review`, `simple-tasks`. */
   capability: string;
@@ -25,8 +36,16 @@ export interface AiRequest {
   outputBoost?: number;
   temperature?: number;
   signal?: AbortSignal;
-  /** Receives the cumulative text while a plain-text reply streams. */
+  /**
+   * Receives the cumulative text while a plain-text reply streams (and once, whole, when it arrives as one JSON body). Never called for a
+   * structured request: its progress is `onProgress`.
+   */
   onText?: (text: string) => void;
+  /**
+   * Called while a reply streams, at most every 250 ms, with how much has arrived and no content (see `AiProgress`). It is how a
+   * structured reply shows that the model is answering. A listener that throws never breaks the call.
+   */
+  onProgress?: (progress: AiProgress) => void;
 }
 
 export interface AiResponse {
@@ -71,6 +90,18 @@ export interface AiErrorTarget {
   endpoint?: string;
 }
 
+/** Which deadline of a call ran out: the provider did not start answering (`start`), went silent while it answered (`idle`), or the call took longer than any call may (`total`). */
+export type AiTimeoutPhase = "start" | "idle" | "total";
+
+/** Which deadline ran out and how long it was, on the error of a call that timed out. Never a secret. */
+export interface AiTimeoutDetails {
+  phase: AiTimeoutPhase;
+  /** The limit that ran out, in milliseconds. */
+  ms: number;
+  /** The provider timeout the integration asked for, when the call raised it to the minimum (`MIN_REQUEST_TIMEOUT_MS`). */
+  raisedFrom?: number;
+}
+
 /** What a failed attempt already cost: the provider may bill a reply the engine rejects. */
 export interface AiProviderErrorDetails {
   /** Where the request went. Set by the engine's client on the errors of the candidates it tried. */
@@ -96,6 +127,8 @@ export interface AiProviderErrorDetails {
   transient?: boolean;
   /** The request ran out of time. */
   timedOut?: boolean;
+  /** Which deadline ran out, for a request that timed out. */
+  timeout?: AiTimeoutDetails;
 }
 
 export class AiProviderError extends Error {
@@ -114,6 +147,7 @@ export class AiProviderError extends Error {
   retryAfterMs?: number;
   transient?: boolean;
   timedOut?: boolean;
+  timeout?: AiTimeoutDetails;
 
   constructor(message: string, readonly status?: number, readonly retryable = false, details: AiProviderErrorDetails = {}) {
     super(message);
