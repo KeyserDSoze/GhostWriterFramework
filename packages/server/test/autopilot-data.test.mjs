@@ -17,7 +17,7 @@ const BOOK = "b";
 const KEY = "zzkey-7f3a91c2b8d44e0f9a1b";
 /** A quarter of the engine's own pace (4 s for the first retry, 12 s for the second…), with no jitter: the first retry waits 750 ms, and the Retry-After of the provider counts a quarter as well. */
 const PACE = { retryDelayMs: 1000, random: () => 0 };
-const ALLOWED_DETAIL = ["attempt", "endpoint", "integration", "model", "provider", "retries", "status"];
+const ALLOWED_DETAIL = ["attempt", "endpoint", "integration", "model", "provider", "retries", "retryAfterMs", "status"];
 
 const stateText = (server, file = "state.json") => readFile(path.join(server.data.bookDirectory(BOOK), "autopilot", file), "utf8");
 const succeeded = (activities) => activities.filter((activity) => activity.status === "succeeded");
@@ -152,9 +152,11 @@ test("S5: a failed attempt that is retried says its kind and where it happened, 
   const { done, messages, origin } = await slow();
   const attempts = failed(done.snapshot.activities);
   assert.equal(attempts.length, 2);
-  for (const activity of attempts) {
+  // The provider asked for 100 s with the first 429 and said nothing with the second: the detail of the first says so, the second has none made up.
+  const retryAfter = [100_000, undefined];
+  for (const [index, activity] of attempts.entries()) {
     assert.equal(activity.errorKind, "rate_limit");
-    assert.deepEqual(activity.errorDetail, { status: 429, endpoint: origin, model: "gpt-test", provider: "openai", integration: "p", attempt: 1, retries: 3 }, "the retry it belongs to is the first of three");
+    assert.deepEqual(activity.errorDetail, { status: 429, endpoint: origin, model: "gpt-test", provider: "openai", integration: "p", ...(retryAfter[index] === undefined ? {} : { retryAfterMs: retryAfter[index] }), attempt: 1, retries: 3 }, "the retry it belongs to is the first of three, and the Retry-After of the provider is there when it gave one");
     assert.ok(AUTOPILOT_ERROR_KINDS.includes(activity.errorKind));
     assert.ok(Object.keys(activity.errorDetail).every((key) => ALLOWED_DETAIL.includes(key)));
     assert.match(activity.error, /HTTP 429/);
@@ -204,6 +206,15 @@ test("S5: the working time is the sum of the steps that were saved, over the run
   assert.equal(done.list[0].autopilot.stats.workedMs, workedMs);
   assert.equal(stateEvents(messages).at(-1).stats.workedMs, workedMs);
   assert.ok(paused.snapshot.state.stats.workedMs <= workedMs, "and it only grows");
+
+  // Since when it counts: the start of the first step that was counted, written once and the same everywhere.
+  const since = [...worked].sort((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt))[0].startedAt;
+  assert.equal(done.snapshot.state.stats.workedMsSince, since, "the moment the first counted step began");
+  assert.equal(paused.snapshot.state.stats.workedMsSince, since, "the first run said it, and the second did not move it");
+  assert.equal(JSON.parse(done.stateFile).stats.workedMsSince, since, "it is in the file");
+  assert.equal(done.snapshot.summary.stats.workedMsSince, since);
+  assert.equal(done.list[0].autopilot.stats.workedMsSince, since);
+  assert.equal(stateEvents(messages).at(-1).stats.workedMsSince, since);
 });
 
 test("S5: the rounds of the review of a chapter are in the state as the engine wrote them, and are the rounds the engine gives with no server around it", async () => {
@@ -211,8 +222,9 @@ test("S5: the rounds of the review of a chapter are in the state as the engine w
   const rounds = done.snapshot.state.plan.chapters.map((chapter) => chapter.rounds);
   assert.ok(rounds.every((list) => Array.isArray(list) && list.length >= 1 && list.length <= MAX_CHAPTER_ROUNDS), JSON.stringify(rounds));
   for (const round of rounds.flat()) {
-    assert.ok(Object.keys(round).every((key) => ["director", "readers", "accepted", "rejected"].includes(key)), JSON.stringify(round));
+    assert.ok(Object.keys(round).every((key) => ["director", "readers", "verdict", "accepted", "rejected"].includes(key)), JSON.stringify(round));
     assert.ok(typeof round.director === "number" && round.director >= 0 && round.director <= 10);
+    assert.ok(round.verdict === "approve" || round.verdict === "revise", `the verdict of the round: ${JSON.stringify(round)}`);
   }
   assert.deepEqual(JSON.parse(done.stateFile).plan.chapters.map((chapter) => chapter.rounds), rounds, "they are in the file, and the snapshot is that file");
   assert.deepEqual((await alone()).plan.chapters.map((chapter) => chapter.rounds), rounds, "the same rounds as the engine alone writes");
@@ -289,6 +301,9 @@ test("S5: an error that ends the run puts its kind and detail in `lastError`, in
   const activity = failed(snapshot.activities).at(-1);
   assert.equal(activity.errorKind, "auth");
   assert.deepEqual(activity.errorDetail, detail);
+  assert.equal(snapshot.state.lastError.activityId, activity.id, "it says which step failed: the one of the log");
+  assert.equal(snapshot.summary.lastError.activityId, activity.id);
+  assert.equal(list[0].autopilot.lastError.activityId, activity.id);
   const event = autopilotEvents(messages).find((entry) => entry.type === "task-finished" && entry.activity.id === activity.id);
   assert.deepEqual([event.activity.errorKind, event.activity.errorDetail], [activity.errorKind, activity.errorDetail]);
   assert.match(snapshot.state.lastError.message, /HTTP 401/);

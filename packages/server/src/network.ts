@@ -47,12 +47,19 @@ export interface OutboundNetworkOptions {
   ca?: ConnectionOptions["ca"];
   /** How long a name may take to resolve when a proxy is going to resolve it as well (tests; default 3 seconds). */
   lookupTimeoutMs?: number;
+  /** How long a connection may take to be made, the tunnel through a proxy and its TLS handshake included (tests; default `DEFAULT_CONNECT_TIMEOUT_MS`). It limits the connection and nothing after it. */
+  connectTimeoutMs?: number;
 }
 
 /** Headers that say how a message is framed or where it goes: the guard writes them itself from the URL and the body. */
 const CALLER_CANNOT_SET = ["host", "content-length", "transfer-encoding", "connection", "keep-alive", "upgrade", "te", "trailer", "expect", "proxy-connection"];
-/** How long a connection may take to be established (the wait for an answer is not limited here). */
-const CONNECT_TIMEOUT_MS = 15_000;
+/**
+ * How long a connection may take to be established, in milliseconds. The wait for an answer is not limited here at all: a model that is slow to
+ * begin, or silent for minutes in the middle of a reply, is the AI client's to cut, with its own deadlines (the engine's "Timeouts and streaming":
+ * the start deadline, which the connection is part of, is never under 30 s). Node's own `fetch` has two limits of its own, 300 s each, that this one
+ * does not have: this is why the server's calls to AI providers are made with it.
+ */
+export const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 const PROXIED_LOOKUP_MS = 3_000;
 
 const isLoopbackHost = (hostname: string): boolean => hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
@@ -102,7 +109,7 @@ const decoded = (value: string): string => {
  * the proxy carries encrypted bytes and the origin's certificate is verified as it is without a proxy). Its failures say why in a few
  * words and never repeat an address or a credential.
  */
-function openTunnel(proxy: URL, url: URL, hostname: string, ca: ConnectionOptions["ca"], signal: AbortSignal | undefined): Promise<TLSSocket> {
+function openTunnel(proxy: URL, url: URL, hostname: string, ca: ConnectionOptions["ca"], signal: AbortSignal | undefined, connectTimeoutMs: number): Promise<TLSSocket> {
   return new Promise((accept, reject) => {
     if (signal?.aborted) {
       reject(new Error("aborted"));
@@ -129,7 +136,7 @@ function openTunnel(proxy: URL, url: URL, hostname: string, ca: ConnectionOption
     };
     const because = (error: unknown) => new Error((error as NodeJS.ErrnoException).code ?? "failed", { cause: error });
     const onAbort = () => finish(new Error("aborted"));
-    const timer = setTimeout(() => finish(new Error("it took too long")), CONNECT_TIMEOUT_MS);
+    const timer = setTimeout(() => finish(new Error("it took too long")), connectTimeoutMs);
     signal?.addEventListener("abort", onAbort, { once: true });
     const request = httpRequest({ host: proxy.hostname.replace(/^\[|\]$/g, ""), port: proxy.port || 80, method: "CONNECT", path: authority, headers, agent: false });
     parts.request = request;
@@ -187,10 +194,12 @@ async function bodyBytes(body: unknown): Promise<{ bytes?: Buffer; type?: string
  * Replace `fetch` inside the server process: only approved AI endpoints (plus GitHub and npm) are
  * reachable, DNS is resolved once and pinned in the connection (no DNS-rebinding race), private
  * addresses are refused except an approved loopback endpoint (a local model), redirects are never followed
- * (`redirect: "manual"` gets the 3xx answer itself, anything else is refused).
+ * (`redirect: "manual"` gets the 3xx answer itself, anything else is refused). Only the connection is limited in time
+ * (`connectTimeoutMs`); once it is up, an answer takes as long as the caller lets it take (the caller's `signal` ends it at once).
  */
 export function installOutboundNetwork(approvedBases: () => string[], options: OutboundNetworkOptions = {}): () => void {
   const original = globalThis.fetch;
+  const connectTimeoutMs = typeof options.connectTimeoutMs === "number" && options.connectTimeoutMs > 0 ? Math.min(options.connectTimeoutMs, 2_147_483_647) : DEFAULT_CONNECT_TIMEOUT_MS;
   const resolve = options.resolve ?? ((hostname: string) => dnsLookup(hostname, { all: true, verbatim: true }));
   /** The addresses of a name that a proxy will resolve as well: whatever this computer can learn in a moment, or nothing. */
   const resolveForProxy = async (hostname: string): Promise<ResolvedAddress[] | undefined> => {
@@ -255,7 +264,7 @@ export function installOutboundNetwork(approvedBases: () => string[], options: O
         ? {
           defaultPort: 443,
           createConnection: ((_options: unknown, callback: (failure: Error | null, socket?: Duplex) => void) => {
-            openTunnel(proxy, url, hostname, options.ca, signal).then((socket) => callback(null, socket), (failure: Error) => callback(failure));
+            openTunnel(proxy, url, hostname, options.ca, signal, connectTimeoutMs).then((socket) => callback(null, socket), (failure: Error) => callback(failure));
           }) as never,
         }
         : { lookup: pinnedLookup(addresses ?? []) as never, ...(url.protocol === "https:" && options.ca ? { ca: options.ca } : {}) };
@@ -263,7 +272,7 @@ export function installOutboundNetwork(approvedBases: () => string[], options: O
         method,
         headers: Object.fromEntries(headers),
         signal,
-        timeout: CONNECT_TIMEOUT_MS,
+        timeout: connectTimeoutMs,
         ...connection,
       }, (incoming) => {
         const responseHeaders = new Headers();
