@@ -1,5 +1,37 @@
 [
   {
+    "version": "0.91.0",
+    "date": "2026-11-22",
+    "en": {
+      "title": "A new AI Router with tables, thinking per task and \"Tools only\" for the autopilot",
+      "summary": "The AI Router is now a compact table per kind of task with filters, group editing and tabs for the primary and every fallback; each task and each fallback can have its own thinking level; the autopilot's agents answer only through their own tools; and the app says clearly when the AI configuration needs fixing.",
+      "changes": [
+        "The AI Router is redesigned: one compact table for text, one for speech, one for transcription and one for images, each with the endpoint, the model and, for text, the thinking level of every task, plus a short line on why each task is used.",
+        "Every table has tabs: Primary, Fallback 1, Fallback 2… and \"New tab\". A tab can be swapped with any other, moved or deleted, for the selected rows or for all of them, with Undo.",
+        "The text table has filters (Autopilot, Copilot and actions, Review, Research, a text filter and \"Only customized\") and group editing: select rows, then change the endpoint, the model and the thinking together, or only some of them, keeping the rest as it is.",
+        "Thinking per task and per fallback (Automatic, Low, Medium, High, Extra high), and a default thinking level for every AI integration. The Copilot, the autopilot, the director and the simulated readers send it. Each model can say how its level is sent (\"Thinking parameter\"): Muse Glimmer on llama.cpp gets it as chat_template_kwargs.reasoning_strength, and the app suggests it.",
+        "New switch \"Tools only for the autopilot\" at the top of the AI Router, on by default: the writer, the director, the simulated readers, the specialists and the summaries always answer by calling their own function; models without tool calls are skipped and a reply in plain text is refused instead of being read as JSON.",
+        "A new error \"The AI configuration needs fixing\", with links straight to AI Integrations and to the switch. A timeout says which limit ran out and how long it was; a rate limit says how long the provider asks to wait.",
+        "While a model answers a structured step, the band says \"The model is answering… (12 KB)\". The debug panel shows how each request was made: as a function call or with JSON in the message, streamed or not, with which thinking level, whether the function was called, which models were skipped and the time to the first byte.",
+        "Engine 0.1.8 also reads the model catalog of an endpoint (with limits and declared capabilities such as LlmProxy's /models/details) and probes a connection; the buttons that use them come in the next version. Personal server 0.1.8 shows \"Tools only\" and the routes in its AI status and waits up to 30 seconds to connect to a provider."
+      ]
+    },
+    "it": {
+      "title": "Un nuovo Router AI a tabelle, thinking per attività e «Solo tool» per l'autopilot",
+      "summary": "Il Router AI ora è una tabella compatta per tipo di attività con filtri, modifica di gruppo e schede per il primario e per ogni fallback; ogni attività e ogni fallback può avere il suo livello di thinking; gli agenti dell'autopilot rispondono solo con i propri strumenti; e l'app dice chiaramente quando la configurazione dell'AI va corretta.",
+      "changes": [
+        "Il Router AI è rinnovato: una tabella compatta per il testo, una per la sintesi vocale, una per la trascrizione e una per le immagini, ognuna con endpoint, modello e, per il testo, il livello di thinking di ogni attività, più una riga breve sul perché ogni attività è usata.",
+        "Ogni tabella ha le schede: Primario, Fallback 1, Fallback 2… e «Nuova scheda». Una scheda si può scambiare con qualsiasi altra, spostare o eliminare, per le righe selezionate o per tutte, con Annulla.",
+        "La tabella del testo ha i filtri (Autopilot, Copilot e azioni, Revisione, Ricerca, un filtro testuale e «Solo personalizzate») e la modifica di gruppo: selezioni le righe e cambi insieme endpoint, modello e thinking, o solo una parte, lasciando il resto com'è.",
+        "Thinking per attività e per fallback (Automatico, Low, Medium, High, Extra high) e un livello di thinking predefinito per ogni integrazione AI. Lo inviano il Copilot, l'autopilot, il direttore e i lettori simulati. Ogni modello può dire come gli si invia il livello («Parametro del thinking»): Muse Glimmer su llama.cpp lo riceve come chat_template_kwargs.reasoning_strength, e l'app lo suggerisce.",
+        "Nuovo interruttore «Solo tool per l'autopilot» in cima al Router AI, acceso di default: scrittore, direttore, lettori simulati, specialisti e riassunti rispondono sempre chiamando la propria funzione; i modelli senza tool call vengono saltati e una risposta in testo semplice viene rifiutata invece di essere letta come JSON.",
+        "Un nuovo errore «Configurazione dell'AI da correggere», con i collegamenti diretti a Integrazioni AI e all'interruttore. Un timeout dice quale limite è scaduto e quanto era; un limite di richieste dice quanto il provider chiede di aspettare.",
+        "Mentre un modello risponde a un passo strutturato, la banda dice «Il modello sta rispondendo… (12 KB)». Il pannello di debug mostra come è stata fatta ogni richiesta: come chiamata di funzione o con il JSON nel messaggio, in streaming o no, con quale livello di thinking, se la funzione è stata chiamata, quali modelli sono stati saltati e il tempo al primo byte.",
+        "Il motore 0.1.8 sa anche leggere il catalogo dei modelli di un endpoint (con limiti e capacità dichiarate, come /models/details di LlmProxy) e verificare una connessione; i pulsanti che li usano arrivano nella prossima versione. Il server personale 0.1.8 mostra «Solo tool» e le rotte nel suo stato AI e attende fino a 30 secondi per connettersi a un provider."
+      ]
+    }
+  },
+  {
     "version": "0.90.0",
     "date": "2026-11-22",
     "en": {
