@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.85.0",
+    "date": "2026-11-22",
+    "en": {
+      "title": "Easier to read: clearer fields, readable errors, no tiny text",
+      "summary": "Form fields, error messages, status labels and small texts are easier to read in both themes, the dark theme shows the edges of panels, and motion follows your system's reduced-motion setting.",
+      "changes": [
+        "Form fields, selects and switches now have clearly visible borders, in the light and in the dark theme.",
+        "Red error text, including the Autopilot Reset button, is readable in both themes. Status pills and small labels are easier to read, and no text is smaller than 12 px any more.",
+        "In the dark theme the Autopilot panel, menus, dialogs and cards have a visible edge instead of blending into the background.",
+        "If your system asks for reduced motion, spinners and animations stop (the \"Loading…\" text stays) and smooth scrolling is turned off.",
+        "Chapter rows on phones show the full title, with their labels on the next line."
+      ]
+    },
+    "it": {
+      "title": "Più leggibile: campi più chiari, errori leggibili, niente testi minuscoli",
+      "summary": "I campi dei moduli, i messaggi d'errore, le etichette di stato e i testi piccoli sono più leggibili in entrambi i temi, il tema scuro mostra i bordi dei pannelli e il movimento segue l'impostazione di movimento ridotto del tuo sistema.",
+      "changes": [
+        "I campi dei moduli, i menu a tendina e gli interruttori hanno bordi ben visibili, nel tema chiaro e in quello scuro.",
+        "Il testo rosso degli errori, incluso il pulsante Reset dell'Autopilot, si legge in entrambi i temi. Le pillole di stato e le etichette piccole sono più leggibili e nessun testo scende più sotto i 12 px.",
+        "Nel tema scuro il pannello Autopilot, i menu, le finestre e le card hanno un bordo visibile invece di confondersi con lo sfondo.",
+        "Se il sistema chiede meno movimento, spinner e animazioni si fermano (resta il testo «Caricamento…») e lo scorrimento fluido è spento.",
+        "Le righe dei capitoli su telefono mostrano il titolo per intero, con le etichette sulla riga sotto."
+      ]
+    }
+  },
+  {
     "version": "0.84.0",
     "date": "2026-11-22",
     "en": {
