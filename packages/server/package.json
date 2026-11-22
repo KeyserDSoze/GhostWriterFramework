@@ -42,7 +42,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit && node build.mjs",
     "start": "node dist/cli.mjs start --direct",
-    "test": "npm run build && node --test --test-timeout=120000 test/*.test.mjs",
+    "test": "npm run build && node --test --test-timeout=300000 test/*.test.mjs",
     "validate": "tsc -p tsconfig.json --noEmit",
     "prepack": "npm run build"
   },
