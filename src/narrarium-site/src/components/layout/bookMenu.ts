@@ -1,10 +1,10 @@
 import { BookOpen, BookOpenText, ClipboardCheck, Clapperboard, Download, Feather, Images, LayoutDashboard, ListTree, Plane, Search, ShieldAlert, SlidersHorizontal, Users, type LucideIcon } from "lucide-react";
 
 /**
- * The Outline (the plan of the chapters, a page of the book) comes with its own delivery: its entry is ready in the Book group and stays out of
- * the menu until its page exists. Turn this on together with the route of the page.
+ * The Outline (the plan of the chapters, a page of the book): its entry is in the Book group, after the Dashboard. `outlineReady: false` leaves it
+ * out, as the menu was before its page existed.
  */
-export const OUTLINE_PAGE_READY = false;
+export const OUTLINE_PAGE_READY = true;
 
 export type BookMenuGroupId = "book" | "autopilot" | "profiles" | "tools";
 

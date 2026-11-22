@@ -2461,6 +2461,11 @@ const it = {
         description: "Crea un personaggio, luogo, fazione, oggetto, segreto o evento della timeline.",
         output: "Nuovo file markdown di canone",
       },
+      "edit-outline": {
+        name: "Modifica la Scaletta",
+        description: "Propone modifiche alla Scaletta (descrizione del libro, voci dei capitoli, aggiunte, spostamenti, eliminazioni). Nulla è scritto finché non applichi.",
+        output: "Proposta per la Scaletta",
+      },
       "create-script": {
         name: "Crea script",
         description: "Crea uno script o uno spazio di lavoro scena per il capitolo o paragrafo corrente.",

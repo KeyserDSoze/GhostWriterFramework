@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useLocation } from "react-router-dom";
-import { BookOpen, ClipboardPaste, Copy, Image as ImageIcon, RefreshCcw, Save, Scissors, Search, Sparkles, TextCursorInput, Users, Wand2 } from "lucide-react";
+import { BookOpen, ClipboardPaste, Copy, Image as ImageIcon, RefreshCcw, Save, ScanSearch, Scissors, Search, Sparkles, TextCursorInput, Users, Wand2 } from "lucide-react";
 import { useClipboardStore } from "@/clipboard/clipboardStore";
 import { useProseEditorStore, type ProseEditorActions } from "@/components/editor/proseEditorStore";
 import { useContextualActions } from "@/hooks/useContextualActions";
@@ -445,10 +445,13 @@ export function GlobalContextMenu() {
               )}
               {menu.prose && (
                 <>
-                  <MenuItem icon={<Wand2 className="h-4 w-4" />} label={menu.selection ? t("ctx.improveSelection") : t("ctx.improveAll")} onClick={() => { menu.prose!.improve(menu.selection || null); close(); }} />
+                  <MenuItem icon={<Wand2 className="h-4 w-4" />} label={menu.selection ? t("ctx.improveSelection") : menu.prose.labels?.improveAll ?? t("ctx.improveAll")} onClick={() => { menu.prose!.improve(menu.selection || null); close(); }} />
                   {menu.prose.merge && <MenuItem icon={<Wand2 className="h-4 w-4" />} label={t("merge.button")} onClick={() => { menu.prose!.merge!(); close(); }} />}
-                  {menu.prose.summarize && <MenuItem icon={<Sparkles className="h-4 w-4" />} label={menu.selection ? t("ctx.summarySelection") : t("ctx.summaryAll")} onClick={() => { menu.prose!.summarize?.(menu.selection || null); close(); }} />}
+                  {menu.prose.summarize && <MenuItem icon={<Sparkles className="h-4 w-4" />} label={menu.selection ? t("ctx.summarySelection") : menu.prose.labels?.summaryAll ?? t("ctx.summaryAll")} onClick={() => { menu.prose!.summarize?.(menu.selection || null); close(); }} />}
                   {canSynonym && <MenuItem icon={<Sparkles className="h-4 w-4" />} label={t("ctx.synonym")} onClick={() => { menu.prose!.synonym(menu.selection); close(); }} />}
+                  {menu.prose.extra?.map((action) => (
+                    <MenuItem key={action.id} icon={action.icon === "check" ? <ScanSearch className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />} label={action.label} onClick={() => { action.run(menu.selection || null); close(); }} />
+                  ))}
                   <div className="my-1 h-px bg-border" />
                 </>
               )}
@@ -485,7 +488,7 @@ function MenuItem({ icon, label, shortcut, trailing, onClick, disabled }: { icon
       className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
     >
       <span className="shrink-0">{icon}</span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="line-clamp-2 min-w-0 flex-1 break-words" title={label}>{label}</span>
       {shortcut && <span className="ml-auto shrink-0 text-xs text-muted-foreground">({shortcut})</span>}
       {trailing && <span className="ml-auto shrink-0 text-xs text-muted-foreground">{trailing}</span>}
     </button>

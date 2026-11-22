@@ -14,12 +14,13 @@ import { useUiStore } from "@/store/uiStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { AutopilotFeed } from "@/components/autopilot/AutopilotFeed";
 import { useBandModel } from "@/components/autopilot/AutopilotControlBand";
-import { ProgressBars, StatusMessage, StatusPill, StepNow } from "@/components/autopilot/band/parts";
+import { FrozenChangesChip, ProgressBars, StatusMessage, StatusPill, StepNow } from "@/components/autopilot/band/parts";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
 import { isErrorKind } from "@/autopilot/errorModel";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
+import { questionHeading } from "@/autopilot/format";
 import { cn } from "@/lib/utils";
 
 /** The events the “Live” tab lists: the last ones, one line each. The page of the autopilot has all of them. */
@@ -173,6 +174,7 @@ function MiniPlayer({ bookId, announce, heading }: { bookId: string; announce: b
         {heading ?? <p className="min-w-0 flex-1 truncate text-sm font-semibold">{bookName ?? bookId}</p>}
         {view.loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden="true" />}
         {model ? <StatusPill status={model.status} /> : <span className="text-xs text-muted-foreground">{t("autopilot.notStarted")}</span>}
+        <FrozenChangesChip count={summary?.frozenChanges} />
       </div>
       {model && (model.running ? <StepNow bookId={bookId} compact announce={announce} /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null)}
       {model && <ProgressBars summary={model.summary} scenes={false} context={t("autopilot.dockTitle")} />}
@@ -184,7 +186,7 @@ function MiniPlayer({ bookId, announce, heading }: { bookId: string; announce: b
       {summary?.question && (
         <Link to={pageHref} className="flex items-start gap-1.5 rounded-md bg-amber-500/10 p-2 text-xs text-amber-800 hover:bg-amber-500/20 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span><span className="font-medium">{t("autopilot.question.title")}:</span> {summary.question.question}</span>
+          <span><span className="font-medium">{questionHeading(t, summary.question)}:</span> {summary.question.question}</span>
         </Link>
       )}
       <QuickCommands bookId={bookId} variant="dock" heading={null} profileHintId={profileHintId} />

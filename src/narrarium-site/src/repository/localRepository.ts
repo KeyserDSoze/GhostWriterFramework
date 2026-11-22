@@ -1540,6 +1540,44 @@ export async function getLocalFile(repoIdValue: string, path: string, scope: Rep
   return file && file.status !== "deleted" ? file : null;
 }
 
+/**
+ * The files of one folder of the working copy (`prefix` ends with `/`), with their content, read by their key range: a page that needs one folder
+ * of a big book (the outline) does not read every file of it. Deleted files are left out.
+ */
+export async function listLocalFilesUnder(repoIdValue: string, prefix: string, scope: RepositoryOperationScope): Promise<LocalRepositoryFile[]> {
+  const db = await openDb();
+  return new Promise<LocalRepositoryFile[]>((resolve, reject) => {
+    const tx = db.transaction(["repositories", "files"], "readonly");
+    const repositoryRequest = tx.objectStore("repositories").get(repoIdValue);
+    const filesRequest = tx.objectStore("files").getAll(IDBKeyRange.bound(fileKey(repoIdValue, prefix), `${fileKey(repoIdValue, prefix)}\uffff`));
+    let repository: LocalRepositoryMeta | undefined;
+    let files: LocalRepositoryFile[] = [];
+    let loaded = 0;
+    let validationError: Error | null = null;
+    const complete = () => {
+      loaded += 1;
+      if (loaded !== 2) return;
+      try {
+        validateRepositoryOperation(repository, scope);
+      } catch (error) {
+        validationError = error as Error;
+        tx.abort();
+      }
+    };
+    repositoryRequest.onsuccess = () => { repository = repositoryRequest.result as LocalRepositoryMeta | undefined; complete(); };
+    filesRequest.onsuccess = () => { files = filesRequest.result as LocalRepositoryFile[]; complete(); };
+    repositoryRequest.onerror = filesRequest.onerror = () => tx.abort();
+    tx.oncomplete = () => {
+      try {
+        assertRepositoryOperationScopeCurrent(scope);
+        resolve(files.filter((file) => file.status !== "deleted" && file.path.startsWith(prefix)).sort((a, b) => a.path.localeCompare(b.path)));
+      } catch (error) { reject(error); }
+    };
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local folder read was aborted."));
+  });
+}
+
 export async function putCleanLocalFile(input: {
   repoId: string;
   path: string;

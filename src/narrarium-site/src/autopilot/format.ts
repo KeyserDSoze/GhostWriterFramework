@@ -1,5 +1,5 @@
 import i18next, { type TFunction } from "i18next";
-import type { AutopilotActivity, AutopilotEvent, AutopilotStateSummary, AutopilotStatus, AutopilotTaskKind, InsightTone } from "narrarium-engine";
+import type { AutopilotActivity, AutopilotEvent, AutopilotStateSummary, AutopilotStatus, AutopilotTaskKind, DirectorQuestion, InsightTone } from "narrarium-engine";
 import type { BookSyncStatus } from "@/autopilot/store";
 
 export type FeedTone = InsightTone;
@@ -155,10 +155,32 @@ function retryText(t: TFunction, event: Extract<Notice, { type: "insight" }>): s
   return t(key, { context: waitMs === 0 ? "larger" : "once", defaultValue: event.title });
 }
 
+/**
+ * The insights about the outline and the frozen chapters say which chapter they are about: without the number (an older event) the engine's own
+ * words stay. A review of a change that found no scene left (a warning) is said apart from one carried out.
+ */
+const CHAPTER_CODES = new Set([
+  "outlineGhostwriter", "outlineChanged", "outlineRemoved", "outlineWrittenChanged", "outlineWarnings", "outlineWrittenAuto",
+  "frozenChanged", "frozenAuto", "frozenReviewed", "frozenCleared", "frozenInvalid",
+]);
+
+function chapterText(t: TFunction, event: Extract<Notice, { type: "insight" }>): string {
+  if (typeof event.chapterNumber !== "number" || (event.code === "outlineGhostwriter" && !event.ghostwriter)) return event.title;
+  const context = event.code === "frozenReviewed" && event.tone === "warning" ? { context: "empty" } : {};
+  return t(`autopilot.insight.${event.code}`, { number: event.chapterNumber, ghostwriter: event.ghostwriter ?? "", ...context, defaultValue: event.title });
+}
+
 function noticeText(t: TFunction, event: Notice): string {
   if (!event.code) return event.title;
   if (event.type === "insight" && event.code === "failureRetry") return retryText(t, event);
+  if (CHAPTER_CODES.has(event.code)) return event.type === "insight" ? chapterText(t, event) : event.title;
   return t(`autopilot.insight.${event.code}`, { defaultValue: event.title });
+}
+
+/** The heading of a question: the director's, or what a question about a change says it is about (a frozen chapter, the outline of a written one). */
+export function questionHeading(t: TFunction, question: Pick<DirectorQuestion, "kind">): string {
+  const key = `autopilot.question.kinds.${question.kind}`;
+  return i18next.exists(key) ? t(key) : t("autopilot.question.title");
 }
 
 /** How an autopilot event reads in the feed, in the UI language where the engine gives a code. */

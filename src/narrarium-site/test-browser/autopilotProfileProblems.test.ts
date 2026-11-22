@@ -133,8 +133,8 @@ describe("which pages correct the files a message names", () => {
   });
 
   it("offers every page when the message names none it recognises: the author is never left without a way to the files", () => {
-    expect(profilePagesFor(["Something a newer engine says."])).toEqual(["director", "ghostwriters", "readers"]);
-    expect(profilePagesFor([])).toEqual(["director", "ghostwriters", "readers"]);
+    expect(profilePagesFor(["Something a newer engine says."])).toEqual(["director", "ghostwriters", "readers", "evaluationStyle"]);
+    expect(profilePagesFor([])).toEqual(["director", "ghostwriters", "readers", "evaluationStyle"]);
   });
 
   it("finds the files in what the engine really says", async () => {

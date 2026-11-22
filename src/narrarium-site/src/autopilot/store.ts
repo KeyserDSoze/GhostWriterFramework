@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AutopilotActivity, AutopilotEvent, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, InterventionInput, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
+import type { AutopilotActivity, AutopilotEvent, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, FrozenAction, FrozenChangeKind, InterventionInput, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
 import type { HandoverPlan, HandoverSide } from "@/autopilot/handover";
 import type { BookOperation } from "@/autopilot/operations";
 import type { PersonalServerSettings } from "@/types/settings";
@@ -268,7 +268,9 @@ export type RelayedCommand =
   | { type: "pause"; mode: "now" | "after-step" | "after-chapter" }
   | { type: "cancel-pause" }
   | { type: "update-options"; options: AutopilotLiveOptions }
-  | { type: "intervene"; input: InterventionInput };
+  | { type: "intervene"; input: InterventionInput }
+  | { type: "resolve-frozen"; number: number; action: FrozenAction; options?: { kind?: FrozenChangeKind; note?: string } }
+  | { type: "set-frozen"; slug: string; frozen: boolean };
 
 /** What the tab that holds the live connection tells the others about it. */
 export type SharedServerState = Pick<ServerConnectionState, "status" | "info" | "message" | "books" | "updates">;

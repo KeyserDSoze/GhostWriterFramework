@@ -13,6 +13,8 @@ import { autopilotLiveHref } from "@/autopilot/pageRoute";
 import { QUICK_CONTROLS_SERVER_VERSION, serverHasQuickControls } from "@/autopilot/quickControls";
 import { serverEditsRules } from "@/autopilot/rules";
 import { useServerConnection } from "@/autopilot/serverConnection";
+import { serverHasFrozenChapters } from "@/autopilot/frozenChapters";
+import { questionHeading } from "@/autopilot/format";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -57,6 +59,8 @@ export function AutopilotSettingsPage() {
   const rulesReadOnly = host === "server" && Boolean(server.info) && !serverEditsRules(server.info);
   // One older than the quick controls cannot change any setting during a run.
   const liveUnsupported = running && host === "server" && Boolean(server.info) && !serverHasQuickControls(server.info);
+  // One older than the frozen chapters does not know what to do with a changed one, and refuses the setting.
+  const frozenUnsupported = host === "server" && Boolean(server.info) && !serverHasFrozenChapters(server.info);
   const asking = Boolean(summary?.question);
 
   return (
@@ -82,7 +86,7 @@ export function AutopilotSettingsPage() {
           <Alert role="note">
             <CircleHelp className="h-4 w-4" aria-hidden="true" />
             <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-              <span>{t("autopilot.question.title")}</span>
+              <span>{questionHeading(t, summary!.question!)}</span>
               <Button asChild size="sm" variant="outline"><Link to={{ pathname: liveHref, hash: "autopilot-question" }}>{t("autopilot.quick.run.answer")}</Link></Button>
             </AlertDescription>
           </Alert>
@@ -123,6 +127,7 @@ export function AutopilotSettingsPage() {
           disabled={state ? false : noAi || !canRefresh}
           asking={asking}
           liveUnsupported={liveUnsupported}
+          frozenUnsupported={frozenUnsupported}
           run={run}
           onStarted={() => navigate(liveHref)}
         >

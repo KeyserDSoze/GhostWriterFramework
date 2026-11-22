@@ -28,6 +28,7 @@ import { readTokenHealth, tokenExpirationWarning, type TokenHealth } from "@/rep
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { defaultPublishRepositoryName } from "@/narrarium/bookScaffold";
 import { useConnectionStore } from "@/account/connectionStore";
+import { McpServerSection } from "@/components/book/McpServerSection";
 
 type TokenMode = "default" | "custom" | string;
 
@@ -420,6 +421,8 @@ export function BookSettingsPage() {
           {t("settings.save")}
         </Button>
       </div>
+
+      <McpServerSection book={currentBook} />
     </div>
   );
 }

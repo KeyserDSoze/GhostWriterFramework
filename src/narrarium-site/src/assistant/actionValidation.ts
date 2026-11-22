@@ -34,11 +34,32 @@ function safePath(path: unknown): path is string {
   return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.split("/").includes("..") && !path.includes("\\");
 }
 
+/** The files of the outline (the Scaletta): its description and its entries. */
+export const OUTLINE_FILE = /^outline\/(?:book\.md|chapters\/\d+\.md)$/;
+/** Files a proposal may change. An edit of the outline moves entries (inserting one shifts the ones after it), so it may touch more of them. */
+const MAX_FILE_UPDATES = 8;
+const MAX_OUTLINE_UPDATES = 100;
+
+function outlineUpdates(updates: unknown[]): boolean {
+  return updates.every((update) => Boolean(update) && typeof update === "object" && typeof (update as { path?: unknown }).path === "string" && OUTLINE_FILE.test((update as { path: string }).path));
+}
+
+/**
+ * A proposal made only of files of the outline: it may delete entries (`content: null`) and touch up to 100 of them, and it is applied whole,
+ * because moving an entry rewrites the ones it passes (applying one file of it would leave two entries with one text).
+ */
+export function isOutlineProposal(action: AssistantAction): boolean {
+  return (action.kind === "apply-file-updates" || action.kind === "undo-file-updates") && Array.isArray(action.updates) && action.updates.length > 0 && outlineUpdates(action.updates);
+}
+
 function validUpdates(updates: unknown): boolean {
-  return Array.isArray(updates) && updates.length > 0 && updates.length <= 8 && updates.every((update) => (
+  if (!Array.isArray(updates) || updates.length === 0) return false;
+  const outline = outlineUpdates(updates);
+  if (updates.length > (outline ? MAX_OUTLINE_UPDATES : MAX_FILE_UPDATES)) return false;
+  return updates.every((update) => (
     update && typeof update === "object"
     && safePath((update as { path?: unknown }).path)
-    && typeof (update as { content?: unknown }).content === "string"
+    && (typeof (update as { content?: unknown }).content === "string" || (outline && (update as { content?: unknown }).content === null))
   ));
 }
 

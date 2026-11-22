@@ -14,6 +14,8 @@ import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAle
 import { resolveBookToken } from "@/types/settings";
 import { createFile, isGitHubFileNotFoundError, readFileWithSha, updateFile } from "@/github/githubClient";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
+import { FrozenChangeNotice, FrozenChapterBar } from "@/components/frozen/FrozenChapter";
+import { useFrozenChapter } from "@/components/frozen/useFrozenChapter";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useProseAssist } from "@/components/editor/useProseAssist";
 import { useMergeDraftFinal } from "@/components/editor/useMergeDraftFinal";
@@ -72,6 +74,8 @@ export function ParagraphSplitPage() {
 
   const [draft, setDraft] = useState<PaneState>(EMPTY_PANE);
   const [final, setFinal] = useState<PaneState>(EMPTY_PANE);
+  // The chapter's freeze: read again when the final text of this scene is saved.
+  const frozen = useFrozenChapter({ book, branch, chapter, version: final.sha });
   const loadedRef = useRef<string>("");
 
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
@@ -248,6 +252,8 @@ export function ParagraphSplitPage() {
         </div>
       </div>
 
+      <FrozenChapterBar frozen={frozen} />
+
       {/* Desktop-only split. Panes flow with the page (no inner scroll) and grow with content. */}
       <div className="hidden grid-cols-[minmax(0,1fr)_2rem_minmax(0,1fr)] items-start gap-2 lg:grid">
         <Pane
@@ -296,6 +302,8 @@ export function ParagraphSplitPage() {
         <Button type="button" variant="outline" onClick={swapDraftFinal} disabled={draft.loading || final.loading || draft.saving || final.saving}><ArrowLeftRight className="mr-2 h-4 w-4" />{t("paragraph.swapDraftFinal")}</Button>
         <Pane title={t("stageIndex.final")} loading={final.loading} body={final.body} onChange={(v) => setFinal((s) => ({ ...s, body: v }))} dirty={finalDirty} saving={final.saving} onSave={() => void saveFinal()} textareaRef={finalRef} placeholder={t("paragraph.writePlaceholder")} />
       </div>
+
+      <FrozenChangeNotice frozen={frozen} />
 
       {draftAssist.dialogs}
       {finalAssist.dialogs}

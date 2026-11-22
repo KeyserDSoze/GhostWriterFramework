@@ -29,6 +29,8 @@ import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAle
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { synonymsFor, stripFrontmatter, type PipelineSource } from "@/narrarium/pipeline";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
+import { FrozenChangeNotice, FrozenChapterBar } from "@/components/frozen/FrozenChapter";
+import { useFrozenChapter } from "@/components/frozen/useFrozenChapter";
 import { useProseAssist } from "@/components/editor/useProseAssist";
 import { useMergeDraftFinal } from "@/components/editor/useMergeDraftFinal";
 import { useRegisterPageSave } from "@/store/saveStore";
@@ -169,6 +171,8 @@ export function ParagraphPage() {
   const [entries, setEntries] = useState<MetaEntry[]>([]);
   const [body, setBody] = useState("");
   const [sha, setSha] = useState("");
+  // The chapter's freeze: read again when this scene is saved.
+  const frozen = useFrozenChapter({ book, branch, chapter, version: sha });
 
   // Snapshots for dirty detection
   const [savedEntries, setSavedEntries] = useState<MetaEntry[]>([]);
@@ -819,6 +823,8 @@ export function ParagraphPage() {
         )}
       </div>}
 
+      <FrozenChapterBar frozen={frozen} />
+
       {viewMode === "reader" ? (
         <article
           className="reader-prose rounded-2xl border border-layer bg-card px-6 py-8 shadow-sm sm:px-10 sm:py-12"
@@ -856,6 +862,8 @@ export function ParagraphPage() {
           aria-label={t("paragraph.writePlaceholder")}
         />
       )}
+
+      <FrozenChangeNotice frozen={frozen} />
 
       <p className="text-xs text-muted-foreground truncate">{paragraph.path}</p>
 

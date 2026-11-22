@@ -14,9 +14,9 @@ const BOOK: BookEntry = { id: "book-1", owner: "local", repo: "book-1", name: "T
 const ROOT = "/app/books/book-1";
 const t = (key: string) => i18n.t(key) as string;
 
-/** The groups the owner chose, in his order, with the address of every entry (the Outline waits for its page). */
+/** The groups the owner chose, in his order, with the address of every entry (the Outline after the Dashboard). */
 const GROUPS: Array<[string, string[]]> = [
-  ["nav.groupBook", [ROOT, `${ROOT}/dashboard`, `${ROOT}/reader`, `${ROOT}/export`]],
+  ["nav.groupBook", [ROOT, `${ROOT}/dashboard`, `${ROOT}/outline`, `${ROOT}/reader`, `${ROOT}/export`]],
   ["autopilot.title", [`${ROOT}/autopilot`, `${ROOT}/autopilot/settings`]],
   ["nav.groupProfiles", [`${ROOT}/director`, `${ROOT}/ghostwriters`, `${ROOT}/evaluation-style`, `${ROOT}/simulated-readers`]],
   ["nav.groupTools", [`${ROOT}/audit`, `${ROOT}/research`, `${ROOT}/assets`]],
@@ -152,7 +152,7 @@ describe.each<Menu>(["desktop", "mobile"])("the menu of a book (%s)", (menu) => 
     open(menu, ROOT, "it");
     expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent?.trim())).toEqual(["Libro", "Autopilot", "Profili", "Strumenti"]);
     const names = (key: string) => within(group(key)).getAllByRole("link").map((link) => link.textContent?.trim());
-    expect(names("nav.groupBook")).toEqual(["Panoramica", "Dashboard", "Reader", "Esporta"]);
+    expect(names("nav.groupBook")).toEqual(["Panoramica", "Dashboard", "Scaletta", "Reader", "Esporta"]);
     expect(names("autopilot.title")).toEqual(["In diretta", "Configurazione"]);
     expect(names("nav.groupProfiles")).toEqual(["Direttore", "Ghostwriter", "Stile di valutazione", "Lettori simulati"]);
     expect(names("nav.groupTools")).toEqual(["Audit", "Ricerche", "Asset"]);
@@ -160,25 +160,26 @@ describe.each<Menu>(["desktop", "mobile"])("the menu of a book (%s)", (menu) => 
   });
 });
 
-describe("the Outline (another delivery makes its page)", () => {
-  it("is not in the menu while its page is not ready", () => {
-    expect(OUTLINE_PAGE_READY).toBe(false);
+describe("the Outline", () => {
+  it("is in the Book group, after the Dashboard, now that its page exists", () => {
+    expect(OUTLINE_PAGE_READY).toBe(true);
     open("desktop", ROOT);
-    expect(allHrefs()).not.toContain(`${ROOT}/outline`);
-  });
-
-  it("is ready to appear in the Book group, after the Dashboard, when its page is", () => {
-    const groups = bookMenuGroups("book-1", { outlineReady: true });
-    const book = groups.find((entry) => entry.id === "book");
+    expect(within(group("nav.groupBook")).getByRole("link", { name: t("nav.outline") })).toHaveAttribute("href", `${ROOT}/outline`);
+    const book = bookMenuGroups("book-1").find((entry) => entry.id === "book");
     expect(book?.items.map((item) => item.href)).toEqual([ROOT, `${ROOT}/dashboard`, `${ROOT}/outline`, `${ROOT}/reader`, `${ROOT}/export`]);
     expect(book?.items[2].labelKey).toBe("nav.outline");
     expect([i18n.getFixedT("en")("nav.outline"), i18n.getFixedT("it")("nav.outline")]).toEqual(["Outline", "Scaletta"]);
   });
 
-  it("leaves the groups as they are without it", () => {
+  it("opens its group, and is the current entry, on its page", () => {
+    open("desktop", `${ROOT}/outline`);
+    expect(within(group("nav.groupBook")).getByRole("link", { name: t("nav.outline") })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("leaves the groups as they were without it", () => {
     const groups = bookMenuGroups("book-1", { outlineReady: false });
     expect(groups.map((entry) => entry.id)).toEqual(["book", "autopilot", "profiles", "tools"]);
-    expect(groups.flatMap((entry) => entry.items.map((item) => item.href))).toEqual(GROUPS.flatMap(([, entries]) => entries));
+    expect(groups.flatMap((entry) => entry.items.map((item) => item.href))).toEqual(GROUPS.flatMap(([, entries]) => entries).filter((href) => href !== `${ROOT}/outline`));
   });
 });
 

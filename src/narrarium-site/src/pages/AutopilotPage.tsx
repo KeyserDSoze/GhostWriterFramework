@@ -25,14 +25,12 @@ import {
   type AutopilotActivity,
   type AutopilotPlan,
   type AutopilotState,
-  type DirectorQuestion,
   type InterventionScope,
 } from "narrarium-engine";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
@@ -41,9 +39,12 @@ import { AutopilotTimeline } from "@/components/autopilot/AutopilotTimeline";
 import { AutopilotBandDetails, AutopilotControlBand } from "@/components/autopilot/AutopilotControlBand";
 import { Card } from "@/components/autopilot/Card";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
-import { PlanChapters } from "@/components/autopilot/PlanChapters";
+import { PlanChapters, RemovedChapters, useGhostwriterName } from "@/components/autopilot/PlanChapters";
 import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice } from "@/components/autopilot/StopNotices";
+import { QuestionCard } from "@/components/autopilot/QuestionCard";
+import { PendingReviews } from "@/components/autopilot/PendingReviews";
+import { loadAutopilotRuntime } from "@/autopilot/loader";
 import { ErrorPanel } from "@/components/autopilot/ErrorPanel";
 import { SyncConflicts } from "@/components/autopilot/SyncConflicts";
 import { SyncSkipped } from "@/components/autopilot/SyncSkipped";
@@ -117,9 +118,21 @@ export function AutopilotPage() {
   // The title of a chapter is looked up when a group asks for it: a plan has no maximum number of chapters, and the timeline shows a few.
   const planChapters = state?.plan?.chapters;
   const chapterTitle = useCallback((number: number) => planChapters?.find((chapter) => chapter.number === number)?.title, [planChapters]);
+  // The ghostwriter the outline gives a chapter, when it is not the book's (engine 0.1.8).
+  const ghostwriterName = useGhostwriterName(bookId ?? "");
+  const chapterGhostwriter = useCallback((number: number) => {
+    const slug = planChapters?.find((chapter) => chapter.number === number)?.ghostwriter;
+    return slug ? ghostwriterName(slug) : undefined;
+  }, [planChapters, ghostwriterName]);
   // The rounds of review the plan recorded (engine 0.1.6) and the verdict on the whole book: the history numbers and scores its rounds by them, and by the log for a state that has none.
   const chapterRounds = useCallback((number: number) => planChapters?.find((chapter) => chapter.number === number)?.rounds, [planChapters]);
   const finalReview = useMemo(() => finalReviewOf(summary, state), [summary, state]);
+  // How many frozen chapters changed is counted by a run before every step: a book that does not run is asked once when its page opens.
+  const hasState = Boolean(state);
+  useEffect(() => {
+    if (!bookId || !hasState || running) return;
+    void loadAutopilotRuntime().then((runtime) => runtime.frozenStatus(bookId)).catch(() => undefined);
+  }, [bookId, hasState, running]);
 
   // How wide the page has: two columns when it is wide, tabs when it is not, and on a phone a short band with the actions in a bar at the bottom.
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
@@ -171,6 +184,7 @@ export function AutopilotPage() {
   const alerts = (
     <div data-autopilot-alerts className="space-y-3 empty:hidden">
       {summary?.question && <QuestionCard bookId={bookId} question={summary.question} disabled={busy !== null || running} run={run} />}
+      <PendingReviews reviews={state?.pendingReviews} running={running} />
       <ErrorPanel bookId={bookId} />
       {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} hintId={PROFILE_HINT_ID} />}
       {awaitingPlan && <Alert><AlertDescription>{t("autopilot.plan.awaiting")}</AlertDescription></Alert>}
@@ -195,7 +209,7 @@ export function AutopilotPage() {
   );
 
   const result = <AutopilotResult bookId={bookId} linkedSlugs={linkedChapters} wide={layout === "wide"} />;
-  const timeline = <AutopilotTimeline bookId={bookId} loading={!loaded} activities={activities} chapterTitle={chapterTitle} chapterRounds={chapterRounds} finalReview={finalReview} currency={summary?.stats.currency ?? settings.costCurrency} />;
+  const timeline = <AutopilotTimeline bookId={bookId} loading={!loaded} activities={activities} chapterTitle={chapterTitle} chapterGhostwriter={chapterGhostwriter} chapterRounds={chapterRounds} finalReview={finalReview} currency={summary?.stats.currency ?? settings.costCurrency} />;
   const plan = state ? <PlanCard bookId={bookId} plan={state.plan} reviewNumber={state.review?.chapterNumber} linkedSlugs={linkedChapters} /> : null;
   const rules = state ? <RulesCard state={state} editHref={`${settingsHref}#autopilot-rules`} /> : null;
   const where = <WhereCard book={book} running={running} quiet />;
@@ -299,35 +313,6 @@ function BottomBar({ children }: { children: ReactNode }) {
   return <div ref={bar} data-autopilot-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-layer bg-card px-3 py-2 shadow-lg">{children}</div>;
 }
 
-function QuestionCard({ bookId, question, disabled, run }: { bookId: string; question: DirectorQuestion; disabled: boolean; run: RunAction }) {
-  const { t } = useTranslation();
-  const [answer, setAnswer] = useState("");
-  const send = (text: string, accept: boolean) => void run("answer", async (runtime, id) => {
-    await runtime.answer(id, { questionId: question.id, answer: text, accept });
-    await runtime.start(id);
-  });
-  return (
-    <section id="autopilot-question" tabIndex={-1} aria-labelledby="autopilot-question-title" className="space-y-3 rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-5" aria-live="polite">
-      <h2 id="autopilot-question-title" className="flex items-center gap-2 text-base font-semibold"><Clapperboard className="h-4 w-4 text-amber-700 dark:text-amber-600" />{t("autopilot.question.title")}</h2>
-      <p className="whitespace-pre-wrap text-sm font-medium">{question.question}</p>
-      {question.context && <p className="whitespace-pre-wrap text-xs text-muted-foreground">{question.context}</p>}
-      {question.options.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {question.options.map((option) => <Button key={option} size="sm" variant="outline" disabled={disabled} onClick={() => send(option, false)}>{option}</Button>)}
-        </div>
-      )}
-      <div className="space-y-1.5">
-        <Label htmlFor={`answer-${bookId}`}>{t("autopilot.question.answer")}</Label>
-        <AutoTextarea id={`answer-${bookId}`} value={answer} onChange={(event) => setAnswer(event.target.value)} minRows={2} className="text-sm" disabled={disabled} />
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button disabled={disabled || !answer.trim()} onClick={() => send(answer.trim(), false)}><Play className="h-4 w-4" />{t("autopilot.question.send")}</Button>
-        <Button variant="outline" disabled={disabled} onClick={() => send("", true)}>{t("autopilot.question.accept")}</Button>
-      </div>
-    </section>
-  );
-}
-
 /** The chapters of the plan. That the plan waits for the author is said once, under the band, and not here. */
 export const PlanCard = memo(function PlanCard({ bookId, plan, reviewNumber, linkedSlugs }: { bookId: string; plan: AutopilotPlan | null; reviewNumber: number | undefined; linkedSlugs: ReadonlySet<string> }) {
   const { t } = useTranslation();
@@ -338,6 +323,7 @@ export const PlanCard = memo(function PlanCard({ bookId, plan, reviewNumber, lin
       ) : (
         <PlanChapters key={bookId} bookId={bookId} chapters={plan.chapters} linkedSlugs={linkedSlugs} reviewNumber={reviewNumber} />
       )}
+      <RemovedChapters bookId={bookId} numbers={plan?.removedChapters} />
       {plan && plan.readerReactions.length > 0 && (
         <details className="rounded-lg border p-2 text-sm">
           <summary className="cursor-pointer text-xs font-medium text-muted-foreground">{t("autopilot.plan.readers")}</summary>

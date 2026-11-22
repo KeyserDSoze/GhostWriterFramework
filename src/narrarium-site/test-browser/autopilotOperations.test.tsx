@@ -265,7 +265,7 @@ describe("between the tabs of one browser", () => {
 });
 
 describe("the texts of the operations", () => {
-  const KINDS = ["start", "answer", "configure", "reset", "intervene", "moveToServer", "moveToBrowser", "sync"];
+  const KINDS = ["start", "answer", "configure", "reset", "intervene", "moveToServer", "moveToBrowser", "sync", "frozen"];
 
   it.each(["en", "it"])("has, in %s, a line to show for each operation and an explanation for each refusal", (lng) => {
     for (const kind of KINDS) {

@@ -1,9 +1,12 @@
 import type { AutopilotStateSummary } from "narrarium-engine";
 
-/** The pages of a book that correct the profile files the autopilot reads, in the order the author meets them. */
-export type ProfilePage = "director" | "ghostwriters" | "readers";
+/** The pages of a book that correct the profile files the autopilot reads, in the order the author meets them (the evaluation style is `evaluation-guidelines.md`). */
+export type ProfilePage = "director" | "ghostwriters" | "readers" | "evaluationStyle";
 
-export const PROFILE_PAGES: readonly ProfilePage[] = ["director", "ghostwriters", "readers"];
+export const PROFILE_PAGES: readonly ProfilePage[] = ["director", "ghostwriters", "readers", "evaluationStyle"];
+
+/** The profile files whose problems stop a run: each line of the engine begins with one of them. */
+const PROFILE_FILE = String.raw`(?:director\.md|evaluation-guidelines\.md|(?:ghostwriters|personas)\/[^\s:]+\.md)`;
 
 /**
  * A run that waits for the author without a question to answer: the engine stops this way when a profile file (the director,
@@ -17,7 +20,7 @@ export function isProfileProblemStop(summary: Pick<AutopilotStateSummary, "statu
 /** The engine joins the problems of its message with this, after a heading, and says how many more there are in brackets. */
 const SEPARATOR = " · ";
 /** Where the first problem starts: every problem begins with the file it is about. */
-const FIRST_PROBLEM = /(?:director\.md|(?:ghostwriters|personas)\/[^\s:]+\.md):\s/;
+const FIRST_PROBLEM = new RegExp(`${PROFILE_FILE}:\\s`);
 /** The engine's own heading, in the two languages it writes in: the page has its own. */
 const ENGINE_HEADING = /^(?:Correct (?:this profile|these profiles) before resuming|Correggi (?:il profilo|i profili) prima di riprendere):/;
 /** "(and 4 more)" and "(e altri 4)": the problems the message does not list. */
@@ -50,7 +53,7 @@ export function problemLines(message: string | null | undefined): string[] {
 
 /** Whether a line is a problem of the engine (always English, naming a file) and not a sentence of the book's language. */
 export function isProblemLine(line: string): boolean {
-  return /^(?:director\.md|(?:ghostwriters|personas)\/[^\s:]+\.md):\s/.test(line);
+  return new RegExp(`^${PROFILE_FILE}:\\s`).test(line);
 }
 
 /**
@@ -63,6 +66,7 @@ export function profilePagesFor(lines: readonly string[]): ProfilePage[] {
     if (/^director\.md\b/.test(line)) found.add("director");
     else if (/^ghostwriters\//.test(line)) found.add("ghostwriters");
     else if (/^personas\//.test(line)) found.add("readers");
+    else if (/^evaluation-guidelines\.md\b/.test(line)) found.add("evaluationStyle");
   }
   return found.size ? PROFILE_PAGES.filter((page) => found.has(page)) : [...PROFILE_PAGES];
 }
@@ -70,6 +74,7 @@ export function profilePagesFor(lines: readonly string[]): ProfilePage[] {
 export function profilePageRoute(bookId: string, page: ProfilePage): string {
   const root = `/app/books/${encodeURIComponent(bookId)}`;
   if (page === "director") return `${root}/director`;
+  if (page === "evaluationStyle") return `${root}/evaluation-style`;
   return page === "ghostwriters" ? `${root}/ghostwriters` : `${root}/simulated-readers`;
 }
 
@@ -85,9 +90,12 @@ export function bookFileRoute(bookId: string, path: string | null | undefined): 
   const encode = encodeURIComponent;
   if (path === "book.md") return root;
   if (path === "director.md") return `${root}/director`;
+  if (path === "evaluation-guidelines.md") return `${root}/evaluation-style`;
+  if (path === "outline/book.md") return `${root}/outline`;
   if (/^ghostwriters\/[^/]+\.md$/.test(path)) return `${root}/ghostwriters`;
   if (/^personas\/[^/]+\.md$/.test(path)) return `${root}/simulated-readers`;
   let match: RegExpExecArray | null;
+  if ((match = /^outline\/chapters\/(\d+)\.md$/.exec(path)) && Number(match[1]) > 0) return `${root}/outline#outline-chapter-${Number(match[1])}`;
   if ((match = /^(characters|locations|factions|items|secrets)\/([^/]+)\.md$/.exec(path))) return `${root}/canon/${match[1]}/${encode(match[2])}`;
   if ((match = /^timelines\/events\/([^/]+)\.md$/.exec(path))) return `${root}/canon/timelines/${encode(match[1])}`;
   if ((match = /^chapters\/([^/]+)\/chapter\.md$/.exec(path))) return `${root}/chapters/${encode(match[1])}`;

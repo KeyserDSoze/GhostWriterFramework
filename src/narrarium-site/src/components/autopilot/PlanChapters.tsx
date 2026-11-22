@@ -1,11 +1,12 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, PenLine } from "lucide-react";
 import type { PlannedChapter } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { formatCount } from "@/autopilot/format";
 import { PLAN_FULL_LIST_LIMIT, PLAN_REVEAL_STEP, chapterInProgress, countRun, mergeRanges, nextReveal, planSegments, type PlanRange, type RunCounts } from "@/autopilot/planWindow";
+import { useBooksStore } from "@/store/booksStore";
 import { cn } from "@/lib/utils";
 
 /** Width of the chapter number: as many digits as the highest number needs, so the titles line up. */
@@ -25,10 +26,12 @@ interface RowProps {
   current: boolean;
   /** Long plans build the scenes of a chapter only once it is opened. */
   lazy: boolean;
+  /** The name of the ghostwriter the outline gives the chapter, when it is not the book's. */
+  ghostwriter?: string;
   onOpen: (index: number) => void;
 }
 
-const PlanChapterRow = memo(function PlanChapterRow({ bookId, chapter, index, digits, linked, current, lazy, onOpen }: RowProps) {
+const PlanChapterRow = memo(function PlanChapterRow({ bookId, chapter, index, digits, linked, current, lazy, ghostwriter, onOpen }: RowProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const statusClass = chapter.status === "done" ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300" : chapter.status === "review" ? "bg-amber-500/15 text-amber-800 dark:text-amber-300" : chapter.status === "writing" ? "bg-sky-500/15 text-sky-800 dark:text-sky-300" : "bg-muted text-muted-foreground";
@@ -45,6 +48,7 @@ const PlanChapterRow = memo(function PlanChapterRow({ bookId, chapter, index, di
         <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
           <span className={cn(numberColumn(digits), "shrink-0 text-xs tabular-nums text-muted-foreground")}>{chapter.number}.</span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{chapter.title}</span>
+          {ghostwriter && <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><PenLine className="h-3.5 w-3.5" aria-hidden="true" />{t("autopilot.plan.ghostwriter", { name: ghostwriter })}</span>}
           {chapter.score !== undefined && <span className="text-xs text-muted-foreground">{t("autopilot.plan.score", { score: chapter.score })}</span>}
           <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", statusClass)}>{chapter.imported ? t("autopilot.plan.imported") : t(`autopilot.plan.status.${chapter.status}`)}</span>
         </summary>
@@ -125,6 +129,7 @@ interface PlanChaptersProps {
  */
 export const PlanChapters = memo(function PlanChapters({ bookId, chapters, linkedSlugs, reviewNumber }: PlanChaptersProps) {
   const [opened, setOpened] = useState<PlanRange[]>([]);
+  const ghostwriterName = useGhostwriterName(bookId);
   const listRef = useRef<HTMLOListElement>(null);
   const afterReveal = useRef<{ revealed: PlanRange; exhausted: boolean } | null>(null);
   const focus = useMemo(() => chapterInProgress(chapters), [chapters]);
@@ -152,7 +157,7 @@ export const PlanChapters = memo(function PlanChapters({ bookId, chapters, linke
 
   const row = (index: number) => {
     const chapter = chapters[index];
-    return <PlanChapterRow key={`${chapter.number}:${chapter.slug}`} bookId={bookId} chapter={chapter} index={index} digits={digits} linked={linkedSlugs.has(chapter.slug)} current={reviewNumber === chapter.number} lazy={windowed} onOpen={keep} />;
+    return <PlanChapterRow key={`${chapter.number}:${chapter.slug}`} bookId={bookId} chapter={chapter} index={index} digits={digits} linked={linkedSlugs.has(chapter.slug)} current={reviewNumber === chapter.number} lazy={windowed} ghostwriter={chapter.ghostwriter ? ghostwriterName(chapter.ghostwriter) : undefined} onOpen={keep} />;
   };
 
   if (!windowed) return <ol className="space-y-1.5" ref={listRef}>{chapters.map((_, index) => row(index))}</ol>;
@@ -167,3 +172,29 @@ export const PlanChapters = memo(function PlanChapters({ bookId, chapters, linke
     </ol>
   );
 });
+
+/** The name of a ghostwriter of the book from its slug, as the book's files say it; the slug itself for one the book does not list. */
+export function useGhostwriterName(bookId: string): (slug: string) => string {
+  const ghostwriters = useBooksStore((state) => state.structures[bookId]?.ghostwriters);
+  return useCallback((slug: string) => ghostwriters?.find((entry) => entry.slug === slug)?.name?.trim() || slug, [ghostwriters]);
+}
+
+/** The most chapter numbers a sentence lists before it says how many more there are. */
+const LISTED_NUMBERS = 20;
+
+/**
+ * The chapters the plan let go because the author deleted their entry of the Outline (`plan.removedChapters`): the following chapters keep their
+ * numbers, so the book has a gap there. Said once, under the list, with the way to the Outline.
+ */
+export function RemovedChapters({ bookId, numbers }: { bookId: string; numbers: readonly number[] | undefined }) {
+  const { t } = useTranslation();
+  if (!numbers?.length) return null;
+  const listed = numbers.slice(0, LISTED_NUMBERS).map((number) => formatCount(number)).join(", ");
+  const text = numbers.length > LISTED_NUMBERS ? t("autopilot.plan.removedMore", { numbers: listed, count: numbers.length - LISTED_NUMBERS }) : listed;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
+      <p className="min-w-0 flex-1">{t("autopilot.plan.removed", { count: numbers.length, numbers: text })}</p>
+      <Link to={`/app/books/${encodeURIComponent(bookId)}/outline`} className="font-medium text-foreground underline underline-offset-4">{t("autopilot.plan.openOutline")}</Link>
+    </div>
+  );
+}

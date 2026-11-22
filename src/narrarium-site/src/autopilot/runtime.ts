@@ -11,6 +11,9 @@ import {
   type AutopilotLiveOptions,
   type AutopilotSnapshot,
   type EvaluationTarget,
+  type FrozenAction,
+  type FrozenChangeKind,
+  type FrozenStatus,
   type InterventionInput,
   type NarrariumServerClient,
   type QuestionAnswer,
@@ -30,6 +33,7 @@ import { AutopilotOperationBusyError, BookOperations, type AutopilotOperationKin
 import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
 import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
 import { AutopilotRulesUnsupportedError, serverEditsRules } from "@/autopilot/rules";
+import { AutopilotFrozenUnsupportedError, frozenErrorCode, serverHasFrozenChapters } from "@/autopilot/frozenChapters";
 import { RefreshCoordinator } from "@/autopilot/refreshCoordinator";
 import { ServerAddressError, validateServerAddress } from "@/autopilot/serverAddress";
 import { ServerIdentityError, verifiedServer, type VerifiedServer, type VerifiedServerOptions } from "@/autopilot/serverIdentity";
@@ -81,8 +85,8 @@ const SETUP_ERROR_KEYS: Record<AutopilotSetupErrorCode, string> = {
 
 /** Files changed on both sides stop the hand-over of a book until the author chooses which version of each to keep. */
 export class AutopilotSyncConflictsError extends Error {
-  constructor(readonly purpose: "moveToServer" | "moveBack", readonly conflicts: string[]) {
-    super(i18n.t(purpose === "moveToServer" ? "autopilot.errors.conflictsMoveToServer" : "autopilot.errors.conflictsMoveBack", { count: conflicts.length }));
+  constructor(readonly purpose: "moveToServer" | "moveBack" | "frozen", readonly conflicts: string[]) {
+    super(i18n.t(purpose === "moveToServer" ? "autopilot.errors.conflictsMoveToServer" : purpose === "frozen" ? "autopilot.errors.conflictsFrozen" : "autopilot.errors.conflictsMoveBack", { count: conflicts.length }));
     this.name = "AutopilotSyncConflictsError";
   }
 }
@@ -159,6 +163,8 @@ export function describeAutopilotError(error: unknown): string {
   if (error instanceof ServerIdentityError) return i18n.t(`personalServer.identity.${error.reason}`);
   if (error instanceof ServerAddressError) return i18n.t(`personalServer.address.${error.reason}`);
   if (error instanceof AutopilotBusyError) return i18n.t("autopilot.errors.busy", { label: error.runnerLabel });
+  const frozenCode = frozenErrorCode(error);
+  if (frozenCode) return i18n.t(`autopilot.frozen.errors.${frozenCode}`);
   if (error instanceof ServerRequestError) {
     if (error.code === "unreachable") return i18n.t("autopilot.serverOffline");
     if (error.code === "book_not_found") return i18n.t("autopilot.where.serverBookMissing");
@@ -638,6 +644,8 @@ export class BrowserAutopilotRuntime {
       if (autopilotHostOf(book) === "server") {
         const { client, info } = await this.requireServer();
         if (!serverHasQuickControls(info)) throw new AutopilotControlsUnsupportedError();
+        // A server that predates the frozen chapters refuses the whole request for a key it does not know.
+        if (options.frozenEdits !== undefined && !serverHasFrozenChapters(info)) throw new AutopilotFrozenUnsupportedError();
         this.applySnapshot(bookId, await client.updateOptions(book.id, options));
         return;
       }
@@ -734,6 +742,93 @@ export class BrowserAutopilotRuntime {
     });
   }
 
+  /**
+   * The changes of the frozen chapters of the book (and of the outline of its written chapters), with what can be done with each: the engine's
+   * `frozenStatus`, which also refreshes the count the summary shows. A personal server that predates the frozen chapters is not asked.
+   */
+  async frozenStatus(bookId: string): Promise<FrozenStatus> {
+    const book = findBook(bookId);
+    if (autopilotHostOf(book) === "server") {
+      const { client, info } = await this.requireServer();
+      if (!serverHasFrozenChapters(info)) throw new AutopilotFrozenUnsupportedError();
+      return client.frozenStatus(book.id);
+    }
+    return this.localSession(book, resolveBookBranch(book)).frozenStatus();
+  }
+
+  /**
+   * Decide about the change of a frozen chapter (or of the outline of a written one), as the answer to its question would, also while a run goes
+   * on: marking it reviewed is done at once, a review is recorded and carried out by the next run (by a run in progress, at its next step). A
+   * book run by another tab of this browser is decided through that tab. On the personal server the author's latest edits are handed to it first
+   * (it decides on its own copy of the book), and what it wrote comes back. The refusals keep the engine's code (`frozenErrorCode`).
+   */
+  resolveFrozenChange(bookId: string, number: number, action: FrozenAction, options: { kind?: FrozenChangeKind; note?: string } = {}): Promise<FrozenStatus> {
+    return this.operations.run(bookId, "frozen", async () => {
+      const book = findBook(bookId);
+      if (autopilotHostOf(book) === "server") {
+        const { info } = await this.requireServer();
+        if (!serverHasFrozenChapters(info)) throw new AutopilotFrozenUnsupportedError();
+        await this.handToServer(book);
+        const { client } = await this.requireServer();
+        const status = await client.resolveFrozenChange(book.id, number, action, options);
+        await this.bringFromServer(book, client);
+        await this.refresh(bookId);
+        return status;
+      }
+      const session = this.localSession(book, resolveBookBranch(book));
+      let status: FrozenStatus;
+      if (!session.running && await this.lockHeldElsewhere(book.id)) {
+        await this.relay(book.id, { type: "resolve-frozen", number, action, options });
+        status = await session.frozenStatus();
+      } else {
+        status = await session.resolveFrozenChange(number, action, options);
+      }
+      // Marking it reviewed wrote the chapter's chapter.md (the record of what it is now).
+      if (action === "mark-reviewed") await this.reloadStructure(bookId);
+      await this.refresh(bookId);
+      return status;
+    });
+  }
+
+  /**
+   * Freeze a chapter by hand, as it is now (`by: author`: a change made to it is accepted as it is), or take its record away; the decisions that
+   * waited for it are dropped. A book run by another tab is changed through that tab; on the personal server the author's latest edits are handed
+   * over first, so that the server freezes the chapter as the author has it, and its chapter.md comes back.
+   */
+  setChapterFrozen(bookId: string, slug: string, frozen: boolean): Promise<void> {
+    return this.operations.run(bookId, "frozen", async () => {
+      const book = findBook(bookId);
+      if (autopilotHostOf(book) === "server") {
+        const { info } = await this.requireServer();
+        if (!serverHasFrozenChapters(info)) throw new AutopilotFrozenUnsupportedError();
+        await this.handToServer(book);
+        const { client } = await this.requireServer();
+        await client.freezeChapter(book.id, slug, frozen);
+        await this.bringFromServer(book, client);
+        await this.refresh(bookId);
+        return;
+      }
+      const session = this.localSession(book, resolveBookBranch(book));
+      if (!session.running && await this.lockHeldElsewhere(book.id)) await this.relay(book.id, { type: "set-frozen", slug, frozen });
+      else if (frozen) await session.freezeChapter(slug);
+      else await session.unfreezeChapter(slug);
+      await this.reloadStructure(bookId);
+      await this.refresh(bookId);
+    });
+  }
+
+  /** The server decides on its own copy of the book: the author's latest edits go there first, and files changed on both sides stop the decision. */
+  private async handToServer(book: BookEntry): Promise<void> {
+    const outcome = await this.syncNow(book.id, { push: true, throwOnError: true });
+    if (outcome.kind === "conflicts") throw new AutopilotSyncConflictsError("frozen", outcome.conflicts);
+  }
+
+  /** What the server wrote (a chapter frozen again, a record taken away) comes back to this browser: a GitHub book through GitHub. */
+  private async bringFromServer(book: BookEntry, client: NarrariumServerClient): Promise<void> {
+    if (bookStorageMode(book) === "github") await client.syncGitHub(book.id);
+    await this.syncNow(book.id);
+  }
+
   /** Remove the permanent rule at `index`, with the same guard as `updateRule`: the rules after it move up. */
   removeRule(bookId: string, index: number, expectedText: string): Promise<void> {
     return this.operations.run(bookId, "configure", async () => {
@@ -823,6 +918,8 @@ export class BrowserAutopilotRuntime {
       if (command.type === "pause") session.pause(command.mode);
       else if (command.type === "cancel-pause") session.cancelPause();
       else if (command.type === "update-options") await session.updateOptions(command.options);
+      else if (command.type === "resolve-frozen") await session.resolveFrozenChange(command.number, command.action, command.options);
+      else if (command.type === "set-frozen") await (command.frozen ? session.freezeChapter(command.slug) : session.unfreezeChapter(command.slug));
       else await session.intervene(command.input);
       this.post({ kind: "command-result", id, ok: true });
     } catch (error) {

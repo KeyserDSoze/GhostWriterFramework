@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
  * What a group is called: its chapter and its round (with the title of the chapter when the plan has it), or what its steps are; and, once the
  * director has judged it, the verdict and the score. One text: two chapters that were both approved with 8/10 do not say the same thing twice.
  */
-function useGroupLabel(group: TimelineGroup, chapterTitle: ((number: number) => string | undefined) | undefined): string {
+function useGroupLabel(group: TimelineGroup, chapterTitle: ((number: number) => string | undefined) | undefined, chapterGhostwriter: ((number: number) => string | undefined) | undefined): string {
   const { t } = useTranslation();
   let label: string;
   if (group.kind !== "chapter") {
@@ -21,6 +21,9 @@ function useGroupLabel(group: TimelineGroup, chapterTitle: ((number: number) => 
     label = title
       ? t("autopilot.timeline.group.chapterTitled", { chapter: group.chapterNumber, title, round: group.round })
       : t("autopilot.timeline.group.chapter", { chapter: group.chapterNumber, round: group.round });
+    // The ghostwriter the outline gives the chapter, only when it is not the book's.
+    const ghostwriter = chapterGhostwriter?.(group.chapterNumber ?? 0)?.trim();
+    if (ghostwriter) label = `${label} · ${t("autopilot.plan.ghostwriter", { name: ghostwriter })}`;
   }
   if (!group.result) return label;
   const score = formatCount(group.result.score);
@@ -32,10 +35,10 @@ function useGroupLabel(group: TimelineGroup, chapterTitle: ((number: number) => 
  * A chapter and its round, or what is not about a chapter: a header that opens and closes it, and its rows when it is open. A closed group has no
  * rows in the page at all; an open one draws a window of them, and gives more when the author asks.
  */
-export const TimelineGroupView = memo(function TimelineGroupView({ group, open, onToggle, chapterTitle, currency }: { group: TimelineGroup; open: boolean; onToggle: (key: string) => void; chapterTitle?: (number: number) => string | undefined; currency?: string }) {
+export const TimelineGroupView = memo(function TimelineGroupView({ group, open, onToggle, chapterTitle, chapterGhostwriter, currency }: { group: TimelineGroup; open: boolean; onToggle: (key: string) => void; chapterTitle?: (number: number) => string | undefined; chapterGhostwriter?: (number: number) => string | undefined; currency?: string }) {
   const { t } = useTranslation();
   const [limit, setLimit] = useState(GROUP_ROWS);
-  const label = useGroupLabel(group, chapterTitle);
+  const label = useGroupLabel(group, chapterTitle, chapterGhostwriter);
   const regionId = `autopilot-timeline-${group.key.replace(/:/g, "-")}`;
   // A group whose first step is still running has nothing to open yet.
   const expandable = group.rows.length > 0;

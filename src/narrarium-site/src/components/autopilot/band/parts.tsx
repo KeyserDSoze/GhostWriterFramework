@@ -1,6 +1,6 @@
 import { memo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, Check, ChevronRight, CheckCircle2, Circle, CircleDot, CircleHelp, Laptop, Loader2, Pause, Server, XCircle } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, CheckCircle2, Circle, CircleDot, CircleHelp, Laptop, Loader2, Lock, Pause, Server, XCircle } from "lucide-react";
 import type { AutopilotActivity, AutopilotOptions, AutopilotStateSummary, AutopilotStatus } from "narrarium-engine";
 import { useElapsed, useNow } from "@/autopilot/hooks";
 import { CYCLE_STAGES, bandPhases, budgetUse, cycleItems, type ChapterCycle } from "@/autopilot/bandModel";
@@ -25,6 +25,21 @@ export function StatusPill({ status }: { status: AutopilotStatus }) {
     <span data-band-status className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm font-semibold", STATUS_BADGE[status])}>
       <Icon className={cn("h-4 w-4 shrink-0", status === "running" && "animate-spin")} aria-hidden="true" />
       {t(`autopilot.status.${status}`)}
+    </span>
+  );
+}
+
+/**
+ * How many frozen chapters changed and wait for the author (the summary's `frozenChanges`, which the engine counts before every step and when
+ * asked): nothing when none does.
+ */
+export function FrozenChangesChip({ count }: { count: number | undefined }) {
+  const { t } = useTranslation();
+  if (!count) return null;
+  return (
+    <span data-frozen-changes className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-800 dark:text-amber-200">
+      <Lock className="h-3 w-3 shrink-0" aria-hidden="true" />
+      {t("autopilot.frozen.changed", { count })}
     </span>
   );
 }

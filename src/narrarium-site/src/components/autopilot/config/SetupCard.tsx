@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import { BookOpen, Github, Loader2, Play, Rocket, Save, ScanSearch } from "lucide-react";
-import { DEFAULT_BRIEF, DEFAULT_OPTIONS, effectivePublish, type AutopilotBrief, type AutopilotLiveOptions, type AutopilotOptions, type AutopilotPublishMode, type AutopilotState } from "narrarium-engine";
+import { DEFAULT_BRIEF, DEFAULT_OPTIONS, FROZEN_EDITS_MODES, effectivePublish, type AutopilotBrief, type AutopilotLiveOptions, type AutopilotOptions, type AutopilotPublishMode, type AutopilotState } from "narrarium-engine";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Card } from "@/components/autopilot/Card";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import type { useAutopilotActions } from "@/autopilot/useAutopilotActions";
+import { FROZEN_SERVER_VERSION } from "@/autopilot/frozenChapters";
 import { bookStorageMode, type BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
 
@@ -86,6 +88,8 @@ export interface SetupCardProps {
   asking?: boolean;
   /** The autopilot runs on a personal server that cannot change its settings during a run (it predates the quick controls). */
   liveUnsupported?: boolean;
+  /** The autopilot runs on a personal server that predates the frozen chapters: what it does with a changed one cannot be chosen. */
+  frozenUnsupported?: boolean;
   run: RunAction;
   /** Once the autopilot has started: the page opens the live page. */
   onStarted?: () => void;
@@ -100,7 +104,7 @@ export interface SetupCardProps {
  * chapter can change, with `updateOptions`, and the rest is locked. The button at the end starts the autopilot (with the form, for a book
  * that never started; after saving what changed, for one that is stopped) and `onStarted` takes the author to the live page.
  */
-export function SetupCard({ book, state, existingChapters, running, busy, disabled, asking = false, liveUnsupported = false, run, onStarted, children }: SetupCardProps) {
+export function SetupCard({ book, state, existingChapters, running, busy, disabled, asking = false, liveUnsupported = false, frozenUnsupported = false, run, onStarted, children }: SetupCardProps) {
   const { t } = useTranslation();
   const github = bookStorageMode(book) === "github";
   const host = book.autopilotHost === "server" ? "server" : "browser";
@@ -119,6 +123,9 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
   // While a run goes on, only where the book is published and the pause after every chapter can change (not on a server that predates it).
   const locked = running || busy;
   const liveLocked = busy || (running && liveUnsupported);
+  const frozenLocked = liveLocked || frozenUnsupported;
+  // Asked every time unless the author chose otherwise: a state written before the option existed has none.
+  const frozenEdits = form.options.frozenEdits ?? "ask";
   // What the host does when the author has not chosen: a server publishes after every step, this browser as the older switch says.
   const publish = effectivePublish(form.options, host === "server" ? "step" : undefined);
 
@@ -126,6 +133,7 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
   const liveChanges = (): AutopilotLiveOptions => ({
     ...(form.options.publishEvery !== undefined && form.options.publishEvery !== initial.options.publishEvery ? { publishEvery: form.options.publishEvery } : {}),
     ...(form.options.pauseAfterEachChapter !== initial.options.pauseAfterEachChapter ? { pauseAfterEachChapter: form.options.pauseAfterEachChapter } : {}),
+    ...(form.options.frozenEdits !== undefined && form.options.frozenEdits !== initial.options.frozenEdits ? { frozenEdits: form.options.frozenEdits } : {}),
   });
 
   const save = () => {
@@ -189,8 +197,13 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
         <div className="space-y-1.5">
           <Label htmlFor="autopilot-synopsis">{t("autopilot.setup.synopsis")}</Label>
           <AutoTextarea id="autopilot-synopsis" value={form.brief.synopsis} onChange={(event) => brief({ synopsis: event.target.value })} minRows={2} placeholder={t("autopilot.setup.synopsisPlaceholder")} className="text-sm" disabled={locked} aria-describedby="autopilot-synopsis-note" />
-          <p id="autopilot-synopsis-note" className="text-xs text-muted-foreground">{t("autopilot.config.synopsisNote")}</p>
+          <p id="autopilot-synopsis-note" className="text-xs text-muted-foreground">{t("autopilot.setup.synopsisOutline")} <Link className="font-medium text-foreground underline underline-offset-4" to={`/app/books/${encodeURIComponent(book.id)}/outline`}>{t("autopilot.setup.useOutline")}</Link></p>
         </div>
+        <label className="flex items-center justify-between gap-3 text-sm">
+          <span>{t("autopilot.setup.fillOutline")}</span>
+          {/* On unless the author turned it off: a state written before the option existed has none. */}
+          <Switch checked={form.options.fillOutline !== false} disabled={locked} onCheckedChange={(checked) => options({ fillOutline: checked })} />
+        </label>
       </Card>
 
       <Card id="autopilot-review" title={t("autopilot.config.sections.review")} icon={<ScanSearch className="h-4 w-4 text-primary" aria-hidden="true" />}>
@@ -212,6 +225,21 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
         </div>
         <p id="autopilot-budget-hint" className="text-xs text-muted-foreground">{t("autopilot.setup.budgetHint")}</p>
         <p id="autopilot-budget-tokens-hint" className="text-xs text-muted-foreground">{t("autopilot.setup.budgetTokensHint")}</p>
+        <fieldset className="space-y-2 pt-1" disabled={frozenLocked} aria-describedby="autopilot-frozen-edits-hint">
+          <legend className="text-sm font-medium">{t("autopilot.config.frozenEdits.title")}</legend>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {FROZEN_EDITS_MODES.map((mode) => (
+              <div key={mode} className={cn("rounded-lg border p-2 transition", frozenEdits === mode ? "border-primary/60 bg-primary/5" : "hover:bg-muted/40")}>
+                <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+                  <input type="radio" name="autopilot-frozen-edits" className="h-4 w-4 accent-primary" value={mode} checked={frozenEdits === mode} aria-describedby={`autopilot-frozen-edits-${mode}`} onChange={() => options({ frozenEdits: mode })} />
+                  {t(`autopilot.config.frozenEdits.${mode}`)}
+                </label>
+                <p id={`autopilot-frozen-edits-${mode}`} className="mt-1 text-xs text-muted-foreground">{t(`autopilot.config.frozenEdits.${mode}Help`)}</p>
+              </div>
+            ))}
+          </div>
+          <p id="autopilot-frozen-edits-hint" className="text-xs text-muted-foreground">{frozenUnsupported ? t("autopilot.config.frozenEdits.oldServer", { version: FROZEN_SERVER_VERSION }) : t("autopilot.config.frozenEdits.hint")}</p>
+        </fieldset>
       </Card>
 
       <Card id="autopilot-publish" title={t("autopilot.config.sections.publish")} icon={<Github className="h-4 w-4 text-primary" aria-hidden="true" />}>

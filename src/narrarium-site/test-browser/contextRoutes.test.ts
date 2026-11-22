@@ -26,7 +26,9 @@ const routeCases = [
   ["/app/docs", "app-page"],
   ["/app/books/book", "book"],
   ["/app/books/book/dashboard", "book-dashboard"],
+  ["/app/books/book/outline", "book-outline"],
   ["/app/books/book/autopilot", "book-autopilot"],
+  ["/app/books/book/autopilot/settings", "book-autopilot-settings"],
   ["/app/books/book/director", "book-director"],
   ["/app/books/book/assets", "book-assets"],
   ["/app/books/book/reader", "reader"],
@@ -64,6 +66,7 @@ test("book route titles and summaries describe the actual page", () => {
     ["/app/books/book/assets", "Book assets", "Assets"],
     ["/app/books/book/ghostwriters", "Ghostwriters", "Ghostwriters"],
     ["/app/books/book/evaluation-style", "Evaluation Style", "evaluation style"],
+    ["/app/books/book/outline", "Outline", "Outline"],
     ["/app/books/book/autopilot", "Autopilot", "Autopilot"],
     ["/app/books/book/director", "Director", "Director"],
   ];

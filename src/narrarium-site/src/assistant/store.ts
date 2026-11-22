@@ -18,11 +18,13 @@ export interface AssistantAttachment {
 
 export interface AssistantFileUpdate {
   path: string;
-  content: string;
+  /** The new text of the file; `null` deletes it (only an entry of the outline, see `isOutlineProposal`). */
+  content: string | null;
   reason?: string;
   previousContent?: string | null;
   status?: "pending" | "applied" | "failed";
-  appliedHash?: string;
+  /** The hash of what was written; `null` when the update deleted the file. */
+  appliedHash?: string | null;
   error?: string;
 }
 

@@ -30,6 +30,7 @@ const EXPECTED_PREREQUISITES: Record<string, CopilotToolPrerequisite[]> = {
   "rewrite-current-paragraph": ["paragraph open", "git token", "context loaded"],
   "create-note": ["book open", "git token", "context loaded"],
   "multi-file-edit": ["book open", "git token", "context loaded"],
+  "edit-outline": ["book open", "git token", "context loaded"],
   "review-context": ["context loaded"],
   "summarize-context": ["context loaded"],
   "answer-from-context": ["context loaded"],

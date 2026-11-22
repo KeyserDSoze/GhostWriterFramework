@@ -7,11 +7,11 @@ import { Button } from "@/components/ui/button";
 import { bookFileRoute, filesInError, isProblemLine, problemLines, profilePageRoute, profilePagesFor, type ProfilePage } from "@/autopilot/stopReason";
 import { cn } from "@/lib/utils";
 
-const OPEN_KEY: Record<ProfilePage, string> = { director: "openDirector", ghostwriters: "openGhostwriters", readers: "openReaders" };
+const OPEN_KEY: Record<ProfilePage, string> = { director: "openDirector", ghostwriters: "openGhostwriters", readers: "openReaders", evaluationStyle: "openEvaluationStyle" };
 
 /**
  * A run that waits for the author without a question: the engine found a profile file (the director, a ghostwriter, a simulated
- * reader) that it cannot read as it is written, and stopped before spending anything. Says so, lists the problems one to a line, and
+ * reader, the evaluation style) that it cannot read as it is written, and stopped before spending anything. Says so, lists the problems one to a line, and
  * leads to the pages that correct those files. The text is one alert, so it is announced once; the button that resumes is the
  * page's own, and `hintId` ties it to what it does.
  */

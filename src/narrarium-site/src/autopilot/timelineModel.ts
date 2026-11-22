@@ -39,6 +39,7 @@ const CATEGORY: Partial<Record<AutopilotTaskKind, StepCategory>> = {
   concept: "writing",
   "summarize-imported": "writing",
   plan: "writing",
+  replan: "writing",
   scenes: "writing",
   write: "writing",
   repair: "writing",

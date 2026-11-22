@@ -58,6 +58,8 @@ import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAle
 import { countChapterReaderEvaluations, countParagraphReaderEvaluations } from "@/narrarium/readerEvaluationCounts";
 import { parseDocument, stringify } from "yaml";
 import { openAskDirector } from "@/store/askDirectorStore";
+import { FrozenChangeNotice, FrozenChapterBar } from "@/components/frozen/FrozenChapter";
+import { useFrozenChapter } from "@/components/frozen/useFrozenChapter";
 
 function stringifyFrontmatter(frontmatter: Record<string, unknown>): string {
   return `---\n${stringify(frontmatter).trimEnd()}\n---`;
@@ -100,6 +102,8 @@ export function ChapterPage() {
   const [chapterFm, setChapterFm] = useState<Record<string, unknown> | null>(null);
   const [chapterBody, setChapterBody] = useState("");
   const [chapterSha, setChapterSha] = useState("");
+  // The chapter's freeze: read again when chapter.md is saved, and when its scenes change (the structure says it).
+  const frozen = useFrozenChapter({ book, branch, chapter, version: chapterSha });
   const [savingTitle, setSavingTitle] = useState(false);
   const titleLoadedRef = useRef("");
 
@@ -459,6 +463,9 @@ export function ChapterPage() {
           <div className="mt-3 max-w-xl rounded-lg border bg-muted/30 px-3 py-2">
             <GhostwriterField ghostwriters={structure?.ghostwriters ?? []} value={currentChapterGhostwriter} onChange={setChapterGhostwriter} />
           </div>
+          <div className="mt-3">
+            <FrozenChapterBar frozen={frozen} />
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {isSavingOrder && (
@@ -630,6 +637,8 @@ export function ChapterPage() {
           </p>
         )}
       </div>
+
+      <FrozenChangeNotice frozen={frozen} />
 
       {/* Add paragraph form */}
       {showAddForm ? (

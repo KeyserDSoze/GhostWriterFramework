@@ -53,7 +53,9 @@ import { isAssistantRequestOwned, isConfirmedMutationOwned, type AssistantReques
 import { resolveChatNoteDestination, reusableChatNoteOperation, type ChatNoteDestination } from "@/assistant/chatNoteSave";
 import { isMediaOperationOwned, stopMediaStreamTracks } from "@/assistant/mediaOwnership";
 import { assistantActionToolId, policyTargetEnabled, quickActionToolId } from "@/assistant/toolPolicy";
-import { hasAssistantActionProvenance, sourceRevisionFromFiles, validateAssistantAction } from "@/assistant/actionValidation";
+import { hasAssistantActionProvenance, isOutlineProposal, OUTLINE_FILE, sourceRevisionFromFiles, validateAssistantAction } from "@/assistant/actionValidation";
+import "@/i18n/outlineCopilot";
+import { FrozenProposalNotice } from "@/components/frozen/FrozenProposalNotice";
 import { copilotToolRegistry, isCopilotToolIdEnabled } from "@/assistant/tools/registry";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import { parseAttachments } from "@/assistant/attachments";
@@ -79,7 +81,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { resolveBookExportSettings, resolveBookToken } from "@/types/settings";
+import { resolveBookExportSettings, resolveBookToken, type BookEntry } from "@/types/settings";
 import {
   compareBranches,
   createBranchFromBase,
@@ -165,6 +167,16 @@ export function diffRevertRevisionsMatch(pending: { sourceHash: string | null; d
   return pending.sourceHash === sourceHash && pending.destinationHash === destinationHash;
 }
 
+/**
+ * Where the Outline page reads and saves the outline (the book's working copy: one local commit, published with the book), for a proposal of the
+ * Copilot for it. Loaded with the first such proposal the author applies, undoes or compares, not with the panel.
+ */
+async function outlineWorkingCopy(book: BookEntry, branch: string) {
+  const { browserOutlineSource, outlineFilesAt } = await import("@/outline/outlineSource");
+  const source = browserOutlineSource(book, branch);
+  return { read: (paths: readonly string[]) => outlineFilesAt(source, paths), commit: source.commit };
+}
+
 export function AssistantPanel() {
   const { t } = useTranslation();
   const location = useLocation();
@@ -173,6 +185,7 @@ export function AssistantPanel() {
   const bookId = "bookId" in route ? route.bookId : undefined;
   const { branch } = useWorkingBranch(bookId);
   const { settings, patchSettings } = useSettingsStore();
+  const bookEntryOf = (id: string) => settings.books.find((entry) => entry.id === id);
   const { structures, workingBranches, clearBook } = useBooksStore();
   const { save } = useSettings();
   const { user, accessToken } = useAuthStore();
@@ -2015,7 +2028,8 @@ export function AssistantPanel() {
     if (!message?.action || message.action.kind !== "apply-file-updates") return;
     const action = message.action;
     if (!requireAssistantActionEnabled(action)) return;
-    const updates = pendingFileUpdates(action.updates, selectedPaths);
+    // A proposal for the outline is applied whole: moving an entry rewrites the ones it passes.
+    const updates = pendingFileUpdates(action.updates, isOutlineProposal(action) ? undefined : selectedPaths);
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !token || updates.length === 0) return;
@@ -2025,27 +2039,34 @@ export function AssistantPanel() {
     const signal = operation.controller.signal;
     setBusy(true);
     try {
-      const currentFiles = await Promise.all(updates.map((update) => optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path, signal))));
+      // The outline is saved where the Outline page saves it: one local commit in the book's working copy, published with the book. The usual
+      // path refuses while local commits wait to be published (the page's own saves among them) and cannot publish a book kept on this device.
+      const outline = isOutlineProposal(action) ? await outlineWorkingCopy(book, branch) : null;
+      const currentFiles = outline
+        ? await outline.read(updates.map((update) => update.path))
+        : await Promise.all(updates.map((update) => optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path, signal))));
       if (!ownsConfirmedMutation(operation)) return;
       let results: Record<string, AppliedFileUpdateResult> = {};
       const mutations = await Promise.all(updates.map(async (update, index) => {
         const current = currentFiles[index];
         const currentHash = current ? await sha256Text(current.content) : null;
         if (!fileRevisionMatches(action.sourceRevisions?.[update.path], current?.sha ?? null, currentHash)) throw new RepositoryConflictError(`Source changed before applying ${update.path}.`, update.path);
-        results[update.path] = { previousContent: current?.content ?? null, appliedHash: await sha256Text(update.content) };
+        results[update.path] = { previousContent: current?.content ?? null, appliedHash: update.content === null ? null : await sha256Text(update.content) };
         return { path: update.path, content: update.content, expectedCurrentHash: currentHash };
       }));
-      const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch, signal });
-      if (!ownsConfirmedMutation(operation)) return;
       const messageText = `Apply ${updates.length} Copilot file update${updates.length === 1 ? "" : "s"}`;
-      const scriptResult = mutations.some((mutation) => /^scripts\/.*\.md$/.test(mutation.path))
-        ? await commitCanonicalScriptMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal })
-        : null;
-      if (!scriptResult) await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal });
+      let scriptResult: Awaited<ReturnType<typeof commitCanonicalScriptMutation>> | null = null;
+      if (outline) await outline.commit(mutations.map(({ path, content, expectedCurrentHash }) => ({ path, content, expectedHash: expectedCurrentHash })), messageText);
+      else {
+        const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch, signal });
+        if (!ownsConfirmedMutation(operation)) return;
+        scriptResult = mutations.some((mutation) => /^scripts\/.*\.md$/.test(mutation.path))
+          ? await commitCanonicalScriptMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal })
+          : null;
+        if (!scriptResult) await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal });
+      }
       if (!ownsConfirmedMutation(operation)) return;
       if (scriptResult) results = applyCanonicalRevisionResults(updates, results, scriptResult);
-      await refreshBookAfterMutation({ book, token, branch });
-      if (!ownsConfirmedMutation(operation)) return;
       const nextUpdates = markFileUpdatesApplied(action.updates, results);
       const nextRevisions = { ...action.sourceRevisions };
       for (const update of updates) nextRevisions[update.path] = results[update.path].appliedHash;
@@ -2068,6 +2089,9 @@ export function AssistantPanel() {
         },
       });
       toast({ title: t("assistant.toastFileUpdatesApplied"), description: scriptResult?.warningCount ? scriptResult.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined });
+      // Reloading the book changes its structure, which ends this operation: the message is updated first, as after a deletion. The write is
+      // done by then, so a failed reload is no failure of it (the book's pages load the structure again by themselves).
+      await refreshBookAfterMutation({ book, token, branch }).catch(() => undefined);
     } catch (err) {
       if (!ownsConfirmedMutation(operation)) return;
       const error = err instanceof Error ? err.message : String(err);
@@ -2261,29 +2285,38 @@ export function AssistantPanel() {
     try {
       const applied = action.updates.filter((update) => update.status === "applied" || update.appliedHash);
       if (!applied.length) throw new Error("No applied file updates are available to undo.");
-      const currentFiles = await Promise.all(applied.map((update) => readFileWithSha(token, book.owner, book.repo, branch, update.path, signal)));
+      const outline = isOutlineProposal(action) ? await outlineWorkingCopy(book, branch) : null;
+      const currentFiles = outline
+        ? await outline.read(applied.map((update) => update.path))
+        : await Promise.all(applied.map((update) => optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path, signal))));
       if (!ownsConfirmedMutation(operation)) return;
       const mutations = await Promise.all(applied.map(async (update, index) => {
         const current = currentFiles[index];
-        if (!update.appliedHash || !current || await sha256Text(current.content) !== update.appliedHash) throw new Error(`Source changed before undoing ${update.path}.`);
-        return { path: update.path, content: update.previousContent ?? null, expectedCurrentHash: update.appliedHash };
+        // A file the proposal deleted (an entry of the outline) comes back only if nothing was written there since.
+        const deleted = update.content === null && update.appliedHash === null;
+        if (deleted ? current !== null : (!update.appliedHash || !current || await sha256Text(current.content) !== update.appliedHash)) throw new Error(`Source changed before undoing ${update.path}.`);
+        return { path: update.path, content: update.previousContent ?? null, expectedCurrentHash: deleted ? null : update.appliedHash! };
       }));
-      const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch, signal });
       const messageText = `Undo ${applied.length} Copilot file update${applied.length === 1 ? "" : "s"}`;
-      const priorLedger = applied.find((update) => update.path === "state/script-ledger.md")?.previousContent;
-      const ledgerGeneratedAt = priorLedger ? /^generated_at:\s*["']?([^"'\r\n]+)["']?\s*$/m.exec(priorLedger)?.[1].trim() : undefined;
-      const scriptResult = mutations.some((mutation) => /^scripts\/.*\.md$/.test(mutation.path))
-        ? await commitCanonicalScriptMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, ledgerGeneratedAt, signal })
-        : null;
-      if (!scriptResult) await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal });
-      if (!ownsConfirmedMutation(operation)) return;
-      await refreshBookAfterMutation({ book, token, branch });
+      let scriptResult: Awaited<ReturnType<typeof commitCanonicalScriptMutation>> | null = null;
+      if (outline) await outline.commit(mutations.map(({ path, content, expectedCurrentHash }) => ({ path, content, expectedHash: expectedCurrentHash })), messageText);
+      else {
+        const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch, signal });
+        const priorLedger = applied.find((update) => update.path === "state/script-ledger.md")?.previousContent;
+        const ledgerGeneratedAt = priorLedger ? /^generated_at:\s*["']?([^"'\r\n]+)["']?\s*$/m.exec(priorLedger)?.[1].trim() : undefined;
+        scriptResult = mutations.some((mutation) => /^scripts\/.*\.md$/.test(mutation.path))
+          ? await commitCanonicalScriptMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, ledgerGeneratedAt, signal })
+          : null;
+        if (!scriptResult) await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal });
+      }
       if (!ownsConfirmedMutation(operation)) return;
       const nextUpdates = markFileUpdatesUndone(action.updates, applied.map((update) => update.path));
       const nextRevisions = { ...action.sourceRevisions };
       await Promise.all(applied.map(async (update) => { nextRevisions[update.path] = scriptResult?.revisions[update.path]?.hash ?? (update.previousContent == null ? null : await sha256Text(update.previousContent)); }));
       useAssistantStore.getState().updateMessage(message.id, { action: { ...action, kind: "apply-file-updates", updates: nextUpdates, sourceRevision: sourceRevisionFromFiles(nextRevisions), sourceRevisions: nextRevisions, generatedAt: new Date().toISOString() }, text: `${message.text}\n\n${t("assistant.undoApplied")}`, mutation: { changedPaths: (scriptResult?.changedPaths ?? applied.map((update) => update.path)).sort(), refresh: "book-structure-and-context" } });
       toast({ title: t("assistant.toastUndoApplied"), description: scriptResult?.warningCount ? scriptResult.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined });
+      // As after applying: the message first, then the reload of the book, which ends this operation.
+      await refreshBookAfterMutation({ book, token, branch }).catch(() => undefined);
     } catch (err) {
       if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastUndoFailed"), description: String(err), variant: "destructive" });
     } finally {
@@ -2396,7 +2429,10 @@ export function AssistantPanel() {
       if (book && token) {
         setLoadingDiffPath(key);
         try {
-          const existing = await optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path));
+          // An entry of the outline is read where the Outline page keeps it, so a new one needs no request to the remote.
+          const existing = OUTLINE_FILE.test(update.path)
+            ? (await (await outlineWorkingCopy(book, branch)).read([update.path]))[0]
+            : await optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path));
           setPreviousContents((current) => ({ ...current, [key]: existing?.content ?? update.previousContent ?? "" }));
         } finally {
           setLoadingDiffPath(null);
@@ -2561,17 +2597,19 @@ export function AssistantPanel() {
                     const showDiff = diffMode[diffKey];
                     return (
                       <details key={update.path} className="rounded border bg-background p-2">
-                        <summary className="cursor-pointer font-mono">{update.path} · {update.status ?? "pending"}</summary>
+                        <summary className="cursor-pointer font-mono">{update.path} · {update.status ?? "pending"}{update.content === null ? ` · ${t("outline.copilot.deleted")}` : ""}</summary>
                         {update.reason && <p className="mt-2 text-muted-foreground">{update.reason}</p>}
                         <div className="mt-2 flex flex-wrap gap-2">
                           <Button size="sm" variant="outline" onClick={() => void toggleDiff(message.id, update)} disabled={loadingDiffPath === diffKey}>
                             {loadingDiffPath === diffKey ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
                             {showDiff ? t("assistant.hideDiff") : t("assistant.showDiff")}
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy || update.status === "applied" || !isAssistantActionEnabled(message.action!)}>{t("assistant.applyThisFile")}</Button>
+                          {!isOutlineProposal(message.action!) && <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy || update.status === "applied" || !isAssistantActionEnabled(message.action!)}>{t("assistant.applyThisFile")}</Button>}
                         </div>
                         {showDiff ? (
-                          <FileDiff previous={previousContents[diffKey] ?? ""} next={update.content} className="mt-2 max-h-64" />
+                          <FileDiff previous={previousContents[diffKey] ?? ""} next={update.content ?? ""} className="mt-2 max-h-64" />
+                        ) : update.content === null ? (
+                          <p className="mt-2 text-xs text-muted-foreground">{t("outline.copilot.deletes")}</p>
                         ) : (
                           <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs">{update.content}</pre>
                         )}
@@ -2579,14 +2617,21 @@ export function AssistantPanel() {
                     );
                   })}
                 </div>
+                <FrozenProposalNotice book={bookEntryOf(message.action.bookId)} branch={message.action.branch ?? branch} files={message.action.updates} />
+                {isOutlineProposal(message.action) && <p className="mt-2 text-muted-foreground">{t("outline.copilot.applyTogether")}</p>}
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Button size="sm" onClick={() => void applySelectedFileUpdates(index)} disabled={busy || !message.action.updates.some((update) => update.status !== "applied") || !isAssistantActionEnabled(message.action)}>{t("assistant.applyAllFiles")}</Button>
                   {message.action.updates.some((update) => update.status === "applied") && <Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy}>{t("assistant.undoChanges")}</Button>}
                 </div>
               </div>
             )}
-            {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.undoChanges")}</Button></div>}
-            {message.action?.kind === "apply-paragraph-rewrite" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>}
+            {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.undoChanges")}</Button></div>}
+            {message.action?.kind === "apply-paragraph-rewrite" && (
+              <>
+                <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>
+                <FrozenProposalNotice book={bookEntryOf(message.action.bookId)} branch={message.action.branch ?? branch} files={[{ path: message.action.paragraphPath, body: message.action.proposedBody }]} />
+              </>
+            )}
             {message.action?.kind === "navigate" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" disabled={!isAssistantActionEnabled(message.action)} onClick={() => void executeNavigationAction(message.action!)}><BookOpen className="mr-1.5 h-3.5 w-3.5" />{message.action.label ?? t("assistant.openLocation")}</Button></div>}
             {message.action?.kind === "read-aloud" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" onClick={() => void replayReadAloud(index)} disabled={!isAssistantActionEnabled(message.action)}><Play className="mr-1.5 h-3.5 w-3.5" />{t("assistant.playAloud")}</Button></div>}
             {message.action?.kind === "confirm-delete" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="destructive">{t("assistant.destructive")}</Badge><Button size="sm" variant="destructive" onClick={() => void confirmDeleteAction(index)} disabled={busy || !isAssistantActionEnabled(message.action)}><Trash2 className="mr-1.5 h-3.5 w-3.5" />{t("assistant.confirmDelete")}</Button><Button size="sm" variant="outline" onClick={() => useAssistantStore.getState().updateMessage(message.id, { action: undefined })} disabled={busy}>{t("assistant.cancel")}</Button></div>}
@@ -2686,7 +2731,7 @@ export function AssistantPanel() {
               <Button type="button" variant="outline" size="sm" className="h-8 gap-1" title={t("assistant.newChat")} onClick={() => void newChat()}>
                 <MessageSquarePlus className="h-4 w-4" /><span className="hidden sm:inline">{t("assistant.newChat")}</span>
               </Button>
-              <Button type="button" variant="outline" size="sm" className="h-8 gap-1" onClick={speechController ? stopReading : () => void readLastAssistantReply()}>
+              <Button type="button" variant="outline" size="sm" className="h-8 gap-1" aria-label={speechController ? t("assistant.stopReading") : t("assistant.read")} onClick={speechController ? stopReading : () => void readLastAssistantReply()}>
                 {speechController ? <Square className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                 <span className="hidden sm:inline">{speechController ? t("assistant.stopReading") : t("assistant.read")}</span>
               </Button>
@@ -2787,7 +2832,7 @@ export function AssistantPanel() {
                   </DropdownMenu>
                   <div className="ml-auto flex items-center gap-1.5">
                     {draft.trim() && <Button type="button" variant="ghost" size="sm" className="h-9" onClick={() => setDraft("")}>{t("assistant.clear")}</Button>}
-                    <Button type="submit" size="sm" className="h-9" disabled={!draft.trim() || busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}<span className="ml-1.5 hidden sm:inline">{t("assistant.send")}</span></Button>
+                    <Button type="submit" size="sm" className="h-9" aria-label={t("assistant.send")} disabled={!draft.trim() || busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}<span className="ml-1.5 hidden sm:inline">{t("assistant.send")}</span></Button>
                   </div>
                 </div>
               </form>

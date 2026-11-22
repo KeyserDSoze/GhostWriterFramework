@@ -69,7 +69,7 @@ describe("custom action execution safety", () => {
 
   it("defines every supported route explicitly", () => {
     expect(SUPPORTED_CUSTOM_ACTION_ROUTE_KINDS).toEqual([
-      "book", "reader", "research", "research-detail", "book-settings", "chapter", "chapter-workspace", "paragraph", "paragraph-workspace", "canon",
+      "book", "reader", "research", "research-detail", "book-settings", "book-outline", "chapter", "chapter-workspace", "paragraph", "paragraph-workspace", "canon",
     ]);
   });
 
@@ -79,6 +79,7 @@ describe("custom action execution safety", () => {
     ["research", "/app/books/book-1/research", "book", "book.md"],
     ["research-detail", "/app/books/book-1/research/source", "book", "book.md"],
     ["book-settings", "/app/books/book-1/settings", "book", "book.md"],
+    ["outline", "/app/books/book-1/outline", "book", "outline/book.md"],
     ["chapter", "/app/books/book-1/chapters/001-start", "chapter", "chapters/001-start/chapter.md"],
     ["chapter draft", "/app/books/book-1/chapters/001-start/workspace/draft", "chapter", "drafts/001-start/chapter.md"],
     ["chapter resume", "/app/books/book-1/chapters/001-start/workspace/resume", "chapter", "resumes/chapters/001-start.md"],

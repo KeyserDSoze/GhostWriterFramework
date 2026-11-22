@@ -6,7 +6,7 @@ import { useBookAutopilotView } from "@/autopilot/hooks";
 import { useAutopilotStore } from "@/autopilot/store";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useAutopilotControl, type AutopilotControl } from "@/autopilot/useAutopilotControl";
-import { CycleList, HostChip, PhaseList, PreviewLine, ProgressBars, SignalAge, StatusMessage, StatusPill, StepElapsed, StepNow, UsageLine } from "@/components/autopilot/band/parts";
+import { CycleList, FrozenChangesChip, HostChip, PhaseList, PreviewLine, ProgressBars, SignalAge, StatusMessage, StatusPill, StepElapsed, StepNow, UsageLine } from "@/components/autopilot/band/parts";
 import { useReserveSpace } from "@/hooks/useReserveSpace";
 import { useSettingsStore } from "@/store/settingsStore";
 import { cn } from "@/lib/utils";
@@ -113,6 +113,7 @@ export function AutopilotControlBand({ bookId, variant = "full", commands }: Aut
     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
       <StatusPill status={status} />
       <HostLine model={model} />
+      <FrozenChangesChip count={summary.frozenChanges} />
     </div>
   );
 
@@ -124,6 +125,7 @@ export function AutopilotControlBand({ bookId, variant = "full", commands }: Aut
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
               <StatusPill status={status} />
               {summary.progress.chapters > 0 && <span className="text-xs font-medium tabular-nums text-muted-foreground">{t("autopilot.band.phases.chapters", { done: summary.progress.chaptersDone, total: summary.progress.chapters })}</span>}
+              <FrozenChangesChip count={summary.frozenChanges} />
               {running && <StepElapsed bookId={bookId} className="ml-auto" />}
             </div>
             {running ? <StepNow bookId={bookId} compact hideElapsed /> : model.message ? <StatusMessage compact>{model.message}</StatusMessage> : null}

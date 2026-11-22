@@ -136,6 +136,9 @@ export function resolveCustomActionTarget(input: {
     case "research-detail":
     case "book-settings":
       return { type: "book", title: structure?.title ?? book?.name ?? "Book", filePath: "book.md", book, structure, chapter: null, paragraph: null, branch, token };
+    case "book-outline":
+      // The Outline is a part of the book: the actions for the book apply to its texts, with the outline's description as their file.
+      return { type: "book", title: "Outline", filePath: "outline/book.md", book, structure, chapter: null, paragraph: null, branch, token };
     case "chapter":
       if (!chapter) return null;
       return { type: "chapter", title: chapter?.title ?? route.chapterId, filePath: chapter ? `${chapter.path}/chapter.md` : undefined, book, structure, chapter, paragraph: null, branch, token };
@@ -165,7 +168,7 @@ export function resolveCustomActionTarget(input: {
 }
 
 export const SUPPORTED_CUSTOM_ACTION_ROUTE_KINDS = [
-  "book", "reader", "research", "research-detail", "book-settings", "chapter", "chapter-workspace", "paragraph", "paragraph-workspace", "canon",
+  "book", "reader", "research", "research-detail", "book-settings", "book-outline", "chapter", "chapter-workspace", "paragraph", "paragraph-workspace", "canon",
 ] as const satisfies readonly AppRouteContext["kind"][];
 const SUPPORTED_ROUTE_KINDS = new Set<AppRouteContext["kind"]>(SUPPORTED_CUSTOM_ACTION_ROUTE_KINDS);
 

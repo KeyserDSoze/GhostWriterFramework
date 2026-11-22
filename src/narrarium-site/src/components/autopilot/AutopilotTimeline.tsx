@@ -19,6 +19,8 @@ export interface AutopilotTimelineProps {
   activities: readonly AutopilotActivity[];
   /** The title of a chapter of the plan, for the header of its groups; asked only for the chapters that are shown. */
   chapterTitle?: (number: number) => string | undefined;
+  /** The name of the ghostwriter the outline gives a chapter, when it is not the book's, for the header of its groups. */
+  chapterGhostwriter?: (number: number) => string | undefined;
   /** The rounds of review the plan recorded for a chapter, oldest first, for the numbers of the rounds and their votes; asked only for the chapters the log has. */
   chapterRounds?: (number: number) => readonly ChapterRound[] | undefined;
   /** What the engine says of the whole book, for the header of its review. */
@@ -32,7 +34,7 @@ export interface AutopilotTimelineProps {
  * It replaces the list of the steps and the live feed that said the same things twice. The page that holds it does not draw it again for what it
  * does not show: it is kept as it is until the log, the events of the book or what the author chose change.
  */
-export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loading = false, activities, chapterTitle, chapterRounds, finalReview, currency }: AutopilotTimelineProps) {
+export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loading = false, activities, chapterTitle, chapterGhostwriter, chapterRounds, finalReview, currency }: AutopilotTimelineProps) {
   const { t } = useTranslation();
   const feed = useAutopilotStore((state) => state.feed);
   const running = useAutopilotStore((state) => state.live[bookId]?.activity ?? null);
@@ -81,7 +83,7 @@ export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loadi
             </div>
           ) : (
             <ol className="space-y-2">
-              {shown.groups.map((group) => <TimelineGroupView key={group.key} group={group} open={chosen[group.key] ?? group.key === shown.open} onToggle={toggle} chapterTitle={chapterTitle} currency={currency} />)}
+              {shown.groups.map((group) => <TimelineGroupView key={group.key} group={group} open={chosen[group.key] ?? group.key === shown.open} onToggle={toggle} chapterTitle={chapterTitle} chapterGhostwriter={chapterGhostwriter} currency={currency} />)}
             </ol>
           )}
         </>

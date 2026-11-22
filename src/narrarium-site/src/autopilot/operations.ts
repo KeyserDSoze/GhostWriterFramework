@@ -1,7 +1,7 @@
 import i18n from "@/i18n";
 
 /** What can hold a book: each of these is exclusive with the others for the same book. Pause, Stop and looking at the book never are. */
-export type AutopilotOperationKind = "start" | "answer" | "configure" | "reset" | "intervene" | "moveToServer" | "moveToBrowser" | "sync";
+export type AutopilotOperationKind = "start" | "answer" | "configure" | "reset" | "intervene" | "moveToServer" | "moveToBrowser" | "sync" | "frozen";
 
 export interface BookOperation {
   kind: AutopilotOperationKind;

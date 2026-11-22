@@ -1,5 +1,10 @@
 import {
+  AutopilotSession,
+  FrozenChapterError,
   SERVER_FEATURE_AUTOPILOT_CONTROLS,
+  SERVER_FEATURE_AUTOPILOT_FROZEN,
+  SERVER_FEATURE_MCP,
+  SERVER_FEATURE_MCP_OAUTH,
   ServerRequestError,
   createAutopilotState,
   isBookConflictError,
@@ -8,19 +13,27 @@ import {
   type AutopilotSnapshot,
   type AutopilotState,
   type AutopilotStatus,
+  type FrozenAction,
+  type FrozenChangeKind,
   type NarrariumServerClient,
   type PauseAutopilotMode,
   type ServerAiStatus,
   type ServerBookSummary,
   type ServerInfo,
+  type ServerMcpClient,
+  type ServerMcpStatus,
+  type UpdateMcpRequest,
 } from "narrarium-engine";
-import { MemoryBookStore } from "narrarium-engine/testing";
+import { MemoryBookStore, createFakeAutopilotAi } from "narrarium-engine/testing";
 
 /** A server that announces the quick controls of the autopilot (`SERVER_FEATURE_AUTOPILOT_CONTROLS`). */
 export const SERVER_INFO = { name: "narrarium-server", apiVersion: 1, serverVersion: "0.1.5", engineVersion: "0.1.5", serverId: "server-1", label: "Home server", git: true, features: [SERVER_FEATURE_AUTOPILOT_CONTROLS] } as ServerInfo;
 /** A server that predates them: it ignores `limits` and takes `after-chapter` and `cancel` for `after-step`. */
 export const OLD_SERVER_INFO = { ...SERVER_INFO, serverVersion: "0.1.4", engineVersion: "0.1.4", features: [] } as ServerInfo;
 export const PIN = "f".repeat(64);
+/** What the server says of an MCP address while it has no public address (the words of narrarium-server). */
+export const MCP_LOCAL_MESSAGE = "This server has no public address yet, so this address works only from this computer. Set the public address of the server in the admin panel (Approved network), then connect from anywhere.";
+const MCP_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
  * A personal server that hosts one book in a `MemoryBookStore`: the book's files go through the same compare-and-swap
@@ -40,6 +53,12 @@ export class FakeBookServer {
   bookMissing = false;
   /** The server announces the quick controls (`SERVER_FEATURE_AUTOPILOT_CONTROLS`); false is a server that predates them. */
   controls = true;
+  /**
+   * The server announces the frozen chapters (`SERVER_FEATURE_AUTOPILOT_FROZEN`), and serves their routes as the real one does: with the engine's
+   * own session over the book it holds. Off by default: a server that predates them.
+   */
+  frozen = false;
+  private frozenSession: AutopilotSession | null = null;
   /** What the server holds for the book: its AI configuration, and the GitHub token of the book. */
   aiConfigured = true;
   hasGithubToken = false;
@@ -53,6 +72,23 @@ export class FakeBookServer {
   onStart?: (options: unknown) => void;
   /** Called after `pauseAutopilot` recorded the mode. */
   onPause?: (mode: string) => void;
+  /**
+   * The server gives each book its MCP endpoint (`SERVER_FEATURE_MCP`) and lets apps connect through OAuth (`SERVER_FEATURE_MCP_OAUTH`). Both off: a server that
+   * predates them, which answers `404 not_found` to their routes.
+   */
+  mcp = false;
+  mcpOAuth = false;
+  /** The MCP of the book: on or off, its slug, and the public address of the server (`null`: it has none, the address is the local one). */
+  mcpEnabled = false;
+  mcpSlug = "the-glass-harbor";
+  mcpPublicUrl: string | null = "https://books.example.net";
+  /** The slugs of the other books of the server. */
+  readonly takenSlugs = new Set<string>(["another-book"]);
+  /** The apps connected to the book through OAuth, as the server lists them (a newer server may add fields: they are passed on as they are). */
+  mcpClients: ServerMcpClient[] = [];
+  /** What `updateMcp` was called with, and the connections `revokeMcpClient` revoked, in order. */
+  readonly mcpUpdates: UpdateMcpRequest[] = [];
+  readonly mcpRevoked: string[] = [];
 
   constructor(initial: Record<string, string> = {}) {
     this.store = new MemoryBookStore(initial);
@@ -69,9 +105,69 @@ export class FakeBookServer {
     return this.calls.filter((call) => call === name).length;
   }
 
-  /** The server's own `GET /info`, with or without the quick controls. */
+  /** The server's own `GET /info`, with or without the quick controls, with the frozen chapters and the MCP features when it has them. */
   info(): ServerInfo {
-    return this.controls ? SERVER_INFO : OLD_SERVER_INFO;
+    const info = this.controls ? SERVER_INFO : OLD_SERVER_INFO;
+    const extra = [...(this.frozen ? [SERVER_FEATURE_AUTOPILOT_FROZEN] : []), ...(this.mcp ? [SERVER_FEATURE_MCP] : []), ...(this.mcpOAuth ? [SERVER_FEATURE_MCP_OAUTH] : [])];
+    if (!extra.length) return info;
+    return { ...info, ...(this.frozen ? { serverVersion: "0.1.9" } : {}), features: [...(info.features ?? []), ...extra] };
+  }
+
+  /** The engine's session over the book the server holds, as the real server answers the routes of the frozen chapters. */
+  private session(bookId: string): AutopilotSession {
+    this.frozenSession ??= new AutopilotSession({ bookId, store: this.store, ai: createFakeAutopilotAi(), host: "server", hostLabel: "Home server" });
+    return this.frozenSession;
+  }
+
+  /** A refusal of the engine, as the server answers it: the status of its code, and the code. */
+  private async refusing<T>(work: () => Promise<T>): Promise<T> {
+    try {
+      return await work();
+    } catch (error) {
+      if (error instanceof FrozenChapterError) throw new ServerRequestError(error.message, error.code === "chapter_not_found" ? 404 : error.code === "not_changed" ? 409 : 400, error.code);
+      throw error;
+    }
+  }
+
+  /** The status of the book's MCP, as `GET /books/:id/mcp` answers it: `connections` and `oauth` only from a server with OAuth apps. */
+  mcpStatus(bookId: string): ServerMcpStatus {
+    const path = `/mcp/${this.mcpSlug}`;
+    const base = this.mcpPublicUrl ?? "http://127.0.0.1:24242";
+    return {
+      bookId,
+      enabled: this.mcpEnabled,
+      slug: this.mcpSlug,
+      path,
+      url: `${base}${path}`,
+      public: Boolean(this.mcpPublicUrl),
+      ...(this.mcpPublicUrl ? {} : { message: MCP_LOCAL_MESSAGE }),
+      protocolVersions: ["2025-06-18", "2025-03-26"],
+      updatedAt: "2026-11-21T10:00:00.000Z",
+      ...(this.mcpOAuth ? { connections: this.mcpClients.length, oauth: { issuer: base, metadataUrl: `${base}/.well-known/oauth-authorization-server`, resourceMetadataUrl: `${base}/.well-known/oauth-protected-resource${path}`, scopes: ["mcp:read", "mcp:write", "mcp:run"] } } : {}),
+    };
+  }
+
+  /** The refusals of the MCP routes: a server without the feature does not know them, and a book that is not there is not found. */
+  private requireMcp(oauth = false): void {
+    if (!this.mcp || (oauth && !this.mcpOAuth)) throw new ServerRequestError("Unknown endpoint.", 404, "not_found");
+    if (this.bookMissing) throw new ServerRequestError("This book is not on the server.", 404, "book_not_found");
+  }
+
+  /** `PUT /books/:id/mcp` with the rules of narrarium-server: switching off, or another slug, disconnects every app of the book. */
+  updateMcp(bookId: string, input: UpdateMcpRequest): ServerMcpStatus {
+    this.requireMcp();
+    if (input.enabled === undefined && input.slug === undefined) throw new ServerRequestError("Nothing to change.", 400, "invalid_request");
+    if (input.slug !== undefined && input.slug !== this.mcpSlug) {
+      if (!MCP_SLUG.test(input.slug) || input.slug.length > 80) throw new ServerRequestError("A slug is made of lowercase letters, digits and single hyphens.", 400, "invalid_slug");
+      if (this.takenSlugs.has(input.slug)) throw new ServerRequestError("Another book has this slug.", 409, "slug_taken");
+      this.mcpSlug = input.slug;
+      this.mcpClients = [];
+    }
+    if (input.enabled !== undefined) {
+      if (!input.enabled) this.mcpClients = [];
+      this.mcpEnabled = input.enabled;
+    }
+    return this.mcpStatus(bookId);
   }
 
   summary(bookId: string): ServerBookSummary {
@@ -180,12 +276,52 @@ export class FakeBookServer {
       async updateOptions(bookId: string, options: AutopilotLiveOptions) {
         return fake.updateAutopilotOptions(bookId, options);
       },
+      async frozenStatus(bookId: string) {
+        await server.serve("frozenStatus");
+        return server.session(bookId).frozenStatus();
+      },
+      async resolveFrozenChange(bookId: string, number: number, action: FrozenAction, options: { kind?: FrozenChangeKind; note?: string } = {}) {
+        await server.serve("resolveFrozenChange");
+        server.resolved.push({ number, action, options });
+        return server.refusing(() => server.session(bookId).resolveFrozenChange(number, action, options));
+      },
+      async freezeChapter(bookId: string, slug: string, frozen = true) {
+        await server.serve("freezeChapter");
+        const session = server.session(bookId);
+        return server.refusing(() => (frozen ? session.freezeChapter(slug) : session.unfreezeChapter(slug)));
+      },
       async listBooks() {
         await server.serve("listBooks");
         return [server.summary("book-1")];
       },
       async updates() {
         return { packageName: "narrarium-server", installedVersion: "0.1.0", available: false, canRequest: false, signed: true, supervised: false, hasUpdateScope: false, message: "Up to date." };
+      },
+      async mcpStatus(bookId: string) {
+        await server.serve("mcpStatus");
+        server.requireMcp();
+        return server.mcpStatus(bookId);
+      },
+      async updateMcp(bookId: string, input: UpdateMcpRequest) {
+        await server.serve("updateMcp");
+        server.mcpUpdates.push(input);
+        return server.updateMcp(bookId, input);
+      },
+      async listMcpClients(_bookId: string) {
+        // The server answers with the apps it has when the request arrives; a gate holds the answer back on its way.
+        const answer = server.mcpClients.map((client) => ({ ...client }));
+        await server.serve("listMcpClients");
+        server.requireMcp(true);
+        return answer;
+      },
+      async revokeMcpClient(_bookId: string, id: string) {
+        await server.serve("revokeMcpClient");
+        server.requireMcp(true);
+        const index = server.mcpClients.findIndex((client) => client.id === id);
+        if (index < 0) throw new ServerRequestError("The book has no such connection.", 404, "client_missing");
+        server.mcpClients.splice(index, 1);
+        server.mcpRevoked.push(id);
+        return { revoked: true };
       },
       stream() {
         return new Promise<void>(() => undefined);
@@ -202,4 +338,6 @@ export class FakeBookServer {
   readonly paused: string[] = [];
   /** What `updateAutopilotOptions` was called with, in order. */
   readonly optionsUpdated: unknown[] = [];
+  /** What `resolveFrozenChange` was called with, in order. */
+  readonly resolved: Array<{ number: number; action: FrozenAction; options: { kind?: FrozenChangeKind; note?: string } }> = [];
 }

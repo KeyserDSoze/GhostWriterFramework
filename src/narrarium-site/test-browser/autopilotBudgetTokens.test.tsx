@@ -51,7 +51,7 @@ const run = vi.fn(async (_name: string, action: (runtime: unknown, bookId: strin
 });
 
 function openForm(state: AutopilotState | null = null) {
-  render(<SetupCard book={BOOK} state={state} existingChapters={0} running={false} busy={false} disabled={false} run={run as never} />);
+  render(<MemoryRouter><SetupCard book={BOOK} state={state} existingChapters={0} running={false} busy={false} disabled={false} run={run as never} /></MemoryRouter>);
 }
 
 const existing = (options: Record<string, unknown> = {}) => ({ ...createAutopilotState(new Date(T0), { ...DEFAULT_BRIEF, idea: "A glass harbor" }), options: { ...DEFAULT_OPTIONS, ...options } }) as AutopilotState;
@@ -158,7 +158,7 @@ describe("the token budget in the form of the autopilot", () => {
   });
 
   it("is locked while the autopilot runs, like the rest of the settings", () => {
-    render(<SetupCard book={BOOK} state={existing({ budgetTokens: 1000 })} existingChapters={0} running busy={false} disabled={false} run={run as never} />);
+    render(<MemoryRouter><SetupCard book={BOOK} state={existing({ budgetTokens: 1000 })} existingChapters={0} running busy={false} disabled={false} run={run as never} /></MemoryRouter>);
     expect(tokensField()).toBeDisabled();
   });
 });

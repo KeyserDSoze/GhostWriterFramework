@@ -109,7 +109,8 @@ export function chooseToolMatch(context: OrchestratorToolContext, availableHandl
 
 function explicitIntentToolId(prompt: string): string | null {
   if (/\b(?:create|add|write|draft|crea|aggiungi|scrivi|genera)(?:\s+(?:a|an|the|uno?|il))?\s+(?:paragraph|scene|paragrafo|scena)\b/i.test(prompt)) return "create-paragraph";
-  if (/\b(?:create|add|write|crea|aggiungi|scrivi|genera)(?:\s+(?:a|an|the|uno?|il))?\s+(?:script|scene script|scaletta)\b/i.test(prompt)) return "create-script";
+  // «Scaletta» alone is the outline of the book now; the script of a scene is «script» or «scaletta della scena».
+  if (/\b(?:create|add|write|crea|aggiungi|scrivi|genera)(?:\s+(?:a|an|the|uno?|il))?\s+(?:script|scene script|scaletta (?:della |di )?scena)\b/i.test(prompt)) return "create-script";
   if (!/\b(?:feedback|reader|readers|lettore|lettori)\b/i.test(prompt) && /\b(?:create|add|write|generate|crea|aggiungi|scrivi|genera)(?:\s+(?:a|an|the|una?|la))?\s+(?:draft|bozza)\b/i.test(prompt)) return "create-draft";
   if (/\b(?:write|create|refresh|update|save|scrivi|crea|aggiorna|salva)\b[\s\S]*\b(?:chapter resume|resume|riassunto del capitolo|riassunto)\b/i.test(prompt)) return "write-resume";
   if (/\b(?:create|open|make|submit|crea|apri|invia)(?:\s+(?:a|an|the|una?|la))?\s+(?:pull request|pr)\b/i.test(prompt)) return "create-pull-request";

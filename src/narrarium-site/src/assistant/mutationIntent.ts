@@ -15,6 +15,7 @@ const MUTATION_VERBS: Record<string, RegExp> = {
   "create-note": /\b(create|add|write|save|take|append|crea|creare|aggiungi|aggiungere|scrivi|scrivere|salva|salvare|annota|annotare)\b/i,
   "rewrite-current-paragraph": /\b(rewrite|revise|fix|improve|edit|riscrivi|riscrivere|rivedi|rivedere|correggi|correggere|migliora|migliorare|modifica|modificare)\b/i,
   "multi-file-edit": /\b(edit|update|change|rewrite|apply|modify|modifica|modificare|aggiorna|aggiornare|cambia|cambiare|riscrivi|riscrivere|applica|applicare)\b/i,
+  "edit-outline": /\b(add|insert|move|delete|remove|change|update|edit|rewrite|rename|set|put|write|create|fill|swap|aggiungi|aggiungere|inserisci|inserire|sposta|spostare|elimina|eliminare|cancella|cancellare|rimuovi|rimuovere|togli|togliere|cambia|cambiare|modifica|modificare|aggiorna|aggiornare|riscrivi|riscrivere|rinomina|rinominare|imposta|impostare|metti|mettere|scrivi|scrivere|crea|creare|riempi|riempire|scambia|scambiare)\b/i,
   "deep-research": /\b(run|start|conduct|perform|do|save|esegui|eseguire|avvia|avviare|fai|fare|conduci|condurre|salva|salvare)\b/i,
   "create-from-research": /\b(create|add|generate|crea|creare|aggiungi|aggiungere|genera|generare)\b/i,
   "create-simulated-reader": /\b(create|add|define|crea|creare|aggiungi|aggiungere|definisci|definire)\b/i,

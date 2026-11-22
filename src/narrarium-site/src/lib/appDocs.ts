@@ -507,6 +507,85 @@ Le Reader Persona possono essere abilitate, disabilitate, personalizzate, duplic
 Gli hash sorgente identificano feedback non aggiornati dopo la modifica del testo. Le sintesi del panel mantengono convergenze, disaccordi, punti forti/problemi ricorrenti e priorità senza sostituire le valutazioni singole.
 `,
   }),
+  entry("outline", "guides", {
+    title: "The Outline (Scaletta)",
+    summary: "The plan of the book chapter by chapter: what the autopilot follows, how to edit it, and how to talk to the Copilot about it.",
+    markdown: `# The Outline (Scaletta)
+
+The Outline is the plan of the book, chapter by chapter: a rough description of the book and, for every chapter, a hypothetical title, what happens in it and, when it is not the book's, the ghostwriter that writes it. Open it from the book's menu (**Outline**). It lives in the files of the book (\`outline/book.md\` and one \`outline/chapters/<NNN>.md\` per chapter), so it travels with the book like everything else.
+
+## The page
+
+At the top, **The book**: a working title (optional: the book's own title stays in its settings) and the **Rough description of the book**. Below, one card per chapter with its **Hypothetical title**, **What happens** (plain text: the events, the turning points, who is there; not prose) and its **Ghostwriter**, where **The book's ghostwriter (default)** is the first choice.
+
+Every card says in words, with an icon, what became of it: **Written by the autopilot, untouched**, **Yours**, **Chapter already written** (a link to the chapter), **Frozen chapter**, **Chapter approved**, or **Changed after the plan: the autopilot will plan it again**. A ghostwriter that does not exist, and a file the Outline cannot read, are said on the card.
+
+The buttons of a card move it up or down (also with Alt+↑ and Alt+↓ inside the card), insert a chapter before or after it, or delete it. Deleting asks first: a chapter already written keeps its text in the book, and the autopilot does not delete it; **Renumber the following chapters** closes the gap. **Add a chapter at the end** is at the top of the page. After every action **Undo** takes it back exactly.
+
+## Saving
+
+What you type is saved when you choose **Save** on the card, or **Save all** (also Ctrl+S) for everything: until then the card says **Unsaved changes**, and leaving the page asks first. Nothing is saved while you type, on purpose: the autopilot plans a chapter again as soon as its entry changes. Every save is a commit of the book, published like the others. If the Outline changed elsewhere meanwhile (the autopilot, the Copilot, another tab), your text is kept and the page says so; **Reload the outline** shows the new version and discards what you had not saved.
+
+## Long books
+
+The page shows 50 chapters at a time, with **Previous** and **Next**. **Filter chapters…** finds chapters by number, title or what happens, and **Go to chapter** jumps to one. An Outline of 5000 chapters opens as fast as one of ten.
+
+## An empty Outline
+
+**Add the first chapter**, **Let the autopilot write it** (the autopilot's **Configuration** opens), or, when the brief has a chapter-by-chapter synopsis, **Convert the brief's synopsis**: the lines «Chapter 1: …» become chapters, the rest becomes the description, and you see everything before anything is written.
+
+## What the autopilot does with it
+
+The autopilot follows the Outline as binding: the same chapters, in the same order, with your titles and your events. When it plans, it fills the chapters that have no entry yet, as its own (**Written by the autopilot, untouched**), and never touches yours; as soon as you change an entry it wrote, the entry is yours. When you change the entry of a chapter it has not written yet, it plans that chapter again (**Replanning chapter N** in its history); when you delete one, the chapter leaves its plan and the following chapters keep their numbers. When you change the entry of a chapter it has already written and closed, it does what its **Configuration** says for a changed frozen chapter: by default it asks you what to do: **Rewrite the chapter to follow the Outline**, **Keep the text, update only the Outline** or **Mark as reviewed** (see *Frozen chapters* in the autopilot's help). The card says so before you save, and the page says it again once saved. A chapter takes the ghostwriter of its entry; one that does not exist is said, and the book's writes it. **Fill the Outline with the plan**, in the autopilot's **Configuration** (under **The book**), turns the filling off. The chapter-by-chapter synopsis of the brief still works, and where the two differ the Outline wins.
+
+## The assistant in the text areas
+
+The menu of a text area of the Outline (right click, or the round button on a touch screen) offers **Improve the entry**, **Summarize the entry**, **Develop this chapter** (events and key points consistent with the description, the nearby chapters and the canon) and **Check against the canon and the nearby chapters** (what does not hold). Each shows its answer first: **Apply** puts it in the card as an unsaved change, **Cancel** leaves the card as it was. Your custom actions for the book appear there too.
+
+## Talking to the Copilot about it
+
+On the Outline page and on the autopilot's pages, «chapter 3» means entry 3 of the Outline; on every other page of the book it means the written chapter 3. «Outline» or «scaletta» always means the Outline, wherever you are, and «the written chapter» or «the chapter's text» always means the chapter. When it is not clear, the Copilot asks which one. Its changes to the Outline are a proposal: nothing is written until you choose **Apply all file updates**, they are applied together and saved like the page's saves (**Undo assistant changes** takes them back), and every entry it writes is yours.
+`,
+  }, {
+    title: "La Scaletta",
+    summary: "Il piano del libro capitolo per capitolo: cosa segue l'autopilot, come modificarla e come parlarne al Copilot.",
+    markdown: `# La Scaletta
+
+La Scaletta è il piano del libro, capitolo per capitolo: una descrizione di massima del libro e, per ogni capitolo, un titolo ipotetico, cosa succede e, quando non è quello del libro, il ghostwriter che lo scrive. Aprila dal menu del libro (**Scaletta**). Vive nei file del libro (\`outline/book.md\` e un \`outline/chapters/<NNN>.md\` per capitolo), quindi viaggia con il libro come tutto il resto.
+
+## La pagina
+
+In alto, **Il libro**: un titolo di lavoro (facoltativo: il titolo vero del libro resta nelle sue impostazioni) e la **Descrizione di massima del libro**. Sotto, una scheda per capitolo con il **Titolo ipotetico**, **Cosa succede** (testo semplice: gli eventi, le svolte, chi c'è; non prosa) e il **Ghostwriter**, dove la prima scelta è **Ghostwriter del libro (predefinito)**.
+
+Ogni scheda dice a parole, con un'icona, cosa ne è stato: **Scritto dall'autopilot, non toccato**, **Tuo**, **Capitolo già scritto** (con il collegamento al capitolo), **Capitolo congelato**, **Capitolo approvato**, oppure **Cambiato dopo il piano: l'autopilot lo ripianificherà**. Un ghostwriter che non esiste, e un file che la Scaletta non riesce a leggere, sono segnalati sulla scheda.
+
+I pulsanti di una scheda la spostano su o giù (anche con Alt+↑ e Alt+↓ dentro la scheda), inseriscono un capitolo prima o dopo, oppure la eliminano. Prima di eliminare la pagina chiede conferma: un capitolo già scritto tiene il suo testo nel libro e l'autopilot non lo cancella; **Rinumera i capitoli successivi** chiude il vuoto. **Aggiungi un capitolo in fondo** è in cima alla pagina. Dopo ogni azione **Annulla** la riporta indietro esattamente.
+
+## Salvare
+
+Quello che scrivi si salva quando scegli **Salva** sulla scheda, oppure **Salva tutto** (anche Ctrl+S) per tutto: fino ad allora la scheda dice **Modifiche non salvate**, e lasciare la pagina chiede conferma. Di proposito nulla si salva mentre scrivi: l'autopilot ripianifica un capitolo appena la sua voce cambia. Ogni salvataggio è un commit del libro, pubblicato come gli altri. Se nel frattempo la Scaletta è cambiata altrove (l'autopilot, il Copilot, un'altra scheda), il tuo testo resta e la pagina lo dice; **Ricarica la Scaletta** mostra la versione nuova e scarta quello che non avevi salvato.
+
+## Libri lunghi
+
+La pagina mostra 50 capitoli alla volta, con **Precedenti** e **Successivi**. **Filtra capitoli…** trova i capitoli per numero, titolo o cosa succede, e **Vai al capitolo** salta a uno. Una Scaletta di 5000 capitoli si apre veloce come una di dieci.
+
+## Una Scaletta vuota
+
+**Aggiungi il primo capitolo**, **Lascia che la scriva l'autopilot** (si apre la **Configurazione** dell'autopilot) oppure, quando il brief ha una sinossi capitolo per capitolo, **Converti la sinossi del brief**: le righe «Capitolo 1: …» diventano capitoli, il resto diventa la descrizione, e vedi tutto prima che venga scritto qualcosa.
+
+## Cosa ne fa l'autopilot
+
+L'autopilot segue la Scaletta come vincolante: gli stessi capitoli, nello stesso ordine, con i tuoi titoli e i tuoi eventi. Quando pianifica riempie i capitoli che non hanno ancora una voce, come suoi (**Scritto dall'autopilot, non toccato**), e non tocca mai le tue; appena cambi una voce che ha scritto lui, la voce è tua. Quando cambi la voce di un capitolo che non ha ancora scritto, lo ripianifica (**Ripianificazione del capitolo N** nella sua cronologia); quando ne elimini una, il capitolo esce dal piano e i capitoli successivi mantengono il loro numero. Quando cambi la voce di un capitolo che ha già scritto e chiuso, fa quello che dice la sua **Configurazione** per un capitolo congelato modificato: di norma ti chiede cosa fare: **Riscrivi il capitolo secondo la Scaletta**, **Tieni il testo, aggiorna solo la Scaletta** oppure **Segna come rivisto** (vedi *Capitoli congelati* nell'aiuto dell'autopilot). La scheda lo dice prima che tu salvi, e la pagina lo ripete dopo il salvataggio. Un capitolo prende il ghostwriter della sua voce; uno che non esiste viene segnalato, e lo scrive quello del libro. **Riempi la Scaletta con il piano**, nella **Configurazione** dell'autopilot (in **Il libro**), spegne il riempimento. La sinossi capitolo per capitolo del brief funziona ancora, e dove le due differiscono vince la Scaletta.
+
+## L'assistente nelle aree di testo
+
+Il menu di un'area di testo della Scaletta (clic destro, o il pulsante rotondo su uno schermo touch) offre **Migliora la voce**, **Riassumi la voce**, **Sviluppa questo capitolo** (eventi e punti chiave coerenti con la descrizione, i capitoli vicini e il canone) e **Controlla con il canone e i capitoli vicini** (ciò che non torna). Ognuna mostra prima la risposta: **Applica** la mette nella scheda come modifica non salvata, **Annulla** lascia la scheda com'era. Lì compaiono anche le tue azioni personalizzate per il libro.
+
+## Parlarne al Copilot
+
+Nella pagina Scaletta e nelle pagine dell'autopilot, «capitolo 3» è la voce 3 della Scaletta; in tutte le altre pagine del libro è il capitolo 3 scritto. «Scaletta» o «outline» indica sempre la Scaletta, ovunque tu sia, e «il capitolo scritto» o «il testo del capitolo» indica sempre il capitolo. Quando non è chiaro, il Copilot chiede quale dei due. Le sue modifiche alla Scaletta sono una proposta: nulla viene scritto finché non scegli **Applica tutte le modifiche**, si applicano tutte insieme e si salvano come quelle della pagina (**Annulla modifiche dell'assistente** le riporta indietro), e ogni voce che scrive è tua.
+`,
+  }),
   entry("autopilot", "guides", {
     title: "Autopilot, director and personal server",
     summary: "Let the autopilot write while the director decides as your stand-in, follow it live, intervene, and run it on your own server.",
@@ -516,11 +595,11 @@ The autopilot writes the book step by step: concept, chapter plan, scenes, simul
 
 ## Start
 
-Open **Configuration**, write an idea (one sentence is enough) or a binding chapter-by-chapter synopsis, choose chapters, scenes per chapter and words per scene, then **Start autopilot** at the bottom of the page: the autopilot starts and **Live** opens. A book that never started shows **Configure the autopilot** on its live page. By default it pauses when the plan is ready: read it, then **Approve the plan and continue**. A book that already has chapters is continued after the last one.
+Open **Configuration**, write an idea (one sentence is enough) or a binding chapter-by-chapter synopsis, choose chapters, scenes per chapter and words per scene, then **Start autopilot** at the bottom of the page: the autopilot starts and **Live** opens. A book that never started shows **Configure the autopilot** on its live page. When the book has an **Outline**, the autopilot follows it as binding, and it fills in the chapters the Outline does not have yet (see *The Outline (Scaletta)*). By default it pauses when the plan is ready: read it, then **Approve the plan and continue**. A book that already has chapters is continued after the last one.
 
 ## The configuration
 
-**Configuration** has the brief and the settings in three parts. **The book** has the idea, the chapters, the scenes per chapter, the words per scene, the genre, the audience and the chapter-by-chapter synopsis (soon replaced by the Outline). **Review** has the simulated readers and how many they are, their reactions to the plan, the specialists, the pause when the plan is ready, **Pause after every chapter**, the chapters per session and the two budgets. **Publishing**, for a book kept on GitHub, chooses where it is published: every step, every chapter or never. **Save settings** saves them while the autopilot is stopped. While it runs, only where it publishes and the pause after every chapter can change (they apply from the next step); the rest is locked and the page says why.
+**Configuration** has the brief and the settings in three parts. **The book** has the idea, the chapters, the scenes per chapter, the words per scene, the genre, the audience and the chapter-by-chapter synopsis (kept for compatibility: the **Outline** takes its place), and **Fill the Outline with the plan**. **Review** has the simulated readers and how many they are, their reactions to the plan, the specialists, the pause when the plan is ready, **Pause after every chapter**, the chapters per session, the two budgets and **When you change a frozen chapter** (see *Frozen chapters*). **Publishing**, for a book kept on GitHub, chooses where it is published: every step, every chapter or never. **Save settings** saves them while the autopilot is stopped. While it runs, only where it publishes, the pause after every chapter and what it does with a changed frozen chapter can change (they apply from the next step); the rest is locked and the page says why.
 
 **Permanent rules** lists the rules you gave with **Intervene** → **From now on**: **Edit** changes one and **Remove** takes it away, also while the autopilot runs. A rule is at most 800 characters, and a rule that changed in the meantime (on another device, or with your answer to the director) is never overwritten: the page says so and shows it as it is now. A personal server older than 0.1.6 cannot change the rules: there they are only listed, with a note to update it. **Profiles used** leads to **Director**, **Ghostwriters**, **Evaluation style** and **Simulated readers**, each with its state: in the book, the defaults, or with problems. The **Danger zone** holds **Reset**, which asks before it forgets anything. The button at the bottom of the page, **Resume** for a book that is stopped, saves what you changed and starts the autopilot again.
 
@@ -532,7 +611,7 @@ On any book, chapter or scene, **Ask the director** gives its opinion, answers y
 
 ## The Autopilot page
 
-**Live** is the page of what is happening. A band at the top of the page stays in sight while you scroll and says everything at a glance: whether the autopilot is running, paused, waiting for you, stopped by an error or finished (always with an icon and in words), where it runs (this browser or your personal server, and how long ago the server last made itself heard), what it is doing now and for how long (while the model answers a step that asks for a value, a line says «The model is answering…» with how much has arrived, in KB; nothing of the reply), how far the book has got, the phases, the steps of the chapter in progress (write, readers, specialists, director, fix) and, on one line, the cost and the tokens used against the budget. The quick commands are in the band too. When it has to wait for you, what it needs is right under the band: the director's question, the error, the profile problems or the plan to approve.
+**Live** is the page of what is happening. A band at the top of the page stays in sight while you scroll and says everything at a glance: whether the autopilot is running, paused, waiting for you, stopped by an error or finished (always with an icon and in words), where it runs (this browser or your personal server, and how long ago the server last made itself heard), what it is doing now and for how long (while the model answers a step that asks for a value, a line says «The model is answering…» with how much has arrived, in KB; nothing of the reply), how far the book has got, the phases, the steps of the chapter in progress (write, readers, specialists, director, fix) and, on one line, the cost and the tokens used against the budget. The quick commands are in the band too. When it has to wait for you, what it needs is right under the band: the director's question or a question about a chapter you changed, the error, the profile problems or the plan to approve.
 
 Below that comes the history, **Everything that happened**: one list for the steps and for what happened around them. It is grouped by chapter and by round of the review (round 1 is everything up to the first judgement of the director; each judgement that asks for fixes starts a new round; the numbers of the rounds are the ones the plan recorded, so they stay right when the log has lost the first reviews of a chapter), and the header of a round gives the director's verdict and score when there is one; open the group to see what the readers gave and what the director decided in that round. The chapter in hand is open and the others are closed. The step in progress is not a row, because the band says what it is, but the text it is writing is at the top of the list. Open a step to see why it was done, what it wrote, the model, the tokens, the cost, the files it changed and the notes of the readers, the specialists and the director; a step that failed shows what kind of failure it was, with an icon and a word, and one that was repeated is one row with every attempt in it, each retry told in words. **All**, **Errors and warnings**, **Director**, **Readers** and **Writing** choose what the list shows (the choice is kept for as long as you work), **Hide until now** hides what is over, and a button at the end of a long group gives more rows. The notes of the runs (started, paused, stopped) are in the group where they happened. The log keeps the last 200 steps, and the notes of a step are there when this browser followed it.
 
@@ -565,7 +644,17 @@ A server older than 0.1.5 does not know the pause at the end of the chapter, the
 
 ## When the autopilot waits for you
 
-Besides a question of the director, the autopilot can stop with **Waiting for you** because a profile file has a problem: the director, a ghostwriter or a simulated reader with YAML that cannot be read, or with a value nobody knows. It stops before spending anything, lists the problems, and replaces nothing with the defaults. Correct the files in **Director**, **Ghostwriters** or **Simulated readers** (each page shows what it could not read, and asks before you save over the file), then choose **Resume**: the files are checked again. If a step stops because a chapter, scene or canon file has front matter that cannot be read, the error names the file and the line: correct it and resume.
+Besides a question of the director, the autopilot can stop with **Waiting for you** because a profile file has a problem: the director, a ghostwriter or a simulated reader with YAML that cannot be read, or with a value nobody knows. It stops before spending anything, lists the problems, and replaces nothing with the defaults. It checks the **Evaluation style** (\`evaluation-guidelines.md\`) the same way. Correct the files in **Director**, **Ghostwriters**, **Simulated readers** or **Evaluation style** (each page shows what it could not read, and asks before you save over the file), then choose **Resume**: the files are checked again. If a step stops because a chapter, scene or canon file has front matter that cannot be read, the error names the file and the line: correct it and resume.
+
+## Frozen chapters
+
+A chapter is **frozen** when the director approves it, or when you freeze it yourself with **Freeze chapter** on its page: it keeps a record of its text, and the page says **Frozen on** the day **by the autopilot** or **by you**. **Unfreeze chapter** takes the record away, after asking.
+
+When you change a frozen chapter, the page of the chapter (and of its scenes) says so under the text, with three choices: **Review and update the book from this change** (the director reads the chapter again and the autopilot updates the later chapters that no longer fit; your text is not rewritten), **Only a review of the chapter**, and **Mark as reviewed** (frozen again as it is, with no AI call). A choice that calls the AI waits in a queue, and the autopilot carries it out at its next run: **Start now** starts it. The band of **Live** and the mini-player say how many frozen chapters changed, and **Live** lists the decisions that wait.
+
+What the autopilot does when it finds a change is chosen in **Configuration** → **Review** → **When you change a frozen chapter**: **Ask me every time** (the default: it stops before spending anything and asks on **Live**, with the same choices as buttons; your own words instead start a review that calls the AI, with them as a note for the director), **Review automatically** (it says so in the history), or **Only report it**. The choice can change while it runs. Nothing starts by itself unless you choose **Review automatically**.
+
+When you change the Outline entry of a chapter already written, the autopilot asks in the same way what to do: **Rewrite the chapter to follow the Outline**, **Keep the text, update only the Outline** or **Mark as reviewed**. A proposal of Copilot that changes the text of a frozen chapter says what will happen once you apply it. Copilot and the apps connected through the book's MCP server never freeze or unfreeze a chapter: what they change in a frozen chapter keeps it frozen, and you decide about it as about your own changes. On a personal server, frozen chapters need version 0.1.9 or newer: with an older one the pages say to update it.
 
 ## Budgets and costs
 
@@ -597,11 +686,11 @@ L'autopilot scrive il libro passo dopo passo: concept, piano dei capitoli, scene
 
 ## Avvio
 
-Apri **Configurazione**, scrivi un'idea (basta una frase) oppure una sinossi capitolo per capitolo vincolante, scegli capitoli, scene per capitolo e parole per scena, poi **Avvia l'autopilot** in fondo alla pagina: l'autopilot parte e si apre **In diretta**. Un libro che non è mai partito mostra **Configura l'autopilot** nella sua pagina In diretta. Di norma si ferma quando il piano è pronto: rileggilo, poi **Approva il piano e continua**. Un libro che ha già capitoli prosegue dopo l'ultimo.
+Apri **Configurazione**, scrivi un'idea (basta una frase) oppure una sinossi capitolo per capitolo vincolante, scegli capitoli, scene per capitolo e parole per scena, poi **Avvia l'autopilot** in fondo alla pagina: l'autopilot parte e si apre **In diretta**. Un libro che non è mai partito mostra **Configura l'autopilot** nella sua pagina In diretta. Quando il libro ha una **Scaletta**, l'autopilot la segue come vincolante e riempie i capitoli che la Scaletta non ha ancora (vedi *La Scaletta*). Di norma si ferma quando il piano è pronto: rileggilo, poi **Approva il piano e continua**. Un libro che ha già capitoli prosegue dopo l'ultimo.
 
 ## La configurazione
 
-**Configurazione** ha il brief e le impostazioni in tre parti. **Il libro** ha l'idea, i capitoli, le scene per capitolo, le parole per scena, il genere, il pubblico e la sinossi capitolo per capitolo (presto sostituita dalla Scaletta). **Revisione** ha i lettori simulati e quanti sono, le loro reazioni al piano, gli specialisti, la pausa quando il piano è pronto, **Fermati dopo ogni capitolo**, i capitoli per sessione e i due budget. **Pubblicazione**, per un libro su GitHub, sceglie dove si pubblica: a ogni passo, a ogni capitolo o mai. **Salva impostazioni** le salva mentre l'autopilot è fermo. Mentre lavora si possono cambiare solo dove pubblica e la pausa dopo ogni capitolo (valgono dal prossimo passo); il resto è bloccato e la pagina dice perché.
+**Configurazione** ha il brief e le impostazioni in tre parti. **Il libro** ha l'idea, i capitoli, le scene per capitolo, le parole per scena, il genere, il pubblico e la sinossi capitolo per capitolo (resta per compatibilità: al suo posto c'è la **Scaletta**), e **Riempi la Scaletta con il piano**. **Revisione** ha i lettori simulati e quanti sono, le loro reazioni al piano, gli specialisti, la pausa quando il piano è pronto, **Fermati dopo ogni capitolo**, i capitoli per sessione, i due budget e **Quando modifichi un capitolo congelato** (vedi *Capitoli congelati*). **Pubblicazione**, per un libro su GitHub, sceglie dove si pubblica: a ogni passo, a ogni capitolo o mai. **Salva impostazioni** le salva mentre l'autopilot è fermo. Mentre lavora si possono cambiare solo dove pubblica, la pausa dopo ogni capitolo e cosa fa con un capitolo congelato modificato (valgono dal prossimo passo); il resto è bloccato e la pagina dice perché.
 
 **Regole permanenti** elenca le regole che hai dato con **Intervieni** → **D'ora in poi**: **Modifica** ne cambia una e **Rimuovi** la toglie, anche mentre l'autopilot lavora. Una regola ha al massimo 800 caratteri, e una regola cambiata nel frattempo (su un altro dispositivo, o con la tua risposta al direttore) non viene mai sovrascritta: la pagina lo dice e la mostra com'è adesso. Un server personale più vecchio della 0.1.6 non sa cambiare le regole: lì sono solo elencate, con l'invito ad aggiornarlo. **Profili usati** porta a **Direttore**, **Ghostwriter**, **Stile di valutazione** e **Lettori simulati**, ognuno con il suo stato: nel libro, predefinito o con problemi. La **Zona pericolosa** contiene **Azzera**, che chiede conferma prima di dimenticare qualcosa. Il pulsante in fondo alla pagina, **Riprendi** per un libro fermo, salva ciò che hai cambiato e fa ripartire l'autopilot.
 
@@ -613,7 +702,7 @@ Su qualsiasi libro, capitolo o scena, **Chiedi al direttore** restituisce il suo
 
 ## La pagina Autopilot
 
-**In diretta** è la pagina di ciò che succede. In cima alla pagina una fascia resta in vista mentre scorri e dice tutto a colpo d'occhio: se l'autopilot sta lavorando, è in pausa, aspetta te, si è fermato per un errore o ha finito (sempre con un'icona e a parole), dove gira (questo browser o il tuo server personale e, per il server, da quanto tempo non si fa sentire), cosa sta facendo adesso e da quanto (mentre il modello risponde a un passo che chiede un valore, una riga dice «Il modello sta rispondendo…» con quanto è arrivato, in KB; nulla della risposta), a che punto è il libro, le fasi, i passi del capitolo in corso (scrittura, lettori, specialisti, direttore, correzioni) e, in una riga, il costo e i token usati rispetto al budget. Nella fascia ci sono anche i comandi rapidi. Se deve aspettare te, ciò che serve sta subito sotto la fascia: la domanda del direttore, l'errore, i problemi di un profilo o il piano da approvare.
+**In diretta** è la pagina di ciò che succede. In cima alla pagina una fascia resta in vista mentre scorri e dice tutto a colpo d'occhio: se l'autopilot sta lavorando, è in pausa, aspetta te, si è fermato per un errore o ha finito (sempre con un'icona e a parole), dove gira (questo browser o il tuo server personale e, per il server, da quanto tempo non si fa sentire), cosa sta facendo adesso e da quanto (mentre il modello risponde a un passo che chiede un valore, una riga dice «Il modello sta rispondendo…» con quanto è arrivato, in KB; nulla della risposta), a che punto è il libro, le fasi, i passi del capitolo in corso (scrittura, lettori, specialisti, direttore, correzioni) e, in una riga, il costo e i token usati rispetto al budget. Nella fascia ci sono anche i comandi rapidi. Se deve aspettare te, ciò che serve sta subito sotto la fascia: la domanda del direttore o una domanda su un capitolo che hai modificato, l'errore, i problemi di un profilo o il piano da approvare.
 
 Più sotto c'è la cronologia, **Tutto ciò che è successo**: un'unica lista per i passi e per ciò che è successo intorno a loro. È raggruppata per capitolo e per giro di revisione (il giro 1 è tutto fino al primo giudizio del direttore; ogni giudizio che chiede correzioni apre un nuovo giro; i numeri dei giri sono quelli che il piano ha registrato, quindi restano giusti anche quando il registro ha perso le prime revisioni di un capitolo), e l'intestazione di un giro riporta il verdetto e il voto del direttore quando ci sono; apri il gruppo per vedere cosa hanno dato i lettori e cosa ha deciso il direttore in quel giro. Il capitolo in corso è aperto e gli altri sono chiusi. Il passo in corso non è una riga, perché lo dice la fascia, ma il testo che sta scrivendo è in cima alla lista. Apri un passo per vedere perché è stato fatto, cosa ha scritto, il modello, i token, il costo, i file modificati e le note di lettori, specialisti e direttore; un passo che è fallito mostra che tipo di errore è stato, con un'icona e una parola, e uno che è stato ripetuto è una sola riga con dentro ogni tentativo, e ogni ripetizione è raccontata a parole. **Tutto**, **Errori e avvisi**, **Direttore**, **Lettori** e **Scrittura** scelgono cosa mostra la lista (la scelta resta finché lavori), **Nascondi fino a ora** nasconde ciò che è finito, e un pulsante in fondo a un gruppo lungo mostra altre righe. Le note delle esecuzioni (partita, in pausa, fermata) stanno nel gruppo in cui sono successe. Il registro conserva gli ultimi 200 passi, e le note di un passo ci sono se questo browser lo ha seguito.
 
@@ -646,7 +735,17 @@ Un server più vecchio della 0.1.5 non conosce la pausa a fine capitolo, il limi
 
 ## Quando l'autopilot aspetta te
 
-Oltre a una domanda del direttore, l'autopilot può fermarsi con **Aspetta te** perché un file di profilo ha un problema: il direttore, un ghostwriter o un lettore simulato con un YAML che non si legge, o con un valore che nessuno conosce. Si ferma prima di spendere qualsiasi cosa, elenca i problemi e non sostituisce nulla con i valori predefiniti. Correggi i file in **Direttore**, **Ghostwriter** o **Lettori simulati** (ogni pagina mostra ciò che non ha saputo leggere e chiede conferma prima che tu salvi sopra il file), poi scegli **Riprendi**: i file vengono controllati di nuovo. Se un passo si ferma perché un capitolo, una scena o un file di canone ha un frontmatter che non si legge, l'errore indica il file e la riga: correggila e riprendi.
+Oltre a una domanda del direttore, l'autopilot può fermarsi con **Aspetta te** perché un file di profilo ha un problema: il direttore, un ghostwriter o un lettore simulato con un YAML che non si legge, o con un valore che nessuno conosce. Si ferma prima di spendere qualsiasi cosa, elenca i problemi e non sostituisce nulla con i valori predefiniti. Controlla allo stesso modo lo **Stile di valutazione** (\`evaluation-guidelines.md\`). Correggi i file in **Direttore**, **Ghostwriter**, **Lettori simulati** o **Stile di valutazione** (ogni pagina mostra ciò che non ha saputo leggere e chiede conferma prima che tu salvi sopra il file), poi scegli **Riprendi**: i file vengono controllati di nuovo. Se un passo si ferma perché un capitolo, una scena o un file di canone ha un frontmatter che non si legge, l'errore indica il file e la riga: correggila e riprendi.
+
+## Capitoli congelati
+
+Un capitolo è **congelato** quando il direttore lo approva, oppure quando lo congeli tu con **Congela capitolo** nella sua pagina: conserva una traccia del suo testo, e la pagina dice **Congelato il** giorno **dall'autopilot** oppure **da te**. **Scongela capitolo** toglie la traccia, dopo averlo chiesto.
+
+Quando modifichi un capitolo congelato, la pagina del capitolo (e delle sue scene) lo dice sotto il testo, con tre scelte: **Rivedi e aggiorna il libro da questa modifica** (il direttore rilegge il capitolo e l'autopilot aggiorna i capitoli successivi che non tornano più; il tuo testo non viene riscritto), **Solo una review del capitolo** e **Segna come rivisto** (congelato di nuovo così com'è, senza chiamate all'AI). Una scelta che chiama l'AI resta in coda, e l'autopilot la porta a termine alla sua prossima esecuzione: **Avvia ora** la fa partire. La fascia di **In diretta** e il mini-player dicono quanti capitoli congelati sono stati modificati, e **In diretta** elenca le decisioni in attesa.
+
+Cosa fa l'autopilot quando trova una modifica si sceglie in **Configurazione** → **Revisione** → **Quando modifichi un capitolo congelato**: **Chiedimi ogni volta** (di norma: si ferma prima di spendere qualsiasi cosa e chiede in **In diretta**, con le stesse scelte come pulsanti; un tuo testo invece avvia una revisione che chiama l'AI, con le tue parole come nota per il direttore), **Rivedi in automatico** (lo dice nella cronologia) oppure **Solo segnala**. La scelta si può cambiare anche mentre lavora. Nulla parte da solo, a meno che tu scelga **Rivedi in automatico**.
+
+Quando cambi la voce della Scaletta di un capitolo già scritto, l'autopilot chiede allo stesso modo cosa fare: **Riscrivi il capitolo secondo la Scaletta**, **Tieni il testo, aggiorna solo la Scaletta** oppure **Segna come rivisto**. Una proposta del Copilot che modifica il testo di un capitolo congelato dice cosa succederà dopo che l'avrai applicata. Il Copilot e le app collegate con il server MCP del libro non congelano né scongelano mai un capitolo: quello che cambiano in un capitolo congelato lo lascia congelato, e ne decidi tu come per le tue modifiche. Su un server personale i capitoli congelati richiedono la versione 0.1.9 o successiva: con una più vecchia le pagine invitano ad aggiornarlo.
 
 ## Budget e costi
 
@@ -668,6 +767,87 @@ Mentre abbini, la pagina mostra quattro cifre: controlla che il pannello di ammi
 ## Router AI
 
 Instrada i task **Autopilot** e **Direttore** in **Impostazioni → AI Router**; il gruppo **Autopilot** della tabella del testo elenca tutti i task che l'autopilot usa. I lettori usano **Valutazione lettore**, gli specialisti **Revisione**. I task senza instradamento usano i modelli con capability predefinita.
+`,
+  }),
+  entry("book-mcp", "guides", {
+    title: "MCP server of a book",
+    summary: "Let Claude Code, Cursor, VS Code, ChatGPT or Claude.ai read and edit a book on your personal server, and see which apps are connected.",
+    markdown: `# MCP server of a book
+
+Every book on your personal server can have its own **MCP server**: an address of the server (\`/mcp/<name>\`) where an assistant such as Claude Code, Cursor, VS Code, ChatGPT or Claude.ai reads the book and edits it with tools like the Narrarium Copilot's (the [Model Context Protocol](https://modelcontextprotocol.io)). It is off for every book until you switch it on, one book at a time.
+
+## Where it is
+
+Open the book and go to **Book settings**: the **MCP server** section is at the bottom of the page. What you change there applies at once on the server, without **Save**. The section is for a book that is on your personal server (move it there from **Where it runs**, on the **Live** page of its autopilot); for any other book it has one line with the way to **Settings** → **Personal server**. A server too old for it says so: update it from the same settings.
+
+## Switch it on
+
+Turn on **MCP server for this book**. The section then shows the **Address** of the book, with a button that copies it, and its **Address name**, the last part of the address: lowercase letters, digits and single hyphens, up to 80 characters. **Change the address** gives it another name; if the server refuses one (another book has it, or it is not a valid name), the field says why.
+
+Switching it off, or changing the address, **disconnects every app** connected to the book: each has to ask you again, and every assistant needs the new address. The page asks before doing either, and says how many apps are connected.
+
+If the server has no public address yet, the address works only on the computer that runs the server, and the section says so with the server's own words: ChatGPT, Claude.ai and assistants on other devices need a public **https** address, which you set in the admin panel of the server (**Approved network**).
+
+## Claude Code, Cursor and VS Code
+
+These assistants send a **token** in a header. Create one for the assistant in the admin panel of the server (**Clients**), with only the permissions it needs, and put it in place of \`YOUR_TOKEN\` in the configuration the section shows for each of them, for example:
+
+\`\`\`bash
+claude mcp add --transport http the-glass-harbor https://books.example.net/mcp/the-glass-harbor \\
+  --header "Authorization: Bearer YOUR_TOKEN"
+\`\`\`
+
+The token goes in the \`Authorization\` header, never in the address. Narrarium never shows the token of this device.
+
+## ChatGPT and Claude.ai
+
+On a server that lets apps connect by themselves (through OAuth), paste the address: in Claude.ai as a custom connector, in ChatGPT as a connector in developer mode, with OAuth. A page of **your** server opens: you prove that it is you with a **passkey** (or the admin code) and choose what the app may do. Read only is the default; changing the book and controlling the autopilot stay off until you turn them on.
+
+**Connected apps** lists the apps connected to the book: the name the app gave itself, what it may do (read the book, change the book, control the autopilot), the address it goes back to, when it was connected and when it was last used. **Revoke** disconnects one, after asking; **Refresh the list** reads it again, for an app you have just allowed. Your passkeys and the log of the latest calls are in the admin panel of the server, under **Connected apps (MCP)**.
+
+## The risk
+
+A model that reads the book reads text, and text can say anything: it can be talked into using the tools (this is called prompt injection). So give write access only to apps you trust, give each assistant only the permissions it needs, and switch the MCP server off for a book you do not work on with an assistant. Every change an assistant makes is a commit of the book, which you can undo.
+`,
+  }, {
+    title: "Server MCP di un libro",
+    summary: "Fai leggere e modificare un libro del tuo server personale a Claude Code, Cursor, VS Code, ChatGPT o Claude.ai, e guarda quali app sono collegate.",
+    markdown: `# Server MCP di un libro
+
+Ogni libro sul tuo server personale può avere il suo **Server MCP**: un indirizzo del server (\`/mcp/<nome>\`) dove un assistente come Claude Code, Cursor, VS Code, ChatGPT o Claude.ai legge il libro e lo modifica con strumenti simili a quelli del Copilot di Narrarium (il [Model Context Protocol](https://modelcontextprotocol.io)). È spento per ogni libro finché non lo accendi, un libro alla volta.
+
+## Dove si trova
+
+Apri il libro e vai in **Impostazioni libro**: la sezione **Server MCP** è in fondo alla pagina. Ciò che cambi lì vale subito sul server, senza **Salva**. La sezione è per un libro che sta sul tuo server personale (spostalo lì da **Dove gira**, nella pagina **In diretta** del suo autopilot); per ogni altro libro ha una riga con la strada per **Impostazioni** → **Server personale**. Un server troppo vecchio per averlo lo dice: aggiornalo dalle stesse impostazioni.
+
+## Accenderlo
+
+Attiva **Server MCP di questo libro**. La sezione mostra allora l'**Indirizzo** del libro, con un pulsante che lo copia, e il suo **Nome dell'indirizzo**, l'ultima parte dell'indirizzo: lettere minuscole, cifre e trattini singoli, fino a 80 caratteri. **Cambia l'indirizzo** gli dà un altro nome; se il server ne rifiuta uno (ce l'ha un altro libro, o non è un nome valido), il campo dice perché.
+
+Spegnerlo, o cambiare l'indirizzo, **scollega ogni app** collegata al libro: ognuna dovrà chiederti di nuovo il permesso, e ogni assistente avrà bisogno del nuovo indirizzo. La pagina chiede conferma prima di fare l'una o l'altra cosa, e dice quante app sono collegate.
+
+Se il server non ha ancora un indirizzo pubblico, l'indirizzo funziona solo sul computer del server, e la sezione lo dice con le parole del server: ChatGPT, Claude.ai e gli assistenti su altri dispositivi hanno bisogno di un indirizzo pubblico **https**, che imposti nel pannello di amministrazione del server (**Rete approvata**).
+
+## Claude Code, Cursor e VS Code
+
+Questi assistenti mandano un **token** in un'intestazione. Creane uno per l'assistente nel pannello di amministrazione del server (**Client**), con i soli permessi che gli servono, e mettilo al posto di \`IL_TUO_TOKEN\` nella configurazione che la sezione mostra per ciascuno, per esempio:
+
+\`\`\`bash
+claude mcp add --transport http il-porto-di-vetro https://books.example.net/mcp/il-porto-di-vetro \\
+  --header "Authorization: Bearer IL_TUO_TOKEN"
+\`\`\`
+
+Il token va nell'intestazione \`Authorization\`, mai nell'indirizzo. Narrarium non mostra mai il token di questo dispositivo.
+
+## ChatGPT e Claude.ai
+
+Su un server che lascia collegare le app da sole (con OAuth), incolla l'indirizzo: in Claude.ai come connettore personalizzato, in ChatGPT come connettore in modalità sviluppatore, con OAuth. Si apre una pagina del **tuo** server: dimostri che sei tu con una **passkey** (o il codice amministratore) e scegli cosa può fare l'app. Di base può solo leggere; modificare il libro e comandare l'autopilot restano spenti finché non li accendi.
+
+**App collegate** elenca le app collegate al libro: il nome che l'app si è data, cosa può fare (leggere il libro, modificare il libro, comandare l'autopilot), l'indirizzo a cui torna, quando è stata collegata e quando è stata usata l'ultima volta. **Revoca** ne scollega una, dopo aver chiesto conferma; **Aggiorna l'elenco** lo rilegge, per un'app che hai appena autorizzato. Le tue passkey e il registro delle ultime chiamate sono nel pannello di amministrazione del server, in **App collegate (MCP)**.
+
+## Il rischio
+
+Un modello che legge il libro legge testo, e il testo può dire qualsiasi cosa: può essere convinto a usare gli strumenti (si chiama prompt injection). Quindi dai il permesso di modifica solo alle app di cui ti fidi, dai a ogni assistente solo i permessi che gli servono, e spegni il server MCP di un libro su cui non lavori con un assistente. Ogni modifica di un assistente è un commit del libro, che puoi annullare.
 `,
   }),
   entry("reader-export", "guides", {

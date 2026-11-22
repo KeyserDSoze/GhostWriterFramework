@@ -1,7 +1,8 @@
 import type { AssistantFileUpdate } from "@/assistant/store";
 import type { CanonicalScriptMutationResult } from "@/narrarium/canonicalScriptMutationPlan";
 
-export type AppliedFileUpdateResult = { previousContent: string | null; appliedHash: string; appliedContent?: string };
+/** What applying a file did: its text before, and the hash of what was written (`null`: the file was deleted, an entry of the outline). */
+export type AppliedFileUpdateResult = { previousContent: string | null; appliedHash: string | null; appliedContent?: string };
 
 export function applyCanonicalRevisionResults(
   updates: AssistantFileUpdate[],

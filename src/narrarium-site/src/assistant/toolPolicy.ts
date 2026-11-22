@@ -61,6 +61,7 @@ export function canonicalAssistantActionToolIds(action: AssistantAction): string
       return ["navigate-app"];
     case "apply-file-updates":
     case "undo-file-updates":
-      return ["multi-file-edit"];
+      // A proposal for the outline (the Scaletta) is the Copilot's «Edit the Outline»; every other one is «Edit Multiple Files».
+      return ["multi-file-edit", "edit-outline"];
   }
 }

@@ -22,6 +22,8 @@ const ACTION_OF_OPERATION: Record<AutopilotOperationKind, AutopilotActionName> =
   moveToServer: "move",
   moveToBrowser: "move",
   sync: "sync",
+  // A decision about a frozen chapter is an answer about it, as the answer to its question would be.
+  frozen: "answer",
 };
 
 /** What a person asks of the autopilot with one click: each returns whether it was done (a failure is already said in a toast). */

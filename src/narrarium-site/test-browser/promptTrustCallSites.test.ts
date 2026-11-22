@@ -12,6 +12,7 @@ const ROUTED_CALL_SITES = [
   "src/narrarium/pipeline.ts",
   "src/narrarium/readerEvaluations.ts",
   "src/narrarium/rewriteFromReaderFeedback.ts",
+  "src/outline/outlineAssistPrompts.ts",
   "src/pages/EvaluationStylePage.tsx",
   "src/research/createFromResearch.ts",
   "src/research/engine.ts",

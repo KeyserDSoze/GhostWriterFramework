@@ -5,11 +5,13 @@ import { resolveBookToken } from "@/types/settings";
 import { resolveAuthoritativeBranch } from "@/github/branchRules";
 import { isRepositoryNotFoundError } from "@/repository/repositoryError";
 import { canDiscloseSecretBody, isSecretPath, secretAccessMapForRoute, visibleSecretManifestEntries, type SecretAccess } from "@/assistant/secretPolicy";
+import { useOutlineFocusStore } from "@/store/outlineFocusStore";
 
 export type AppRouteContext =
   | { kind: "app-home" }
   | { kind: "book"; bookId: string }
   | { kind: "book-dashboard"; bookId: string }
+  | { kind: "book-outline"; bookId: string }
   | { kind: "book-autopilot"; bookId: string }
   | { kind: "book-autopilot-settings"; bookId: string }
   | { kind: "book-director"; bookId: string }
@@ -73,6 +75,9 @@ export function parseAppRoute(pathname: string): AppRouteContext {
 
   match = /^\/app\/books\/([^/]+)\/dashboard$/.exec(clean);
   if (match) return { kind: "book-dashboard", bookId: decodeURIComponent(match[1]) };
+
+  match = /^\/app\/books\/([^/]+)\/outline$/.exec(clean);
+  if (match) return { kind: "book-outline", bookId: decodeURIComponent(match[1]) };
 
   match = /^\/app\/books\/([^/]+)\/autopilot$/.exec(clean);
   if (match) return { kind: "book-autopilot", bookId: decodeURIComponent(match[1]) };
@@ -268,6 +273,11 @@ export async function loadWriterContext(
       case "book-autopilot-settings":
         await pushFile("book.md");
         await pushFile(structure.plotPath);
+        await pushOutline(relevantFiles, loaded, (path) => readFile(token, book.owner, book.repo, path, readBranch, signal), book.id, signal);
+        break;
+      case "book-outline":
+        await pushFile("book.md");
+        await pushOutline(relevantFiles, loaded, (path) => readFile(token, book.owner, book.repo, path, readBranch, signal), book.id, signal);
         break;
       case "book-director":
         if (structure.rootFiles?.some((file) => file.path === "director.md")) await pushFile("director.md");
@@ -344,6 +354,38 @@ export async function loadWriterContext(
   };
 }
 
+/** Entries of the outline around the one in focus that a request reads, and the characters of each: the outline has no maximum. */
+const OUTLINE_WINDOW = 5;
+const OUTLINE_ENTRY_CHARS = 1_500;
+const OUTLINE_BOOK_CHARS = 3_000;
+
+function clipped(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max).trimEnd()}\n[…]` : text;
+}
+
+/**
+ * The outline as the Copilot reads it on the Outline page and on the autopilot's pages, where «chapter N» is its entry N: the description of the book
+ * and the entries around the one the author is working on (the first ones when none is), each cut to a few lines. The files that do not exist are
+ * left out.
+ */
+async function pushOutline(files: Array<{ path: string; content: string }>, loaded: Set<string>, read: (path: string) => Promise<string>, bookId: string, signal?: AbortSignal): Promise<void> {
+  const focus = useOutlineFocusStore.getState();
+  const center = focus.bookId === bookId && focus.number ? focus.number : 1;
+  const first = Math.max(1, center - OUTLINE_WINDOW);
+  const paths = ["outline/book.md", ...Array.from({ length: OUTLINE_WINDOW * 2 + 1 }, (_, index) => `outline/chapters/${String(first + index).padStart(3, "0")}.md`)];
+  for (const path of paths) {
+    if (loaded.has(path)) continue;
+    try {
+      const content = await read(path);
+      signal?.throwIfAborted();
+      files.push({ path, content: clipped(content, path === "outline/book.md" ? OUTLINE_BOOK_CHARS : OUTLINE_ENTRY_CHARS) });
+      loaded.add(path);
+    } catch (error) {
+      if (!isRepositoryNotFoundError(error)) throw error;
+    }
+  }
+}
+
 export function buildContextTitle(
   route: AppRouteContext,
   structure: BookStructure | null,
@@ -353,6 +395,7 @@ export function buildContextTitle(
   switch (route.kind) {
     case "book": return structure?.title ?? "Book";
     case "book-dashboard": return "Book dashboard";
+    case "book-outline": return "Outline";
     case "book-autopilot": return "Autopilot";
     case "book-autopilot-settings": return "Autopilot configuration";
     case "book-director": return "Director";
@@ -404,6 +447,7 @@ export function buildContextSummary(
   switch (route.kind) {
     case "book": return `Book context for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-dashboard": return `Dashboard for ${structure?.title ?? book?.name ?? "book"}.`;
+    case "book-outline": return `Outline (Scaletta) of ${structure?.title ?? book?.name ?? "book"}: the rough description of the book (outline/book.md) and one entry per chapter (outline/chapters/<NNN>.md) with a hypothetical title, what happens and its ghostwriter. The autopilot follows it as binding.`;
     case "book-autopilot": return `Autopilot of ${structure?.title ?? book?.name ?? "book"}, live: what it is doing, its history, its plan and the author's permanent rules.`;
     case "book-autopilot-settings": return `Autopilot configuration for ${structure?.title ?? book?.name ?? "book"}: the brief, how it reviews and publishes the book, the author's permanent rules and the profiles it uses.`;
     case "book-director": return `Director profile and opinions for ${structure?.title ?? book?.name ?? "book"}.`;
@@ -453,7 +497,7 @@ function buildNoteTargetPath(route: AppRouteContext, chapter: Chapter | null): s
   if (route.kind === "chapter" || route.kind === "paragraph" || route.kind === "chapter-workspace" || route.kind === "paragraph-workspace" || route.kind === "chapter-audit" || route.kind === "paragraph-audit") {
     return chapter ? `drafts/${chapter.slug}/notes.md` : null;
   }
-  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-autopilot" || route.kind === "book-autopilot-settings" || route.kind === "book-director" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-evaluation-style" || route.kind === "book-simulated-readers" || route.kind === "reader" || route.kind === "book-export" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "book-audit" || route.kind === "app-home") {
+  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-outline" || route.kind === "book-autopilot" || route.kind === "book-autopilot-settings" || route.kind === "book-director" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-evaluation-style" || route.kind === "book-simulated-readers" || route.kind === "reader" || route.kind === "book-export" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "book-audit" || route.kind === "app-home") {
     return "notes.md";
   }
   return null;

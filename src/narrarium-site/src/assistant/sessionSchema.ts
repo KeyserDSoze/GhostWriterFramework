@@ -1,6 +1,6 @@
 import type { AssistantAction, AssistantAttachment, AssistantLosslessArchiveManifest, AssistantLosslessSegment, AssistantLosslessSegmentRef, AssistantMessage, AssistantNoteSaveOperation, AssistantQuarantinedAction, AssistantSession, AssistantSessionArchive, AssistantSessionProvenance } from "./store.ts";
 import { emptyAssistantArchiveRollup, emptyAssistantSessionArchive, normalizeAssistantSession } from "./store.ts";
-import { hasAssistantActionProvenance } from "./actionValidation.ts";
+import { hasAssistantActionProvenance, OUTLINE_FILE } from "./actionValidation.ts";
 
 export const ASSISTANT_SESSION_SCHEMA_VERSION = 1 as const;
 export const MAX_ASSISTANT_SESSION_BYTES = 8 * 1024 * 1024;
@@ -71,7 +71,10 @@ function provenance(value: unknown, label: string): AssistantSessionProvenance {
 function update(value: unknown, label: string) {
   const raw = object(value, label);
   if (raw.status !== undefined && raw.status !== "pending" && raw.status !== "applied" && raw.status !== "failed") throw new AssistantSessionValidationError(`${label}.status is invalid.`);
-  return { path: repositoryPath(raw.path, `${label}.path`), content: text(raw.content, `${label}.content`), ...(raw.reason === undefined ? {} : { reason: text(raw.reason, `${label}.reason`, 10_000) }), ...(raw.previousContent === undefined ? {} : { previousContent: raw.previousContent === null ? null : text(raw.previousContent, `${label}.previousContent`) }), ...(raw.status === undefined ? {} : { status: raw.status }), ...(raw.appliedHash === undefined ? {} : { appliedHash: text(raw.appliedHash, `${label}.appliedHash`, 256) }), ...(raw.error === undefined ? {} : { error: text(raw.error, `${label}.error`, 10_000) }) };
+  const path = repositoryPath(raw.path, `${label}.path`);
+  // Only an entry of the outline is deleted by a proposal (`content: null`), and only then is there no hash of what was written.
+  const deletion = raw.content === null && OUTLINE_FILE.test(path);
+  return { path, content: deletion ? null : text(raw.content, `${label}.content`), ...(raw.reason === undefined ? {} : { reason: text(raw.reason, `${label}.reason`, 10_000) }), ...(raw.previousContent === undefined ? {} : { previousContent: raw.previousContent === null ? null : text(raw.previousContent, `${label}.previousContent`) }), ...(raw.status === undefined ? {} : { status: raw.status }), ...(raw.appliedHash === undefined ? {} : { appliedHash: deletion && raw.appliedHash === null ? null : text(raw.appliedHash, `${label}.appliedHash`, 256) }), ...(raw.error === undefined ? {} : { error: text(raw.error, `${label}.error`, 10_000) }) };
 }
 
 function action(value: unknown, label: string): AssistantAction {

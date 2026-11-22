@@ -8,7 +8,9 @@ const engineTypes = readFileSync(new URL("../../../packages/engine/src/autopilot
 
 /** The kinds of step the engine declares, read from where it declares them, so a new one cannot ship without a name. */
 function engineTaskKinds() {
-  const declaration = /export type AutopilotTaskKind =((?:\s*\|\s*"[a-z-]+")+);/.exec(engineTypes);
+  // A kind may carry its own doc comment inside the union (`freeze` does): the comments are not part of the declaration.
+  const source = engineTypes.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const declaration = /export type AutopilotTaskKind =((?:\s*\|\s*"[a-z-]+")+);/.exec(source);
   assert.ok(declaration, "the engine declares its kinds of step as a union of strings");
   return [...declaration[1].matchAll(/"([a-z-]+)"/g)].map((match) => match[1]);
 }

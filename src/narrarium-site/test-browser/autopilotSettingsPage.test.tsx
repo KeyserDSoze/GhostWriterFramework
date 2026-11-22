@@ -125,12 +125,14 @@ describe("the configuration of the autopilot", () => {
     ]);
   });
 
-  it("has the brief in The book, and the synopsis with the note that the Outline will take its place", () => {
+  it("has the brief in The book, the synopsis with the way to the Outline that takes its place, and the switch that fills the Outline", () => {
     seedRun({ status: "paused" });
     render(<Page />);
     const book = region("autopilot.config.sections.book");
     for (const key of ["idea", "chapters", "scenes", "words", "genre", "audience", "synopsis"]) expect(within(book).getByLabelText(t(`autopilot.setup.${key}`)), key).toBeInTheDocument();
-    expect(within(book).getByLabelText(t("autopilot.setup.synopsis"))).toHaveAccessibleDescription(new RegExp(t("autopilot.config.synopsisNote").slice(0, 30)));
+    expect(within(book).getByLabelText(t("autopilot.setup.synopsis"))).toHaveAccessibleDescription(new RegExp(t("autopilot.setup.synopsisOutline").slice(0, 30)));
+    expect(within(book).getByRole("link", { name: t("autopilot.setup.useOutline") })).toHaveAttribute("href", `${ROOT}/outline`);
+    expect(within(book).getByRole("switch", { name: t("autopilot.setup.fillOutline") })).toBeChecked();
   });
 
   it("has how the autopilot reviews the book in Review: the readers and how many, the plan, the specialists, the pauses, the sessions and the two budgets", () => {
@@ -407,7 +409,7 @@ describe("the configuration of the autopilot", () => {
       fireEvent.click(start);
       await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledWith("book-1", { brief: expect.objectContaining({ idea: "A harbor built on glass.", targetChapters: 20 }), options: expect.anything() }));
       await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(`${ROOT}/autopilot`));
-      expect(screen.getByText("The live page")).toBeInTheDocument();
+      expect(await screen.findByText("The live page")).toBeInTheDocument();
     });
 
     it("resumes a book that is stopped, saving what was changed first, and opens the live page", async () => {

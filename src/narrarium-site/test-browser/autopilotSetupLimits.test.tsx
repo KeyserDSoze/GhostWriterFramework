@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { DEFAULT_BRIEF, DEFAULT_OPTIONS, normalizeBrief, normalizeOptions, type AutopilotState } from "narrarium-engine";
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
@@ -16,7 +17,7 @@ const run = vi.fn(async (_name: string, action: (runtime: unknown, bookId: strin
 });
 
 function openForm(state: AutopilotState | null = null) {
-  render(<SetupCard book={BOOK} state={state} existingChapters={0} running={false} busy={false} disabled={false} run={run as never} />);
+  render(<MemoryRouter><SetupCard book={BOOK} state={state} existingChapters={0} running={false} busy={false} disabled={false} run={run as never} /></MemoryRouter>);
 }
 
 const chaptersField = () => screen.getByLabelText(t("autopilot.setup.chapters")) as HTMLInputElement;

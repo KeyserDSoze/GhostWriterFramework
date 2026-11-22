@@ -26,6 +26,7 @@ import { isEditorialReviewPrompt } from "@/assistant/intentRules";
 import { resolveChapterTarget, resolveParagraphTarget } from "@/assistant/targetRules";
 import { selectMentionedCanonFiles, type CanonContextCandidate } from "@/assistant/canonContext";
 import { copilotToolRegistry, isCopilotHandlerEnabled } from "@/assistant/tools/registry";
+import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import { classifyMutationIntent, type MutationIntent } from "@/assistant/mutationIntent";
 import { sourceRevisionFromFiles } from "@/assistant/actionValidation";
 import { resolveNavigateAction, resolveReadAloudAction } from "@/assistant/planner";
@@ -54,6 +55,7 @@ import {
 } from "@/narrarium/workspace";
 import { commitScriptWithCanonicalLedger } from "@/narrarium/scriptLedger";
 import { chapterNumberFromSlug } from "@/lib/chapterSlug";
+import { chapterTextFile } from "@/frozen/chapterText";
 import { generatedNameLabel } from "@/lib/fallbackTitle";
 import { matchKey } from "@/lib/matchText";
 import { describeCopilotScriptCreation } from "@/assistant/scriptMutationResult";
@@ -83,6 +85,7 @@ import { assertToolExecutionResult, evaluateToolContract, llmTaskForTool, missin
 import { parseBranchName, parseBranchOperation } from "@/github/branchNameParser";
 import { buildPullRequestProposal, pullRequestRevision, summarizePullRequestFiles } from "@/assistant/pullRequestProposal";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
+import { chapterTargetInstruction, resolveChapterReference } from "@/assistant/outlineTarget";
 
 async function completeForTask(
   settings: AppSettings,
@@ -238,12 +241,14 @@ export async function runAssistantPrompt(input: {
     "deep-research": () => runDeepResearchFromPrompt({ ...promptInput, book, branch, token }),
     "create-from-research": () => proposeEntityFromResearch({ ...promptInput, book, branch, token }),
     "multi-file-edit": () => proposeMultiFileUpdates({ ...promptInput, book, branch, token }),
+    "edit-outline": () => proposeOutlineEditFromPrompt({ ...promptInput, book, branch, token }),
   } as const;
   assertExecutableHandlerMap(handlers);
 
   const availableHandlerIds = new Set(Object.keys(handlers));
   const runtime: CopilotToolRuntimeContext = { settings, book: selectedBook, token, branch, context, attachments, attachmentTarget };
   const executeTool = async (toolId: string, mutationIntent?: MutationIntent): Promise<AssistantMessage> => {
+    ensureBuiltinCopilotToolsRegistered();
     const tool = copilotToolRegistry.get(toolId);
     if (!tool?.handlerId || !(tool.handlerId in handlers)) throw new Error(`Copilot tool ${toolId} has no runtime handler.`);
     if (!isCopilotHandlerEnabled(settings, tool.handlerId)) return disabledCopilotToolMessage(settings, tool.id);
@@ -270,6 +275,10 @@ export async function runAssistantPrompt(input: {
   if (isCreateFromResearchPrompt(prompt)) {
     return executeTool("create-from-research");
   }
+  // «Chapter» on the Outline and on the autopilot's pages is the entry of the outline; «scaletta»/«outline» is the outline anywhere.
+  const chapterReference = selectedBook && context.route ? resolveChapterReference(prompt, context.route) : null;
+  if (chapterReference?.target === "ask") return whichChapterMessage(prompt, settings);
+  if (chapterReference?.target === "outline" && classifyMutationIntent(prompt, "edit-outline") === "positive") return executeTool("edit-outline", "positive");
   const match = chooseToolMatch({ prompt, lowered, settings, spokenMode, evaluateContract: (tool) => evaluateToolContract(tool, runtime) }, availableHandlerIds);
   if (match && !match.enabled) return disabledCopilotToolMessage(settings, match.toolId);
   if (match?.toolId === "update-plot" && match.mutationIntent === "read-only") return executeTool("answer-from-context");
@@ -2037,9 +2046,73 @@ async function proposeMultiFileUpdates(input: PromptInput & { book: BookEntry; b
     buildUserMessage(input, currentRequest(input.prompt)),
   ], "default", multiFileOutputSchema, { accountScope: input.accountScope, signal: input.signal, label: "copilot:multi-file-edit" });
   const summary = parsed.summary;
-  const updates = parsed.updates as AssistantFileUpdate[];
+  // The Outline changes only through «Edit the Outline» (the engine writes its files, as the author's): a file of it written here by hand
+  // could even claim to be the autopilot's.
+  const proposed = parsed.updates as AssistantFileUpdate[];
+  const outsideOutline = proposed.filter((entry) => !isOutlineFolder(entry.path));
+  const outlineNote = outsideOutline.length < proposed.length
+    ? (promptIsItalian(input.prompt, input.settings) ? "La Scaletta si modifica con «Modifica la Scaletta» (Edit the Outline): chiedimelo nominando la Scaletta, per esempio «nella Scaletta, …»." : "The outline is changed with «Edit the Outline»: ask me again naming the outline, for example «in the outline, …».")
+    : "";
+  if (!outsideOutline.length) return makeAssistantMessage("assistant", outlineNote);
+  const updates = await keepChapterFreezes(input, outsideOutline);
   const provenance = await actionProvenance(input, "multi-file-edit", updates.map((entry) => entry.path));
-  return { id: crypto.randomUUID(), role: "assistant", text: `${summary}\n\nProposed files:\n${updates.map((entry) => `- ${entry.path}${entry.reason ? `: ${entry.reason}` : ""}`).join("\n")}`, action: { ...provenance, kind: "apply-file-updates", bookId: input.book.id, updates } };
+  return { id: crypto.randomUUID(), role: "assistant", text: `${summary}\n\nProposed files:\n${updates.map((entry) => `- ${entry.path}${entry.reason ? `: ${entry.reason}` : ""}`).join("\n")}${outlineNote ? `\n\n${outlineNote}` : ""}`, action: { ...provenance, kind: "apply-file-updates", bookId: input.book.id, updates } };
+}
+
+/**
+ * The chapter.md a proposal writes keeps the freeze the file holds now (the engine's `keepChapterFreeze`): a model never freezes a chapter or
+ * takes its freeze away, so a change of a frozen chapter is noticed and the author is asked about it. Read only when a proposal writes one.
+ */
+async function keepChapterFreezes(input: { book: BookEntry; branch: string; token: string }, updates: AssistantFileUpdate[]): Promise<AssistantFileUpdate[]> {
+  const writesChapterFile = (update: AssistantFileUpdate) => typeof update.content === "string" && chapterTextFile(update.path)?.name === "chapter.md";
+  if (!updates.some(writesChapterFile)) return updates;
+  const { keepChapterFreeze } = await import("narrarium-engine");
+  return Promise.all(updates.map(async (update) => {
+    if (!writesChapterFile(update)) return update;
+    const current = await readFileWithSha(input.token, input.book.owner, input.book.repo, input.branch, update.path).catch((error) => {
+      if (isGitHubFileNotFoundError(error)) return null;
+      throw error;
+    });
+    return { ...update, content: keepChapterFreeze(update.content as string, current?.content ?? null) };
+  }));
+}
+
+/** The folder of the Outline (the Scaletta), which only «Edit the Outline» writes. */
+function isOutlineFolder(path: string): boolean {
+  return path === "outline" || path.startsWith("outline/");
+}
+
+/** Whether a request is written in Italian, for the words of the Copilot that are not the model's. */
+function promptIsItalian(prompt: string, settings: AppSettings): boolean {
+  if (/(?<![\p{L}])(?:capitol[oi]|scalett[ae]|scen[ae]|aggiungi|sposta|elimina|riscrivi|cambia|nel|nella|della|dopo|prima|che|cosa|il|la|una?)(?![\p{L}])/iu.test(prompt)) return true;
+  if (/(?<![\p{L}])(?:chapter|outline|the|move|add|delete|rewrite|change|after|before|what|in)(?![\p{L}])/iu.test(prompt)) return false;
+  return settings.ui.language === "it";
+}
+
+/** On an outline page, a request that speaks of scenes or prose: the Copilot asks which chapter is meant before doing anything. */
+function whichChapterMessage(prompt: string, settings: AppSettings): AssistantMessage {
+  return makeAssistantMessage("assistant", promptIsItalian(prompt, settings)
+    ? "Intendi la voce della Scaletta (il piano del capitolo: titolo ipotetico, cosa succede, ghostwriter) o il capitolo scritto, con il suo testo? Dimmi «nella Scaletta» oppure «nel testo del capitolo» e procedo."
+    : "Do you mean the entry of the outline (the plan of the chapter: hypothetical title, what happens, ghostwriter) or the written chapter, with its text? Say «in the outline» or «in the chapter's text» and I will go on.");
+}
+
+/**
+ * «Edit the Outline»: the request becomes edits of the outline (the engine writes every file, as the author's), shown as a proposal of the files
+ * it changes. Nothing is written until the author applies it, all together. The outline's code is loaded with the first request about it.
+ */
+async function proposeOutlineEditFromPrompt(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
+  const { outlineEditMessage } = await import("@/assistant/outlineProposal");
+  const structure = input.context.structure;
+  return outlineEditMessage({
+    prompt: input.prompt,
+    italian: promptIsItalian(input.prompt, input.settings),
+    route: input.context.route ?? { kind: "book-outline" },
+    language: structure?.language ?? input.settings.ui.language,
+    book: input.book,
+    branch: input.branch,
+    ghostwriters: (structure?.ghostwriters ?? []).map((entry) => entry.slug),
+    complete: (messages, schema) => completeStructuredForTask(input.settings, messages, "default", schema, { accountScope: input.accountScope, signal: input.signal, label: "copilot:edit-outline" }),
+  });
 }
 
 async function createContextNote(input: PromptInput & { book: BookEntry; branch: string; token: string }): Promise<AssistantMessage> {
@@ -2111,7 +2184,8 @@ function buildSystemMessage(input: PromptInput, instruction: string, taskLanguag
   const spokenInstruction = input.spokenMode
     ? "\n\nThis answer will be read aloud. Be conversational, direct, and natural. Use short spoken paragraphs. Avoid tables, dense markdown, long lists, code blocks, and anything that is hard to understand through audio. If you need to list things, use a few concise spoken points."
     : "";
-  return { role: "system", content: `${instruction}${spokenInstruction}${languageInstruction(input, taskLanguage)}\n\n${systemContextBundle(input)}` };
+  const chapterRule = input.context.route ? chapterTargetInstruction(input.context.route) : "";
+  return { role: "system", content: `${instruction}${chapterRule ? `\n\n${chapterRule}` : ""}${spokenInstruction}${languageInstruction(input, taskLanguage)}\n\n${systemContextBundle(input)}` };
 }
 
 function languageInstruction(input: PromptInput, taskLanguage?: "book" | "user"): string {

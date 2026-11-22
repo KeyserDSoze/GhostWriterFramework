@@ -17,6 +17,7 @@ const cases = [
   ["create-note", "save a note", "salva un appunto", "read this note", "non salvare un appunto"],
   ["rewrite-current-paragraph", "rewrite this paragraph", "riscrivi questo paragrafo", "how would you rewrite this paragraph?", "do not rewrite this paragraph"],
   ["multi-file-edit", "update multiple files", "aggiorna più file", "which files would change?", "do not update multiple files"],
+  ["edit-outline", "move chapter 5 in the outline", "sposta il capitolo 5 nella scaletta", "what is in the outline?", "do not change the outline"],
   ["deep-research", "run deep research", "fai una ricerca approfondita", "tell me about this research", "non fare una ricerca approfondita"],
   ["create-from-research", "create from research", "crea dalla ricerca", "what came from this research?", "non creare dalla ricerca"],
   ["create-simulated-reader", "create a simulated reader", "crea un lettore simulato", "which simulated reader is this?", "non creare un lettore simulato"],
