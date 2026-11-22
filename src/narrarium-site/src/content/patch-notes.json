@@ -1,5 +1,35 @@
 [
   {
+    "version": "0.88.0",
+    "date": "2026-11-22",
+    "en": {
+      "title": "One history for the autopilot, and the groundwork for results, errors and rules",
+      "summary": "The Autopilot's history is now a single list grouped by chapter and review round, and personal server and engine 0.1.6 record and serve the details that the coming result screen, error panel and rule editing will show.",
+      "changes": [
+        "The Autopilot history is now one list, \"Everything that happened\", grouped by chapter and review round, with the director's verdict in each header. The chapter in hand is open and the others are closed.",
+        "Open a step to see why it ran, what it wrote, the model, tokens, cost, the files it changed and the notes of readers, specialists and director. A step that failed and was repeated is one row with all its attempts.",
+        "Filter the history by All, Errors and warnings, Director, Readers or Writing (the choice is remembered while you work), hide what is over with \"Hide until now\", and ask for more rows in long groups. The text of the step in progress is at the top.",
+        "The old \"Live\" card is gone and nothing is shown twice: the page is much shorter on long books, and the mini-player no longer repeats the events the page already lists.",
+        "The autopilot now records more about itself: the director's final verdict as a number and a text, the total working time, a compact history of the scores of every review round of each chapter, and the kind of each failure (connection, access, rate limit, timeout, cut reply, refusal, conflict, budget, limit, provider) with its endpoint, model and a countdown to the next retry. The screens that show them are coming next.",
+        "Personal server 0.1.6 adds the routes to edit and remove the permanent rules of an autopilot (the app will use them in a coming version) and passes on all the new details without filtering them. A server older than this one keeps working: the app only turns the new commands on when the server says it has them.",
+        "Handing the autopilot over to the other side after this step could, rarely, end with the book moved but stopped: if the run ended exactly while its state was being read, the pause you had asked for was taken for an interruption and the autopilot did not go on there. Engine 0.1.6 reports such a run as it really ended, and the app now trusts the end that the run announced, also with an older personal server."
+      ]
+    },
+    "it": {
+      "title": "Una sola cronologia per l'autopilot e le basi per risultato, errori e regole",
+      "summary": "La cronologia dell'Autopilot ora è un unico elenco raggruppato per capitolo e giro di revisione, e il server personale e il motore 0.1.6 registrano e servono i dettagli che mostreranno la futura schermata di risultato, il pannello d'errore e la modifica delle regole.",
+      "changes": [
+        "La cronologia dell'Autopilot ora è un unico elenco, «Tutto ciò che è successo», raggruppato per capitolo e giro di revisione, con il verdetto del direttore in ogni intestazione. Il capitolo in lavorazione è aperto e gli altri sono chiusi.",
+        "Apri un passo per vedere perché è partito, cosa ha scritto, il modello, i token, il costo, i file che ha cambiato e le note di lettori, specialisti e direttore. Un passo che è fallito ed è stato ripetuto è una riga sola con tutti i suoi tentativi.",
+        "Filtra la cronologia per Tutto, Errori e avvisi, Direttore, Lettori o Scrittura (la scelta si ricorda mentre lavori), nascondi ciò che è passato con «Nascondi fino a ora» e chiedi altre righe nei gruppi lunghi. Il testo del passo in corso sta in alto.",
+        "La vecchia scheda «In diretta» non c'è più e niente è mostrato due volte: la pagina è molto più corta sui libri lunghi e il mini-player non ripete più gli eventi che la pagina già elenca.",
+        "L'autopilot ora registra di più su di sé: il verdetto finale del direttore come numero e testo, il tempo di lavoro totale, una storia compatta dei voti di ogni giro di revisione di ciascun capitolo e il tipo di ogni errore (connessione, accesso, limite di richieste, timeout, risposta tagliata, rifiuto, conflitto, budget, limite, provider) con endpoint, modello e un conto alla rovescia del prossimo tentativo. Le schermate che li mostrano arrivano subito dopo.",
+        "Il server personale 0.1.6 aggiunge le rotte per modificare e rimuovere le regole permanenti di un autopilot (l'app le userà in una prossima versione) e inoltra tutti i dettagli nuovi senza filtrarli. Un server più vecchio continua a funzionare: l'app attiva i comandi nuovi solo quando il server dice di averli.",
+        "Passare l'autopilot dall'altra parte dopo questo passo poteva, raramente, finire con il libro spostato ma fermo: se la corsa terminava proprio mentre se ne leggeva lo stato, la pausa che avevi chiesto veniva scambiata per un'interruzione e l'autopilot non proseguiva lì. Il motore 0.1.6 racconta una corsa così come è finita davvero, e l'app ora si fida della fine annunciata dalla corsa, anche con un server personale più vecchio."
+      ]
+    }
+  },
+  {
     "version": "0.87.0",
     "date": "2026-11-22",
     "en": {
