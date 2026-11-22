@@ -19,7 +19,18 @@ export * from "./tunnel.js";
 export * from "./process-identity.js";
 export * from "./autostart.js";
 export * from "./network.js";
+export * from "./ai-approval.js";
+export * from "./spend.js";
 export * from "./admin-client.js";
 export { main as cliMain, parseCommand, doctorChecks, prepareRuntime, HELP, type CliDependencies } from "./cli-main.js";
 // The engine's own copy of these classes (the one the server's `instanceof` checks see), for tests that must build them.
-export { AiProviderError, AiReplyRejectedError, AutopilotStateCorruptError } from "narrarium-engine";
+export {
+  AiFallbackBlockedError,
+  AiPromptTooLargeError,
+  AiProviderError,
+  AiReplyRejectedError,
+  AiRoutingBudgetError,
+  AutopilotRuleError,
+  AutopilotStateCorruptError,
+  FrontmatterError,
+} from "narrarium-engine";

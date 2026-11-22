@@ -6,6 +6,7 @@ import { DEFAULT_ADMIN_PORT, DEFAULT_SERVER_PORT, pickAiRuntimeConfig, serverIde
 import { HttpError } from "./errors.js";
 import { KeyedMutex } from "./fs-store.js";
 import { atomicJson, ensurePrivateDirectory, readJson, renameReplacing } from "./files.js";
+import { hasSpendSettings, parseSpendSettings, type SpendSettings } from "./spend.js";
 import { isEncryptedSecret, Vault, type EncryptedSecret } from "./vault.js";
 
 /** Browser origins that may always call the API: the Narrarium web app and its local dev servers. */
@@ -27,9 +28,12 @@ export interface ServerConfig {
   adminPort: number;
   /** Extra browser origins allowed to call the API (the defaults are always allowed). */
   origins: string[];
-  /** Origins of the AI endpoints the server may call, approved by the owner. */
+  /**
+   * The AI endpoints the server may send API keys to, approved by the owner: an origin (what every version up to 0.1.3 saved; it covers every
+   * base on it) or an origin and a path (it covers that base and what is under it). The outbound guard in `network.ts` still decides by origin.
+   */
   allowedAiBases: string[];
-  /** AI endpoint origins sent by a client and waiting for the owner's approval. */
+  /** The AI bases (origin and path, the providers' defaults included) of a configuration sent by a client that no approval covers yet. */
   pendingAiBases: string[];
   /** Public HTTPS address of the API (for example a Cloudflare hostname). */
   publicUrl?: string;
@@ -40,6 +44,8 @@ export interface ServerConfig {
   /** Maximum books whose autopilot runs at the same time. */
   maxConcurrentRuns: number;
   createdAt: string;
+  /** The owner's spending caps and switch (absent: no cap, the switch on). Only the admin panel and the command line change it. */
+  spend?: SpendSettings;
 }
 
 export interface StoredBook {
@@ -74,6 +80,11 @@ export function assertNewBookId(bookId: string): string {
   assertBookId(bookId);
   if (bookId.startsWith(".") || /[. ]$/.test(bookId) || WINDOWS_DEVICE_NAME.test(bookId.split(".")[0])) {
     throw new HttpError(400, "invalid_book", "Invalid book id: it may not start or end with a dot, nor be a name that Windows keeps for devices (con, prn, aux, nul, com0-9, lpt0-9), with or without an extension.");
+  }
+  // The files of the data folder refuse these three as JSON keys, and the stored GitHub tokens are keyed by book id: a book called so
+  // would make the tokens of every book unreadable.
+  if (bookId === "__proto__" || bookId === "constructor" || bookId === "prototype") {
+    throw new HttpError(400, "invalid_book", `Invalid book id: "${bookId}" is a name that the server's files cannot hold as a key.`);
   }
   return bookId;
 }
@@ -134,6 +145,7 @@ export function configPath(root: string): string {
  */
 function parseConfig(stored: unknown, existing: boolean): ServerConfig {
   const value = (stored && typeof stored === "object" ? stored : {}) as Partial<ServerConfig> & { port?: unknown };
+  const spend = parseSpendSettings(value.spend);
   return {
     version: 2,
     serverId: typeof value.serverId === "string" && /^[0-9a-f-]{36}$/i.test(value.serverId) ? value.serverId : randomUUID(),
@@ -148,6 +160,7 @@ function parseConfig(stored: unknown, existing: boolean): ServerConfig {
     allowRemoteAdmin: typeof value.allowRemoteAdmin === "boolean" ? value.allowRemoteAdmin : existing,
     maxConcurrentRuns: typeof value.maxConcurrentRuns === "number" && value.maxConcurrentRuns >= 1 && value.maxConcurrentRuns <= 8 ? Math.round(value.maxConcurrentRuns) : 2,
     createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString(),
+    ...(hasSpendSettings(spend) ? { spend } : {}),
   };
 }
 

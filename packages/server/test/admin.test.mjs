@@ -193,7 +193,7 @@ test("the admin panel and the API can be reached through one public address (Clo
     });
     assert.equal(saved.status, 200);
     const status = (await admin.call("GET", "/admin/api/status")).body;
-    assert.deepEqual(status.allowedAiBases, ["https://api.openai.com"]);
+    assert.deepEqual(status.allowedAiBases, ["https://api.openai.com/v1"], "an approval keeps its path: it covers that base, not the whole origin");
     assert.deepEqual(status.origins, ["https://my-reader.example.org"]);
     assert.equal(status.publicUrl, "https://books.example.com");
 

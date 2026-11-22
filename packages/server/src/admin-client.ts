@@ -5,6 +5,7 @@ import path from "node:path";
 import { DEFAULT_ADMIN_PORT, serverIdentityMessage, type ServerScope } from "narrarium-engine";
 import { ADMIN_CODE_FILE, assertAdminCode, parseScopes } from "./auth.js";
 import { readJson, readPrivateText } from "./files.js";
+import type { ServerSpendStatus, SpendSettings } from "./spend.js";
 import { SERVER_VERSION } from "./version.js";
 
 /** The admin code of a data folder (the CLI reads it locally; it is never sent anywhere but the loopback admin port). */
@@ -173,6 +174,18 @@ async function adminPost<T>(session: AdminSession, route: string, body: unknown)
   return payload as T;
 }
 
+async function adminGet<T>(session: AdminSession, route: string): Promise<T> {
+  const response = await session.fetchImpl(`${session.origin}${route}`, {
+    method: "GET",
+    redirect: "error",
+    credentials: "omit",
+    headers: { origin: session.origin, cookie: session.cookie, "user-agent": CLI_AGENT },
+  });
+  const payload = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(payload.message || `The admin request failed (HTTP ${response.status}).`);
+  return payload as T;
+}
+
 /** One admin session for one command: it is closed afterwards (unless the command itself ended every session), so sessions never pile up. */
 async function withLocalAdminSession<T>(options: LocalAdminOptions, action: (session: AdminSession) => Promise<T>, endsSessions = false): Promise<T> {
   const session = await localAdminSession(options);
@@ -200,4 +213,17 @@ export async function rotateLocalAdminCode(options: LocalAdminOptions): Promise<
 export async function setLocalAdminCode(options: LocalAdminOptions & { code: string }): Promise<void> {
   const code = assertAdminCode(options.code);
   await withLocalAdminSession(options, (session) => adminPost(session, "/admin/api/admin-code/set", { code }), true);
+}
+
+/** What the owner reads of the spending (the panel's own answer: with a warning when the record was damaged). */
+export type LocalSpendStatus = ServerSpendStatus & { warning?: string };
+
+/** The spending of the running server: today's use, the caps, the switch. */
+export async function readLocalSpend(options: LocalAdminOptions): Promise<LocalSpendStatus> {
+  return withLocalAdminSession(options, (session) => adminGet<LocalSpendStatus>(session, "/admin/api/spend"));
+}
+
+/** Change the switch or the caps of the running server (what is not given is left as it is) and answer the new status. */
+export async function updateLocalSpend(options: LocalAdminOptions, changes: Partial<SpendSettings>): Promise<LocalSpendStatus> {
+  return withLocalAdminSession(options, (session) => adminPost<LocalSpendStatus>(session, "/admin/api/spend", changes));
 }

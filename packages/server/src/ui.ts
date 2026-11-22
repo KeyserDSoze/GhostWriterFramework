@@ -69,15 +69,32 @@ export const ADMIN_HTML = `<!doctype html>
 
     <section class="card" id="ai">
       <h2 data-i18n="aiTitle">AI endpoints</h2>
-      <p class="muted" data-i18n="aiHelp">The server calls only the AI endpoints you approve. Endpoints sent by a client wait here.</p>
+      <p class="muted" data-i18n="aiHelp">The server calls only the AI endpoints you approve, and only then sends an API key there. The endpoints of a configuration sent by a client wait here, with the address requests start with.</p>
       <ul class="list" id="ai-pending"></ul>
       <p class="muted" id="ai-approved"></p>
+    </section>
+
+    <section class="card" id="spend">
+      <h2 id="spend-title" data-i18n="spendTitle">AI spending</h2>
+      <p class="muted" data-i18n="spendHelp">Limits that only you can set, whatever a client asks for. When one is reached no AI call is made: the autopilot stops with a message and resumes later.</p>
+      <dl class="facts" id="spend-facts"></dl>
+      <form id="spend-form" autocomplete="off">
+        <label for="spend-tokens-day" data-i18n="spendTokensDay">Tokens per day, UTC (0 = no limit)</label>
+        <input id="spend-tokens-day" type="number" min="0" step="1">
+        <label for="spend-cost-day" data-i18n="spendCostDay">Cost per day, in the currency of the AI settings (0 = no limit)</label>
+        <input id="spend-cost-day" type="number" min="0" step="any">
+        <label for="spend-tokens-run" data-i18n="spendTokensRun">Tokens per run (0 = no limit)</label>
+        <input id="spend-tokens-run" type="number" min="0" step="1">
+        <label for="spend-cost-run" data-i18n="spendCostRun">Cost per run (0 = no limit)</label>
+        <input id="spend-cost-run" type="number" min="0" step="any">
+        <div class="row"><button type="submit" data-i18n="spendSave">Save limits</button><button type="button" class="ghost" id="spend-toggle"></button></div>
+      </form>
     </section>
 
     <section class="card" id="network">
       <h2 data-i18n="networkTitle">Approved network</h2>
       <form id="network-form" autocomplete="off">
-        <label for="net-ai" data-i18n="aiBases">Approved AI endpoints (one origin per line)</label>
+        <label for="net-ai" data-i18n="aiBases">Approved AI endpoints (one address per line: an origin, or an origin and a path)</label>
         <textarea id="net-ai" rows="3" spellcheck="false"></textarea>
         <label for="net-origins" data-i18n="origins">Extra client origins (one per line)</label>
         <textarea id="net-origins" rows="2" spellcheck="false"></textarea>
@@ -165,8 +182,12 @@ export const ADMIN_JS = String.raw`"use strict";
       pairTitle: "Connect a client", pairHelp: "In Narrarium open Settings → Personal server, choose Pair and type this code. Then approve the request here.",
       pairStart: "Generate a pairing code", clientsTitle: "Clients", name: "Name", permissions: "Permissions", created: "Created", lastSeen: "Last seen",
       clientName: "Client name", allowUpdates: "Also allow updating the server", issueToken: "Create token", tokenOnce: "Token (shown once):", copy: "Copy",
-      aiTitle: "AI endpoints", aiHelp: "The server calls only the AI endpoints you approve. Endpoints sent by a client wait here.",
-      networkTitle: "Approved network", aiBases: "Approved AI endpoints (one origin per line)", origins: "Extra client origins (one per line)",
+      aiTitle: "AI endpoints", aiHelp: "The server calls only the AI endpoints you approve, and only then sends an API key there. The endpoints of a configuration sent by a client wait here, with the address requests start with.",
+      networkTitle: "Approved network", aiBases: "Approved AI endpoints (one address per line: an origin, or an origin and a path)", origins: "Extra client origins (one per line)",
+      spendTitle: "AI spending", spendHelp: "Limits that only you can set, whatever a client asks for. When one is reached no AI call is made: the autopilot stops with a message and resumes later.",
+      spendState: "AI calls", spendOn: "allowed", spendOff: "paused by you", spendToday: "Today (UTC {day})", spendUsed: "{tokens} tokens · {calls} calls", spendCostUsed: " · {cost} {currency}", spendUnknown: " · {n} calls with no known cost",
+      spendTokensDay: "Tokens per day, UTC (0 = no limit)", spendCostDay: "Cost per day, in the currency of the AI settings (0 = no limit)", spendTokensRun: "Tokens per run (0 = no limit)", spendCostRun: "Cost per run (0 = no limit)",
+      spendSave: "Save limits", spendPause: "Pause AI spending", spendResume: "Resume AI spending", spendPauseConfirm: "Pause all AI spending now? Every autopilot stops at once and nothing more is sent to any AI provider until you resume.",
       publicUrl: "Public API address (https://, for example a Cloudflare hostname)", adminPublicUrl: "Public admin address (optional)",
       remoteAdmin: "Serve this panel on its public address", save: "Save", tunnelHelp: "Create a remotely-managed tunnel in the Cloudflare dashboard, route a hostname to http://127.0.0.1 and the API port, install cloudflared 2025.4.0 or newer, then paste the connector token.",
       tunnelToken: "Connector token", tunnelHost: "Hostname (https://, informational)", tunnelSave: "Save and start", restart: "Restart", remove: "Remove",
@@ -197,8 +218,12 @@ export const ADMIN_JS = String.raw`"use strict";
       pairTitle: "Collega un client", pairHelp: "In Narrarium apri Impostazioni → Server personale, scegli Abbina e digita questo codice. Poi approva la richiesta qui.",
       pairStart: "Genera un codice di abbinamento", clientsTitle: "Client", name: "Nome", permissions: "Permessi", created: "Creato", lastSeen: "Ultimo accesso",
       clientName: "Nome del client", allowUpdates: "Consenti anche di aggiornare il server", issueToken: "Crea token", tokenOnce: "Token (mostrato una volta):", copy: "Copia",
-      aiTitle: "Endpoint AI", aiHelp: "Il server chiama solo gli endpoint AI che approvi. Quelli inviati da un client attendono qui.",
-      networkTitle: "Rete approvata", aiBases: "Endpoint AI approvati (un'origine per riga)", origins: "Origini client aggiuntive (una per riga)",
+      aiTitle: "Endpoint AI", aiHelp: "Il server chiama solo gli endpoint AI che approvi, e solo allora vi invia una chiave API. Gli endpoint di una configurazione inviata da un client attendono qui, con l'indirizzo da cui partono le richieste.",
+      networkTitle: "Rete approvata", aiBases: "Endpoint AI approvati (un indirizzo per riga: un'origine, oppure origine e percorso)", origins: "Origini client aggiuntive (una per riga)",
+      spendTitle: "Spesa AI", spendHelp: "Limiti che solo tu puoi impostare, qualunque cosa chieda un client. Quando se ne raggiunge uno non parte nessuna chiamata AI: l'autopilot si ferma con un messaggio e riprende dopo.",
+      spendState: "Chiamate AI", spendOn: "consentite", spendOff: "in pausa (deciso da te)", spendToday: "Oggi (UTC {day})", spendUsed: "{tokens} token · {calls} chiamate", spendCostUsed: " · {cost} {currency}", spendUnknown: " · {n} chiamate senza costo noto",
+      spendTokensDay: "Token al giorno, UTC (0 = nessun limite)", spendCostDay: "Costo al giorno, nella valuta delle impostazioni AI (0 = nessun limite)", spendTokensRun: "Token per corsa (0 = nessun limite)", spendCostRun: "Costo per corsa (0 = nessun limite)",
+      spendSave: "Salva i limiti", spendPause: "Metti in pausa la spesa AI", spendResume: "Riattiva la spesa AI", spendPauseConfirm: "Mettere in pausa tutta la spesa AI adesso? Ogni autopilot si ferma subito e non viene inviato altro a nessun provider AI finché non riattivi.",
       publicUrl: "Indirizzo pubblico dell'API (https://, per esempio un hostname Cloudflare)", adminPublicUrl: "Indirizzo pubblico del pannello (facoltativo)",
       remoteAdmin: "Servi questo pannello anche sul suo indirizzo pubblico", save: "Salva", tunnelHelp: "Crea un tunnel gestito da remoto nella dashboard Cloudflare, instrada un hostname verso http://127.0.0.1 e la porta dell'API, installa cloudflared 2025.4.0 o successivo, poi incolla il token del connettore.",
       tunnelToken: "Token del connettore", tunnelHost: "Hostname (https://, informativo)", tunnelSave: "Salva e avvia", restart: "Riavvia", remove: "Rimuovi",
@@ -294,7 +319,7 @@ export const ADMIN_JS = String.raw`"use strict";
     fact(facts, t("version"), s.serverVersion); fact(facts, t("engine"), s.engineVersion); fact(facts, t("api"), s.apiUrl, true);
     fact(facts, t("admin"), location.origin); fact(facts, t("data"), s.dataRoot); fact(facts, t("git"), s.git ? t("available") : t("missing"));
     fact(facts, t("supervisor"), s.supervised ? t("supervisedYes") : t("supervisedNo"));
-    renderPairing(); renderClients(); renderAi();
+    renderPairing(); renderClients(); renderAi(); renderSpend(quiet);
     if (!quiet || !editing()) renderNetwork();
     renderTunnel(); renderBooks();
   }
@@ -347,6 +372,25 @@ export const ADMIN_JS = String.raw`"use strict";
       row.appendChild(approve); row.appendChild(dismiss); li.appendChild(row); list.appendChild(li);
     });
     $("ai-approved").textContent = t("approved", { list: state.allowedAiBases.length ? state.allowedAiBases.join(", ") : t("none") });
+  }
+  function renderSpend(quiet) {
+    var s = state.spend; var card = $("spend");
+    if (!s) { card.classList.add("hidden"); return; }
+    card.classList.remove("hidden");
+    var facts = $("spend-facts"); facts.textContent = "";
+    fact(facts, t("spendState"), s.paused ? t("spendOff") : t("spendOn"));
+    var today = s.today || {};
+    var used = t("spendUsed", { tokens: today.tokens || 0, calls: today.calls || 0 });
+    if (typeof today.cost === "number") used += t("spendCostUsed", { cost: today.cost, currency: today.currency || "" }).replace(/ $/, "");
+    if (today.costUnknownCalls) used += t("spendUnknown", { n: today.costUnknownCalls });
+    fact(facts, t("spendToday", { day: today.day || "" }), used);
+    if (s.warning) fact(facts, "!", s.warning);
+    $("spend-toggle").textContent = s.paused ? t("spendResume") : t("spendPause");
+    if (!quiet || !editing()) {
+      var limits = s.limits || {};
+      $("spend-tokens-day").value = String(limits.maxTokensPerDay || 0); $("spend-cost-day").value = String(limits.maxCostPerDay || 0);
+      $("spend-tokens-run").value = String(limits.maxTokensPerRun || 0); $("spend-cost-run").value = String(limits.maxCostPerRun || 0);
+    }
   }
   function renderNetwork() {
     $("net-ai").value = state.allowedAiBases.join("\n"); $("net-origins").value = state.origins.join("\n");
@@ -413,6 +457,16 @@ export const ADMIN_JS = String.raw`"use strict";
     $("network-form").addEventListener("submit", function (event) {
       event.preventDefault();
       call("POST", "/admin/api/network", { allowedAiBases: lines("net-ai"), origins: lines("net-origins"), publicUrl: $("net-public").value.trim(), adminPublicUrl: $("net-admin").value.trim(), allowRemoteAdmin: $("net-remote-admin").checked }).then(function () { document.activeElement && document.activeElement.blur(); toast(t("saved")); refresh(); }, fail);
+    });
+    $("spend-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      function amount(id) { var text = $(id).value.trim(); return text === "" ? 0 : Number(text); }
+      call("POST", "/admin/api/spend", { maxTokensPerDay: amount("spend-tokens-day"), maxCostPerDay: amount("spend-cost-day"), maxTokensPerRun: amount("spend-tokens-run"), maxCostPerRun: amount("spend-cost-run") }).then(function () { document.activeElement && document.activeElement.blur && document.activeElement.blur(); toast(t("saved")); refresh(); }, fail);
+    });
+    $("spend-toggle").addEventListener("click", function () {
+      var pause = !(state && state.spend && state.spend.paused);
+      if (pause && !confirm(t("spendPauseConfirm"))) return;
+      call("POST", "/admin/api/spend", { paused: pause }).then(function () { refresh(); }, fail);
     });
     $("tunnel-form").addEventListener("submit", function (event) {
       event.preventDefault();

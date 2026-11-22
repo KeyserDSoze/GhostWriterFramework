@@ -323,11 +323,12 @@ test("R13: a retry after a failed first clone starts clean and works", async () 
 
 const RESERVED = ["con", "CON", "prn", "aux", "nul", "NUL", "com0", "com1", "COM9", "lpt0", "lpt1", "LPT9", "con.txt", "NUL.md", "aux.tar.gz", "com1.x", "Lpt3.backup", "LPT0.log"];
 const BAD_ENDINGS = ["a.", "book..", "...", "x.y."];
-const FINE = ["console", "auxiliary", "nullable", "com10", "lpt10", "com", "con-x", "my.book", "book_1", "a-b.c", "1984", "Z"];
+const FINE = ["console", "auxiliary", "nullable", "com10", "lpt10", "com", "con-x", "my.book", "book_1", "a-b.c", "1984", "Z", "constructors", "Constructor"];
 
 test("R14: a new book id may not be a reserved device name, end with a dot, or start with one", async () => {
   await withServer(async (server, client) => {
-    for (const id of [...RESERVED, ...BAD_ENDINGS, ".git", ".GIT", ".hidden", ".trash"]) {
+    // `__proto__`, `constructor` and `prototype` are keys that the files of the data folder refuse: a book called so would make the stored GitHub tokens of every book unreadable.
+    for (const id of [...RESERVED, ...BAD_ENDINGS, ".git", ".GIT", ".hidden", ".trash", "__proto__", "constructor", "prototype"]) {
       await assert.rejects(() => client.registerBook(id, { title: "T", storage: { kind: "local" } }), (error) => error.status === 400 && error.code === "invalid_book", `${id} is refused`);
     }
     assert.deepEqual(await client.listBooks(), [], "and none of them was registered");

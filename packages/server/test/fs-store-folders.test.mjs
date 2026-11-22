@@ -11,9 +11,10 @@ const remove = (...directories) => Promise.all(directories.map((directory) => rm
 
 /**
  * `mkdir` with `recursive` says which folder it made first. A commit used to compare that answer with its own spelling of the same path,
- * and on Windows the two were not the same string: the comparison never came true and the commit never ended (every test that wrote a
- * file into a new folder hung for the whole two minutes). The answer is replaced here by each way a system may spell it, in a process
- * of its own so that a commit that does not end is a failure and not a stuck test run.
+ * and on Windows the two were not the same string (Node answers `\\?\C:\...`, with the long-path prefix): the comparison never came
+ * true and the commit never ended (every test that wrote a file into a new folder hung for the whole two minutes). The answer is
+ * replaced here by each way a system may spell it, in a process of its own so that a commit that does not end is a failure and not a
+ * stuck test run.
  */
 const SPELLINGS = {
   "with the long-path prefix of Windows": "(first) => (first === undefined ? first : '\\\\\\\\?\\\\' + first)",

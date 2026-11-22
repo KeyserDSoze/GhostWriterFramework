@@ -176,10 +176,12 @@ const status = (extra = {}) => ({
   ...extra,
 });
 
-async function openPanel(server, state) {
+async function openPanel(server, state, extraRoutes = () => undefined) {
   const html = await (await fetch(`${server.adminUrl}/`)).text();
   const script = await (await fetch(`${server.adminUrl}/admin.js`)).text();
   const browser = fakeBrowser(html, script, (route, init) => {
+    const extra = extraRoutes(route, init);
+    if (extra) return extra;
     if (route === "/admin/api/status") return { body: state() };
     if (route === "/admin/api/updates") return { body: { installedVersion: "0.1.2", available: false, canRequest: false, message: "up to date", reason: "up_to_date" } };
     if (route === "/admin/api/revoke" || route === "/admin/api/pairing/cancel") return { body: { revoked: true } };
@@ -247,5 +249,98 @@ test("P1: a request from this computer, or from a server that sent no details, i
     assert.equal(/undefined|null/.test(box), false);
     const local = await openPanel(server, () => status({ pairing: { id: "p", label: "Phone", expiresAt: Date.now() + 60_000, requested: true, approved: false, source: "local", verification: "0042" } }));
     assert.match(local.$("pairing-box").textContent, /From this computer.*0042/s);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// C16 / C15: the AI endpoints that wait, and the spending card
+// ---------------------------------------------------------------------------------------------
+
+const buttonsOf = (element, label) => element.find((node) => node.tagName === "BUTTON" && node.textContent === label);
+
+test("C16: the panel lists the endpoints that wait with their path, and Approve / Dismiss send exactly the base that is shown", async () => {
+  await withServer(async (server) => {
+    const pending = ["https://api.openai.com/v1", "https://my-resource.openai.azure.com/openai/v1"];
+    const browser = await openPanel(server, () => status({ pendingAiBases: pending, allowedAiBases: ["https://llm.example"] }), (route) => (route === "/admin/api/ai/approve" || route === "/admin/api/ai/dismiss" ? { body: { saved: true } } : undefined));
+    const rows = browser.$("ai-pending").children;
+    assert.equal(rows.length, 2, "one row per base");
+    assert.match(rows[0].textContent, /https:\/\/api\.openai\.com\/v1/);
+    assert.match(rows[1].textContent, /https:\/\/my-resource\.openai\.azure\.com\/openai\/v1/);
+    assert.match(browser.$("ai-approved").textContent, /https:\/\/llm\.example/);
+    buttonsOf(rows[1], "Approve")[0].click();
+    await settle();
+    assert.deepEqual(browser.requests.find((request) => request.route === "/admin/api/ai/approve").body, { bases: ["https://my-resource.openai.azure.com/openai/v1"] });
+    buttonsOf(rows[0], "Dismiss")[0].click();
+    await settle();
+    assert.deepEqual(browser.requests.find((request) => request.route === "/admin/api/ai/dismiss").body, { bases: ["https://api.openai.com/v1"] });
+  });
+});
+
+const spendStatus = (extra = {}) => ({
+  paused: false,
+  today: { day: "2026-11-22", tokens: 1234, calls: 5, cost: 0.42, currency: "USD", costUnknownCalls: 2 },
+  limits: { maxTokensPerDay: 50000, maxCostPerDay: 2.5, maxTokensPerRun: 0, maxCostPerRun: 0 },
+  ...extra,
+});
+
+test("C15: the panel's spending card shows today's use and the caps, switches AI spending off and on, and saves the caps", async () => {
+  await withServer(async (server) => {
+    let current = spendStatus();
+    const saved = [];
+    const browser = await openPanel(server, () => status({ spend: current }), (route, init) => {
+      if (route !== "/admin/api/spend" || init.method !== "POST") return undefined;
+      saved.push(JSON.parse(init.body));
+      current = spendStatus(saved.at(-1).paused === undefined ? {} : { paused: saved.at(-1).paused });
+      return { body: current };
+    });
+    assert.equal(browser.$("spend").classList.contains("hidden"), false);
+    const facts = browser.$("spend-facts").textContent;
+    assert.match(facts, /allowed/i, "the state of the switch");
+    assert.match(facts, /2026-11-22/, "the UTC day");
+    assert.match(facts, /1234 tokens/);
+    assert.match(facts, /5 calls/);
+    assert.match(facts, /0\.42 USD/);
+    assert.match(facts, /2 calls/, "and that some of them had no known cost");
+    assert.equal(/undefined|null|NaN/.test(facts), false);
+    assert.equal(browser.$("spend-tokens-day").value, "50000");
+    assert.equal(browser.$("spend-cost-day").value, "2.5");
+    assert.equal(browser.$("spend-tokens-run").value, "0");
+    assert.equal(browser.$("spend-cost-run").value, "0");
+    assert.equal(browser.$("spend-toggle").textContent, "Pause AI spending");
+
+    browser.$("spend-toggle").click();
+    await settle();
+    assert.match(browser.confirms.at(-1), /Pause/i, "switching off asks first: running autopilots stop at once");
+    assert.deepEqual(saved.at(-1), { paused: true });
+    assert.equal(browser.$("spend-toggle").textContent, "Resume AI spending");
+    assert.match(browser.$("spend-facts").textContent, /paused/i, "and the card is drawn again with the switch off");
+
+    browser.$("spend-tokens-day").value = "75000";
+    browser.$("spend-cost-day").value = "";
+    browser.$("spend-tokens-run").value = "20000";
+    browser.$("spend-cost-run").value = "0.75";
+    browser.$("spend-form").listeners.submit[0]({ preventDefault() {} });
+    await settle();
+    assert.deepEqual(saved.at(-1), { maxTokensPerDay: 75000, maxCostPerDay: 0, maxTokensPerRun: 20000, maxCostPerRun: 0.75 }, "a box left empty is no limit");
+  });
+});
+
+test("C15: the spending card speaks Italian too, shows the warning of a damaged record, and is absent from the status of a server without it", async () => {
+  await withServer(async (server) => {
+    const browser = await openPanel(server, () => status({ spend: spendStatus({ paused: true, warning: "private/spend.json could not be read (bad): the totals start from zero." }) }));
+    assert.match(browser.$("spend-facts").textContent, /paused/i);
+    assert.match(browser.$("spend-facts").textContent, /spend\.json/, "the owner is told");
+    assert.equal(browser.$("spend-toggle").textContent, "Resume AI spending");
+    browser.$("lang").click();
+    await settle();
+    assert.equal(browser.$("spend-title").textContent, "Spesa AI");
+    assert.equal(browser.$("spend-toggle").textContent, "Riattiva la spesa AI");
+    assert.match(browser.$("spend-facts").textContent, /1234 token/);
+    assert.match(browser.$("spend-facts").textContent, /in pausa/i);
+    assert.equal(/undefined|null|NaN/.test(browser.$("spend").textContent), false);
+
+    const older = await openPanel(server, () => status());
+    assert.equal(older.$("spend").classList.contains("hidden"), true, "no `spend` in the status: nothing is drawn, nothing breaks");
+    assert.equal(older.requests.filter((request) => request.route === "/admin/api/status").length > 0, true);
   });
 });

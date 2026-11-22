@@ -12,15 +12,18 @@ import {
   type AiRequest,
   type AiResponse,
   type AutopilotEvent,
+  type AutopilotSessionConfig,
   type RegisterBookRequest,
   type ServerBookSummary,
   type ServerBookSync,
 } from "narrarium-engine";
+import { assertAiApproved } from "./ai-approval.js";
 import { assertBookId, assertBookToken, assertNewBookId, publicLabel, type DataDirectory, type StoredBook } from "./config.js";
 import { HttpError } from "./errors.js";
 import { renameReplacing } from "./files.js";
 import { FileBookStore, KeyedMutex } from "./fs-store.js";
 import { GitRepository } from "./git.js";
+import { spendSettingsOf, type SpendLedger, type SpendScope, type SpendSettings } from "./spend.js";
 
 export { HttpError };
 
@@ -37,10 +40,16 @@ export interface BookRuntime {
 /** Books one server hosts at most: each has a runtime, a working copy and a stored token, and the files that list them are read whole. */
 export const MAX_BOOKS = 200;
 
+/** How the autopilot sessions wait and beat (tests shorten it; a session keeps the engine's own defaults for what is not given). */
+export type AutopilotTuning = Partial<Pick<AutopilotSessionConfig, "retryDelayMs" | "random" | "heartbeatMs" | "persistHeartbeatMs">>;
+
 export interface BookRegistryOptions {
   gitAvailable: boolean;
   /** Fixed AI port (tests); otherwise the AI configuration saved on the server is used. */
   ai?: AiPort;
+  /** What the server spends on AI: the owner's switch and caps are checked before every call, and every attempt is counted. */
+  spend: SpendLedger;
+  autopilot?: AutopilotTuning;
   /** Override the GitHub clone URL (tests use a local bare repository). */
   githubRemoteUrl?: (owner: string, repo: string) => string;
   onEvent: (event: AutopilotEvent) => void;
@@ -86,7 +95,6 @@ export class BookRegistry {
   private readonly arriving = new Set<string>();
   /** `register` and `remove` of one book never overlap. */
   private readonly locks = new KeyedMutex();
-  private aiCache: { updatedAt: string | null; port: AiPort; configured: boolean } | null = null;
   /** Set once an update is accepted: the server only finishes what it is doing and then restarts. */
   private maintenance = false;
 
@@ -122,16 +130,46 @@ export class BookRegistry {
     this.maintenance = false;
   }
 
-  /** AI port reading the latest saved configuration on every call. */
-  private readonly ai: AiPort = {
-    complete: async (request: AiRequest): Promise<AiResponse> => {
-      if (this.options.ai) return this.options.ai.complete(request);
-      const { config, updatedAt } = await this.data.aiConfig();
-      if (!this.aiCache || this.aiCache.updatedAt !== updatedAt) this.aiCache = { updatedAt, port: createFetchAi(config), configured: config.aiIntegrations.length > 0 };
-      if (!hasAiCandidates(config, request.capability)) throw new AiUnavailableError(request.capability);
-      return this.aiCache.port.complete(request);
-    },
-  };
+  /** The owner's switch and caps, as the configuration says now. */
+  private get spendSettings(): SpendSettings {
+    return spendSettingsOf(this.data.config);
+  }
+
+  /**
+   * Refuse a new run when the owner's switch is off or a cap of the day is reached: a run that would stop at its first call is not started (it
+   * would only leave an error in the book). Throws the same `SpendLimitError` a call would, answered `429 spend_limit`.
+   */
+  assertSpendAllowed(): void {
+    this.options.spend.assertAllowed(this.spendSettings);
+  }
+
+  /** Stop every autopilot at once (the owner switched AI spending off): each pauses, and the call in flight is abandoned. */
+  stopAll(): void {
+    for (const runtime of this.all()) runtime.session.pause("now");
+  }
+
+  /** The AI port of one book: the latest saved configuration is read on every call. */
+  private aiFor(bookId: string): AiPort {
+    return { complete: (request) => this.complete(bookId, request) };
+  }
+
+  /**
+   * One AI call, in this order: the owner's switch and caps (for every AI port); the configuration; the approval of every endpoint the call can
+   * reach (an endpoint that is not approved is never called, and the run stops saying which one to approve); then the engine's AI client, whose
+   * `onAttemptEnd` counts every attempt, the failed ones that used tokens included.
+   */
+  private async complete(bookId: string, request: AiRequest): Promise<AiResponse> {
+    const { spend } = this.options;
+    const runId = this.runtimes.get(bookId)?.session.running ? spend.activeRun(bookId) : undefined;
+    const scope: SpendScope | undefined = runId ? { bookId, runId } : undefined;
+    spend.assertAllowed(this.spendSettings, scope);
+    if (this.options.ai) return this.options.ai.complete(request);
+    const { config } = await this.data.aiConfig();
+    if (!hasAiCandidates(config, request.capability)) throw new AiUnavailableError(request.capability);
+    assertAiApproved(config, request.capability, this.data.config.allowedAiBases);
+    // `githubModelsBaseUrl` is not given: the server calls https://models.github.ai itself (there is no CORS here, so no proxy is needed).
+    return createFetchAi(config, { onAttemptEnd: (end) => spend.record(end, scope) }).complete(request);
+  }
 
   async load(): Promise<void> {
     await this.data.purgeTrash().then(
@@ -176,10 +214,11 @@ export class BookRegistry {
       session: new AutopilotSession({
         bookId: book.bookId,
         store,
-        ai: this.ai,
+        ai: this.aiFor(book.bookId),
         host: "server",
         hostLabel: publicLabel(this.data.config.label),
         hostId: this.data.config.serverId,
+        ...this.options.autopilot,
         // Git's own work on the working copy (a pull may rewrite files) takes its turn among the commits and the syncs of the book.
         hooks: book.storage.kind === "github" && git ? {
           beforeStep: async () => {
@@ -198,6 +237,9 @@ export class BookRegistry {
       unsubscribe: () => undefined,
     };
     runtime.unsubscribe = runtime.session.subscribe((event) => {
+      // A run of the book has its own count of what it spends: it starts when the run does.
+      if (event.type === "run-started") this.options.spend.beginRun(book.bookId, event.runId);
+      else if (event.type === "run-ended") this.options.spend.endRun(book.bookId, event.runId);
       this.options.onEvent(event);
       if (event.type === "task-finished" || event.type === "run-ended" || event.type === "state") this.options.onBookChanged(book.bookId);
     });
@@ -481,6 +523,7 @@ export class BookRegistry {
       runtime.unsubscribe();
       this.runtimes.delete(bookId);
       this.tokenCache.delete(bookId);
+      this.options.spend.forgetBook(bookId);
     });
   }
 

@@ -301,8 +301,8 @@ export class FileBookStore implements BookStore {
   /**
    * Make `folder` and whatever is missing above it. `made` is what it created, outermost first, and `parent` the folder that held the
    * outermost one: each of them gained an entry (there is nothing to report when the folder was there already). This is worked out from
-   * `folder` itself, not from the first folder `mkdir` says it made: on Windows that answer is not spelt the way `folder` is, and a
-   * loop that waited for the two to meet never ended.
+   * `folder` itself, not from the first folder `mkdir` says it made: on Windows that answer comes back with the long-path prefix
+   * (`\\?\C:\...`), so it is not spelt the way `folder` is, and a loop that waited for the two to meet never ended.
    */
   private async makeFolder(folder: string, present: Set<string>): Promise<{ made: string[]; parent?: string }> {
     if (present.has(folder)) return { made: [] };

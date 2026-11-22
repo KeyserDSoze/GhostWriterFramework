@@ -107,15 +107,15 @@ test("AI keys and GitHub tokens are encrypted at rest and new AI endpoints wait 
     const status = await client.putAiConfig({ aiIntegrations: [{ id: "a", name: "OpenAI", provider: "openai", endpoint: "https://api.openai.com/v1", apiKey: "sk-secret-value", chatModels: [{ id: "m", name: "gpt-4o", capabilities: ["default"] }] }] });
     assert.equal(status.configured, true);
     assert.equal(status.integrations[0].hasApiKey, true);
-    assert.deepEqual(status.pendingApproval, ["https://api.openai.com"]);
+    assert.deepEqual(status.pendingApproval, ["https://api.openai.com/v1"], "what waits is the base requests start with, path included");
     assert.equal(JSON.stringify(status).includes("sk-secret-value"), false, "keys are never returned");
     const stored = await readFile(path.join(server.data.root, "private", "ai.json"), "utf8");
     assert.equal(stored.includes("sk-secret-value"), false, "the AI configuration is encrypted on disk");
     if (process.platform !== "win32") assert.equal((await stat(path.join(server.data.root, "private", "master.key"))).mode & 0o777, 0o600);
 
     const admin = await adminLogin(server);
-    assert.deepEqual((await admin.call("GET", "/admin/api/status")).body.pendingAiBases, ["https://api.openai.com"]);
-    assert.equal((await admin.call("POST", "/admin/api/ai/approve", { bases: ["https://api.openai.com"] })).status, 200);
+    assert.deepEqual((await admin.call("GET", "/admin/api/status")).body.pendingAiBases, ["https://api.openai.com/v1"]);
+    assert.equal((await admin.call("POST", "/admin/api/ai/approve", { bases: ["https://api.openai.com"] })).status, 200, "the origin, as the owners of the earlier versions approved it, covers the base");
     assert.equal((await client.aiStatus()).pendingApproval, undefined);
     assert.deepEqual(server.allowedBases(), ["https://api.openai.com"]);
   }, { ai: undefined });

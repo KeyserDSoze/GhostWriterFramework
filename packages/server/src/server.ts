@@ -5,13 +5,16 @@ import {
   AiProviderError,
   AiUnavailableError,
   AutopilotBusyError,
+  AutopilotRuleError,
   AutopilotStateCorruptError,
   DEFAULT_ADMIN_PORT,
   ENGINE_VERSION,
+  FrontmatterError,
   SERVER_API_VERSION,
   SERVER_PACKAGE_NAME,
   encodeServerSentEvent,
   isBookConflictError,
+  normalizeRuleText,
   pickAiRuntimeConfig,
   redactAiRuntimeConfig,
   type AiPort,
@@ -25,8 +28,9 @@ import {
   type ServerUpdateInfo,
   type ServerUpdateResult,
 } from "narrarium-engine";
+import { AiNotApprovedError, approvalCovers, baseIsApproved, normalizeAiBase, unapprovedAiBases } from "./ai-approval.js";
 import { Auth, assertScope, isScope, parseScopes, type ClientRecord } from "./auth.js";
-import { BookRegistry } from "./books.js";
+import { BookRegistry, type AutopilotTuning } from "./books.js";
 import { DEFAULT_ORIGINS, DataDirectory, normalizeOrigin, publicLabel } from "./config.js";
 import { HttpError, retryAfter } from "./errors.js";
 import { MAX_COMMIT_CHANGES } from "./fs-store.js";
@@ -36,6 +40,7 @@ import { gitVersion } from "./git.js";
 import { ConcurrencyLimiter, WindowLimiter, sourceOf, type LimitVerdict } from "./limits.js";
 import { checkNpmServerRelease, isExactSemver, type NpmReleaseCheck } from "./npm-release.js";
 import { RuntimeInstaller, SUPERVISED_ENV, type UpdateResult } from "./runtime-install.js";
+import { SpendLedger, SpendLimitError, applySpendChanges, pausedError, spendSettingsOf, type ServerSpendStatus } from "./spend.js";
 import { CloudflareTunnelManager, type CloudflareTunnelManagerOptions } from "./tunnel.js";
 import { ADMIN_CSS, ADMIN_HTML, ADMIN_JS } from "./ui.js";
 import { SERVER_VERSION } from "./version.js";
@@ -67,6 +72,10 @@ export interface NarrariumServerOptions {
   tunnel?: Omit<CloudflareTunnelManagerOptions, "root">;
   /** Limits of the listeners (tests). */
   limits?: ServerLimits;
+  /** The clock that decides the UTC day of the spending record (tests move it). */
+  now?: () => Date;
+  /** How the autopilot sessions wait and beat (tests shorten it). */
+  autopilot?: AutopilotTuning;
   /** Take the lock of the data folder (tests; default: `lockDataRoot`). Its second argument is what to call when the lock is lost. */
   lock?: typeof lockDataRoot;
   /** Called once a server that lost its data folder lock has stopped (the process should exit: another server may have the folder now). */
@@ -83,6 +92,8 @@ export interface RunningNarrariumServer {
   books: BookRegistry;
   auth: Auth;
   tunnel: CloudflareTunnelManager;
+  /** What the server spent on AI (the owner's caps are checked against it), for tests and diagnostics. */
+  spend: SpendLedger;
   /** The two listeners, for tests and diagnostics. */
   servers: { api: http.Server; admin: http.Server };
   /** AI origins the outbound network guard may reach. */
@@ -211,6 +222,9 @@ function describeUnknown(error: unknown): string {
   return `Not an Error: ${text.slice(0, 500)}`;
 }
 
+/** A rule that cannot be saved is the author's to fix (400), unless it is not there (404) or changed under them (409). */
+const RULE_ERROR_STATUS: Record<string, number> = { rule_empty: 400, rule_too_long: 400, rule_duplicate: 400, rule_not_found: 404, rule_changed: 409 };
+
 /**
  * What a failure is answered with. Only errors this server knows keep their meaning: its own HttpError, the engine's
  * errors and a few explicit cases. A `status` or `code` that some other library put on its error says nothing about this
@@ -220,6 +234,11 @@ function describeUnknown(error: unknown): string {
 export function errorStatus(error: unknown): MappedError {
   if (error instanceof HttpError) return { status: error.status, code: error.code, message: error.message, headers: error.headers };
   if (error instanceof AiUnavailableError) return { status: 412, code: "ai_not_configured", message: error.message };
+  // What the owner decided (a cap, the switch, an endpoint not approved) is a refusal to say as it is, not a failure of the AI provider.
+  if (error instanceof SpendLimitError) return { status: 429, code: "spend_limit", message: error.message };
+  if (error instanceof AiNotApprovedError) return { status: 412, code: "ai_not_approved", message: error.message };
+  if (error instanceof AutopilotRuleError) return { status: RULE_ERROR_STATUS[error.code] ?? 400, code: error.code, message: error.message };
+  if (error instanceof FrontmatterError) return { status: 422, code: "frontmatter_invalid", message: error.message };
   if (error instanceof AutopilotBusyError) return { status: 409, code: "busy", message: error.message };
   if (isBookConflictError(error)) return { status: 409, code: "conflict", message: (error as Error).message };
   if (error instanceof AutopilotStateCorruptError) return { status: 409, code: "state_corrupt", message: error.message };
@@ -276,20 +295,6 @@ function hostOf(url: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-/** Origins of the AI endpoints in a router configuration. */
-function aiOrigins(config: ReturnType<typeof pickAiRuntimeConfig>): string[] {
-  const origins = new Set<string>();
-  for (const integration of config.aiIntegrations) {
-    if (!integration.endpoint) continue;
-    try {
-      origins.add(new URL(integration.endpoint).origin);
-    } catch {
-      // A malformed endpoint simply cannot be called.
-    }
-  }
-  return [...origins];
 }
 
 function toUpdateResult(result: UpdateResult | undefined): ServerUpdateResult | undefined {
@@ -360,6 +365,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     const tunnelTrusted = () => Boolean(data.config.publicUrl) || Boolean(data.config.allowRemoteAdmin && data.config.adminPublicUrl) || tunnel.status().enabled;
     const anonymousRefusal = () => new HttpError(429, "rate_limit", "Too many simultaneous requests from this address: wait a moment and try again.", { "retry-after": "1" });
     const streams = new Map<ServerResponse, ClientRecord>();
+    /** Director questions in flight: the owner's switch abandons them (a question can run for minutes, and costs money all along). */
+    const asking = new Set<AbortController>();
     /** Close the live streams of clients whose token was revoked or replaced. */
     const dropStaleStreams = () => {
       for (const [stream, client] of streams) {
@@ -379,6 +386,9 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         stream.write(frame);
       }
     };
+    /** What the server spends on AI: the owner's caps are checked against it before every call. Flushed after the books are closed. */
+    const spend = await SpendLedger.open({ file: data.file("private", "spend.json"), now: options.now, log });
+    closers.push(() => spend.flush());
     const pendingBookUpdates = new Set<string>();
     let bookTimer: NodeJS.Timeout | null = null;
     /** Summaries being built (each asks git for a revision): closing waits for them, so no git process outlives the server. */
@@ -386,6 +396,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     const books = new BookRegistry(data, {
       gitAvailable,
       ai: options.ai,
+      spend,
+      autopilot: options.autopilot,
       githubRemoteUrl: options.githubRemoteUrl,
       log,
       onEvent: (event: AutopilotEvent) => broadcast({ event: "autopilot", data: event }, event.seq),
@@ -420,19 +432,46 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", ...(gitAvailable ? ["github"] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", ...(gitAvailable ? ["github"] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
       ...(nonce ? { nonce, signature: data.signIdentity(nonce) } : {}),
     });
 
-    const aiStatus = async (): Promise<ServerAiStatus> => {
+    const spendStatus = (): ServerSpendStatus => spend.status(spendSettingsOf(data.config));
+    /** The same status for the owner, with what only the owner is told (a record that was damaged and started again from zero). */
+    const adminSpend = () => ({ ...spendStatus(), ...(spend.warning ? { warning: spend.warning } : {}) });
+
+    /**
+     * What the AI configuration says, without its keys: the endpoints that wait are the bases every integration sends requests to (the providers'
+     * defaults included) that no approval of the owner covers.
+     */
+    const aiStatus = async (): Promise<ServerAiStatus & { spend: ServerSpendStatus }> => {
       const { config: aiConfig, updatedAt } = await data.aiConfig();
       const redacted = redactAiRuntimeConfig(aiConfig);
-      const pending = aiOrigins(aiConfig).filter((origin) => !data.config.allowedAiBases.includes(origin));
-      return { configured: options.ai ? true : aiConfig.aiIntegrations.length > 0, integrations: redacted.integrations, routedTasks: redacted.routedTasks, updatedAt, ...(pending.length && !options.ai ? { pendingApproval: pending } : {}) };
+      const pending = unapprovedAiBases(aiConfig, data.config.allowedAiBases);
+      return { configured: options.ai ? true : aiConfig.aiIntegrations.length > 0, integrations: redacted.integrations, routedTasks: redacted.routedTasks, updatedAt, ...(pending.length && !options.ai ? { pendingApproval: pending } : {}), spend: spendStatus() };
     };
+
+    /**
+     * A configuration saved by an earlier version never listed the providers' default bases for approval (and listed origins, not bases): the
+     * owner must see what the saved configuration needs, so what no approval covers is added to the waiting list when the server starts.
+     */
+    const listPendingAiBases = async () => {
+      if (options.ai) return;
+      const { config: aiConfig } = await data.aiConfig();
+      const merged = (config: { allowedAiBases: string[]; pendingAiBases: string[] }) => {
+        const missing = unapprovedAiBases(aiConfig, config.allowedAiBases);
+        const kept = config.pendingAiBases.filter((base) => !baseIsApproved(base, config.allowedAiBases) && !missing.some((entry) => approvalCovers(base, entry)));
+        return [...new Set([...kept, ...missing])].slice(-50);
+      };
+      if (JSON.stringify(merged(data.config)) === JSON.stringify(data.config.pendingAiBases)) return;
+      await data.updateConfig((next) => {
+        next.pendingAiBases = merged(next);
+      });
+    };
+    await listPendingAiBases().catch((error) => log(`The AI endpoints waiting for approval could not be listed: ${error instanceof Error ? error.message : String(error)}`));
 
     /** The update request still waiting for the supervisor (one it already answered is not pending). */
     const pendingRequest = async () => {
@@ -535,7 +574,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           const body = asObject(await readBody(request, SMALL_BODY));
           const config = pickAiRuntimeConfig(body.config);
           await data.saveAiConfig(config);
-          const unapproved = aiOrigins(config).filter((origin) => !data.config.allowedAiBases.includes(origin));
+          const unapproved = unapprovedAiBases(config, data.config.allowedAiBases);
           if (unapproved.length) await data.updateConfig((next) => {
             next.pendingAiBases = [...new Set([...next.pendingAiBases, ...unapproved])].slice(-50);
           });
@@ -628,6 +667,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           const body = asObject(await readBody(request, SMALL_BODY));
           if (!(await books.aiConfigured())) throw new HttpError(412, "ai_not_configured", "Send your AI router configuration to the server before starting the autopilot.");
           books.assertCanStart();
+          // The owner's switch or a cap of the day would stop the run at its first call: it is not started (and leaves nothing in the book).
+          books.assertSpendAllowed();
           await runtime.session.start({ brief: body.brief as never, options: body.options as never, force: body.force === true });
           return runtime.session.snapshot();
         },
@@ -646,7 +687,13 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           const runtime = books.get(params[0]);
           const body = asObject(await readBody(request, SMALL_BODY));
           const scope = body.scope === "from_now" || body.scope === "rewrite" ? body.scope : "next_step";
-          await runtime.session.intervene({ scope, text: String(body.text ?? "").slice(0, 8000), interrupt: body.interrupt === true });
+          const text = String(body.text ?? "");
+          // A note is cut at 8000 characters. A rule is never cut: the engine refuses one that is empty or over its limit and the answer says so
+          // (400 with the engine's code), so the length it reports is the length of what the author sent.
+          if (scope === "next_step") {
+            if (!text.trim()) throw new HttpError(400, "invalid_request", "The intervention is empty.");
+          } else normalizeRuleText(text);
+          await runtime.session.intervene({ scope, text: scope === "next_step" ? text.slice(0, 8000) : text, interrupt: body.interrupt === true });
           return runtime.session.snapshot();
         },
       },
@@ -655,7 +702,16 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           books.assertNotInMaintenance();
           const runtime = books.get(params[0]);
           const body = asObject(await readBody(request, SMALL_BODY));
-          await runtime.session.answer({ questionId: String(body.questionId ?? ""), answer: String(body.answer ?? "").slice(0, 8000), accept: body.accept === true });
+          const questionId = String(body.questionId ?? "");
+          const asRule = body.asRule === true;
+          const answer = String(body.answer ?? "");
+          // An answer that another device gave already is a conflict, not an internal error.
+          if (!runtime.session.running) {
+            const open = (await runtime.session.snapshot()).state?.question;
+            if (!open || open.id !== questionId) throw new HttpError(409, "question_closed", "This question is no longer open.");
+          }
+          // A note is cut at 8000 characters; an answer that becomes a rule is not (the engine refuses one over its limit and says so).
+          await runtime.session.answer({ questionId, answer: asRule ? answer : answer.slice(0, 8000), accept: body.accept === true, asRule });
           return runtime.session.snapshot();
         },
       },
@@ -689,9 +745,11 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           const runtime = books.get(params[0]);
           const body = asObject(await readBody(request, SMALL_BODY));
           const controller = new AbortController();
+          asking.add(controller);
           // The question may run for minutes and costs money: it stops with the connection. (The request's own `close`
           // event fires as soon as its body is read, so only the response tells that the caller left.)
           response.once("close", () => {
+            asking.delete(controller);
             if (!response.writableEnded) controller.abort();
           });
           return runtime.session.askDirector({ target: asTarget(body.target), question: typeof body.question === "string" ? body.question.slice(0, 4000) : undefined, save: body.save === true, signal: controller.signal });
@@ -922,7 +980,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
             defaultOrigins: DEFAULT_ORIGINS,
             origins: data.config.origins,
             allowedAiBases: data.config.allowedAiBases,
-            pendingAiBases: data.config.pendingAiBases.filter((base) => !data.config.allowedAiBases.includes(base)),
+            pendingAiBases: data.config.pendingAiBases.filter((base) => !baseIsApproved(base, data.config.allowedAiBases)),
+            spend: adminSpend(),
             publicUrl: data.config.publicUrl ?? "",
             adminPublicUrl: data.config.adminPublicUrl ?? "",
             allowRemoteAdmin: data.config.allowRemoteAdmin,
@@ -972,29 +1031,54 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         if (path === "/admin/api/network" && request.method === "POST") {
           const list = (value: unknown, max: number) => (Array.isArray(value) ? value : []).filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).slice(0, max);
           const origins = list(body.origins, 20).map((origin) => normalizeOrigin(origin));
-          const allowedAiBases = list(body.allowedAiBases, 50).map((base) => normalizeOrigin(base));
+          const allowedAiBases = list(body.allowedAiBases, 50).map((base) => normalizeAiBase(base));
           const publicUrl = typeof body.publicUrl === "string" && body.publicUrl.trim() ? normalizeOrigin(body.publicUrl, false) : undefined;
           const adminPublicUrl = typeof body.adminPublicUrl === "string" && body.adminPublicUrl.trim() ? normalizeOrigin(body.adminPublicUrl, false) : undefined;
           await data.updateConfig((next) => {
             next.origins = [...new Set(origins)];
             next.allowedAiBases = [...new Set(allowedAiBases)];
-            next.pendingAiBases = next.pendingAiBases.filter((base) => !next.allowedAiBases.includes(base));
+            next.pendingAiBases = next.pendingAiBases.filter((base) => !baseIsApproved(base, next.allowedAiBases));
             if (publicUrl) next.publicUrl = publicUrl;
             else delete next.publicUrl;
             if (adminPublicUrl) next.adminPublicUrl = adminPublicUrl;
             else delete next.adminPublicUrl;
             if (typeof body.allowRemoteAdmin === "boolean") next.allowRemoteAdmin = body.allowRemoteAdmin;
           });
+          // An approval that was taken out leaves what it covered waiting again: the next run would stop on it.
+          await listPendingAiBases().catch(() => undefined);
           sendJson(response, 200, { saved: true });
           return;
         }
         if ((path === "/admin/api/ai/approve" || path === "/admin/api/ai/dismiss") && request.method === "POST") {
-          const bases = (Array.isArray(body.bases) ? body.bases : []).filter((entry): entry is string => typeof entry === "string").slice(0, 50).map((base) => normalizeOrigin(base));
+          // The owner approves what the panel shows: an origin or an origin and a path, kept as it is (in a canonical spelling).
+          const bases = (Array.isArray(body.bases) ? body.bases : []).filter((entry): entry is string => typeof entry === "string").slice(0, 50).map((base) => normalizeAiBase(base));
           await data.updateConfig((next) => {
-            if (path.endsWith("approve")) next.allowedAiBases = [...new Set([...next.allowedAiBases, ...bases])].slice(0, 50);
-            next.pendingAiBases = next.pendingAiBases.filter((base) => !bases.includes(base));
+            if (path.endsWith("approve")) {
+              next.allowedAiBases = [...new Set([...next.allowedAiBases, ...bases])].slice(0, 50);
+              next.pendingAiBases = next.pendingAiBases.filter((base) => !baseIsApproved(base, next.allowedAiBases));
+            } else {
+              next.pendingAiBases = next.pendingAiBases.filter((base) => !bases.some((dismissed) => approvalCovers(dismissed, base) && approvalCovers(base, dismissed)));
+            }
           });
           sendJson(response, 200, { saved: true });
+          return;
+        }
+        // The owner's switch and caps on what the server spends on AI: only this panel (and the command line, through it) changes them.
+        if (path === "/admin/api/spend" && request.method === "GET") {
+          sendJson(response, 200, adminSpend());
+          return;
+        }
+        if (path === "/admin/api/spend" && request.method === "POST") {
+          await data.updateConfig((next) => {
+            next.spend = applySpendChanges(spendSettingsOf(next), body);
+          });
+          // Switched off: every autopilot stops at once, the call in flight included, and is paused (not failed); a director question in
+          // flight is abandoned and answered with the switch's refusal.
+          if (body.paused === true) {
+            books.stopAll();
+            for (const controller of asking) controller.abort(pausedError());
+          }
+          sendJson(response, 200, adminSpend());
           return;
         }
         if (path === "/admin/api/tunnel/configure" && request.method === "POST") {
@@ -1086,6 +1170,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       books,
       auth,
       tunnel,
+      spend,
       servers: { api, admin },
       allowedBases: () => [...data.config.allowedAiBases],
       close,

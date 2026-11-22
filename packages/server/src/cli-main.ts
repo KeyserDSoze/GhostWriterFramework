@@ -3,12 +3,13 @@ import { accessSync, constants, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_ADMIN_PORT, DEFAULT_SERVER_PORT } from "narrarium-engine";
-import { readAdminCode, readAdminCodeFile, requestLocalClientToken, rotateLocalAdminCode, setLocalAdminCode } from "./admin-client.js";
+import { readAdminCode, readAdminCodeFile, readLocalSpend, requestLocalClientToken, rotateLocalAdminCode, setLocalAdminCode, updateLocalSpend } from "./admin-client.js";
 import { autostartStatus, configureAutostart } from "./autostart.js";
 import { loadServerConfig } from "./config.js";
 import { compareSemver } from "./npm-release.js";
 import { resolveDataRoot } from "./data-root.js";
 import { PACKAGE_NAME, RollbackRefusedError, RuntimeInstaller, assertExactSemver, assertSupportedNode, sanitizedNpmEnvironment, superviseServer } from "./runtime-install.js";
+import { MAX_SPEND_COST, MAX_SPEND_TOKENS, describeSpend, type SpendSettings } from "./spend.js";
 import { parseCloudflaredVersion } from "./tunnel.js";
 import { SERVER_VERSION } from "./version.js";
 
@@ -23,6 +24,7 @@ Usage:
   npx ${PACKAGE_NAME} rotate-admin-code [--data-root DIR]
   npx ${PACKAGE_NAME} set-admin-code [--data-root DIR] [--code-file FILE-0600]
   npx ${PACKAGE_NAME} client-token [--data-root DIR] [--label NAME] [--scope read,write,run[,update]]
+  npx ${PACKAGE_NAME} spend [--data-root DIR] [--pause | --resume] [--max-tokens-per-day N] [--max-cost-per-day N] [--max-tokens-per-run N] [--max-cost-per-run N]
   npx ${PACKAGE_NAME} update [--data-root DIR] [--to VERSION]
   npx ${PACKAGE_NAME} rollback [--data-root DIR] --to VERSION
   npx ${PACKAGE_NAME} --version
@@ -31,6 +33,8 @@ start         Run the server under the update supervisor (default). --direct run
 setup         Install the verified runtime in the data folder; --autostart also starts it at login (Linux, macOS).
 admin-code    Show the code that opens the admin panel (${"http://127.0.0.1:" + DEFAULT_ADMIN_PORT}).
 client-token  Create a client token to paste in Narrarium → Settings → Personal server.
+spend         Show what this server spent on AI today and the owner's limits, or set them (0 is no limit): --pause switches every
+              AI call off at once, --resume switches them on again. Talks to the running server, like client-token.
 update        Install the latest verified version (or --to VERSION); a running server keeps its version until restarted.
               A version older than the highest ever installed in the data folder is refused.
 rollback      Go back to a version that is already installed on this computer (nothing is downloaded). Updates from npm
@@ -39,7 +43,7 @@ rollback      Go back to a version that is already installed on this computer (n
 The data folder is ${resolveDataRoot()} unless --data-root or NARRARIUM_SERVER_HOME says otherwise.
 `;
 
-const COMMANDS = ["start", "setup", "status", "doctor", "admin-code", "rotate-admin-code", "set-admin-code", "client-token", "update", "rollback"] as const;
+const COMMANDS = ["start", "setup", "status", "doctor", "admin-code", "rotate-admin-code", "set-admin-code", "client-token", "spend", "update", "rollback"] as const;
 type Command = (typeof COMMANDS)[number];
 
 export interface ParsedCommand {
@@ -55,12 +59,31 @@ export interface ParsedCommand {
   codeFile?: string;
   scopes?: string[];
   requestedVersion?: string;
+  /** `spend`: what to change (absent: just show it). */
+  spend?: Partial<SpendSettings>;
 }
 
 function port(value: string | undefined, flag: string): number {
   const parsed = Number(value);
   if (!value || !Number.isInteger(parsed) || parsed < 1 || parsed > 65535) throw new Error(`${flag} needs a port between 1 and 65535.`);
   return parsed;
+}
+
+const SPEND_LIMIT_FLAGS = {
+  "--max-tokens-per-day": "maxTokensPerDay",
+  "--max-cost-per-day": "maxCostPerDay",
+  "--max-tokens-per-run": "maxTokensPerRun",
+  "--max-cost-per-run": "maxCostPerRun",
+} as const;
+
+/** A whole number of tokens, or an amount of money, from 0 (no limit) up to what the server believes. */
+function spendLimit(flag: keyof typeof SPEND_LIMIT_FLAGS, text: string): number {
+  const tokens = flag.includes("tokens");
+  const value = /^\d+(?:\.\d+)?$/.test(text) ? Number(text) : Number.NaN;
+  if (!Number.isFinite(value)) throw new Error(`${flag} needs ${tokens ? "a whole number of tokens" : "an amount"} from 0 (no limit), not "${text}".`);
+  if (tokens && !Number.isInteger(value)) throw new Error(`${flag} needs a whole number of tokens, not "${text}".`);
+  if (value > (tokens ? MAX_SPEND_TOKENS : MAX_SPEND_COST)) throw new Error(`${flag} is too large: at most ${tokens ? MAX_SPEND_TOKENS : MAX_SPEND_COST}.`);
+  return value;
 }
 
 export function parseCommand(argv: readonly string[]): ParsedCommand {
@@ -91,7 +114,13 @@ export function parseCommand(argv: readonly string[]): ParsedCommand {
     else if (flag === "--autostart" && allowed(["setup"])) parsed.autostart = true;
     else if (flag === "--code-file" && allowed(["set-admin-code"])) parsed.codeFile = value(++index, flag);
     else if (flag === "--scope" && allowed(["client-token"])) parsed.scopes = value(++index, flag).split(",").map((scope) => scope.trim());
-    else if (flag === "--to" && allowed(["update", "rollback"])) {
+    else if ((flag === "--pause" || flag === "--resume") && allowed(["spend"])) {
+      const paused = flag === "--pause";
+      if (parsed.spend?.paused !== undefined && parsed.spend.paused !== paused) throw new Error("Use either --pause or --resume, not both.");
+      parsed.spend = { ...parsed.spend, paused };
+    } else if (flag in SPEND_LIMIT_FLAGS && allowed(["spend"])) {
+      parsed.spend = { ...parsed.spend, [SPEND_LIMIT_FLAGS[flag as keyof typeof SPEND_LIMIT_FLAGS]]: spendLimit(flag as keyof typeof SPEND_LIMIT_FLAGS, value(++index, flag)) };
+    } else if (flag === "--to" && allowed(["update", "rollback"])) {
       const version = value(++index, flag);
       assertExactSemver(version);
       parsed.requestedVersion = version;
@@ -324,6 +353,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2), envi
       const result = await requestLocalClientToken({ dataRoot, adminPort: config.adminPort, label: parsed.label ?? "Narrarium", scopes: parsed.scopes ?? ["read", "write", "run"] });
       say(`Client token (shown once): ${result.token}`);
       say(`Paste it in Narrarium → Settings → Personal server with the address http://127.0.0.1:${config.apiPort}. Never share it.`);
+      return 0;
+    }
+    if (parsed.command === "spend") {
+      const config = await loadServerConfig(dataRoot);
+      const options = { dataRoot, adminPort: config.adminPort };
+      for (const line of describeSpend(parsed.spend ? await updateLocalSpend(options, parsed.spend) : await readLocalSpend(options))) say(line);
       return 0;
     }
     if (parsed.command === "update") {

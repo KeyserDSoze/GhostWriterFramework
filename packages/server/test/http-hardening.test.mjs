@@ -751,6 +751,10 @@ test("C20: an AI provider's 401 is a 502 ai_provider, never a 401 that the web a
       await client.registerBook("p", { title: "P", storage: { kind: "local" } });
       await client.commitFiles("p", Object.entries(seedBookFiles()).map(([file, content]) => ({ path: file, content })), "seed");
       await client.putAiConfig({ aiIntegrations: [{ id: "p", name: "Local provider", provider: "openai", endpoint: provider.url, apiKey: "sk-test", chatModels: [{ id: "m", name: "gpt-test", capabilities: ["default"] }] }] });
+      // The server calls only what its owner approved: this is the owner approving the provider's origin.
+      await server.data.updateConfig((config) => {
+        config.allowedAiBases = [new URL(provider.url).origin];
+      });
       await assert.rejects(
         () => client.askDirector("p", { target: { kind: "book" }, question: "Does it work?" }),
         (error) => error.status === 502 && error.code === "ai_provider" && /401/.test(error.message),
