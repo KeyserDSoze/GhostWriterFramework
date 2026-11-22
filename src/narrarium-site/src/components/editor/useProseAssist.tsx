@@ -292,7 +292,7 @@ export function useProseAssist(opts: {
             {summaryLoading ? (
               <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("pipeline.generating")}</div>
             ) : (
-              <textarea value={summaryText} onChange={(event) => setSummaryText(event.target.value)} className="min-h-48 w-full rounded-md border bg-background p-3 text-sm leading-6" />
+              <textarea value={summaryText} onChange={(event) => setSummaryText(event.target.value)} className="min-h-48 w-full rounded-md border border-field bg-background p-3 text-sm leading-6" />
             )}
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="ghost" onClick={() => setSummaryOpen(false)}>{t("common.cancel")}</Button>
@@ -318,9 +318,9 @@ function InteractiveImproveDiff({ previous, next, chunks, choices, regenerateSel
         <Button size="sm" variant={choices[chunk.id] === "original" ? "default" : "outline"} onClick={() => onChoice(chunk.id, "original")}>{t("pipeline.original")}</Button>
         <Button size="sm" variant={choices[chunk.id] === "proposed" ? "default" : "outline"} onClick={() => onChoice(chunk.id, "proposed")}>{t("pipeline.proposed")}</Button>
         <Button size="sm" variant="ghost" className="ml-auto" onClick={() => onRegenerateOne(chunk.id)}><RefreshCw className="mr-1 h-3.5 w-3.5" />{t("pipeline.regenerateThis")}</Button>
-        {choices[chunk.id] === "pending" && <span className="w-full text-xs font-medium text-amber-600 dark:text-amber-400">{t("pipeline.decisionPending")}</span>}
+        {choices[chunk.id] === "pending" && <span className="w-full text-xs font-medium text-amber-800 dark:text-amber-400">{t("pipeline.decisionPending")}</span>}
       </div>
-      <div className="grid gap-2 sm:grid-cols-2"><pre className="whitespace-pre-wrap rounded bg-red-500/10 p-2 text-red-700 dark:text-red-300">{chunk.oldText || t("pipeline.noText")}</pre><pre className="whitespace-pre-wrap rounded bg-emerald-500/10 p-2 text-emerald-700 dark:text-emerald-300">{chunk.newText || t("pipeline.removed")}</pre></div>
+      <div className="grid gap-2 sm:grid-cols-2"><pre className="whitespace-pre-wrap rounded bg-red-500/10 p-2 text-red-800 dark:text-red-300">{chunk.oldText || t("pipeline.noText")}</pre><pre className="whitespace-pre-wrap rounded bg-emerald-500/10 p-2 text-emerald-800 dark:text-emerald-300">{chunk.newText || t("pipeline.removed")}</pre></div>
     </div>
   ))}</div>;
 }

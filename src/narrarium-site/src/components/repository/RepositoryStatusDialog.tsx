@@ -56,8 +56,8 @@ function logKindLabel(t: ReturnType<typeof useTranslation>["t"], kind: LocalRepo
 
 function logTone(kind: LocalRepoLogKind): string {
   if (kind === "error") return "border-destructive/40 bg-destructive/10 text-destructive";
-  if (kind === "push" || kind === "commit") return "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300";
-  if (kind === "pull" || kind === "fetch" || kind === "clone") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  if (kind === "push" || kind === "commit") return "border-sky-500/40 bg-sky-500/10 text-sky-800 dark:text-sky-300";
+  if (kind === "pull" || kind === "fetch" || kind === "clone") return "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300";
   return "border-muted bg-muted/40 text-muted-foreground";
 }
 
@@ -312,7 +312,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                {repoMeta && <p className="mt-1 text-xs text-muted-foreground">{t(remoteStatus === "changed" ? "repoStatus.behind" : remoteStatus === "checking" ? "repoStatus.checking" : remoteStatus === "unavailable" || remoteStatus === "unverified" ? (repoMeta.lastKnownChanged ? "repoStatus.staleChanged" : "repoStatus.unverified") : "repoStatus.clean")}</p>}
               {maintenance?.lifecycle && <p className="mt-1 text-xs font-medium">{t("repoStatus.lifecycle", { status: t(`repoStatus.lifecycleStates.${maintenance.lifecycle}`) })}</p>}
               {maintenance && <p className="mt-1 text-xs text-muted-foreground">{t("repoStatus.maintenanceCounts", { modified: maintenance.status.modified, new: maintenance.status.new, deleted: maintenance.status.deleted, commits: maintenance.unpushedCommits.length, recoveries: maintenance.recoveries.length, rewrites: maintenance.rewriteOperationCount })}</p>}
-              {maintenance?.legacyCopies.length ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">{t("repoStatus.legacyCopies", { count: maintenance.legacyCopies.length })}</p> : null}
+              {maintenance?.legacyCopies.length ? <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">{t("repoStatus.legacyCopies", { count: maintenance.legacyCopies.length })}</p> : null}
               {maintenanceError && <p className="mt-2 rounded border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive" role="alert">{maintenanceError}</p>}
               {cloneProgress && (
                 <div className="mt-3 space-y-1">
@@ -323,7 +323,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                 </div>
               )}
               {storage.usage && (
-                <p className={storageHigh ? "mt-2 text-xs font-medium text-amber-600 dark:text-amber-300" : "mt-2 text-xs text-muted-foreground"}>{t("repoStatus.storage", { usage: formatBytes(storage.usage), quota: storage.quota ? formatBytes(storage.quota) : "n/d" })}{storageHigh ? ` · ${t("repoStatus.storageHigh")}` : ""}</p>
+                <p className={storageHigh ? "mt-2 text-xs font-medium text-amber-800 dark:text-amber-300" : "mt-2 text-xs text-muted-foreground"}>{t("repoStatus.storage", { usage: formatBytes(storage.usage), quota: storage.quota ? formatBytes(storage.quota) : "n/d" })}{storageHigh ? ` · ${t("repoStatus.storageHigh")}` : ""}</p>
               )}
             </div>
             <div className="rounded-xl border p-3 text-sm">
@@ -394,8 +394,8 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
             {maintenance && (maintenance.repository || maintenance.removalPending) && <div className="space-y-2 rounded-xl border border-destructive/30 p-3 text-xs">
               <p className="font-medium">{t("repoStatus.removeSummary", { modified: maintenance.status.modified, new: maintenance.status.new, deleted: maintenance.status.deleted, commits: maintenance.unpushedCommits.length, recoveries: maintenance.recoveries.length, rewrites: maintenance.rewriteOperationCount, lifecycle: t(`repoStatus.lifecycleStates.${maintenance.lifecycle}`) })}</p>
               <p className="text-muted-foreground">{t("repoStatus.recoveryPreserved")}</p>
-              {!backupReceipt && !maintenance.removalPending && <p className="font-medium text-amber-700 dark:text-amber-300">{t("repoStatus.backupRequired")}</p>}
-              {maintenance.removalPending && <p className="font-medium text-amber-700 dark:text-amber-300">{t("repoStatus.removalPending")}</p>}
+              {!backupReceipt && !maintenance.removalPending && <p className="font-medium text-amber-800 dark:text-amber-300">{t("repoStatus.backupRequired")}</p>}
+              {maintenance.removalPending && <p className="font-medium text-amber-800 dark:text-amber-300">{t("repoStatus.removalPending")}</p>}
               <Input value={removeConfirmation} onChange={(event) => setRemoveConfirmation(event.target.value)} placeholder={t("repoStatus.removeConfirmation", { value: `REMOVE ${book.owner}/${book.repo}` })} disabled={disabled} />
             </div>}
             <div className="space-y-2 rounded-xl border p-3">
@@ -485,7 +485,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                       key={filter}
                       type="button"
                       onClick={() => setLogFilter(filter)}
-                      className={logFilter === filter ? "rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium uppercase text-primary-foreground" : "rounded-full border px-2 py-0.5 text-[10px] uppercase text-muted-foreground hover:bg-muted"}
+                      className={logFilter === filter ? "rounded-full bg-primary px-2 py-0.5 text-xs font-medium uppercase text-primary-foreground" : "rounded-full border px-2 py-0.5 text-xs uppercase text-muted-foreground hover:bg-muted"}
                     >
                       {filter === "all" ? t("repoStatus.logAll") : logKindLabel(t, filter)}
                     </button>
@@ -497,8 +497,8 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                   {visibleLogs.map((log) => (
                     <div key={log.id} className="rounded border px-2 py-1">
                       <div className="mb-1 flex flex-wrap items-center gap-2">
-                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase ${logTone(log.kind)}`}>{logKindLabel(t, log.kind)}</span>
-                        <span className="text-[10px] text-muted-foreground">{new Date(log.createdAt).toLocaleString()}</span>
+                        <span className={`rounded-full border px-2 py-0.5 text-xs font-medium uppercase ${logTone(log.kind)}`}>{logKindLabel(t, log.kind)}</span>
+                        <span className="text-xs text-muted-foreground">{new Date(log.createdAt).toLocaleString()}</span>
                       </div>
                       <p className="break-words text-xs">{log.message}</p>
                     </div>

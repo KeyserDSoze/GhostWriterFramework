@@ -24,7 +24,7 @@ export function SyncSkipped({ skipped }: { skipped: readonly SyncSkippedFile[] |
   return (
     <details className="rounded-lg border border-amber-500/40 bg-amber-500/5 text-xs">
       <summary id={titleId} className="flex cursor-pointer list-none items-center gap-1.5 p-3 text-sm font-semibold [&::-webkit-details-marker]:hidden">
-        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700 dark:text-amber-600" aria-hidden />
         {t("autopilot.where.skippedTitle", { count: skipped.length })}
       </summary>
       <div className="space-y-2 px-3 pb-3">

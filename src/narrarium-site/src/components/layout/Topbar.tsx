@@ -349,7 +349,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           >
             <History className="h-3.5 w-3.5" />
             <span className="truncate">{previousDocument.label}</span>
-            <span className="ml-1 text-[10px] text-muted-foreground">Ctrl+`</span>
+            <span className="ml-1 text-xs text-muted-foreground">Ctrl+`</span>
           </Button>
         )}
         {currentBook && visibleRepoStatus.tone !== "none" && (
@@ -358,13 +358,13 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               <button
                 type="button"
                 className={visibleRepoStatus.tone === "dirty"
-                  ? `inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300${pendingCurrentObject.pending ? " motion-safe:animate-pulse" : ""}`
+                  ? `inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300${pendingCurrentObject.pending ? " motion-safe:animate-pulse" : ""}`
                   : visibleRepoStatus.tone === "ahead"
-                    ? "inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-xs text-sky-700 dark:text-sky-300"
+                    ? "inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-xs text-sky-800 dark:text-sky-300"
                     : visibleRepoStatus.tone === "behind"
                       ? "inline-flex items-center gap-1 rounded-full border border-violet-500/50 bg-violet-500/10 px-2 py-1 text-xs text-violet-700 dark:text-violet-300"
                   : visibleRepoStatus.tone === "clean"
-                    ? "inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-300"
+                    ? "inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-800 dark:text-emerald-300"
                     : "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs text-muted-foreground"}
                 title={visibleRepoStatus.label}
               >
@@ -429,7 +429,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
                 </AvatarFallback>
               </Avatar>
               {updateWorker && (
-                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold leading-none text-amber-950 shadow-sm ring-2 ring-background">!</span>
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-xs font-bold leading-none text-amber-950 shadow-sm ring-2 ring-background">!</span>
               )}
             </Button>
           </DropdownMenuTrigger>
@@ -485,7 +485,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               {debugStorageError ? <CircleAlert className="mr-2 h-4 w-4 text-destructive" /> : <Activity className="mr-2 h-4 w-4" />}
               <span className="flex-1">{t("debug.title")}</span>
               {debugCount > 0 && (
-                <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">{debugCount}</span>
+                <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">{debugCount}</span>
               )}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => navigate("/app/docs")}>
@@ -505,10 +505,10 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               {t("patchNotes.title")}
             </DropdownMenuItem>
             {updateWorker && (
-               <DropdownMenuItem className="font-semibold text-amber-700 focus:text-amber-800 dark:text-amber-300 dark:focus:text-amber-200" onSelect={() => void activateAvailableUpdate(true)}>
+               <DropdownMenuItem className="font-semibold text-amber-800 focus:text-amber-900 dark:text-amber-300 dark:focus:text-amber-200" onSelect={() => void activateAvailableUpdate(true)}>
                 <CircleAlert className="mr-2 h-4 w-4" />
                 <span className="flex-1">{t("pwa.updateMenu")}</span>
-                {updateVersion && <span className="ml-2 font-mono text-[10px]">v{updateVersion}</span>}
+                {updateVersion && <span className="ml-2 font-mono text-xs">v{updateVersion}</span>}
               </DropdownMenuItem>
             )}
           </DropdownMenuContent>

@@ -24,7 +24,7 @@ export function ProfileProblemsNotice({ bookId, message, compact = false, hintId
     <section className={cn("space-y-3 border border-amber-500/40 bg-amber-500/5", compact ? "rounded-xl p-3" : "rounded-2xl p-4 sm:p-5")}>
       <div role="alert" className="space-y-2">
         <Heading className={cn("flex items-start gap-2 font-semibold", compact ? "text-xs" : "text-base")}>
-          <AlertTriangle className={cn("shrink-0 text-amber-600", compact ? "mt-0.5 h-3.5 w-3.5" : "mt-1 h-4 w-4")} aria-hidden />
+          <AlertTriangle className={cn("shrink-0 text-amber-800 dark:text-amber-300", compact ? "mt-0.5 h-3.5 w-3.5" : "mt-1 h-4 w-4")} aria-hidden />
           <span>{t("autopilot.profileProblems.title")}</span>
         </Heading>
         {!compact && <p className="text-sm">{t("autopilot.profileProblems.explain")}</p>}

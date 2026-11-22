@@ -76,7 +76,7 @@ export function CopilotToolsSettingsBody({ settings, patchSettings }: { settings
 
       <div className="space-y-3">
         <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-3">
-          <p className="flex items-center gap-2 text-sm font-medium text-foreground"><AlertTriangle className="h-4 w-4 text-amber-500" />{t("copilotTools.warningTitle")}</p>
+          <p className="flex items-center gap-2 text-sm font-medium text-foreground"><AlertTriangle className="h-4 w-4 text-amber-700 dark:text-amber-500" />{t("copilotTools.warningTitle")}</p>
           <p className="mt-1 text-sm text-muted-foreground">{t("copilotTools.warningBody")}</p>
         </div>
         <div className="space-y-3">

@@ -334,7 +334,7 @@ function QuickSwitchDialog({ open, onOpenChange }: { open: boolean; onOpenChange
                   <span className="block truncate text-sm font-medium">{item.label}</span>
                   <span className="block truncate text-xs text-muted-foreground">{item.subtitle}</span>
                 </span>
-                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{navigationKindLabel(t, item.kind)}</span>
+                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs uppercase tracking-wide text-muted-foreground">{navigationKindLabel(t, item.kind)}</span>
               </button>
             ))}
           </div>

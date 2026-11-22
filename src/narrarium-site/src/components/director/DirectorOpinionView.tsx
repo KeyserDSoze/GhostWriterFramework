@@ -6,14 +6,14 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const VERDICT_STYLE: Record<DirectorVerdict, string> = {
-  approve: "border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  revise: "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  rewrite: "border-transparent bg-red-500/15 text-red-700 dark:text-red-300",
+  approve: "border-transparent bg-emerald-500/15 text-emerald-800 dark:text-emerald-300",
+  revise: "border-transparent bg-amber-500/15 text-amber-800 dark:text-amber-300",
+  rewrite: "border-transparent bg-red-500/15 text-red-800 dark:text-red-300",
 };
 
 const SEVERITY_STYLE = {
-  critical: "border-transparent bg-red-500/15 text-red-700 dark:text-red-300",
-  major: "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  critical: "border-transparent bg-red-500/15 text-red-800 dark:text-red-300",
+  major: "border-transparent bg-amber-500/15 text-amber-800 dark:text-amber-300",
   minor: "border-transparent bg-muted text-muted-foreground",
 } as const;
 
@@ -51,7 +51,7 @@ export function DirectorOpinionView({ opinion }: { opinion: DirectorOpinion }) {
       <Section icon={<CheckCircle2 className="h-4 w-4 text-emerald-600" />} title={t("director.opinion.strengths")} items={opinion.strengths} />
       {opinion.concerns.length > 0 && (
         <section className="space-y-2">
-          <h4 className="flex items-center gap-1.5 text-sm font-semibold"><TriangleAlert className="h-4 w-4 text-amber-600" />{t("director.opinion.concerns")}</h4>
+          <h4 className="flex items-center gap-1.5 text-sm font-semibold"><TriangleAlert className="h-4 w-4 text-amber-700 dark:text-amber-600" />{t("director.opinion.concerns")}</h4>
           <ul className="space-y-2">
             {opinion.concerns.map((concern, index) => (
               <li key={index} className="rounded-lg border p-2.5 text-sm">

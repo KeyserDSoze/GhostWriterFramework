@@ -320,7 +320,7 @@ export function AuditPage() {
       {error && <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{error}</AlertDescription></Alert>}
 
       {(running || runState === "failed" || runState === "cancelled" || runState === "completed") && progress && (
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl border bg-card p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-layer bg-card p-4 shadow-sm">
           {running ? <Loader2 className="h-5 w-5 animate-spin text-primary" /> : runState === "completed" ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> : <AlertCircle className="h-5 w-5 text-destructive" />}
           <div className="min-w-0 flex-1">
             <p className="font-medium">{t(`audit.progress.${runState}`)}</p>
@@ -421,7 +421,7 @@ function FindingCard({ finding, note, busy, sourceBlocked, onNoteChange, onSaveN
 }) {
   const { t } = useTranslation();
   return (
-    <article className="overflow-hidden rounded-2xl border bg-card shadow-sm">
+    <article className="overflow-hidden rounded-2xl border border-layer bg-card shadow-sm">
       <div className="border-b bg-muted/25 p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 flex-wrap gap-2">

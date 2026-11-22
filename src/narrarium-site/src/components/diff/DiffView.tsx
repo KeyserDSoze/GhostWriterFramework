@@ -145,9 +145,9 @@ export function parseUnifiedPatch(patch: string): DiffRow[] {
 function rowClass(type: DiffRowType): string {
   switch (type) {
     case "add":
-      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+      return "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300";
     case "remove":
-      return "bg-red-500/10 text-red-700 dark:text-red-300";
+      return "bg-red-500/10 text-red-800 dark:text-red-300";
     case "hunk":
       return "bg-primary/10 text-primary";
     default:
@@ -167,13 +167,13 @@ export function DiffView({ rows, className }: { rows: DiffRow[]; className?: str
     return null;
   }
   return (
-    <div className={`overflow-auto rounded-lg border bg-background font-mono text-[11px] leading-5 ${className ?? ""}`}>
+    <div className={`overflow-auto rounded-lg border bg-background font-mono text-xs leading-5 ${className ?? ""}`}>
       <table className="w-full border-collapse">
         <tbody>
           {rows.map((row, index) => (
             <tr key={index} className={rowClass(row.type)}>
-              <td className="select-none border-r px-2 text-right align-top text-muted-foreground/70 w-10">{row.oldNumber ?? ""}</td>
-              <td className="select-none border-r px-2 text-right align-top text-muted-foreground/70 w-10">{row.newNumber ?? ""}</td>
+              <td className="select-none border-r px-2 text-right align-top text-muted-foreground w-10">{row.oldNumber ?? ""}</td>
+              <td className="select-none border-r px-2 text-right align-top text-muted-foreground w-10">{row.newNumber ?? ""}</td>
               <td className="select-none px-1 text-center align-top w-4">{rowSign(row.type)}</td>
               <td className="whitespace-pre-wrap break-words px-2 align-top">{row.text || "\u00a0"}</td>
             </tr>

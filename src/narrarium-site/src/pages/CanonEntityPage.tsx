@@ -291,7 +291,7 @@ export function CanonEntityPage() {
       </div>
 
       <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-2 text-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{t("common.metadata")}</p>
+        <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{t("common.metadata")}</p>
         {loading ? (
           <div className="space-y-1.5">
             <Skeleton className="h-4 w-3/4" />
@@ -301,7 +301,7 @@ export function CanonEntityPage() {
           <>
             {readonlyEntries.map((entry) => (
               <div key={entry.key} className="flex items-start gap-3">
-                <span className="mt-0.5 w-24 shrink-0 font-mono text-[11px] text-muted-foreground flex items-center gap-1">
+                <span className="mt-0.5 w-[7.5rem] shrink-0 break-all font-mono text-xs text-muted-foreground flex items-center gap-1">
                   <Lock className="h-2.5 w-2.5" />
                   {entry.key}
                 </span>
@@ -313,7 +313,7 @@ export function CanonEntityPage() {
 
             {editableEntries.map((entry) => (
               <div key={entry.key} className="flex items-center gap-3">
-                <span className="w-24 shrink-0 font-mono text-[11px]">{entry.key}</span>
+                <span className="w-[7.5rem] shrink-0 break-all font-mono text-xs">{entry.key}</span>
                 <Input
                   value={Array.isArray(entry.value) ? entry.value.join(", ") : entry.value}
                   onChange={(event) => {
@@ -394,7 +394,7 @@ export function CanonEntityPage() {
       )}
       {proseAssist.dialogs}
 
-      <p className="text-[11px] text-muted-foreground truncate">{path}</p>
+      <p className="text-xs text-muted-foreground truncate">{path}</p>
 
       {book && token && path && structure && showRegen && (
         <RegenerateEntityDialog

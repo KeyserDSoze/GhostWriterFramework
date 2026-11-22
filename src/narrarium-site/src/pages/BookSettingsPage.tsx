@@ -404,7 +404,7 @@ export function BookSettingsPage() {
                 <Input placeholder={t("bookSettings.labelOptional")} value={customTokenLabel} onChange={(e) => setCustomTokenLabel(e.target.value)} />
                 <Input type="password" placeholder="github_pat_…" value={customToken} onChange={(e) => setCustomToken(e.target.value)} autoComplete="off" />
               </div>
-              <p className="text-[11px] text-muted-foreground">{t("bookSettings.createOneAt")} <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener noreferrer" className="underline">github.com/settings/tokens</a> {t("bookSettings.withPermissions")}</p>
+              <p className="text-xs text-muted-foreground">{t("bookSettings.createOneAt")} <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener noreferrer" className="underline">github.com/settings/tokens</a> {t("bookSettings.withPermissions")}</p>
             </div>
           )}
 

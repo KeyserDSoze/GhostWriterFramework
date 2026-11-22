@@ -214,7 +214,7 @@ export function GhostwritersPage() {
         <div className="space-y-1">
           {list.map((g) => (
             <button key={g.slug} type="button" onClick={() => void selectProfile(g.slug)} className={selected === g.slug ? "flex w-full items-center gap-2 rounded-lg border bg-primary/5 px-3 py-2 text-left text-sm" : "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm hover:bg-muted/40"}>
-               <PenLine className="h-4 w-4 shrink-0 text-muted-foreground" /><span className="min-w-0 truncate">{g.name}</span>{structure?.ghostwriter === g.slug && <Star className="ml-auto h-3.5 w-3.5 shrink-0 fill-current text-amber-500" />}
+               <PenLine className="h-4 w-4 shrink-0 text-muted-foreground" /><span className="min-w-0 truncate">{g.name}</span>{structure?.ghostwriter === g.slug && <Star className="ml-auto h-3.5 w-3.5 shrink-0 fill-current text-amber-700 dark:text-amber-400" />}
             </button>
           ))}
         </div>

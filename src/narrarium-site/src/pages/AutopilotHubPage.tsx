@@ -43,12 +43,12 @@ export function AutopilotHubPage() {
           <h1 className="flex items-center gap-2 font-serif text-3xl font-semibold tracking-tight"><Plane className="h-6 w-6 text-primary" />{t("autopilot.title")}</h1>
           <p className="mt-1 max-w-2xl text-muted-foreground">{t("autopilot.hubDescription")}</p>
         </div>
-        <Link to="/app/settings/server" className="flex items-center gap-2 rounded-xl border bg-card px-3 py-2 text-sm shadow-sm transition hover:bg-accent">
+        <Link to="/app/settings/server" className="flex items-center gap-2 rounded-xl border border-layer bg-card px-3 py-2 text-sm shadow-sm transition hover:bg-accent">
           <Server className="h-4 w-4 text-primary" />
           <span>{t("autopilot.hub.server")}</span>
           <Badge variant="outline">{t(`personalServer.status.${server.status}`)}</Badge>
           {server.status === "online" && server.updates?.available && server.updates.latestVersion && (
-            <Badge className="border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300">{t("autopilot.hub.serverUpdate", { version: server.updates.latestVersion })}</Badge>
+            <Badge className="border-transparent bg-amber-500/15 text-amber-800 dark:text-amber-300">{t("autopilot.hub.serverUpdate", { version: server.updates.latestVersion })}</Badge>
           )}
         </Link>
       </div>
@@ -67,7 +67,7 @@ export function AutopilotHubPage() {
                 const current = live[book.id];
                 const host = book.autopilotHost === "server" ? "server" : "browser";
                 return (
-                  <li key={book.id} className="space-y-2 rounded-xl border bg-card p-3 shadow-sm">
+                  <li key={book.id} className="space-y-2 rounded-xl border border-layer bg-card p-3 shadow-sm">
                     <div className="flex flex-wrap items-center gap-2">
                       <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1 truncate font-medium">{book.name}</span>

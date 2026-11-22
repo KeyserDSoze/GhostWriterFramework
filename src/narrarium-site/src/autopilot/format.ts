@@ -12,19 +12,19 @@ export const TONE_BORDER: Record<FeedTone, string> = {
 };
 
 export const TONE_TEXT: Record<FeedTone, string> = {
-  ok: "text-emerald-600 dark:text-emerald-400",
-  info: "text-sky-600 dark:text-sky-400",
-  warning: "text-amber-600 dark:text-amber-400",
-  critical: "text-red-600 dark:text-red-400",
+  ok: "text-emerald-700 dark:text-emerald-400",
+  info: "text-sky-700 dark:text-sky-400",
+  warning: "text-amber-800 dark:text-amber-400",
+  critical: "text-red-700 dark:text-red-400",
 };
 
 export const STATUS_BADGE: Record<AutopilotStatus, string> = {
   idle: "border-transparent bg-muted text-muted-foreground",
-  running: "border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  paused: "border-transparent bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  "waiting-author": "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  error: "border-transparent bg-red-500/15 text-red-700 dark:text-red-300",
-  completed: "border-transparent bg-primary/15 text-primary",
+  running: "border-transparent bg-emerald-500/15 text-emerald-800 dark:text-emerald-300",
+  paused: "border-transparent bg-sky-500/15 text-sky-800 dark:text-sky-300",
+  "waiting-author": "border-transparent bg-amber-500/15 text-amber-800 dark:text-amber-300",
+  error: "border-transparent bg-red-500/15 text-red-800 dark:text-red-300",
+  completed: "border-transparent bg-primary/15 text-accent-foreground",
 };
 
 /** The language of the app, not the one of the browser: dates and numbers read like the rest of the screen. */

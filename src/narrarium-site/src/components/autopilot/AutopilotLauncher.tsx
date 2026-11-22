@@ -40,7 +40,7 @@ export function AutopilotLauncher() {
       aria-label={name}
       title={current ? `${t("autopilot.openDock")} — ${activityTitle(t, current.activity)}` : name}
       className={cn(
-        "flex min-w-0 items-center gap-2 rounded-full border bg-card px-3 py-2.5 text-sm font-medium text-card-foreground shadow-lg transition hover:bg-accent",
+        "flex min-w-0 items-center gap-2 rounded-full border border-layer bg-card px-3 py-2.5 text-sm font-medium text-card-foreground shadow-lg transition hover:bg-accent",
         dockOpen && "border-primary/50 bg-accent",
       )}
     >

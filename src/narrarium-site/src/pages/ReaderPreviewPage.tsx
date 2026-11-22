@@ -396,7 +396,7 @@ export function ReaderPreviewPage() {
         </div>
       </div>}
 
-      <div className={fullScreen ? "min-h-0 flex-1 bg-card text-card-foreground" : "min-h-0 flex-1 rounded-[2rem] border bg-card p-2 text-card-foreground shadow-sm sm:p-3"}>
+      <div className={fullScreen ? "min-h-0 flex-1 bg-card text-card-foreground" : "min-h-0 flex-1 rounded-[2rem] border border-layer bg-card p-2 text-card-foreground shadow-sm sm:p-3"}>
         {readerLoadError ? <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{readerLoadError}</AlertDescription></Alert> : busy || !readerBook ? <ReaderSkeleton /> : (
           <div className="flex h-full min-h-0 flex-col">
             <div
@@ -463,7 +463,7 @@ export function ReaderPreviewPage() {
                         {readerSettings.showFrontmatter && paragraph.frontmatter.trim() && <ReaderFrontmatter value={paragraph.frontmatter} />}
                         <div className="doc-prose reader-prose" dangerouslySetInnerHTML={{ __html: paragraph.html }} />
                         {readerSettings.showImages && paragraph.images.length > 0 && <ReaderImages images={paragraph.images} />}
-                        {paragraphIndex < entry.paragraphs.length - 1 && presentationSettings && paragraphSeparator(presentationSettings) && <div className="my-10 text-center text-xl tracking-[0.5em] text-muted-foreground/60">{paragraphSeparator(presentationSettings)}</div>}
+                        {paragraphIndex < entry.paragraphs.length - 1 && presentationSettings && paragraphSeparator(presentationSettings) && <div className="my-10 text-center text-xl tracking-[0.5em] text-muted-foreground">{paragraphSeparator(presentationSettings)}</div>}
                       </section>
                     ))}
                     {readerSettings.showImages && entry.images.length > 0 && <ReaderImages images={entry.images} chapter />}
@@ -494,7 +494,7 @@ export function ReaderPreviewPage() {
                 <button type="button" className="min-w-0 flex-1 text-left" onClick={() => jumpToPosition(entry)}>
                   <p className="font-medium">{entry.label}</p>
                   {entry.preview && <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{entry.preview}</p>}
-                  <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">{new Date(entry.createdAt).toLocaleString()}</p>
+                  <p className="mt-1 text-xs uppercase tracking-wide text-muted-foreground">{new Date(entry.createdAt).toLocaleString()}</p>
                 </button>
                 <Button variant="ghost" size="icon" onClick={() => deleteBookmark(entry.id)} aria-label={t("reader.deleteBookmark")}><Trash2 className="h-4 w-4 text-destructive" /></Button>
               </div>
@@ -568,7 +568,7 @@ function EntityDetailsView({ details }: { details: EntityDetails }) {
       <div className="flex items-start gap-4">
         {details.imageUrl && <img src={details.imageUrl} alt={details.entity.name} className="h-24 w-24 shrink-0 rounded-xl object-cover ring-1 ring-border" />}
         <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-1 text-[10px] uppercase tracking-[0.22em] text-muted-foreground">{Icon && <Icon className="h-3.5 w-3.5" />}{meta ? t(meta.labelKey) : details.entity.section}</p>
+          <p className="flex items-center gap-1 text-xs uppercase tracking-[0.22em] text-muted-foreground">{Icon && <Icon className="h-3.5 w-3.5" />}{meta ? t(meta.labelKey) : details.entity.section}</p>
           <h2 className="font-serif text-3xl font-semibold leading-tight">{details.entity.name}</h2>
           <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{details.entity.path}</p>
         </div>
@@ -577,7 +577,7 @@ function EntityDetailsView({ details }: { details: EntityDetails }) {
         <div className="grid gap-2 rounded-xl border bg-muted/30 p-3 sm:grid-cols-2">
           {details.frontmatterEntries.map((entry) => (
             <div key={entry.key} className="min-w-0">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{entry.key}</p>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground">{entry.key}</p>
               <p className="break-words text-sm">{entry.value}</p>
             </div>
           ))}

@@ -312,7 +312,7 @@ export function GlobalContextMenu() {
     isTouchDevice() ? (
       <>
         <div className="my-1 h-px bg-border" />
-        <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t("customActions.title")}</div>
+        <div className="px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("customActions.title")}</div>
         {currentCustomActions.map((action) => (
           <MenuItem key={action.id} icon={<Wand2 className="h-4 w-4" />} label={action.name} onClick={() => startCustomAction(action)} />
         ))}
@@ -323,7 +323,7 @@ export function GlobalContextMenu() {
         {customSubmenuOpen && (
           <div
             data-no-context-menu
-            className={`absolute top-0 z-[75] w-[234px] overflow-hidden rounded-xl border bg-popover p-1 text-popover-foreground shadow-2xl ${menu.x + 480 > window.innerWidth ? "right-full mr-1" : "left-full ml-1"}`}
+            className={`absolute top-0 z-[75] w-[234px] overflow-hidden rounded-xl border border-layer bg-popover p-1 text-popover-foreground shadow-2xl ${menu.x + 480 > window.innerWidth ? "right-full mr-1" : "left-full ml-1"}`}
           >
             {currentCustomActions.map((action) => (
               <MenuItem key={action.id} icon={<Wand2 className="h-4 w-4" />} label={action.name} onClick={() => startCustomAction(action)} />
@@ -354,7 +354,7 @@ export function GlobalContextMenu() {
         <div
           ref={menuRef}
           data-no-context-menu
-          className="fixed z-[70] w-[234px] overflow-hidden rounded-xl border bg-popover p-1 text-popover-foreground shadow-2xl"
+          className="fixed z-[70] w-[234px] overflow-hidden rounded-xl border border-layer bg-popover p-1 text-popover-foreground shadow-2xl"
           style={{ left: menu.x, top: menu.y }}
           onContextMenu={(e) => e.preventDefault()}
         >
@@ -486,7 +486,7 @@ function MenuItem({ icon, label, shortcut, trailing, onClick, disabled }: { icon
     >
       <span className="shrink-0">{icon}</span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      {shortcut && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">({shortcut})</span>}
+      {shortcut && <span className="ml-auto shrink-0 text-xs text-muted-foreground">({shortcut})</span>}
       {trailing && <span className="ml-auto shrink-0 text-xs text-muted-foreground">{trailing}</span>}
     </button>
   );

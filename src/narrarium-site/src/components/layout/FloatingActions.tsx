@@ -139,7 +139,7 @@ export function FloatingActions() {
   return (
     <div className="fixed bottom-20 right-4 z-40 flex flex-col items-end gap-2 lg:bottom-24 lg:right-6">
       {open && (
-        <div className="w-60 max-w-[80vw] overflow-hidden rounded-2xl border bg-card p-1.5 shadow-2xl">
+        <div className="w-60 max-w-[80vw] overflow-hidden rounded-2xl border border-layer bg-card p-1.5 shadow-2xl">
           <div className="flex items-center justify-between px-2 py-1">
             <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("bookActions.title")}</span>
             <button type="button" onClick={() => setOpen(false)} className="rounded p-1 text-muted-foreground hover:bg-muted"><X className="h-3.5 w-3.5" /></button>

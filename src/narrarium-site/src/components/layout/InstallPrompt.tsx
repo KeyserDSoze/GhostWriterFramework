@@ -73,7 +73,7 @@ export function InstallPrompt() {
   if (!deferred && !iosHint) return null;
 
   return (
-    <div className="fixed bottom-20 left-1/2 z-[75] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 rounded-2xl border bg-card p-4 text-card-foreground shadow-2xl">
+    <div className="fixed bottom-20 left-1/2 z-[75] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 rounded-2xl border border-layer bg-card p-4 text-card-foreground shadow-2xl">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="font-semibold">{t("pwa.installTitle")}</p>

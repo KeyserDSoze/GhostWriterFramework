@@ -173,7 +173,7 @@ export function DirectorPage() {
         </div>
       </div>
 
-      <section className="space-y-4 rounded-2xl border bg-card p-5 shadow-sm">
+      <section className="space-y-4 rounded-2xl border border-layer bg-card p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold">{t("director.profileTitle")}</h2>
           <Button size="sm" onClick={() => void save()} disabled={busy || !dirty || !current?.name.trim()}>
@@ -243,7 +243,7 @@ export function DirectorPage() {
         )}
       </section>
 
-      <section className="space-y-3 rounded-2xl border bg-card p-5 shadow-sm">
+      <section className="space-y-3 rounded-2xl border border-layer bg-card p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-semibold">{t("director.opinions.title")}</h2>
           <Button size="sm" variant="ghost" onClick={() => setOpinionsKey((value) => value + 1)} disabled={opinionsLoading}>

@@ -59,7 +59,7 @@ export function CommitHistoryDialog(props: {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-medium">{commit.message}</p>
-                    <p className="font-mono text-[11px] text-muted-foreground">{commit.sha.slice(0, 7)}</p>
+                    <p className="font-mono text-xs text-muted-foreground">{commit.sha.slice(0, 7)}</p>
                     <p className="text-xs text-muted-foreground">{commit.authorName} · {new Date(commit.authoredAt).toLocaleString()}</p>
                   </div>
                   <Button asChild size="sm" variant="ghost">

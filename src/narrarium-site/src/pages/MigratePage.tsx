@@ -330,7 +330,7 @@ export function MigratePage() {
                   {isActive ? (
                     <Loader2 className="h-4 w-4 animate-spin text-primary" />
                   ) : result ? (
-                    result.ok ? <Check className="h-4 w-4 text-green-600" /> : <X className="h-4 w-4 text-destructive" />
+                    result.ok ? <Check className="h-4 w-4 text-emerald-700 dark:text-emerald-400" /> : <X className="h-4 w-4 text-destructive" />
                   ) : (
                     <span className="h-4 w-4 rounded-full border" />
                   )}
@@ -346,7 +346,7 @@ export function MigratePage() {
             })}
           </ul>
           {results && results.every((r) => r.ok) && (
-            <p className="pt-1 text-sm font-medium text-green-600">{t("migration.done")}</p>
+            <p className="pt-1 text-sm font-medium text-emerald-800 dark:text-emerald-400">{t("migration.done")}</p>
           )}
         </div>
       )}

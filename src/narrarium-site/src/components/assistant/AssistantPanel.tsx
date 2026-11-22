@@ -115,6 +115,7 @@ import { commitCanonicalScriptMutation } from "@/narrarium/scriptLedger";
 import { directSecretPath } from "@/assistant/secretPolicy";
 import { deleteLocalChatSession, loadLocalChatSession, saveLocalChatSession } from "@/assistant/chatLocal";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
+import { scrollBehavior } from "@/lib/motion";
 
 ensureBuiltinCopilotToolsRegistered();
 
@@ -348,7 +349,7 @@ export function AssistantPanel() {
 
   const lastMessageText = currentSession?.messages[currentSession.messages.length - 1]?.text;
   useEffect(() => {
-    if (busy) messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (busy) messagesEndRef.current?.scrollIntoView({ behavior: scrollBehavior(), block: "end" });
   }, [busy, lastMessageText]);
 
   useEffect(() => {
@@ -2572,7 +2573,7 @@ export function AssistantPanel() {
                         {showDiff ? (
                           <FileDiff previous={previousContents[diffKey] ?? ""} next={update.content} className="mt-2 max-h-64" />
                         ) : (
-                          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-[11px]">{update.content}</pre>
+                          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs">{update.content}</pre>
                         )}
                       </details>
                     );
@@ -2836,7 +2837,7 @@ export function AssistantPanel() {
               type="button"
               onClick={togglePauseReading}
               title={livePaused ? t("assistant.resumeAudio") : t("assistant.pauseAudio")}
-              className="flex h-16 w-16 items-center justify-center rounded-full border bg-background text-foreground shadow-lg transition hover:scale-105 active:scale-95"
+              className="flex h-16 w-16 items-center justify-center rounded-full border border-layer bg-background text-foreground shadow-lg transition hover:scale-105 active:scale-95"
             >
               {livePaused ? <Play className="h-7 w-7" /> : <Pause className="h-7 w-7" />}
               <span className="sr-only">{livePaused ? t("assistant.resumeAudio") : t("assistant.pauseAudio")}</span>

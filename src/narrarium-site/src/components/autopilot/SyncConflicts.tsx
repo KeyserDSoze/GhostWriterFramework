@@ -30,7 +30,7 @@ export function SyncConflicts({ conflicts, disabled, onResolve }: { conflicts: S
   return (
     <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
       <h3 id={headingId} className="flex items-center gap-1.5 text-sm font-semibold">
-        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700 dark:text-amber-600" aria-hidden />
         {t("autopilot.where.conflictsTitle", { count: conflicts.length })}
       </h3>
       <p className="text-xs text-muted-foreground">{t("autopilot.where.conflictsHint")}</p>

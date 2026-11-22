@@ -26,7 +26,7 @@ export function PatchNotesPage() {
       </div>
       {patchNotes.map((note) => {
         const localized = localizedPatchNote(note, i18n.language);
-        return <article key={note.version} className="rounded-2xl border bg-card p-5 shadow-sm sm:p-6"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">{localized.title}</h2><p className="mt-1 text-sm text-muted-foreground">{localized.summary}</p></div><div className="text-right"><Badge>v{note.version}</Badge><p className="mt-1 text-xs text-muted-foreground">{new Date(note.date).toLocaleDateString()}</p></div></div><ul className="mt-5 space-y-2 text-sm leading-6">{localized.changes.map((change) => <li key={change} className="flex gap-3"><span className="text-primary">•</span><span>{change}</span></li>)}</ul></article>;
+        return <article key={note.version} className="rounded-2xl border border-layer bg-card p-5 shadow-sm sm:p-6"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">{localized.title}</h2><p className="mt-1 text-sm text-muted-foreground">{localized.summary}</p></div><div className="text-right"><Badge>v{note.version}</Badge><p className="mt-1 text-xs text-muted-foreground">{new Date(note.date).toLocaleDateString()}</p></div></div><ul className="mt-5 space-y-2 text-sm leading-6">{localized.changes.map((change) => <li key={change} className="flex gap-3"><span className="text-primary">•</span><span>{change}</span></li>)}</ul></article>;
       })}
     </div>
   );

@@ -173,7 +173,7 @@ function DossierSearch({ structure, bookId, onPicked, autoFocus }: { structure: 
 
   return (
     <div ref={boxRef} className="relative mt-3">
-      <div className="flex items-center gap-2 rounded-lg border bg-background px-2">
+      <div className="flex items-center gap-2 rounded-lg border border-field bg-background px-2">
         <Search className="h-4 w-4 text-muted-foreground" />
         <input
           ref={inputRef}
@@ -185,7 +185,7 @@ function DossierSearch({ structure, bookId, onPicked, autoFocus }: { structure: 
         />
       </div>
       {open && query.trim().length >= 3 && (
-        <div className="absolute left-0 right-0 top-11 z-20 max-h-72 overflow-auto rounded-xl border bg-popover p-1 shadow-2xl">
+        <div className="absolute left-0 right-0 top-11 z-20 max-h-72 overflow-auto rounded-xl border border-layer bg-popover p-1 shadow-2xl">
           {results.length === 0 ? (
             <p className="px-3 py-3 text-xs text-muted-foreground">{t("dossier.noResults")}</p>
           ) : results.map((hit) => {
@@ -200,7 +200,7 @@ function DossierSearch({ structure, bookId, onPicked, autoFocus }: { structure: 
               >
                 {Icon && <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />}
                 <span className="truncate">{hit.name}</span>
-                <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">{meta ? t(meta.labelKey) : hit.section}</span>
+                <span className="ml-auto shrink-0 text-xs uppercase tracking-wide text-muted-foreground">{meta ? t(meta.labelKey) : hit.section}</span>
               </button>
             );
           })}
@@ -224,7 +224,7 @@ function DossierCard({ entry, variant }: { entry: DossierEntry; variant: "docked
           <img src={entry.imageUrl} alt={entry.title} className="h-14 w-14 shrink-0 rounded-lg object-cover ring-1 ring-border" />
         )}
         <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          <p className="flex items-center gap-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
             {Icon && <Icon className="h-3 w-3" />}{meta ? t(meta.labelKey) : entry.section}
           </p>
           <h3 className="truncate font-serif text-xl font-semibold leading-tight">{entry.title}</h3>
@@ -240,7 +240,7 @@ function DossierCard({ entry, variant }: { entry: DossierEntry; variant: "docked
           </Button>
         </div>
       </div>
-      <p className="mb-3 break-all rounded-lg bg-muted px-2 py-1 font-mono text-[10px] text-muted-foreground">{entry.path}</p>
+      <p className="mb-3 break-all rounded-lg bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">{entry.path}</p>
       <pre className="w-full max-w-full whitespace-pre-wrap break-words rounded-xl bg-muted/50 p-3 text-xs leading-6 text-foreground [overflow-wrap:anywhere]">{body || entry.content}</pre>
     </article>
   );
@@ -278,8 +278,8 @@ function FloatingDossier({ entry }: { entry: DossierEntry }) {
     <div
       data-no-context-menu
       className={isMobile
-        ? "fixed inset-x-2 bottom-2 top-16 z-[60] flex flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl"
-        : "fixed z-[60] flex h-[70vh] max-h-[70vh] w-[380px] max-w-[92vw] flex-col overflow-hidden rounded-2xl border bg-card shadow-2xl"}
+        ? "fixed inset-x-2 bottom-2 top-16 z-[60] flex flex-col overflow-hidden rounded-2xl border border-layer bg-card shadow-2xl"
+        : "fixed z-[60] flex h-[70vh] max-h-[70vh] w-[380px] max-w-[92vw] flex-col overflow-hidden rounded-2xl border border-layer bg-card shadow-2xl"}
       style={isMobile ? undefined : { left: entry.x ?? 80, top: entry.y ?? 80 }}
     >
       <div
@@ -310,7 +310,7 @@ function FloatingDossier({ entry }: { entry: DossierEntry }) {
         {entry.imageUrl && (
           <img src={entry.imageUrl} alt={entry.title} className="mb-3 h-24 w-24 rounded-lg object-cover ring-1 ring-border" />
         )}
-        <p className="mb-2 break-all rounded-lg bg-muted px-2 py-1 font-mono text-[10px] text-muted-foreground">{entry.path}</p>
+        <p className="mb-2 break-all rounded-lg bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">{entry.path}</p>
         <pre className="w-full max-w-full whitespace-pre-wrap break-words rounded-xl bg-muted/50 p-3 text-xs leading-6 text-foreground [overflow-wrap:anywhere]">{body || entry.content}</pre>
       </div>
     </div>

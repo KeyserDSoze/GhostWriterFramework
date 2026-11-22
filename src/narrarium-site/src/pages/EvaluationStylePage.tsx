@@ -263,7 +263,7 @@ export function EvaluationStylePage() {
         <p className="mt-3 flex items-center gap-2 text-xs"><Sparkles className="h-3.5 w-3.5 text-primary" />{t("evaluationStyle.aiHint")}</p>
       </div>
 
-      <section className="rounded-2xl border bg-card p-5 shadow-sm sm:p-6">
+      <section className="rounded-2xl border border-layer bg-card p-5 shadow-sm sm:p-6">
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div><h2 className="text-lg font-semibold">{t("evaluationStyle.criteriaTitle")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("evaluationStyle.criteriaHint")}</p></div>
           <Button variant="outline" size="sm" onClick={addCriterion} disabled={!loaded}><Plus className="mr-1.5 h-4 w-4" />{t("evaluationStyle.addCriterion")}</Button>
@@ -294,7 +294,7 @@ export function EvaluationStylePage() {
         ) : <div className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground">{t("evaluationStyle.noCriteria")}</div>}
       </section>
 
-      <section className="rounded-2xl border bg-card p-5 shadow-sm sm:p-6">
+      <section className="rounded-2xl border border-layer bg-card p-5 shadow-sm sm:p-6">
         <div className="mb-4"><h2 className="text-lg font-semibold">{t("evaluationStyle.bodyTitle")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("evaluationStyle.bodyHint")}</p></div>
         {!loaded ? (loading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div> : null) : <AutoTextarea ref={bodyRef} value={body} onChange={(event) => setBody(event.target.value)} className="min-h-[55vh] font-mono text-sm leading-7" placeholder={t("evaluationStyle.placeholder")} />}
       </section>

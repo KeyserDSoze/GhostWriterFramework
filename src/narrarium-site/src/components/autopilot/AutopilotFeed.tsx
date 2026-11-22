@@ -41,7 +41,7 @@ export function AutopilotLiveCard({ preview, bookTitle, className }: { preview: 
           {preview.preview}
         </p>
       )}
-      {preview.characters > 0 && <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">{t("autopilot.characters", { count: preview.characters })}</p>}
+      {preview.characters > 0 && <p className="mt-1 text-xs tabular-nums text-muted-foreground">{t("autopilot.characters", { count: preview.characters })}</p>}
     </div>
   );
 }
@@ -96,7 +96,7 @@ export function AutopilotFeed({ bookId, showBook = false, limit = 200, className
                 <div className="min-w-0 flex-1">
                   <p className="text-sm leading-snug">{view.text}</p>
                   {view.detail && <p className={cn("mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground", !view.full && "line-clamp-3")}>{view.detail}</p>}
-                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  <p className="mt-0.5 text-xs text-muted-foreground">
                     <span className="tabular-nums">{formatClock(entry.event.at)}</span>
                     {showBook && <span> · {titles.get(entry.event.bookId) ?? entry.bookTitle}</span>}
                     {view.meta && <span> · {view.meta}</span>}

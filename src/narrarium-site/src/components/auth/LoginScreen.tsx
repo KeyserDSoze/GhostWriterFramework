@@ -220,7 +220,7 @@ export function LoginScreen() {
         </div>
 
         {/* Sign-in card */}
-        <div className="rounded-xl border bg-card p-8 shadow-sm space-y-6">
+        <div className="rounded-xl border border-layer bg-card p-8 shadow-sm space-y-6">
           <div className="space-y-2">
             <h2 className="text-lg font-semibold">{recoveryExpired ? t("auth.recoveryExpiredHeading") : recoveryRequest ? t("auth.recoveryHeading") : continuity ? t("auth.continuityHeading", { email: continuity.normalizedEmail }) : t("auth.heading")}</h2>
             <p className="text-sm text-muted-foreground">
@@ -235,7 +235,7 @@ export function LoginScreen() {
           )}
 
           <div className="flex items-start gap-2 text-left">
-            <input id="remember-me" type="checkbox" className="mt-0.5 h-4 w-4 rounded border-input accent-primary" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} disabled={!!loadingProvider || recoveryRequest !== null} />
+            <input id="remember-me" type="checkbox" className="mt-0.5 h-4 w-4 rounded border-field accent-primary" checked={rememberMe} onChange={(event) => setRememberMe(event.target.checked)} disabled={!!loadingProvider || recoveryRequest !== null} />
             <div className="space-y-1">
               <Label htmlFor="remember-me" className="cursor-pointer text-sm">{t("auth.rememberMe")}</Label>
               <p className="text-xs text-muted-foreground">{t("auth.rememberMeHint")}</p>

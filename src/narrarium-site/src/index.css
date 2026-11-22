@@ -55,6 +55,13 @@
   }
 }
 
+/*
+ * Colour tokens, checked by test/themeContrast.test.mjs (WCAG 2.2 AA, both themes):
+ *   text and button labels  4.5:1 on the surface they sit on (--foreground 7:1)
+ *   --field, --ring         3:1 against the page, the card, the popover (and a muted panel for --field)
+ *   --layer (dark)          3:1 against the page, the card and the popover
+ * --border and --input stay the soft decorative lines (dividers, outline buttons): never use them to outline a control.
+ */
 @layer base {
   :root {
     --background: 40 33% 95%;
@@ -68,13 +75,20 @@
     --secondary: 120 4% 90%;
     --secondary-foreground: 120 4% 12%;
     --muted: 120 4% 92%;
-    --muted-foreground: 120 4% 40%;
+    --muted-foreground: 120 4% 38%;
     --accent: 174 76% 90%;
     --accent-foreground: 174 76% 18%;
-    --destructive: 0 84% 60%;
+    /* Fill of the destructive button, badge and toast (and the tint of error boxes). The text colour is --destructive-text. */
+    --destructive: 0 72% 45%;
     --destructive-foreground: 0 0% 98%;
+    /* What text-destructive paints: red text on the page, the card, a muted panel or an error box. */
+    --destructive-text: 0 72% 40%;
     --border: 120 4% 85%;
     --input: 120 4% 88%;
+    /* Outline of text fields, selects and the unchecked switch track. */
+    --field: 120 4% 50%;
+    /* Edge of the surfaces that float over the page (dock, dialogs, menus, cards). Light theme: the soft --border, as before. */
+    --layer: 120 4% 85%;
     --ring: 174 76% 24%;
     --radius: 0.75rem;
   }
@@ -91,13 +105,18 @@
     --secondary: 186 10% 18%;
     --secondary-foreground: 150 20% 92%;
     --muted: 186 10% 16%;
-    --muted-foreground: 150 10% 55%;
+    --muted-foreground: 150 10% 64%;
     --accent: 186 10% 20%;
     --accent-foreground: 174 55% 65%;
     --destructive: 0 63% 31%;
     --destructive-foreground: 0 86% 97%;
+    /* A dark red fill cannot be read as text on a dark page: red text uses this lighter red. */
+    --destructive-text: 0 84% 74%;
     --border: 186 10% 20%;
     --input: 186 10% 20%;
+    --field: 186 10% 44%;
+    /* In the dark theme the edge of a floating layer is clearly visible against the page. */
+    --layer: 186 10% 42%;
     --ring: 174 55% 60%;
   }
 }
@@ -140,6 +159,24 @@
 
   *::-webkit-scrollbar-corner {
     background: transparent;
+  }
+
+  /*
+   * Reduced motion, for the whole site (test/reducedMotion.test.mjs). Animations are not removed, they end at once: a spinner stops
+   * on its still ring, a pulse on its resting state, and libraries that wait for animationend/transitionend keep working.
+   * Nothing runs forever, nothing glides. Programmatic smooth scrolling asks for the same through scrollBehavior() in lib/motion.ts.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      animation-delay: 0s !important;
+      transition-duration: 0.01ms !important;
+      transition-delay: 0s !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 

@@ -79,7 +79,7 @@ export function BooksPage() {
                       </CardTitle>
                       <Badge
                         variant="outline"
-                        className="ml-2 shrink-0 text-[10px]"
+                        className="ml-2 shrink-0"
                       >
                         {book.storageMode === "local-only" ? (
                           <HardDrive className="mr-1 h-3 w-3" />
@@ -169,5 +169,5 @@ function EmptyState() {
 }
 
 function QuickStartCard({ icon, step, title, text, action }: { icon: React.ReactNode; step: string; title: string; text: string; action: React.ReactNode }) {
-  return <div className="rounded-2xl border bg-card p-4"><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">{icon}</div><div><p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{step}</p><p className="font-semibold">{title}</p></div></div><p className="mt-3 text-sm leading-6 text-muted-foreground">{text}</p><div className="mt-3">{action}</div></div>;
+  return <div className="rounded-2xl border bg-card p-4"><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">{icon}</div><div><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{step}</p><p className="font-semibold">{title}</p></div></div><p className="mt-3 text-sm leading-6 text-muted-foreground">{text}</p><div className="mt-3">{action}</div></div>;
 }

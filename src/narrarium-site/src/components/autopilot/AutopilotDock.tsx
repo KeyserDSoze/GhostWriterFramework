@@ -38,7 +38,7 @@ export function AutopilotDock() {
   const tabClass = (active: boolean) => cn("rounded-md px-2.5 py-1 text-xs font-medium transition", active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground");
 
   return (
-    <section aria-label={t("autopilot.dockTitle")} className="fixed bottom-20 right-4 z-40 flex max-h-[min(70dvh,38rem)] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border bg-card text-card-foreground shadow-2xl lg:bottom-24 lg:right-6">
+    <section aria-label={t("autopilot.dockTitle")} className="fixed bottom-20 right-4 z-40 flex max-h-[min(70dvh,38rem)] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-layer bg-card text-card-foreground shadow-2xl lg:bottom-24 lg:right-6">
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b px-3 py-2">
         <Plane className="h-4 w-4 shrink-0 text-primary" />
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{t("autopilot.dockTitle")}</h2>

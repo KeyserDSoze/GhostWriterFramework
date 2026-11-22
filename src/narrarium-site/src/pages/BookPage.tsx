@@ -283,7 +283,7 @@ export function BookPage() {
           <p className="mt-0.5 text-xs text-muted-foreground font-mono">
             {ensuring ? t("bookPage.creatingBranch") : branch}
           </p>
-          {bookStorageMode(book) === "github" && <p className="mt-1 text-[11px] text-muted-foreground">
+          {bookStorageMode(book) === "github" && <p className="mt-1 text-xs text-muted-foreground">
             {t("bookPage.token")}{" "}
             {book.bookToken
               ? `${t("bookPage.dedicatedPatLabel")}${book.bookTokenLabel ? ` · ${book.bookTokenLabel}` : ""}`
@@ -313,49 +313,49 @@ export function BookPage() {
             <TabsTrigger value="chapters">
               <BookOpen className="mr-1 h-3 w-3" />
               {t("bookPage.chapters")}
-              <Badge variant="secondary" className="ml-1.5 text-[10px]">
+              <Badge variant="secondary" className="ml-1.5">
                 {structure.chapters.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="characters">
               <Users className="mr-1 h-3 w-3" />
               {t("bookPage.characters")}
-              <Badge variant="secondary" className="ml-1.5 text-[10px]">
+              <Badge variant="secondary" className="ml-1.5">
                 {structure.characters.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="locations">
               <MapPin className="mr-1 h-3 w-3" />
               {t("bookPage.locations")}
-              <Badge variant="secondary" className="ml-1.5 text-[10px]">
+              <Badge variant="secondary" className="ml-1.5">
                 {structure.locations.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="factions">
               <Shield className="mr-1 h-3 w-3" />
               {t("bookPage.factions")}
-              <Badge variant="secondary" className="ml-1.5 text-[10px]">
+              <Badge variant="secondary" className="ml-1.5">
                 {structure.factions.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="items">
               <Package className="mr-1 h-3 w-3" />
               {t("bookPage.items")}
-              <Badge variant="secondary" className="ml-1.5 text-[10px]">
+              <Badge variant="secondary" className="ml-1.5">
                 {structure.items.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="timelines">
               <Clock className="mr-1 h-3 w-3" />
               {t("bookPage.timelines")}
-              <Badge variant="secondary" className="ml-1.5 text-[10px]">
+              <Badge variant="secondary" className="ml-1.5">
                 {structure.timelines.length}
               </Badge>
             </TabsTrigger>
             <TabsTrigger value="secrets">
               <EyeOff className="mr-1 h-3 w-3" />
               {t("bookPage.secrets")}
-              <Badge variant="secondary" className="ml-1.5 text-[10px]">
+              <Badge variant="secondary" className="ml-1.5">
                 {structure.secrets.length}
               </Badge>
             </TabsTrigger>
@@ -506,7 +506,7 @@ export function BookPage() {
           </TabsContent>
 
           <TabsContent value="metadata" className="mt-4">
-            <section className="rounded-xl border bg-card p-4 shadow-sm">
+            <section className="rounded-xl border border-layer bg-card p-4 shadow-sm">
               <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">

@@ -139,8 +139,8 @@ export function useMergeDraftFinal(ctx: MergeContext) {
                 <p className="text-sm font-semibold">{t("merge.mergedResult")}</p>
                 <div className="flex items-center gap-1 text-xs">
                   <span className="text-muted-foreground">{t("merge.compareWith")}</span>
-                  <Button size="sm" variant={compareSide === "draft" ? "default" : "outline"} className="h-6 px-2 text-[11px]" onClick={() => setCompareSide("draft")}>{t("chapter.draft")}</Button>
-                  <Button size="sm" variant={compareSide === "final" ? "default" : "outline"} className="h-6 px-2 text-[11px]" onClick={() => setCompareSide("final")}>{t("stageIndex.final")}</Button>
+                  <Button size="sm" variant={compareSide === "draft" ? "default" : "outline"} className="h-6 px-2 text-xs" onClick={() => setCompareSide("draft")}>{t("chapter.draft")}</Button>
+                  <Button size="sm" variant={compareSide === "final" ? "default" : "outline"} className="h-6 px-2 text-xs" onClick={() => setCompareSide("final")}>{t("stageIndex.final")}</Button>
                 </div>
               </div>
               <div className="min-h-0 flex-1 overflow-auto p-4">

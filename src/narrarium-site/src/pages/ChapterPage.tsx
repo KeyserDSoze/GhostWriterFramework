@@ -720,7 +720,7 @@ export function ChapterPage() {
           <div className="max-h-64 space-y-1 overflow-y-auto rounded-lg border p-2">
             {(pendingReorder ?? []).map((p, i) => (
               <div key={p.path} className="flex items-center gap-2 rounded px-2 py-1 text-sm">
-                <Badge variant="outline" className="shrink-0 font-mono text-[10px]">{String(i + 1).padStart(3, "0")}</Badge>
+                <Badge variant="outline" className="shrink-0 font-mono">{String(i + 1).padStart(3, "0")}</Badge>
                 <span className="truncate">{p.title}</span>
               </div>
             ))}
@@ -761,13 +761,13 @@ function ChapterActionChip({
         "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
         active
           ? "border-primary/40 bg-secondary text-secondary-foreground hover:bg-secondary/80"
-          : "border-dashed border-muted-foreground/30 bg-transparent text-muted-foreground/60 hover:text-muted-foreground hover:border-muted-foreground/50",
+          : "border-dashed border-muted-foreground/30 bg-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/50",
       ].join(" ")}
     >
       {icon}
       <span>{label}</span>
       {typeof count === "number" && count > 0 && (
-        <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-primary">
+        <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-accent-foreground">
           {count}
         </span>
       )}
@@ -792,15 +792,15 @@ function ParagraphActionChip({
       to={to}
       onClick={(e) => e.stopPropagation()}
       className={[
-        "hidden shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors sm:inline-flex",
+        "hidden shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors sm:inline-flex",
         active
           ? "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-          : "text-muted-foreground/50 hover:bg-accent/50 hover:text-muted-foreground",
+          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
       ].join(" ")}
     >
       <span>{label}</span>
       {typeof count === "number" && count > 0 && (
-        <span className="rounded-full bg-primary/15 px-1 text-[9px] font-semibold tabular-nums text-primary">
+        <span className="rounded-full bg-primary/15 px-1.5 text-xs font-semibold tabular-nums text-accent-foreground">
           {count}
         </span>
       )}

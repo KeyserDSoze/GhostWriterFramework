@@ -79,13 +79,13 @@ function ModelBreakdown({ models, fmt }: { models?: Record<string, UsageBucket>;
   if (entries.length === 0) return null;
   return (
     <div className="mt-3">
-      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t("costs.perModel")}</p>
+      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("costs.perModel")}</p>
       <div className="space-y-1.5">
         {entries.map(([name, bucket]) => (
           <div key={name} className="flex items-center justify-between rounded-lg border bg-muted/10 px-3 py-1.5">
             <div>
               <p className="text-sm font-medium">{name}</p>
-              <p className="text-[11px] text-muted-foreground">{`${num(bucket.inputTokens)} in · ${num(bucket.cachedTokens)} cache · ${num(bucket.outputTokens)} out`}</p>
+              <p className="text-xs text-muted-foreground">{`${num(bucket.inputTokens)} in · ${num(bucket.cachedTokens)} cache · ${num(bucket.outputTokens)} out`}</p>
             </div>
             <span className="text-sm font-semibold">{fmt(bucket.chatCost)}</span>
           </div>
@@ -113,7 +113,7 @@ function CategoryGrid({ bucket, fmt }: { bucket: UsageBucket; fmt: (v: number) =
         <div key={row.label} className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2">
           <div>
             <p className="text-sm font-medium">{row.label}</p>
-            <p className="text-[11px] text-muted-foreground">{row.detail}</p>
+            <p className="text-xs text-muted-foreground">{row.detail}</p>
           </div>
           <span className="text-sm font-semibold">{fmt(row.cost)}</span>
         </div>

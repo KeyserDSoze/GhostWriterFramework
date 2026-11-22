@@ -36,11 +36,11 @@ const UPDATE_WAIT_MS = 10 * 60_000;
 
 const STATUS_STYLE: Record<ServerConnectionStatus, string> = {
   disabled: "border-transparent bg-muted text-muted-foreground",
-  connecting: "border-transparent bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  reconnecting: "border-transparent bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  online: "border-transparent bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  offline: "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  error: "border-transparent bg-red-500/15 text-red-700 dark:text-red-300",
+  connecting: "border-transparent bg-sky-500/15 text-sky-800 dark:text-sky-300",
+  reconnecting: "border-transparent bg-sky-500/15 text-sky-800 dark:text-sky-300",
+  online: "border-transparent bg-emerald-500/15 text-emerald-800 dark:text-emerald-300",
+  offline: "border-transparent bg-amber-500/15 text-amber-800 dark:text-amber-300",
+  error: "border-transparent bg-red-500/15 text-red-800 dark:text-red-300",
 };
 
 function isLoopback(url: string): boolean {
@@ -467,7 +467,7 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <KeyRound className="h-3.5 w-3.5 shrink-0" />
             <span className="font-medium">{t("personalServer.permissions.label")}:</span>
-            {session.scopes.map((scope) => <Badge key={scope} variant="outline" className={cn("font-normal", scope === "update" && "border-amber-500/50 text-amber-700 dark:text-amber-300")}>{t(`personalServer.permissions.${scope}`)}</Badge>)}
+            {session.scopes.map((scope) => <Badge key={scope} variant="outline" className={cn("font-normal", scope === "update" && "border-amber-500/50 text-amber-800 dark:text-amber-300")}>{t(`personalServer.permissions.${scope}`)}</Badge>)}
           </div>
         )}
         {server.info && <p className="text-xs text-muted-foreground">{server.info.git ? t("personalServer.git.yes") : t("personalServer.git.no")}</p>}

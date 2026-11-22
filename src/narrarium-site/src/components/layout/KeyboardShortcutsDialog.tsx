@@ -29,7 +29,7 @@ export function KeyboardShortcutsDialog({ open, onOpenChange }: { open: boolean;
           {SHORTCUTS.map(([id, keys]) => (
             <div key={id} className="flex items-center justify-between gap-4 px-3 py-2.5 text-sm">
               <span>{t(`shortcuts.items.${id}`)}</span>
-              <kbd className="shrink-0 rounded border bg-muted px-2 py-1 font-mono text-[11px] text-muted-foreground">{keys}</kbd>
+              <kbd className="shrink-0 rounded border bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">{keys}</kbd>
             </div>
           ))}
         </div>

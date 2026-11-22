@@ -160,7 +160,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <div className="flex items-center gap-2 px-4 py-4">
         <BookOpen className="h-6 w-6 text-primary" />
         <span className="font-semibold text-base leading-tight">Narrarium</span>
-        <Link to="/app/patch-notes" onClick={onNavigate} title={t("patchNotes.title")} className="ml-auto rounded-full border px-2 py-0.5 font-mono text-[10px] text-muted-foreground transition hover:border-primary/40 hover:text-foreground">
+        <Link to="/app/patch-notes" onClick={onNavigate} title={t("patchNotes.title")} className="ml-auto rounded-full border px-2 py-0.5 font-mono text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground">
           v{APP_VERSION}
         </Link>
         <button

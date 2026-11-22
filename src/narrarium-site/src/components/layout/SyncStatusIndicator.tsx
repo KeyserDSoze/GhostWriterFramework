@@ -177,7 +177,7 @@ function BackendSection({ entry, disabled, busy, onSync }: { entry: SyncBackendS
       {failed && (
         <div className="px-1 pt-1 text-xs">
           <p><span className="font-medium">{t("syncStatus.popover.lastError")}:</span> {t(`accountSync.error.${replica.errorKind}`, { defaultValue: replica.errorKind })}</p>
-          {replica.lastErrorMessage && <p className="mt-1 break-words font-mono text-[11px] text-muted-foreground">{replica.lastErrorMessage}</p>}
+          {replica.lastErrorMessage && <p className="mt-1 break-words font-mono text-xs text-muted-foreground">{replica.lastErrorMessage}</p>}
         </div>
       )}
       <div className="mt-1">

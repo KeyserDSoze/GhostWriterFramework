@@ -37,6 +37,7 @@ import { switchDraftAndFinal } from "@/narrarium/switchDraftFinal";
 import { presentMetadata } from "@/export/metadataPresentation";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { paragraphRenameTarget } from "@/narrarium/paragraphSave";
+import { scrollBehavior } from "@/lib/motion";
 
 // ─── Frontmatter parsing ──────────────────────────────────────────────────────
 
@@ -319,7 +320,7 @@ export function ParagraphPage() {
       if (!node) return;
       node.focus();
       node.setSelectionRange(start, end);
-      node.scrollIntoView({ behavior: "smooth", block: "center" });
+      node.scrollIntoView({ behavior: scrollBehavior(), block: "center" });
       navigate(location.pathname, { replace: true, state: null });
     }));
   }, [body, loading, location.key, location.pathname, location.state, navigate, paragraph]);
@@ -704,7 +705,7 @@ export function ParagraphPage() {
       </div>
 
       {viewMode === "edit" && <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-2 text-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+        <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
           {t("common.metadata")}
         </p>
 
@@ -718,7 +719,7 @@ export function ParagraphPage() {
             {/* Read-only fields */}
             {readonlyEntries.map((e) => (
               <div key={e.key} className="flex items-start gap-3">
-                <span className="mt-0.5 w-20 shrink-0 font-mono text-[11px] text-muted-foreground flex items-center gap-1">
+                <span className="mt-0.5 w-28 shrink-0 break-all font-mono text-xs text-muted-foreground flex items-center gap-1">
                   <Lock className="h-2.5 w-2.5" />
                   {e.key}
                 </span>
@@ -730,7 +731,7 @@ export function ParagraphPage() {
 
             {/* Title (editable) */}
             <div className="flex items-center gap-3">
-              <span className="w-20 shrink-0 font-mono text-[11px] font-medium">
+              <span className="w-28 shrink-0 break-all font-mono text-xs font-medium">
                 {t("paragraph.titleField")}
               </span>
               <Input
@@ -746,7 +747,7 @@ export function ParagraphPage() {
             {/* Other editable fields */}
             {editableEntries.map((e) => (
               <div key={e.key} className="flex items-center gap-3">
-                <span className="w-20 shrink-0 font-mono text-[11px]">{e.key}</span>
+                <span className="w-28 shrink-0 break-all font-mono text-xs">{e.key}</span>
                 <Input
                   value={
                     Array.isArray(e.value) ? e.value.join(", ") : e.value
@@ -820,7 +821,7 @@ export function ParagraphPage() {
 
       {viewMode === "reader" ? (
         <article
-          className="reader-prose rounded-2xl border bg-card px-6 py-8 shadow-sm sm:px-10 sm:py-12"
+          className="reader-prose rounded-2xl border border-layer bg-card px-6 py-8 shadow-sm sm:px-10 sm:py-12"
           style={{
             padding: `${settings.reader.pageMargin}px`,
             fontFamily: readerFontFamily(settings.reader.fontFamily),
@@ -856,7 +857,7 @@ export function ParagraphPage() {
         />
       )}
 
-      <p className="text-[11px] text-muted-foreground truncate">{paragraph.path}</p>
+      <p className="text-xs text-muted-foreground truncate">{paragraph.path}</p>
 
       {proseAssist.dialogs}
 

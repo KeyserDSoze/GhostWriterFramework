@@ -128,9 +128,9 @@ function parseScoresFromEntries(entries: MetaEntry[]): EvaluationScore[] {
 }
 
 function scoreTone(score: number): { bar: string; badge: string; ring: string } {
-  if (score >= 8) return { bar: "bg-emerald-500", badge: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300", ring: "#10b981" };
+  if (score >= 8) return { bar: "bg-emerald-500", badge: "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300", ring: "#10b981" };
   if (score >= 6) return { bar: "bg-primary", badge: "border-primary/40 bg-primary/10 text-primary", ring: "hsl(var(--primary))" };
-  if (score >= 4) return { bar: "bg-amber-500", badge: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300", ring: "#f59e0b" };
+  if (score >= 4) return { bar: "bg-amber-500", badge: "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300", ring: "#f59e0b" };
   return { bar: "bg-destructive", badge: "border-destructive/40 bg-destructive/10 text-destructive", ring: "hsl(var(--destructive))" };
 }
 
@@ -206,9 +206,9 @@ function EvaluationHighlights({ t, entries }: { t: ReturnType<typeof useTranslat
   if (!wordCount && !verdict && !focus) return null;
   return (
     <div className="grid gap-3 md:grid-cols-[0.7fr_1.6fr_1.2fr]">
-      {wordCount && <div className="rounded-2xl border bg-card p-4 shadow-sm"><p className="text-xs uppercase tracking-wide text-muted-foreground">{t("evaluationView.wordCount")}</p><p className="mt-1 text-2xl font-bold tabular-nums">{wordCount}</p></div>}
-      {verdict && <div className="rounded-2xl border bg-card p-4 shadow-sm"><p className="text-xs uppercase tracking-wide text-muted-foreground">{t("evaluationView.verdict")}</p><p className="mt-2 text-sm font-medium leading-6">{verdict}</p></div>}
-      {focus && <div className="rounded-2xl border bg-card p-4 shadow-sm"><p className="text-xs uppercase tracking-wide text-muted-foreground">{t("evaluationView.focus")}</p><p className="mt-2 text-sm leading-6 text-muted-foreground">{focus}</p></div>}
+      {wordCount && <div className="rounded-2xl border border-layer bg-card p-4 shadow-sm"><p className="text-xs uppercase tracking-wide text-muted-foreground">{t("evaluationView.wordCount")}</p><p className="mt-1 text-2xl font-bold tabular-nums">{wordCount}</p></div>}
+      {verdict && <div className="rounded-2xl border border-layer bg-card p-4 shadow-sm"><p className="text-xs uppercase tracking-wide text-muted-foreground">{t("evaluationView.verdict")}</p><p className="mt-2 text-sm font-medium leading-6">{verdict}</p></div>}
+      {focus && <div className="rounded-2xl border border-layer bg-card p-4 shadow-sm"><p className="text-xs uppercase tracking-wide text-muted-foreground">{t("evaluationView.focus")}</p><p className="mt-2 text-sm leading-6 text-muted-foreground">{focus}</p></div>}
     </div>
   );
 }
@@ -245,7 +245,7 @@ function EvaluationOverview({
             <ScoreCards scores={scores} t={t} />
           </section>
         )}
-        <section className="rounded-2xl border bg-card p-5 shadow-sm"><EvaluationBody body={body} /></section>
+        <section className="rounded-2xl border border-layer bg-card p-5 shadow-sm"><EvaluationBody body={body} /></section>
       </div>
     );
   }
@@ -281,7 +281,7 @@ function EvaluationOverview({
         ) : paragraphEvaluations.length ? (
           <div className="space-y-4">
             {paragraphEvaluations.map((entry) => (
-              <article key={entry.path} className="rounded-2xl border bg-card p-5 shadow-sm">
+              <article key={entry.path} className="rounded-2xl border border-layer bg-card p-5 shadow-sm">
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold">{entry.paragraphNumber} · {entry.paragraphTitle}</p>
@@ -802,7 +802,7 @@ export function WorkspaceDocPage() {
       </div>
 
       <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-2 text-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{t("common.metadata")}</p>
+        <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{t("common.metadata")}</p>
         {loading ? (
           <div className="space-y-1.5">
             <Skeleton className="h-4 w-3/4" />
@@ -814,7 +814,7 @@ export function WorkspaceDocPage() {
           <>
             {readonlyEntries.map((entry) => (
               <div key={entry.key} className="flex items-start gap-3">
-                <span className="mt-0.5 w-24 shrink-0 font-mono text-[11px] text-muted-foreground flex items-center gap-1">
+                <span className="mt-0.5 w-[7.5rem] shrink-0 break-all font-mono text-xs text-muted-foreground flex items-center gap-1">
                   <Lock className="h-2.5 w-2.5" />
                   {entry.key}
                 </span>
@@ -830,7 +830,7 @@ export function WorkspaceDocPage() {
 
             {editableEntries.map((entry) => (
               <div key={entry.key} className="flex items-center gap-3">
-                <span className="w-24 shrink-0 font-mono text-[11px]">{entry.key}</span>
+                <span className="w-[7.5rem] shrink-0 break-all font-mono text-xs">{entry.key}</span>
                 <Input
                   value={Array.isArray(entry.value) ? entry.value.join(", ") : entry.value}
                   onChange={(event) => {

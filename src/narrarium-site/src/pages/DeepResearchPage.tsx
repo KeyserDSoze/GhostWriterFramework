@@ -770,7 +770,7 @@ export function DeepResearchPage() {
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
             placeholder={t("research.searchPlaceholder")}
-            className="h-9 w-full rounded-md border bg-background py-2 pl-8 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+            className="h-9 w-full rounded-md border border-field bg-background py-2 pl-8 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
         {loading && !structure ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -792,7 +792,7 @@ export function DeepResearchPage() {
               <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate">{researchListTitle(f, searchIndex[f.slug])}</span>
               {lastRunCosts[f.slug] !== undefined && (
-                <Badge variant="outline" className="shrink-0 font-mono text-[10px]">
+                <Badge variant="outline" className="shrink-0 font-mono">
                   {new Intl.NumberFormat(undefined, { style: "currency", currency: (settings.costCurrency || "USD").trim(), maximumFractionDigits: 4 }).format(lastRunCosts[f.slug])}
                 </Badge>
               )}

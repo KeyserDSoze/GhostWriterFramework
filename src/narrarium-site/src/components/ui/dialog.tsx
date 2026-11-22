@@ -58,8 +58,8 @@ const DialogContent = React.forwardRef<
         // `bare` opts out of the default centered/padded shell so callers can
         // position the panel freely (e.g. a docked Copilot chat).
         bare
-          ? "fixed z-50 border bg-background shadow-lg sm:rounded-lg"
-          : "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg sm:rounded-lg",
+          ? "fixed z-50 border border-layer bg-background shadow-lg sm:rounded-lg"
+          : "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-layer bg-background p-6 shadow-lg sm:rounded-lg",
         className,
       )}
       onPointerDownOutside={(event) => {

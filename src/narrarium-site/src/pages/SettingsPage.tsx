@@ -62,7 +62,7 @@ function useBrowserVoices(): SpeechSynthesisVoice[] {
 /** Collapsible settings section (closed by default) styled like a card. */
 function Section({ title, description, icon, defaultOpen, children }: { title: string; description?: string; icon?: ReactNode; defaultOpen?: boolean; children: ReactNode }) {
   return (
-    <details open={defaultOpen} className="rounded-xl border bg-card text-card-foreground shadow-sm [&[open]>summary_.chev]:rotate-90">
+    <details open={defaultOpen} className="rounded-xl border border-layer bg-card text-card-foreground shadow-sm [&[open]>summary_.chev]:rotate-90">
       <summary className="flex cursor-pointer list-none items-center gap-2 p-4 [&::-webkit-details-marker]:hidden">
         <ChevronRight className="chev h-4 w-4 shrink-0 text-muted-foreground transition-transform" />
         {icon}
@@ -328,7 +328,7 @@ function settingsSectionMeta(t: ReturnType<typeof useTranslation>["t"], section:
 
 function SettingsCard({ href, title, description, icon }: { href: string; title: string; description: string; icon: ReactNode }) {
   return (
-    <Link to={href} className="rounded-2xl border bg-card p-5 shadow-sm transition hover:border-primary/40 hover:bg-accent/30">
+    <Link to={href} className="rounded-2xl border border-layer bg-card p-5 shadow-sm transition hover:border-primary/40 hover:bg-accent/30">
       <div className="flex items-start gap-3">
         <div className="rounded-full bg-primary/10 p-2 text-primary">{icon}</div>
         <div className="min-w-0">
@@ -477,7 +477,7 @@ function IntegrationAccordion({ integration, children }: { integration: AIIntegr
   const providerText = providerLabel(t, integration.provider);
   const modelCount = integration.chatModels?.length ?? 0;
   return (
-    <details className="group min-w-0 rounded-2xl border bg-card shadow-sm [&[open]>summary_.chev]:rotate-90">
+    <details className="group min-w-0 rounded-2xl border border-layer bg-card shadow-sm [&[open]>summary_.chev]:rotate-90">
       <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
         <ChevronRight className="chev h-4 w-4 shrink-0 text-muted-foreground transition-transform" />
         <div className="min-w-0 flex-1">
@@ -1047,7 +1047,7 @@ function TaskRouteEditor({ task, settings, integrations, route, onChange }: { ta
           type="button"
           variant="outline"
           size="sm"
-          className="h-7 px-2 text-[11px]"
+          className="h-7 px-2 text-xs"
           onClick={swapPrimaryWithFirstFallback}
           disabled={!current.primary || current.fallbacks.length === 0}
         >

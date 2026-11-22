@@ -82,7 +82,7 @@ const MAX_BUDGET_TOKENS = 1_000_000_000_000;
 
 function Card({ title, icon, actions, children, className }: { title: string; icon?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cn("space-y-3 rounded-2xl border bg-card p-4 shadow-sm sm:p-5", className)}>
+    <section className={cn("space-y-3 rounded-2xl border border-layer bg-card p-4 shadow-sm sm:p-5", className)}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="flex items-center gap-2 text-base font-semibold">{icon}{title}</h2>
         {actions}
@@ -198,7 +198,7 @@ export function AutopilotPage() {
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-5">
           {!loaded ? (
-            <div className="flex items-center gap-2 rounded-2xl border bg-card p-5 text-sm text-muted-foreground shadow-sm"><Loader2 className="h-4 w-4 animate-spin" />{t("autopilot.current.loading")}</div>
+            <div className="flex items-center gap-2 rounded-2xl border border-layer bg-card p-5 text-sm text-muted-foreground shadow-sm"><Loader2 className="h-4 w-4 animate-spin" />{t("autopilot.current.loading")}</div>
           ) : !state ? (
             <SetupCard book={book} state={null} existingChapters={existingChapters} running={false} busy={busy !== null} disabled={noAi || !canRefresh} run={run} />
           ) : (
@@ -252,7 +252,7 @@ function QuestionCard({ bookId, question, disabled, run }: { bookId: string; que
   });
   return (
     <section className="space-y-3 rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4 sm:p-5" aria-live="polite">
-      <h2 className="flex items-center gap-2 text-base font-semibold"><Clapperboard className="h-4 w-4 text-amber-600" />{t("autopilot.question.title")}</h2>
+      <h2 className="flex items-center gap-2 text-base font-semibold"><Clapperboard className="h-4 w-4 text-amber-700 dark:text-amber-600" />{t("autopilot.question.title")}</h2>
       <p className="whitespace-pre-wrap text-sm font-medium">{question.question}</p>
       {question.context && <p className="whitespace-pre-wrap text-xs text-muted-foreground">{question.context}</p>}
       {question.options.length > 0 && (
@@ -291,7 +291,7 @@ const ProgressCard = memo(function ProgressCard({ summary }: { summary: Autopilo
     <Card title={t(`autopilot.phase.${summary.phase}`)} icon={<Gauge className="h-4 w-4 text-primary" />}>
       <ol className="flex flex-wrap gap-1">
         {AUTOPILOT_PHASES.map((phase, index) => (
-          <li key={phase} className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", index < phaseIndex ? "bg-primary/15 text-primary" : index === phaseIndex ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>
+          <li key={phase} className={cn("rounded-full px-2 py-0.5 text-xs font-medium", index < phaseIndex ? "bg-primary/15 text-accent-foreground" : index === phaseIndex ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>
             {t(`autopilot.phase.${phase}`)}
           </li>
         ))}
@@ -299,7 +299,7 @@ const ProgressCard = memo(function ProgressCard({ summary }: { summary: Autopilo
       <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {stats.map(([label, value]) => (
           <div key={label} className="rounded-lg bg-muted/40 p-2">
-            <dt className="text-[11px] text-muted-foreground">{label}</dt>
+            <dt className="text-xs text-muted-foreground">{label}</dt>
             <dd className="text-sm font-semibold tabular-nums">{value}</dd>
           </div>
         ))}
@@ -341,8 +341,8 @@ export const PlanCard = memo(function PlanCard({ bookId, plan, reviewNumber, lin
 function ActivityIcon({ activity }: { activity: AutopilotActivity }) {
   if (activity.status === "running") return <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />;
   if (activity.status === "succeeded") return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />;
-  if (activity.status === "cancelled") return <Ban className="h-3.5 w-3.5 text-amber-600" />;
-  return <XCircle className="h-3.5 w-3.5 text-red-600" />;
+  if (activity.status === "cancelled") return <Ban className="h-3.5 w-3.5 text-amber-700 dark:text-amber-600" />;
+  return <XCircle className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />;
 }
 
 function ActivityList({ loading, activities, currency }: { loading: boolean; activities: AutopilotActivity[]; currency?: string }) {
@@ -369,7 +369,7 @@ function ActivityRow({ activity, currency }: { activity: AutopilotActivity; curr
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
         <ActivityIcon activity={activity} />
         <span className="min-w-0 flex-1 truncate text-sm">{activityTitle(t, activity)}</span>
-        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{formatDuration(duration)}</span>
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatDuration(duration)}</span>
       </summary>
       <div className="space-y-1.5 border-t px-3 py-2 text-xs">
         {activity.summary && <p className="whitespace-pre-wrap">{activity.summary}</p>}
@@ -386,7 +386,7 @@ function ActivityRow({ activity, currency }: { activity: AutopilotActivity; curr
         {activity.changedPaths && activity.changedPaths.length > 0 && (
           <div>
             <p className="font-medium">{t("autopilot.activity.changed")}</p>
-            <ul className="mt-0.5 space-y-0.5 font-mono text-[11px] text-muted-foreground">{activity.changedPaths.map((path) => <li key={path} className="break-all">{path}</li>)}</ul>
+            <ul className="mt-0.5 space-y-0.5 font-mono text-xs text-muted-foreground">{activity.changedPaths.map((path) => <li key={path} className="break-all">{path}</li>)}</ul>
           </div>
         )}
       </div>
@@ -571,7 +571,7 @@ export function WhereCard({ book, running }: { book: BookEntry; running: boolean
           {serverBook ? (
             <p className="text-xs text-muted-foreground">{t("autopilot.where.serverBook", { status: serverBook.autopilot ? t(`autopilot.status.${serverBook.autopilot.status}`) : t("autopilot.notStarted") })}{serverBook.lastSync ? ` · ${serverBook.lastSync.message}` : ""}</p>
           ) : serverReady ? (
-            <p className="text-xs text-amber-700 dark:text-amber-300">{t("autopilot.where.serverBookMissing")}</p>
+            <p className="text-xs text-amber-800 dark:text-amber-300">{t("autopilot.where.serverBookMissing")}</p>
           ) : null}
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" disabled={busy !== null || !serverReady} onClick={() => void run("sync", async (runtime, id) => { toast(syncToast(t, await runtime.syncWithServer(id, { push: true }))); })}>
@@ -590,12 +590,12 @@ export function WhereCard({ book, running }: { book: BookEntry; running: boolean
       )}
       {sync && (
         <div ref={statusRef} role="status" tabIndex={-1} className="space-y-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <p className={cn("flex items-start gap-1.5 text-xs", sync.ok ? "text-muted-foreground" : "text-amber-700 dark:text-amber-300")}>
+          <p className={cn("flex items-start gap-1.5 text-xs", sync.ok ? "text-muted-foreground" : "text-amber-800 dark:text-amber-300")}>
             <SyncIcon kind={sync.kind} />
             <span>{syncText} · {t("autopilot.where.lastSync", { time: formatDateTime(sync.at) })}</span>
           </p>
           {sync.firstSync && <p className="text-xs text-muted-foreground">{t("autopilot.where.firstSync")}</p>}
-          {sync.baseSaved === false && sync.kind !== "error" && <p className="text-xs text-amber-700 dark:text-amber-300">{t("autopilot.errors.baseSaveFailed")}</p>}
+          {sync.baseSaved === false && sync.kind !== "error" && <p className="text-xs text-amber-800 dark:text-amber-300">{t("autopilot.errors.baseSaveFailed")}</p>}
         </div>
       )}
       {sync && <SyncConflicts conflicts={sync.conflictDetails} disabled={busy !== null} onResolve={settle} />}
@@ -725,7 +725,7 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
 
   if (fresh) return <Card title={t("autopilot.setup.title")} icon={<Rocket className="h-4 w-4 text-primary" />}>{body}</Card>;
   return (
-    <details className="rounded-2xl border bg-card shadow-sm">
+    <details className="rounded-2xl border border-layer bg-card shadow-sm">
       <summary className="cursor-pointer list-none p-4 text-base font-semibold sm:p-5 [&::-webkit-details-marker]:hidden">{t("autopilot.setup.settingsTitle")}</summary>
       <div className="px-4 pb-4 sm:px-5 sm:pb-5">{body}</div>
     </details>

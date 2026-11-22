@@ -158,7 +158,7 @@ export function ChapterStageIndexPage({ stage }: { stage: Stage }) {
           return (
             <div key={p.number} className="rounded-xl border p-3">
               <div className="mb-2 flex items-center gap-2">
-                <Badge variant="outline" className="font-mono text-[11px]">{p.number}</Badge>
+                <Badge variant="outline" className="font-mono">{p.number}</Badge>
                 <span className="font-medium">{p.title}</span>
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
@@ -203,7 +203,7 @@ function frontmatterFromMarkdown(raw: string): Record<string, unknown> {
 
 function StageLink({ active, href, icon, label, missing }: { active: boolean; href: string; icon: React.ReactNode; label: string; missing: string }) {
   if (!active && missing) {
-    return <span className="flex items-center gap-1 rounded-md border border-dashed px-2 py-1 text-xs text-muted-foreground/60">{icon}{missing}</span>;
+    return <span className="flex items-center gap-1 rounded-md border border-dashed px-2 py-1 text-xs text-muted-foreground">{icon}{missing}</span>;
   }
   return (
     <Button asChild size="sm" variant="outline" className="h-7 gap-1 text-xs">

@@ -31,7 +31,7 @@ interface RowProps {
 const PlanChapterRow = memo(function PlanChapterRow({ bookId, chapter, index, digits, linked, current, lazy, onOpen }: RowProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const statusClass = chapter.status === "done" ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : chapter.status === "review" ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : chapter.status === "writing" ? "bg-sky-500/15 text-sky-700 dark:text-sky-300" : "bg-muted text-muted-foreground";
+  const statusClass = chapter.status === "done" ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300" : chapter.status === "review" ? "bg-amber-500/15 text-amber-800 dark:text-amber-300" : chapter.status === "writing" ? "bg-sky-500/15 text-sky-800 dark:text-sky-300" : "bg-muted text-muted-foreground";
   return (
     <li data-plan-chapter={lazy ? index : undefined}>
       <details
@@ -45,8 +45,8 @@ const PlanChapterRow = memo(function PlanChapterRow({ bookId, chapter, index, di
         <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
           <span className={cn(numberColumn(digits), "shrink-0 text-xs tabular-nums text-muted-foreground")}>{chapter.number}.</span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{chapter.title}</span>
-          {chapter.score !== undefined && <span className="text-[11px] text-muted-foreground">{t("autopilot.plan.score", { score: chapter.score })}</span>}
-          <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-medium", statusClass)}>{chapter.imported ? t("autopilot.plan.imported") : t(`autopilot.plan.status.${chapter.status}`)}</span>
+          {chapter.score !== undefined && <span className="text-xs text-muted-foreground">{t("autopilot.plan.score", { score: chapter.score })}</span>}
+          <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", statusClass)}>{chapter.imported ? t("autopilot.plan.imported") : t(`autopilot.plan.status.${chapter.status}`)}</span>
         </summary>
         {(!lazy || open) && (
           <div className="space-y-2 border-t px-3 py-2 text-sm">
@@ -103,7 +103,7 @@ function PlanRunLine({ chapters, run, onReveal }: { chapters: readonly PlannedCh
           <span className="block font-medium">{summary}</span>
           <span className="block text-xs text-muted-foreground">{first === last ? t("autopilot.plan.run.rangeOne", { number: first }) : t("autopilot.plan.run.range", { from: first, to: last })}</span>
         </span>
-        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">{all ? t("autopilot.plan.run.showAll") : t("autopilot.plan.run.showMore", { count: PLAN_REVEAL_STEP })}</span>
+        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs font-medium">{all ? t("autopilot.plan.run.showAll") : t("autopilot.plan.run.showMore", { count: PLAN_REVEAL_STEP })}</span>
       </button>
     </li>
   );

@@ -76,7 +76,7 @@ export function LlmDebugPanel() {
                         <span className="font-medium">{KIND_LABEL[entry.kind]}</span>
                         <span className="truncate text-muted-foreground">{entry.label}</span>
                       </div>
-                      <p className="truncate text-[11px] text-muted-foreground">{entry.model} · {new Date(entry.at).toLocaleTimeString()}</p>
+                      <p className="truncate text-xs text-muted-foreground">{entry.model} · {new Date(entry.at).toLocaleTimeString()}</p>
                     </div>
                     <div className="flex items-center gap-1 whitespace-nowrap">
                       <span className="font-semibold">{eur(entry.cost)}</span>
@@ -98,7 +98,7 @@ export function LlmDebugPanel() {
 }
 
 function StatusDot({ entry }: { entry: LlmDebugEntry }) {
-  const color = entry.status === "pending" ? "bg-amber-500" : entry.status === "error" ? "bg-destructive" : "bg-emerald-500";
+  const color = entry.status === "pending" ? "bg-amber-500" : entry.status === "error" ? "bg-red-600 dark:bg-red-400" : "bg-emerald-500";
   return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${color}`} />;
 }
 
@@ -125,14 +125,14 @@ function RequestDetail({ entry }: { entry: LlmDebugEntry }) {
 
       {entry.messages?.map((message, index) => (
         <div key={index} className="rounded-lg border bg-muted/20 p-3">
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{message.role}</p>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{message.role}</p>
           <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5">{message.content}</pre>
         </div>
       ))}
 
       {entry.response != null && (
         <div className="rounded-lg border bg-emerald-500/5 p-3">
-          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t("debug.response")}</p>
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("debug.response")}</p>
           <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5">{entry.response}</pre>
         </div>
       )}
@@ -143,7 +143,7 @@ function RequestDetail({ entry }: { entry: LlmDebugEntry }) {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border bg-muted/20 px-3 py-2">
-      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
       <p className="truncate text-sm font-medium">{value}</p>
     </div>
   );

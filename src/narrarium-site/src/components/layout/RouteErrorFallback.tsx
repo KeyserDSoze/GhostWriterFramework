@@ -7,7 +7,7 @@ export function RouteErrorFallback() {
   const message = error instanceof Error ? error.message : String(error ?? t("common.loadFailed"));
   return (
     <main className="flex min-h-[100dvh] items-center justify-center bg-background p-6" role="alert">
-      <div className="max-w-lg rounded-3xl border bg-card p-6 text-center shadow-xl">
+      <div className="max-w-lg rounded-3xl border border-layer bg-card p-6 text-center shadow-xl">
         <h1 className="font-serif text-2xl font-semibold">{t("common.loadFailed")}</h1>
         <p className="mt-3 text-sm text-muted-foreground">{message}</p>
         <div className="mt-6 flex justify-center gap-3">

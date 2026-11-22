@@ -14,7 +14,7 @@ export function GhostwriterField({
   const { t } = useTranslation();
   return (
     <div className="flex items-center gap-3">
-      <span className="w-20 shrink-0 font-mono text-[11px]">{t("pipeline.ghostwriter")}</span>
+      <span className="w-28 shrink-0 break-all font-mono text-xs">{t("pipeline.ghostwriter")}</span>
       <Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
         <SelectTrigger className="h-8 flex-1 text-xs"><SelectValue /></SelectTrigger>
         <SelectContent>

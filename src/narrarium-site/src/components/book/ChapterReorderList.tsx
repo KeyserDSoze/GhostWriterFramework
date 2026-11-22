@@ -116,7 +116,7 @@ export function ChapterReorderList({
             onDrop={(e) => handleDrop(e, i)}
             onDragEnd={handleDragEnd}
             className={[
-              "flex items-center gap-2 rounded-lg border bg-card px-3 py-3 text-sm transition-colors",
+              "flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-3 text-sm transition-colors",
               draggingIdx === i ? "opacity-40" : "",
               overIdx === i && draggingIdx !== i ? "border-primary bg-accent" : "hover:bg-accent/50",
             ].filter(Boolean).join(" ")}
@@ -129,7 +129,7 @@ export function ChapterReorderList({
             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
             <Link
               to={`/app/books/${bookId}/chapters/${ch.slug}`}
-              className="min-w-0 flex-1"
+              className="min-w-[9rem] flex-1"
               onClick={(e) => { if (draggingIdx !== null) e.preventDefault(); }}
             >
               <p className="truncate font-medium">{ch.title}</p>
@@ -138,7 +138,7 @@ export function ChapterReorderList({
                 {ch.draftPath && ` · ${t("bookPage.draft")}`}
               </p>
             </Link>
-            <div className="flex shrink-0 items-center gap-1">
+            <div className="ml-auto flex shrink-0 items-center gap-1">
               <ChapterRowAction
                 to={`/app/books/${bookId}/chapters/${ch.slug}/workspace/resume`}
                 label={t("bookPage.resume")}
@@ -172,7 +172,7 @@ export function ChapterReorderList({
           <div className="max-h-64 space-y-1 overflow-y-auto rounded-lg border p-2">
             {(pending ?? []).map((c, i) => (
               <div key={c.slug} className="flex items-center gap-2 rounded px-2 py-1 text-sm">
-                <Badge variant="outline" className="shrink-0 font-mono text-[10px]">{String(i + 1).padStart(3, "0")}</Badge>
+                <Badge variant="outline" className="shrink-0 font-mono">{String(i + 1).padStart(3, "0")}</Badge>
                 <span className="truncate">{c.title}</span>
               </div>
             ))}
@@ -209,15 +209,15 @@ function ChapterRowAction({
       to={to}
       onClick={(e) => { e.stopPropagation(); if (disabled) e.preventDefault(); }}
       className={[
-        "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+        "inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
         active
           ? "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-          : "text-muted-foreground/50 hover:bg-accent/50 hover:text-muted-foreground",
+          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
       ].join(" ")}
     >
       <span>{label}</span>
       {typeof count === "number" && count > 0 && (
-        <span className="rounded-full bg-primary/15 px-1 text-[9px] font-semibold tabular-nums text-primary">
+        <span className="rounded-full bg-primary/15 px-1.5 text-xs font-semibold tabular-nums text-accent-foreground">
           {count}
         </span>
       )}

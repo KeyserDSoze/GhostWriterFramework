@@ -21,6 +21,10 @@ export default {
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
+        // Outline of text fields, selects and switch tracks: 3:1 against the page (WCAG 1.4.11). --border and --input stay decorative.
+        field: "hsl(var(--field))",
+        // Edge of the surfaces that float over the page: clearly visible in the dark theme, the soft border in the light one.
+        layer: "hsl(var(--layer))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
@@ -52,6 +56,11 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+      },
+      // `text-destructive` is red TEXT: it reads --destructive-text (readable on the page in both themes).
+      // `bg-destructive`, `border-destructive` and the tints (`bg-destructive/10`) keep reading --destructive, the fill of the button.
+      textColor: {
+        destructive: { DEFAULT: "hsl(var(--destructive-text))" },
       },
       borderRadius: {
         lg: "var(--radius)",
