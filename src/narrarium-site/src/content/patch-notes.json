@@ -1,5 +1,35 @@
 [
   {
+    "version": "0.93.0",
+    "date": "2026-11-22",
+    "en": {
+      "title": "The Outline, frozen chapters and an MCP server for every book",
+      "summary": "Plan the book chapter by chapter in the Outline, which the autopilot follows and fills; keep approved chapters safe, because a later change of yours makes the autopilot ask what to do; and give every book on your personal server its own MCP server for ChatGPT, Claude and other assistants.",
+      "changes": [
+        "New Outline page in the Book group of the menu: a rough description of the book and one card per chapter with a hypothetical title, what happens and the ghostwriter. Save explicitly, add, insert, move, delete and undo entries, filter and jump in long books, and turn the brief's synopsis into an outline. The smart menu of its text areas improves, summarizes, develops a chapter or checks it against the canon and the nearby chapters.",
+        "The autopilot follows the Outline as binding, fills the missing chapters with its own plan (you can turn this off in Configuration) and never overwrites an entry you wrote; when you change the entry of a chapter it has not written yet, it plans that chapter again. Each chapter is written with the ghostwriter its entry names, and the director, the specialists and the final judgement now use the book's evaluation style.",
+        "The Copilot knows which chapter you mean: on the Outline and Autopilot pages «chapter 3» is the Outline entry, elsewhere the written chapter, and «outline» always means the Outline. It can edit the Outline after you confirm, with Undo.",
+        "Frozen chapters: a chapter is frozen when the director approves it or when you freeze it from its page. If you change it afterwards, the chapter page shows what changed and three choices: review it and update the book from your change (your text is never rewritten; the later chapters that no longer fit are), only review the chapter, or mark it as reviewed. The autopilot asks before spending anything; Live counts the changed frozen chapters, offers the choices as buttons and lists the decisions waiting for the next run. Changes made by the Copilot or by an app connected through MCP keep the chapter frozen and are decided the same way.",
+        "Configuration → Review: «When you change a frozen chapter» (Ask me every time, Review automatically, Only report it), also while the autopilot runs. The Outline and the Copilot say what will happen when you change a written or frozen chapter. On a personal server, frozen chapters need version 0.1.9.",
+        "An MCP server for every book: Book settings has a new MCP server section for books on your personal server. Switch it on, copy or rename its address, and follow the short instructions for ChatGPT, Claude.ai, Claude Code, Cursor or VS Code to read and edit the book with the Copilot's tools. ChatGPT and Claude.ai connect through OAuth on your server, which asks for your passkey (or the admin code) and lets you grant read only or read and write; every change is a commit you can undo, and you can see and revoke the connected apps. A new help page explains it, with the risks.",
+        "Personal server 0.1.9 brings the MCP server and its sign-in, the frozen chapters, and verifies the registry signatures of an update itself, so updating no longer depends on the npm version installed on the computer. Reading the models of an endpoint now works in every browser."
+      ]
+    },
+    "it": {
+      "title": "La Scaletta, i capitoli congelati e un server MCP per ogni libro",
+      "summary": "Pianifica il libro capitolo per capitolo nella Scaletta, che l'autopilot segue e riempie; proteggi i capitoli approvati, perché una tua modifica successiva fa chiedere all'autopilot cosa fare; e dai a ogni libro sul tuo server personale il suo server MCP per ChatGPT, Claude e altri assistenti.",
+      "changes": [
+        "Nuova pagina Scaletta nel gruppo Libro del menu: una descrizione di massima del libro e una scheda per capitolo con titolo ipotetico, cosa succede e ghostwriter. Salva esplicitamente, aggiungi, inserisci, sposta, elimina e annulla le voci, filtra e salta nei libri lunghi, e trasforma la sinossi del brief in una Scaletta. Il menu intelligente delle sue aree di testo migliora, riassume, sviluppa un capitolo o lo controlla con il canone e i capitoli vicini.",
+        "L'autopilot segue la Scaletta come vincolante, riempie i capitoli che mancano con il suo piano (puoi spegnerlo in Configurazione) e non sovrascrive mai una voce scritta da te; quando cambi la voce di un capitolo che non ha ancora scritto, ripianifica quel capitolo. Ogni capitolo viene scritto con il ghostwriter indicato dalla sua voce, e il direttore, gli specialisti e il giudizio finale ora usano lo stile di valutazione del libro.",
+        "Il Copilot capisce quale capitolo intendi: nelle pagine Scaletta e Autopilot «capitolo 3» è la voce della Scaletta, altrove il capitolo scritto, e «scaletta» indica sempre la Scaletta. Può modificare la Scaletta dopo la tua conferma, con Annulla.",
+        "Capitoli congelati: un capitolo si congela quando il direttore lo approva o quando lo congeli tu dalla sua pagina. Se poi lo modifichi, la pagina del capitolo mostra cosa è cambiato e tre scelte: rivederlo e aggiornare il libro dalla tua modifica (il tuo testo non viene mai riscritto; i capitoli successivi che non tornano più sì), solo una review del capitolo, oppure segnarlo come rivisto. L'autopilot chiede prima di spendere qualsiasi cosa; In diretta conta i capitoli congelati modificati, propone le scelte come pulsanti ed elenca le decisioni che aspettano la prossima corsa. Anche le modifiche del Copilot o di un'app collegata con MCP lasciano il capitolo congelato e si decidono allo stesso modo.",
+        "Configurazione → Revisione: «Quando modifichi un capitolo congelato» (Chiedimi ogni volta, Rivedi in automatico, Solo segnala), anche mentre l'autopilot lavora. La Scaletta e il Copilot dicono cosa succederà quando cambi un capitolo scritto o congelato. Sul server personale i capitoli congelati richiedono la versione 0.1.9.",
+        "Un server MCP per ogni libro: Impostazioni libro ha una nuova sezione Server MCP per i libri sul tuo server personale. Accendilo, copia o rinomina il suo indirizzo e segui le brevi istruzioni per ChatGPT, Claude.ai, Claude Code, Cursor o VS Code per leggere e modificare il libro con gli strumenti del Copilot. ChatGPT e Claude.ai si collegano con OAuth sul tuo server, che chiede la tua passkey (o il codice admin) e ti fa concedere sola lettura o lettura e modifica; ogni modifica è un commit che puoi annullare, e puoi vedere e revocare le app collegate. Una nuova pagina d'aiuto lo spiega, con i rischi.",
+        "Il server personale 0.1.9 porta il server MCP e il suo accesso, i capitoli congelati, e verifica da sé le firme del registro di un aggiornamento, così aggiornarsi non dipende più dalla versione di npm installata sul computer. La lettura dei modelli di un endpoint ora funziona in ogni browser."
+      ]
+    }
+  },
+  {
     "version": "0.92.0",
     "date": "2026-11-22",
     "en": {
