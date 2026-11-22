@@ -14,9 +14,12 @@ import {
   type AutopilotEvent,
   type AutopilotPublishMode,
   type AutopilotSessionConfig,
+  type BookCommitResult,
+  type BookFileChange,
   type RegisterBookRequest,
   type ServerBookSummary,
   type ServerBookSync,
+  type StartOptions,
 } from "narrarium-engine";
 import { assertAiApproved } from "./ai-approval.js";
 import { assertBookId, assertBookToken, assertNewBookId, publicLabel, type DataDirectory, type StoredBook } from "./config.js";
@@ -152,6 +155,30 @@ export class BookRegistry {
    */
   assertSpendAllowed(): void {
     this.options.spend.assertAllowed(this.spendSettings);
+  }
+
+  /**
+   * Start or resume the autopilot of a book, in the order that every start has: the AI must be configured, the server may not already run as many
+   * autopilots as the owner allows, and the owner's switch and caps must allow a run. The route that starts a run and the tool of the MCP endpoint
+   * that resumes one both come here, so that no way of starting a run skips one of them.
+   */
+  async startRun(runtime: BookRuntime, start: StartOptions & { force?: boolean }): Promise<void> {
+    if (!(await this.aiConfigured())) throw new HttpError(412, "ai_not_configured", "Send your AI router configuration to the server before starting the autopilot.");
+    this.assertCanStart();
+    // The owner's switch or a cap of the day would stop the run at its first call: it is not started (and leaves nothing in the book).
+    this.assertSpendAllowed();
+    await runtime.session.start(start);
+  }
+
+  /**
+   * What a commit from a client is: the files are committed (compare-and-swap, one writer at a time), and a GitHub book that no run publishes is
+   * pulled and pushed at once (a run publishes by its own rules: see `publishEvery`). A sync that fails never fails the commit. The commit route
+   * and the write tools of the MCP endpoint both come here, so that a change made through either reaches GitHub the same way.
+   */
+  async commitFiles(runtime: BookRuntime, changes: BookFileChange[], message: string): Promise<BookCommitResult> {
+    const result = await runtime.store.commit(changes, message);
+    if (runtime.book.storage.kind === "github" && runtime.git && !runtime.session.running) await this.syncGitHub(runtime.book.bookId).catch(() => undefined);
+    return result;
   }
 
   /** Stop every autopilot at once (the owner switched AI spending off): each pauses, and the call in flight is abandoned. */

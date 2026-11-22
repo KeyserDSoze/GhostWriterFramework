@@ -19,9 +19,11 @@ import {
   fakeRegistry,
   forgeRelease,
   integrityFor,
+  keysUrl,
   lockfile,
   sanValue,
   utf8Value,
+  versionUrl,
   workflowUri,
 } from "./release-fixtures.mjs";
 
@@ -69,12 +71,12 @@ async function assertNothingActivated(installer, dataRoot) {
 // The real release goes through the whole install
 // ---------------------------------------------------------------------------------------------
 
-test("C8 install: the real registry data of narrarium-server@0.1.2 passes the whole flow; the identity is read before the download and again after the audit", async () => {
+test("C8 install: the real registry data of narrarium-server@0.1.2 passes the whole flow; the identity is read before the download and again after the audit, each time with the registry's signature (S8: two reads of the release's document and one of the keys, which are cached)", async () => {
   await withInstaller({ releases: [REAL_RELEASE], latest: REAL_VERSION }, async ({ installer, events, registry, dataRoot }) => {
     const active = await installer.installVersion(REAL_VERSION);
     assert.equal(active.version, REAL_VERSION);
-    assert.deepEqual(events, ["npm view", "attestations", "npm install", "npm audit", "attestations"]);
-    assert.deepEqual(registry.urls(), [attestationUrl(REAL_VERSION), attestationUrl(REAL_VERSION)]);
+    assert.deepEqual(events, ["npm view", "attestations", "registry", "registry", "npm install", "npm audit", "attestations", "registry"]);
+    assert.deepEqual(registry.urls(), [attestationUrl(REAL_VERSION), versionUrl(REAL_VERSION), keysUrl, attestationUrl(REAL_VERSION), versionUrl(REAL_VERSION)]);
     assert.equal((await installer.activeRuntime()).version, REAL_VERSION);
     assert.equal(JSON.parse(await readFile(path.join(dataRoot, "private", "npm-install.json"), "utf8")).activeVersion, REAL_VERSION);
   });
@@ -138,7 +140,7 @@ test("C8 install: the attestation is read again after the audit; a registry that
   const routes = { [attestationUrl("0.2.0")]: (nth) => new Response(JSON.stringify(nth === 1 ? good.attestations : attacker.attestations)) };
   await withInstaller({ releases: [good], latest: "0.2.0", routes }, async ({ installer, events, dataRoot }) => {
     await assert.rejects(() => installer.installVersion("0.2.0"), refused(/signing certificate names/));
-    assert.deepEqual(events, ["npm view", "attestations", "npm install", "npm audit", "attestations"], "it got as far as the final check");
+    assert.deepEqual(events, ["npm view", "attestations", "registry", "registry", "npm install", "npm audit", "attestations"], "it got as far as the final check of the identity, which comes before the last read of the registry's signature");
     await assertNothingActivated(installer, dataRoot);
   });
 });
@@ -222,7 +224,7 @@ test("C8 bootstrap: 0.1.0 still installs on request with its registry signature 
     assert.equal(npm.names().includes("install"), false);
     const active = await installer.installVersion("0.1.0", { bootstrapRegistryRelease: true });
     assert.equal(active.version, "0.1.0");
-    assert.deepEqual(registry.urls(), [], "there is no attestation to read");
+    assert.deepEqual(registry.urls(), [versionUrl("0.1.0"), keysUrl, versionUrl("0.1.0")], "there is no attestation to read: only the registry's signature is checked, the keys once");
     assert.deepEqual(npm.names().filter((name) => name !== "view"), ["install", "audit"]);
     assert.ok(existsSync(path.join(runtimeFolder(dataRoot), "versions", "0.1.0", "dist", "server.mjs")));
   });
@@ -250,7 +252,7 @@ test("C8 install: without an injected fetch the attestations are read through th
     globalThis.fetch = original;
     await remove(dataRoot);
   }
-  assert.deepEqual(registry.urls(), [attestationUrl("0.2.0"), attestationUrl("0.2.0")]);
+  assert.deepEqual(registry.urls(), [attestationUrl("0.2.0"), versionUrl("0.2.0"), keysUrl, attestationUrl("0.2.0"), versionUrl("0.2.0")]);
   for (const { init } of registry.requests) {
     assert.equal(init.method, "GET");
     assert.equal(init.redirect, "error", "a redirect is never followed");

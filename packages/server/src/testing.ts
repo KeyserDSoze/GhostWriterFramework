@@ -33,4 +33,11 @@ export {
   AutopilotRuleError,
   AutopilotStateCorruptError,
   FrontmatterError,
+  FrozenChapterError,
 } from "narrarium-engine";
+export { McpBooks, assertSlug, slugFromTitle } from "./mcp-books.js";
+export { McpAudit } from "./mcp-audit.js";
+export { pageText } from "./mcp-kit.js";
+export * from "./webauthn.js";
+export { OAuthServer } from "./oauth.js";
+export { OAuthStore } from "./oauth-store.js";

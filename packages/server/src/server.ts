@@ -38,7 +38,7 @@ import {
 } from "narrarium-engine";
 import { AiNotApprovedError, approvalCovers, baseIsApproved, normalizeAiBase, unapprovedAiBases } from "./ai-approval.js";
 import { Auth, assertScope, isScope, parseScopes, type ClientRecord } from "./auth.js";
-import { BookRegistry, type AutopilotTuning } from "./books.js";
+import { BookRegistry, type AutopilotTuning, type BookRuntime } from "./books.js";
 import { DEFAULT_ORIGINS, DataDirectory, normalizeOrigin, publicLabel } from "./config.js";
 import { HttpError, retryAfter } from "./errors.js";
 import { MAX_COMMIT_CHANGES } from "./fs-store.js";
@@ -46,17 +46,35 @@ import { lockDataRoot, unsafeKeys } from "./files.js";
 import { bridgeToApi } from "./gateway.js";
 import { gitVersion } from "./git.js";
 import { ConcurrencyLimiter, WindowLimiter, sourceOf, type LimitVerdict } from "./limits.js";
+import { authenticateMcp, challenge, clientTokenAuthenticator, type McpAuthenticator, type McpPrincipal } from "./mcp-access.js";
+import { McpAudit } from "./mcp-audit.js";
+import { McpBooks, assertSlug, type McpBookState } from "./mcp-books.js";
+import { McpEndpoint, describeMcp, mcpAddress, type McpLimits } from "./mcp.js";
+import { OAuthServer, assertPasskeyLabel, isOAuthPath } from "./oauth.js";
+import { OAuthStore } from "./oauth-store.js";
 import { checkNpmServerRelease, isExactSemver, type NpmReleaseCheck } from "./npm-release.js";
 import { RuntimeInstaller, SUPERVISED_ENV, type UpdateResult } from "./runtime-install.js";
 import { SpendLedger, SpendLimitError, applySpendChanges, pausedError, spendSettingsOf, type ServerSpendStatus } from "./spend.js";
 import { CloudflareTunnelManager, type CloudflareTunnelManagerOptions } from "./tunnel.js";
 import { ADMIN_CSS, ADMIN_HTML, ADMIN_JS } from "./ui.js";
 import { SERVER_VERSION } from "./version.js";
+import { FROZEN_ACTIONS, FROZEN_EDITS_MODES, FrozenChapterError, SERVER_FEATURE_AUTOPILOT_FROZEN, type FrozenAction, type FrozenChangeKind, type FrozenEditsMode } from "narrarium-engine";
 
 /** Tuning of the server's own limits (the defaults are the ones to run with; tests shorten them). */
 export interface ServerLimits {
   /** Silence in the middle of a request body, in milliseconds, after which the request is answered with 408 (default 20 000). */
   bodyIdleMs?: number;
+  /** The MCP endpoint of the books: calls of tools per client per minute, of those the ones that change a book or run its autopilot, how long a call may take, tools per page of `tools/list`. */
+  mcpCallsPerMinute?: McpLimits["callsPerMinute"];
+  mcpWritesPerMinute?: McpLimits["writesPerMinute"];
+  mcpCallMs?: McpLimits["callMs"];
+  mcpToolsPerPage?: McpLimits["toolsPerPage"];
+  /** The largest answer of a tool, in bytes (default 512 KiB). */
+  mcpResultBytes?: McpLimits["resultBytes"];
+  /** The OAuth server of the books' MCP endpoints: apps one source may register an hour (default 20), requests to its addresses one source may make a minute (default 120), apps kept at most (default 500). */
+  oauthRegistrationsPerHour?: number;
+  oauthRequestsPerMinute?: number;
+  oauthMaxClients?: number;
 }
 
 export interface NarrariumServerOptions {
@@ -102,6 +120,10 @@ export interface RunningNarrariumServer {
   tunnel: CloudflareTunnelManager;
   /** What the server spent on AI (the owner's caps are checked against it), for tests and diagnostics. */
   spend: SpendLedger;
+  /** The switches and slugs of the books' MCP endpoints, and the audit of what was called through them (the admin panel shows it), for tests and diagnostics. */
+  mcp: { books: McpBooks; audit: McpAudit };
+  /** The OAuth server that lets apps (ChatGPT, Claude.ai…) connect to a book's MCP endpoint by themselves, for tests and diagnostics. */
+  oauth: OAuthServer;
   /** The two listeners, for tests and diagnostics. */
   servers: { api: http.Server; admin: http.Server };
   /** AI origins the outbound network guard may reach. */
@@ -232,6 +254,8 @@ function describeUnknown(error: unknown): string {
 
 /** A rule that cannot be saved is the author's to fix (400), unless it is not there (404) or changed under them (409). */
 const RULE_ERROR_STATUS: Record<string, number> = { rule_empty: 400, rule_too_long: 400, rule_duplicate: 400, rule_not_found: 404, rule_changed: 409 };
+/** A decision about a frozen chapter that cannot be taken: the chapter is not there (404), nothing waits for a decision (409), the action does not fit (400). */
+const FROZEN_ERROR_STATUS: Record<string, number> = { chapter_not_found: 404, not_changed: 409, invalid_action: 400 };
 
 /**
  * What a failure is answered with. Only errors this server knows keep their meaning: its own HttpError, the engine's
@@ -246,6 +270,7 @@ export function errorStatus(error: unknown): MappedError {
   if (error instanceof SpendLimitError) return { status: 429, code: "spend_limit", message: error.message };
   if (error instanceof AiNotApprovedError) return { status: 412, code: "ai_not_approved", message: error.message };
   if (error instanceof AutopilotRuleError) return { status: RULE_ERROR_STATUS[error.code] ?? 400, code: error.code, message: error.message };
+  if (error instanceof FrozenChapterError) return { status: FROZEN_ERROR_STATUS[error.code] ?? 400, code: error.code, message: error.message };
   if (error instanceof FrontmatterError) return { status: 422, code: "frontmatter_invalid", message: error.message };
   if (error instanceof AutopilotBusyError) return { status: 409, code: "busy", message: error.message };
   if (isBookConflictError(error)) return { status: 409, code: "conflict", message: (error as Error).message };
@@ -303,11 +328,13 @@ function asPauseMode(value: unknown): PauseAutopilotMode {
  */
 function asLiveOptions(body: Record<string, unknown>): AutopilotLiveOptions {
   const refuse = (problem: string): never => {
-    throw new HttpError(400, "invalid_request", `${problem} Only these can change here: publishEvery (${[...AUTOPILOT_PUBLISH_MODES, "null"].join(", ")}) and pauseAfterEachChapter (true or false).`);
+    throw new HttpError(400, "invalid_request", `${problem} Only these can change here: publishEvery (${[...AUTOPILOT_PUBLISH_MODES, "null"].join(", ")}), pauseAfterEachChapter (true or false) and frozenEdits (${FROZEN_EDITS_MODES.join(", ")}).`);
   };
   const keys = Object.keys(body);
   if (!keys.length) refuse("There is nothing to change.");
-  const unknown = keys.filter((key) => !(LIVE_AUTOPILOT_OPTIONS as readonly string[]).includes(key));
+  // What the engine lets change during a run and this server checks: a setting it would not check is refused, never dropped in silence.
+  const checked = ["publishEvery", "pauseAfterEachChapter", "frozenEdits"].filter((key) => (LIVE_AUTOPILOT_OPTIONS as readonly string[]).includes(key));
+  const unknown = keys.filter((key) => !checked.includes(key));
   if (unknown.length) refuse(`${unknown.slice(0, 3).map((key) => key.slice(0, 40)).join(", ")} cannot be changed here.`);
   const options: AutopilotLiveOptions = {};
   if (Object.hasOwn(body, "publishEvery")) {
@@ -318,6 +345,10 @@ function asLiveOptions(body: Record<string, unknown>): AutopilotLiveOptions {
   if (Object.hasOwn(body, "pauseAfterEachChapter")) {
     if (typeof body.pauseAfterEachChapter !== "boolean") refuse("pauseAfterEachChapter must be true or false.");
     options.pauseAfterEachChapter = body.pauseAfterEachChapter as boolean;
+  }
+  if (Object.hasOwn(body, "frozenEdits")) {
+    if (!(typeof body.frozenEdits === "string" && (FROZEN_EDITS_MODES as readonly string[]).includes(body.frozenEdits))) refuse("frozenEdits is not one of the ways to handle a change of a frozen chapter.");
+    options.frozenEdits = body.frozenEdits as FrozenEditsMode;
   }
   return options;
 }
@@ -334,6 +365,18 @@ function asRuleIndex(value: string): number {
   const index = /^(?:0|[1-9][0-9]*)$/.test(value) ? Number(value) : Number.NaN;
   if (!Number.isSafeInteger(index)) throw new HttpError(400, "invalid_request", "The rule number in the address must be a whole number from 0 (the first rule is 0).");
   return index;
+}
+
+/** What a request may change in a book's MCP: `{ enabled?, slug? }`, at least one of them, and nothing else is read. */
+function asMcpChange(body: Record<string, unknown>): { enabled?: boolean; slug?: string } {
+  const change: { enabled?: boolean; slug?: string } = {};
+  if (Object.hasOwn(body, "enabled")) {
+    if (typeof body.enabled !== "boolean") throw new HttpError(400, "invalid_request", "`enabled` must be true or false.");
+    change.enabled = body.enabled;
+  }
+  if (Object.hasOwn(body, "slug")) change.slug = assertSlug(body.slug);
+  if (change.enabled === undefined && change.slug === undefined) throw new HttpError(400, "invalid_request", "Send `enabled` (true or false) and/or `slug`.");
+  return change;
 }
 
 /** A name that a client sent, as a message may say it: short, and on one line. */
@@ -372,19 +415,82 @@ function asExpectedText(url: URL): string | undefined {
   return given[0];
 }
 
+/** The number of a chapter in the address (`…/autopilot/frozen/:number`): a whole number from 1, written as an address writes one. */
+function asChapterNumber(value: string): number {
+  const number = /^[1-9][0-9]*$/.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isSafeInteger(number)) throw new HttpError(400, "invalid_request", "The chapter number in the address must be a whole number from 1.");
+  return number;
+}
+
+/** The longest note of the author that goes with a decision about a change: as long as the note of an answer (a longer one is cut, as there). */
+const MAX_DECISION_NOTE_CHARACTERS = 8000;
+
+/**
+ * The body of a decision about a change of a chapter, `{ action, kind?, note? }`: the action, which the engine judges (one that is not an action, or does
+ * not fit the change, is its `invalid_action`), the kind of change (`frozen` or `outline`) for a chapter that has both, and the author's words for the
+ * director. Nothing else is read, and a field that is misspelt is refused, not ignored: the wrong change would be decided.
+ */
+function asFrozenDecision(body: Record<string, unknown>): { action: FrozenAction; kind?: FrozenChangeKind; note?: string } {
+  const refuse = (problem: string): never => {
+    throw new HttpError(400, "invalid_request", `${problem} A change is decided with { "action": ${FROZEN_ACTIONS.join(" | ")}, "kind"?: frozen | outline, "note"?: string }.`);
+  };
+  const unknown = Object.keys(body).filter((key) => key !== "action" && key !== "kind" && key !== "note");
+  if (unknown.length) refuse(`${unknown.slice(0, 3).map(named).join(", ")} cannot be sent here.`);
+  if (typeof body.action !== "string") refuse("`action`, what to do with the change, must be a string.");
+  if (body.kind !== undefined && body.kind !== "frozen" && body.kind !== "outline") refuse("`kind` must be frozen or outline.");
+  if (body.note !== undefined && typeof body.note !== "string") refuse("`note`, the author's words for the director, must be a string.");
+  return {
+    action: body.action as FrozenAction,
+    ...(body.kind === undefined ? {} : { kind: body.kind as FrozenChangeKind }),
+    ...(typeof body.note === "string" ? { note: body.note.slice(0, MAX_DECISION_NOTE_CHARACTERS) } : {}),
+  };
+}
+
+/** The folder of a chapter in the address (`…/chapters/:slug/freeze`): a name in `chapters/`, not a path (no separator, no control character), and short. */
+function asChapterFolder(value: string): string {
+  if (!value || value.length > 200 || value === "." || value === ".." || /[/\\\u0000-\u001f\u007f]/.test(value)) throw new HttpError(400, "invalid_request", "The chapter in the address must be the name of its folder in chapters/.");
+  return value;
+}
+
+/** The body of a freeze, `{ frozen: boolean }`, and nothing else. */
+function asFreezeRequest(body: Record<string, unknown>): boolean {
+  const unknown = Object.keys(body).filter((key) => key !== "frozen");
+  if (unknown.length || typeof body.frozen !== "boolean") {
+    throw new HttpError(400, "invalid_request", `${unknown.length ? `${unknown.slice(0, 3).map(named).join(", ")} cannot be sent here. ` : ""}A chapter is frozen with { "frozen": true } and unfrozen with { "frozen": false }.`);
+  }
+  return body.frozen;
+}
+
 /** The routes of the permanent rules: `…/autopilot/rules/:index`, whose DELETE carries the text of a rule in its address. */
 const RULES_ADDRESS = /^\/api\/v1\/books\/[^/]+\/autopilot\/rules\/[^/]+$/;
 
+/** The addresses of the MCP endpoints of the books: a client that puts its token in the query (it should not) must not see it in the log. */
+const MCP_ADDRESS = /^\/mcp(?:\/|$)/;
+
+/** The addresses of the OAuth server: the query of an authorization request holds the state, the PKCE challenge and the app's address, and of a callback a code. None of it is logged. */
+const OAUTH_ADDRESS = /^\/(?:oauth(?:\/|$)|\.well-known\/)/;
+
 /**
  * A request address as the log says it. The text of a rule is the author's: a DELETE carries it in the query of its address (`?expectedText=…`), so for
- * the routes of the rules the log says that there was a query, not what it said (whatever the name of a parameter, spelt as it may be).
+ * the routes of the rules the log says that there was a query, not what it said (whatever the name of a parameter, spelt as it may be). The same for the
+ * MCP endpoints, where a query is whatever a client chose to send, and for the OAuth server, where it holds the secrets of an authorization.
  */
 function loggable(address: string | undefined): string {
   const text = address ?? "/";
   try {
-    return RULES_ADDRESS.test(new URL(text, "http://127.0.0.1").pathname) && text.includes("?") ? `${text.slice(0, text.indexOf("?"))}?***` : text;
+    const { pathname } = new URL(text, "http://127.0.0.1");
+    return (RULES_ADDRESS.test(pathname) || MCP_ADDRESS.test(pathname) || OAUTH_ADDRESS.test(pathname)) && text.includes("?") ? `${text.slice(0, text.indexOf("?"))}?***` : text;
   } catch {
     return text;
+  }
+}
+
+/** The path of a request address, as the server reads it (dot segments resolved); empty when the address is not one. */
+function pathOf(address: string | undefined): string {
+  try {
+    return new URL(address ?? "/", "http://127.0.0.1").pathname;
+  } catch {
+    return "";
   }
 }
 
@@ -532,6 +638,47 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     await books.load();
     closers.push(() => books.close());
 
+    // The MCP endpoint of every book (off until the owner switches a book on): which books are on and at which slug, and what was called through them.
+    const mcpBooks = await McpBooks.open(data.file("mcp.json"), log);
+    const mcpAudit = new McpAudit(data.file("mcp-audit.jsonl"), log);
+    closers.push(() => mcpAudit.flush());
+    const mcp = new McpEndpoint({
+      books,
+      state: mcpBooks,
+      audit: mcpAudit,
+      readBody: (request, limit) => readBody(request, limit),
+      mapError: (error) => errorStatus(error),
+      log,
+      limits: { callsPerMinute: options.limits?.mcpCallsPerMinute, writesPerMinute: options.limits?.mcpWritesPerMinute, callMs: options.limits?.mcpCallMs, toolsPerPage: options.limits?.mcpToolsPerPage, resultBytes: options.limits?.mcpResultBytes },
+      serverVersion: SERVER_VERSION,
+    });
+
+    // The OAuth server that lets ChatGPT, Claude.ai and the like connect to a book's endpoint by themselves: what the owner allowed is kept in private/oauth.json.
+    const clock = options.now ?? (() => new Date());
+    const oauthStore = await OAuthStore.open(data.file("private", "oauth.json"), { now: clock, log });
+    const oauth = new OAuthServer({
+      store: oauthStore,
+      books: mcpBooks,
+      hasBook: (bookId) => books.has(bookId),
+      verifyAdminCode: (code, source) => auth.verifyAdminCode(code, source),
+      publicUrl: () => data.config.publicUrl,
+      localUrl: () => `http://127.0.0.1:${apiPort}`,
+      readJson: (request, limit) => readBody(request, limit),
+      bodyIdleMs,
+      now: clock,
+      log,
+      limits: { registrationsPerHour: options.limits?.oauthRegistrationsPerHour, requestsPerMinute: options.limits?.oauthRequestsPerMinute, maxClients: options.limits?.oauthMaxClients },
+    });
+    closers.push(() => oauth.close());
+    // What ran out (grants that ended, apps nobody used for 30 days) is forgotten when the server starts and every hour after.
+    const forgetStale = () => oauth.sweep().catch((error) => log(`The OAuth state could not be cleaned: ${error instanceof Error ? error.message : String(error)}`));
+    await forgetStale();
+    const staleTimer = setInterval(() => void forgetStale(), 60 * 60_000);
+    staleTimer.unref();
+    closers.push(() => clearInterval(staleTimer));
+    /** The ways of proving who calls an MCP endpoint, tried in order: the client tokens of this server, then the OAuth access tokens (each bound to one book and to what the owner allowed). */
+    const mcpAuthenticators: McpAuthenticator[] = [clientTokenAuthenticator(auth), oauth.authenticator()];
+
     const tunnel = new CloudflareTunnelManager({ root: data.root, vault: data.vault, ...options.tunnel });
     closers.push(() => tunnel.close());
     // A connector problem is shown in the admin panel; it never prevents the server from starting.
@@ -545,7 +692,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, ...(gitAvailable ? ["github"] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, "mcp", "mcp-oauth", ...(gitAvailable ? ["github"] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -679,6 +826,24 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       return { accepted: true as const, version, message: "Update requested: the supervisor stops the server cleanly, verifies the npm package and restarts the server only after a valid installation." };
     };
 
+    /** Where a book's MCP address is: the public address of the API when the owner set one, else this computer's own. */
+    const mcpAddresses = () => ({ publicUrl: data.config.publicUrl, localUrl: `http://127.0.0.1:${apiPort}` });
+
+    /** What the status of a book's MCP says: its address (see `describeMcp`), how many apps are connected through OAuth, and where the OAuth server is. */
+    const mcpStatus = (state: McpBookState) => ({ ...describeMcp(state, mcpAddresses()), connections: oauth.countGrants(state.bookId), oauth: oauth.describe(state.slug) });
+
+    /**
+     * Switch a book's MCP on or off or give it another address: the one way it is done, for the API and the admin panel. What the owner allowed to apps on that address ends with it:
+     * a book that is switched off, or moved, or removed, has no connected apps (and they do not come back when it is switched on again: the owner allows them again).
+     */
+    const setMcp = async (runtime: BookRuntime, change: { enabled?: boolean; slug?: string }): Promise<McpBookState> => {
+      books.assertNotInMaintenance();
+      const previous = mcpBooks.peek(runtime.book.bookId);
+      const state = await mcpBooks.update(runtime.book.bookId, runtime.book.title, change);
+      if (!state.enabled || (previous !== undefined && previous.slug !== state.slug)) await oauth.revokeBook(state.bookId);
+      return state;
+    };
+
     const routes: Route[] = [
       { method: "GET", pattern: /^\/api\/v1\/session$/, scope: "read", handler: async ({ client }) => ({ serverId: data.config.serverId, label: data.config.label, clientLabel: client.label, clientId: client.id, scopes: client.scopes }) },
       { method: "GET", pattern: /^\/api\/v1\/ai$/, scope: "read", handler: aiStatus },
@@ -708,7 +873,37 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       {
         method: "DELETE", pattern: /^\/api\/v1\/books\/([^/]+)$/, scope: "write", handler: async ({ params }) => {
           await books.remove(params[0]);
+          // A book that is gone has no address, and its slug is free again.
+          await mcpBooks.forget(params[0]).catch((error) => log(`The MCP address of a removed book could not be forgotten: ${error instanceof Error ? error.message : String(error)}`));
+          await oauth.revokeBook(params[0]).catch((error) => log(`The apps connected to a removed book could not be disconnected: ${error instanceof Error ? error.message : String(error)}`));
           return { removed: true };
+        },
+      },
+      {
+        method: "GET", pattern: /^\/api\/v1\/books\/([^/]+)\/mcp$/, scope: "read", handler: async ({ params }) => {
+          const runtime = books.get(params[0]);
+          return mcpStatus(await mcpBooks.state(runtime.book.bookId, runtime.book.title));
+        },
+      },
+      {
+        method: "PUT", pattern: /^\/api\/v1\/books\/([^/]+)\/mcp$/, scope: "write", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          const change = asMcpChange(asObject(await readBody(request, 4096)));
+          return mcpStatus(await setMcp(runtime, change));
+        },
+      },
+      {
+        method: "GET", pattern: /^\/api\/v1\/books\/([^/]+)\/mcp\/clients$/, scope: "write", handler: async ({ params }) => {
+          const runtime = books.get(params[0]);
+          return { clients: oauth.grantsOf(runtime.book.bookId) };
+        },
+      },
+      {
+        method: "DELETE", pattern: /^\/api\/v1\/books\/([^/]+)\/mcp\/clients\/([^/]+)$/, scope: "write", handler: async ({ params }) => {
+          const runtime = books.get(params[0]);
+          if (!(await oauth.revokeGrant(params[1], runtime.book.bookId))) throw new HttpError(404, "client_missing", "No app with this id is connected to this book.");
+          return { revoked: true };
         },
       },
       {
@@ -762,8 +957,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
             };
           }) : [];
           if (!changes.length) throw new HttpError(400, "invalid_request", "No changes to commit.");
-          await runtime.store.commit(changes, typeof body.message === "string" && body.message.trim() ? body.message.trim().slice(0, 300) : "Sync from Narrarium");
-          if (runtime.book.storage.kind === "github" && runtime.git && !runtime.session.running) await books.syncGitHub(params[0]).catch(() => undefined);
+          await books.commitFiles(runtime, changes, typeof body.message === "string" && body.message.trim() ? body.message.trim().slice(0, 300) : "Sync from Narrarium");
           return { revision: (await books.summary(runtime)).revision };
         },
       },
@@ -780,11 +974,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           const body = asObject(await readBody(request, SMALL_BODY));
           // A request that is wrong in itself is refused before anything else is asked of the server, and starts nothing.
           const limits = asLimits(body.limits);
-          if (!(await books.aiConfigured())) throw new HttpError(412, "ai_not_configured", "Send your AI router configuration to the server before starting the autopilot.");
-          books.assertCanStart();
-          // The owner's switch or a cap of the day would stop the run at its first call: it is not started (and leaves nothing in the book).
-          books.assertSpendAllowed();
-          await runtime.session.start({ brief: body.brief as never, options: body.options as never, limits, force: body.force === true });
+          await books.startRun(runtime, { brief: body.brief as never, options: body.options as never, limits, force: body.force === true });
           return runtime.session.snapshot();
         },
       },
@@ -827,6 +1017,27 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           const index = asRuleIndex(params[1]);
           await runtime.session.removeRule(index, asExpectedText(url));
           return runtime.session.snapshot();
+        },
+      },
+      // The frozen chapters: what changed in them and what can be done with it, a decision about a change, and the author's freeze by hand.
+      { method: "GET", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/frozen$/, scope: "read", handler: async ({ params }) => books.get(params[0]).session.frozenStatus() },
+      {
+        method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/frozen\/([^/]+)$/, scope: "run", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          const number = asChapterNumber(params[1]);
+          const { action, kind, note } = asFrozenDecision(asObject(await readBody(request, SMALL_BODY)));
+          // Also while a run goes on: what needs no model is done at once, a review is recorded for the run's next step. What cannot be done is the engine's refusal.
+          return runtime.session.resolveFrozenChange(number, action, { ...(kind ? { kind } : {}), ...(note === undefined ? {} : { note }) });
+        },
+      },
+      {
+        method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/chapters\/([^/]+)\/freeze$/, scope: "write", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          const slug = asChapterFolder(params[1]);
+          const frozen = asFreezeRequest(asObject(await readBody(request, SMALL_BODY)));
+          return frozen ? runtime.session.freezeChapter(slug) : runtime.session.unfreezeChapter(slug);
         },
       },
       {
@@ -926,10 +1137,14 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         if (!hosts.has(String(request.headers.host ?? "").toLowerCase())) throw new HttpError(421, "host_not_allowed", "Unexpected Host header. Set the public address of the server in its admin panel (Approved network).");
         const origin = typeof request.headers.origin === "string" ? request.headers.origin.replace(/\/+$/, "") : "";
         if (origin) {
-          if (!allowedOrigins().has(origin)) throw new HttpError(403, "origin_not_allowed", `The origin ${origin} is not allowed. Add it in the server's admin panel (Approved network).`);
-          response.setHeader("access-control-allow-origin", origin);
-          response.setHeader("vary", "Origin");
-          response.setHeader("access-control-expose-headers", "etag, retry-after, x-request-id");
+          if (allowedOrigins().has(origin)) {
+            response.setHeader("access-control-allow-origin", origin);
+            response.setHeader("vary", "Origin");
+            response.setHeader("access-control-expose-headers", "etag, retry-after, x-request-id");
+          } else if (!(isOAuthPath(pathOf(request.url)) && origin === oauth.baseOf(request))) {
+            // The pages of the OAuth server call it from the address they were served on: that origin is the server's own, so it needs no approval (and gets no CORS: nobody else may use it).
+            throw new HttpError(403, "origin_not_allowed", `The origin ${origin} is not allowed. Add it in the server's admin panel (Approved network).`);
+          }
         }
         if (request.method === "OPTIONS") {
           response.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -977,7 +1192,36 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           sendJson(response, 200, await auth.pollPairing(pairing[1], body.nonce));
           return;
         }
+        // The OAuth server (discovery, registration, the consent page, tokens): nobody has shown a token yet, which is what it is for.
+        if (isOAuthPath(url.pathname)) {
+          await oauth.handle({ request, response, url, source });
+          return;
+        }
         const token = /^Bearer\s+(.+)$/i.exec(String(request.headers.authorization ?? ""))?.[1];
+        // The address of a book's MCP endpoint says who is calling in its own way (a client token, or an OAuth token bound to one book), and answers a refusal the
+        // way MCP clients look for it: `WWW-Authenticate: Bearer`, with the address of the metadata that tells an app how to get a token. Everything else about
+        // the request is what every route has: the host, the origin, the limits per source and per client.
+        const mcpTarget = mcpAddress(url.pathname);
+        if (mcpTarget) {
+          const resourceMetadata = `${oauth.baseOf(request)}/.well-known/oauth-protected-resource/mcp/${mcpTarget.slug}`;
+          let principal: McpPrincipal;
+          try {
+            principal = authenticateMcp(mcpAuthenticators, token);
+          } catch (error) {
+            if (!(error instanceof HttpError) || error.status !== 401) throw error;
+            refuseOver(failedAuthenticationLimit.hit(source));
+            throw new HttpError(401, error.code, error.message, { ...error.headers, ...challenge(token === undefined ? undefined : "invalid_token", { resourceMetadata }) });
+          }
+          releaseAnonymous();
+          refuseOver(clientLimit.hit(principal.id));
+          const answer = await mcp.handle({ request, slug: mcpTarget.slug, principal, resourceMetadata });
+          if (!principal.current()) throw new HttpError(401, "revoked", "This client token was revoked.", challenge("invalid_token", { resourceMetadata }));
+          if (answer.body === undefined) {
+            response.writeHead(answer.status, { "content-length": "0" });
+            response.end();
+          } else sendJson(response, answer.status, answer.body);
+          return;
+        }
         let client: ClientRecord;
         try {
           client = auth.authenticate(token);
@@ -1058,12 +1302,12 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         const remote = Boolean(publicAdminOrigin) && host === hostOf(publicAdminOrigin);
         const local = localOrigins.some((origin) => hostOf(origin) === host);
         const path = request.url ?? "/";
-        const bridge = remote && /^\/api\/v1\//.test(path);
+        const bridge = remote && /^\/(?:api\/v1|mcp|oauth|\.well-known)\//.test(path);
         if ((!local && !remote) || (request.headers.origin && !bridge && !adminOrigins.includes(request.headers.origin))) {
           throw new HttpError(403, "admin_origin", "The admin panel is available only from this computer or from its approved public address.");
         }
-        // One public hostname can point to the admin port: the panel is served on / and /api/v1/*
-        // is bridged to the loopback API, which still checks Host, Origin and the client token.
+        // One public hostname can point to the admin port: the panel is served on / and /api/v1/* (and the MCP addresses of the books, /mcp/*, and the OAuth
+        // server, /oauth/* and /.well-known/*) are bridged to the loopback API, which still checks Host, Origin and the client token.
         if (bridge) {
           bridgeToApi(request, response, { port: apiPort, host: hostOf(data.config.publicUrl) ?? `127.0.0.1:${apiPort}` }, gatewayAgent);
           return;
@@ -1258,6 +1502,58 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           sendJson(response, 200, { scopes: ["read", "write", "run", "update"].filter(isScope) });
           return;
         }
+        // The owner's view of the books' MCP endpoints: the switches, the apps connected through OAuth, the passkeys, and what was called.
+        const adminPath = path.split("?")[0];
+        if (adminPath === "/admin/api/mcp" && request.method === "GET") {
+          sendJson(response, 200, {
+            publicUrl: data.config.publicUrl ?? "",
+            canAddPasskey: oauth.canAddPasskey,
+            passkeys: oauth.passkeyViews(),
+            books: books.all().map(({ book }) => {
+              // A book that has no MCP state yet is listed with the slug it would get: looking at the panel gives no book an address.
+              const state: McpBookState = mcpBooks.peek(book.bookId) ?? { bookId: book.bookId, slug: mcpBooks.propose(book.bookId, book.title), enabled: false, updatedAt: new Date(0).toISOString() };
+              return { ...describeMcp(state, mcpAddresses()), title: book.title, apps: oauth.grantsOf(book.bookId) };
+            }),
+          });
+          return;
+        }
+        if (adminPath === "/admin/api/mcp/audit" && request.method === "GET") {
+          const query = new URL(path, "http://127.0.0.1").searchParams;
+          const whole = (name: string, fallback: number | undefined): number | undefined => {
+            const text = query.get(name);
+            if (text === null) return fallback;
+            if (!/^\d{1,12}$/.test(text) || Number(text) < 1) throw new HttpError(400, "invalid_request", `\`${name}\` must be a whole number from 1.`);
+            return Number(text);
+          };
+          const wanted = query.get("book");
+          sendJson(response, 200, await mcpAudit.page({ limit: Math.min(whole("limit", 20) as number, 200), before: whole("before", undefined), ...(wanted ? { bookId: wanted.slice(0, 120) } : {}) }));
+          return;
+        }
+        if (adminPath === "/admin/api/mcp/book" && request.method === "POST") {
+          if (typeof body.bookId !== "string" || !body.bookId) throw new HttpError(400, "invalid_request", "Which book?");
+          const runtime = books.get(body.bookId);
+          sendJson(response, 200, mcpStatus(await setMcp(runtime, asMcpChange(body))));
+          return;
+        }
+        if (adminPath === "/admin/api/mcp/revoke" && request.method === "POST") {
+          if (typeof body.id !== "string" || !body.id) throw new HttpError(400, "invalid_request", "Which app?");
+          sendJson(response, 200, { revoked: await oauth.revokeGrant(body.id) });
+          return;
+        }
+        if (adminPath === "/admin/api/passkeys/link" && request.method === "POST") {
+          sendJson(response, 200, oauth.passkeyLink());
+          return;
+        }
+        if (adminPath === "/admin/api/passkeys/rename" && request.method === "POST") {
+          await oauth.renamePasskey(body.id, body.label);
+          sendJson(response, 200, { renamed: true });
+          return;
+        }
+        if (adminPath === "/admin/api/passkeys/remove" && request.method === "POST") {
+          await oauth.removePasskey(body.id, body.confirmLast === true);
+          sendJson(response, 200, { removed: true });
+          return;
+        }
         throw new HttpError(404, "not_found", "Unknown admin endpoint.");
       })().catch((error) => {
         const mapped = errorStatus(error);
@@ -1320,6 +1616,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       tunnel,
       spend,
       servers: { api, admin },
+      mcp: { books: mcpBooks, audit: mcpAudit },
+      oauth,
       allowedBases: () => [...data.config.allowedAiBases],
       close,
     };

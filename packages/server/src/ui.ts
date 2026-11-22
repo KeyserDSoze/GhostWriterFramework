@@ -126,6 +126,22 @@ export const ADMIN_HTML = `<!doctype html>
       <ul class="list" id="book-rows"></ul>
     </section>
 
+    <section class="card wide" id="mcp">
+      <h2 data-i18n="mcpTitle">Connected apps (MCP)</h2>
+      <p class="muted" data-i18n="mcpHelp">Every book has its own MCP address. Paste it in ChatGPT or Claude: they send you to a page of this server where you prove it is you with a passkey or the admin code, and choose what the app may do with that book.</p>
+      <p class="notice hidden" id="mcp-public-note" data-i18n="mcpNoPublic">This server has no public address yet: apps on other computers cannot reach it and passkeys cannot be used. Set the public API address in Approved network.</p>
+      <ul class="list" id="mcp-books"></ul>
+      <h3 data-i18n="passkeysTitle">Passkeys</h3>
+      <p class="muted" data-i18n="passkeysHelp">A passkey lets you approve an app on the consent page with your fingerprint, face or screen lock. The admin code always works as well.</p>
+      <ul class="list" id="passkey-rows"></ul>
+      <div class="row"><button type="button" id="passkey-link" data-i18n="passkeyAdd">Add a passkey</button></div>
+      <p class="notice hidden" id="passkey-link-box"><span data-i18n="passkeyLink">Open this address on the device that will keep the passkey (valid ten minutes, works once):</span> <code id="passkey-link-value"></code> <button type="button" class="ghost small" id="passkey-link-copy" data-i18n="copy">Copy</button></p>
+      <h3 data-i18n="auditTitle">Recent calls</h3>
+      <p class="muted" data-i18n="auditHelp">Who called which tool, on which book, and when. What the book says is never recorded here.</p>
+      <div class="table-wrap"><table><thead><tr><th data-i18n="auditWhen">When</th><th data-i18n="auditCaller">Caller</th><th data-i18n="auditBook">Book</th><th data-i18n="auditTool">Tool</th><th data-i18n="auditResult">Result</th></tr></thead><tbody id="audit-rows"></tbody></table></div>
+      <div class="row"><button type="button" class="ghost" id="audit-more" data-i18n="auditMore">Older calls</button></div>
+    </section>
+
     <section class="card" id="admin-code">
       <h2 data-i18n="codeTitle">Admin code</h2>
       <form id="code-form" autocomplete="off">
@@ -170,6 +186,7 @@ code,pre{font-family:ui-monospace,monospace;font-size:13px}pre.code{background:v
 .list{list-style:none;margin:0;padding:0}.list li{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}
 .toast{position:fixed;right:16px;bottom:16px;background:var(--fg);color:var(--bg);padding:10px 14px;border-radius:10px;max-width:420px;z-index:5}
 .revoked{opacity:.55}.agent{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+h3{font-size:14px;margin:18px 0 6px}.list li.mcp-book{display:block}.mcp-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}.mcp-book .list{margin:6px 0 4px 8px}.mcp-book .inline{margin-top:6px}
 @media (max-width:640px){main{padding:12px}.top{padding:12px}.facts{grid-template-columns:1fr}}
 `;
 
@@ -210,7 +227,19 @@ export const ADMIN_JS = String.raw`"use strict";
       tunnelEnabled: "Enabled", tunnelProcess: "Connector", tunnelBinary: "cloudflared", tunnelOther: "Other connectors", tunnelHostLabel: "Hostname", running: "running", stopped: "stopped",
       tunnelFailed: "stopped with an error", available: "available", missing: "missing", detected: "detected (left untouched)", maintenance: "restarting for an update",
       defaults: "Always allowed: {list}", status: { idle: "ready", running: "running", paused: "paused", "waiting-author": "waiting for the author", error: "stopped by an error", completed: "completed" },
-      local: "local", github: "GitHub", working: "autopilot running", lang: "IT"
+      local: "local", github: "GitHub", working: "autopilot running", lang: "IT",
+      mcpTitle: "Connected apps (MCP)", mcpHelp: "Every book has its own MCP address. Paste it in ChatGPT or Claude: they send you to a page of this server where you prove it is you with a passkey or the admin code, and choose what the app may do with that book.",
+      mcpNoPublic: "This server has no public address yet: apps on other computers cannot reach it and passkeys cannot be used. Set the public API address in Approved network.",
+      mcpEnabled: "MCP on", mcpAddress: "Address", mcpSlug: "Address name (slug)", mcpSlugChange: "Change", mcpNoApps: "No app is connected to this book.",
+      mcpAppFrom: "returns to {host}", mcpLastUsed: "last used {when}", mcpRevoked: "Access revoked.",
+      mcpOffConfirm: "Switching MCP off disconnects the {n} app(s) connected to this book, and they will have to ask you again. Continue?",
+      mcpSlugConfirm: "Changing the address disconnects the {n} app(s) connected to this book, and they will have to ask you again. Continue?",
+      passkeysTitle: "Passkeys", passkeysHelp: "A passkey lets you approve an app on the consent page with your fingerprint, face or screen lock. The admin code always works as well.",
+      passkeyAdd: "Add a passkey", passkeyLink: "Open this address on the device that will keep the passkey (valid ten minutes, works once):", passkeyNone: "No passkey yet: the admin code is the only way to approve an app.",
+      passkeyName: "Name of the passkey", passkeyRename: "Rename", passkeyUsed: "used {when}", passkeyOtherHost: "for another address: it cannot be used now",
+      passkeyLastConfirm: "This is your last passkey. After removing it the admin code is the only way to approve an app (it keeps working). Remove it?",
+      auditTitle: "Recent calls", auditHelp: "Who called which tool, on which book, and when. What the book says is never recorded here.", auditWhen: "When", auditCaller: "Caller", auditBook: "Book",
+      auditTool: "Tool", auditResult: "Result", auditMore: "Older calls", auditNone: "No call yet.", auditOk: "done", auditFailed: "failed: {code}"
     },
     it: {
       title: "Server Narrarium", logout: "Esci", loginTitle: "Accedi", loginHelp: "Inserisci il codice amministratore di questo server. Per vederlo, esegui su questo computer:",
@@ -246,7 +275,19 @@ export const ADMIN_JS = String.raw`"use strict";
       tunnelEnabled: "Attivo", tunnelProcess: "Connettore", tunnelBinary: "cloudflared", tunnelOther: "Altri connettori", tunnelHostLabel: "Hostname", running: "in esecuzione", stopped: "fermo",
       tunnelFailed: "fermo per un errore", available: "disponibile", missing: "mancante", detected: "rilevati (non toccati)", maintenance: "riavvio per aggiornamento",
       defaults: "Sempre consentite: {list}", status: { idle: "pronto", running: "in esecuzione", paused: "in pausa", "waiting-author": "aspetta l'autore", error: "fermo per un errore", completed: "completato" },
-      local: "locale", github: "GitHub", working: "autopilot al lavoro", lang: "EN"
+      local: "locale", github: "GitHub", working: "autopilot al lavoro", lang: "EN",
+      mcpTitle: "App collegate (MCP)", mcpHelp: "Ogni libro ha il suo indirizzo MCP. Incollalo in ChatGPT o Claude: ti mandano a una pagina di questo server dove dimostri che sei tu con una passkey o il codice amministratore, e scegli cosa l'app può fare con quel libro.",
+      mcpNoPublic: "Questo server non ha ancora un indirizzo pubblico: le app su altri computer non lo raggiungono e le passkey non si possono usare. Imposta l'indirizzo pubblico dell'API in Rete approvata.",
+      mcpEnabled: "MCP attivo", mcpAddress: "Indirizzo", mcpSlug: "Nome dell'indirizzo (slug)", mcpSlugChange: "Cambia", mcpNoApps: "Nessuna app è collegata a questo libro.",
+      mcpAppFrom: "torna a {host}", mcpLastUsed: "ultimo uso {when}", mcpRevoked: "Accesso revocato.",
+      mcpOffConfirm: "Spegnere l'MCP scollega le {n} app collegate a questo libro, che dovranno chiederti di nuovo il permesso. Continuare?",
+      mcpSlugConfirm: "Cambiare l'indirizzo scollega le {n} app collegate a questo libro, che dovranno chiederti di nuovo il permesso. Continuare?",
+      passkeysTitle: "Passkey", passkeysHelp: "Una passkey ti permette di approvare un'app nella pagina di consenso con impronta, volto o blocco schermo. Il codice amministratore funziona sempre.",
+      passkeyAdd: "Aggiungi una passkey", passkeyLink: "Apri questo indirizzo sul dispositivo che terrà la passkey (valido dieci minuti, funziona una volta):", passkeyNone: "Nessuna passkey: il codice amministratore è l'unico modo per approvare un'app.",
+      passkeyName: "Nome della passkey", passkeyRename: "Rinomina", passkeyUsed: "usata {when}", passkeyOtherHost: "per un altro indirizzo: ora non si può usare",
+      passkeyLastConfirm: "È la tua ultima passkey. Dopo averla rimossa il codice amministratore è l'unico modo per approvare un'app (continua a funzionare). Rimuoverla?",
+      auditTitle: "Chiamate recenti", auditHelp: "Chi ha chiamato quale strumento, su quale libro, e quando. Quello che dice il libro non viene mai registrato qui.", auditWhen: "Quando", auditCaller: "Chiamante", auditBook: "Libro",
+      auditTool: "Strumento", auditResult: "Esito", auditMore: "Chiamate precedenti", auditNone: "Nessuna chiamata finora.", auditOk: "eseguita", auditFailed: "non riuscita: {code}"
     }
   };
   var lang = localStorage.getItem("narrarium-admin-lang") || ((navigator.language || "en").toLowerCase().indexOf("it") === 0 ? "it" : "en");
@@ -254,6 +295,8 @@ export const ADMIN_JS = String.raw`"use strict";
   var state = null;
   var timer = null;
   var pairCode = null;
+  var mcp = null;
+  var audit = { rows: [], next: null, older: false };
 
   function t(key, values) {
     var text = (T[lang] && T[lang][key]) || T.en[key] || key;
@@ -270,6 +313,8 @@ export const ADMIN_JS = String.raw`"use strict";
     document.querySelectorAll("[data-i18n-placeholder]").forEach(function (node) { node.setAttribute("placeholder", t(node.getAttribute("data-i18n-placeholder"))); });
     $("lang").textContent = t("lang");
     if (state) render();
+    if (mcp) renderMcp();
+    renderAudit();
   }
   function call(method, path, body) {
     var headers = { "content-type": "application/json" };
@@ -292,7 +337,8 @@ export const ADMIN_JS = String.raw`"use strict";
   }
   function signedIn() {
     $("login-view").classList.add("hidden"); $("main-view").classList.remove("hidden"); $("logout").classList.remove("hidden"); $("login-error").textContent = "";
-    refresh(); loadUpdates(); if (!timer) timer = setInterval(function () { if (document.visibilityState === "visible") refresh(true); }, 20000);
+    refresh(); loadUpdates(); loadMcp(); loadAudit(false);
+    if (!timer) timer = setInterval(function () { if (document.visibilityState === "visible") { refresh(true); loadMcp(); if (!audit.older) loadAudit(false); } }, 20000);
   }
   function editing() { var active = document.activeElement; return active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA") && active.closest("form"); }
   function refresh(quiet) {
@@ -416,6 +462,80 @@ export const ADMIN_JS = String.raw`"use strict";
       list.appendChild(li);
     });
   }
+  function loadMcp() {
+    return call("GET", "/admin/api/mcp").then(function (data) { mcp = data; renderMcp(); }, function () {});
+  }
+  function loadAudit(older) {
+    var query = "?limit=20" + (older && audit.next ? "&before=" + audit.next : "");
+    return call("GET", "/admin/api/mcp/audit" + query).then(function (page) {
+      audit.rows = older ? audit.rows.concat(page.entries) : page.entries; audit.next = page.nextBefore; if (older) audit.older = true; renderAudit();
+    }, function () {});
+  }
+  function chip(text) { return el("span", "chip", text); }
+  function renderMcp() {
+    if (!mcp) return;
+    var note = $("mcp-public-note"); if (mcp.publicUrl) note.classList.add("hidden"); else note.classList.remove("hidden");
+    var list = $("mcp-books"); list.textContent = "";
+    if (!mcp.books.length) list.appendChild(el("li", "muted", t("noBooks")));
+    mcp.books.forEach(function (book) { list.appendChild(renderMcpBook(book)); });
+    renderPasskeys();
+  }
+  function renderMcpBook(book) {
+    var li = el("li", "mcp-book"); var head = el("div", "mcp-head"); head.appendChild(el("strong", "", book.title));
+    var label = el("label", "check"); var toggle = document.createElement("input"); toggle.type = "checkbox"; toggle.checked = !!book.enabled;
+    label.appendChild(toggle); label.appendChild(el("span", "", t("mcpEnabled"))); head.appendChild(label); li.appendChild(head);
+    toggle.addEventListener("change", function () {
+      var on = toggle.checked;
+      if (!on && book.apps.length && !confirm(t("mcpOffConfirm", { n: book.apps.length }))) { toggle.checked = true; return; }
+      call("POST", "/admin/api/mcp/book", { bookId: book.bookId, enabled: on }).then(function () { toast(t("saved")); loadMcp(); }, function (error) { toggle.checked = !on; fail(error); });
+    });
+    var where = el("p", "muted small", t("mcpAddress") + ": "); where.appendChild(el("code", "", book.url)); li.appendChild(where);
+    var row = el("div", "inline"); var slug = document.createElement("input"); slug.value = book.slug; slug.setAttribute("maxlength", "80"); slug.setAttribute("aria-label", t("mcpSlug")); slug.setAttribute("spellcheck", "false");
+    var change = el("button", "ghost small", t("mcpSlugChange")); change.type = "button";
+    change.addEventListener("click", function () {
+      var value = slug.value.trim(); if (!value || value === book.slug) return;
+      if (book.apps.length && !confirm(t("mcpSlugConfirm", { n: book.apps.length }))) { slug.value = book.slug; return; }
+      call("POST", "/admin/api/mcp/book", { bookId: book.bookId, slug: value }).then(function () { toast(t("saved")); loadMcp(); }, fail);
+    });
+    row.appendChild(slug); row.appendChild(change); li.appendChild(row);
+    var apps = el("ul", "list"); if (!book.apps.length) apps.appendChild(el("li", "muted small", t("mcpNoApps")));
+    book.apps.forEach(function (app) {
+      var item = el("li"); var who = el("span", "", app.name + " "); app.scopes.forEach(function (scope) { who.appendChild(chip(scope)); });
+      who.appendChild(el("span", "muted small", " " + t("mcpAppFrom", { host: app.redirectHost }) + " · " + t("mcpLastUsed", { when: when(app.lastUsedAt) }))); item.appendChild(who);
+      var revoke = el("button", "ghost small danger", t("revoke")); revoke.type = "button";
+      revoke.addEventListener("click", function () { call("POST", "/admin/api/mcp/revoke", { id: app.id }).then(function () { toast(t("mcpRevoked")); loadMcp(); }, fail); });
+      item.appendChild(revoke); apps.appendChild(item);
+    });
+    li.appendChild(apps);
+    return li;
+  }
+  function renderPasskeys() {
+    var list = $("passkey-rows"); list.textContent = "";
+    if (!mcp.passkeys.length) list.appendChild(el("li", "muted", t("passkeyNone")));
+    mcp.passkeys.forEach(function (key) {
+      var li = el("li"); var info = el("span"); info.appendChild(el("strong", "", key.label));
+      info.appendChild(el("span", "muted small", " " + [key.rpId, t("created") + " " + when(key.createdAt), key.lastUsedAt ? t("passkeyUsed", { when: when(key.lastUsedAt) }) : "", key.usable ? "" : t("passkeyOtherHost")].filter(Boolean).join(" · "))); li.appendChild(info);
+      var actions = el("span", "row"); var name = document.createElement("input"); name.value = key.label; name.setAttribute("maxlength", "40"); name.setAttribute("aria-label", t("passkeyName"));
+      var rename = el("button", "ghost small", t("passkeyRename")); rename.type = "button";
+      rename.addEventListener("click", function () { call("POST", "/admin/api/passkeys/rename", { id: key.id, label: name.value }).then(function () { toast(t("saved")); loadMcp(); }, fail); });
+      var remove = el("button", "ghost small danger", t("remove")); remove.type = "button";
+      remove.addEventListener("click", function () {
+        var last = mcp.passkeys.length === 1;
+        if (last && !confirm(t("passkeyLastConfirm"))) return;
+        call("POST", "/admin/api/passkeys/remove", last ? { id: key.id, confirmLast: true } : { id: key.id }).then(function () { toast(t("saved")); loadMcp(); }, fail);
+      });
+      actions.appendChild(name); actions.appendChild(rename); actions.appendChild(remove); li.appendChild(actions); list.appendChild(li);
+    });
+  }
+  function renderAudit() {
+    var body = $("audit-rows"); body.textContent = "";
+    if (!audit.rows.length) { var empty = el("tr"); var cell = el("td", "muted", t("auditNone")); cell.setAttribute("colspan", "5"); empty.appendChild(cell); body.appendChild(empty); }
+    audit.rows.forEach(function (entry) {
+      var tr = el("tr"); tr.appendChild(el("td", "", when(entry.at))); tr.appendChild(el("td", "", entry.client)); tr.appendChild(el("td", "", entry.bookId)); tr.appendChild(el("td", "", entry.tool));
+      tr.appendChild(el("td", "", entry.ok ? t("auditOk") : t("auditFailed", { code: entry.code || "?" }))); body.appendChild(tr);
+    });
+    if (audit.next === null) $("audit-more").classList.add("hidden"); else $("audit-more").classList.remove("hidden");
+  }
   function pick(group, key, values) {
     var table = t(group); var text = (table && table[key]) || "";
     if (values) Object.keys(values).forEach(function (name) { text = text.split("{" + name + "}").join(String(values[name])); });
@@ -448,6 +568,11 @@ export const ADMIN_JS = String.raw`"use strict";
     $("logout").addEventListener("click", function () { call("POST", "/admin/api/logout", {}).catch(function () {}).then(function () { signOut(""); }); });
     $("updates-check").addEventListener("click", function () { loadUpdates(); });
     $("pairing-start").addEventListener("click", function () { call("POST", "/admin/api/pairing", {}).then(function (result) { pairCode = result; refresh(); }, fail); });
+    $("passkey-link").addEventListener("click", function () {
+      call("POST", "/admin/api/passkeys/link", {}).then(function (result) { $("passkey-link-value").textContent = result.url; $("passkey-link-box").classList.remove("hidden"); }, fail);
+    });
+    $("passkey-link-copy").addEventListener("click", function () { navigator.clipboard.writeText($("passkey-link-value").textContent).then(function () { toast(t("copied")); }, fail); });
+    $("audit-more").addEventListener("click", function () { loadAudit(true); });
     $("token-form").addEventListener("submit", function (event) {
       event.preventDefault();
       var scopes = ["read", "write", "run"]; if ($("token-update").checked) scopes.push("update");

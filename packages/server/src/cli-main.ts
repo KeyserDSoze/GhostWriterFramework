@@ -218,7 +218,7 @@ export async function prepareRuntime(installer: RuntimeInstaller, version: strin
     const active = await installer.activeRuntime().catch(() => undefined);
     if (!active || compareSemver(version, active.version) > 0) {
       say(active ? `Installing the verified runtime ${version} (was ${active.version})…` : `Preparing the verified runtime ${version} in ${installer.dataRoot}…`);
-      await installer.installVersion(version, { bootstrapRegistryRelease: true });
+      await installer.installVersion(version, { bootstrapRegistryRelease: true, log: say });
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -290,7 +290,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), envi
     if (parsed.command === "setup") {
       assertSupportedNode();
       const config = await loadServerConfig(dataRoot, { label: parsed.label, apiPort: parsed.apiPort, adminPort: parsed.adminPort });
-      const active = await installer.installVersion(SERVER_VERSION, { bootstrapRegistryRelease: true }).catch((error) => {
+      const active = await installer.installVersion(SERVER_VERSION, { bootstrapRegistryRelease: true, log: say }).catch((error) => {
         throw olderCli(error, "setup");
       });
       say(`Narrarium personal server ${active.version} installed in ${dataRoot}.`);
@@ -364,7 +364,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), envi
     if (parsed.command === "update") {
       assertSupportedNode();
       const previous = await installer.activeRuntime().catch(() => undefined);
-      const active = await installer.installVersion(parsed.requestedVersion ?? "latest");
+      const active = await installer.installVersion(parsed.requestedVersion ?? "latest", { log: say });
       say(`Runtime ${previous?.version ?? "(none)"} → ${active.version}. A running server keeps its version until it restarts; under the supervisor, update from Narrarium or the admin panel instead.`);
       return 0;
     }

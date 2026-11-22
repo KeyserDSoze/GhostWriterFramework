@@ -4,7 +4,20 @@ import * as fs from "node:fs/promises";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
-import { NPM_SERVER_PACKAGE, compareSemver, inspectNpmRelease, integrityHex, isExactSemver, verifyNpmReleaseProvenance, type NpmReleaseMetadata } from "./npm-release.js";
+import {
+  NPM_SERVER_PACKAGE,
+  NpmRegistryKeyring,
+  ReleaseVerificationError,
+  compareSemver,
+  fetchNpmAttestations,
+  hasNpmPublishAttestation,
+  inspectNpmRelease,
+  integrityHex,
+  isExactSemver,
+  verifyNpmProvenance,
+  verifyNpmRegistrySignatures,
+  type NpmReleaseMetadata,
+} from "./npm-release.js";
 
 export const PACKAGE_NAME = NPM_SERVER_PACKAGE;
 export const MINIMUM_NODE: readonly [number, number, number] = [22, 14, 0];
@@ -91,10 +104,69 @@ export interface CommandOptions {
 
 export type CommandRunner = (command: string, args: readonly string[], options: CommandOptions) => Promise<CommandResult>;
 
+/**
+ * An npm command that ran and failed. What npm printed is kept in `result`, for whoever must tell one failure from another (`failedOnlyForMissingAttestationKeys`);
+ * the message never carries it, because the message is what clients and logs show.
+ */
+export class NpmCommandError extends Error {
+  constructor(readonly command: string, readonly result: CommandResult) {
+    super(`npm ${command} did not succeed.`);
+    this.name = "NpmCommandError";
+  }
+}
+
+const ANSI_ESCAPE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+const NPM_ERROR_LINE = /^npm (?:error|ERR!)(?: (.*))?$/;
+const NPM_NOTE_LINE = /^npm (?:warn|WARN|notice)(?: |$)/;
+
+/**
+ * Whether `npm audit signatures` failed for exactly one reason: it found no public key for the attestations of the package, `EMISSINGSIGNATUREKEY`, "<name>@<version> has
+ * attestations but no corresponding public key(s) can be found". That is what an npm that expects every attested package to have an npm publish attestation (a keyed
+ * one) says of a package whose only attestation is the keyless SLSA provenance; a newer npm accepts such a package. It is the failure of the npm, not of the release.
+ *
+ * The output (both streams, without colours, in the words of npm 7 and later) must be that code once, that message once, for exactly this package and version, and nothing
+ * else but `npm warn` and `npm notice` lines, the line that says where the log is, and blank lines. Any other line, any other code, a message that goes on, the same
+ * thing twice, a failure that printed nothing, or anything that is not a failed `CommandResult`: no. The message of the same code about a *registry signature* ("has a
+ * registry signature with keyid … but no corresponding public key") is another failure, and is never this one.
+ */
+export function failedOnlyForMissingAttestationKeys(result: unknown, name: string, version: string): boolean {
+  const output = result as Partial<CommandResult> | null | undefined;
+  if (typeof output !== "object" || output === null || typeof output.code !== "number" || output.code === 0) return false;
+  const text = [output.stdout, output.stderr].filter((part): part is string => typeof part === "string").join("\n");
+  const expected = `${name}@${version} has attestations but no corresponding public key(s) can be found`;
+  let codes = 0;
+  let messages = 0;
+  for (const raw of text.replace(ANSI_ESCAPE, "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === "" || NPM_NOTE_LINE.test(line)) continue;
+    const error = NPM_ERROR_LINE.exec(line);
+    if (!error) return false;
+    const body = (error[1] ?? "").trim();
+    if (body === "") continue;
+    if (body === "code EMISSINGSIGNATUREKEY") codes += 1;
+    else if (body === expected) messages += 1;
+    else if (!body.startsWith("A complete log of this run can be found in:")) return false;
+  }
+  return codes === 1 && messages === 1;
+}
+
 export interface InstallOptions {
   /** Accept the hand-published bootstrap version, which has a registry signature but no provenance. */
   bootstrapRegistryRelease?: boolean;
+  /** Where a warning goes: a release accepted although `npm audit signatures` could not finish (see `failedOnlyForMissingAttestationKeys`). One line each; never required. */
+  log?: (line: string) => void;
 }
+
+/** A log that is closed or broken never undoes an install that was accepted. */
+function tell(log: ((line: string) => void) | undefined, line: string): void {
+  try {
+    log?.(line);
+  } catch {
+    // Nothing else to tell it to.
+  }
+}
+
+const auditToleratedWarning = (version: string): string => `Warning: npm audit signatures could not finish for ${PACKAGE_NAME}@${version}: this npm refuses a release that has an SLSA provenance but no npm publish attestation (a newer npm accepts it). The release was accepted because the server verified its npm registry signature and its SLSA provenance itself.`;
 
 export interface RuntimeInstallerOptions {
   dataRoot: string;
@@ -403,7 +475,7 @@ export class RuntimeInstaller {
         "--no-update-notifier",
       ];
       const result = await this.runner(this.npm, [...this.npmPrefix, ...args, ...flags, "--registry=https://registry.npmjs.org"], { cwd: sandbox.work, env: npmChildEnvironment(this.environment, sandbox.home), timeoutMs: 10 * 60_000 });
-      if (result.code !== 0) throw new Error(`npm ${args[0]} did not succeed.`);
+      if (result.code !== 0) throw new NpmCommandError(String(args[0]), result);
       return result;
     } finally {
       await fs.rm(sandbox.run, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => undefined);
@@ -505,6 +577,13 @@ export class RuntimeInstaller {
     return entry.integrity as string;
   }
 
+  /** The attestations npm serves for the release, read and checked against `integrity`; says whether npm's own publish attestation is among them. */
+  private async verifiedAttestations(version: string, integrity: string): Promise<{ publishAttestation: boolean }> {
+    const document = await fetchNpmAttestations(version, this.fetchImpl);
+    verifyNpmProvenance(document, { version, integrity });
+    return { publishAttestation: hasNpmPublishAttestation(document) };
+  }
+
   async installVersion(requested: string | "latest" = "latest", options: InstallOptions = {}): Promise<ActiveRuntime> {
     assertSupportedNode();
     await ensureDataRoot(this.dataRoot);
@@ -512,8 +591,13 @@ export class RuntimeInstaller {
     assertExactSemver(version);
     await this.assertNotRollback(version);
     const release = await this.assertTrustedRelease(version, options.bootstrapRegistryRelease === true);
+    // The registry's keys (and, only for a key that has expired, its dates) are read once for the whole run.
+    const keyring = new NpmRegistryKeyring(this.fetchImpl);
+    const registrySignature = (integrity: string) => verifyNpmRegistrySignatures(version, integrity, this.fetchImpl, { keyring, now: this.now });
     // Who signed it is read from the attestation (not from the metadata) before anything is downloaded ...
-    if (release.attested) await verifyNpmReleaseProvenance(version, release.integrity, this.fetchImpl);
+    const identityBefore = release.attested ? await this.verifiedAttestations(version, release.integrity) : undefined;
+    // ... and so is the registry's own signature of the tarball that was announced: the server checks it itself, the same way whatever npm this machine has.
+    await registrySignature(release.integrity);
     await fs.mkdir(path.join(this.runtimeRoot, "versions"), { recursive: true, mode: 0o700 });
     const staging = path.join(this.runtimeRoot, `staging-${this.uuid()}`);
     const destination = path.join(this.runtimeRoot, "versions", version);
@@ -523,9 +607,23 @@ export class RuntimeInstaller {
       // What was installed is what was judged: the metadata and the installation are two reads of the registry.
       const installed = await this.stagedIntegrity(staging, version);
       if (integrityHex(installed) !== integrityHex(release.integrity)) throw new Error("The package npm installed is not the one it announced: its integrity differs from the one reported before the download. Nothing was installed.");
-      await this.runNpm(["audit", "signatures", "--prefix", staging]);
-      // ... and again, against what was really installed, now that npm has verified that the bundle is validly signed and about it.
-      if (release.attested) await verifyNpmReleaseProvenance(version, installed, this.fetchImpl);
+      // npm still audits what it installed. One failure of it is not a verdict on the release: an npm that expects a keyed npm publish attestation from every attested
+      // package refuses one that has only the keyless SLSA provenance (narrarium-server@0.1.8 was published like that). It is accepted only for such a release, when
+      // npm printed nothing else, and as long as the server's own checks all pass: the provenance and the registry signature before the download and again below.
+      let auditTolerated = false;
+      try {
+        await this.runNpm(["audit", "signatures", "--prefix", staging]);
+      } catch (error) {
+        const keyless = identityBefore !== undefined && !identityBefore.publishAttestation;
+        if (!(keyless && error instanceof NpmCommandError && failedOnlyForMissingAttestationKeys(error.result, PACKAGE_NAME, version))) throw error;
+        auditTolerated = true;
+      }
+      // ... and again, against what was really installed, now that npm has verified that the bundle is validly signed and about it (or has not been able to).
+      const identityAfter = release.attested ? await this.verifiedAttestations(version, installed) : undefined;
+      if (auditTolerated && identityAfter?.publishAttestation) {
+        throw new ReleaseVerificationError(version, "the registry now serves an npm publish attestation that it did not serve before npm audit signatures failed: its answers differ between reads, so the release is not trusted");
+      }
+      await registrySignature(installed);
       const stagedPackage = path.join(staging, "node_modules", PACKAGE_NAME);
       await this.validateInstalledPackage(stagedPackage, version);
       if (await regularFile(path.join(destination, "package.json"))) {
@@ -537,6 +635,7 @@ export class RuntimeInstaller {
       await this.activate(version);
       const active = await this.activeRuntime();
       if (!active) throw new Error("The activated runtime cannot be read.");
+      if (auditTolerated) tell(options.log, auditToleratedWarning(version));
       return active;
     } finally {
       await fs.rm(staging, { recursive: true, force: true });
@@ -773,7 +872,7 @@ export async function superviseServer(options: SupervisorOptions): Promise<Child
     while (updateRestarts[0] !== undefined && updateRestarts[0] < cutoff) updateRestarts.shift();
   };
   try {
-    if (!await installer.activeRuntime()) await installer.installVersion(options.currentVersion, { bootstrapRegistryRelease: true });
+    if (!await installer.activeRuntime()) await installer.installVersion(options.currentVersion, { bootstrapRegistryRelease: true, log });
     for (;;) {
       const active = await installer.activeRuntime();
       if (!active) throw new Error("No active runtime is available.");
@@ -831,7 +930,7 @@ export async function superviseServer(options: SupervisorOptions): Promise<Child
       }
       let installed: ActiveRuntime | undefined;
       try {
-        installed = await installer.installVersion(updateRequest.version);
+        installed = await installer.installVersion(updateRequest.version, { log });
       } catch (error) {
         log(`Update to ${updateRequest.version} failed: ${error instanceof Error ? error.message : String(error)}`);
         await writeUpdateFailure(installer, updateRequest, active.version, "failed").catch(() => undefined);

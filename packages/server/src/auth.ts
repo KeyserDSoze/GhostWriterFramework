@@ -286,14 +286,20 @@ export class Auth {
   /**
    * Check the admin code. Every source has its own budget of wrong codes: an anonymous caller can only spend its own, a
    * correct code clears the source's count, and a source over its budget is refused (429) even with the right code, so
-   * the budget cannot be used to guess. Nothing is written to disk.
+   * the budget cannot be used to guess. Nothing is written to disk. The admin panel's sign-in and the consent page of the
+   * OAuth server both ask here, so the two share one count.
    */
-  async login(code: string, source: string = LOCAL_SOURCE): Promise<{ cookie: string; csrf: string }> {
+  async verifyAdminCode(code: string, source: string = LOCAL_SOURCE): Promise<void> {
     // The attempt is counted before the code is looked at, so parallel guesses cannot all slip through the check.
     const verdict = this.logins.hit(source);
     if (!verdict.allowed) throw tooManyAttempts(verdict.retryAfterMs);
     if (!sameHash(this.state.adminHash, hash(code))) throw new HttpError(401, "admin_login", "Wrong admin code.");
     this.logins.reset(source);
+  }
+
+  /** Sign in to the admin panel with the admin code: a session, with the token that its changes must carry. */
+  async login(code: string, source: string = LOCAL_SOURCE): Promise<{ cookie: string; csrf: string }> {
+    await this.verifyAdminCode(code, source);
     const cookie = secret();
     const csrf = secret();
     this.makeRoomForSession(source);
