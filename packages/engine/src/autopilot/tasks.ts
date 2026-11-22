@@ -18,6 +18,7 @@ import {
   AUTOPILOT_PLAN_FILE,
   BOOK_FILE,
   CONTEXT_FILE,
+  OUTLINE_BOOK_FILE,
   PLOT_FILE,
   STORY_DESIGN_FILE,
   TOTAL_RESUME_FILE,
@@ -28,6 +29,8 @@ import {
   chapterSlug,
   directorOpinionPath,
   formatOrdinal,
+  isValidGhostwriterSlug,
+  outlineChapterPath,
   paragraphFilePath,
   paragraphId,
   paragraphSlug,
@@ -35,11 +38,14 @@ import {
   readerSummaryPath,
   type CanonKind,
 } from "../book/paths.js";
+import { chapterFreezeRecord, freezeChapterChanges, frozenChanges, markReviewedChanges, type ChapterFreeze } from "../book/freeze.js";
 import type { BookSnapshot, ChapterInfo } from "../book/snapshot.js";
 import type { BookFileChange, BookStore } from "../book/store.js";
+import { OUTLINE_TITLE_MAX_CHARS, OutlineReader, outlineBookDigest, outlineEntryDigest, serializeOutlineBook, serializeOutlineChapter, type OutlineChapterEntry } from "../book/outline.js";
 import { askDirector, directorSystemPrompt, parseDirectorVerdict, renderDirectorOpinion, withheldApprovalNote, type DirectorOpinion } from "../director/opinion.js";
 import { assertFrontmatterReadable, frontmatterString, parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
 import { directorPrompt, type DirectorProfile } from "../profiles/director.js";
+import { evaluationStyleBlock, evaluationStyleInstruction, type EvaluationStyle } from "../profiles/evaluation-style.js";
 import type { GhostwriterProfile } from "../profiles/ghostwriter.js";
 import { readerPersonaSystemPrompt, type ReaderPersonaProfile } from "../profiles/readers.js";
 import { currentRequest, unescapePromptData, untrustedData } from "../prompt/trust.js";
@@ -53,9 +59,10 @@ import {
 } from "../readers/evaluation.js";
 import { sha256Hex } from "../util/hash.js";
 import { asArray, asInteger, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
-import { bulletList, countWords, isItalian, languageName, OUTPUT_TOKENS_CEILING, sceneCharacterLimit, scaleOutputTokens, tokensPerWord, truncate } from "../util/text.js";
+import { bulletList, clipText, countWords, isItalian, languageName, OUTPUT_TOKENS_CEILING, sceneCharacterLimit, scaleOutputTokens, tokensPerWord, truncate } from "../util/text.js";
 import { chapterLines, layoutChapters, listSection, outlineList, type ChapterFormat } from "./outline.js";
-import { batchesNamed, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, sceneFile, type TaskDescriptor } from "./planner.js";
+import { legacyChapters, queuedMarkReviewed, startedReview } from "./frozen.js";
+import { batchesNamed, effectiveTargetChapters, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, sceneFile, type TaskDescriptor } from "./planner.js";
 import {
   CHAPTER_REVIEW_TOOL,
   CHAPTER_SUMMARY_TOOL,
@@ -73,11 +80,18 @@ import {
   specialistsSystemPrompt,
   writerSystemPrompt,
 } from "./prompts.js";
-import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES, closedRound, normalizeFinalReview, recordChapterRound } from "./state.js";
+import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES, CONCEPT_LOGLINE_CHARACTERS, closedRound, normalizeFinalReview, recordChapterRound } from "./state.js";
 import { STORY_SO_FAR_MAX_WORDS, STORY_SO_FAR_TARGET_WORDS, pruneStorySnapshots, readStorySoFar, renderTotalResumeBody, storySoFarExcess } from "./story-so-far.js";
-import type { AuthorIntervention, AutopilotPlan, AutopilotState, InsightTone, PlannedChapter, PlannedScene, ReviewDecision, ReviewFinding, RevisionRequest } from "./types.js";
+import type { AuthorIntervention, AutopilotMessageCode, AutopilotPlan, AutopilotState, FrozenChapterView, InsightTone, PlannedChapter, PlannedScene, ReviewDecision, ReviewFinding, RevisionRequest } from "./types.js";
 
 export type TaskAi = (request: Omit<AiRequest, "signal">) => Promise<AiResponse>;
+
+/** What an insight says besides its words: a code a client can say in its own language, and what it is about. */
+export interface InsightExtra {
+  code?: AutopilotMessageCode;
+  chapterNumber?: number;
+  ghostwriter?: string;
+}
 
 export interface TaskContext {
   bookId: string;
@@ -96,7 +110,11 @@ export interface TaskContext {
   /** This is the repeat of a step whose reply was rejected: the request carries the reason. */
   rejectedBefore?: boolean;
   ai: TaskAi;
-  insight: (tone: InsightTone, title: string, detail?: string) => void;
+  insight: (tone: InsightTone, title: string, detail?: string, extra?: InsightExtra) => void;
+  /** The book's evaluation style (`evaluation-guidelines.md`): the steps that judge use it. Absent or `null`: the book has none. */
+  evaluationStyle?: EvaluationStyle | null;
+  /** The book's outline, read through the run's cache. Absent: it is read from the snapshot. */
+  outline?: OutlineReader;
 }
 
 export interface TaskResult {
@@ -207,6 +225,157 @@ function ghostwriterOf(ctx: TaskContext, chapter: ChapterInfo): Promise<Ghostwri
   });
 }
 
+// ─── The outline (Scaletta) and the evaluation style ───────────────────────
+
+const outlineReaders = new WeakMap<TaskContext, OutlineReader>();
+
+/** The outline of the book: the run's reader (with its cache), or one over the snapshot for a step that runs on its own. */
+function outlineOf(ctx: TaskContext): OutlineReader {
+  if (ctx.outline) return ctx.outline;
+  let reader = outlineReaders.get(ctx);
+  if (!reader) {
+    reader = OutlineReader.of(ctx.store, ctx.snapshot);
+    outlineReaders.set(ctx, reader);
+  }
+  return reader;
+}
+
+/** What binds the autopilot in the outline: every entry but the autopilot's own untouched ones, and the description the author wrote. */
+interface AuthorOutline {
+  /** The working title and the description of the book, when the author wrote them. */
+  book?: string;
+  entries: Map<number, OutlineChapterEntry>;
+  /** Something binds: only then a prompt carries the outline, so a book without one is asked what it always was. */
+  any: boolean;
+  /** The last chapter an entry of the author asks for (0 when none). */
+  lastChapter: number;
+}
+
+/** Characters of the description of the book, of the entries of the chapters a step plans (shared among them), and of the list of the others. */
+const OUTLINE_BOOK_CHARS = 3000;
+const OUTLINE_BATCH_CHARS = 24_000;
+const OUTLINE_CONTEXT_CHARS = 12_000;
+const OUTLINE_ENTRY_MIN_CHARS = 400;
+
+async function authorOutline(ctx: TaskContext): Promise<AuthorOutline> {
+  const outline = outlineOf(ctx);
+  if (outline.empty) return { entries: new Map(), any: false, lastChapter: 0 };
+  const [book, chapters] = await Promise.all([outline.book(), outline.chapters()]);
+  const entries = new Map(chapters.filter((entry) => !entry.intact).map((entry) => [entry.number, entry]));
+  const description = book && !book.intact && (book.body || book.title)
+    ? truncate([book.title ? `Working title: ${book.title}` : "", book.body].filter(Boolean).join("\n"), OUTLINE_BOOK_CHARS)
+    : undefined;
+  const lastChapter = [...entries.keys()].reduce((highest, number) => Math.max(highest, number), 0);
+  return { ...(description ? { book: description } : {}), entries, any: Boolean(description) || entries.size > 0, lastChapter };
+}
+
+function entryHeading(entry: OutlineChapterEntry): string {
+  return `Chapter ${entry.number} ${entry.title ? `«${entry.title}»` : "(no title yet: give it one)"}`;
+}
+
+const OUTLINE_ENTRIES: ChapterFormat<OutlineChapterEntry> = {
+  render(entry, detail) {
+    const head = `${entry.number}. ${entry.title || "(no title yet)"}`;
+    if (detail === "title" || !entry.body) return head;
+    return `${head} — ${truncate(entry.body.replace(/\s+/g, " "), detail === "full" ? 600 : 200)}`;
+  },
+  collapse(entries, titles) {
+    const range = `Chapters ${entries[0].number}-${entries[entries.length - 1].number}`;
+    return titles ? `${range}: ${entries.map((entry) => entry.title || "(no title yet)").join("; ")}` : `${range} (entries of the outline)`;
+  },
+};
+
+function outlineBookSection(view: AuthorOutline): string {
+  return view.book ? `AUTHOR'S OUTLINE, THE BOOK (binding):\n${view.book}` : "";
+}
+
+/** The entries of the chapters `from` to `to`, whole as far as their share of the budget allows. */
+function outlineBatchSection(view: AuthorOutline, from: number, to: number): string {
+  const entries = [...view.entries.values()].filter((entry) => entry.number >= from && entry.number <= to).sort((left, right) => left.number - right.number);
+  if (!entries.length) return "";
+  const share = Math.max(OUTLINE_ENTRY_MIN_CHARS, Math.floor(OUTLINE_BATCH_CHARS / entries.length));
+  const label = from === to ? `CHAPTER ${from}` : `CHAPTERS ${from}-${to}`;
+  return `AUTHOR'S OUTLINE, ${label} (binding):\n${entries.map((entry) => `${entryHeading(entry)}:\n${truncate(entry.body, share) || "(no text)"}`).join("\n\n")}`;
+}
+
+/** Other entries of the outline, condensed around `around` like every list of chapters. */
+function outlineListSection(entries: OutlineChapterEntry[], around: number | undefined, label: string): string {
+  return entries.length ? listSection(label, layoutChapters(entries, OUTLINE_ENTRIES, { around, maxChars: OUTLINE_CONTEXT_CHARS })) : "";
+}
+
+const OUTLINE_RULE = "Follow the author's outline (AUTHOR'S OUTLINE, in the data): the same chapters, in the same order, with the same hypothetical titles (refine a title only where the entry has none) and the same events. Enrich it, never change it.";
+const OUTLINE_AND_SYNOPSIS = "The chapter-by-chapter synopsis of the brief still applies where the outline says nothing; where they differ, the outline wins.";
+
+/** The ghostwriter an entry names, when the book has it. One it does not have is said (with its code), and the book's writes the chapter. */
+function outlineGhostwriter(ctx: TaskContext, entry: OutlineChapterEntry | undefined): string | undefined {
+  const slug = entry?.ghostwriter;
+  if (!entry || !slug) return undefined;
+  if (isValidGhostwriterSlug(slug) && ctx.snapshot.ghostwriterSlugs.includes(slug)) return slug;
+  const italian = isItalian(ctx.language);
+  ctx.insight(
+    "warning",
+    italian ? `La Scaletta del capitolo ${entry.number} indica il ghostwriter «${slug}», che non esiste: lo scrive quello del libro` : `The outline of chapter ${entry.number} names the ghostwriter «${slug}», which does not exist: the book's ghostwriter writes it`,
+    italian ? `Crea ghostwriters/${slug}.md, oppure correggi la voce della Scaletta.` : `Create ghostwriters/${slug}.md, or correct the entry of the outline.`,
+    { code: "outlineGhostwriter", chapterNumber: entry.number, ghostwriter: slug },
+  );
+  return undefined;
+}
+
+/** What the autopilot writes in the outline for a chapter: its title, then its summary and its key events as a list. */
+function outlineContentOf(chapter: PlannedChapter): { title: string; body: string; ghostwriter?: string } {
+  const body = [chapter.summary.trim(), chapter.keyEvents.length ? bulletList(chapter.keyEvents) : ""].filter(Boolean).join("\n\n");
+  return { title: chapter.title, body, ...(chapter.ghostwriter ? { ghostwriter: chapter.ghostwriter } : {}) };
+}
+
+/**
+ * The outline after a plan: a planned chapter without an entry gets one, as the autopilot's (`origin: autopilot`, with the `digest`
+ * of what it wrote); a chapter the author wrote gets one only when it has none, with its summary; an entry of the autopilot that
+ * nobody touched follows the new plan of its chapter; an entry of the author is never touched. Every chapter remembers the digest
+ * of its entry as it is after this step, so that a later change of the author is recognized. With `fillOutline` off nothing is
+ * written. `outline/book.md` is written once, when it is missing, with the logline of the concept.
+ */
+async function fillOutline(ctx: TaskContext, planned: PlannedChapter[], imported: PlannedChapter[]): Promise<BookFileChange[]> {
+  const fill = ctx.state.options.fillOutline !== false;
+  const outline = outlineOf(ctx);
+  const entries = new Map((await outline.chapters()).map((entry) => [entry.number, entry]));
+  const changes: BookFileChange[] = [];
+  const write = async (chapter: PlannedChapter, existing?: OutlineChapterEntry) => {
+    const content = outlineContentOf(chapter);
+    const digest = await outlineEntryDigest(content);
+    if (!existing || digest !== existing.contentDigest) {
+      changes.push({
+        path: existing?.path ?? outlineChapterPath(chapter.number),
+        content: serializeOutlineChapter({ number: chapter.number, ...content, origin: "autopilot", digest, frontmatter: existing?.frontmatter }),
+        expectedHash: existing ? existing.hash : null,
+      });
+    }
+    chapter.outlineDigest = digest;
+  };
+  for (const chapter of imported) {
+    const entry = entries.get(chapter.number);
+    if (entry) chapter.outlineDigest = entry.contentDigest;
+    else if (fill && chapter.summary.trim()) await write(chapter);
+    else delete chapter.outlineDigest;
+  }
+  for (const chapter of planned) {
+    const entry = entries.get(chapter.number);
+    if (entry && !(entry.intact && fill)) chapter.outlineDigest = entry.contentDigest;
+    else if (fill) await write(chapter, entry ?? undefined);
+    else delete chapter.outlineDigest;
+  }
+  if (fill && !outline.index.book) {
+    const body = clipText(ctx.state.concept.logline || ctx.state.brief.idea, CONCEPT_LOGLINE_CHARACTERS).trim();
+    if (body) changes.push({ path: OUTLINE_BOOK_FILE, content: serializeOutlineBook({ body, origin: "autopilot", digest: await outlineBookDigest({ body }) }), expectedHash: null });
+  }
+  return changes;
+}
+
+/** The style a step that judges is given, among the data, and the instruction to judge with it; nothing without a style. */
+function evaluationStyleOf(ctx: TaskContext, kind: Parameters<typeof evaluationStyleInstruction>[0]): { block: string; rule: string } {
+  const block = evaluationStyleBlock(ctx.evaluationStyle, { criteria: kind !== "plan" });
+  return block ? { block, rule: evaluationStyleInstruction(kind) } : { block: "", rule: "" };
+}
+
 const MAX_NOTE_CHARACTERS = 400;
 
 /** Same note despite case, punctuation, quotes or spacing. */
@@ -261,7 +430,7 @@ function sceneOf(chapter: PlannedChapter, number: number | undefined): PlannedSc
 
 function chapterFiles(ctx: TaskContext, chapter: PlannedChapter): ChapterInfo {
   return ctx.snapshot.chapters.find((entry) => entry.slug === chapter.slug)
-    ?? { slug: chapter.slug, number: chapter.number, title: chapter.title, pov: chapter.pov, path: chapterFilePath(chapter.slug), paragraphs: [] };
+    ?? { slug: chapter.slug, number: chapter.number, title: chapter.title, pov: chapter.pov, path: chapterFilePath(chapter.slug), paragraphs: [], ...(chapter.ghostwriter ? { ghostwriter: chapter.ghostwriter } : {}) };
 }
 
 /** A line that only labels the scene, in Latin script ("Scene 3:", "Scena 3."): the writer is asked for prose and nothing else. */
@@ -317,16 +486,23 @@ async function assertRewritable(ctx: Pick<TaskContext, "store" | "language">, pa
   }
 }
 
-function chapterDocument(chapter: PlannedChapter): string {
+/** The ghostwriter that writes a chapter that names none: the book's, else the default profile, else the first. */
+function bookGhostwriter(snapshot: BookSnapshot): string | undefined {
+  return snapshot.book.ghostwriter ?? (snapshot.ghostwriterSlugs.includes("default") ? "default" : snapshot.ghostwriterSlugs[0]);
+}
+
+/** The `chapter.md` of a chapter the plan creates, with the chapter's own ghostwriter when it is not the book's. */
+function chapterDocument(chapter: PlannedChapter, snapshot?: BookSnapshot): string {
+  const ghostwriter = chapter.ghostwriter && (!snapshot || chapter.ghostwriter !== bookGhostwriter(snapshot)) ? chapter.ghostwriter : undefined;
   return renderMarkdown(
-    { type: "chapter", id: `chapter:${chapter.slug}`, number: chapter.number, title: chapter.title, summary: chapter.summary, pov: chapter.pov, canon: "draft" },
+    { type: "chapter", id: `chapter:${chapter.slug}`, number: chapter.number, title: chapter.title, summary: chapter.summary, pov: chapter.pov, ...(ghostwriter ? { ghostwriter } : {}), canon: "draft" },
     `# ${chapter.title}\n\n${chapter.goal || chapter.summary || ""}`,
   );
 }
 
 function ensureChapterFile(ctx: TaskContext, chapter: PlannedChapter): BookFileChange | null {
   const path = chapterFilePath(chapter.slug);
-  return ctx.snapshot.files.has(path) ? null : { path, content: chapterDocument(chapter), expectedHash: null };
+  return ctx.snapshot.files.has(path) ? null : { path, content: chapterDocument(chapter, ctx.snapshot), expectedHash: null };
 }
 
 /** Human-readable mirror of the plan, refreshed whenever the plan changes. */
@@ -416,10 +592,11 @@ function compact(changes: Array<BookFileChange | null>): BookFileChange[] {
 // ─── Concept ────────────────────────────────────────────────────────────────
 
 async function runConcept(ctx: TaskContext): Promise<TaskResult> {
-  const [bookBody, design, context] = await Promise.all([
+  const [bookBody, design, context, view] = await Promise.all([
     readBody(ctx.store, BOOK_FILE, 2500),
     readDocument(ctx.store, STORY_DESIGN_FILE),
     readDocument(ctx.store, CONTEXT_FILE),
+    authorOutline(ctx),
   ]);
   // Both files are rewritten from what the model says: one whose frontmatter cannot be read is refused before the call.
   if (design) assertFrontmatterReadable(STORY_DESIGN_FILE, design.document, ctx.language);
@@ -429,14 +606,17 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
     label: "autopilot:concept",
     system: architectSystemPrompt(ctx.language),
     user: `${request([
-      `Design the foundation of this novel from the author's brief, for about ${ctx.state.brief.targetChapters} chapters.`,
+      `Design the foundation of this novel from the author's brief, for about ${effectiveTargetChapters(ctx.state, view)} chapters.`,
       "Create 3 to 8 characters with clear desires, fears and arcs, the key locations, factions only when useful, and 1 to 5 secrets that drive the plot, each with the chapter where the reader learns it.",
       ctx.state.brief.synopsis ? "The author's chapter-by-chapter synopsis is binding: the concept must make it possible exactly as written." : "",
+      view.any ? "The author's outline (AUTHOR'S OUTLINE, in the data) is binding too, and wins over the synopsis: the concept must make it possible exactly as written." : "",
       "Reuse the existing canon names instead of duplicating them.",
       authorRules(ctx),
     ])}\n\n${data([
       bookHeader(ctx),
       briefBlock(ctx),
+      outlineBookSection(view),
+      outlineListSection([...view.entries.values()], undefined, "AUTHOR'S OUTLINE, CHAPTER BY CHAPTER (binding)"),
       bookBody ? `BOOK DESCRIPTION:\n${bookBody}` : "",
       design?.document.body ? `CURRENT STORY DESIGN:\n${truncate(design.document.body, 4000)}` : "",
       context?.document.body ? `CURRENT WORLD CONTEXT:\n${truncate(context.document.body, 3000)}` : "",
@@ -524,7 +704,9 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
     const revealChapter = asInteger(secret.revealChapter, 0, 0, MAX_BOOK_CHAPTERS);
     secrets.push({ slug, title, revealChapter: revealChapter || undefined });
   }
-  ctx.state.concept = { done: true, generated: true, secrets };
+  // The pitch of the book, kept for the description of the outline that the plan writes when the author has none.
+  const pitch = clipText(logline || asString(output.premise), CONCEPT_LOGLINE_CHARACTERS).trim();
+  ctx.state.concept = { done: true, generated: true, secrets, ...(pitch ? { logline: pitch } : {}) };
   if (logline) ctx.insight("ok", logline);
   const summary = italian
     ? `${counts.character} personaggi, ${counts.other} altri elementi di canone, ${secrets.length} segreti.`
@@ -579,6 +761,13 @@ async function runSummarizeImported(ctx: TaskContext): Promise<TaskResult> {
     changes.push({ path: resumePath, content: renderMarkdown({ type: "resume", id: `resume:chapter:${chapter.slug}`, title: `Resume ${chapter.slug}`, chapter: `chapter:${chapter.slug}` }, `# Chapter Summary\n\n${summary}`), expectedHash: null });
   }
   if (planned) planned.summary = summary;
+  // A chapter the author wrote, summarized after the plan was made, gets its entry of the outline when it has none.
+  if (planned && ctx.state.options.fillOutline !== false && !outlineOf(ctx).has(chapter.number)) {
+    const content = { title: chapter.title, body: summary };
+    const digest = await outlineEntryDigest(content);
+    changes.push({ path: outlineChapterPath(chapter.number), content: serializeOutlineChapter({ number: chapter.number, ...content, origin: "autopilot", digest }), expectedHash: null });
+    planned.outlineDigest = digest;
+  }
   ctx.insight("ok", isItalian(ctx.language) ? `Capitolo ${chapter.number} riassunto` : `Chapter ${chapter.number} summarized`, summary);
   return { changes: compact(changes), summary };
 }
@@ -614,7 +803,10 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
     // The history of the rounds of a chapter that was reviewed outlives the plan being made again around it (the book is being extended).
     return earlier?.rounds?.length ? { ...kept, rounds: earlier.rounds } : kept;
   });
-  const range = planRange(imported, ctx.state.brief.targetChapters);
+  // The author's outline binds the plan: its chapters, its order, its titles, its events, and as many chapters as it has.
+  const view = await authorOutline(ctx);
+  const target = effectiveTargetChapters(ctx.state, view);
+  const range = planRange(imported, target);
   const batch = nextPlanBatch(previous, range);
   if (!batch) throw new Error("There is no chapter left to plan.");
   const { start: startNumber, last: lastNumber } = range;
@@ -632,6 +824,10 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
   const changesToApply = notes.filter((note) => !isExtensionNote(note));
   const secretsPlan = ctx.state.concept.secrets.filter((secret) => secret.revealChapter).map((secret) => `- ${secret.title}: reveal in chapter ${secret.revealChapter}`).join("\n");
   const otherChapters = batched && previous ? { ...previous, chapters: previous.chapters.filter((chapter) => !chapter.imported && (chapter.number < from || chapter.number > to)) } : null;
+  // The chapters of this call that the outline says nothing about, and the entries of the chapters not planned yet beyond it.
+  const plannedNumbers = new Set((previous?.chapters ?? []).map((chapter) => chapter.number));
+  const unlisted = view.any ? Array.from({ length: batchCount }, (_, index) => from + index).filter((number) => !view.entries.has(number)) : [];
+  const ahead = [...view.entries.values()].filter((entry) => entry.number >= startNumber && (entry.number < from || entry.number > to) && !plannedNumbers.has(entry.number));
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.writer,
     label: "autopilot:plan",
@@ -640,17 +836,22 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
       revising
         ? `Revise the chapter plan (chapters ${from}-${to}) applying the director's changes:\n${bulletList(notes)}`
         : `Plan the next ${batchCount} chapters of the novel, numbered ${from} to ${to}.`,
-      batched ? `The novel will have ${ctx.state.brief.targetChapters} chapters in all and is planned in batches: this call covers only chapters ${from} to ${to}.` : "",
+      batched ? `The novel will have ${target} chapters in all and is planned in batches: this call covers only chapters ${from} to ${to}.` : "",
       batched ? (to < lastNumber ? `The story must not end before chapter ${lastNumber}: leave room for what the following chapters have to tell.` : `These are the last chapters of the book: close its arcs and end the story in chapter ${lastNumber}.`) : "",
       batched && revising ? `Apply only the changes that concern chapters ${from} to ${to} or the whole book: the other chapters are revised in their own call. Return every chapter of the range.` : "",
       batched && !revising && changesToApply.length ? `Apply the changes below that concern these chapters or the whole book:\n${bulletList(changesToApply)}` : "",
-      ctx.state.brief.synopsis ? "Follow the author's chapter-by-chapter synopsis exactly: same chapters, same order, same events. Enrich, never change." : "",
+      view.any ? OUTLINE_RULE : ctx.state.brief.synopsis ? "Follow the author's chapter-by-chapter synopsis exactly: same chapters, same order, same events. Enrich, never change." : "",
+      view.any && ctx.state.brief.synopsis ? OUTLINE_AND_SYNOPSIS : "",
+      unlisted.length && unlisted.length < batchCount ? `The outline has no entry for ${unlisted.length === 1 ? `chapter ${unlisted[0]}` : `chapters ${unlisted.join(", ")}`}: plan ${unlisted.length === 1 ? "it" : "them"} so that the story leads from the entries before to the entries after.` : "",
       imported.length ? `Chapters 1-${startNumber - 1} are already written by the author: continue from them without changing them.` : "",
       "Every chapter must change something and raise the stakes; place every secret reveal in a specific chapter; vary the shape of chapters.",
       authorRules(ctx),
     ])}\n\n${data([
       bookHeader(ctx),
       briefBlock(ctx),
+      outlineBookSection(view),
+      outlineBatchSection(view, from, to),
+      outlineListSection(ahead, from, "AUTHOR'S OUTLINE, THE CHAPTERS AFTER THESE (binding)"),
       design ? `STORY DESIGN:\n${design}` : "",
       context ? `WORLD CONTEXT:\n${context}` : "",
       `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true }) || "-"}`,
@@ -670,7 +871,10 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
   if (proposed.length < batchCount) throw new AiReplyRejectedError(`The chapter plan has ${proposed.length} chapters with a title, but ${batchCount} were requested (chapters ${from}-${to}).`);
   const planned: PlannedChapter[] = proposed.map((chapter, index) => {
     const number = from + index;
-    const title = asString(chapter.title);
+    // The hypothetical title of the author's entry is the chapter's: the model refines a title only where the entry has none.
+    const entry = view.entries.get(number);
+    const title = entry?.title ? clipText(entry.title, OUTLINE_TITLE_MAX_CHARS).trim() : asString(chapter.title);
+    const ghostwriter = outlineGhostwriter(ctx, entry);
     return {
       number,
       title,
@@ -682,6 +886,7 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
       reveals: asStringList(chapter.reveals, 8),
       status: "planned",
       scenes: [],
+      ...(ghostwriter ? { ghostwriter } : {}),
     };
   });
   // The chapters of the range that are outside this batch stay as they are; the batch replaces what it covers.
@@ -721,7 +926,10 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
     readersDone: previous?.readersDone ?? false,
     ...(previous?.skippedReaders?.length ? { skippedReaders: previous.skippedReaders } : {}),
     awaitingAuthor: false,
+    ...(previous?.removedChapters?.length ? { removedChapters: previous.removedChapters } : {}),
   };
+  // The outline is filled from the plan in the same commit: what the author did not write, the author can now correct.
+  changes.push(...await fillOutline(ctx, planned, imported));
   changes.push(await planFileChange(ctx));
   // A batch of a long plan is reported under the chapters it covers; a short book's only batch, as ever, under their number.
   const italian = isItalian(ctx.language);
@@ -813,7 +1021,8 @@ async function runPlanReview(ctx: TaskContext): Promise<TaskResult> {
     if (file && !frontmatterString(parseMarkdown(file.content).frontmatter, "reveal_in")) toRewrite.push(path);
   }
   await assertRewritable(ctx, toRewrite);
-  const design = await readBody(ctx.store, STORY_DESIGN_FILE, 5000);
+  const [design, view] = await Promise.all([readBody(ctx.store, STORY_DESIGN_FILE, 5000), authorOutline(ctx)]);
+  const style = evaluationStyleOf(ctx, "plan");
   const lastRound = plan.rounds >= 2;
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.director,
@@ -822,12 +1031,17 @@ async function runPlanReview(ctx: TaskContext): Promise<TaskResult> {
     user: `${request([
       `Review the concept and the chapter plan before any prose is written (review ${plan.rounds + 1}).`,
       "Approve when the plan delivers the brief and the vision with a satisfying shape; otherwise list precise changes chapter by chapter. Weigh the simulated readers by their weights: do not chase every opinion.",
+      view.any ? "The author's outline (AUTHOR'S OUTLINE, in the data) binds the plan: never ask to change its chapters, their order, their titles or their events; ask only for what enriches them." : "",
+      style.rule,
       lastRound ? "This is the final plan review: approve it and turn anything still imperfect into standing guidance." : "",
       ctx.director.autonomy === "full" ? "Never ask the author: decide." : "Ask the author (questionForAuthor) only for a critical choice you cannot settle from the vision and the author's rules.",
       authorRules(ctx, false),
     ])}\n\n${data([
       bookHeader(ctx),
       briefBlock(ctx),
+      outlineBookSection(view),
+      outlineListSection([...view.entries.values()], planFocus(plan), "AUTHOR'S OUTLINE (binding)"),
+      style.block,
       design ? `STORY DESIGN:\n${design}` : "",
       `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true }) || "-"}`,
       listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
@@ -862,7 +1076,7 @@ async function runPlanReview(ctx: TaskContext): Promise<TaskResult> {
     plan.rounds += 1;
     plan.revisionNotes = changesRequested;
     // Only the batches that hold the chapters the changes name are planned again; a change that names none concerns them all.
-    plan.revisionBatches = batchesNamed(planRange(importedChapters(ctx.snapshot), ctx.state.brief.targetChapters), requested.map((change) => change.chapterNumber));
+    plan.revisionBatches = batchesNamed(planRange(importedChapters(ctx.snapshot), effectiveTargetChapters(ctx.state, view)), requested.map((change) => change.chapterNumber));
     ctx.insight("warning", isItalian(ctx.language) ? `Il direttore chiede ${changesRequested.length} modifiche al piano` : `The director asks for ${changesRequested.length} plan changes`, changesRequested.slice(0, 3).join(" · "));
   } else {
     plan.approved = true;
@@ -895,6 +1109,120 @@ async function runPlanReview(ctx: TaskContext): Promise<TaskResult> {
   }
   changes.push(await planFileChange(ctx));
   return { changes: compact(changes), summary: `${approved ? "approve" : "revise"} ${score}/10 — ${summaryText}` };
+}
+
+// ─── The author changed the outline of a chapter not written yet ────────────
+
+/**
+ * The `chapter.md` of a chapter with no text yet, made or brought up to date with its new plan: title, summary, point of view and
+ * the ghostwriter of the outline. A ghostwriter written by hand in a chapter the outline never gave one is left as it is.
+ */
+async function chapterStubChange(ctx: TaskContext, chapter: PlannedChapter, before: { title: string; goal: string; summary: string; ghostwriter?: string }): Promise<BookFileChange | null> {
+  const path = chapterFilePath(chapter.slug);
+  if (!ctx.snapshot.files.has(path)) return { path, content: chapterDocument(chapter, ctx.snapshot), expectedHash: null };
+  const own = chapter.ghostwriter && chapter.ghostwriter !== bookGhostwriter(ctx.snapshot) ? chapter.ghostwriter : undefined;
+  const oldBody = `# ${before.title}\n\n${before.goal || before.summary || ""}`.trim();
+  return changeFor(ctx, path, (existing) => {
+    const frontmatter: Record<string, unknown> = { ...(existing?.frontmatter ?? {}), title: chapter.title, summary: chapter.summary, pov: chapter.pov };
+    if (own) frontmatter.ghostwriter = own;
+    else if (before.ghostwriter) delete frontmatter.ghostwriter;
+    const body = !existing || existing.body.trim() === oldBody ? `# ${chapter.title}\n\n${chapter.goal || chapter.summary || ""}` : existing.body;
+    return renderMarkdown(frontmatter, body);
+  });
+}
+
+/**
+ * A chapter whose entry of the outline the author changed, or deleted, since it was planned, and of which nothing is written yet. It
+ * is planned again following the new entry (its title, summary, purpose, events and ghostwriter; its scenes are planned again), or,
+ * without an entry, it leaves the plan, and the book when its folder is empty. No other chapter is touched, and none is renumbered.
+ */
+async function runReplan(ctx: TaskContext): Promise<TaskResult> {
+  const plan = ctx.state.plan!;
+  const chapter = chapterOf(ctx);
+  const italian = isItalian(ctx.language);
+  const number = chapter.number;
+  const entry = await outlineOf(ctx).chapter(number);
+  const folder = ctx.snapshot.chapters.find((info) => info.slug === chapter.slug);
+  const stubPath = chapterFilePath(chapter.slug);
+  const stubHash = ctx.snapshot.files.get(stubPath);
+  const written = Boolean(folder?.paragraphs.length);
+  const changes: Array<BookFileChange | null> = [];
+
+  if (!entry) {
+    plan.chapters = plan.chapters.filter((item) => item !== chapter);
+    plan.removedChapters = [...new Set([...(plan.removedChapters ?? []), number])].sort((left, right) => left - right);
+    if (stubHash && !written) changes.push({ path: stubPath, content: null, expectedHash: stubHash });
+    ctx.insight(
+      "warning",
+      italian ? `Il capitolo ${number} non è più nella Scaletta: esce dal piano` : `Chapter ${number} is no longer in the outline: it leaves the plan`,
+      italian ? "I capitoli successivi mantengono il loro numero: rinumera la Scaletta se vuoi chiudere il vuoto." : "The following chapters keep their number: renumber the outline if you want to close the gap.",
+      { code: "outlineRemoved", chapterNumber: number },
+    );
+    changes.push(await planFileChange(ctx));
+    return { changes: compact(changes), summary: italian ? `Il capitolo ${number} è uscito dal piano: la sua voce della Scaletta è stata cancellata.` : `Chapter ${number} left the plan: its entry of the outline was deleted.` };
+  }
+
+  const [view, design, resume] = await Promise.all([authorOutline(ctx), readBody(ctx.store, STORY_DESIGN_FILE, 2500), storySoFar(ctx, number, 4000)]);
+  const secretsPlan = ctx.state.concept.secrets.filter((secret) => secret.revealChapter).map((secret) => `- ${secret.title}: reveal in chapter ${secret.revealChapter}`).join("\n");
+  const around = chapterLines(plan.chapters.filter((item) => item.number !== number), { around: number });
+  const response = await ctx.ai({
+    capability: AI_CAPABILITIES.writer,
+    label: `autopilot:replan:${number}`,
+    system: architectSystemPrompt(ctx.language),
+    user: `${request([
+      `The author changed the outline of chapter ${number}. Plan chapter ${number} again, numbered ${number} to ${number}, following the new entry (AUTHOR'S OUTLINE, CHAPTER ${number}): the same hypothetical title (refine it only if the entry has none) and the same events. Enrich it, never change it.`,
+      "Keep it consistent with the other chapters, which do not change, and place the reveals the chapter has to hold.",
+      authorRules(ctx),
+    ])}\n\n${data([
+      bookHeader(ctx),
+      briefBlock(ctx),
+      `AUTHOR'S OUTLINE, CHAPTER ${number} (the new entry, binding):\n${entryHeading(entry)}:\n${truncate(entry.body, OUTLINE_BATCH_CHARS) || "(no text)"}`,
+      outlineBookSection(view),
+      design ? `STORY DESIGN (excerpt):\n${design}` : "",
+      `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true }) || "-"}`,
+      secretsPlan ? `PLANNED REVEALS:\n${secretsPlan}` : "",
+      around.text ? listSection("THE OTHER CHAPTERS OF THE PLAN", around) : "",
+      resume ? `STORY SO FAR (before this chapter):\n${resume}` : "",
+      `THE PLAN OF CHAPTER ${number} UNTIL NOW (replace it):\n${chapterPlanBlock(chapter)}`,
+      `DIRECTOR (the author's taste):\n${directorTaste(ctx.director)}`,
+    ])}`,
+    json: PLAN_TOOL,
+    maxOutputTokens: outputLimit(ctx, 3000),
+    temperature: 0.7,
+  });
+  const output = requireStructuredFields(response.json, { chapters: "list" }, "The plan of the chapter");
+  const proposal = asArray(output.chapters).map(asRecord).find((item) => asString(item.title) || asString(item.summary));
+  if (!proposal) throw new AiReplyRejectedError(`The plan of chapter ${number} has no chapter: return chapter ${number} with its title, summary, goal, point of view, key events and reveals.`);
+  const before = { title: chapter.title, goal: chapter.goal, summary: chapter.summary, ...(chapter.ghostwriter ? { ghostwriter: chapter.ghostwriter } : {}) };
+  const title = entry.title ? clipText(entry.title, OUTLINE_TITLE_MAX_CHARS).trim() : asString(proposal.title) || chapter.title;
+  const ghostwriter = outlineGhostwriter(ctx, entry);
+  // A folder with somebody's text in it keeps its name; an empty one follows the new title, as a plan made again does.
+  const slug = written ? chapter.slug : chapterSlug(number, title);
+  if (slug !== chapter.slug && stubHash) changes.push({ path: stubPath, content: null, expectedHash: stubHash });
+  Object.assign(chapter, {
+    title,
+    slug,
+    summary: asString(proposal.summary),
+    goal: asString(proposal.goal),
+    pov: asStringList(proposal.pov, 6),
+    keyEvents: asStringList(proposal.keyEvents, 12),
+    reveals: asStringList(proposal.reveals, 8),
+    status: "planned",
+    scenes: [],
+    outlineDigest: entry.contentDigest,
+  });
+  if (ghostwriter) chapter.ghostwriter = ghostwriter;
+  else delete chapter.ghostwriter;
+  delete chapter.skipReaders;
+  changes.push(await chapterStubChange(ctx, chapter, before));
+  changes.push(await planFileChange(ctx));
+  ctx.insight(
+    "info",
+    italian ? `Hai cambiato la Scaletta del capitolo ${number}: lo ripianifico` : `You changed the outline of chapter ${number}: I am planning it again`,
+    `${number}. ${title}${chapter.summary ? ` — ${chapter.summary}` : ""}`,
+    { code: "outlineChanged", chapterNumber: number },
+  );
+  return { changes: compact(changes), summary: `${number}. ${title}${chapter.summary ? ` — ${truncate(chapter.summary, 240)}` : ""}` };
 }
 
 // ─── Scenes and prose ───────────────────────────────────────────────────────
@@ -950,7 +1278,23 @@ async function runScenes(ctx: TaskContext): Promise<TaskResult> {
   }));
   chapter.status = "writing";
   ctx.insight("info", isItalian(ctx.language) ? `Capitolo ${chapter.number}: ${chapter.scenes.length} scene` : `Chapter ${chapter.number}: ${chapter.scenes.length} scenes`, chapter.scenes.map((scene) => scene.title).join(" · "));
-  return { changes: compact([ensureChapterFile(ctx, chapter), await planFileChange(ctx)]), summary: chapter.scenes.map((scene) => `${scene.number}. ${scene.title}`).join("; ") };
+  const ghostwriter = await outlineGhostwriterArrived(ctx, chapter);
+  return { changes: compact([ensureChapterFile(ctx, chapter), ghostwriter, await planFileChange(ctx)]), summary: chapter.scenes.map((scene) => `${scene.number}. ${scene.title}`).join("; ") };
+}
+
+/**
+ * The ghostwriter the outline names for a chapter that is starting, when it did not exist at the time of the plan and exists now
+ * (the author created it after being told): the chapter takes it, and its `chapter.md` says it. Nothing else of the plan changes.
+ */
+async function outlineGhostwriterArrived(ctx: TaskContext, chapter: PlannedChapter): Promise<BookFileChange | null> {
+  const entry = await outlineOf(ctx).chapter(chapter.number);
+  const slug = entry?.ghostwriter;
+  if (!entry || entry.unreadable || !slug || slug === chapter.ghostwriter || entry.contentDigest !== chapter.outlineDigest) return null;
+  if (!isValidGhostwriterSlug(slug) || !ctx.snapshot.ghostwriterSlugs.includes(slug)) return null;
+  chapter.ghostwriter = slug;
+  const path = chapterFilePath(chapter.slug);
+  if (!ctx.snapshot.files.has(path) || slug === bookGhostwriter(ctx.snapshot)) return null;
+  return changeFor(ctx, path, (existing) => (existing ? renderMarkdown({ ...existing.frontmatter, ghostwriter: slug }, existing.body) : null));
 }
 
 /** One or two sentences on what a scene does, for continuity; `null` when the summary call fails. */
@@ -1203,6 +1547,7 @@ async function runSpecialists(ctx: TaskContext): Promise<TaskResult> {
   const [ghostwriter, secrets] = await Promise.all([ghostwriterOf(ctx, info), secretRules(ctx.store, ctx.snapshot, chapter.number)]);
   const relevant = mentionedCanon(ctx.snapshot, text, 16);
   const previousChapters = chapterLines(ctx.state.plan!.chapters.filter((entry) => entry.number < chapter.number), { around: chapter.number });
+  const style = evaluationStyleOf(ctx, "specialists");
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.specialist,
     label: `autopilot:specialists:${chapter.number}`,
@@ -1210,10 +1555,12 @@ async function runSpecialists(ctx: TaskContext): Promise<TaskResult> {
     user: `${request([
       `Review chapter ${chapter.number} «${chapter.title}» (review round ${review.round}). Return at most 12 findings, most important first, using the scene numbers of the markers.`,
       review.previousFixes.length ? `These fixes were applied after the previous round: verify them and report only remaining or new real problems.\n${bulletList(review.previousFixes)}` : "",
+      style.rule,
       authorRules(ctx, false),
     ])}\n\n${data([
       bookHeader(ctx),
       `GHOSTWRITER PROFILE:\n${ghostwriterBlock(ghostwriter)}`,
+      style.block,
       previousChapters.text ? listSection("PREVIOUS CHAPTERS", previousChapters) : "",
       chapterPlanBlock(chapter),
       `SCENE PLANS:\n${chapter.scenes.map((scene) => `- Scene ${scene.number} «${scene.title}»: ${scene.goal}`).join("\n")}`,
@@ -1279,6 +1626,8 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   const maxRounds = ctx.director.maxReviewRounds;
   const last = review.round >= maxRounds;
   const perScene = sceneLimit(ctx, Math.max(3000, Math.floor(60000 / Math.max(1, source.paragraphs.length))));
+  const style = evaluationStyleOf(ctx, "chapter");
+  const authorNote = review.authorEdit ? startedReview(ctx.state)?.note : undefined;
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.director,
     label: `autopilot:director-review:${chapter.number}`,
@@ -1287,13 +1636,18 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
       `Decide on chapter ${chapter.number} «${chapter.title}» (review round ${review.round} of ${maxRounds}).`,
       "For EVERY finding decide exactly once: accept it with a precise, minimal remediation for the ghostwriter and its scene number, or reject it with the reason. Reject unfounded or unanchored findings, findings against the vision or the author's rules, and single-reader taste the intended audience would not share.",
       `Score the chapter from 1 to 10. Verdict "approve" when it deserves at least ${ctx.director.approvalScore}/10 and nothing critical remains; otherwise "revise".`,
-      last ? "This is the LAST review round: accepted fixes will be applied and the chapter closed without another review, so accept only what really matters." : "",
+      style.rule,
+      review.authorEdit
+        ? "The author changed this chapter after it was approved: judge the chapter as it is now. The author's text stays as it is: no fix will be applied and there is no other round, so your accepted fixes are advice for the author."
+        : last ? "This is the LAST review round: accepted fixes will be applied and the chapter closed without another review, so accept only what really matters." : "",
+      authorNote ? `The author's note on the change: «${authorNote}»` : "",
       "Add standing guidance for the next chapters when this chapter taught you something.",
       ctx.director.autonomy === "full" ? "Never ask the author: decide." : "Ask the author (questionForAuthor) only for a critical matter you must not settle alone.",
       authorRules(ctx, false),
     ])}\n\n${data([
       bookHeader(ctx),
       directorGuidance(ctx),
+      style.block,
       chapterPlanBlock(chapter),
       `SCENE PLANS:\n${chapter.scenes.map((scene) => `- Scene ${scene.number} «${scene.title}»: ${scene.goal}`).join("\n")}`,
       resume ? `STORY SO FAR (before this chapter):\n${resume}` : "",
@@ -1385,7 +1739,8 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   review.verdict = verdict;
   review.score = score;
   review.summary = summaryText;
-  review.repairQueue = [...new Set(accepted.map((decision) => decision.sceneNumber!))].sort((left, right) => left - right);
+  // The fixes of a review of the author's change are advice: the author's text is never rewritten for them.
+  review.repairQueue = review.authorEdit ? [] : [...new Set(accepted.map((decision) => decision.sceneNumber!))].sort((left, right) => left - right);
   // The readers read the chapter once, in the first round of its review: their average is in the record of that round and of no other. The verdict is the one the plan acts on.
   recordChapterRound(chapter, closedRound({ director: score, readers: review.history.length === 0 ? review.readerScores.map((entry) => entry.score) : undefined, verdict, accepted: accepted.length, rejected: rejected.length }));
   review.history = [...review.history, { round: review.round, verdict, score, accepted: accepted.length, rejected: rejected.length }];
@@ -1554,9 +1909,16 @@ async function runConsolidate(ctx: TaskContext): Promise<TaskResult> {
   }
   const stateChanges = asRecord(output.stateChanges);
   const changes: Array<BookFileChange | null> = [];
+  // The director approved it: the chapter is frozen as it was read for this closing, in the same commit. One the author wrote is frozen
+  // only when the author froze it (it is closed again after a change was reviewed); who froze it does not change.
+  const folder = ctx.snapshot.chapters.find((entry) => entry.slug === chapter.slug);
+  const freezeBy = !chapter.imported ? (folder?.frozen?.by ?? "autopilot") : folder?.frozen?.by;
+  const prefix = `chapters/${chapter.slug}/`;
+  const scenes = source.paragraphs.map((paragraph) => ({ name: paragraph.path.startsWith(prefix) ? paragraph.path.slice(prefix.length) : paragraph.path.split("/").pop()!, body: paragraph.body }));
+  const record = (body: string): { frozen: ChapterFreeze } | Record<string, never> => (freezeBy ? { frozen: chapterFreezeRecord({ at: ctx.now().toISOString(), by: freezeBy, chapterBody: body, scenes }) } : {});
   changes.push(await changeFor(ctx, chapterFilePath(chapter.slug), (existing) => existing
-    ? renderMarkdown({ ...existing.frontmatter, summary }, existing.body)
-    : renderMarkdown({ type: "chapter", id: `chapter:${chapter.slug}`, number: chapter.number, title: chapter.title, summary, canon: "draft" }, `# ${chapter.title}`)));
+    ? renderMarkdown({ ...existing.frontmatter, summary, ...record(existing.body) }, existing.body)
+    : renderMarkdown({ type: "chapter", id: `chapter:${chapter.slug}`, number: chapter.number, title: chapter.title, summary, canon: "draft", ...record(`# ${chapter.title}`) }, `# ${chapter.title}`)));
   changes.push(await changeFor(ctx, chapterResumePath(chapter.slug), (existing) => renderMarkdown({
     ...(existing?.frontmatter ?? {}),
     type: "resume",
@@ -1634,32 +1996,106 @@ function revisionFocus(revision: RevisionRequest, written: WrittenChapter[]): nu
   return named ? Number(named) : written.at(-1)?.number;
 }
 
+/** What the autopilot knew of a chapter, for the analysis of the impact of a change of it. */
+function chapterViewBlock(view: FrozenChapterView | undefined): string {
+  if (!view) return "Not known.";
+  return [
+    `Title: ${view.title}`,
+    view.summary ? `Summary: ${view.summary}` : "Summary: none.",
+    view.keyEvents.length ? `Key events:\n${bulletList(view.keyEvents)}` : "",
+    view.storySoFar ? `Story so far at its close:\n${view.storySoFar}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+/** The request of the impact of a revision that comes from a change (of a frozen chapter, or of the outline of a written one), and its data. */
+async function sourceImpactPrompt(ctx: TaskContext, revision: RevisionRequest, scenesList: ReturnType<typeof layoutChapters>): Promise<{ lines: string[]; sections: string[] } | null> {
+  const source = revision.source;
+  if (!source) return null;
+  const number = source.chapterNumber;
+  const chapter = ctx.state.plan?.chapters.find((entry) => entry.number === number);
+  const title = quotedTitle(chapter?.title);
+  const extra = revision.instruction.split("\n").slice(1).map((line) => line.trim()).filter(Boolean);
+  const notes = [
+    source.note ? `The author's note on the change: «${source.note}»` : "",
+    extra.length ? `The author also asked: «${extra.join(" ")}»` : "",
+  ];
+  const listed = scenesList.note ? "Some chapters are listed without their scenes: a scene of such a chapter can still be chosen by its chapter and scene number." : "";
+  if (revision.onlyChapter === number) {
+    const entry = await outlineOf(ctx).chapter(number);
+    return {
+      lines: [
+        `The author changed the outline entry of chapter ${number}${title}, which is already written. Decide which written scenes of chapter ${number} must be rewritten so that the chapter follows the new entry (AUTHOR'S OUTLINE, CHAPTER ${number}, in the data), in reading order, with a precise instruction for each.`,
+        "Choose the minimum set: keep what already follows the entry. Only the scenes of this chapter can be chosen.",
+        ...notes,
+        listed,
+      ],
+      sections: [
+        entry ? `AUTHOR'S OUTLINE, CHAPTER ${number} (the new entry, binding):\n${entryHeading(entry)}:\n${truncate(entry.body, OUTLINE_BATCH_CHARS) || "(no text)"}` : "",
+        source.before ? `THE PLAN OF CHAPTER ${number} UNTIL NOW:\n${chapterViewBlock(source.before)}` : "",
+        listSection(`WRITTEN SCENES OF CHAPTER ${number}`, scenesList),
+      ],
+    };
+  }
+  const changed = source.kind === "frozen"
+    ? `The author changed chapter ${number}${title} after it was approved. The author's text stands: chapter ${number} is never rewritten.`
+    : `Chapter ${number}${title} was rewritten to follow the author's new outline entry. It stands as it is now: it is never rewritten here.`;
+  return {
+    lines: [
+      changed,
+      `Compare what the book knew of chapter ${number} BEFORE the change with what it is AFTER it, and decide which written scenes of the LATER chapters must change to stay consistent with it, in reading order, with a precise instruction for each. Choose the minimum set; when nothing later depends on the change, return no target.`,
+      ...notes,
+      listed,
+    ],
+    sections: [
+      `CHAPTER ${number} BEFORE THE CHANGE (what the book knew of it when it was frozen):\n${chapterViewBlock(source.before)}`,
+      `CHAPTER ${number} AFTER THE CHANGE (its new closing):\n${chapterViewBlock(source.after)}`,
+      listSection("WRITTEN SCENES OF THE LATER CHAPTERS", scenesList),
+    ],
+  };
+}
+
+function quotedTitle(title: string | undefined): string {
+  return title ? ` «${title}»` : "";
+}
+
 async function runImpact(ctx: TaskContext): Promise<TaskResult> {
   const revision = ctx.state.revision!;
   const plan = ctx.state.plan;
-  const written: WrittenChapter[] = (plan?.chapters ?? []).flatMap((chapter) => {
+  // A revision that comes from a change looks only where the change can reach: the later chapters, or the chapter rewritten to follow its
+  // outline; one the autopilot decided by itself never rewrites a chapter the author wrote; and none rewrites a chapter whose own change of
+  // the author's waits (its text is the author's until the author has decided about it).
+  const authorEdited = revision.source ? new Set(frozenChanges(ctx.snapshot).map((change) => change.slug)) : new Set<string>();
+  const reachable = (chapter: PlannedChapter) => (revision.afterChapter === undefined || chapter.number > revision.afterChapter)
+    && (revision.onlyChapter === undefined || chapter.number === revision.onlyChapter)
+    && !(revision.source?.auto && chapter.imported)
+    && (revision.onlyChapter === chapter.number || !authorEdited.has(chapter.slug));
+  const written: WrittenChapter[] = (plan?.chapters ?? []).filter(reachable).flatMap((chapter) => {
     const scenes = chapter.scenes.filter((scene) => scene.status !== "planned" && scene.path);
     return scenes.length ? [{ number: chapter.number, chapter, scenes }] : [];
   });
   if (!written.length) {
     revision.targets = [];
-    return { changes: [], summary: "Nothing written yet: the instruction becomes a permanent rule." };
+    return { changes: [], summary: revision.source ? "No written scene the change can reach." : "Nothing written yet: the instruction becomes a permanent rule." };
   }
   const design = await readBody(ctx.store, STORY_DESIGN_FILE, 3000);
-  const scenesList = layoutChapters(written, WRITTEN_SCENES, { around: revisionFocus(revision, written) });
+  const focus = revision.afterChapter !== undefined ? written[0]?.number : revisionFocus(revision, written);
+  const scenesList = layoutChapters(written, WRITTEN_SCENES, { around: focus });
+  const fromChange = await sourceImpactPrompt(ctx, revision, scenesList);
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.director,
     label: "autopilot:impact",
     system: directorSystemPrompt(ctx.director, ctx.language),
-    user: `${request([
-      `The author asked to revise what is already written: «${revision.instruction}».`,
-      "Decide which written scenes must change to honor it, in reading order, with a precise instruction for each. Choose the minimum set; include later scenes only when they depend on the change.",
-      scenesList.note ? "Some chapters are listed without their scenes: a scene of such a chapter can still be chosen by its chapter and scene number." : "",
-    ])}\n\n${data([
-      bookHeader(ctx),
-      design ? `STORY DESIGN:\n${design}` : "",
-      listSection("WRITTEN SCENES", scenesList),
-    ])}`,
+    user: fromChange
+      ? `${request(fromChange.lines)}\n\n${data([bookHeader(ctx), design ? `STORY DESIGN:\n${design}` : "", ...fromChange.sections])}`
+      : `${request([
+        `The author asked to revise what is already written: «${revision.instruction}».`,
+        "Decide which written scenes must change to honor it, in reading order, with a precise instruction for each. Choose the minimum set; include later scenes only when they depend on the change.",
+        scenesList.note ? "Some chapters are listed without their scenes: a scene of such a chapter can still be chosen by its chapter and scene number." : "",
+      ])}\n\n${data([
+        bookHeader(ctx),
+        design ? `STORY DESIGN:\n${design}` : "",
+        listSection("WRITTEN SCENES", scenesList),
+      ])}`,
     json: IMPACT_TOOL,
     maxOutputTokens: outputLimit(ctx, 3000),
   });
@@ -1711,6 +2147,7 @@ async function runFinal(ctx: TaskContext): Promise<TaskResult> {
     now: ctx.now,
     source: "autopilot",
     instruction: "Every chapter has been approved: judge the arcs, the promises made to the reader, the open threads and the ending, and list what the author should still consider.",
+    ...(ctx.evaluationStyle ? { evaluationStyle: ctx.evaluationStyle } : {}),
   });
   ctx.state.finalDone = true;
   const finalReview = normalizeFinalReview({ verdict: result.opinion.verdict === "approve" ? "approve" : "revise", score: result.opinion.score, text: result.opinion.summary, at: result.opinion.createdAt });
@@ -1721,12 +2158,60 @@ async function runFinal(ctx: TaskContext): Promise<TaskResult> {
   return { changes: compact([change]), summary: `${result.opinion.verdict} ${result.opinion.score}/10 — ${result.opinion.summary}` };
 }
 
+/**
+ * Freezing without the model: the chapters an older engine approved (once, the first time a state that does not know frozen chapters
+ * runs; never a chapter the author wrote), and the changes the author marked as reviewed through a decision that waited for a run
+ * (frozen as they are, unless they changed again since: then they are asked about again).
+ */
+async function runFreeze(ctx: TaskContext): Promise<TaskResult> {
+  const at = ctx.now().toISOString();
+  const italian = isItalian(ctx.language);
+  const changes: BookFileChange[] = [];
+  const done: string[] = [];
+  if (!ctx.state.frozenSince) {
+    const legacy = legacyChapters(ctx.state, ctx.snapshot);
+    for (const folder of legacy) changes.push(...freezeChapterChanges(ctx.snapshot, folder.slug, "autopilot", at));
+    ctx.state.frozenSince = at;
+    if (legacy.length) {
+      done.push(italian ? `${legacy.length} capitoli approvati congelati` : `${legacy.length} approved chapters frozen`);
+      ctx.insight(
+        "info",
+        italian
+          ? `${legacy.length === 1 ? "Il capitolo già approvato è congelato" : `I ${legacy.length} capitoli già approvati sono congelati`}: d'ora in poi una tua modifica viene notata`
+          : `${legacy.length === 1 ? "The chapter already approved is frozen" : `The ${legacy.length} chapters already approved are frozen`}: from now on a change you make to them is noticed`,
+        legacy.map((folder) => folder.slug).join(", "),
+        { code: "frozenMigrated" },
+      );
+    }
+  }
+  const pending = queuedMarkReviewed(ctx.state);
+  if (pending.length) {
+    const current = new Map(frozenChanges(ctx.snapshot).map((change) => [change.number, change]));
+    const plan = ctx.state.plan?.chapters ?? [];
+    for (const entry of pending) {
+      const slug = plan.find((chapter) => chapter.number === entry.number)?.slug;
+      const change = current.get(entry.number);
+      if (slug && change && change.slug === slug && change.fingerprint === entry.fingerprint) {
+        changes.push(...markReviewedChanges(ctx.snapshot, slug, at));
+        done.push(italian ? `capitolo ${entry.number} segnato come rivisto` : `chapter ${entry.number} marked as reviewed`);
+        ctx.insight("ok", italian ? `Capitolo ${entry.number} segnato come rivisto: congelato così com'è` : `Chapter ${entry.number} marked as reviewed: frozen as it is`, undefined, { code: "frozenReviewed", chapterNumber: entry.number });
+      }
+    }
+    const ids = new Set(pending.map((entry) => entry.id));
+    const left = (ctx.state.pendingReviews ?? []).filter((entry) => !ids.has(entry.id));
+    if (left.length) ctx.state.pendingReviews = left;
+    else delete ctx.state.pendingReviews;
+  }
+  return { changes, summary: done.join("; ") || (italian ? "Nulla da congelare." : "Nothing to freeze.") };
+}
+
 export const TASK_EXECUTORS: Record<TaskDescriptor["kind"], (ctx: TaskContext) => Promise<TaskResult>> = {
   concept: runConcept,
   "summarize-imported": runSummarizeImported,
   plan: runPlan,
   "plan-reader": runPlanReader,
   "plan-review": runPlanReview,
+  replan: runReplan,
   scenes: runScenes,
   write: runWrite,
   reader: runReader,
@@ -1738,4 +2223,5 @@ export const TASK_EXECUTORS: Record<TaskDescriptor["kind"], (ctx: TaskContext) =
   impact: runImpact,
   revise: runRevise,
   final: runFinal,
+  freeze: runFreeze,
 };

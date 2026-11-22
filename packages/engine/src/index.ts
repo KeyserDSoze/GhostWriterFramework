@@ -10,11 +10,14 @@ export * from "./prompt/trust.js";
 export * from "./book/paths.js";
 export * from "./book/store.js";
 export * from "./book/snapshot.js";
+export * from "./book/freeze.js";
 export * from "./book/context.js";
+export * from "./book/outline.js";
 
 export * from "./profiles/ghostwriter.js";
 export * from "./profiles/readers.js";
 export * from "./profiles/director.js";
+export * from "./profiles/evaluation-style.js";
 
 export * from "./readers/evaluation.js";
 
@@ -39,6 +42,8 @@ export * from "./autopilot/state.js";
 export * from "./autopilot/errors.js";
 export * from "./autopilot/planner.js";
 export * from "./autopilot/outline.js";
+export * from "./autopilot/outline-check.js";
+export * from "./autopilot/frozen.js";
 export * from "./autopilot/story-so-far.js";
 export { TASK_EXECUTORS, cleanProse, renderPlanMarkdown, sameCanonEntity, type TaskContext, type TaskResult, type TaskAi } from "./autopilot/tasks.js";
 export * from "./autopilot/runner.js";

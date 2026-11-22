@@ -1,10 +1,12 @@
 import { redactSecrets } from "../ai/redact.js";
 import { AiProviderError, AiReplyRejectedError, type AiPort, type AiProgress, type AiRequest, type AiResponse, type AiUsage } from "../ai/types.js";
-import { activeReaders, isThinDocument, loadDirectorProfile, loadReaderPanel, readBody } from "../book/context.js";
+import { activeReaders, isThinDocument, loadDirectorProfile, loadEvaluationStyle, loadReaderPanel, readBody } from "../book/context.js";
+import { OutlineCache, OutlineReader } from "../book/outline.js";
 import { AUTOPILOT_ACTIVITY_FILE, AUTOPILOT_STATE_FILE, STORY_DESIGN_FILE } from "../book/paths.js";
 import { SnapshotCache, loadBookSnapshot, type BookSnapshot } from "../book/snapshot.js";
 import { BookConflictError, isBookConflictError, normalizeChanges, type BookFileChange, type BookStore } from "../book/store.js";
 import type { DirectorProfile } from "../profiles/director.js";
+import type { EvaluationStyle } from "../profiles/evaluation-style.js";
 import type { ReaderPersonaProfile } from "../profiles/readers.js";
 import { abortError, isAbortError, sleep } from "../util/abort.js";
 import { randomId } from "../util/hash.js";
@@ -12,7 +14,9 @@ import { StructuredReplyError } from "../util/json.js";
 import { currentRequest, unescapePromptDataDeep } from "../prompt/trust.js";
 import { isItalian, languageCode, tail, truncate } from "../util/text.js";
 import { autopilotErrorFields } from "./errors.js";
-import { advanceState, extensionNote, nextStep, phaseOf, type PlanNote, type PlannerContext, type TaskDescriptor } from "./planner.js";
+import { applyFrozenDecision, frozenAnswerAction, isFrozenQuestion, settleFrozenChanges } from "./frozen.js";
+import { outlinePlanStatus } from "./outline-check.js";
+import { advanceState, effectiveTargetChapters, extensionNote, nextStep, phaseOf, type PlanNote, type PlannerContext, type TaskDescriptor } from "./planner.js";
 import { profileProblems, profileProblemsMessage, profileProblemsTitle } from "./profile-check.js";
 import {
   MAX_INTERVENTIONS,
@@ -47,6 +51,7 @@ import {
   type AutopilotStateSummary,
   type AuthorIntervention,
   type InterventionInput,
+  type PendingFrozenReview,
   type QuestionAnswer,
   type StartOptions,
 } from "./types.js";
@@ -171,7 +176,9 @@ function applyRewrite(next: AutopilotState, text: string, at: string): void {
   if (written) {
     const current = next.revision;
     if (current && current.targets === null) {
-      next.revision = { ...current, instruction: `${current.instruction}\n${text}` };
+      // The author's instruction is about the whole book: a revision that looked only at some chapters (the impact of a change) now looks at all.
+      const { afterChapter: _after, onlyChapter: _only, ...open } = current;
+      next.revision = { ...open, instruction: `${current.instruction}\n${text}` };
     } else {
       // Chapters already rewritten by a revision in progress are still reviewed again at the end.
       const revised = [...(current?.revisedChapters ?? []), ...(current?.targets ?? []).slice(0, current?.cursor ?? 0).map((target) => target.chapterNumber)];
@@ -209,9 +216,18 @@ export function applyIntervention(state: AutopilotState, input: InterventionInpu
   return next;
 }
 
-/** Pure application of the author's answer to the director's question. */
+/**
+ * Pure application of the author's answer to the director's question. An answer to a question about a change of a frozen chapter (or of
+ * the outline of a written one) records the decision it chooses (`frozenAnswerAction`) in `pendingReviews`: the session carries out at
+ * once what needs no model, the next run the rest.
+ */
 export function applyAnswer(state: AutopilotState, answer: QuestionAnswer, now: Date): AutopilotState {
   if (!state.question || state.question.id !== answer.questionId) throw new Error("This question is no longer open.");
+  const asked = state.question;
+  if (isFrozenQuestion(asked)) {
+    const { action, note } = frozenAnswerAction(asked, answer);
+    return applyFrozenDecision(state, { kind: asked.frozen.kind, number: asked.frozen.number, action, fingerprint: asked.frozen.fingerprint, ...(note ? { note } : {}), ...(answer.asRule ? { asRule: true } : {}) }, now.toISOString(), randomId("review"));
+  }
   const text = answer.answer.trim();
   const at = now.toISOString();
   // A rule is checked before anything is changed: one that is too long leaves the question open.
@@ -246,7 +262,7 @@ function withoutLiveOptions(options: AutopilotState["options"]): unknown {
 
 /** The state without what only the author changes and what every write changes: what is left must be the same before and after. */
 function withoutAuthorParts(state: AutopilotState): unknown {
-  const { version: _version, updatedAt: _updatedAt, interventions: _interventions, constraints: _constraints, revision: _revision, finalDone: _finalDone, finalReview: _finalReview, options, plan, runner, ...rest } = state;
+  const { version: _version, updatedAt: _updatedAt, interventions: _interventions, constraints: _constraints, revision: _revision, finalDone: _finalDone, finalReview: _finalReview, pendingReviews: _pendingReviews, options, plan, runner, ...rest } = state;
   return {
     ...rest,
     options: withoutLiveOptions(options),
@@ -270,8 +286,14 @@ export function reconcileAuthorChanges(working: AutopilotState, base: AutopilotS
   const added = stored.interventions.filter((entry) => !known.has(entry.id));
   const rulesChanged = stored.constraints.length !== base.constraints.length || stored.constraints.some((rule, index) => rule !== base.constraints[index]);
   const optionsChanged = LIVE_AUTOPILOT_OPTIONS.filter((key) => stored.options[key] !== base.options[key]);
-  if (!added.length && !rulesChanged && !optionsChanged.length) return { state: working, foreign };
+  const reviewsChanged = JSON.stringify(base.pendingReviews ?? []) !== JSON.stringify(stored.pendingReviews ?? []);
+  if (!added.length && !rulesChanged && !optionsChanged.length && !reviewsChanged) return { state: working, foreign };
   const merged = structuredClone(working);
+  if (reviewsChanged) {
+    const reviews = mergePendingReviews(working.pendingReviews ?? [], base.pendingReviews ?? [], stored.pendingReviews ?? []);
+    if (reviews.length) merged.pendingReviews = reviews;
+    else delete merged.pendingReviews;
+  }
   if (rulesChanged) {
     // The author's list as it is now, and the rules the run itself added to its own copy.
     const before = new Set(base.constraints);
@@ -291,10 +313,27 @@ export function reconcileAuthorChanges(working: AutopilotState, base: AutopilotS
   return { state: merged, foreign };
 }
 
-/** When the author raises the number of chapters of a finished plan, extend it instead of stopping. */
-export function extendPlanIfNeeded(state: AutopilotState): AutopilotState {
+/**
+ * The decisions about changes, merged: the run's own (it starts and finishes them), the ones the author recorded meanwhile (an author's
+ * decision replaces one that waited for the same change of the same chapter), without the ones the author took back (unless the run has
+ * already started carrying it out).
+ */
+function mergePendingReviews(working: PendingFrozenReview[], base: PendingFrozenReview[], stored: PendingFrozenReview[]): PendingFrozenReview[] {
+  const before = new Set(base.map((entry) => entry.id));
+  const now = new Set(stored.map((entry) => entry.id));
+  const own = new Set(working.map((entry) => entry.id));
+  const added = stored.filter((entry) => !before.has(entry.id) && !own.has(entry.id));
+  const kept = working.filter((entry) => entry.started || ((now.has(entry.id) || !before.has(entry.id)) && !added.some((other) => other.kind === entry.kind && other.number === entry.number)));
+  return [...kept, ...added];
+}
+
+/**
+ * When the author raises the number of chapters of a finished plan, extend it instead of stopping. `targetChapters` is the number the
+ * book is planned to (`effectiveTargetChapters`: the brief's, or the last chapter of the author's outline when it asks for more).
+ */
+export function extendPlanIfNeeded(state: AutopilotState, targetChapters = effectiveTargetChapters(state)): AutopilotState {
   const plan = state.plan;
-  if (!plan?.approved || plan.chapters.length >= state.brief.targetChapters) return state;
+  if (!plan?.approved || plan.chapters.length >= targetChapters) return state;
   if (!plan.chapters.every((chapter) => chapter.status === "done")) return state;
   // The book is not complete any more: nobody has judged it as it is going to be.
   const { finalReview: _finalReview, ...reopened } = state;
@@ -306,7 +345,7 @@ export function extendPlanIfNeeded(state: AutopilotState): AutopilotState {
       approved: false,
       rounds: 0,
       readersDone: true,
-      revisionNotes: [extensionNote(state.brief.targetChapters)],
+      revisionNotes: [extensionNote(targetChapters)],
     },
   };
 }
@@ -524,6 +563,8 @@ interface StepContext {
   planner: PlannerContext;
   director: DirectorProfile;
   panel: ReaderPersonaProfile[];
+  evaluationStyle: EvaluationStyle | null;
+  outline: OutlineReader;
 }
 
 const TAKEN_OVER = "Another runner took over this book: this run stops.";
@@ -544,6 +585,8 @@ export class AutopilotRun {
   private leaseLost = false;
   private readonly queue: InterventionInput[] = [];
   private readonly cache = new SnapshotCache();
+  /** The entries of the outline the run has read, by path and hash: a file is read again only when it changed. */
+  private readonly outlineCache = new OutlineCache();
   private readonly store: BookStore;
   private readonly now: () => Date;
   /** Steps this run saved, and chapters it closed: what the limits of the run count. A step that failed or was abandoned is not one. */
@@ -576,6 +619,8 @@ export class AutopilotRun {
   private closed = false;
   /** The state as the run last read or wrote it: what the author's changes are measured against. */
   private known: AutopilotState | null = null;
+  /** How many chapters had a change waiting for the author before the last step (`summary.frozenChanges`); `null` until the run looked. */
+  private frozenWaitingCount: number | null = null;
 
   constructor(private readonly config: AutopilotRunConfig) {
     this.now = config.now ?? (() => new Date());
@@ -640,15 +685,23 @@ export class AutopilotRun {
    * What the run knows that the state file does not: the pause that waits, the limits of the run with how far it got, and the retry it is
    * waiting for (only while it is). A run that is over has none of them.
    */
-  runtime(): { pausePending: AutopilotPausePending | null; limits: AutopilotLimitsSummary | null; retry?: AutopilotRetryInfo } {
-    if (this.closed) return { pausePending: null, limits: null };
+  runtime(): { pausePending: AutopilotPausePending | null; limits: AutopilotLimitsSummary | null; retry?: AutopilotRetryInfo; frozenChanges?: number } {
+    // What the run found of the changes is a fact of the book, not of the run: it is said after the run too.
+    const frozen = this.frozenWaitingCount === null ? {} : { frozenChanges: this.frozenWaitingCount };
+    if (this.closed) return { pausePending: null, limits: null, ...frozen };
     const steps = this.limits.steps ?? 0;
     const chapters = this.chaptersLimit(this.known?.options.chaptersPerRun ?? 0);
     return {
       pausePending: this.pausePending,
       limits: steps || chapters ? { ...(steps ? { steps } : {}), ...(chapters ? { chapters } : {}), stepsDone: this.stepsThisRun, chaptersDone: this.chaptersThisRun } : null,
       ...(this.retry ? { retry: this.retry } : {}),
+      ...frozen,
     };
+  }
+
+  /** How many chapters had a change waiting for the author before the last step; `null` until the run looked. */
+  get frozenWaiting(): number | null {
+    return this.frozenWaitingCount;
   }
 
   /** The summary of a state as this run says it: with the pause that waits, its limits, and where the book is published. */
@@ -681,19 +734,29 @@ export class AutopilotRun {
 
   private async stepContext(snapshot: BookSnapshot, state: AutopilotState): Promise<StepContext> {
     const language = languageCode(snapshot.book.language);
-    const [director, panel, design] = await Promise.all([
+    const outline = OutlineReader.of(this.store, snapshot, this.outlineCache);
+    const [director, panel, design, evaluationStyle, lastChapter] = await Promise.all([
       loadDirectorProfile(this.store, language),
       loadReaderPanel(this.store, snapshot),
       readBody(this.store, STORY_DESIGN_FILE, 20000),
+      loadEvaluationStyle(this.store),
+      // Only the entries above the brief's number of chapters are read: an outline can only make the book longer.
+      outline.lastAuthorChapter(state.brief.targetChapters),
     ]);
     const readers = activeReaders(panel, director, state.options.maxReaders).map((reader) => ({ slug: reader.slug, name: reader.name }));
-    return { planner: { snapshot, director, readers, language, storyDesignThin: isThinDocument(design), report: (note) => this.announce(note) }, director, panel };
+    return {
+      planner: { snapshot, director, readers, language, storyDesignThin: isThinDocument(design), report: (note) => this.announce(note), outline: { lastChapter } },
+      director,
+      panel,
+      evaluationStyle,
+      outline,
+    };
   }
 
   private announce(note: PlanNote): void {
     if (this.reported.has(note.key)) return;
     this.reported.add(note.key);
-    this.emit({ type: "insight", tone: note.tone, title: note.title, ...(note.detail ? { detail: note.detail } : {}) });
+    this.emit({ type: "insight", tone: note.tone, title: note.title, ...(note.detail ? { detail: note.detail } : {}), ...(note.code ? { code: note.code } : {}), ...(note.chapterNumber !== undefined ? { chapterNumber: note.chapterNumber } : {}) });
   }
 
   /**
@@ -866,7 +929,23 @@ export class AutopilotRun {
         await this.config.hooks?.beforeStep?.(stepController.signal);
         const snapshot = await loadBookSnapshot(store, this.cache);
         const context = await this.stepContext(snapshot, state);
+        // An outline the author made longer than the book extends it, as raising the number of chapters does at the start of a run.
+        const outlineTarget = effectiveTargetChapters(state, context.planner.outline);
+        if (outlineTarget > effectiveTargetChapters(state)) state = extendPlanIfNeeded(state, outlineTarget);
         state = advanceState(state, context.planner);
+        // Before a chapter is started: an entry of the outline the author changed or deleted since the plan followed it.
+        const outlineStatus = await outlinePlanStatus(context.outline, state, context.planner.language);
+        for (const note of outlineStatus.notes) this.announce(note);
+        context.planner.outline = { lastChapter: context.planner.outline?.lastChapter ?? 0, changed: outlineStatus.changed };
+        // The author changed a frozen chapter, or the outline of a written one: asked, reviewed or said, as `frozenEdits` says, before the step.
+        const at = this.now().toISOString();
+        const settled = settleFrozenChanges(state, { snapshot, outlineWritten: outlineStatus.written, language: context.planner.language, now: at });
+        for (const note of settled.notes) this.announce(note);
+        this.frozenWaitingCount = settled.waiting;
+        context.planner.frozen = { outlineWritten: outlineStatus.written, now: at };
+        // A decision about a change may start now (the chapter goes back to review, before the plan). Advancing is idempotent: it is done
+        // again only when there is something new for it.
+        if (settled.state !== state || settled.state.pendingReviews?.some((entry) => !entry.started)) state = advanceState(settled.state, context.planner);
         let step = nextStep(state, context.planner);
         if (this.queue.length) {
           // Interventions recorded during the previous step steer the choice of this one.
@@ -890,7 +969,7 @@ export class AutopilotRun {
           break;
         }
         // A profile the autopilot cannot read as it is written (a typo in director.md, a ghostwriter with broken YAML) is the author's to correct: nothing is spent, and no file is replaced by the defaults.
-        const problems = await profileProblems({ store, snapshot, state, director: context.director, panel: context.panel, task: step.task });
+        const problems = await profileProblems({ store, snapshot, state, director: context.director, panel: context.panel, task: step.task, evaluationStyle: context.evaluationStyle });
         if (problems.length) {
           this.emit({ type: "insight", tone: "warning", code: "profileProblems", title: profileProblemsTitle(problems, context.planner.language), detail: problems.join("\n") });
           state = await this.finish(state, "waiting-author", profileProblemsMessage(problems, context.planner.language));
@@ -990,7 +1069,18 @@ export class AutopilotRun {
           signal: stepController.signal,
           rejectedBefore: Boolean(correction),
           ai,
-          insight: (tone, title, detail) => this.emit({ type: "insight", activityId: activity.id, tone, title, ...(detail ? { detail } : {}) }),
+          insight: (tone, title, detail, extra) => this.emit({
+            type: "insight",
+            activityId: activity.id,
+            tone,
+            title,
+            ...(detail ? { detail } : {}),
+            ...(extra?.code ? { code: extra.code } : {}),
+            ...(extra?.chapterNumber !== undefined ? { chapterNumber: extra.chapterNumber } : {}),
+            ...(extra?.ghostwriter ? { ghostwriter: extra.ghostwriter } : {}),
+          }),
+          evaluationStyle: context.evaluationStyle,
+          outline: context.outline,
         };
         const result = await TASK_EXECUTORS[task.kind](taskContext);
         const finishedAt = this.now();

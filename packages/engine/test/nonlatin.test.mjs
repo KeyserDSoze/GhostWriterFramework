@@ -54,10 +54,30 @@ async function runSession(store, ai, { brief, options = {}, hostLabel = "test", 
 // A whole run of an English and of an Italian book (accents, apostrophes, hyphens, ß, Æ, ¿) is digested: every file the
 // run writes and every request it sends (system, user, schema, limit, temperature). The digests were taken from the
 // engine as it was before it learned non-Latin scripts: `UPDATE_LATIN_GOLDEN=1 node --test test/nonlatin.test.mjs`
-// writes them again, and only an intended change of the Latin prompts may do that.
+// writes them again, and only an intended change of the Latin prompts may do that. The files are digested without the freeze
+// records of the chapters the autopilot approves (see `withoutFreezeRecords`).
 
 const clock = () => new Date("2026-01-01T00:00:00.000Z");
 const digest = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
+const BOOK_OPINION = "evaluations/director/book.md";
+
+/**
+ * The files without the freeze record the autopilot writes in the chapter.md of every chapter it approves (E4b), and with the one value
+ * it changes elsewhere (the hash of the chapter files in the director's judgement of the book) computed without it: the rest must be what
+ * it always was, byte for byte.
+ */
+function withoutFreezeRecords(files) {
+  const full = (text) => createHash("sha256").update(text).digest("hex");
+  const plain = { ...files };
+  for (const [name, content] of Object.entries(files)) {
+    if (/^chapters\/[^/]+\/chapter\.md$/.test(name)) plain[name] = content.replace(/^frozen:\n(?: {2,}.*\n)+/m, "");
+  }
+  if (plain[BOOK_OPINION]) {
+    const chapters = Object.entries(plain).filter(([name]) => name.startsWith("chapters/")).map(([name, content]) => `${name}:${full(content)}`).sort().join("\n");
+    plain[BOOK_OPINION] = plain[BOOK_OPINION].replace(/^(source_hash: "?)[0-9a-f]{64}/m, `$1${full(chapters)}`);
+  }
+  return plain;
+}
 
 const ITALIAN_BOOK = scripted((request) => {
   switch (request.json?.name) {
@@ -97,7 +117,7 @@ const ITALIAN_BOOK = scripted((request) => {
 async function latinRun({ files, ai, brief }) {
   const store = new MemoryBookStore(files);
   const { state } = await runSession(store, ai, { brief, now: clock });
-  const written = Object.entries(store.toObject()).filter(([name]) => name !== STATE && name !== ACTIVITY);
+  const written = Object.entries(withoutFreezeRecords(store.toObject())).filter(([name]) => name !== STATE && name !== ACTIVITY);
   return {
     status: state.status,
     error: state.lastError?.message ?? null,

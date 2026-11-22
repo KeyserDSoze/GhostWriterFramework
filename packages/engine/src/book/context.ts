@@ -1,9 +1,10 @@
 import { parseMarkdown, type MarkdownDocument } from "../markdown/frontmatter.js";
 import { defaultDirector, parseDirector, type DirectorProfile } from "../profiles/director.js";
+import { parseEvaluationStyle, type EvaluationStyle } from "../profiles/evaluation-style.js";
 import { ghostwriterPrompt, parseGhostwriter, type GhostwriterProfile } from "../profiles/ghostwriter.js";
 import { mergeReaderPersonas, parseReaderPersona, type ReaderPersonaProfile } from "../profiles/readers.js";
 import { clipMiddle, clipText, latinLength, tail, truncate } from "../util/text.js";
-import { CANON_DIRECTORIES, DIRECTOR_FILE, chapterNumberFromSlug, isValidGhostwriterSlug, type CanonKind } from "./paths.js";
+import { CANON_DIRECTORIES, DIRECTOR_FILE, EVALUATION_GUIDELINES_FILE, chapterNumberFromSlug, isValidGhostwriterSlug, type CanonKind } from "./paths.js";
 import type { BookSnapshot, CanonInfo, ChapterInfo, ParagraphInfo } from "./snapshot.js";
 import type { BookFileContent, BookStore } from "./store.js";
 
@@ -36,6 +37,12 @@ export function isThinDocument(body: string): boolean {
 export async function loadDirectorProfile(store: BookStore, language?: string): Promise<DirectorProfile> {
   const file = await store.read(DIRECTOR_FILE);
   return file ? parseDirector(file.content, language) : defaultDirector(language);
+}
+
+/** The evaluation style of the book (`evaluation-guidelines.md`); `null` without the file: nothing changes in how the book is judged. */
+export async function loadEvaluationStyle(store: BookStore): Promise<EvaluationStyle | null> {
+  const file = await store.read(EVALUATION_GUIDELINES_FILE);
+  return file ? parseEvaluationStyle(file.content) : null;
 }
 
 /**

@@ -1,3 +1,5 @@
+import { formatOrdinal } from "./slug.js";
+
 export const SKILL_NAME = "narrarium-book";
 export const DEEP_RESEARCH_SKILL_NAME = "deep-research";
 export const AUDIT_DIRECTORY = "audit";
@@ -101,6 +103,32 @@ export const PERSONAS_REVIEW_FILENAME = "personas-review.md";
 
 export const SCRIPTS_DIRECTORY = "scripts";
 
+/**
+ * The outline (Scaletta): the author's chapter-by-chapter trace of the book. `outline/book.md` holds the rough description of
+ * the book, and `outline/chapters/<NNN>.md` one entry per chapter (hypothetical title, what happens, the ghostwriter), numbered
+ * by the name of the file with the zero-padding of the chapter folders. It is not `plot.md`, which is generated.
+ */
+export const OUTLINE_DIRECTORY = "outline";
+export const OUTLINE_BOOK_FILE = `${OUTLINE_DIRECTORY}/book.md`;
+export const OUTLINE_CHAPTERS_DIRECTORY = `${OUTLINE_DIRECTORY}/chapters`;
+
+/** The file of the outline entry of a chapter: `outline/chapters/007.md`, `outline/chapters/1500.md`. */
+export function outlineChapterPath(number: number): string {
+  return `${OUTLINE_CHAPTERS_DIRECTORY}/${formatOrdinal(number)}.md`;
+}
+
+/**
+ * The chapter an outline file is the entry of, from its name (the name wins over the frontmatter); `canonical` is false for a
+ * name that is not padded as the core pads it (`7.md`, `0007.md`). `null` for any other file.
+ */
+export function parseOutlineChapterPath(filePath: string): { number: number; canonical: boolean } | null {
+  const match = /^outline\/chapters\/(\d+)\.md$/.exec(filePath);
+  if (!match) return null;
+  const number = Number(match[1]);
+  if (!Number.isSafeInteger(number) || number < 1) return null;
+  return { number, canonical: match[1] === formatOrdinal(number) };
+}
+
 export const CONTENT_GLOB = [
   "book.md",
   "context.md",
@@ -127,4 +155,5 @@ export const CONTENT_GLOB = [
   "operations/**/*.md",
   "research/**/*.md",
   "assets/**/*.md",
+  "outline/**/*.md",
 ];

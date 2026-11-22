@@ -40,8 +40,10 @@ Narrarium MCP already auto-refreshes `plot.md` and the resume files after final 
 - Keep structured facts in frontmatter and prose in markdown body.
 - In chapter and scene prose, write character, item, location, faction, secret, and timeline-event names as plain text. Do not insert markdown links to canon files or reader routes; the reader will link visible canon mentions.
 - Do not reveal a secret before its `known_from` or `reveal_in` threshold.
+- A frozen chapter (a `frozen` record in its `chapter.md`) that was changed after it was approved must never be ignored: ask the author whether to review it (autopilot: `frozenStatus` / `resolveFrozenChange`).
 - Treat `guidelines/`, `drafts/`, `plot.md`, `conversations/`, `resumes/`, `evaluations/`, and `secrets/` as first-class context, not optional notes.
 - Treat `director.md` (the director profile: the author's stand-in) and `evaluations/director/` as first-class context when judging or revising prose.
+- `outline/` (the Scaletta: `outline/book.md` and one `outline/chapters/<NNN>.md` per chapter, with hypothetical title, what happens and ghostwriter) is the author's chapter-by-chapter plan of the book: the autopilot follows it as binding and only fills the entries that are missing (`origin: autopilot`). It is not `plot.md`, which is generated: to change the plan, change the outline.
 - `autopilot/state.json`, `autopilot/activity.json`, and `autopilot/plan.md` belong to the autopilot. Read them for context, but do not edit them while an autopilot run is active; change the autopilot through its interventions instead.
 
 ## Historical or factual content
@@ -62,6 +64,7 @@ Narrarium MCP already auto-refreshes `plot.md` and the resume files after final 
 - Avoid renumbering or renaming chapter and paragraph files unless the user explicitly asks for structural migration.
 - Before writing new chapter or paragraph prose, read the selected `ghostwriters/<slug>.md` profile, the relevant prior story context, and any matching draft files. Resolve the selection from paragraph, chapter, then `book.md`.
 - Keep `plot.md` updated whenever chapter progression, timeline anchors, or reveal timing changes.
+- Before planning or writing a chapter, read its entry in `outline/chapters/` and follow it (title, events, ghostwriter); an entry you write or edit on the author's behalf is `origin: author`, without `digest`, and the autopilot never overwrites it.
 
 ## Reader and publishing
 

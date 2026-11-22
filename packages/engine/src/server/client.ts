@@ -1,6 +1,7 @@
 import type { AiRuntimeConfig } from "../ai/config.js";
 import { BookConflictError, type BookCommitResult, type BookFileChange, type BookFileContent, type BookFileEntry, type BookStore } from "../book/store.js";
-import type { AutopilotSnapshot, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
+import type { FrozenChapterResult, FrozenStatus } from "../autopilot/frozen.js";
+import type { AutopilotSnapshot, FrozenAction, FrozenChangeKind, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
 import { linkedSignal } from "../util/abort.js";
 import {
   ServerSentEventParser,
@@ -13,6 +14,8 @@ import {
   type AskDirectorResponse,
   type ErrorResponse,
   type EventsResponse,
+  type FreezeChapterRequest,
+  type ResolveFrozenChangeRequest,
   type PairingRequest,
   type PairingResult,
   type PauseAutopilotMode,
@@ -31,6 +34,9 @@ import {
   type ServerUpdateRequest,
   type UpdateAutopilotOptionsRequest,
   type UpdateAutopilotRuleRequest,
+  type ServerMcpClient,
+  type ServerMcpStatus,
+  type UpdateMcpRequest,
 } from "./protocol.js";
 
 export class ServerRequestError extends Error {
@@ -249,6 +255,30 @@ export class NarrariumServerClient {
     return this.request("POST", bookRoute(bookId, "/autopilot/answer"), input);
   }
 
+  /**
+   * The changes of frozen chapters (and of the outline of written ones) and what can be done with each: `GET …/autopilot/frozen` (a server
+   * that announces `SERVER_FEATURE_AUTOPILOT_FROZEN`; an older one answers 404).
+   */
+  frozenStatus(bookId: string): Promise<FrozenStatus> {
+    return this.request("GET", bookRoute(bookId, "/autopilot/frozen"));
+  }
+
+  /**
+   * Decide about the change of a chapter: `POST …/autopilot/frozen/:number` with `{ action, kind?, note? }` (`ResolveFrozenChangeRequest`).
+   * Answers the status after it. A refusal is a `ServerRequestError` with the code of the engine's `FrozenChapterError`
+   * (`chapter_not_found`, `not_changed`, `invalid_action`).
+   */
+  resolveFrozenChange(bookId: string, number: number, action: FrozenAction, options: { kind?: FrozenChangeKind; note?: string } = {}): Promise<FrozenStatus> {
+    const body: ResolveFrozenChangeRequest = { action, ...(options.kind ? { kind: options.kind } : {}), ...(options.note !== undefined ? { note: options.note } : {}) };
+    return this.request("POST", bookRoute(bookId, `/autopilot/frozen/${encodeURIComponent(String(number))}`), body);
+  }
+
+  /** Freeze a chapter by hand (`frozen: true`), or take its record away: `POST …/chapters/:slug/freeze` with `{ frozen }`. Answers the chapter's record now. */
+  freezeChapter(bookId: string, slug: string, frozen = true): Promise<FrozenChapterResult> {
+    const body: FreezeChapterRequest = { frozen };
+    return this.request("POST", bookRoute(bookId, `/chapters/${encodeURIComponent(slug)}/freeze`), body);
+  }
+
   configureAutopilot(bookId: string, input: StartOptions): Promise<AutopilotSnapshot> {
     return this.request("POST", bookRoute(bookId, "/autopilot/configure"), input);
   }
@@ -263,6 +293,46 @@ export class NarrariumServerClient {
 
   askDirector(bookId: string, input: AskDirectorRequest, signal?: AbortSignal): Promise<AskDirectorResponse> {
     return this.request("POST", bookRoute(bookId, "/director/ask"), input, { timeoutMs: 600_000, signal });
+  }
+
+  /**
+   * The MCP endpoint of a book (a server that announces `SERVER_FEATURE_MCP`; an older one answers `404 not_found`): `GET …/mcp` needs `read` and answers whether it is
+   * on, its slug and the address an assistant connects to. From a server that announces `SERVER_FEATURE_MCP_OAUTH` it also says how many apps are connected and where
+   * the OAuth server is. The answer is passed on as the server gave it; `404 book_not_found` for a book that is not there.
+   */
+  mcpStatus(bookId: string): Promise<ServerMcpStatus> {
+    return this.request("GET", bookRoute(bookId, "/mcp"));
+  }
+
+  /**
+   * Switch a book's MCP on or off and/or give it another slug: `PUT …/mcp` with `{ enabled?, slug? }` (needs `write`). Only what is given is sent, and only those two
+   * things; a `false` is a value. Answers the status after the change. Switching off, or a new slug, disconnects the apps of the book. The server refuses with
+   * `400 invalid_slug`, `409 slug_taken` (another book has it), `400 invalid_request` (nothing to change), `404 book_not_found` and `503 maintenance`: each is a
+   * `ServerRequestError` with the status and the code of the server.
+   */
+  updateMcp(bookId: string, input: UpdateMcpRequest): Promise<ServerMcpStatus> {
+    const body: UpdateMcpRequest = { ...(input.enabled === undefined ? {} : { enabled: input.enabled }), ...(input.slug === undefined ? {} : { slug: input.slug }) };
+    return this.request("PUT", bookRoute(bookId, "/mcp"), body);
+  }
+
+  /**
+   * The apps connected to a book through OAuth (a server that announces `SERVER_FEATURE_MCP_OAUTH`; one that has only the endpoint answers `404 not_found`): `GET …/mcp/clients`
+   * needs `write`, because it says who may change the book. Answers the list, which is empty when nothing is connected (and for an answer that has no list: a host never
+   * has to guard for it). Each entry is as the server gave it, with what a newer server adds.
+   */
+  async listMcpClients(bookId: string): Promise<ServerMcpClient[]> {
+    const answer = await this.request<{ clients?: unknown } | null | undefined>("GET", bookRoute(bookId, "/mcp/clients"));
+    const clients = answer?.clients;
+    return Array.isArray(clients) ? (clients as ServerMcpClient[]) : [];
+  }
+
+  /**
+   * Disconnect an app: `DELETE …/mcp/clients/:id` (needs `write`), with the `id` of the entry that `listMcpClients` gave (the connection's, not the app's). Its next call is
+   * refused and its tokens are useless; the app has to ask the owner again. Answers `{ revoked: true }`; `404 client_missing` when the book has no such connection (it was
+   * revoked already, or belongs to another book), told apart from `404 book_not_found` by the code.
+   */
+  revokeMcpClient(bookId: string, id: string): Promise<{ revoked: boolean }> {
+    return this.request("DELETE", bookRoute(bookId, `/mcp/clients/${encodeURIComponent(id)}`));
   }
 
   /**

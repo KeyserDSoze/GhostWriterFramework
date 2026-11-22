@@ -21,6 +21,7 @@ import { findChapter, findParagraph, loadBookSnapshot, type BookSnapshot, type C
 import type { BookStore } from "../book/store.js";
 import { frontmatterNumber, frontmatterString, parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
 import { directorPrompt, type DirectorProfile } from "../profiles/director.js";
+import { evaluationStyleBlock, evaluationStyleInstruction, type EvaluationStyle } from "../profiles/evaluation-style.js";
 import { currentRequest, unescapePromptDataDeep, untrustedData } from "../prompt/trust.js";
 import { asArray, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
 import { sha256Hex } from "../util/hash.js";
@@ -370,6 +371,11 @@ export interface AskDirectorInput {
   source?: DirectorOpinion["source"];
   /** Extra instruction appended to the request (used by the autopilot's final review). */
   instruction?: string;
+  /**
+   * The book's evaluation style (`loadEvaluationStyle`): the opinion is given with its criteria, its method and its severity. The
+   * autopilot's final judgement passes it; without it the request is what it always was.
+   */
+  evaluationStyle?: EvaluationStyle | null;
 }
 
 export interface AskDirectorResult {
@@ -397,18 +403,20 @@ export async function askDirector(input: AskDirectorInput): Promise<AskDirectorR
       : await paragraphMaterial(input.store, snapshot, input.target.chapter, input.target.paragraph);
   const question = input.question?.trim();
   const kindLabel = input.target.kind === "book" ? "the whole book" : input.target.kind === "chapter" ? "this chapter" : "this scene";
+  const style = evaluationStyleBlock(input.evaluationStyle);
   const request = [
     question
       ? `The author asks you about ${kindLabel}: "${question}". Answer the question directly in "answer", then give your full opinion.`
       : `Give your opinion on ${kindLabel} as the author's stand-in.`,
     "Judge it against the vision, the plan, the canon and the reveal rules. Be concrete; quote short evidence for concerns. Decide what you would do if the author left the decision to you.",
     input.instruction ?? "",
+    style ? evaluationStyleInstruction(input.target.kind === "book" ? "book" : input.target.kind === "chapter" ? "chapter" : "scene") : "",
   ].filter(Boolean).join(" ");
   const response = await input.ai.complete({
     capability: AI_CAPABILITIES.director,
     label: `director:${input.target.kind}`,
     system: directorSystemPrompt(director, language),
-    user: `${currentRequest(request)}\n\n${untrustedData("repository_content", material.sections.filter(Boolean).join("\n\n"))}`,
+    user: `${currentRequest(request)}\n\n${untrustedData("repository_content", [...material.sections, style].filter(Boolean).join("\n\n"))}`,
     json: DIRECTOR_OPINION_TOOL,
     maxOutputTokens: scaleOutputTokens(4000, language),
     signal: input.signal,

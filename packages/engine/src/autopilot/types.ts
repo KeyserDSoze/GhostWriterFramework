@@ -1,4 +1,5 @@
 import type { AiTimeoutPhase, AiUsage } from "../ai/types.js";
+import type { ChapterFreezeAuthor, FrozenChapterChanges } from "../book/freeze.js";
 
 /** Lifecycle of the autopilot of one book. */
 export type AutopilotStatus = "idle" | "running" | "paused" | "waiting-author" | "error" | "completed";
@@ -14,6 +15,7 @@ export type AutopilotTaskKind =
   | "plan"
   | "plan-reader"
   | "plan-review"
+  | "replan"
   | "scenes"
   | "write"
   | "reader"
@@ -24,18 +26,88 @@ export type AutopilotTaskKind =
   | "consolidate"
   | "impact"
   | "revise"
-  | "final";
+  | "final"
+  /** Freezing, without the model: the chapters an older engine approved (once), and the changes the author marked as reviewed. */
+  | "freeze";
 
 export interface AutopilotBrief {
   /** The idea, premise or pitch. One sentence is enough. */
   idea: string;
-  /** Optional chapter-by-chapter synopsis: binding when present. */
+  /**
+   * Optional chapter-by-chapter synopsis: binding when present. The outline (`outline/`) takes its place when the author wrote one:
+   * the synopsis then still applies where the outline says nothing.
+   */
   synopsis: string;
   targetChapters: number;
   scenesPerChapter: number;
   wordsPerScene: number;
   genre: string;
   audience: string;
+}
+
+/**
+ * What the autopilot does when the author changed a chapter that is frozen (or the outline entry of a chapter already written): `ask`
+ * (the default) stops and asks, every time; `auto` reviews and updates the book from the change without asking, and says so; `notify`
+ * only says it, once for every change.
+ */
+export type FrozenEditsMode = "ask" | "auto" | "notify";
+
+export const FROZEN_EDITS_MODES: readonly FrozenEditsMode[] = ["ask", "auto", "notify"];
+
+/** What changed that the author decides about: the text of a frozen chapter, or the outline entry of a chapter already written. */
+export type FrozenChangeKind = "frozen" | "outline";
+
+/**
+ * What can be done with a change. Of a frozen chapter: `review-and-update` (the director reviews the chapter, then the later chapters
+ * are checked and rewritten where the change requires it), `review-only` (only the director's review of the chapter), `mark-reviewed`
+ * (freeze it again as it is). Of the outline entry of a written chapter: `rewrite-to-outline` (rewrite the chapter to follow the new entry,
+ * then check the later chapters), `keep-text` (the plan follows the new entry, the text stays), `mark-reviewed` (the same as `keep-text`).
+ */
+export type FrozenAction = "review-and-update" | "review-only" | "mark-reviewed" | "rewrite-to-outline" | "keep-text";
+
+export const FROZEN_ACTIONS: readonly FrozenAction[] = ["review-and-update", "review-only", "mark-reviewed", "rewrite-to-outline", "keep-text"];
+
+/** The actions of each kind of change, in the order the question offers them. */
+export const FROZEN_CHANGE_ACTIONS: Readonly<Record<FrozenChangeKind, readonly FrozenAction[]>> = {
+  frozen: ["review-and-update", "review-only", "mark-reviewed"],
+  outline: ["rewrite-to-outline", "keep-text", "mark-reviewed"],
+};
+
+/** What the autopilot knew of a chapter: before a change (when it was frozen) and after it (its new closing). */
+export interface FrozenChapterView {
+  title: string;
+  summary: string;
+  keyEvents: string[];
+  /** The story so far as it was saved when the chapter closed (the plan keeps it only for the newest chapters). */
+  storySoFar?: string;
+}
+
+/**
+ * A decision about a change that waits to be carried out, or is being carried out: the author's (an answer, `resolveFrozenChange`) or the
+ * autopilot's (`frozenEdits: "auto"`). The author's part of the state, like the interventions: saved at once, also while a run goes on.
+ */
+export interface PendingFrozenReview {
+  id: string;
+  kind: FrozenChangeKind;
+  /** The chapter. */
+  number: number;
+  action: FrozenAction;
+  /** The change it is about: `FrozenChapterChange.fingerprint`, or the digest of the new outline entry. */
+  fingerprint: string;
+  /** When it was decided. */
+  at: string;
+  /** The author's own words, for the director. */
+  note?: string;
+  /** Decided by the autopilot (`frozenEdits: "auto"`): the chapters the author wrote are never rewritten for it. */
+  auto?: boolean;
+  /** The work began: since when, in which phase (`review` of the changed chapter, or its `rewrite` to follow the outline), and the chapter as it was before. */
+  started?: {
+    at: string;
+    phase: "review" | "rewrite";
+    before: FrozenChapterView;
+    /** For a `rewrite`: whether its revision rewrote any scene (a rewrite that changed nothing has no impact on the later chapters). */
+    rewritten?: boolean;
+  };
 }
 
 /** Where the book is published to GitHub: after every committed step (and again when a chapter is closed), after every chapter that is closed, or never. */
@@ -76,15 +148,27 @@ export interface AutopilotOptions {
    * says nothing publishes after every step when it is a server, and as `syncAfterChapter` says when it is a browser.
    */
   publishEvery?: AutopilotPublishMode;
+  /**
+   * After every plan (and every revision of it) the autopilot writes in the outline (`outline/`) the chapters that have no entry
+   * yet, and the description of the book when it has none, as its own (`origin: autopilot`), so that the author can correct them.
+   * It never touches an entry of the author. On unless the author turns it off; saved with the other options.
+   */
+  fillOutline?: boolean;
+  /**
+   * What to do when the author changes a frozen chapter, or the outline entry of a chapter already written (`FrozenEditsMode`): `ask`
+   * unless the author chose otherwise. Saved with the other options, and it can change while a run goes on.
+   */
+  frozenEdits?: FrozenEditsMode;
 }
 
 /** The options that can change while a run goes on: the run reads them again at the end of every step and of every chapter. */
-export const LIVE_AUTOPILOT_OPTIONS = ["publishEvery", "pauseAfterEachChapter"] as const;
+export const LIVE_AUTOPILOT_OPTIONS = ["publishEvery", "pauseAfterEachChapter", "frozenEdits"] as const;
 
 /** What the author can change while a run goes on. `publishEvery: null` takes the choice back, so that the host decides again. */
 export interface AutopilotLiveOptions {
   publishEvery?: AutopilotPublishMode | null;
   pauseAfterEachChapter?: boolean;
+  frozenEdits?: FrozenEditsMode;
 }
 
 /** What `AutopilotSession.updateOptions` takes: the settings above at any time, and any other option when no run is active. */
@@ -137,6 +221,17 @@ export interface PlannedChapter {
    * rewritten adds the rounds of its new review; the oldest leave when there are too many. Absent for a chapter that was never reviewed.
    */
   rounds?: ChapterRound[];
+  /**
+   * The ghostwriter of the chapter, from its entry in the outline (the slug of `ghostwriters/<slug>.md`). Written in the chapter's
+   * `chapter.md` when the folder is made, if it is not the book's: the chain scene → chapter → book then picks it as ever. Absent:
+   * the book's (an outline that names one that does not exist is said, and the book's writes).
+   */
+  ghostwriter?: string;
+  /**
+   * The digest of the outline entry the chapter comes from (`outlineEntryDigest`), as it was when the plan followed it (or wrote it).
+   * When the entry no longer matches it, the author changed it: a chapter not written yet is planned again before its scenes.
+   */
+  outlineDigest?: string;
 }
 
 /**
@@ -194,6 +289,11 @@ export interface AutopilotPlan {
   skippedReaders?: string[];
   /** Approved plan waiting for the author because of `pauseAfterPlan` or the director's autonomy. */
   awaitingAuthor: boolean;
+  /**
+   * Chapters taken out of the plan, before they were written, because the author deleted their entry of the outline. The next
+   * chapters keep their numbers, and these count among the chapters of the book, so that it is not extended to replace them.
+   */
+  removedChapters?: number[];
 }
 
 export interface ReviewFinding {
@@ -235,6 +335,11 @@ export interface ChapterReview {
   /** Fixes accepted and applied in the previous round, verified by the next one. */
   previousFixes: string[];
   history: Array<{ round: number; verdict: "approve" | "revise"; score: number; accepted: number; rejected: number }>;
+  /**
+   * The review of a change the author made to a frozen chapter: one round of the director (and of the specialists), whose fixes are
+   * advice for the author and are never applied (the author's text stays as it is); then the chapter is closed and frozen again.
+   */
+  authorEdit?: boolean;
 }
 
 export type InterventionScope = "next_step" | "from_now" | "rewrite";
@@ -251,14 +356,41 @@ export interface AuthorIntervention {
   appliedBy?: string;
 }
 
-export type DirectorQuestionKind = "plan-approval" | "chapter-approval" | "round-limit" | "director";
+export type DirectorQuestionKind = "plan-approval" | "chapter-approval" | "round-limit" | "director" | "frozen-change" | "outline-change";
+
+/** One of the choices of a question: `id` is what an answer names (`QuestionAnswer.choice`, or its `answer`), `label` what the author reads. */
+export interface QuestionChoice {
+  id: string;
+  label: string;
+}
+
+/** What a question about a change is about (`frozen-change`: a frozen chapter's text; `outline-change`: the outline entry of a written chapter). */
+export interface FrozenQuestionContext {
+  kind: FrozenChangeKind;
+  number: number;
+  slug: string;
+  /** The change asked about: an answer is about this one. */
+  fingerprint: string;
+  title?: string;
+  /** For a frozen chapter: who froze it and when, and what changed since. */
+  by?: ChapterFreezeAuthor;
+  frozenAt?: string;
+  changed?: FrozenChapterChanges;
+  /** The other chapters whose change waits for the author, after this one (asked one at a time, in order). */
+  others?: number[];
+}
 
 export interface DirectorQuestion {
   id: string;
   kind: DirectorQuestionKind;
   question: string;
   context: string;
+  /** What the author can answer, as text. For a question with `choices`, their labels in the same order. */
   options: string[];
+  /** Typed choices: an answer names one by its `id` (or its label). Absent from a question of free text. */
+  choices?: QuestionChoice[];
+  /** What a `frozen-change` or `outline-change` question is about. */
+  frozen?: FrozenQuestionContext;
   chapterNumber?: number;
   askedAt: string;
 }
@@ -272,6 +404,23 @@ export interface RevisionRequest {
   cursor: number;
   /** Chapters already rewritten by a revision this one replaced: they are reviewed again too. */
   revisedChapters?: number[];
+  /** Only the scenes of the chapters after this one may be rewritten: the impact of a change of this chapter on the later ones. */
+  afterChapter?: number;
+  /** Only the scenes of this chapter may be rewritten: a written chapter rewritten to follow its new outline entry. */
+  onlyChapter?: number;
+  /** What the revision comes from when it is not an instruction of the author: a change of a frozen chapter, or of the outline of a written one. */
+  source?: RevisionSource;
+}
+
+/** The change a revision comes from: the chapter, what the autopilot knew of it BEFORE and what it knows AFTER, and the author's words. */
+export interface RevisionSource {
+  kind: FrozenChangeKind;
+  chapterNumber: number;
+  note?: string;
+  /** Decided by the autopilot (`frozenEdits: "auto"`): the chapters the author wrote are left alone. */
+  auto?: boolean;
+  before?: FrozenChapterView;
+  after?: FrozenChapterView;
 }
 
 export interface AutopilotRunnerInfo {
@@ -389,8 +538,8 @@ export interface AutopilotState {
   phase: AutopilotPhase;
   brief: AutopilotBrief;
   options: AutopilotOptions;
-  /** `done` once the book has a usable foundation; `generated` when the autopilot wrote it. */
-  concept: { done: boolean; generated: boolean; secrets: ConceptSecret[] };
+  /** `done` once the book has a usable foundation; `generated` when the autopilot wrote it. `logline`: the one-sentence pitch of the concept it wrote (it describes the book in the outline). */
+  concept: { done: boolean; generated: boolean; secrets: ConceptSecret[]; logline?: string };
   plan: AutopilotPlan | null;
   review: ChapterReview | null;
   revision: RevisionRequest | null;
@@ -407,6 +556,18 @@ export interface AutopilotState {
   /** Guidance the director carries forward to the next chapters. */
   directorNotes: string[];
   question: DirectorQuestion | null;
+  /**
+   * Decisions about changes of frozen chapters (and of the outline of written ones) that wait to be carried out, or are being carried out:
+   * the next run does them before it goes on with the plan (a run in progress, at its next step). Absent when there is none.
+   */
+  pendingReviews?: PendingFrozenReview[];
+  /**
+   * Since when the state knows frozen chapters: a new state, from its start. A state saved by an older engine has none: its first run
+   * freezes the chapters the autopilot approved (never the author's), once, and sets it.
+   */
+  frozenSince?: string;
+  /** The changes already said with `frozenEdits: "notify"` (their fingerprints), so that each is said once. The newest are kept. */
+  frozenSeen?: string[];
   runner: AutopilotRunnerInfo | null;
   stats: AutopilotStats;
   /** Short human message about the current status ("Plan ready for review"). */
@@ -471,7 +632,19 @@ export type AutopilotMessageCode =
   | "profileProblems"
   | "chapterPause"
   | "stepLimit"
-  | "chapterLimit";
+  | "chapterLimit"
+  | "outlineGhostwriter"
+  | "outlineChanged"
+  | "outlineRemoved"
+  | "outlineWrittenChanged"
+  | "outlineWarnings"
+  | "outlineWrittenAuto"
+  | "frozenMigrated"
+  | "frozenChanged"
+  | "frozenAuto"
+  | "frozenInvalid"
+  | "frozenReviewed"
+  | "frozenCleared";
 
 /**
  * Live events: everything the autopilot does, as it happens. `run-ended` carries a `code` when the run ended for a
@@ -485,6 +658,8 @@ export type AutopilotMessageCode =
  * the tail of it, and the `characters` so far, at most about three times a second); a step that answers with a structured value says it with
  * numbers only (`bytes` of the reply that arrived, `characters` of its text or arguments, `preview` empty), at most once a second. It is never saved
  * and never replayed to a client that connects later; `snapshot().live` carries the last one.
+ * The insights about the outline carry the chapter they are about (`chapterNumber`) and, for a ghostwriter the outline names that does
+ * not exist, its slug (`ghostwriter`), so that a client can say them in its language.
  */
 export type AutopilotEventBody =
   | { type: "run-started"; runId: string; host: "browser" | "server" }
@@ -492,7 +667,7 @@ export type AutopilotEventBody =
   | { type: "task-started"; activity: AutopilotActivity }
   | { type: "task-progress"; activityId: string; characters: number; preview: string; bytes?: number }
   | { type: "task-finished"; activity: AutopilotActivity }
-  | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode; attempt?: number; retries?: number; waitMs?: number }
+  | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode; attempt?: number; retries?: number; waitMs?: number; chapterNumber?: number; ghostwriter?: string }
   | { type: "state"; state: AutopilotStateSummary }
   | { type: "sync"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode };
 
@@ -555,6 +730,12 @@ export interface AutopilotStateSummary {
   /** Derived, not saved: where the book is published now (`effectivePublish` of the options and of the host's default). */
   publish?: AutopilotPublishMode;
   /**
+   * Not saved, and absent when no change waits (and until a live session looked): how many chapters have a change that waits for the
+   * author's decision (a frozen chapter whose text changed, or a written chapter whose outline entry changed), as the run found it before its
+   * last step, or as the last `frozenStatus()` did. A change that has a decision recorded (`state.pendingReviews`) is not counted.
+   */
+  frozenChanges?: number;
+  /**
    * Not saved, and absent when nothing waits: while the run waits to try a failed step again, when the next attempt is and which retry it
    * is, so that a client can count down. Every change of it is a `state` event: it appears when the wait begins and goes when the attempt
    * starts (or the run ends). Absent from a summary made from the state file alone.
@@ -592,8 +773,10 @@ export interface InterventionInput {
 
 export interface QuestionAnswer {
   questionId: string;
-  /** One of the proposed options, or free text. */
+  /** One of the proposed options (for a question with choices, the `id` or the label of one), or free text. */
   answer: string;
+  /** The `id` of one of the question's `choices`: it wins over `answer`. A client of an older server sends the id as `answer`. */
+  choice?: string;
   /** Accept the work as it is and continue. */
   accept?: boolean;
   /** Keep the answer as a permanent rule instead of a note used once. Never the default. */

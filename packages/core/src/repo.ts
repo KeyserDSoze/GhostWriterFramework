@@ -21,6 +21,8 @@ import {
   GUIDELINE_FILES,
   IDEAS_FILE,
   NOTES_FILE,
+  OUTLINE_BOOK_FILE,
+  OUTLINE_DIRECTORY,
   PERSONAS_DIRECTORY,
   PERSONAS_REVIEW_FILENAME,
   SCRIPTS_DIRECTORY,
@@ -35,12 +37,14 @@ import {
   TIMELINE_MAIN_FILE,
   TOTAL_EVALUATION_FILE,
   TOTAL_RESUME_FILE,
+  parseOutlineChapterPath,
 } from "./constants.js";
 import { parseRewriteOperationPath, rewriteOperationManifestPath, REWRITE_FROM_READER_FEEDBACK_ROOT } from "./rewrite-operations.js";
 import {
   assetSchema,
   bookSchema,
   characterSchema,
+  chapterFreezeSchema,
   chapterSchema,
   chapterDraftSchema,
   contextSchema,
@@ -51,6 +55,8 @@ import {
   itemSchema,
   locationSchema,
   noteSchema,
+  outlineBookSchema,
+  outlineChapterSchema,
   paragraphSchema,
   paragraphDraftSchema,
   personaSchema,
@@ -7291,6 +7297,8 @@ export async function validateBook(rootPath: string): Promise<{
     await assertContainedPath(root, path.relative(root, filePath), "Doctor repository file path");
     const relativePath = toPosixPath(path.relative(root, filePath));
     if (relativePath.startsWith(`${GHOSTWRITERS_DIRECTORY}/`)) continue;
+    // The outline is the author's plan: a ghostwriter it names that does not exist is a warning of the doctor, and the book's writes.
+    if (relativePath.startsWith(`${OUTLINE_DIRECTORY}/`)) continue;
     const raw = await readFile(filePath, "utf8").catch(() => null);
     if (!raw) continue;
     let selected: unknown;
@@ -7416,6 +7424,63 @@ export async function doctorBook(rootPath: string): Promise<{
         path: relativePath,
         message: `secret_refs references a missing secret: ${secretRef}`,
       });
+    }
+  }
+
+  // A chapter's freeze record is the engine's: one that cannot be read is a warning (the chapter counts as not frozen), never an error.
+  for (const filePath of contentFiles) {
+    const relativePath = toPosixPath(path.relative(root, filePath));
+    if (!/^chapters\/[^/]+\/chapter\.md$/.test(relativePath)) continue;
+    await assertContainedPath(root, relativePath, "Doctor repository file path");
+    let frontmatter: Record<string, unknown>;
+    try {
+      frontmatter = matter(await readFile(filePath, "utf8")).data as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const frozen = frontmatter.frozen;
+    if (frozen === undefined || frozen === null || frozen === false) continue;
+    const reading = chapterFreezeSchema.safeParse(frozen);
+    if (reading.success) continue;
+    addDoctorIssue(issues, seen, {
+      severity: "warning",
+      code: "chapter-frozen-invalid",
+      path: relativePath,
+      message: `The freeze record of this chapter (frozen) cannot be read (${reading.error.issues.map((issue) => [issue.path.join("."), issue.message].filter(Boolean).join(": ")).slice(0, 3).join("; ")}): the chapter counts as not frozen, so a change to it is not noticed. Freeze it again from the app, or remove the key.`,
+    });
+  }
+
+  // The outline is the author's plan: what is odd in it is a warning, never an error.
+  for (const filePath of contentFiles) {
+    const relativePath = toPosixPath(path.relative(root, filePath));
+    const outlineEntry = parseOutlineChapterPath(relativePath);
+    if (!outlineEntry) continue;
+    await assertContainedPath(root, relativePath, "Doctor repository file path");
+    let frontmatter: Record<string, unknown>;
+    try {
+      frontmatter = matter(await readFile(filePath, "utf8")).data as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (typeof frontmatter.number === "number" && frontmatter.number !== outlineEntry.number) {
+      addDoctorIssue(issues, seen, {
+        severity: "warning",
+        code: "outline-number-mismatch",
+        path: relativePath,
+        message: `The outline entry says it is chapter ${frontmatter.number}, but its file is chapter ${outlineEntry.number}: the name of the file wins.`,
+      });
+    }
+    const ghostwriter = frontmatter.ghostwriter;
+    if (typeof ghostwriter === "string" && ghostwriter.trim()) {
+      const slug = ghostwriter.trim();
+      if (!isValidGhostwriterSlug(slug) || !(await pathExists(path.join(root, GHOSTWRITERS_DIRECTORY, `${slug}.md`)))) {
+        addDoctorIssue(issues, seen, {
+          severity: "warning",
+          code: "outline-ghostwriter-missing",
+          path: relativePath,
+          message: `The outline names the ghostwriter ${slug} for chapter ${outlineEntry.number}, but ${GHOSTWRITERS_DIRECTORY}/${slug}.md does not exist: the book's ghostwriter writes the chapter.`,
+        });
+      }
     }
   }
 
@@ -10574,6 +10639,17 @@ async function validateFile(root: string, filePath: string): Promise<void> {
   }
 
   if (relativePath.startsWith(`${AUDIT_DIRECTORY}/`)) {
+    return;
+  }
+
+  if (relativePath === OUTLINE_BOOK_FILE) {
+    outlineBookSchema.parse(data);
+    return;
+  }
+
+  // An entry of the outline: its number is the name of its file (a frontmatter that says otherwise is only a doctor's warning).
+  if (parseOutlineChapterPath(relativePath)) {
+    outlineChapterSchema.parse(data);
     return;
   }
 

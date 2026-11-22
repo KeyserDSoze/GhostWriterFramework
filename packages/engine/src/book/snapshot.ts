@@ -1,5 +1,7 @@
-import { frontmatterList, frontmatterNumber, frontmatterString, parseMarkdown } from "../markdown/frontmatter.js";
+import { frontmatterList, frontmatterNumber, frontmatterString, parseMarkdown, type MarkdownDocument } from "../markdown/frontmatter.js";
 import { clipText, slugToTitle } from "../util/text.js";
+import { chapterBodyDigest, parseChapterFreeze, sceneBodyDigest, type ChapterFreeze } from "./freeze.js";
+import { outlineIndex, type OutlineIndex } from "./outline.js";
 import {
   BOOK_FILE,
   CANON_DIRECTORIES,
@@ -29,6 +31,8 @@ export interface ParagraphInfo {
   ghostwriter?: string;
   path: string;
   hash: string;
+  /** The fingerprint of the text of the scene (`sceneBodyDigest`: its body, without the frontmatter), computed when the file was read. */
+  bodyDigest?: string;
 }
 
 export interface ChapterInfo {
@@ -41,6 +45,14 @@ export interface ChapterInfo {
   path: string;
   hash?: string;
   paragraphs: ParagraphInfo[];
+  /** The freeze record of chapter.md, when it holds a valid one: the chapter is frozen (see `book/freeze.ts`). */
+  frozen?: ChapterFreeze;
+  /** Why the `frozen` of chapter.md cannot be read: the chapter then counts as not frozen. Absent when there is no record, or a valid one. */
+  frozenProblem?: string;
+  /** The fingerprint of the body of chapter.md, its title heading excluded (`chapterBodyDigest`), computed when the file was read. */
+  bodyDigest?: string;
+  /** chapter.md as it was read (its whole body, and why its frontmatter cannot be read): what freezing the chapter rewrites, without reading it again. */
+  document?: MarkdownDocument;
 }
 
 export interface CanonInfo {
@@ -64,25 +76,43 @@ export interface BookSnapshot {
   personaPaths: string[];
   ghostwriterSlugs: string[];
   hasDirector: boolean;
+  /**
+   * The files of the outline (`outline/book.md`, `outline/chapters/<NNN>.md`) with their hashes, from the list of the files: none
+   * is read until something needs what it says (`OutlineReader`). Absent from a snapshot made by hand: it is then made from `files`.
+   */
+  outline?: OutlineIndex;
 }
 
 interface CachedHeader {
   hash: string;
   frontmatter: Record<string, unknown>;
   body: string;
+  /** The fingerprint of the text of a chapter.md or of a scene. */
+  digest?: string;
+  /** The whole document of a chapter.md. */
+  document?: MarkdownDocument;
 }
+
+/** What a file is to the snapshot: a chapter.md and a scene keep the fingerprint of their text, a chapter.md its whole document too. */
+type HeaderKind = "chapter" | "scene";
 
 /** Parsed frontmatter cache keyed by path and content hash, reused across autopilot steps. */
 export class SnapshotCache {
   private readonly entries = new Map<string, CachedHeader>();
 
-  async header(store: BookStore, path: string, hash: string): Promise<CachedHeader | null> {
+  async header(store: BookStore, path: string, hash: string, kind?: HeaderKind): Promise<CachedHeader | null> {
     const cached = this.entries.get(path);
     if (cached && cached.hash === hash) return cached;
     const file = await store.read(path);
     if (!file) return null;
     const document = parseMarkdown(file.content);
-    const entry = { hash: file.hash, frontmatter: document.frontmatter, body: clipText(document.body, 600) };
+    // The fingerprints are taken when the file is read, which happens once for each content: telling a change of a frozen chapter reads nothing.
+    const entry: CachedHeader = {
+      hash: file.hash,
+      frontmatter: document.frontmatter,
+      body: clipText(document.body, 600),
+      ...(kind === "chapter" ? { digest: chapterBodyDigest(document.body), document } : kind === "scene" ? { digest: sceneBodyDigest(document.body) } : {}),
+    };
     this.entries.set(path, entry);
     return entry;
   }
@@ -135,7 +165,7 @@ export async function loadBookSnapshot(store: BookStore, cache = new SnapshotCac
   await Promise.all(entries.map(async ({ path, hash }) => {
     const chapterFile = parseChapterFilePath(path);
     if (chapterFile) {
-      const header = await cache.header(store, path, hash);
+      const header = await cache.header(store, path, hash, "chapter");
       const chapter = ensureChapter(chapterFile.chapter);
       const frontmatter = header?.frontmatter ?? {};
       chapter.hash = hash;
@@ -144,11 +174,17 @@ export async function loadBookSnapshot(store: BookStore, cache = new SnapshotCac
       chapter.summary = frontmatterString(frontmatter, "summary");
       chapter.pov = frontmatterList(frontmatter, "pov");
       chapter.ghostwriter = frontmatterString(frontmatter, "ghostwriter");
+      if (header?.digest) chapter.bodyDigest = header.digest;
+      if (header?.document) chapter.document = header.document;
+      // A record is read only from a frontmatter that can be read: after an error of the YAML every value is a guess.
+      const freeze = header?.document?.error ? (frontmatter.frozen === undefined ? {} : { problem: "the frontmatter of chapter.md cannot be read, so neither can its freeze record: the chapter counts as not frozen" }) : parseChapterFreeze(frontmatter.frozen);
+      if (freeze.freeze) chapter.frozen = freeze.freeze;
+      if (freeze.problem) chapter.frozenProblem = freeze.problem;
       return;
     }
     const paragraphFile = parseParagraphFilePath(path);
     if (paragraphFile) {
-      const header = await cache.header(store, path, hash);
+      const header = await cache.header(store, path, hash, "scene");
       const frontmatter = header?.frontmatter ?? {};
       ensureChapter(paragraphFile.chapter).paragraphs.push({
         chapter: paragraphFile.chapter,
@@ -160,6 +196,7 @@ export async function loadBookSnapshot(store: BookStore, cache = new SnapshotCac
         ghostwriter: frontmatterString(frontmatter, "ghostwriter"),
         path,
         hash,
+        ...(header?.digest ? { bodyDigest: header.digest } : {}),
       });
       return;
     }
@@ -200,6 +237,7 @@ export async function loadBookSnapshot(store: BookStore, cache = new SnapshotCac
     personaPaths: personaPaths.sort(),
     ghostwriterSlugs: ghostwriterSlugs.sort(),
     hasDirector: files.has(DIRECTOR_FILE),
+    outline: outlineIndex(files),
   };
 }
 

@@ -1,8 +1,32 @@
 import { redactSecrets } from "../ai/redact.js";
 import type { AiPort } from "../ai/types.js";
+import { FrozenChapterError, freezeChapterChanges, markReviewedChanges, parseChapterFreeze, unfreezeChapterChanges } from "../book/freeze.js";
+import { OutlineCache, OutlineReader } from "../book/outline.js";
 import { AUTOPILOT_ACTIVITY_FILE, AUTOPILOT_PLAN_FILE, AUTOPILOT_STATE_FILE, type EvaluationTarget } from "../book/paths.js";
-import { isBookConflictError, type BookStore } from "../book/store.js";
+import { SnapshotCache, loadBookSnapshot, type BookSnapshot } from "../book/snapshot.js";
+import { isBookConflictError, type BookFileChange, type BookStore } from "../book/store.js";
 import { askDirector, type AskDirectorResult } from "../director/opinion.js";
+import { parseMarkdown } from "../markdown/frontmatter.js";
+import { defaultDirector } from "../profiles/director.js";
+import { randomId } from "../util/hash.js";
+import { languageCode } from "../util/text.js";
+import {
+  applyFrozenDecision,
+  forgetFrozenChapter,
+  frozenActions,
+  frozenAnswerAction,
+  frozenWaitingCount,
+  frozenWork,
+  isFrozenQuestion,
+  withoutPendingReview,
+  type FrozenChapterResult,
+  type FrozenDecision,
+  type FrozenStatus,
+  type FrozenStatusEntry,
+  type FrozenWorkItem,
+} from "./frozen.js";
+import { outlinePlanStatus, type OutlineWrittenChange } from "./outline-check.js";
+import { advanceState } from "./planner.js";
 import {
   AutopilotRun,
   AutopilotStateCorruptError,
@@ -13,9 +37,12 @@ import {
   stampState,
   stateChange,
   type AutopilotHooks,
+  type StoredAutopilot,
 } from "./runner.js";
 import { AutopilotRuleError, DEFAULT_OPTIONS, createAutopilotState, hostDefaultPublish, normalizeBrief, normalizeOptions, normalizeRuleText, summarizeAutopilotState } from "./state.js";
 import {
+  FROZEN_ACTIONS,
+  FROZEN_CHANGE_ACTIONS,
   LIVE_AUTOPILOT_OPTIONS,
   type AutopilotActivity,
   type AutopilotEvent,
@@ -29,6 +56,8 @@ import {
   type AutopilotSnapshot,
   type AutopilotState,
   type AutopilotStateSummary,
+  type FrozenAction,
+  type FrozenChangeKind,
   type InterventionInput,
   type QuestionAnswer,
   type StartOptions,
@@ -104,6 +133,43 @@ export interface AutopilotSessionConfig {
 export type AutopilotListener = (event: AutopilotEvent) => void;
 
 /**
+ * The changes of a book and what can be done with them, for a host outside a run (and during one): the plan as the next step would see it
+ * (folders followed, scenes reconciled), and the outline entries of the chapters already closed, read through `outlineCache`.
+ */
+async function bookFrozenStatus(store: BookStore, snapshot: BookSnapshot, state: AutopilotState | null, outlineCache: OutlineCache): Promise<{ status: FrozenStatus; items: FrozenWorkItem[] }> {
+  const language = languageCode(snapshot.book.language);
+  const advanced = state ? advanceState(state, { snapshot, director: defaultDirector(language), readers: [], language, storyDesignThin: false }) : null;
+  const written = advanced ? (await outlinePlanStatus(OutlineReader.of(store, snapshot, outlineCache), advanced, language)).written : new Map<number, OutlineWrittenChange>();
+  const items = frozenWork(advanced, snapshot, written);
+  const changes: FrozenStatusEntry[] = items.map((item) => ({
+    kind: item.kind,
+    number: item.number,
+    slug: item.slug,
+    title: item.title,
+    fingerprint: item.fingerprint,
+    actions: frozenActions(item),
+    ...(item.change ? { by: item.change.by, frozenAt: item.change.frozenAt, changed: item.change.changed } : {}),
+    ...(item.outline ? { outline: { title: item.outline.title, digest: item.outline.digest } } : {}),
+    ...(item.pending ? { pending: { action: item.pending.action, at: item.pending.at } } : {}),
+  }));
+  return {
+    status: {
+      mode: state?.options.frozenEdits ?? "ask",
+      changes,
+      pending: [...(state?.pendingReviews ?? [])],
+      warnings: snapshot.chapters.filter((chapter) => chapter.frozenProblem).map((chapter) => ({ slug: chapter.slug, path: chapter.path, problem: chapter.frozenProblem! })),
+    },
+    items,
+  };
+}
+
+/** Whether two states say the same (what every write changes aside). */
+function sameState(left: AutopilotState, right: AutopilotState): boolean {
+  const plain = ({ version: _version, updatedAt: _updatedAt, ...rest }: AutopilotState) => JSON.stringify(rest);
+  return plain(left) === plain(right);
+}
+
+/**
  * Control surface of one book's autopilot. The browser and the personal server both use
  * this class, so start, pause, interventions, questions and live events behave identically.
  */
@@ -124,6 +190,11 @@ export class AutopilotSession {
   private beatTimer: ReturnType<typeof setInterval> | null = null;
   /** The heartbeat of the active run in memory: newer than the one in the file between two saves. */
   private liveHeartbeatAt: string | null = null;
+  /** How many chapters have a change waiting for the author, as the last run or the last `frozenStatus()` found; `null` until one looked. */
+  private frozenCount: number | null = null;
+  /** The book as `frozenStatus()` and the decisions about changes read it: a file is read again only when it changed. */
+  private readonly bookCache = new SnapshotCache();
+  private readonly outlineCache = new OutlineCache();
 
   constructor(private readonly config: AutopilotSessionConfig) {
     this.now = config.now ?? (() => new Date());
@@ -233,6 +304,7 @@ export class AutopilotSession {
       limits: runtime?.limits ?? null,
       retry: runtime?.retry ?? null,
       defaultPublish: hostDefaultPublish(this.config.host, this.config.defaultPublish),
+      frozenChanges: runtime?.frozenChanges ?? this.frozenCount,
     });
     return summary.runner ? { ...summary, runner: this.liveRunner(summary.runner) } : summary;
   }
@@ -332,6 +404,8 @@ export class AutopilotSession {
       else this.emit({ type: "insight", tone: "critical", code: "unexpectedStop", title: "The autopilot stopped unexpectedly.", detail: redactSecrets(error instanceof Error ? error.message : String(error)) });
       throw error;
     }).finally(() => {
+      // What the run found of the changes stays known after it.
+      if (run.frozenWaiting !== null) this.frozenCount = run.frozenWaiting;
       if (this.run === run) {
         this.run = null;
         this.runPromise = null;
@@ -467,9 +541,142 @@ export class AutopilotSession {
     });
   }
 
+  /**
+   * Answer the question the run stopped with. The answer to a question about a change of a frozen chapter (or of the outline of a written
+   * one) is a decision (`frozenAnswerAction`): marking it reviewed, or keeping the text, is done at once; a review is recorded for the
+   * next run, which does it before going on with the plan.
+   */
   async answer(answer: QuestionAnswer): Promise<AutopilotState> {
     if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
+    const stored = await readStoredAutopilot(this.config.store);
+    const question = stored.state?.question;
+    if (stored.state && isFrozenQuestion(question) && question.id === answer.questionId) {
+      const { action, note } = frozenAnswerAction(question, answer);
+      const { items } = await this.frozenView();
+      const item = items.find((entry) => entry.kind === question.frozen.kind && entry.number === question.frozen.number);
+      // The change is gone meanwhile (taken back, or decided elsewhere): the question is only closed.
+      if (!item) return this.mutate("Autopilot: author answer", (state) => forgetFrozenChapter(state, question.frozen.number, question.frozen.kind));
+      if (!frozenActions(item).includes(action)) throw new FrozenChapterError("invalid_action", `${action} cannot be done with chapter ${item.number} now.`);
+      const saved = await this.carryOutDecision({ kind: item.kind, number: item.number, action, fingerprint: item.fingerprint, ...(note ? { note } : {}), ...(answer.asRule ? { asRule: true } : {}) }, item);
+      await this.frozenView();
+      return saved ?? (await readStoredAutopilot(this.config.store)).state ?? stored.state;
+    }
     return this.mutate("Autopilot: author answer", (state) => applyAnswer(state, answer, this.now()));
+  }
+
+  // ─── Frozen chapters ──────────────────────────────────────────────────────
+
+  /** The changes of frozen chapters (and of the outline of written ones), with what can be done with each, and the summary's count of them. */
+  async frozenStatus(): Promise<FrozenStatus> {
+    return (await this.frozenView()).status;
+  }
+
+  private async frozenView(): Promise<{ status: FrozenStatus; items: FrozenWorkItem[]; snapshot: BookSnapshot; stored: StoredAutopilot }> {
+    const stored = await readStoredAutopilot(this.config.store);
+    const snapshot = await loadBookSnapshot(this.config.store, this.bookCache);
+    const { status, items } = await bookFrozenStatus(this.config.store, snapshot, stored.state, this.outlineCache);
+    const count = frozenWaitingCount(status);
+    const changed = count !== this.frozenCount;
+    this.frozenCount = count;
+    // The count is part of the summary and changes without a write: a client is told, as it is told of a pause that waits.
+    if (changed && stored.state && !this.running) this.emit({ type: "state", state: this.summarize(stored.state) });
+    return { status, items, snapshot, stored };
+  }
+
+  /**
+   * Decide about the change of a chapter, as the answer to the question would: `mark-reviewed` (and `keep-text`) at once, in one commit of
+   * the chapter.md and of the state, also while a run goes on (`keep-text` then at the run's next step); a review is recorded in
+   * `state.pendingReviews` and done by the next run before the plan (by a run in progress, at its next step). `kind` tells the change when
+   * a chapter has both (its text and its outline); without it the action says it, and `mark-reviewed` is about the text first. `note` is the
+   * author's word for the director. Refused with a `FrozenChapterError`: `chapter_not_found`, `not_changed` (nothing to decide), and
+   * `invalid_action` (not an action, or not one that can be done with this change now). Answers the status after it.
+   */
+  async resolveFrozenChange(number: number, action: FrozenAction, options: { kind?: FrozenChangeKind; note?: string } = {}): Promise<FrozenStatus> {
+    if (!(FROZEN_ACTIONS as readonly string[]).includes(action)) throw new FrozenChapterError("invalid_action", `${String(action).slice(0, 40)} is not one of: ${FROZEN_ACTIONS.join(", ")}.`);
+    if (options.kind !== undefined && !(options.kind in FROZEN_CHANGE_ACTIONS)) throw new FrozenChapterError("invalid_action", "The kind of change is frozen or outline.");
+    const kind: FrozenChangeKind | undefined = options.kind ?? (action === "rewrite-to-outline" || action === "keep-text" ? "outline" : action === "mark-reviewed" ? undefined : "frozen");
+    if (this.starting) await this.starting.catch(() => undefined);
+    const { items, snapshot, stored } = await this.frozenView();
+    const item = items.find((entry) => entry.number === number && (!kind || entry.kind === kind));
+    if (!item) {
+      const known = snapshot.chapters.some((chapter) => chapter.number === number) || Boolean(stored.state?.plan?.chapters.some((chapter) => chapter.number === number));
+      throw known
+        ? new FrozenChapterError("not_changed", `Chapter ${number} has no change to decide about${kind === "outline" ? " in its outline" : kind === "frozen" ? " in its text" : ""}.`)
+        : new FrozenChapterError("chapter_not_found", `There is no chapter ${number}.`);
+    }
+    if (!frozenActions(item).includes(action)) {
+      throw new FrozenChapterError("invalid_action", item.inPlan ? `${action} is not something that can be done with a change of ${item.kind === "frozen" ? "a frozen chapter" : "the outline of a written chapter"}.` : `Chapter ${number} is not in the autopilot's plan: it can only be marked as reviewed.`);
+    }
+    const note = options.note?.trim();
+    await this.carryOutDecision({ kind: item.kind, number, action, fingerprint: item.fingerprint, ...(note ? { note } : {}) }, item);
+    return this.frozenStatus();
+  }
+
+  /** Record a decision and do at once what needs no model. One commit, compare-and-swap, tried again when the files changed meanwhile. */
+  private async carryOutDecision(decision: FrozenDecision, item: FrozenWorkItem): Promise<AutopilotState | null> {
+    const message = `Autopilot: chapter ${decision.number}, ${decision.action}`;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const stored = await readStoredAutopilot(this.config.store);
+      const at = this.now().toISOString();
+      const id = randomId("review");
+      const changes: BookFileChange[] = [];
+      let next: AutopilotState | null = null;
+      if (stored.state && !stored.corrupt) next = applyFrozenDecision(stored.state, decision, at, id);
+      else if (decision.action !== "mark-reviewed") assertStoredStateReadable(stored);
+      if (decision.kind === "frozen" && decision.action === "mark-reviewed") {
+        const snapshot = await loadBookSnapshot(this.config.store, this.bookCache);
+        if (snapshot.chapters.find((chapter) => chapter.slug === item.slug)?.frozen) changes.push(...markReviewedChanges(snapshot, item.slug, at));
+        if (next) next = withoutPendingReview(next, id);
+      } else if (decision.kind === "outline" && (decision.action === "keep-text" || decision.action === "mark-reviewed") && next?.plan && !this.running) {
+        // While a run goes on the plan is its own: the decision waits for its next step.
+        const chapter = next.plan.chapters.find((entry) => entry.number === decision.number);
+        if (chapter) chapter.outlineDigest = decision.fingerprint;
+        next = withoutPendingReview(next, id);
+      }
+      const write = next && stored.state && !sameState(stored.state, next) ? stampState(next, this.now()) : null;
+      if (!changes.length && !write) return stored.state;
+      try {
+        await this.config.store.commit([...changes, ...(write ? [stateChange(write, stored.stateHash)] : [])], message);
+        if (write) this.emit({ type: "state", state: this.summarize(write) });
+        return write ?? stored.state;
+      } catch (error) {
+        if (!isBookConflictError(error) || attempt === 4) throw error;
+      }
+    }
+    return null;
+  }
+
+  /** Freeze a chapter by hand (`by: author`), as it is now: a change the author made to it is accepted, and the decisions that waited for it are dropped. */
+  async freezeChapter(slug: string): Promise<FrozenChapterResult> {
+    return this.setFrozen(slug, true);
+  }
+
+  /** Take the record of a chapter away (one that cannot be read too): the chapter is not frozen any more, and nothing waits for it. */
+  async unfreezeChapter(slug: string): Promise<FrozenChapterResult> {
+    return this.setFrozen(slug, false);
+  }
+
+  private async setFrozen(slug: string, frozen: boolean): Promise<FrozenChapterResult> {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const stored = await readStoredAutopilot(this.config.store);
+      const snapshot = await loadBookSnapshot(this.config.store, this.bookCache);
+      const chapter = snapshot.chapters.find((entry) => entry.slug === slug);
+      if (!chapter) throw new FrozenChapterError("chapter_not_found", `There is no chapter in the folder chapters/${slug}.`);
+      const changes = frozen ? freezeChapterChanges(snapshot, slug, "author", this.now().toISOString()) : unfreezeChapterChanges(snapshot, slug);
+      const record = frozen ? parseChapterFreeze(parseMarkdown(changes[0].content ?? "").frontmatter.frozen).freeze ?? null : null;
+      const next = stored.state && !stored.corrupt ? forgetFrozenChapter(stored.state, chapter.number, "frozen") : null;
+      const write = next && stored.state && !sameState(stored.state, next) ? stampState(next, this.now()) : null;
+      if (!changes.length && !write) return { slug, number: chapter.number, frozen: record };
+      try {
+        await this.config.store.commit([...changes, ...(write ? [stateChange(write, stored.stateHash)] : [])], `Autopilot: chapter ${slug} ${frozen ? "frozen" : "unfrozen"} by the author`);
+        if (write) this.emit({ type: "state", state: this.summarize(write) });
+        await this.frozenView();
+        return { slug, number: chapter.number, frozen: record };
+      } catch (error) {
+        if (!isBookConflictError(error) || attempt === 4) throw error;
+      }
+    }
+    throw new Error("Could not save the chapter.");
   }
 
   /** Change the brief or the options while the autopilot is not running. */

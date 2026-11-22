@@ -2,7 +2,8 @@ import type { AiRuntimeConfig, RedactedAiIntegration, RedactedAiTaskRoute } from
 import type { EvaluationTarget } from "../book/paths.js";
 import type { BookFileChange, BookFileContent, BookFileEntry } from "../book/store.js";
 import type { DirectorOpinion } from "../director/opinion.js";
-import type { AutopilotEvent, AutopilotLiveOptions, AutopilotPauseMode, AutopilotSnapshot, AutopilotStateSummary, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
+import type { FrozenChapterResult, FrozenStatus } from "../autopilot/frozen.js";
+import type { AutopilotEvent, AutopilotLiveOptions, AutopilotPauseMode, AutopilotSnapshot, AutopilotStateSummary, FrozenAction, FrozenChangeKind, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
 
 export const SERVER_API_VERSION = 1;
 /** The oldest and the newest `ServerInfo.apiVersion` a server may speak for this engine to talk to it (see `serverCompatibility`). */
@@ -230,6 +231,136 @@ export const SERVER_FEATURE_AUTOPILOT_RULES = "autopilot-rules";
 export function serverSupportsAutopilotRules(info: { features?: unknown } | null | undefined): boolean {
   const features = info?.features;
   return Array.isArray(features) && features.includes(SERVER_FEATURE_AUTOPILOT_RULES);
+}
+
+/**
+ * The `ServerInfo.features` entry of a server that implements the routes of the frozen chapters: `GET /api/v1/books/:id/autopilot/frozen`
+ * (the changes and what can be done with them), `POST /api/v1/books/:id/autopilot/frozen/:number` (a decision about one, see
+ * `ResolveFrozenChangeRequest`) and `POST /api/v1/books/:id/chapters/:slug/freeze` (`FreezeChapterRequest`). A server without it answers
+ * 404 to them: a client checks `serverSupportsFrozenChapters` before it offers them. The answer to the question about a change needs no
+ * new route: the `id` of a choice travels as the `answer` of `POST …/autopilot/answer`, as an older server forwards it.
+ */
+export const SERVER_FEATURE_AUTOPILOT_FROZEN = "autopilot-frozen";
+
+/** Whether the server announces the routes of the frozen chapters. Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsFrozenChapters(info: { features?: unknown } | null | undefined): boolean {
+  const features = info?.features;
+  return Array.isArray(features) && features.includes(SERVER_FEATURE_AUTOPILOT_FROZEN);
+}
+
+/** The body of `POST /api/v1/books/:id/autopilot/frozen/:number`: what to do with the change of that chapter (`AutopilotSession.resolveFrozenChange`). */
+export interface ResolveFrozenChangeRequest {
+  action: FrozenAction;
+  /** `frozen` (the chapter's text) or `outline` (its outline entry), for a chapter that has both; without it the action says it. */
+  kind?: FrozenChangeKind;
+  /** The author's words for the director. */
+  note?: string;
+}
+
+/** The body of `POST /api/v1/books/:id/chapters/:slug/freeze`: freeze the chapter by hand, or take its record away. */
+export interface FreezeChapterRequest {
+  frozen: boolean;
+}
+
+/** The answer of `GET …/autopilot/frozen` and of `POST …/autopilot/frozen/:number`. */
+export type FrozenStatusResponse = FrozenStatus;
+/** The answer of `POST …/chapters/:slug/freeze`. */
+export type FreezeChapterResponse = FrozenChapterResult;
+
+/**
+ * The `ServerInfo.features` entry of a server that has the MCP endpoint of a book (`/mcp/<slug>`, which an assistant such as Claude Code connects to with a
+ * client token) and the routes that switch it on and off: `GET` and `PUT /api/v1/books/:id/mcp`. A server without it answers 404 to them: a client checks
+ * `serverSupportsMcp` before it offers the setting.
+ */
+export const SERVER_FEATURE_MCP = "mcp";
+
+/** Whether the server announces that it has the MCP endpoint of a book. Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsMcp(info: { features?: unknown } | null | undefined): boolean {
+  const features = info?.features;
+  return Array.isArray(features) && features.includes(SERVER_FEATURE_MCP);
+}
+
+/**
+ * The `ServerInfo.features` entry of a server on which apps such as ChatGPT and Claude.ai connect to a book by themselves, through OAuth (the owner allows each
+ * one on a page of his server): the status of the book's MCP then says how many are connected and where the OAuth server is (`ServerMcpStatus.connections` and
+ * `oauth`), and `GET` and `DELETE /api/v1/books/:id/mcp/clients` list and revoke them. A server with the MCP endpoint but without it answers 404 to those two
+ * routes: a client checks `serverSupportsMcpOAuth` before it offers the list.
+ */
+export const SERVER_FEATURE_MCP_OAUTH = "mcp-oauth";
+
+/** Whether the server announces that apps can connect to a book's MCP endpoint through OAuth. Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsMcpOAuth(info: { features?: unknown } | null | undefined): boolean {
+  const features = info?.features;
+  return Array.isArray(features) && features.includes(SERVER_FEATURE_MCP_OAUTH);
+}
+
+/** Where a server's OAuth server is, as the status of a book's MCP says it (`GET /api/v1/books/:id/mcp`, from a server that announces `SERVER_FEATURE_MCP_OAUTH`). */
+export interface ServerMcpOAuth {
+  /** The issuer: the server's public address, or the address on its own computer while it has none. */
+  issuer: string;
+  /** The metadata of the authorization server (RFC 8414) and of this book as a protected resource (RFC 9728): what an app reads to find out how to get a token. */
+  metadataUrl: string;
+  resourceMetadataUrl: string;
+  /** What an app may ask for: `mcp:read`, `mcp:write`, `mcp:run`. */
+  scopes: string[];
+}
+
+/**
+ * The MCP endpoint of a book as the server reports it: whether it is on, and the address an assistant connects to. It is off until the owner switches it on, one
+ * book at a time. `connections` and `oauth` come from a server that announces `SERVER_FEATURE_MCP_OAUTH`; one that has the endpoint without it sends neither
+ * (a missing `connections` is *unknown*, not *none*).
+ */
+export interface ServerMcpStatus {
+  bookId: string;
+  enabled: boolean;
+  /** The last part of the address, made from the title once and the owner's to change: `/mcp/<slug>`. Stable: a new title never moves it. */
+  slug: string;
+  path: string;
+  /** The address to paste into the assistant: `<public address>/mcp/<slug>`, or the local one while the server has no public address. */
+  url: string;
+  /** Whether `url` can be reached from outside this computer (the server has a public address). */
+  public: boolean;
+  /** Why `url` works from this computer only, when `public` is false. */
+  message?: string;
+  /** The versions of the MCP protocol the endpoint speaks, newest first. */
+  protocolVersions: string[];
+  updatedAt: string;
+  /** How many apps are connected to the book through OAuth. Switching the book off, or changing its slug, ends them all. */
+  connections?: number;
+  oauth?: ServerMcpOAuth;
+}
+
+/**
+ * The body of `PUT /api/v1/books/:id/mcp`: switch the endpoint on or off and/or choose the slug (lowercase letters and digits, joined by single hyphens, at most 80
+ * characters). At least one of the two. Switching off, or choosing another slug, disconnects every app of the book.
+ */
+export interface UpdateMcpRequest {
+  enabled?: boolean;
+  slug?: string;
+}
+
+/** What an app connected through OAuth may do with a book: `read` always, `write` the editing tools, `run` the autopilot's. (Never `update`: an app cannot update the server.) */
+export type ServerMcpClientScope = Exclude<ServerScope, "update">;
+
+/** An app that the owner allowed to use a book through OAuth, as `GET /api/v1/books/:id/mcp/clients` lists it. Never a token. */
+export interface ServerMcpClient {
+  /** The connection's id: what `DELETE …/mcp/clients/:id` revokes. The same app connected twice has two. */
+  id: string;
+  /** The id the app registered under. */
+  clientId: string;
+  /** What the app calls itself, cleaned: one short line, to be shown as text. */
+  name: string;
+  /** The host (and port, when it has one) the app sends the owner back to: where the owner can see that it is the app's own. */
+  redirectHost: string;
+  /** What the owner allowed. A server may add others: show what is known and leave the rest out. */
+  scopes: ServerMcpClientScope[];
+  createdAt: string;
+  lastUsedAt: string;
+}
+
+/** What `GET /api/v1/books/:id/mcp/clients` answers: `listMcpClients` returns the list. */
+export interface ListMcpClientsResponse {
+  clients: ServerMcpClient[];
 }
 
 /** The `mode`s of `POST /api/v1/books/:id/autopilot/pause`: `now`, `after-step` and `after-chapter` pause (see `AutopilotPauseMode`); `cancel` takes back a pause that waits. */

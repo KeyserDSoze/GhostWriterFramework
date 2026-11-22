@@ -2,7 +2,8 @@ import type { BookSnapshot, ChapterInfo } from "../book/snapshot.js";
 import { chapterNumberFromSlug, chapterSlug, paragraphFilePath, paragraphSlug } from "../book/paths.js";
 import type { DirectorProfile } from "../profiles/director.js";
 import { isItalian } from "../util/text.js";
-import type { AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, InsightTone, PlannedChapter, PlannedScene } from "./types.js";
+import { advancePendingReviews, frozenQuestionMessage, inRevision, isFrozenQuestion, needsFreezeStep, noteOutlineRewrite, startedReview, type PlannerFrozen } from "./frozen.js";
+import type { AutopilotMessageCode, AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, InsightTone, PlannedChapter, PlannedScene } from "./types.js";
 
 export interface PlannerReader {
   slug: string;
@@ -16,6 +17,9 @@ export interface PlanNote {
   tone: InsightTone;
   title: string;
   detail?: string;
+  /** A code a client can say in its own language, and the chapter it is about. */
+  code?: AutopilotMessageCode;
+  chapterNumber?: number;
 }
 
 export interface PlannerContext {
@@ -28,6 +32,34 @@ export interface PlannerContext {
   storyDesignThin: boolean;
   /** Told what the reconciliation of the plan with the files found: a chapter followed into its renamed folder, a folder the autopilot will not write in, a rewrite with nothing left to rewrite. */
   report?: (note: PlanNote) => void;
+  /** What the outline says, read by the runner before the step (absent: no outline, as before it existed). */
+  outline?: PlannerOutline;
+  /**
+   * Given once the runner has settled the changes of frozen chapters for the step (`settleFrozenChanges`): advancing the state may then
+   * start carrying out a decision about one. Absent: decisions are only finished, never started.
+   */
+  frozen?: PlannerFrozen;
+}
+
+/** What the planner knows of the outline (`outline/`): the runner reads it before every step, and the planner never reads a file. */
+export interface PlannerOutline {
+  /** The last chapter the author's outline asks for (0 when it asks for none): the book has at least this many chapters. */
+  lastChapter: number;
+  /**
+   * Chapters of the plan whose entry of the outline the author changed (`changed`) or deleted (`removed`) since the plan followed it,
+   * and that have nothing written yet: each is planned again, or taken out of the plan, before its scenes.
+   */
+  changed?: ReadonlyMap<number, "changed" | "removed">;
+}
+
+/**
+ * The number of chapters the book is planned to: the brief's, or the last chapter of the author's outline when it asks for more.
+ * Chapters taken out of the plan because the author deleted their entry count among them, so that the book is not extended to
+ * replace them.
+ */
+export function effectiveTargetChapters(state: Pick<AutopilotState, "brief" | "plan">, outline?: Pick<PlannerOutline, "lastChapter"> | null): number {
+  const removed = state.plan?.removedChapters?.length ?? 0;
+  return Math.max(1, Math.max(state.brief.targetChapters, outline?.lastChapter ?? 0) - removed);
 }
 
 export interface TaskDescriptor {
@@ -51,7 +83,7 @@ export type PlannedStep =
   | { kind: "stop"; status: "paused" | "waiting-author" | "completed"; message: string };
 
 /** The steps that write: the author's "next step" notes go to the first of them, once. Closing a chapter and repairing a scene that is already written take none. */
-const NOTE_TASKS = new Set<AutopilotTaskKind>(["concept", "plan", "scenes", "write", "revise"]);
+const NOTE_TASKS = new Set<AutopilotTaskKind>(["concept", "plan", "replan", "scenes", "write", "revise"]);
 
 function text(language: string, en: string, it: string): string {
   return isItalian(language) ? it : en;
@@ -66,7 +98,7 @@ function quoted(title: string | undefined): string {
  * long plan covers) make the title of the plan task say which chapters it plans; without them it says how many chapters
  * the single batch of a short book plans.
  */
-export function describeTask(kind: AutopilotTaskKind, language: string, params: { chapter?: PlannedChapter; scene?: PlannedScene; readerName?: string; round?: number; chapters?: number; from?: number; to?: number }): Pick<TaskDescriptor, "title" | "reason" | "next"> {
+export function describeTask(kind: AutopilotTaskKind, language: string, params: { chapter?: PlannedChapter; scene?: PlannedScene; readerName?: string; round?: number; chapters?: number; from?: number; to?: number; outline?: "changed" | "removed" }): Pick<TaskDescriptor, "title" | "reason" | "next"> {
   const chapter = params.chapter;
   const scene = params.scene;
   const c = chapter?.number ?? 0;
@@ -107,6 +139,18 @@ export function describeTask(kind: AutopilotTaskKind, language: string, params: 
         reason: text(language, "The director stands in for the author and approves or corrects the plan.", "Il direttore sostituisce l'autore e approva o corregge il piano."),
         next: text(language, "Plan the scenes of the first chapter.", "Pianificare le scene del primo capitolo."),
       };
+    case "replan":
+      return params.outline === "removed"
+        ? {
+          title: text(language, `Taking chapter ${c}${quoted(chapter?.title)} out of the plan`, `Il capitolo ${c}${quoted(chapter?.title)} esce dal piano`),
+          reason: text(language, "You deleted its entry of the outline, and nothing of it is written yet.", "Hai cancellato la sua voce della Scaletta, e non ne è ancora scritto nulla."),
+          next: text(language, "Go on with the next chapter: its number does not change.", "Proseguire con il capitolo successivo: il suo numero non cambia."),
+        }
+        : {
+          title: text(language, `Planning chapter ${c}${quoted(chapter?.title)} again from your outline`, `Nuova pianificazione del capitolo ${c}${quoted(chapter?.title)} dalla tua Scaletta`),
+          reason: text(language, "You changed its entry of the outline: its plan follows the new entry, and its scenes are planned again.", "Hai cambiato la sua voce della Scaletta: il suo piano segue la voce nuova, e le sue scene si ripianificano."),
+          next: text(language, `Plan the scenes of chapter ${c}.`, `Pianificare le scene del capitolo ${c}.`),
+        };
     case "scenes":
       return {
         title: text(language, `Planning the scenes of chapter ${c}${quoted(chapter?.title)}`, `Pianificazione delle scene del capitolo ${c}${quoted(chapter?.title)}`),
@@ -175,6 +219,12 @@ export function describeTask(kind: AutopilotTaskKind, language: string, params: 
         reason: text(language, "Arcs, promises and open threads are checked once every chapter is approved.", "Archi, promesse e fili aperti si verificano quando tutti i capitoli sono approvati."),
         next: text(language, "The autopilot is complete.", "L'autopilot è completato."),
       };
+    case "freeze":
+      return {
+        title: text(language, "Freezing the approved chapters", "Congelamento dei capitoli approvati"),
+        reason: text(language, "A chapter approved by the director is frozen: a change you make to it afterwards is noticed, and you decide what to do with it.", "Un capitolo approvato dal direttore è congelato: una tua modifica successiva viene notata, e decidi tu cosa farne."),
+        next: text(language, "Go on with the book.", "Proseguire con il libro."),
+      };
   }
 }
 
@@ -212,7 +262,7 @@ function cloneState(state: AutopilotState): AutopilotState {
   return structuredClone(state);
 }
 
-function newReview(chapter: PlannedChapter, ctx: PlannerContext, readersEnabled: boolean): ChapterReview {
+function newReview(chapter: PlannedChapter, ctx: PlannerContext, readersEnabled: boolean, authorEdit = false): ChapterReview {
   return {
     chapterNumber: chapter.number,
     round: 1,
@@ -226,6 +276,7 @@ function newReview(chapter: PlannedChapter, ctx: PlannerContext, readersEnabled:
     repairQueue: [],
     previousFixes: [],
     history: [],
+    ...(authorEdit ? { authorEdit: true } : {}),
   };
 }
 
@@ -457,7 +508,7 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
 
   if (!state.plan && state.concept.done) {
     const imported = importedChapters(snapshot);
-    if (imported.length && imported.length >= state.brief.targetChapters) {
+    if (imported.length && imported.length >= effectiveTargetChapters(state, ctx.outline)) {
       state.plan = { chapters: imported, approved: true, rounds: 0, revisionNotes: [], readerReactions: [], readersDone: true, awaitingAuthor: false };
     }
   }
@@ -465,8 +516,17 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
   if (state.plan) {
     // One lookup table instead of a scan of the snapshot per chapter: a book of thousands of chapters is advanced in linear time.
     const folders = matchChapterFolders(state.plan.chapters, snapshot, ctx.language, state.plan.approved, report);
+    const editing = startedReview(state);
     for (const chapter of state.plan.chapters) {
       const files = folders.get(chapter);
+      // A frozen chapter that is closed (or whose change the director is reviewing) follows its files: a scene the author deleted is a
+      // change to ask about, never one to write again in silence.
+      // (A chapter the revision in progress rewrites is the autopilot's until the revision is over, as any chapter it works on.)
+      if (files?.frozen && !inRevision(state, chapter.number) && (chapter.status === "done" || (editing?.number === chapter.number && editing.started?.phase === "review" && chapter.status === "review"))) {
+        followScenes(chapter, files);
+        if (chapter.imported && !chapter.summary && files.summary) chapter.summary = files.summary;
+        continue;
+      }
       for (const scene of chapter.scenes) {
         if (scene.status !== "planned" && scene.path && !snapshot.files.has(scene.path)) {
           removed.set(`${chapter.number}.${scene.number}`, scene.path);
@@ -526,6 +586,7 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
   }
 
   if (state.revision?.targets && state.revision.cursor >= state.revision.targets.length) {
+    noteOutlineRewrite(state, state.revision);
     const affected = new Set([...state.revision.targets.map((target) => target.chapterNumber), ...(state.revision.revisedChapters ?? [])]);
     for (const chapter of state.plan?.chapters ?? []) {
       if (!affected.has(chapter.number) || !chapter.scenes.length) continue;
@@ -538,13 +599,19 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
     state.revision = null;
   }
 
-  const current = state.plan?.approved ? state.plan.chapters.find((chapter) => chapter.status !== "done") : undefined;
+  // The decisions about the changes of frozen chapters: kept, finished, or started (the chapter goes back to review, before the plan).
+  advancePendingReviews(state, snapshot, report, ctx.language, ctx.frozen);
+
+  const current = editedChapter(state) ?? (state.plan?.approved ? state.plan.chapters.find((chapter) => chapter.status !== "done") : undefined);
   if (current?.status === "review") {
-    if (!state.review || state.review.chapterNumber !== current.number) state.review = newReview(current, ctx, state.options.readers);
+    const editing = startedReview(state);
+    const authorEdit = editing?.number === current.number && editing.kind === "frozen" && editing.started?.phase === "review";
+    if (!state.review || state.review.chapterNumber !== current.number) state.review = newReview(current, ctx, state.options.readers, authorEdit);
     const review = state.review;
     review.readersPending = review.readersPending.filter((slug) => ctx.readers.some((reader) => reader.slug === slug));
     if (!state.options.specialists) review.specialistsDone = true;
-    if (review.directorDone && review.verdict === "revise" && review.repairQueue.length === 0) {
+    // The review of the author's change is one round whose fixes are never applied: it goes to the closing, whatever the verdict.
+    if (review.directorDone && review.verdict === "revise" && review.repairQueue.length === 0 && !review.authorEdit) {
       const maxRounds = ctx.director.maxReviewRounds;
       if (review.round < maxRounds) {
         review.round += 1;
@@ -569,8 +636,16 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
   return state;
 }
 
+/** The chapter of the decision being carried out, while the autopilot works on it (not closed again yet): it comes before the plan. */
+function editedChapter(state: AutopilotState): PlannedChapter | undefined {
+  const editing = startedReview(state);
+  const chapter = editing ? state.plan?.chapters.find((entry) => entry.number === editing.number) : undefined;
+  return chapter && chapter.status !== "done" ? chapter : undefined;
+}
+
 export function phaseOf(state: AutopilotState): AutopilotPhase {
-  if (state.finalDone) return "completed";
+  // A book that was complete stays complete while the director only reviews a change of the author's.
+  if (state.finalDone && !state.plan?.chapters.some((chapter) => chapter.status !== "done")) return "completed";
   if (!state.concept.done) return "concept";
   if (!state.plan || !state.plan.approved) return "plan";
   const current = state.plan.chapters.find((chapter) => chapter.status !== "done");
@@ -582,8 +657,12 @@ export function phaseOf(state: AutopilotState): AutopilotPhase {
 export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedStep {
   const italian = isItalian(ctx.language);
   if (state.question) {
+    if (isFrozenQuestion(state.question)) return { kind: "stop", status: "waiting-author", message: frozenQuestionMessage(state.question, ctx.language) };
     return { kind: "stop", status: "waiting-author", message: italian ? "Il direttore ha una domanda per te." : "The director has a question for you." };
   }
+
+  // Without the model: the chapters an older engine approved are frozen once, and the changes marked as reviewed are frozen as they are.
+  if (needsFreezeStep(state, ctx.snapshot)) return { kind: "task", task: descriptor("freeze", phaseOf(state), ctx) };
 
   if (state.revision) {
     if (!state.revision.targets) return { kind: "task", task: descriptor("impact", phaseOf(state), ctx) };
@@ -595,6 +674,10 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
     }
   }
 
+  // A change of the author's being reviewed comes before the plan: its chapter is reviewed (or written again) first.
+  const edited = editedChapter(state);
+  if (edited) return chapterStep(edited, state, ctx);
+
   if (!state.concept.done) return { kind: "task", task: descriptor("concept", "concept", ctx) };
 
   const plan = state.plan;
@@ -602,7 +685,7 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
     // Before anything is planned after them, the chapters the author wrote get the summaries the story so far is made of.
     const unsummarized = nextImportedWithoutSummary(state, ctx.snapshot);
     if (unsummarized) return { kind: "task", task: descriptor("summarize-imported", phaseOf(state), ctx, { chapter: unsummarized }) };
-    const batch = nextPlanBatch(plan, planRange(importedChapters(ctx.snapshot), state.brief.targetChapters));
+    const batch = nextPlanBatch(plan, planRange(importedChapters(ctx.snapshot), effectiveTargetChapters(state, ctx.outline)));
     if (batch) return { kind: "task", task: planDescriptor(ctx, plan, batch) };
   }
 
@@ -629,6 +712,17 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
 
   if (!chapter) return { kind: "task", task: descriptor("final", "final", ctx) };
 
+  // The author changed (or deleted) the outline of this chapter since it was planned, and nothing of it is written: it follows the outline first.
+  const outlineChange = ctx.outline?.changed?.get(chapter.number);
+  if (outlineChange && !chapter.imported && !chapter.scenes.some((scene) => scene.status !== "planned")) {
+    return { kind: "task", task: descriptor("replan", "write", ctx, { chapter, outline: outlineChange }) };
+  }
+
+  return chapterStep(chapter, state, ctx);
+}
+
+/** The next step of a chapter that is being written or reviewed: its scenes, its prose, its review round, its repairs, its closing. */
+function chapterStep(chapter: PlannedChapter, state: AutopilotState, ctx: PlannerContext): PlannedStep {
   if (chapter.status === "planned" || !chapter.scenes.length) return { kind: "task", task: descriptor("scenes", "write", ctx, { chapter }) };
 
   if (chapter.status === "writing") {

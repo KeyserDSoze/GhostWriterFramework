@@ -172,7 +172,8 @@ function readingOf(integration: AiIntegrationConfig, options: FetchModelCatalogO
   return {
     name: nameOf(integration),
     secrets: [integration.apiKey],
-    fetchImpl: options.fetch ?? fetch,
+    // The global fetch is called on its own, never as a method of this object: a browser refuses `fetch` called with another `this` (Illegal invocation).
+    fetchImpl: options.fetch ?? ((input, init) => fetch(input, init)),
     signal: options.signal,
     timeoutMs: timeoutOf(options.timeoutMs, CATALOG_TIMEOUT_MS),
   };

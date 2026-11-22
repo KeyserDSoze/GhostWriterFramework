@@ -16,6 +16,32 @@ export const AUTOPILOT_STATE_FILE = "autopilot/state.json";
 export const AUTOPILOT_ACTIVITY_FILE = "autopilot/activity.json";
 export const AUTOPILOT_PLAN_FILE = "autopilot/plan.md";
 
+/**
+ * The outline (Scaletta): the author's chapter-by-chapter trace of the book, a main part of it (the core's `OUTLINE_*`).
+ * `outline/book.md` is the rough description, `outline/chapters/<NNN>.md` one entry per chapter, numbered by the name of the
+ * file with the zero-padding of the chapter folders. Not to be confused with `plot.md`, which is generated.
+ */
+export const OUTLINE_DIRECTORY = "outline";
+export const OUTLINE_BOOK_FILE = "outline/book.md";
+export const OUTLINE_CHAPTERS_DIRECTORY = "outline/chapters";
+
+/** The file of the outline entry of a chapter: `outline/chapters/007.md`, `outline/chapters/1500.md`. */
+export function outlineChapterPath(number: number): string {
+  return `${OUTLINE_CHAPTERS_DIRECTORY}/${formatOrdinal(number)}.md`;
+}
+
+/**
+ * The chapter an outline file is the entry of, from its name (the name wins over the frontmatter); `canonical` is false for a
+ * name padded otherwise (`7.md`, `0007.md`). `null` for any other file.
+ */
+export function parseOutlineChapterPath(path: string): { number: number; canonical: boolean } | null {
+  const match = /^outline\/chapters\/(\d+)\.md$/.exec(path);
+  if (!match) return null;
+  const number = Number(match[1]);
+  if (!Number.isSafeInteger(number) || number < 1) return null;
+  return { number, canonical: match[1] === formatOrdinal(number) };
+}
+
 export type CanonKind = "character" | "location" | "faction" | "item" | "secret" | "timeline-event";
 
 export const CANON_DIRECTORIES: Record<CanonKind, string> = {

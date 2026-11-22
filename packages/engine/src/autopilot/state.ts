@@ -1,7 +1,8 @@
+import { isValidGhostwriterSlug } from "../book/paths.js";
 import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
 import { clipText, countWords } from "../util/text.js";
 import { normalizeErrorDetail, normalizeErrorKind } from "./errors.js";
-import { AUTOPILOT_PUBLISH_MODES } from "./types.js";
+import { AUTOPILOT_PUBLISH_MODES, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES } from "./types.js";
 import type {
   AutopilotActivity,
   AutopilotBrief,
@@ -25,9 +26,17 @@ import type {
   ChapterRound,
   ConceptSecret,
   DirectorQuestion,
+  FrozenAction,
+  FrozenChangeKind,
+  FrozenChapterView,
+  FrozenEditsMode,
+  FrozenQuestionContext,
+  PendingFrozenReview,
   PlannedChapter,
   PlannedScene,
+  QuestionChoice,
   RevisionRequest,
+  RevisionSource,
 } from "./types.js";
 
 export const MAX_ACTIVITIES = 200;
@@ -42,6 +51,12 @@ export const MAX_CHAPTER_ROUNDS = 8;
 /** Characters of the text of the final review in the state, and in the summary the live events carry. */
 export const FINAL_REVIEW_TEXT_CHARACTERS = 1200;
 export const FINAL_REVIEW_SUMMARY_CHARACTERS = 400;
+/** Characters of the logline of the concept the state keeps (it becomes the description of the book in the outline). */
+export const CONCEPT_LOGLINE_CHARACTERS = 600;
+/** The changes of frozen chapters already said (`frozenEdits: "notify"`) that the state remembers: the newest. */
+export const MAX_FROZEN_SEEN = 200;
+/** Decisions about changes that the state keeps at most (one per chapter and kind is the most there can usefully be). */
+export const MAX_PENDING_REVIEWS = 500;
 /**
  * Upper bound for any chapter number or chapter count read from a file or a reply. It only guards against typos and
  * garbage: a book has no maximum length, and nothing below this value is ever clamped.
@@ -110,6 +125,8 @@ export const DEFAULT_OPTIONS: AutopilotOptions = {
   budgetLimit: 0,
   budgetTokens: 0,
   syncAfterChapter: true,
+  fillOutline: true,
+  frozenEdits: "ask",
 };
 
 const STATUSES: AutopilotStatus[] = ["idle", "running", "paused", "waiting-author", "error", "completed"];
@@ -126,6 +143,12 @@ export function normalizeBrief(value: unknown, base: AutopilotBrief = DEFAULT_BR
     genre: asString(source.genre, base.genre),
     audience: asString(source.audience, base.audience),
   };
+}
+
+/** What to do with a change of a frozen chapter, read like every word of the options is (any case, spaces around); `undefined` for anything else. */
+function frozenEditsModeOf(value: unknown): FrozenEditsMode | undefined {
+  const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return (FROZEN_EDITS_MODES as readonly string[]).includes(text) ? text as FrozenEditsMode : undefined;
 }
 
 /** The way of publishing a value names, read like every word of the options is (any case, spaces around); `undefined` for anything else. */
@@ -175,6 +198,8 @@ export function normalizeOptions(value: unknown, base: AutopilotOptions = DEFAUL
     budgetLimit: asNumber(source.budgetLimit, base.budgetLimit, 0, 1_000_000),
     budgetTokens: asInteger(source.budgetTokens, base.budgetTokens ?? 0, 0, Number.MAX_SAFE_INTEGER),
     syncAfterChapter: asBoolean(source.syncAfterChapter, base.syncAfterChapter),
+    fillOutline: asBoolean(source.fillOutline, base.fillOutline ?? true),
+    frozenEdits: frozenEditsModeOf(source.frozenEdits) ?? base.frozenEdits ?? "ask",
     ...(publishEvery ? { publishEvery } : {}),
   };
 }
@@ -301,6 +326,8 @@ function normalizeChapter(value: unknown, index: number): PlannedChapter {
   const source = asRecord(value);
   const number = asInteger(source.number, index + 1, 1, MAX_BOOK_CHAPTERS);
   const rounds = normalizeRounds(source.rounds);
+  const ghostwriter = asString(source.ghostwriter);
+  const outlineDigest = asString(source.outlineDigest);
   return {
     number,
     title: asString(source.title) || `Chapter ${number}`,
@@ -317,7 +344,17 @@ function normalizeChapter(value: unknown, index: number): PlannedChapter {
     score: typeof source.score === "number" ? source.score : undefined,
     storySoFarAtClose: asString(source.storySoFarAtClose) || undefined,
     ...(rounds ? { rounds } : {}),
+    ...(ghostwriter && isValidGhostwriterSlug(ghostwriter) ? { ghostwriter } : {}),
+    ...(OUTLINE_DIGEST_SHAPE.test(outlineDigest) ? { outlineDigest } : {}),
   };
+}
+
+/** A digest as the outline writes it: a short token of letters and digits. Anything else is no digest. */
+const OUTLINE_DIGEST_SHAPE = /^[A-Za-z0-9:_-]{4,128}$/;
+
+/** The chapters the outline took out of the plan: whole numbers of chapters, once each, in order. */
+function normalizeRemovedChapters(value: unknown): number[] {
+  return [...new Set(asArray(value).map((entry) => asInteger(entry, 0, 0, MAX_BOOK_CHAPTERS)).filter((entry) => entry > 0))].sort((left, right) => left - right);
 }
 
 function normalizePlan(value: unknown): AutopilotPlan | null {
@@ -325,6 +362,7 @@ function normalizePlan(value: unknown): AutopilotPlan | null {
   const source = asRecord(value);
   const revisionBatches = [...new Set(asArray(source.revisionBatches).map((entry) => asInteger(entry, 0, 0, MAX_BOOK_CHAPTERS)).filter((entry) => entry > 0))].sort((left, right) => left - right);
   const skippedReaders = asStringList(source.skippedReaders, 40);
+  const removedChapters = normalizeRemovedChapters(source.removedChapters);
   return {
     chapters: asArray(source.chapters).map(normalizeChapter).sort((left, right) => left.number - right.number),
     approved: asBoolean(source.approved, false),
@@ -345,6 +383,7 @@ function normalizePlan(value: unknown): AutopilotPlan | null {
     readersDone: asBoolean(source.readersDone, false),
     ...(skippedReaders.length ? { skippedReaders } : {}),
     awaitingAuthor: asBoolean(source.awaitingAuthor, false),
+    ...(removedChapters.length ? { removedChapters } : {}),
   };
 }
 
@@ -419,6 +458,124 @@ function normalizeReview(value: unknown): ChapterReview | null {
         rejected: asInteger(item.rejected, 0, 0, 999),
       };
     }),
+    ...(source.authorEdit === true ? { authorEdit: true } : {}),
+  };
+}
+
+const FROZEN_CHANGE_KINDS: readonly FrozenChangeKind[] = ["frozen", "outline"];
+
+function frozenKindOf(value: unknown): FrozenChangeKind | undefined {
+  return typeof value === "string" && (FROZEN_CHANGE_KINDS as readonly string[]).includes(value) ? value as FrozenChangeKind : undefined;
+}
+
+/** Text a file says, as it is (only the spaces around go): `undefined` for anything that is not a text, or is empty. */
+function readText(value: unknown, max: number): string | undefined {
+  return typeof value === "string" && value.trim() ? clipText(value.trim(), max) : undefined;
+}
+
+/** Texts only (a number or anything else is no entry), without empty ones. */
+function textList(value: unknown, max: number): string[] {
+  return asArray(value).filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim()).slice(-max);
+}
+
+/** What the autopilot knew of a chapter (before or after a change), as a file says it; `undefined` for what is not one. */
+function normalizeFrozenView(value: unknown): FrozenChapterView | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const storySoFar = readText(source.storySoFar, 16_000);
+  return {
+    title: readText(source.title, 400) ?? "",
+    summary: readText(source.summary, 4000) ?? "",
+    keyEvents: asStringList(source.keyEvents, 20),
+    ...(storySoFar ? { storySoFar } : {}),
+  };
+}
+
+/** A decision about a change, as a file says it: one of the actions of its kind, about a chapter. Anything else is no decision. */
+function normalizePendingReview(value: unknown): PendingFrozenReview | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const kind = frozenKindOf(source.kind);
+  const action = typeof source.action === "string" ? source.action as FrozenAction : undefined;
+  const number = asInteger(source.number, 0, 0, MAX_BOOK_CHAPTERS);
+  const id = readText(source.id, 120);
+  const fingerprint = readText(source.fingerprint, 128);
+  if (!kind || !action || !FROZEN_CHANGE_ACTIONS[kind].includes(action) || !number || !id || !fingerprint) return null;
+  const note = readText(source.note, 8000);
+  const startedSource = asRecord(source.started);
+  const phase: "review" | "rewrite" | undefined = startedSource.phase === "review" || startedSource.phase === "rewrite" ? startedSource.phase : undefined;
+  const before = normalizeFrozenView(startedSource.before);
+  const started = phase && before
+    ? { at: asString(startedSource.at), phase, before, ...(typeof startedSource.rewritten === "boolean" ? { rewritten: startedSource.rewritten } : {}) }
+    : undefined;
+  return {
+    id,
+    kind,
+    number,
+    action,
+    fingerprint,
+    at: asString(source.at),
+    ...(note ? { note } : {}),
+    ...(source.auto === true ? { auto: true } : {}),
+    ...(started ? { started } : {}),
+  };
+}
+
+/** The decisions that wait, as a file says them: the valid ones, at most `MAX_PENDING_REVIEWS`; `undefined` when there is none. */
+function normalizePendingReviews(value: unknown): PendingFrozenReview[] | undefined {
+  const entries = asArray(value).map(normalizePendingReview).filter((entry): entry is PendingFrozenReview => entry !== null).slice(-MAX_PENDING_REVIEWS);
+  return entries.length ? entries : undefined;
+}
+
+function normalizeChanged(value: unknown): FrozenQuestionContext["changed"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  return { added: textList(source.added, 200), removed: textList(source.removed, 200), modified: textList(source.modified, 200), body: source.body === true };
+}
+
+/** What a question about a change is about, as a file says it; `undefined` for what is not one. */
+function normalizeFrozenContext(value: unknown): FrozenQuestionContext | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const kind = frozenKindOf(source.kind);
+  const number = asInteger(source.number, 0, 0, MAX_BOOK_CHAPTERS);
+  const fingerprint = readText(source.fingerprint, 128);
+  if (!kind || !number || !fingerprint) return undefined;
+  const title = readText(source.title, 400);
+  const by = source.by === "autopilot" || source.by === "author" ? source.by : undefined;
+  const frozenAt = readMoment(source.frozenAt);
+  const changed = normalizeChanged(source.changed);
+  const others = [...new Set(asArray(source.others).map((entry) => asInteger(entry, 0, 0, MAX_BOOK_CHAPTERS)).filter((entry) => entry > 0))].slice(0, 200);
+  return {
+    kind,
+    number,
+    slug: asString(source.slug),
+    fingerprint,
+    ...(title ? { title } : {}),
+    ...(by ? { by } : {}),
+    ...(frozenAt ? { frozenAt } : {}),
+    ...(changed ? { changed } : {}),
+    ...(others.length ? { others } : {}),
+  };
+}
+
+/** The change a revision comes from, as a file says it; `undefined` for what is not one. */
+function normalizeRevisionSource(value: unknown): RevisionSource | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const kind = frozenKindOf(source.kind);
+  const chapterNumber = asInteger(source.chapterNumber, 0, 0, MAX_BOOK_CHAPTERS);
+  if (!kind || !chapterNumber) return undefined;
+  const note = readText(source.note, 8000);
+  const before = normalizeFrozenView(source.before);
+  const after = normalizeFrozenView(source.after);
+  return {
+    kind,
+    chapterNumber,
+    ...(note ? { note } : {}),
+    ...(source.auto === true ? { auto: true } : {}),
+    ...(before ? { before } : {}),
+    ...(after ? { after } : {}),
   };
 }
 
@@ -428,12 +585,16 @@ function normalizeQuestion(value: unknown): DirectorQuestion | null {
   const question = asString(source.question);
   if (!question) return null;
   const chapterNumber = asInteger(source.chapterNumber, 0, 0, MAX_BOOK_CHAPTERS);
+  const choices: QuestionChoice[] = asArray(source.choices).map(asRecord).map((choice) => ({ id: asString(choice.id), label: asString(choice.label) })).filter((choice) => choice.id && choice.label).slice(0, 6);
+  const frozen = normalizeFrozenContext(source.frozen);
   return {
     id: asString(source.id) || `question-${Date.now()}`,
-    kind: asOneOf(source.kind, ["plan-approval", "chapter-approval", "round-limit", "director"] as const, "director"),
+    kind: asOneOf(source.kind, ["plan-approval", "chapter-approval", "round-limit", "director", "frozen-change", "outline-change"] as const, "director"),
     question,
     context: asString(source.context),
     options: asStringList(source.options, 6),
+    ...(choices.length ? { choices } : {}),
+    ...(frozen ? { frozen } : {}),
     chapterNumber: chapterNumber || undefined,
     askedAt: asString(source.askedAt) || new Date(0).toISOString(),
   };
@@ -445,6 +606,9 @@ function normalizeRevision(value: unknown): RevisionRequest | null {
   const instruction = asString(source.instruction);
   if (!instruction) return null;
   const revisedChapters = [...new Set(asArray(source.revisedChapters).map((entry) => asInteger(entry, 0, 0, MAX_BOOK_CHAPTERS)).filter((entry) => entry > 0))].sort((left, right) => left - right);
+  const afterChapter = asInteger(source.afterChapter, 0, 0, MAX_BOOK_CHAPTERS);
+  const onlyChapter = asInteger(source.onlyChapter, 0, 0, MAX_BOOK_CHAPTERS);
+  const revisionSource = normalizeRevisionSource(source.source);
   return {
     id: asString(source.id) || `revision-${Date.now()}`,
     instruction,
@@ -457,6 +621,9 @@ function normalizeRevision(value: unknown): RevisionRequest | null {
       : null,
     cursor: asInteger(source.cursor, 0, 0, 1_000_000),
     ...(revisedChapters.length ? { revisedChapters } : {}),
+    ...(afterChapter ? { afterChapter } : {}),
+    ...(onlyChapter ? { onlyChapter } : {}),
+    ...(revisionSource ? { source: revisionSource } : {}),
   };
 }
 
@@ -493,6 +660,8 @@ export function createAutopilotState(now: Date, brief?: Partial<AutopilotBrief>,
     interventions: [],
     directorNotes: [],
     question: null,
+    // A new state knows frozen chapters from its start: no chapter is frozen without asking but the ones the autopilot approves.
+    frozenSince: at,
     runner: null,
     stats: { tasks: 0, aiCalls: 0, inputTokens: 0, outputTokens: 0, cost: 0, failures: 0 },
     message: null,
@@ -515,18 +684,22 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
   const workedMsSince = workedMs === undefined ? undefined : readMoment(stats.workedMsSince);
   const finalReview = normalizeFinalReview(source.finalReview);
   const concept = asRecord(source.concept);
+  const logline = clipText(asString(concept.logline), CONCEPT_LOGLINE_CHARACTERS);
   const lastError = asRecord(source.lastError);
   const activityId = readActivityId(lastError.activityId);
   const errorKind = normalizeErrorKind(lastError.errorKind);
   const errorDetail = normalizeErrorDetail(lastError.errorDetail);
   const runner = asRecord(source.runner);
+  const pendingReviews = normalizePendingReviews(source.pendingReviews);
+  const frozenSince = readMoment(source.frozenSince);
+  const frozenSeen = textList(source.frozenSeen, MAX_FROZEN_SEEN);
   return {
     schemaVersion: 1,
     status: asOneOf(source.status, STATUSES, "idle"),
     phase: asOneOf(source.phase, PHASES, "concept"),
     brief: normalizeBrief(source.brief),
     options: normalizeOptions(source.options),
-    concept: { done: asBoolean(concept.done, false), generated: asBoolean(concept.generated, false), secrets: normalizeSecrets(concept.secrets) },
+    concept: { done: asBoolean(concept.done, false), generated: asBoolean(concept.generated, false), secrets: normalizeSecrets(concept.secrets), ...(logline ? { logline } : {}) },
     plan: normalizePlan(source.plan),
     review: normalizeReview(source.review),
     revision: normalizeRevision(source.revision),
@@ -536,6 +709,9 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
     interventions: normalizeInterventions(source.interventions),
     directorNotes: newestList(source.directorNotes, MAX_DIRECTOR_NOTES),
     question: normalizeQuestion(source.question),
+    ...(pendingReviews ? { pendingReviews } : {}),
+    ...(frozenSince ? { frozenSince } : {}),
+    ...(frozenSeen.length ? { frozenSeen } : {}),
     runner: asString(runner.runId)
       ? {
         host: runner.host === "server" ? "server" : "browser",
@@ -661,6 +837,8 @@ export interface AutopilotSummaryContext {
   defaultPublish?: AutopilotPublishMode;
   /** The retry the run is waiting for, when it is: the summary says it, and says nothing otherwise. */
   retry?: AutopilotRetryInfo | null;
+  /** How many chapters have a change that waits for the author (`AutopilotStateSummary.frozenChanges`), when the session knows it. */
+  frozenChanges?: number | null;
 }
 
 /** The last error as the summary says it: as the state has it, and with its kind and its detail also under the names `kind` and `detail`. */
@@ -691,6 +869,8 @@ export function summarizeAutopilotState(state: AutopilotState, context: Autopilo
     ...(context.limits === undefined ? {} : { limits: context.limits }),
     publish: effectivePublish(state.options, context.defaultPublish),
     ...(context.retry ? { retry: context.retry } : {}),
+    // Like `retry`, said only when something waits: a book with no change has the summary it always had.
+    ...(typeof context.frozenChanges === "number" && context.frozenChanges > 0 ? { frozenChanges: context.frozenChanges } : {}),
   };
 }
 

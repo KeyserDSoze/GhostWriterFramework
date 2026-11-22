@@ -294,6 +294,41 @@ export const chapterSchema = z
     status: z.string().optional(),
     canon: canonSchema.default("draft"),
     tags: z.array(z.string()).default([]),
+    /**
+     * The freeze record (`chapterFreezeSchema`), written by the engine. Kept as it is whatever it holds: a record that cannot be read
+     * is never an error and is never dropped by a tool that rewrites the file (the doctor warns, and the chapter counts as not frozen).
+     */
+    frozen: z.unknown().optional(),
+  })
+  .passthrough();
+
+/** Who froze a chapter: the autopilot's director when it approved it, or the author by hand. */
+export const chapterFreezeAuthorSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+  z.enum(["autopilot", "author"]),
+);
+
+/** A fingerprint of a text in a freeze record: sixteen hexadecimal characters. */
+const freezeDigestSchema = z.string().regex(/^[0-9a-f]{16}$/i);
+
+/** A date, or a date and a time with its zone: the moments of ISO 8601 that read the same anywhere. */
+const freezeMomentSchema = yamlDateStringSchema.refine(
+  (value) => /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/.test(value) && !Number.isNaN(Date.parse(value)),
+  { message: "Expected an ISO 8601 date and time." },
+);
+
+/**
+ * `frozen` in a chapter's `chapter.md`: the chapter as it was when it was frozen (when the autopilot's director approved it, or when the
+ * author froze it by hand). `digest` is the fingerprint of the body of chapter.md (its title heading excluded); `files` the fingerprint
+ * of the text of every scene of the chapter, by the name of its file in the chapter's folder. A change of the text after that is noticed
+ * by the engine, which asks the author whether to review it.
+ */
+export const chapterFreezeSchema = z
+  .object({
+    at: freezeMomentSchema,
+    by: chapterFreezeAuthorSchema,
+    digest: freezeDigestSchema,
+    files: z.record(z.string().regex(/^\d{3}(?:-[^/]*)?\.md$/), freezeDigestSchema),
   })
   .passthrough();
 
@@ -359,6 +394,36 @@ export const researchNoteSchema = z
     language: z.string().min(1),
     source_url: z.string().url(),
     retrieved_at: yamlDateStringSchema,
+  })
+  .passthrough();
+
+/** Who wrote an outline entry last: the author (the entry binds the autopilot) or the autopilot (from its plan, until somebody changes it). */
+export const outlineOriginSchema = z.enum(["author", "autopilot"]);
+
+/** `outline/book.md`: the working title and the rough description of the book (the canonical title stays in `book.md`). */
+export const outlineBookSchema = z
+  .object({
+    type: z.literal("outline"),
+    id: z.literal("outline:book"),
+    title: z.string().optional(),
+    origin: outlineOriginSchema.default("author"),
+    digest: z.string().optional(),
+  })
+  .passthrough();
+
+/**
+ * `outline/chapters/<NNN>.md`: one chapter of the outline. The number of the file's name is the chapter's; `digest` is the
+ * fingerprint of what the autopilot wrote (only with `origin: autopilot`), so that an edit of the author is recognized.
+ */
+export const outlineChapterSchema = z
+  .object({
+    type: z.literal("outline-chapter"),
+    id: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().optional(),
+    ghostwriter: z.string().min(1).optional(),
+    origin: outlineOriginSchema.default("author"),
+    digest: z.string().optional(),
   })
   .passthrough();
 
@@ -440,10 +505,13 @@ export type SecretFrontmatter = z.infer<typeof secretSchema>;
 export type TimelineEventFrontmatter = z.infer<typeof timelineEventSchema>;
 export type AssetFrontmatter = z.infer<typeof assetSchema>;
 export type ChapterFrontmatter = z.infer<typeof chapterSchema>;
+export type ChapterFreezeRecord = z.infer<typeof chapterFreezeSchema>;
 export type ChapterDraftFrontmatter = z.infer<typeof chapterDraftSchema>;
 export type ParagraphFrontmatter = z.infer<typeof paragraphSchema>;
 export type ParagraphDraftFrontmatter = z.infer<typeof paragraphDraftSchema>;
 export type ResearchNoteFrontmatter = z.infer<typeof researchNoteSchema>;
+export type OutlineBookFrontmatter = z.infer<typeof outlineBookSchema>;
+export type OutlineChapterFrontmatter = z.infer<typeof outlineChapterSchema>;
 export type PersonaFrontmatter = z.infer<typeof personaSchema>;
 export type EntityType = z.infer<typeof entityTypeSchema>;
 
