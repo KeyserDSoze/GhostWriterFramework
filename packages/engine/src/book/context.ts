@@ -2,7 +2,7 @@ import { parseMarkdown, type MarkdownDocument } from "../markdown/frontmatter.js
 import { defaultDirector, parseDirector, type DirectorProfile } from "../profiles/director.js";
 import { ghostwriterPrompt, parseGhostwriter, type GhostwriterProfile } from "../profiles/ghostwriter.js";
 import { mergeReaderPersonas, parseReaderPersona, type ReaderPersonaProfile } from "../profiles/readers.js";
-import { latinLength, tail, truncate } from "../util/text.js";
+import { clipMiddle, clipText, latinLength, tail, truncate } from "../util/text.js";
 import { CANON_DIRECTORIES, DIRECTOR_FILE, chapterNumberFromSlug, isValidGhostwriterSlug, type CanonKind } from "./paths.js";
 import type { BookSnapshot, CanonInfo, ChapterInfo, ParagraphInfo } from "./snapshot.js";
 import type { BookFileContent, BookStore } from "./store.js";
@@ -103,22 +103,141 @@ export function referencedChapterNumber(reference: string | undefined): number |
   return chapterNumberFromSlug(slug) ?? (/^\d+$/.test(slug) ? Number(slug) : undefined);
 }
 
-/** Reveal rules for every secret relative to the chapter being written or judged. */
-export async function secretRules(store: BookStore, snapshot: BookSnapshot, chapterNumber?: number, maxBody = 500): Promise<string> {
+/** Characters the rules of the secrets may take in a prompt: the same as a list of chapters (`OUTLINE_MAX_CHARS`). */
+export const SECRET_RULES_MAX_CHARS = 24_000;
+/** Chapters on each side of the one being written within which a secret is always listed. */
+export const SECRET_WINDOW_CHAPTERS = 30;
+
+/** Characters kept free for the line that says how many secrets are not listed. */
+const OMISSION_NOTE_RESERVE = 400;
+
+interface SecretEntry {
+  secret: CanonInfo;
+  /** The chapter of its reveal (`reveal_in`, else `known_from`); `undefined` when it has none. */
+  reveal: number | undefined;
+  /** The chapter asked for is before (`hidden`), at (`here`) or after (`revealed`) the reveal; `unplaced` has no reveal; `planned` is for rules that are not about a chapter. */
+  relation: "hidden" | "here" | "revealed" | "unplaced" | "planned";
+  /** Chapters between the one asked for and the reveal (0 for what is not about a chapter). */
+  distance: number;
+  /** Position in the book's own order of the secrets. */
+  index: number;
+}
+
+/** One way of laying the list out, from all of it to what the writer cannot do without. */
+interface SecretLevel {
+  /** Characters of each secret's truth. */
+  truth: number;
+  /** Revealed secrets this many chapters back, and hidden ones this many chapters ahead, are listed. */
+  past: number;
+  future: number;
+  /** The short wording of the rules. */
+  compact: boolean;
+}
+
+function secretLevels(maxBody: number): SecretLevel[] {
+  const all = Number.POSITIVE_INFINITY;
+  const near = SECRET_WINDOW_CHAPTERS;
+  return [
+    { truth: maxBody, past: all, future: all, compact: false },
+    { truth: maxBody, past: near, future: all, compact: false },
+    { truth: Math.min(maxBody, 160), past: near, future: all, compact: false },
+    { truth: Math.min(maxBody, 60), past: near, future: all, compact: false },
+    { truth: 0, past: near, future: all, compact: false },
+    { truth: 0, past: 10, future: all, compact: true },
+    { truth: 0, past: 0, future: all, compact: true },
+    { truth: 0, past: 0, future: near, compact: true },
+  ];
+}
+
+function inLevel(entry: SecretEntry, level: SecretLevel): boolean {
+  if (entry.relation === "hidden") return entry.distance <= level.future;
+  if (entry.relation === "revealed") return entry.distance <= level.past;
+  return true;
+}
+
+/** What the writer is told about a secret, in the words the rules have always used (the `compact` ones are shorter, for a list that has to fit). */
+function secretRule(entry: SecretEntry, chapterNumber: number | undefined, compact: boolean): string {
+  const { reveal } = entry;
+  if (!reveal) return compact ? "No reveal threshold: keep it hidden." : "No reveal threshold: keep it hidden unless the chapter plan explicitly reveals it.";
+  if (chapterNumber === undefined) return `Reveal planned in chapter ${reveal}.`;
+  if (chapterNumber < reveal) return compact ? `HIDDEN until chapter ${reveal}.` : `HIDDEN until chapter ${reveal}: do not reveal it here; only subtle, deniable hints are allowed.`;
+  if (chapterNumber === reveal) return "The reveal is planned in THIS chapter.";
+  return compact ? "Already revealable." : `Already revealable (since chapter ${reveal}).`;
+}
+
+/** The line that says what a shortened list leaves out. */
+function omissionNote(left: SecretEntry[]): string {
+  if (!left.length) return "";
+  const revealed = left.filter((entry) => entry.relation === "revealed").length;
+  const hidden = left.length - revealed;
+  const parts = [
+    hidden ? `${hidden} ${hidden === 1 ? "secret that stays" : "secrets that stay"} hidden until other chapters (reveal none of ${hidden === 1 ? "it" : "them"})` : "",
+    revealed ? `${revealed} ${revealed === 1 ? "secret" : "secrets"} revealed in earlier chapters, no longer secret` : "",
+  ].filter(Boolean);
+  return `(Not listed, to keep this list short: ${parts.join("; ")}.)`;
+}
+
+/**
+ * Reveal rules for the secrets relative to the chapter being written or judged. A book with few secrets gets every one of
+ * them with its truth, exactly as ever. A list that would pass `options.maxChars` (`SECRET_RULES_MAX_CHARS`) is windowed like a
+ * list of chapters: the secrets revealed long before the chapter (more than `SECRET_WINDOW_CHAPTERS`, then fewer) drop out
+ * first, then the truths and the long wording; what the chapter must not reveal (a reveal still to come, or none planned)
+ * and the reveal of the chapter itself stay as long as anything can, the nearest chapters first, and the line at the end says how many
+ * are not listed. Only the files of the secrets that are listed with their truth are read.
+ */
+export async function secretRules(store: BookStore, snapshot: BookSnapshot, chapterNumber?: number, maxBody = 500, options: { maxChars?: number } = {}): Promise<string> {
   const secrets = snapshot.canon.filter((entry) => entry.kind === "secret");
   if (!secrets.length) return "";
-  const lines = await Promise.all(secrets.map(async (secret: CanonInfo) => {
+  const maxChars = options.maxChars ?? SECRET_RULES_MAX_CHARS;
+  const entries: SecretEntry[] = secrets.map((secret, index) => {
     const reveal = referencedChapterNumber(secret.revealIn) ?? referencedChapterNumber(secret.knownFrom);
-    const truth = await readBody(store, secret.path, maxBody);
-    let rule: string;
-    if (!reveal) rule = "No reveal threshold: keep it hidden unless the chapter plan explicitly reveals it.";
-    else if (chapterNumber === undefined) rule = `Reveal planned in chapter ${reveal}.`;
-    else if (chapterNumber < reveal) rule = `HIDDEN until chapter ${reveal}: do not reveal it here; only subtle, deniable hints are allowed.`;
-    else if (chapterNumber === reveal) rule = "The reveal is planned in THIS chapter.";
-    else rule = `Already revealable (since chapter ${reveal}).`;
-    return `- ${secret.name}: ${rule}${truth ? `\n  Truth: ${truth.replace(/\s+/g, " ")}` : ""}`;
-  }));
-  return lines.join("\n");
+    if (!reveal) return { secret, reveal, relation: "unplaced", distance: 0, index };
+    if (chapterNumber === undefined) return { secret, reveal, relation: "planned", distance: 0, index };
+    return { secret, reveal, relation: chapterNumber < reveal ? "hidden" : chapterNumber === reveal ? "here" : "revealed", distance: Math.abs(reveal - chapterNumber), index };
+  });
+  const truths = new Map<string, string>();
+  const readTruths = async (members: SecretEntry[]) => {
+    await Promise.all(members.filter((entry) => !truths.has(entry.secret.path)).map(async (entry) => {
+      truths.set(entry.secret.path, await readBody(store, entry.secret.path, maxBody));
+    }));
+  };
+  const lineOf = (entry: SecretEntry, level: SecretLevel): string => {
+    const stored = level.truth > 0 ? truths.get(entry.secret.path) ?? "" : "";
+    const truth = stored && level.truth < maxBody ? truncate(stored, level.truth) : stored;
+    return `- ${entry.secret.name}: ${secretRule(entry, chapterNumber, level.compact)}${truth ? `\n  Truth: ${truth.replace(/\s+/g, " ")}` : ""}`;
+  };
+  const layout = (members: SecretEntry[], level: SecretLevel): string => {
+    const chosen = new Set(members);
+    const note = omissionNote(entries.filter((entry) => !chosen.has(entry)));
+    return [...members.map((entry) => lineOf(entry, level)), ...(note ? [note] : [])].join("\n");
+  };
+
+  for (const level of secretLevels(maxBody)) {
+    const members = entries.filter((entry) => inLevel(entry, level));
+    if (!members.length) return "";
+    if (level.truth > 0) {
+      // Without any truth the list is the least this level can be: when that does not fit, no truth is read.
+      if (layout(members, { ...level, truth: 0 }).length > maxChars) continue;
+      await readTruths(members);
+    }
+    const text = layout(members, level);
+    if (text.length <= maxChars) return text;
+  }
+
+  // Not even what the chapter must not reveal fits: the reveal of this chapter, what has no chapter, then the hidden ones from the nearest on.
+  const last = secretLevels(maxBody).at(-1)!;
+  const urgency = (entry: SecretEntry) => (entry.relation === "here" ? 0 : entry.relation === "hidden" ? 2 + entry.distance : 1);
+  const ranked = entries.filter((entry) => inLevel(entry, last)).sort((left, right) => urgency(left) - urgency(right) || left.index - right.index);
+  const kept: SecretEntry[] = [];
+  let size = 0;
+  for (const entry of ranked) {
+    const line = lineOf(entry, last);
+    if (size + line.length + 1 > maxChars - Math.min(OMISSION_NOTE_RESERVE, Math.floor(maxChars / 4))) break;
+    kept.push(entry);
+    size += line.length + 1;
+  }
+  const text = layout(kept.sort((left, right) => left.index - right.index), last);
+  return text.length <= maxChars ? text : clipText(text, maxChars);
 }
 
 export interface LoadedParagraph {
@@ -139,9 +258,13 @@ export async function loadChapterParagraphs(store: BookStore, chapter: ChapterIn
   return loaded.filter((entry): entry is LoadedParagraph => Boolean(entry));
 }
 
-/** Chapter text with explicit scene markers, so reviewers can reference scene numbers. */
+/**
+ * Chapter text with explicit scene markers, so reviewers can reference scene numbers. A scene over `maxPerScene` characters
+ * keeps its start and its end (with `[…]` between them): the end of a scene is where it turns, and what reviews and summaries
+ * look at first.
+ */
 export function markedChapterText(paragraphs: LoadedParagraph[], maxPerScene = 14000): string {
-  return paragraphs.map((paragraph) => `=== SCENE ${paragraph.number}: ${paragraph.title} ===\n${truncate(paragraph.body, maxPerScene)}`).join("\n\n");
+  return paragraphs.map((paragraph) => `=== SCENE ${paragraph.number}: ${paragraph.title} ===\n${clipMiddle(paragraph.body, maxPerScene)}`).join("\n\n");
 }
 
 export function canonDirectory(kind: CanonKind): string {

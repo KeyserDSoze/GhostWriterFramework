@@ -100,6 +100,40 @@ export function clipText(text: string, max: number): string {
   return value.length <= max ? value : value.slice(0, characterEdge(value, max, -1));
 }
 
+/** What stands between the two parts of a text clipped in the middle: the reader (a model, or a person) sees at once that something is left out. */
+export const CLIP_MARKER = "[…]";
+
+/** Below this many characters for the two parts together a cut in the middle is no use: only the start is kept. */
+const MIN_ROOM_FOR_A_MIDDLE_CUT = 16;
+
+/**
+ * Shorten a text to at most `max` characters keeping both ends, for prose that is judged or summarized: its beginning and
+ * its end matter, its middle can wait. `options.head` is the share of what is kept that comes from the start (0.6 by
+ * default); the two parts are joined by `[…]` (on a line of its own when the text has several lines). A text that fits is
+ * returned as it is. Each part begins and ends at a word when one is near, and never inside a character.
+ */
+export function clipMiddle(text: string, max: number, options: { head?: number; marker?: string } = {}): string {
+  const value = text ?? "";
+  if (!(max > 0)) return "";
+  if (value.length <= max) return value;
+  const marker = options.marker ?? CLIP_MARKER;
+  const share = typeof options.head === "number" && Number.isFinite(options.head) ? Math.min(0.95, Math.max(0.05, options.head)) : 0.6;
+  const glue = value.includes("\n") ? "\n" : " ";
+  const room = max - marker.length - 2 * glue.length;
+  if (room < MIN_ROOM_FOR_A_MIDDLE_CUT) return truncate(value, max);
+  const headBudget = Math.floor(room * share);
+  const tailBudget = room - headBudget;
+  const headEnd = characterEdge(value, headBudget, -1);
+  let head = value.slice(0, headEnd);
+  const wordEnd = head.search(/\s\S*$/);
+  if (!/\s/.test(value[headEnd] ?? " ") && wordEnd > head.length * 0.75) head = head.slice(0, wordEnd);
+  const tailStart = characterEdge(value, value.length - tailBudget, 1);
+  let tail = value.slice(tailStart);
+  const wordStart = tail.search(/\s/);
+  if (tailStart > 0 && !/\s/.test(value[tailStart - 1]) && wordStart >= 0 && wordStart < tail.length * 0.25) tail = tail.slice(wordStart);
+  return `${head.trimEnd()}${glue}${marker}${glue}${tail.trimStart()}`;
+}
+
 // ─── Counting words ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** A word of a script written with spaces: letters and numbers, with the marks inside them, joined by an apostrophe or a hyphen. */
@@ -159,6 +193,23 @@ export function latinLength(text: string): number {
   return length;
 }
 
+/**
+ * Characters of a word with the space after it, as much as the longest words of any language written with spaces (German
+ * and Finnish average eight or nine): a scene of the length the book asks for fits in this many whatever its language.
+ */
+const SCENE_CHARACTERS_PER_WORD = 10;
+/** A scene may run this much over the length asked for before a prompt cuts it. */
+const SCENE_OVERRUN = 1.5;
+
+/**
+ * Characters a prompt keeps of a scene that is judged or summarized: the scene's own length with room for a scene that
+ * runs over (`wordsPerScene` of the brief). A scene of the length the book asks for is never clipped by it; the limits that
+ * were fixed numbers before stay as the least a prompt keeps, so no scene is cut that was not cut already.
+ */
+export function sceneCharacterLimit(wordsPerScene: number): number {
+  return Number.isFinite(wordsPerScene) && wordsPerScene > 0 ? Math.ceil(wordsPerScene * SCENE_CHARACTERS_PER_WORD * SCENE_OVERRUN) : 0;
+}
+
 export function collapseWhitespace(text: string): string {
   return (text ?? "").replace(/\s+/g, " ").trim();
 }
@@ -171,9 +222,35 @@ export function slugToTitle(slug: string): string {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
+/**
+ * The frontmatter block at the start of a Markdown file, or `null` when the file does not start with one: the lines between
+ * the opening `---` line and the first line that is only `---`, and what follows it. A byte order mark before the first line
+ * is ignored (editors on Windows add one), and so are CRLF line ends. The one place where a file is cut in two: the parsers of
+ * frontmatter and the readers that only want the text (`stripFrontmatter`) all come here.
+ */
+export function splitFrontmatter(raw: string): { yaml: string; body: string } | null {
+  const text = (raw ?? "").replace(/^\uFEFF/, "");
+  const opening = /^---\r?\n/.exec(text);
+  if (!opening) return null;
+  let lineStart = opening[0].length;
+  for (;;) {
+    const newline = text.indexOf("\n", lineStart);
+    const lineEnd = newline < 0 ? text.length : newline;
+    const line = text.slice(lineStart, lineEnd);
+    if (line === "---" || (line === "---\r" && newline >= 0)) {
+      let yamlEnd = lineStart - 1;
+      if (text[yamlEnd - 1] === "\r") yamlEnd -= 1;
+      return { yaml: lineStart === opening[0].length ? "" : text.slice(opening[0].length, yamlEnd), body: newline < 0 ? "" : text.slice(newline + 1) };
+    }
+    if (newline < 0) return null;
+    lineStart = newline + 1;
+  }
+}
+
 /** Remove a leading YAML frontmatter block the same way the web app does before reading prose. */
 export function stripFrontmatter(raw: string): string {
-  return (raw ?? "").replace(/^---[\s\S]*?---\s*/, "").trim();
+  const split = splitFrontmatter(raw);
+  return (split ? split.body : raw ?? "").trim();
 }
 
 const LANGUAGE_NAMES: Record<string, string> = {

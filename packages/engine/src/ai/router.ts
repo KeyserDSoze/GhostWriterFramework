@@ -62,7 +62,7 @@ function pick(integration: AiIntegrationConfig, capability: string): AiChatModel
  * capability, then the default writing integration, then any `default` model.
  */
 export function resolveAiCandidates(config: AiRuntimeConfig, capability: string): AiCandidate[] {
-  const limit = Math.max(1, Math.min(8, config.maxCandidates ?? 4));
+  const limit = Math.max(1, Math.min(8, config.routingExecution?.maxCandidates ?? config.maxCandidates ?? 4));
   const route = config.taskRouting?.[capability];
   const seen = new Set<string>();
   const output: AiCandidate[] = [];

@@ -1,5 +1,6 @@
+import { normalizeScore } from "../ai/structured.js";
 import type { AiJsonSchema } from "../ai/types.js";
-import { asNumber, asRecord, asString, asStringList } from "../util/json.js";
+import { asRecord, asString, asStringList } from "../util/json.js";
 import { stripFrontmatter } from "../util/text.js";
 
 /** Structured opinion of one simulated reader (same shape the web app stores). */
@@ -64,7 +65,7 @@ export function normalizeReaderEvaluationOutput(value: unknown): ReaderEvaluatio
     mostEffectiveMoment: asString(record.mostEffectiveMoment),
     mainProblem: asString(record.mainProblem),
     prioritySuggestion: asString(record.prioritySuggestion),
-    score: Math.round(asNumber(record.score, 5, 1, 10) * 10) / 10,
+    score: Math.round(Math.max(1, normalizeScore(record.score) ?? 5) * 10) / 10,
     ...(additionalNotes ? { additionalNotes } : {}),
   };
 }

@@ -7,6 +7,7 @@ import {
   bookRoute,
   normalizeServerUrl,
   randomNonce,
+  serverCompatibility,
   verifyServerIdentity,
   type AskDirectorRequest,
   type AskDirectorResponse,
@@ -18,6 +19,7 @@ import {
   type RegisterBookRequest,
   type ServerAiStatus,
   type ServerBookSummary,
+  type ServerCompatibility,
   type ServerIdentityCheck,
   type ServerInfo,
   type ServerManifest,
@@ -117,8 +119,22 @@ export class NarrariumServerClient {
     return this.request("DELETE", "/api/v1/session", undefined, { timeoutMs: 10_000 });
   }
 
-  /** First pairing step: send the code shown in the server's admin panel. */
-  requestPairing(request: PairingRequest): Promise<{ id: string }> {
+  /**
+   * Sign out: revoke the token this client holds, and no other (`DELETE /api/v1/session`, with a token of any permission). A
+   * token that is already revoked or unknown is already signed out: it answers `{ revoked: false }` instead of an error. A server
+   * that cannot be reached is an error, because the token may still be valid there.
+   */
+  async signOut(): Promise<{ revoked: boolean }> {
+    try {
+      return await this.forgetSession();
+    } catch (error) {
+      if (error instanceof ServerRequestError && error.status === 401) return { revoked: false };
+      throw error;
+    }
+  }
+
+  /** First pairing step: send the code shown in the server's admin panel. `verification` (four digits the owner sees next to the request) is absent from older servers. */
+  requestPairing(request: PairingRequest): Promise<{ id: string; verification?: string }> {
     return this.request("POST", "/api/v1/pairings", request, { auth: false, timeoutMs: 15_000 });
   }
 
@@ -282,6 +298,14 @@ export function remoteBookStore(client: NarrariumServerClient, bookId: string): 
   };
 }
 
+/** What is known while the owner is asked to approve a pairing. */
+export interface PairingWaiting {
+  /** The four digits the owner sees next to the request in the admin panel: show them, so that the owner can tell this device's request from another one. Absent from older servers. */
+  verification?: string;
+  /** Whether the server speaks an API this app supports; absent when the server did not answer `info`. */
+  compatibility?: ServerCompatibility;
+}
+
 export interface PairWithServerOptions {
   baseUrl: string;
   /** Nine-digit code generated in the server's admin panel. */
@@ -290,22 +314,52 @@ export interface PairWithServerOptions {
   label: string;
   signal?: AbortSignal;
   /** Called once the code is accepted, while the owner has to approve the request. */
-  onWaitingApproval?: () => void;
+  onWaitingApproval?: (request: PairingWaiting) => void;
+  /** Called with everything the pairing found out (the token, the verification digits, the compatibility) just before `pairWithServer` answers the token. */
+  onPaired?: (pairing: ServerPairing) => void;
   pollMs?: number;
   fetch?: typeof fetch;
 }
 
-/** Pair this client with a server: send the code, wait for the owner's approval, return the token. */
-export async function pairWithServer(options: PairWithServerOptions): Promise<string> {
+/** Everything a pairing found out, not only the token. */
+export interface ServerPairing {
+  token: string;
+  /** The four digits the admin panel shows next to this client (derived from the token). Absent from older servers. */
+  verification?: string;
+  /** The four digits the owner saw next to the request while approving it. Absent from older servers. */
+  requestVerification?: string;
+  /** Whether the server speaks an API this app supports; absent when the server did not answer `info`. */
+  compatibility?: ServerCompatibility;
+}
+
+/** Four digits as the server derives them, or `undefined` for anything else: a server that sends nothing, or something odd, is not an error. */
+function verificationOf(value: unknown): string | undefined {
+  return typeof value === "string" && /^\d{4}$/.test(value) ? value : undefined;
+}
+
+/**
+ * Pair this client with a server and return what the pairing found out: send the code, wait for the owner's approval, and
+ * return the token with the verification digits and the server's compatibility. Nothing here throws for a server that is older
+ * or newer than the app, or that sends no verification: the host decides how to say it.
+ */
+export async function pairWithServerDetailed(options: PairWithServerOptions): Promise<ServerPairing> {
   const client = new NarrariumServerClient({ baseUrl: options.baseUrl, token: "", fetch: options.fetch });
+  options.signal?.throwIfAborted();
+  const compatibility = await client.info().then((info) => serverCompatibility(info), () => undefined);
   const nonce = randomNonce();
-  const { id } = await client.requestPairing({ code: options.code.replace(/\D/g, ""), nonce, label: options.label.trim().slice(0, 80) || "Narrarium" });
-  options.onWaitingApproval?.();
+  const requested = await client.requestPairing({ code: options.code.replace(/\D/g, ""), nonce, label: options.label.trim().slice(0, 80) || "Narrarium" });
+  const requestVerification = verificationOf(requested.verification);
+  options.onWaitingApproval?.({ ...(requestVerification ? { verification: requestVerification } : {}), ...(compatibility ? { compatibility } : {}) });
   const deadline = Date.now() + 5 * 60_000;
   while (Date.now() < deadline) {
     options.signal?.throwIfAborted();
-    const result = await client.pairingResult(id, nonce);
-    if ("token" in result) return result.token;
+    const result = await client.pairingResult(requested.id, nonce);
+    if ("token" in result) {
+      const verification = verificationOf(result.verification);
+      const pairing: ServerPairing = { token: result.token, ...(verification ? { verification } : {}), ...(requestVerification ? { requestVerification } : {}), ...(compatibility ? { compatibility } : {}) };
+      options.onPaired?.(pairing);
+      return pairing;
+    }
     await new Promise<void>((resolve, reject) => {
       const onAbort = () => {
         clearTimeout(timer);
@@ -319,4 +373,9 @@ export async function pairWithServer(options: PairWithServerOptions): Promise<st
     });
   }
   throw new ServerRequestError("The pairing expired before it was approved.", 408, "pairing_expired");
+}
+
+/** Pair this client with a server: send the code, wait for the owner's approval, return the token (`pairWithServerDetailed` returns more). */
+export async function pairWithServer(options: PairWithServerOptions): Promise<string> {
+  return (await pairWithServerDetailed(options)).token;
 }

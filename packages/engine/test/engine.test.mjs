@@ -113,7 +113,7 @@ test("fetch client streams text, reads usage and falls back between candidates",
   const response = await ai.complete({ capability: "autopilot", label: "t", system: "s", user: "u", maxOutputTokens: 100, temperature: 0.5, onText: (text) => seen.push(text) });
   assert.equal(requests[0].url, "https://res.openai.azure.com/openai/deployments/dep-a/chat/completions?api-version=2024-10-21");
   assert.equal(requests[0].init.headers["api-key"], "key-a");
-  assert.equal(requests[0].body.max_completion_tokens, 100);
+  assert.equal(requests[0].body.max_completion_tokens, 100 + 12_000, "gpt-5-mini is a reasoning model: its reasoning gets a margin on top of the limit requested");
   assert.equal("temperature" in requests[0].body, false);
   assert.equal(requests[1].url, "https://llm.example/v1/chat/completions");
   assert.equal(requests[1].init.headers.authorization, "Bearer key-b");

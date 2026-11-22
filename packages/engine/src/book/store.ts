@@ -4,6 +4,11 @@ export interface BookFileEntry {
   path: string;
   /** Lowercase hex SHA-256 of the UTF-8 content. */
   hash: string;
+  /**
+   * Size of the content in bytes, when the store knows it without reading the file. A sync uses it to leave a file over its limit
+   * where it is without reading it; a store that does not list sizes is asked for the content, and the size is measured there.
+   */
+  size?: number;
 }
 
 export interface BookFileContent extends BookFileEntry {

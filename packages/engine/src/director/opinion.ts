@@ -1,9 +1,9 @@
 import type { AiJsonSchema, AiPort, AiUsage } from "../ai/types.js";
-import { AI_CAPABILITIES, AiProviderError } from "../ai/types.js";
-import { requireStructuredFields } from "../ai/structured.js";
+import { AI_CAPABILITIES, AiProviderError, AiReplyRejectedError } from "../ai/types.js";
+import { normalizeScore, requireStructuredFields } from "../ai/structured.js";
 import { layoutChapters, listSection, type ChapterFormat, type WindowedList } from "../autopilot/outline.js";
 import { importedChapters } from "../autopilot/planner.js";
-import { parseAutopilotState } from "../autopilot/state.js";
+import { DEFAULT_BRIEF, parseAutopilotState } from "../autopilot/state.js";
 import { readStorySoFar } from "../autopilot/story-so-far.js";
 import {
   canonManifest,
@@ -21,10 +21,10 @@ import { findChapter, findParagraph, loadBookSnapshot, type BookSnapshot, type C
 import type { BookStore } from "../book/store.js";
 import { frontmatterNumber, frontmatterString, parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
 import { directorPrompt, type DirectorProfile } from "../profiles/director.js";
-import { currentRequest, untrustedData } from "../prompt/trust.js";
-import { asArray, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
+import { currentRequest, unescapePromptDataDeep, untrustedData } from "../prompt/trust.js";
+import { asArray, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
 import { sha256Hex } from "../util/hash.js";
-import { isItalian, languageName, scaleOutputTokens, tail, truncate } from "../util/text.js";
+import { clipMiddle, isItalian, languageName, sceneCharacterLimit, scaleOutputTokens, tail, truncate } from "../util/text.js";
 
 export type DirectorVerdict = "approve" | "revise" | "rewrite";
 
@@ -105,12 +105,29 @@ export const DIRECTOR_OPINION_TOOL: AiJsonSchema = {
   },
 };
 
+/** The director's verdict whatever its case, spacing or wording ("Approved", "da rivedere"); `null` for anything else. */
+export function parseDirectorVerdict(value: unknown): DirectorVerdict | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim().toLowerCase().replace(/\s+/g, " ");
+  if (/^approv/.test(text)) return "approve";
+  if (/^(?:da )?(?:revis|rived|rivist|rework|respin|reject)/.test(text)) return "revise";
+  if (/^(?:da )?(?:rewrit|riscriv|rifar)/.test(text)) return "rewrite";
+  return null;
+}
+
+/** Why an approval was not accepted: the director's score is under the approval score of the director profile. */
+export function withheldApprovalNote(score: number, approvalScore: number, language: string): string {
+  return isItalian(language)
+    ? `L'approvazione è sospesa: il punteggio ${score}/10 è sotto il punteggio di approvazione del direttore (${approvalScore}/10), quindi il verdetto è «da rivedere».`
+    : `The approval is withheld: the score ${score}/10 is below the director's approval score of ${approvalScore}/10, so the verdict is revise.`;
+}
+
 export function normalizeDirectorOpinionOutput(value: unknown): Pick<DirectorOpinion, "verdict" | "score" | "summary" | "answer" | "strengths" | "concerns" | "decisions" | "nextSteps" | "questionsForAuthor"> {
   const source = asRecord(value);
   const answer = asString(source.answer);
   return {
-    verdict: asOneOf(source.verdict, ["approve", "revise", "rewrite"] as const, "revise"),
-    score: Math.round(asNumber(source.score, 5, 1, 10) * 10) / 10,
+    verdict: parseDirectorVerdict(source.verdict) ?? "revise",
+    score: Math.round((normalizeScore(source.score) ?? 5) * 10) / 10,
     summary: asString(source.summary),
     ...(answer ? { answer } : {}),
     strengths: asStringList(source.strengths, 12),
@@ -288,6 +305,8 @@ async function chapterMaterial(store: BookStore, snapshot: BookSnapshot, slug: s
   ]);
   const resume = await readStorySoFar(store, { chapters: state?.plan?.chapters ?? importedChapters(snapshot), beforeChapter: chapter.number, max: 5000 });
   const ghostwriter = await loadGhostwriter(store, snapshot, chapter);
+  // What the book asks of a scene (the brief when there is one) with room to spare; never less than the limit these opinions always had.
+  const perScene = Math.max(3000, Math.floor(60000 / Math.max(1, paragraphs.length)), sceneCharacterLimit(state?.brief.wordsPerScene ?? DEFAULT_BRIEF.wordsPerScene));
   return {
     title: `${chapter.number}. ${chapter.title}`,
     sections: [
@@ -299,7 +318,7 @@ async function chapterMaterial(store: BookStore, snapshot: BookSnapshot, slug: s
       `GHOSTWRITER:\n${ghostwriterBlock(ghostwriter)}`,
       readers ? `SIMULATED READERS (panel summary):\n${readers}` : "",
       previous ? `YOUR PREVIOUS OPINION ON THIS CHAPTER:\n${previous}` : "",
-      paragraphs.length ? `CHAPTER TEXT:\n${markedChapterText(paragraphs, Math.max(3000, Math.floor(60000 / paragraphs.length)))}` : "CHAPTER TEXT: no scenes written yet.",
+      paragraphs.length ? `CHAPTER TEXT:\n${markedChapterText(paragraphs, perScene)}` : "CHAPTER TEXT: no scenes written yet.",
     ],
     sourceHash: await sha256Hex(paragraphs.map((paragraph) => paragraph.hash).join(":")),
   };
@@ -319,6 +338,7 @@ async function paragraphMaterial(store: BookStore, snapshot: BookSnapshot, chapt
     readBody(store, directorOpinionPath({ kind: "paragraph", chapter: chapterSlug, paragraph: paragraphSlug }), 2000),
   ]);
   const ghostwriter = await loadGhostwriter(store, snapshot, chapter, paragraph);
+  const state = parseAutopilotState((await store.read(AUTOPILOT_STATE_FILE))?.content);
   return {
     title: `${chapter.number}.${paragraph.number} ${paragraph.title}`,
     sections: [
@@ -330,7 +350,7 @@ async function paragraphMaterial(store: BookStore, snapshot: BookSnapshot, chapt
       readers ? `SIMULATED READERS (panel summary):\n${readers}` : "",
       earlier ? `YOUR PREVIOUS OPINION ON THIS SCENE:\n${earlier}` : "",
       previous ? `PREVIOUS SCENE ENDING:\n${tail(previous.document.body, 1500)}` : "",
-      `SCENE ${paragraph.number}: ${paragraph.title}\n${truncate(document.document.body, 30000)}`,
+      `SCENE ${paragraph.number}: ${paragraph.title}\n${clipMiddle(document.document.body, Math.max(30000, sceneCharacterLimit(state?.brief.wordsPerScene ?? DEFAULT_BRIEF.wordsPerScene)))}`,
     ],
     sourceHash: document.file.hash,
   };
@@ -356,6 +376,12 @@ export interface AskDirectorResult {
   opinion: DirectorOpinion;
   path: string;
   saved: boolean;
+  /**
+   * What is wrong with `director.md` (YAML that cannot be read, a value that is not understood), each problem naming the file;
+   * empty when it is fine. The opinion is given with the director as far as it could be read: the author is told, and the file is
+   * never replaced by the defaults. Always there in what `askDirector` returns; absent in an answer that comes from an older server.
+   */
+  warnings?: string[];
 }
 
 /** "What does the director think?" — the same call works in the browser and on the personal server. */
@@ -389,8 +415,15 @@ export async function askDirector(input: AskDirectorInput): Promise<AskDirectorR
   });
   // A reply cut by the output limit is never an opinion, also outside the autopilot.
   if (response.truncated) throw new AiProviderError(`${[response.provider, response.model].filter(Boolean).join(" ") || "The model"}: the reply was cut by the output token limit. Nothing was applied.`, undefined, false, { truncated: true, usage: response.usage, cost: response.cost, model: response.model, provider: response.provider });
-  // A reply without a verdict must never become an opinion (nor close the book in the autopilot).
-  const output = normalizeDirectorOpinionOutput(requireStructuredFields(response.json, { verdict: "text", summary: "text" }, "The director's opinion"));
+  // A reply without a verdict or a score must never become an opinion (nor close the book in the autopilot).
+  const subject = "The director's opinion";
+  const reply = requireStructuredFields(unescapePromptDataDeep(response.json), { verdict: "text", summary: "text", score: "score" }, subject);
+  if (parseDirectorVerdict(reply.verdict) === null) throw new AiReplyRejectedError(`${subject} was rejected: the field "verdict" must be one of "approve", "revise" or "rewrite".`);
+  const output = normalizeDirectorOpinionOutput(reply);
+  if (output.verdict === "approve" && output.score < director.approvalScore) {
+    output.verdict = "revise";
+    output.decisions = [withheldApprovalNote(output.score, director.approvalScore, language), ...output.decisions];
+  }
   const opinion: DirectorOpinion = {
     target: input.target,
     targetTitle: material.title,
@@ -411,7 +444,7 @@ export async function askDirector(input: AskDirectorInput): Promise<AskDirectorR
     const existing = await input.store.read(path);
     await input.store.commit([{ path, content: renderDirectorOpinion(opinion, language), expectedHash: existing?.hash ?? null }], `Director: opinion on ${material.title}`);
   }
-  return { opinion, path, saved: Boolean(input.save) };
+  return { opinion, path, saved: Boolean(input.save), warnings: director.warnings ?? [] };
 }
 
 /** Saved director opinions found in the book, newest first. */

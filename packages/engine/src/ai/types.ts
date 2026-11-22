@@ -21,6 +21,8 @@ export interface AiRequest {
   /** When present the reply must be one JSON object matching this schema (forced tool call when supported). */
   json?: AiJsonSchema;
   maxOutputTokens?: number;
+  /** Multiplies the output limit (after the structured floor and the reasoning margin, up to the model's own maximum). */
+  outputBoost?: number;
   temperature?: number;
   signal?: AbortSignal;
   /** Receives the cumulative text while a plain-text reply streams. */
@@ -31,10 +33,14 @@ export interface AiResponse {
   text: string;
   json?: unknown;
   usage?: AiUsage;
+  /** `false` when the provider reported no tokens and `usage` is the engine's estimate. */
+  usageKnown?: boolean;
   model?: string;
   provider?: string;
   integrationId?: string;
   cost?: number;
+  /** `false` when `cost` is missing because the model has no price, or is an estimate built on estimated tokens. */
+  costKnown?: boolean;
   currency?: string;
   /** The provider stopped because of the output token limit. */
   truncated?: boolean;
@@ -55,23 +61,43 @@ export class AiUnavailableError extends Error {
 /** What a failed attempt already cost: the provider may bill a reply the engine rejects. */
 export interface AiProviderErrorDetails {
   usage?: AiUsage;
+  /** `false` when the provider reported no tokens and `usage` is an estimate. */
+  usageKnown?: boolean;
   cost?: number;
+  costKnown?: boolean;
   currency?: string;
   model?: string;
   provider?: string;
   integrationId?: string;
   /** The provider stopped because of the output token limit. */
   truncated?: boolean;
+  /** The reply was cut by the output limit while the model had only reasoned: none of the answer was written. */
+  reasoningOnly?: boolean;
+  /** The request already asked for the model's own maximum output: asking for more cannot help. */
+  limitReached?: boolean;
+  /** The provider's `Retry-After` on a 429 or 503, in milliseconds (at most five minutes). */
+  retryAfterMs?: number;
+  /** The failure depends on the moment (rate limit, overload, network): waiting and repeating may succeed. */
+  transient?: boolean;
+  /** The request ran out of time. */
+  timedOut?: boolean;
 }
 
 export class AiProviderError extends Error {
   usage?: AiUsage;
+  usageKnown?: boolean;
   cost?: number;
+  costKnown?: boolean;
   currency?: string;
   model?: string;
   provider?: string;
   integrationId?: string;
   truncated?: boolean;
+  reasoningOnly?: boolean;
+  limitReached?: boolean;
+  retryAfterMs?: number;
+  transient?: boolean;
+  timedOut?: boolean;
 
   constructor(message: string, readonly status?: number, readonly retryable = false, details: AiProviderErrorDetails = {}) {
     super(message);
@@ -88,6 +114,30 @@ export class AiReplyRejectedError extends AiProviderError {
   constructor(message: string, details: AiProviderErrorDetails = {}) {
     super(message, undefined, true, details);
     this.name = "AiReplyRejectedError";
+  }
+}
+
+/** No candidate's context window holds the prompt: nothing was sent, and the same request would end the same way. */
+export class AiPromptTooLargeError extends AiProviderError {
+  constructor(message: string, readonly estimatedTokens: number, readonly largestBudget: number) {
+    super(message, undefined, false);
+    this.name = "AiPromptTooLargeError";
+  }
+}
+
+/** The routing limits (token attempts, estimated cost) leave no candidate to call, not even the first. */
+export class AiRoutingBudgetError extends AiProviderError {
+  constructor(message: string) {
+    super(message, undefined, false);
+    this.name = "AiRoutingBudgetError";
+  }
+}
+
+/** The privacy policy for fallbacks left no candidate to call. */
+export class AiFallbackBlockedError extends AiProviderError {
+  constructor(message: string) {
+    super(message, undefined, false);
+    this.name = "AiFallbackBlockedError";
   }
 }
 

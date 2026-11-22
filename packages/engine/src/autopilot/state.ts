@@ -24,6 +24,8 @@ export const MAX_ACTIVITIES = 200;
 export const MAX_INTERVENTIONS = 100;
 export const MAX_DIRECTOR_NOTES = 12;
 export const MAX_CONSTRAINTS = 80;
+/** A rule goes into every request the autopilot makes: longer text is refused, never cut. */
+export const MAX_RULE_CHARACTERS = 800;
 export const MAX_REVISION_NOTES = 40;
 /**
  * Upper bound for any chapter number or chapter count read from a file or a reply. It only guards against typos and
@@ -39,6 +41,26 @@ function newestList(value: unknown, max: number): string[] {
 /** Permanent author rules, newest kept when the cap is reached. */
 export function capConstraints(constraints: string[]): string[] {
   return newestList(constraints, MAX_CONSTRAINTS);
+}
+
+export type AutopilotRuleErrorCode = "rule_empty" | "rule_too_long" | "rule_not_found" | "rule_changed" | "rule_duplicate";
+
+/** A rule that cannot be saved as asked. The message says why; `code` lets a host say it in the author's language. */
+export class AutopilotRuleError extends Error {
+  constructor(readonly code: AutopilotRuleErrorCode, message: string, readonly limit?: number) {
+    super(message);
+    this.name = "AutopilotRuleError";
+  }
+}
+
+/** The text of a rule without the spaces around it. An empty rule, or one over `MAX_RULE_CHARACTERS`, is refused. */
+export function normalizeRuleText(text: string): string {
+  const rule = (text ?? "").trim();
+  if (!rule) throw new AutopilotRuleError("rule_empty", "The rule is empty.");
+  if (rule.length > MAX_RULE_CHARACTERS) {
+    throw new AutopilotRuleError("rule_too_long", `The rule is ${rule.length} characters long: a rule is at most ${MAX_RULE_CHARACTERS} characters, because it goes into every request. Shorten it or split it into several rules.`, MAX_RULE_CHARACTERS);
+  }
+  return rule;
 }
 
 export const DEFAULT_BRIEF: AutopilotBrief = {
@@ -60,6 +82,7 @@ export const DEFAULT_OPTIONS: AutopilotOptions = {
   pauseAfterEachChapter: false,
   chaptersPerRun: 0,
   budgetLimit: 0,
+  budgetTokens: 0,
   syncAfterChapter: true,
 };
 
@@ -90,6 +113,7 @@ export function normalizeOptions(value: unknown, base: AutopilotOptions = DEFAUL
     pauseAfterEachChapter: asBoolean(source.pauseAfterEachChapter, base.pauseAfterEachChapter),
     chaptersPerRun: asInteger(source.chaptersPerRun, base.chaptersPerRun, 0, MAX_BOOK_CHAPTERS),
     budgetLimit: asNumber(source.budgetLimit, base.budgetLimit, 0, 1_000_000),
+    budgetTokens: asInteger(source.budgetTokens, base.budgetTokens ?? 0, 0, Number.MAX_SAFE_INTEGER),
     syncAfterChapter: asBoolean(source.syncAfterChapter, base.syncAfterChapter),
   };
 }
@@ -138,6 +162,7 @@ function normalizePlan(value: unknown): AutopilotPlan | null {
   if (!value || typeof value !== "object") return null;
   const source = asRecord(value);
   const revisionBatches = [...new Set(asArray(source.revisionBatches).map((entry) => asInteger(entry, 0, 0, MAX_BOOK_CHAPTERS)).filter((entry) => entry > 0))].sort((left, right) => left - right);
+  const skippedReaders = asStringList(source.skippedReaders, 40);
   return {
     chapters: asArray(source.chapters).map(normalizeChapter).sort((left, right) => left.number - right.number),
     approved: asBoolean(source.approved, false),
@@ -156,6 +181,7 @@ function normalizePlan(value: unknown): AutopilotPlan | null {
       };
     }).filter((reaction) => reaction.slug),
     readersDone: asBoolean(source.readersDone, false),
+    ...(skippedReaders.length ? { skippedReaders } : {}),
     awaitingAuthor: asBoolean(source.awaitingAuthor, false),
   };
 }
@@ -320,6 +346,8 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
   const source = asRecord(value);
   const base = createAutopilotState(now);
   const stats = asRecord(source.stats);
+  const usageUnknownCalls = asInteger(stats.usageUnknownCalls, 0, 0, Number.MAX_SAFE_INTEGER);
+  const costUnknownCalls = asInteger(stats.costUnknownCalls, 0, 0, Number.MAX_SAFE_INTEGER);
   const concept = asRecord(source.concept);
   const lastError = asRecord(source.lastError);
   const runner = asRecord(source.runner);
@@ -356,6 +384,8 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
       cost: asNumber(stats.cost, 0, 0, Number.MAX_SAFE_INTEGER),
       currency: asString(stats.currency) || undefined,
       failures: asInteger(stats.failures, 0, 0, Number.MAX_SAFE_INTEGER),
+      ...(usageUnknownCalls ? { usageUnknownCalls } : {}),
+      ...(costUnknownCalls ? { costUnknownCalls } : {}),
     },
     message: asString(source.message) || null,
     lastError: asString(lastError.message)

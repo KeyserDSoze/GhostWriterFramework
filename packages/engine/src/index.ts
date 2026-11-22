@@ -22,7 +22,11 @@ export * from "./ai/types.js";
 export * from "./ai/config.js";
 export * from "./ai/router.js";
 export * from "./ai/token-limit.js";
+export * from "./ai/budget.js";
+export * from "./ai/redact.js";
 export * from "./ai/structured.js";
+export * from "./ai/request.js";
+export * from "./ai/routing.js";
 export * from "./ai/fetch-client.js";
 
 export * from "./director/opinion.js";

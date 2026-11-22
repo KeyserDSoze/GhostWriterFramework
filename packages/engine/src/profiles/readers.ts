@@ -1,8 +1,11 @@
-import { parseDocument, stringify } from "yaml";
+import { stringify } from "yaml";
 import { slugifyAny } from "narrarium/slug";
+import { clampNumber, enumValue, isEmptyValue, listEntry, numericValue, quoted, readProfileFile, switchValue } from "./read.js";
 
 export type ReaderPersonaType = "standard" | "genre" | "custom";
 export type ReaderEvaluationDepth = "brief" | "normal" | "deep";
+
+const READER_TYPES: ReaderPersonaType[] = ["standard", "genre", "custom"];
 
 export interface ReaderPersonaProfile {
   id: string;
@@ -28,6 +31,8 @@ export interface ReaderPersonaProfile {
   version: number;
   body: string;
   path?: string;
+  /** What is wrong with `personas/<slug>.md`, each problem naming it (YAML that cannot be read, a value that is not understood). Empty when the file is as it says: the autopilot does not run readers with a file that has warnings. */
+  warnings?: string[];
 }
 
 interface LocalizedPreset {
@@ -100,6 +105,7 @@ function baseProfile(input: { id: string; name: string; description: string; pro
     builtin: true,
     version: 1,
     body: input.description,
+    warnings: [],
   };
 }
 
@@ -140,38 +146,93 @@ export function emptyReaderPersona(language = "en", order = 1000): ReaderPersona
     builtin: false,
     version: 1,
     body: "",
+    warnings: [],
   };
 }
 
+/**
+ * A simulated reader from `personas/<slug>.md`. It never throws: YAML that cannot be read, a type that is none of
+ * `standard`, `genre` and `custom`, a severity or an order that is not a number, a switch that is not yes or no, a list that is
+ * not one are warnings that name the file (the value is then the default, as it always was). Values are read whatever their
+ * case (`reader_type: Genre`, `enabled: No`), and numbers written as text (`'7'`, `'7,5'`) are read.
+ */
 export function parseReaderPersona(slug: string, raw: string): ReaderPersonaProfile {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
-  const frontmatter = match ? ((parseDocument(match[1]).toJSON() as Record<string, unknown> | null) ?? {}) : {};
-  const list = (key: string) => Array.isArray(frontmatter[key]) ? (frontmatter[key] as unknown[]).map(String) : [];
-  const text = (key: string, fallback = "") => typeof frontmatter[key] === "string" ? String(frontmatter[key]) : fallback;
+  const { frontmatter, body, warnings, warn } = readProfileFile(`personas/${slug}.md`, raw);
+  const list = (key: string): string[] => {
+    const value = frontmatter[key];
+    if (Array.isArray(value)) {
+      let skipped = 0;
+      const items: string[] = [];
+      for (const entry of value) {
+        const item = listEntry(entry);
+        if (item === undefined) skipped += 1;
+        else if (item !== null) items.push(item);
+      }
+      if (skipped) warn(`${skipped === 1 ? "one entry" : `${skipped} entries`} of ${key} cannot be read as text and ${skipped === 1 ? "was" : "were"} left out`);
+      return items;
+    }
+    if (typeof value === "string" && value.trim()) return value.split(",").map((part) => part.trim()).filter(Boolean);
+    if (!isEmptyValue(value)) warn(`${key} must be a list (${quoted(value)} is not one): it is left empty`);
+    return [];
+  };
+  const text = (key: string, fallback = ""): string => {
+    const value = frontmatter[key];
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    if (!isEmptyValue(value)) warn(`${key} must be text (${quoted(value)} is not): ${fallback ? `${fallback} is used` : "it is left empty"}`);
+    return fallback;
+  };
+  const number = (key: string, fallback: number, clamp?: [number, number]): number => {
+    const value = frontmatter[key];
+    if (isEmptyValue(value)) return fallback;
+    const parsed = numericValue(value);
+    if (parsed === undefined) {
+      warn(`${key} ${quoted(value)} is not a number: ${fallback} is used`);
+      return fallback;
+    }
+    return clamp ? clampNumber(parsed, clamp[0], clamp[1], 1) : parsed;
+  };
+  const toggle = (key: string, fallback: boolean): boolean => {
+    const value = frontmatter[key];
+    if (isEmptyValue(value)) return fallback;
+    const parsed = switchValue(value);
+    if (parsed === undefined) {
+      warn(`${key} ${quoted(value)} is neither yes nor no: ${fallback ? "yes" : "no"} is used`);
+      return fallback;
+    }
+    return parsed;
+  };
+  let readerType: ReaderPersonaType = "custom";
+  if (!isEmptyValue(frontmatter.reader_type)) {
+    const named = enumValue(frontmatter.reader_type, READER_TYPES);
+    if (named) readerType = named;
+    else warn(`reader_type ${quoted(frontmatter.reader_type)} is not one of ${READER_TYPES.join(", ")}: custom is used`);
+  }
   return {
     id: text("id", `reader:custom:${slug}`),
     slug,
     name: text("name", slug),
     description: text("description"),
     language: text("language", "en"),
-    readerType: (text("reader_type", "custom") as ReaderPersonaType),
+    readerType,
     profile: text("profile"),
     aspects: list("aspects"),
     preferredGenres: list("preferred_genres"),
     dislikedGenres: list("disliked_genres"),
     experienceLevel: text("experience_level", "average"),
-    severity: typeof frontmatter.severity === "number" ? frontmatter.severity : 5,
+    severity: number("severity", 5, [1, 10]),
     audienceAge: text("audience_age", "adult"),
     interests: list("interests"),
     appreciatedElements: list("appreciated_elements"),
     frequentCriticisms: list("frequent_criticisms"),
     customPrompt: text("custom_prompt"),
-    enabled: frontmatter.enabled !== false,
-    order: typeof frontmatter.order === "number" ? frontmatter.order : 1000,
-    builtin: frontmatter.builtin === true,
-    version: typeof frontmatter.version === "number" ? frontmatter.version : 1,
-    body: match?.[2]?.trim() ?? raw.trim(),
+    enabled: toggle("enabled", true),
+    order: number("order", 1000),
+    builtin: toggle("builtin", false),
+    version: number("version", 1),
+    body,
     path: `personas/${slug}.md`,
+    warnings,
   };
 }
 

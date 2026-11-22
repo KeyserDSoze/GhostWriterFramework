@@ -181,6 +181,8 @@ export function createFakeAutopilotAi(options: FakeAiOptions = {}): AiPort & { c
         };
       case "scene_summary":
         return { summary: "Mira confronts Orrin at the harbor." };
+      case "chapter_summary":
+        return { summary: `Summary of imported chapter ${/chapter (\d+)/i.exec(user)?.[1] ?? "?"}.` };
       case "plan_reader":
       case "reader_evaluation":
         return { generalImpression: "Engaging.", strengths: ["Atmosphere"], weaknesses: ["Pacing"], mostEffectiveMoment: "The confrontation.", mainProblem: "The middle drags.", prioritySuggestion: "Tighten the middle.", score: 7 };

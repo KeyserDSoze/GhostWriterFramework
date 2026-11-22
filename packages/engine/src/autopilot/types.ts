@@ -10,6 +10,7 @@ export const AUTOPILOT_PHASES: AutopilotPhase[] = ["concept", "plan", "write", "
 
 export type AutopilotTaskKind =
   | "concept"
+  | "summarize-imported"
   | "plan"
   | "plan-reader"
   | "plan-review"
@@ -54,6 +55,11 @@ export interface AutopilotOptions {
   chaptersPerRun: number;
   /** Stop before the next AI call once the tracked cost reaches this amount (0 = no limit). */
   budgetLimit: number;
+  /**
+   * Stop before the next AI call once this many tokens (input and output) have been used (0 = no limit). A limit that
+   * also works for models without a price, and with providers that report no tokens (their use is estimated).
+   */
+  budgetTokens?: number;
   /** Publish to GitHub after every approved chapter (browser host; the server publishes after every step). */
   syncAfterChapter: boolean;
 }
@@ -130,6 +136,8 @@ export interface AutopilotPlan {
   revisionBatches?: number[];
   readerReactions: ReaderReaction[];
   readersDone: boolean;
+  /** Readers whose reaction stayed incomplete after a retry: they are not asked again. */
+  skippedReaders?: string[];
   /** Approved plan waiting for the author because of `pauseAfterPlan` or the director's autonomy. */
   awaitingAuthor: boolean;
 }
@@ -230,6 +238,10 @@ export interface AutopilotStats {
   cost: number;
   currency?: string;
   failures: number;
+  /** Calls whose tokens the provider did not report: `inputTokens` and `outputTokens` hold the engine's estimate for them. */
+  usageUnknownCalls?: number;
+  /** Calls whose cost could not be measured (the model has no price, or the tokens were estimated): `cost` leaves them out or estimates them. */
+  costUnknownCalls?: number;
 }
 
 export interface AutopilotState {
@@ -306,11 +318,15 @@ export type AutopilotMessageCode =
   | "unexpectedStop"
   | "syncFailed"
   | "publishFailed"
-  | "finalStateFailed";
+  | "finalStateFailed"
+  | "budgetNotApplicable"
+  | "profileProblems";
 
 /**
  * Live events: everything the autopilot does, as it happens. `run-ended` carries a `code` when the run ended for a
  * reason a client can translate (`takenOver`: another runner owns the book now, so this run stopped without saving).
+ * A `failureRetry` insight carries `attempt` (the retry about to happen), `retries` (how many this kind of failure
+ * allows) and `waitMs` (how long the runner waits first).
  */
 export type AutopilotEventBody =
   | { type: "run-started"; runId: string; host: "browser" | "server" }
@@ -318,7 +334,7 @@ export type AutopilotEventBody =
   | { type: "task-started"; activity: AutopilotActivity }
   | { type: "task-progress"; activityId: string; characters: number; preview: string }
   | { type: "task-finished"; activity: AutopilotActivity }
-  | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode }
+  | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode; attempt?: number; retries?: number; waitMs?: number }
   | { type: "state"; state: AutopilotStateSummary }
   | { type: "sync"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode };
 
@@ -375,6 +391,8 @@ export interface QuestionAnswer {
   answer: string;
   /** Accept the work as it is and continue. */
   accept?: boolean;
+  /** Keep the answer as a permanent rule instead of a note used once. Never the default. */
+  asRule?: boolean;
 }
 
 export interface StartOptions {

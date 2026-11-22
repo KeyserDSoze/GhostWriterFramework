@@ -5,6 +5,9 @@ import type { DirectorOpinion } from "../director/opinion.js";
 import type { AutopilotEvent, AutopilotSnapshot, AutopilotStateSummary, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
 
 export const SERVER_API_VERSION = 1;
+/** The oldest and the newest `ServerInfo.apiVersion` a server may speak for this engine to talk to it (see `serverCompatibility`). */
+export const MIN_SUPPORTED_SERVER_API = 1;
+export const MAX_SUPPORTED_SERVER_API = 1;
 export const DEFAULT_SERVER_PORT = 24242;
 /** Loopback port of the server's admin panel. */
 export const DEFAULT_ADMIN_PORT = 24243;
@@ -34,6 +37,31 @@ export interface ServerInfo {
   supervised?: boolean;
 }
 
+/** Whether this engine and a server speak the same API: `server-older` (the server must be updated) or `server-newer` (this app must be). */
+export type ServerCompatibilityStatus = "ok" | "server-older" | "server-newer";
+
+export interface ServerCompatibility {
+  status: ServerCompatibilityStatus;
+  /** What to tell the author, in English: which version the server speaks, which this engine supports, and what to update. */
+  message: string;
+}
+
+/**
+ * Whether the server that answered `info` speaks an API this engine supports (`MIN_SUPPORTED_SERVER_API` to
+ * `MAX_SUPPORTED_SERVER_API`). It never throws: a server that does not say which API it speaks (or says it oddly) is an older one,
+ * and what to do about each answer is for the host to decide.
+ */
+export function serverCompatibility(info: Pick<ServerInfo, "apiVersion"> | null | undefined): ServerCompatibility {
+  const version = info?.apiVersion;
+  if (typeof version !== "number" || !Number.isFinite(version)) {
+    return { status: "server-older", message: "The personal server does not say which API version it speaks, so it is older than this app supports: update the server." };
+  }
+  const supported = MIN_SUPPORTED_SERVER_API === MAX_SUPPORTED_SERVER_API ? `${MIN_SUPPORTED_SERVER_API}` : `${MIN_SUPPORTED_SERVER_API} to ${MAX_SUPPORTED_SERVER_API}`;
+  if (version < MIN_SUPPORTED_SERVER_API) return { status: "server-older", message: `The personal server speaks API version ${version}; this app supports ${supported}: update the server.` };
+  if (version > MAX_SUPPORTED_SERVER_API) return { status: "server-newer", message: `The personal server speaks API version ${version}; this app supports ${supported}: update Narrarium.` };
+  return { status: "ok", message: `The personal server speaks API version ${version}, which this app supports.` };
+}
+
 export interface ServerSession {
   serverId: string;
   label: string;
@@ -50,7 +78,11 @@ export interface PairingRequest {
   label: string;
 }
 
-export type PairingResult = { pending: true } | { token: string };
+/**
+ * What polling a pairing answers: still waiting for the owner, or the token (delivered once), with the four digits the owner
+ * sees next to the client in the admin panel when the server sends them (`verification`: older servers do not).
+ */
+export type PairingResult = { pending: true } | { token: string; verification?: string };
 
 export type ServerUpdateReason = "not_published" | "no_trusted_release" | "unavailable" | "up_to_date" | "no_supervisor" | "missing_scope";
 
@@ -151,6 +183,8 @@ export interface AskDirectorResponse {
   opinion: DirectorOpinion;
   path: string;
   saved: boolean;
+  /** Problems of `director.md`, when the server's engine reports them (older servers send none). */
+  warnings?: string[];
 }
 
 export interface ServerAiStatus {
@@ -274,6 +308,8 @@ export interface ServerIdentityCheck {
   /** This runtime cannot verify Ed25519 signatures (only the fingerprint can be compared). */
   unsupported?: boolean;
   fingerprint: string;
+  /** Whether the server speaks an API this engine supports: reported, never thrown, so the host decides how to say it. */
+  compatibility: ServerCompatibility;
 }
 
 /**
@@ -282,6 +318,7 @@ export interface ServerIdentityCheck {
  */
 export async function verifyServerIdentity(info: ServerInfo, nonce: string): Promise<ServerIdentityCheck> {
   if (!info.publicKey || !info.signature || !info.fingerprint || info.nonce !== nonce) throw new Error("The personal server did not prove its identity.");
+  const compatibility = serverCompatibility(info);
   const subtle = globalThis.crypto.subtle;
   const keyBytes = base64Bytes(info.publicKey);
   const digest = new Uint8Array(await subtle.digest("SHA-256", keyBytes));
@@ -291,11 +328,11 @@ export async function verifyServerIdentity(info: ServerInfo, nonce: string): Pro
   try {
     key = await subtle.importKey("spki", keyBytes, { name: "Ed25519" }, false, ["verify"]);
   } catch {
-    return { verified: false, unsupported: true, fingerprint };
+    return { verified: false, unsupported: true, fingerprint, compatibility };
   }
   const valid = await subtle.verify({ name: "Ed25519" }, key, base64Bytes(info.signature), new TextEncoder().encode(serverIdentityMessage(nonce, info.serverId, info.publicKey)));
   if (!valid) throw new Error("The personal server's identity signature is not valid.");
-  return { verified: true, fingerprint };
+  return { verified: true, fingerprint, compatibility };
 }
 
 export type { AutopilotSnapshot };

@@ -196,6 +196,16 @@ export const SCENE_SUMMARY_TOOL: AiJsonSchema = {
   },
 };
 
+export const CHAPTER_SUMMARY_TOOL: AiJsonSchema = {
+  name: "chapter_summary",
+  description: "Summarize a chapter written by the author, for continuity.",
+  parameters: {
+    type: "object",
+    properties: { summary: { ...string, description: "Two to four sentences: what happens and what changes." } },
+    required: ["summary"],
+  },
+};
+
 export const FINDINGS_TOOL: AiJsonSchema = {
   name: "chapter_findings",
   description: "Return the specialists' findings on one chapter.",

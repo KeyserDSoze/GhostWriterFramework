@@ -1,12 +1,21 @@
-import type { BookSnapshot } from "../book/snapshot.js";
-import { chapterSlug } from "../book/paths.js";
+import type { BookSnapshot, ChapterInfo } from "../book/snapshot.js";
+import { chapterNumberFromSlug, chapterSlug, paragraphFilePath, paragraphSlug } from "../book/paths.js";
 import type { DirectorProfile } from "../profiles/director.js";
 import { isItalian } from "../util/text.js";
-import type { AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, PlannedChapter, PlannedScene } from "./types.js";
+import type { AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, InsightTone, PlannedChapter, PlannedScene } from "./types.js";
 
 export interface PlannerReader {
   slug: string;
   name: string;
+}
+
+/** Something advancing the state found in the author's files that the author should know about. */
+export interface PlanNote {
+  /** The same for the same finding, so that a run can say it once however many steps it takes. */
+  key: string;
+  tone: InsightTone;
+  title: string;
+  detail?: string;
 }
 
 export interface PlannerContext {
@@ -17,6 +26,8 @@ export interface PlannerContext {
   language: string;
   /** The story design is still the empty scaffold. */
   storyDesignThin: boolean;
+  /** Told what the reconciliation of the plan with the files found: a chapter followed into its renamed folder, a folder the autopilot will not write in, a rewrite with nothing left to rewrite. */
+  report?: (note: PlanNote) => void;
 }
 
 export interface TaskDescriptor {
@@ -26,6 +37,8 @@ export interface TaskDescriptor {
   reason: string;
   next: string;
   chapterNumber?: number;
+  /** Folder of the chapter, for the one step that is about a chapter by its folder (`summarize-imported`): two folders can have one number. */
+  chapterSlug?: string;
   sceneNumber?: number;
   reader?: string;
   readerName?: string;
@@ -37,7 +50,8 @@ export type PlannedStep =
   | { kind: "task"; task: TaskDescriptor }
   | { kind: "stop"; status: "paused" | "waiting-author" | "completed"; message: string };
 
-const NOTE_TASKS = new Set<AutopilotTaskKind>(["concept", "plan", "scenes", "write", "repair", "revise", "consolidate"]);
+/** The steps that write: the author's "next step" notes go to the first of them, once. Closing a chapter and repairing a scene that is already written take none. */
+const NOTE_TASKS = new Set<AutopilotTaskKind>(["concept", "plan", "scenes", "write", "revise"]);
 
 function text(language: string, en: string, it: string): string {
   return isItalian(language) ? it : en;
@@ -63,6 +77,12 @@ export function describeTask(kind: AutopilotTaskKind, language: string, params: 
         title: text(language, "Designing the concept of the book", "Progettazione del concept del libro"),
         reason: text(language, "Premise, cast, places and secrets must exist before planning chapters.", "Premessa, personaggi, luoghi e segreti devono esistere prima di pianificare i capitoli."),
         next: text(language, "Plan the chapters.", "Pianificare i capitoli."),
+      };
+    case "summarize-imported":
+      return {
+        title: text(language, `Summarizing chapter ${c}${quoted(chapter?.title)}, written by the author`, `Riassunto del capitolo ${c}${quoted(chapter?.title)}, scritto dall'autore`),
+        reason: text(language, "The next chapters need the story so far: a chapter without a summary leaves the continuity blind.", "I capitoli successivi hanno bisogno della storia finora: un capitolo senza riassunto lascia la continuità cieca."),
+        next: text(language, "Plan or write the chapters that follow.", "Pianificare o scrivere i capitoli successivi."),
       };
     case "plan": {
       const batch = params.from !== undefined && params.to !== undefined ? { from: params.from, to: params.to } : null;
@@ -164,6 +184,7 @@ function descriptor(kind: AutopilotTaskKind, phase: AutopilotPhase, ctx: Planner
     phase,
     ...describeTask(kind, ctx.language, params),
     chapterNumber: params.chapter?.number,
+    ...(kind === "summarize-imported" && params.chapter ? { chapterSlug: params.chapter.slug } : {}),
     sceneNumber: params.scene?.number,
     reader: params.reader,
     readerName: params.readerName,
@@ -236,6 +257,21 @@ export function importedChapters(snapshot: BookSnapshot): PlannedChapter[] {
         revisions: 0,
       })),
     }));
+}
+
+/**
+ * The first chapter written by the author that has no summary yet: one a later chapter cannot be written after without a blind
+ * "story so far". The chapters of the plan that are imported when there is a plan, else every chapter of the book that has prose
+ * (nothing has been written by the autopilot before its plan is approved). A summary in the chapter's file counts, whatever the plan
+ * says; a folder without scenes has nothing to summarize.
+ */
+export function nextImportedWithoutSummary(state: AutopilotState, snapshot: BookSnapshot): PlannedChapter | undefined {
+  const candidates = state.plan ? state.plan.chapters.filter((chapter) => chapter.imported) : importedChapters(snapshot);
+  const folders = new Map(snapshot.chapters.map((chapter) => [chapter.slug, chapter]));
+  return candidates.find((chapter) => {
+    const folder = folders.get(chapter.slug);
+    return Boolean(folder?.paragraphs.length) && !chapter.summary.trim() && !folder?.summary;
+  });
 }
 
 /** Chapters planned by one AI call: a longer plan is made of several, so that no reply outgrows the model's output. */
@@ -315,6 +351,95 @@ export function isExtensionNote(note: string): boolean {
   return /^Extend the book to \d+ chapters, continuing from the chapters already written\.$/.test(note);
 }
 
+/** Where the file of a scene is, or would be: the path the plan knows, else the name the autopilot gives its scenes. */
+export function sceneFile(chapter: PlannedChapter, scene: PlannedScene): string {
+  return scene.path ?? paragraphFilePath(chapter.slug, paragraphSlug(scene.number, scene.title));
+}
+
+function hasWrittenScenes(chapter: PlannedChapter): boolean {
+  return chapter.scenes.some((scene) => scene.status !== "planned");
+}
+
+/** The scenes of a done chapter as its folder has them: the plan follows the files, so that renaming or moving a finished chapter never reopens it. */
+function followScenes(chapter: PlannedChapter, folder: ChapterInfo): void {
+  const known = new Map(chapter.scenes.map((scene) => [scene.number, scene]));
+  const scenes: PlannedScene[] = [];
+  for (const paragraph of folder.paragraphs) {
+    if (scenes.length && scenes[scenes.length - 1].number === paragraph.number) continue;
+    const scene = known.get(paragraph.number);
+    scenes.push(scene
+      ? { ...scene, slug: paragraph.slug, path: paragraph.path, status: scene.status === "planned" ? "reviewed" : scene.status }
+      : { number: paragraph.number, title: paragraph.title, goal: "", beats: [], characters: [], summary: paragraph.summary, status: "reviewed", slug: paragraph.slug, path: paragraph.path, revisions: 0 });
+  }
+  chapter.scenes = scenes;
+}
+
+/**
+ * The folder of every chapter of the plan. The folder the plan knows (same slug) is the chapter's. When the author renamed
+ * or reordered it, the folder that starts with the chapter's number (three digits or more) takes its place and the plan adopts
+ * its slug and title. Two folders with one number are never both used: the plan's own is kept (else the first by name), and
+ * the other is reported and left alone, so that nothing is ever written in it. A chapter not written yet follows only a stub
+ * (the folder the plan made when it was approved, renamed): a folder that has scenes is somebody's text.
+ */
+function matchChapterFolders(chapters: PlannedChapter[], snapshot: BookSnapshot, language: string, approved: boolean, report: (note: PlanNote) => void): Map<PlannedChapter, ChapterInfo> {
+  const bySlug = new Map<string, ChapterInfo>();
+  const byNumber = new Map<number, ChapterInfo[]>();
+  for (const entry of snapshot.chapters) {
+    if (!bySlug.has(entry.slug)) bySlug.set(entry.slug, entry);
+    const number = chapterNumberFromSlug(entry.slug);
+    if (number === undefined) continue;
+    const same = byNumber.get(number);
+    if (same) same.push(entry);
+    else byNumber.set(number, [entry]);
+  }
+  const folders = new Map<PlannedChapter, ChapterInfo>();
+  const taken = new Set<ChapterInfo>();
+  const lost: PlannedChapter[] = [];
+  for (const chapter of chapters) {
+    if (!chapter.slug) chapter.slug = chapterSlug(chapter.number, chapter.title);
+    const known = bySlug.get(chapter.slug);
+    if (known) {
+      folders.set(chapter, known);
+      taken.add(known);
+    } else lost.push(chapter);
+  }
+  for (const chapter of lost) {
+    // A chapter with prose in the book takes a folder that has scenes; one with none takes only a stub (the folder the plan made, renamed), never somebody's text.
+    const written = hasWrittenScenes(chapter);
+    const candidates = (byNumber.get(chapter.number) ?? []).filter((entry) => !taken.has(entry) && (written ? entry.paragraphs.length > 0 : approved && entry.paragraphs.length === 0));
+    if (!candidates.length) continue;
+    const folder = candidates.reduce((first, entry) => (entry.slug < first.slug ? entry : first));
+    const before = chapter.slug;
+    folders.set(chapter, folder);
+    taken.add(folder);
+    chapter.slug = folder.slug;
+    if (folder.hash) chapter.title = folder.title;
+    if (chapter.status === "done" || chapter.imported) followScenes(chapter, folder);
+    report({
+      key: `chapter-folder:${chapter.number}:${folder.slug}`,
+      tone: "info",
+      title: text(language, `Chapter ${chapter.number} is now in the folder «${folder.slug}»`, `Il capitolo ${chapter.number} è ora nella cartella «${folder.slug}»`),
+      detail: text(language, `The folder «${before}» is gone: the autopilot follows the chapter by its number into «${folder.slug}».`, `La cartella «${before}» non c'è più: l'autopilot segue il capitolo, dal suo numero, in «${folder.slug}».`),
+    });
+  }
+  const reported = new Set<ChapterInfo>();
+  for (const folder of folders.values()) {
+    const number = chapterNumberFromSlug(folder.slug);
+    if (number === undefined) continue;
+    for (const other of byNumber.get(number) ?? []) {
+      if (other === folder || taken.has(other) || reported.has(other)) continue;
+      reported.add(other);
+      report({
+        key: `chapter-folder-duplicate:${other.slug}`,
+        tone: "warning",
+        title: text(language, `Two folders for chapter ${number}: «${folder.slug}» is used, «${other.slug}» is left alone`, `Due cartelle per il capitolo ${number}: uso «${folder.slug}», «${other.slug}» resta com'è`),
+        detail: text(language, `The autopilot never writes in «${other.slug}». Rename or remove it if it is a leftover.`, `L'autopilot non scrive mai in «${other.slug}». Rinominala o eliminala se è un residuo.`),
+      });
+    }
+  }
+  return folders;
+}
+
 /**
  * Deterministic, AI-free transitions: reconcile the plan with the files the author may have
  * changed, skip what is not needed, open review cycles and advance review rounds.
@@ -322,6 +447,9 @@ export function isExtensionNote(note: string): boolean {
 export function advanceState(input: AutopilotState, ctx: PlannerContext): AutopilotState {
   const state = cloneState(input);
   const { snapshot } = ctx;
+  const report = ctx.report ?? (() => undefined);
+  /** Scenes whose file the author removed during this pass, with the path they had. */
+  const removed = new Map<string, string>();
 
   if (!state.concept.done && (snapshot.chapters.some((chapter) => chapter.paragraphs.length > 0) || !ctx.storyDesignThin)) {
     state.concept.done = true;
@@ -336,13 +464,12 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
 
   if (state.plan) {
     // One lookup table instead of a scan of the snapshot per chapter: a book of thousands of chapters is advanced in linear time.
-    const filesBySlug = new Map<string, BookSnapshot["chapters"][number]>();
-    for (const entry of snapshot.chapters) if (!filesBySlug.has(entry.slug)) filesBySlug.set(entry.slug, entry);
+    const folders = matchChapterFolders(state.plan.chapters, snapshot, ctx.language, state.plan.approved, report);
     for (const chapter of state.plan.chapters) {
-      if (!chapter.slug) chapter.slug = chapterSlug(chapter.number, chapter.title);
-      const files = filesBySlug.get(chapter.slug);
+      const files = folders.get(chapter);
       for (const scene of chapter.scenes) {
         if (scene.status !== "planned" && scene.path && !snapshot.files.has(scene.path)) {
+          removed.set(`${chapter.number}.${scene.number}`, scene.path);
           scene.status = "planned";
           scene.path = undefined;
           scene.slug = undefined;
@@ -358,6 +485,8 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
           }
         }
       }
+      // A summary the author wrote in the chapter's file reaches the plan (the story so far is built from it) without a call to the model.
+      if (chapter.imported && !chapter.summary && files?.summary) chapter.summary = files.summary;
       if (chapter.imported) continue;
       const allWritten = chapter.scenes.length > 0 && chapter.scenes.every((scene) => scene.status !== "planned");
       if (chapter.status === "done" && !allWritten) chapter.status = chapter.scenes.length ? "writing" : "planned";
@@ -371,6 +500,29 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
     const reviewed = state.plan.chapters.find((chapter) => chapter.number === state.review!.chapterNumber);
     if (!reviewed || reviewed.status !== "review") state.review = null;
     else state.review.repairQueue = state.review.repairQueue.filter((number, index, queue) => queue.indexOf(number) === index && reviewed.scenes.some((scene) => scene.number === number && scene.status !== "planned"));
+  }
+
+  if (state.revision?.targets) {
+    // A rewrite whose scene is no longer in the book has nothing to rewrite: it is passed over, and the revision goes on.
+    const { revision } = state;
+    const targets = state.revision.targets;
+    while (revision.cursor < targets.length) {
+      const target = targets[revision.cursor];
+      const chapter = state.plan?.chapters.find((entry) => entry.number === target.chapterNumber);
+      const scene = chapter?.scenes.find((entry) => entry.number === target.sceneNumber);
+      if (scene && scene.status !== "planned") break;
+      const label = `${target.chapterNumber}.${target.sceneNumber}`;
+      const path = chapter && scene ? removed.get(label) ?? sceneFile(chapter, scene) : undefined;
+      report({
+        key: `revision-target:${revision.id}:${label}`,
+        tone: "warning",
+        title: path
+          ? text(ctx.language, `Scene ${label} no longer exists (${path}): its rewrite is skipped`, `La scena ${label} non esiste più (${path}): la sua riscrittura viene saltata`)
+          : text(ctx.language, `Scene ${label} is not in the plan any more: its rewrite is skipped`, `La scena ${label} non è più nel piano: la sua riscrittura viene saltata`),
+        detail: text(ctx.language, "There is nothing left to rewrite there: the revision goes on with the other scenes.", "Non c'è più nulla da riscrivere: la revisione prosegue con le altre scene."),
+      });
+      revision.cursor += 1;
+    }
   }
 
   if (state.revision?.targets && state.revision.cursor >= state.revision.targets.length) {
@@ -447,6 +599,9 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
 
   const plan = state.plan;
   if (!plan || !plan.approved) {
+    // Before anything is planned after them, the chapters the author wrote get the summaries the story so far is made of.
+    const unsummarized = nextImportedWithoutSummary(state, ctx.snapshot);
+    if (unsummarized) return { kind: "task", task: descriptor("summarize-imported", phaseOf(state), ctx, { chapter: unsummarized }) };
     const batch = nextPlanBatch(plan, planRange(importedChapters(ctx.snapshot), state.brief.targetChapters));
     if (batch) return { kind: "task", task: planDescriptor(ctx, plan, batch) };
   }
@@ -455,7 +610,7 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
 
   if (!plan.approved) {
     if (state.options.readersOnPlan && !plan.readersDone) {
-      const reader = ctx.readers.find((entry) => !plan.readerReactions.some((reaction) => reaction.slug === entry.slug));
+      const reader = ctx.readers.find((entry) => !plan.readerReactions.some((reaction) => reaction.slug === entry.slug) && !plan.skippedReaders?.includes(entry.slug));
       if (reader) return { kind: "task", task: descriptor("plan-reader", "plan", ctx, { reader: reader.slug, readerName: reader.name }) };
     }
     return { kind: "task", task: descriptor("plan-review", "plan", ctx) };
@@ -466,10 +621,13 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
   }
 
   const chapter = plan.chapters.find((entry) => entry.status !== "done");
-  if (!chapter) {
-    if (!state.finalDone) return { kind: "task", task: descriptor("final", "final", ctx) };
-    return { kind: "stop", status: "completed", message: italian ? "Il libro è completo." : "The book is complete." };
-  }
+  if (!chapter && state.finalDone) return { kind: "stop", status: "completed", message: italian ? "Il libro è completo." : "The book is complete." };
+
+  // ...and before anything is written, reviewed or judged after them, for a plan that was made without them.
+  const unsummarized = nextImportedWithoutSummary(state, ctx.snapshot);
+  if (unsummarized) return { kind: "task", task: descriptor("summarize-imported", phaseOf(state), ctx, { chapter: unsummarized }) };
+
+  if (!chapter) return { kind: "task", task: descriptor("final", "final", ctx) };
 
   if (chapter.status === "planned" || !chapter.scenes.length) return { kind: "task", task: descriptor("scenes", "write", ctx, { chapter }) };
 

@@ -89,7 +89,7 @@ test("syncBookStores reads in batches through readMany when a store has it, and 
   const second = await syncBookStores({ local: withoutReadMany, remote: target, base: new Map() });
   assert.equal(second.uploaded.length, 7);
   assert.equal(reads, 7, "a store without readMany is read as before");
-  assert.deepEqual(Object.keys(second).sort(), ["base", "conflicts", "downloaded", "rejected", "uploaded"], "the result keeps its shape");
+  assert.deepEqual(Object.keys(second).sort(), ["base", "conflicts", "downloaded", "rejected", "skipped", "uploaded"], "the result keeps its shape, and `skipped` is the one field that was added");
 });
 
 // ─── sync in chunks ─────────────────────────────────────────────────────────
@@ -146,7 +146,8 @@ test("a large book is committed in chunks of about 24 MiB: 75 MiB would be refus
 test("a file larger than a chunk travels alone", async () => {
   const local = new MemoryBookStore({ "notes/a.md": "small", "notes/b.md": "x".repeat(30 * MIB), "notes/c.md": "small" });
   const remote = new ServerLikeStore();
-  await syncBookStores({ local, remote, base: new Map() });
+  // The file is far over the 8 MiB the sync moves by default (it would be skipped): the limit is raised to test the chunks.
+  await syncBookStores({ local, remote, base: new Map(), maxFileBytes: 64 * MIB });
   assert.deepEqual(remote.commitLog.map((commit) => commit.changes), [1, 1, 1]);
   assert.equal(remote.files.get("notes/b.md").length, 30 * MIB);
 });

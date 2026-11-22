@@ -207,7 +207,7 @@ test("a failing provider is retried once, then the autopilot stops with a readab
   const { session: autopilot, events } = session(store, failing);
   const state = await runToEnd(autopilot, { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });
   assert.equal(state.status, "completed");
-  assert.ok(events.some((event) => event.type === "insight" && /retrying once/.test(event.title)));
+  assert.ok(events.some((event) => event.type === "insight" && /retry 1 of 3/.test(event.title)), "a transient provider error is retried up to three times: the first retry says so");
 
   const broken = new MemoryBookStore(seedBookFiles());
   const ai = { calls: [], async complete() { throw new AiProviderError("invalid api key", 401, false); } };

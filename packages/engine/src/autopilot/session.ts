@@ -1,3 +1,4 @@
+import { redactSecrets } from "../ai/redact.js";
 import type { AiPort } from "../ai/types.js";
 import { AUTOPILOT_ACTIVITY_FILE, AUTOPILOT_PLAN_FILE, AUTOPILOT_STATE_FILE, type EvaluationTarget } from "../book/paths.js";
 import { isBookConflictError, type BookStore } from "../book/store.js";
@@ -13,13 +14,15 @@ import {
   stateChange,
   type AutopilotHooks,
 } from "./runner.js";
-import { createAutopilotState, normalizeBrief, normalizeOptions, summarizeAutopilotState } from "./state.js";
+import { AutopilotRuleError, createAutopilotState, normalizeBrief, normalizeOptions, normalizeRuleText, summarizeAutopilotState } from "./state.js";
 import type {
   AutopilotActivity,
   AutopilotEvent,
   AutopilotEventBody,
+  AutopilotRunnerInfo,
   AutopilotSnapshot,
   AutopilotState,
+  AutopilotStateSummary,
   InterventionInput,
   QuestionAnswer,
   StartOptions,
@@ -43,6 +46,16 @@ export function runnerActivity(state: AutopilotState | null, now = new Date()): 
   return now.getTime() - heartbeat > RUNNER_STALE_MINUTES * 60_000 ? "stale" : "active";
 }
 
+/** How old the heartbeat of the recorded runner is, in milliseconds; `null` when nobody runs or the heartbeat cannot be read. Works on a state and on the summary of a live event. */
+export function runnerHeartbeatAgeMs(state: { runner: AutopilotRunnerInfo | null } | null | undefined, now = new Date()): number | null {
+  if (!state?.runner) return null;
+  const heartbeat = Date.parse(state.runner.heartbeatAt);
+  return Number.isFinite(heartbeat) ? Math.max(0, now.getTime() - heartbeat) : null;
+}
+
+/** How often a live run says it is alive (ms). */
+export const DEFAULT_HEARTBEAT_MS = 30_000;
+
 export interface AutopilotSessionConfig {
   bookId: string;
   store: BookStore;
@@ -60,7 +73,20 @@ export interface AutopilotSessionConfig {
   hooks?: AutopilotHooks;
   /** Live events kept in memory for late subscribers (default 400). */
   maxEvents?: number;
+  /** Base delay before a retry of a failed step (ms, default 4000): see `AutopilotRunConfig`. */
   retryDelayMs?: number;
+  /** Source of the retry jitter, in [0, 1) (default `Math.random`). */
+  random?: () => number;
+  /**
+   * While a run is active the session emits a `state` event this often (ms), with the run's current heartbeat in memory; nothing
+   * is saved for it. 0 switches it off. Default 30 000.
+   */
+  heartbeatMs?: number;
+  /**
+   * Longest silence (ms) of `autopilot/state.json` during a run: after it the run saves a fresh `runner.heartbeatAt`, so that a
+   * long step is not taken for a dead run by another host. 0 switches it off. Default 300 000 (5 minutes).
+   */
+  persistHeartbeatMs?: number;
 }
 
 export type AutopilotListener = (event: AutopilotEvent) => void;
@@ -81,6 +107,11 @@ export class AutopilotSession {
   private readonly listeners = new Set<AutopilotListener>();
   private live: AutopilotSnapshot["live"] = null;
   private readonly now: () => Date;
+  /** The latest `state` event, whoever emitted it: what a heartbeat event repeats with a fresh heartbeat. */
+  private summary: AutopilotStateSummary | null = null;
+  private beatTimer: ReturnType<typeof setInterval> | null = null;
+  /** The heartbeat of the active run in memory: newer than the one in the file between two saves. */
+  private liveHeartbeatAt: string | null = null;
 
   constructor(private readonly config: AutopilotSessionConfig) {
     this.now = config.now ?? (() => new Date());
@@ -109,14 +140,15 @@ export class AutopilotSession {
     return this.events.filter((event) => event.seq > since);
   }
 
-  private emit(body: AutopilotEventBody): void {
+  private emit(body: AutopilotEventBody, options: { replay?: boolean } = {}): void {
     const event = { ...body, bookId: this.config.bookId, at: this.now().toISOString(), seq: ++this.seq } as AutopilotEvent;
+    if (body.type === "state") this.summary = body.state;
     if (body.type === "task-started") this.live = { activity: body.activity, characters: 0, preview: "" };
     else if (body.type === "task-progress" && this.live?.activity.id === body.activityId) this.live = { ...this.live, characters: body.characters, preview: body.preview };
     else if (body.type === "task-finished" && this.live?.activity.id === body.activity.id) this.live = null;
     else if (body.type === "run-ended") this.live = null;
-    // Streaming previews are only useful live; keep the replay buffer for meaningful events.
-    if (body.type !== "task-progress") {
+    // Streaming previews and heartbeats are only useful live; keep the replay buffer for meaningful events.
+    if (body.type !== "task-progress" && options.replay !== false) {
       this.events.push(event);
       const max = this.config.maxEvents ?? 400;
       if (this.events.length > max) this.events = this.events.slice(-max);
@@ -145,9 +177,39 @@ export class AutopilotSession {
     }
   }
 
+  private startBeat(run: AutopilotRun): void {
+    const { heartbeatMs } = this.config;
+    const every = typeof heartbeatMs === "number" && Number.isFinite(heartbeatMs) ? heartbeatMs : DEFAULT_HEARTBEAT_MS;
+    if (!(every > 0)) return;
+    const timer = setInterval(() => this.beat(run), every);
+    (timer as { unref?: () => void }).unref?.();
+    this.beatTimer = timer;
+  }
+
+  private stopBeat(): void {
+    if (this.beatTimer) clearInterval(this.beatTimer);
+    this.beatTimer = null;
+    this.liveHeartbeatAt = null;
+  }
+
+  /** The run is alive: say so with the latest state and the heartbeat of now. Nothing is saved, and nothing is said once the run is over. */
+  private beat(run: AutopilotRun): void {
+    const summary = this.summary;
+    if (this.run !== run || !summary?.runner || summary.runner.runId !== run.runId) return;
+    this.liveHeartbeatAt = this.now().toISOString();
+    this.emit({ type: "state", state: { ...summary, runner: { ...summary.runner, heartbeatAt: this.liveHeartbeatAt } } }, { replay: false });
+  }
+
+  /** The runner as the active run's own session knows it: its heartbeat is the one in memory when that is newer than the saved one. */
+  private liveRunner(runner: AutopilotRunnerInfo | null): AutopilotRunnerInfo | null {
+    if (!runner || !this.run || !this.liveHeartbeatAt || runner.runId !== this.run.runId) return runner;
+    return Date.parse(this.liveHeartbeatAt) > Date.parse(runner.heartbeatAt) ? { ...runner, heartbeatAt: this.liveHeartbeatAt } : runner;
+  }
+
   async snapshot(): Promise<AutopilotSnapshot> {
     const stored = await readStoredAutopilot(this.config.store);
     let state = stored.state;
+    if (state?.runner && this.liveRunner(state.runner) !== state.runner) state = { ...state, runner: this.liveRunner(state.runner) };
     const interrupted = "Interrupted: resume to continue from the last saved step.";
     if (state && !this.running && state.status === "running" && this.isOwnRunner(state.runner) && !(await this.ownRunnerAliveElsewhere())) {
       state = { ...state, status: "paused", runner: null, message: state.message ?? interrupted };
@@ -207,6 +269,8 @@ export class AutopilotSession {
       now: this.config.now,
       hooks: this.config.hooks,
       retryDelayMs: this.config.retryDelayMs,
+      random: this.config.random,
+      persistHeartbeatMs: this.config.persistHeartbeatMs,
       emit: (event) => {
         if (event.type === "run-started" && !didStart) {
           didStart = true;
@@ -218,15 +282,17 @@ export class AutopilotSession {
     this.run = run;
     this.runPromise = run.execute(options).catch((error) => {
       if (!didStart) rejectStarted(error);
-      else this.emit({ type: "insight", tone: "critical", code: "unexpectedStop", title: "The autopilot stopped unexpectedly.", detail: error instanceof Error ? error.message : String(error) });
+      else this.emit({ type: "insight", tone: "critical", code: "unexpectedStop", title: "The autopilot stopped unexpectedly.", detail: redactSecrets(error instanceof Error ? error.message : String(error)) });
       throw error;
     }).finally(() => {
       if (this.run === run) {
         this.run = null;
         this.runPromise = null;
+        this.stopBeat();
       }
     });
     this.runPromise.catch(() => undefined);
+    this.startBeat(run);
     const pause = this.pendingPause;
     this.pendingPause = null;
     if (pause === "now") run.stop();
@@ -252,33 +318,73 @@ export class AutopilotSession {
     await this.runPromise?.catch(() => undefined);
   }
 
+  /** Save a change of the state with a compare-and-swap commit, read again and tried again when the file changed in between (a run saves it too). A change that returns the state it was given writes nothing. */
   private async mutate(message: string, change: (state: AutopilotState) => AutopilotState): Promise<AutopilotState> {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
       const stored = await readStoredAutopilot(this.config.store);
       assertStoredStateReadable(stored);
-      const next = stampState(change(stored.state ?? createAutopilotState(this.now())), this.now());
+      const base = stored.state ?? createAutopilotState(this.now());
+      const changed = change(base);
+      if (changed === base && stored.state) return base;
+      const next = stampState(changed, this.now());
       try {
         await this.config.store.commit([stateChange(next, stored.stateHash)], message);
-        this.emit({ type: "state", state: summarizeAutopilotState(next) });
+        const summary = summarizeAutopilotState(next);
+        this.emit({ type: "state", state: summary.runner ? { ...summary, runner: this.liveRunner(summary.runner) } : summary });
         return next;
       } catch (error) {
-        if (!isBookConflictError(error) || attempt === 2) throw error;
+        if (!isBookConflictError(error) || attempt === 4) throw error;
       }
     }
     throw new Error("Could not save the autopilot state.");
   }
 
-  /** Record an author intervention. While running it reaches the next step (or interrupts the current one). */
+  /**
+   * Record an author intervention. It is saved at once, even while a step runs: the run is not repeated for it (it merges what the
+   * author saved when the step commits), and it is not lost if the process dies. A note reaches the next step that writes, a rule
+   * every step from the next one; with `interrupt` the step in flight is abandoned and repeated with it. A rule over the limit of
+   * characters is refused, never cut.
+   */
   async intervene(input: InterventionInput): Promise<AutopilotState | null> {
-    if (!input.text.trim()) throw new Error("The intervention is empty.");
-    // A start in flight is about to own the book: let it settle, then hand the intervention to the run it created.
+    const text = input.text.trim();
+    if (!text) throw new Error("The intervention is empty.");
+    if (input.scope !== "next_step") normalizeRuleText(text);
+    // A start in flight is about to own the book: let it settle first, so that the run it creates is the one that is told.
     if (this.starting) await this.starting.catch(() => undefined);
-    if (this.run) {
-      this.run.intervene(input);
-      this.emit({ type: "insight", tone: "info", code: input.interrupt ? "interventionInterrupt" : "interventionQueued", title: input.interrupt ? "Intervention recorded: the current step restarts with it." : "Intervention recorded: it applies from the next step." });
-      return null;
-    }
-    return this.mutate("Autopilot: author intervention", (state) => applyIntervention(state, input, this.now(), "paused"));
+    const run = this.run;
+    const during = run ? run.activity?.title ?? "running" : "paused";
+    const saved = await this.mutate("Autopilot: author intervention", (state) => applyIntervention(state, input, this.now(), during));
+    if (!run) return saved;
+    if (input.interrupt) run.interrupt();
+    this.emit({ type: "insight", tone: "info", code: input.interrupt ? "interventionInterrupt" : "interventionQueued", title: input.interrupt ? "Intervention recorded: the current step restarts with it." : "Intervention recorded: it applies from the next step." });
+    return null;
+  }
+
+  /** The rule at `index` of `state.constraints`, which must still be `expectedText` when one is given: a rule that changed in the meantime is never overwritten. */
+  private ruleAt(state: AutopilotState, index: number, expectedText?: string): string {
+    const current = Number.isInteger(index) && index >= 0 ? state.constraints[index] : undefined;
+    if (current === undefined) throw new AutopilotRuleError("rule_not_found", `There is no rule number ${index + 1}.`);
+    if (expectedText !== undefined && current !== expectedText.trim()) throw new AutopilotRuleError("rule_changed", "The rule changed in the meantime: reload the rules and try again.");
+    return current;
+  }
+
+  /** Replace the text of one permanent rule. `expectedText` is what the author saw: when the rule is no longer that, nothing is written and the call is refused. */
+  async updateRule(index: number, text: string, expectedText?: string): Promise<AutopilotState> {
+    const rule = normalizeRuleText(text);
+    return this.mutate("Autopilot: rule edited", (state) => {
+      const current = this.ruleAt(state, index, expectedText);
+      if (rule === current) return state;
+      if (state.constraints.includes(rule)) throw new AutopilotRuleError("rule_duplicate", "Another rule already says this.");
+      return { ...state, constraints: state.constraints.map((entry, position) => (position === index ? rule : entry)) };
+    });
+  }
+
+  /** Remove one permanent rule, with the same check of `expectedText`. */
+  async removeRule(index: number, expectedText?: string): Promise<AutopilotState> {
+    return this.mutate("Autopilot: rule removed", (state) => {
+      this.ruleAt(state, index, expectedText);
+      return { ...state, constraints: state.constraints.filter((_, position) => position !== index) };
+    });
   }
 
   async answer(answer: QuestionAnswer): Promise<AutopilotState> {

@@ -1,6 +1,7 @@
-import { parseDocument, stringify } from "yaml";
+import { stringify } from "yaml";
 import { DIRECTOR_FILE } from "../book/paths.js";
 import { isItalian } from "../util/text.js";
+import { clampNumber, enumValue, isEmptyValue, isMapping, listEntry, numericValue, quoted, readProfileFile } from "./read.js";
 
 /**
  * How far the director may decide on the author's behalf during the autopilot.
@@ -11,6 +12,11 @@ import { isItalian } from "../util/text.js";
 export type DirectorAutonomy = "full" | "ask-on-critical" | "ask-always";
 
 export const DIRECTOR_AUTONOMIES: DirectorAutonomy[] = ["full", "ask-on-critical", "ask-always"];
+
+/** The autonomy a value names, whatever its case, spacing or separators (`Full`, `Ask On Critical`, `ask_always`); `null` when it names none. */
+export function parseDirectorAutonomy(value: unknown): DirectorAutonomy | null {
+  return enumValue(value, DIRECTOR_AUTONOMIES);
+}
 
 export interface DirectorProfile {
   name: string;
@@ -32,17 +38,18 @@ export interface DirectorProfile {
   /** Vision for the book and free decision rules, in Markdown. */
   body: string;
   path: string;
+  /**
+   * What is wrong with the file, each problem naming it: YAML that cannot be read, a value that is not understood. Empty when
+   * the file is as it says. A profile with warnings is not what the author wrote: the autopilot does not run with it, and a
+   * host that saves a profile must not do it over a file that has them.
+   */
+  warnings?: string[];
 }
 
-function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
-  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.round(parsed))) : fallback;
-}
-
-function stringList(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map((entry) => String(entry).trim()).filter(Boolean);
-  if (typeof value === "string" && value.trim()) return value.split(/\r?\n/).map((entry) => entry.replace(/^\s*[-*]\s*/, "").trim()).filter(Boolean);
-  return [];
+/** A number of the profile: with the decimals the author wrote (up to `decimals`), a decimal comma accepted, limited to `min`-`max`. */
+function clampValue(value: unknown, fallback: number, min: number, max: number, decimals: number): number {
+  const parsed = numericValue(value);
+  return parsed === undefined ? fallback : clampNumber(parsed, min, max, decimals);
 }
 
 export function defaultDirector(language?: string): DirectorProfile {
@@ -68,6 +75,7 @@ export function defaultDirector(language?: string): DirectorProfile {
         "Non contraddire il canone stabilito senza una decisione esplicita dell'autore",
       ],
       readerWeights: {},
+      warnings: [],
       body: [
         "# Visione",
         "",
@@ -103,6 +111,7 @@ export function defaultDirector(language?: string): DirectorProfile {
       "Do not contradict established canon without an explicit author decision",
     ],
     readerWeights: {},
+    warnings: [],
     body: [
       "# Vision",
       "",
@@ -118,40 +127,91 @@ export function defaultDirector(language?: string): DirectorProfile {
   };
 }
 
+/**
+ * The director of a book from its `director.md`. It never throws and never hides what is wrong with the file: YAML that cannot
+ * be read, a value that is not understood (an autonomy nobody knows, a score that is not a number, a list that is not one) is a
+ * warning that names the file, and the value then is the default of the director, as it always was. Enumerated values are read
+ * whatever their case or spacing (`autonomy: Full`), and numbers keep their decimals (`reader_weights` of 0.4, `approval_score`
+ * of 7.5; a decimal comma is accepted).
+ */
 export function parseDirector(raw: string, fallbackLanguage?: string): DirectorProfile {
   const fallback = defaultDirector(fallbackLanguage);
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw ?? "");
-  let frontmatter: Record<string, unknown> = {};
-  if (match) {
-    try {
-      const parsed = parseDocument(match[1]).toJSON() as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) frontmatter = parsed as Record<string, unknown>;
-    } catch {
-      frontmatter = {};
+  const { frontmatter, body, warnings, warn } = readProfileFile(DIRECTOR_FILE, raw);
+  const text = (key: string, fallbackValue: string): string => {
+    const value = frontmatter[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    if (!isEmptyValue(value)) warn(`${key} is not text (${quoted(value)}): the default is used`);
+    return fallbackValue;
+  };
+  const scale = (key: string, fallbackValue: number, min: number, max: number, decimals: number): number => {
+    const value = frontmatter[key];
+    if (isEmptyValue(value)) return fallbackValue;
+    if (numericValue(value) === undefined) {
+      warn(`${key} ${quoted(value)} is not a number from ${min} to ${max}: ${fallbackValue} is used`);
+      return fallbackValue;
     }
+    return clampValue(value, fallbackValue, min, max, decimals);
+  };
+  const list = (key: string, fallbackValue: string[]): string[] => {
+    if (!(key in frontmatter)) return fallbackValue;
+    const value = frontmatter[key];
+    if (value === null || value === undefined) return [];
+    if (typeof value === "string") return value.split(/\r?\n/).map((entry) => entry.replace(/^\s*[-*]\s*/, "").trim()).filter(Boolean);
+    if (!Array.isArray(value)) {
+      warn(`${key} must be a list of lines (${quoted(value)} is not one): the default lines are used`);
+      return fallbackValue;
+    }
+    const lines: string[] = [];
+    let skipped = 0;
+    for (const entry of value) {
+      const line = listEntry(entry);
+      if (line === undefined) skipped += 1;
+      else if (line !== null && line.trim()) lines.push(line.trim());
+    }
+    if (skipped) warn(`${skipped === 1 ? "one entry" : `${skipped} entries`} of ${key} cannot be read as a line of text and ${skipped === 1 ? "was" : "were"} left out`);
+    return lines;
+  };
+
+  let autonomy = fallback.autonomy;
+  if (!isEmptyValue(frontmatter.autonomy)) {
+    const named = parseDirectorAutonomy(frontmatter.autonomy);
+    if (named) autonomy = named;
+    else warn(`autonomy ${quoted(frontmatter.autonomy)} is not one of ${DIRECTOR_AUTONOMIES.join(", ")}: ${fallback.autonomy} is used`);
   }
-  const text = (key: string, fallbackValue: string) => typeof frontmatter[key] === "string" && String(frontmatter[key]).trim() ? String(frontmatter[key]).trim() : fallbackValue;
-  const autonomy = text("autonomy", fallback.autonomy) as DirectorAutonomy;
-  const weightsSource = frontmatter.reader_weights && typeof frontmatter.reader_weights === "object" && !Array.isArray(frontmatter.reader_weights)
-    ? frontmatter.reader_weights as Record<string, unknown>
-    : {};
+
   const readerWeights: Record<string, number> = {};
-  for (const [slug, weight] of Object.entries(weightsSource)) readerWeights[slug] = clampInteger(weight, 1, 0, 3);
-  const body = match ? match[2].trim() : (raw ?? "").trim();
+  const weightsValue = frontmatter.reader_weights;
+  if (isMapping(weightsValue)) {
+    for (const [slug, weight] of Object.entries(weightsValue)) {
+      if (isEmptyValue(weight)) {
+        readerWeights[slug] = 1;
+      } else if (numericValue(weight) === undefined) {
+        warn(`the weight of ${slug} (${quoted(weight)}) is not a number from 0 to 3: 1 is used`);
+        readerWeights[slug] = 1;
+      } else {
+        readerWeights[slug] = clampValue(weight, 1, 0, 3, 2);
+      }
+    }
+  } else if (!isEmptyValue(weightsValue)) {
+    warn(`reader_weights must give a weight for each reader (slug: number); ${quoted(weightsValue)} is not that, and every reader weighs 1`);
+  }
+
   return {
     name: text("name", fallback.name),
     language: text("language", fallback.language),
     persona: text("persona", fallback.persona),
-    autonomy: DIRECTOR_AUTONOMIES.includes(autonomy) ? autonomy : fallback.autonomy,
-    strictness: clampInteger(frontmatter.strictness, fallback.strictness, 1, 10),
-    approvalScore: clampInteger(frontmatter.approval_score, fallback.approvalScore, 1, 10),
-    maxReviewRounds: clampInteger(frontmatter.max_review_rounds, fallback.maxReviewRounds, 1, 3),
-    priorities: "priorities" in frontmatter ? stringList(frontmatter.priorities) : fallback.priorities,
-    taste: "taste" in frontmatter ? stringList(frontmatter.taste) : fallback.taste,
-    redLines: "red_lines" in frontmatter ? stringList(frontmatter.red_lines) : fallback.redLines,
+    autonomy,
+    strictness: scale("strictness", fallback.strictness, 1, 10, 1),
+    approvalScore: scale("approval_score", fallback.approvalScore, 1, 10, 1),
+    maxReviewRounds: scale("max_review_rounds", fallback.maxReviewRounds, 1, 3, 0),
+    priorities: list("priorities", fallback.priorities),
+    taste: list("taste", fallback.taste),
+    redLines: list("red_lines", fallback.redLines),
     readerWeights,
     body: body || fallback.body,
     path: DIRECTOR_FILE,
+    warnings,
   };
 }
 
@@ -163,9 +223,9 @@ export function serializeDirector(profile: DirectorProfile): string {
     language: profile.language,
     persona: profile.persona,
     autonomy: profile.autonomy,
-    strictness: clampInteger(profile.strictness, 7, 1, 10),
-    approval_score: clampInteger(profile.approvalScore, 7, 1, 10),
-    max_review_rounds: clampInteger(profile.maxReviewRounds, 2, 1, 3),
+    strictness: clampValue(profile.strictness, 7, 1, 10, 1),
+    approval_score: clampValue(profile.approvalScore, 7, 1, 10, 1),
+    max_review_rounds: clampValue(profile.maxReviewRounds, 2, 1, 3, 0),
     priorities: profile.priorities,
     taste: profile.taste,
     red_lines: profile.redLines,

@@ -1,4 +1,5 @@
-import { stringify, parseDocument } from "yaml";
+import { stringify } from "yaml";
+import { isEmptyValue, listEntry, numericValue, quoted, readProfileFile } from "./read.js";
 
 export interface GhostwriterProfile {
   slug: string;
@@ -18,6 +19,8 @@ export interface GhostwriterProfile {
   avoid: string[];
   temperature: number;
   body: string;
+  /** What is wrong with `ghostwriters/<slug>.md`, each problem naming it (YAML that cannot be read, a value that is not understood). Empty when the file is as it says: the autopilot does not write with a profile that has warnings. */
+  warnings?: string[];
 }
 
 export function ghostwriterReferencePaths(files: Array<{ path: string }>): string[] {
@@ -48,20 +51,47 @@ export function emptyGhostwriter(name: string): Omit<GhostwriterProfile, "slug">
     avoid: [],
     temperature: 0.8,
     body: "Describe how this ghostwriter writes: their craft, instincts, and what makes their prose recognizable.\n",
+    warnings: [],
   };
 }
 
-function asArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map((item) => String(item)).filter(Boolean);
-  if (typeof value === "string" && value.trim()) return value.split(",").map((part) => part.trim()).filter(Boolean);
-  return [];
-}
-
+/**
+ * The ghostwriter of `ghostwriters/<slug>.md`. It never throws: YAML that cannot be read, a text field that is a list, a
+ * temperature that is not a number, a list that is not one are warnings that name the file (the field is then empty or the
+ * default, as it always was). A temperature written as text (`'0.7'`, `'0,7'`) is read.
+ */
 export function parseGhostwriter(slug: string, raw: string): GhostwriterProfile {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
-  const fm = (match ? (parseDocument(match[1]).toJSON() as Record<string, unknown>) : {}) ?? {};
-  const body = match ? match[2].trim() : raw.trim();
-  const str = (key: string) => (typeof fm[key] === "string" ? (fm[key] as string) : "");
+  const { frontmatter: fm, body, warnings, warn } = readProfileFile(`ghostwriters/${slug}.md`, raw);
+  const str = (key: string): string => {
+    const value = fm[key];
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    if (!isEmptyValue(value)) warn(`${key} must be text (${quoted(value)} is not): it is left empty`);
+    return "";
+  };
+  const asArray = (key: string): string[] => {
+    const value = fm[key];
+    if (Array.isArray(value)) {
+      let skipped = 0;
+      const items: string[] = [];
+      for (const entry of value) {
+        const item = listEntry(entry);
+        if (item === undefined) skipped += 1;
+        else if (item) items.push(item);
+      }
+      if (skipped) warn(`${skipped === 1 ? "one entry" : `${skipped} entries`} of ${key} cannot be read as text and ${skipped === 1 ? "was" : "were"} left out`);
+      return items;
+    }
+    if (typeof value === "string" && value.trim()) return value.split(",").map((part) => part.trim()).filter(Boolean);
+    if (!isEmptyValue(value)) warn(`${key} must be a list (${quoted(value)} is not one): it is left empty`);
+    return [];
+  };
+  let temperature = 0.8;
+  if (!isEmptyValue(fm.temperature)) {
+    const parsed = numericValue(fm.temperature);
+    if (parsed === undefined) warn(`temperature ${quoted(fm.temperature)} is not a number: 0.8 is used`);
+    else temperature = parsed;
+  }
   return {
     slug,
     name: str("name") || slug,
@@ -75,11 +105,12 @@ export function parseGhostwriter(slug: string, raw: string): GhostwriterProfile 
     vocabulary: str("vocabulary"),
     writingStyle: str("writing_style"),
     punctuationStyle: str("punctuation_style"),
-    influences: asArray(fm["influences"]),
-    strengths: asArray(fm["strengths"]),
-    avoid: asArray(fm["avoid"]),
-    temperature: typeof fm["temperature"] === "number" ? (fm["temperature"] as number) : 0.8,
+    influences: asArray("influences"),
+    strengths: asArray("strengths"),
+    avoid: asArray("avoid"),
+    temperature,
     body,
+    warnings,
   };
 }
 

@@ -62,14 +62,36 @@ export function stripReasoningBlock(text: string): string {
   return splitReasoningBlock(text).reply;
 }
 
+/** End of the last closing reasoning tag that no opening tag matches: models that think without writing `<think>` still close it. */
+function lastHeadlessClose(text: string): { start: number; end: number } | null {
+  const open = new Map<string, number>();
+  let found: { start: number; end: number } | null = null;
+  for (const tag of text.matchAll(/<(\/?)(think|thinking|reasoning)>/gi)) {
+    const name = tag[2].toLowerCase();
+    const pending = open.get(name) ?? 0;
+    if (!tag[1]) open.set(name, pending + 1);
+    else if (pending > 0) open.set(name, pending - 1);
+    else found = { start: tag.index, end: tag.index + tag[0].length };
+  }
+  return found;
+}
+
 /**
- * Separate a leading `<think>` (or `<thinking>`, `<reasoning>`) block from the reply, also when
- * it is unterminated because the output limit cut it. Only its length is reported.
+ * Separate the reasoning from the reply: a leading `<think>` (or `<thinking>`, `<reasoning>`) block, also when it is
+ * unterminated because the output limit cut it, and everything up to the last closing tag that was never opened.
+ * Only the length of what is dropped is reported.
  */
 export function splitReasoningBlock(text: string): { reply: string; reasoningCharacters: number } {
-  const match = /^\s*<(think|thinking|reasoning)>([\s\S]*?)(?:<\/\1>|$)/i.exec(text ?? "");
-  if (!match) return { reply: text ?? "", reasoningCharacters: 0 };
-  return { reply: (text ?? "").slice(match[0].length).replace(/^\s+/, ""), reasoningCharacters: match[2].length };
+  const source = text ?? "";
+  const match = /^\s*<(think|thinking|reasoning)>([\s\S]*?)(?:<\/\1>|$)/i.exec(source);
+  let reply = match ? source.slice(match[0].length).replace(/^\s+/, "") : source;
+  let reasoningCharacters = match ? match[2].length : 0;
+  const headless = lastHeadlessClose(reply);
+  if (headless) {
+    reasoningCharacters += headless.start;
+    reply = reply.slice(headless.end).replace(/^\s+/, "");
+  }
+  return { reply, reasoningCharacters };
 }
 
 function acceptor(required: string[], mode: "all" | "any"): (value: unknown) => boolean {
@@ -85,6 +107,14 @@ function expectedFields(required: string[]): string {
   if (!required.length) return "";
   const shown = required.slice(0, 8).map((key) => `"${key}"`).join(", ");
   return ` Expected fields: ${shown}${required.length > 8 ? ", ..." : ""}.`;
+}
+
+/** The fields a reply is expected to carry: the schema's required keys, else the properties it declares. */
+function expectedKeys(schema: AiJsonSchema): string[] {
+  const required = schemaRequiredKeys(schema);
+  if (required.length) return required;
+  const properties = (schema.parameters as { properties?: unknown } | undefined)?.properties;
+  return isRecord(properties) ? Object.keys(properties) : [];
 }
 
 /**
@@ -124,11 +154,18 @@ function decodeStringifiedFields(record: Record<string, unknown>, schema: AiJson
   return output;
 }
 
-/** Reject what must never be treated as an answer: anything but a non-empty JSON object. */
+/**
+ * Reject what must never be treated as an answer: anything but a non-empty JSON object that carries at least one of
+ * the fields the schema asks for (an object with some of them is returned for the task to name what is missing).
+ */
 export function structuredReply(value: unknown, schema: AiJsonSchema): Record<string, unknown> {
   const normalized = normalizeStructuredValue(value, schemaRequiredKeys(schema));
   if (!isRecord(normalized)) throw new AiReplyRejectedError(`The structured reply (${schema.name}) is not a JSON object.${expectedFields(schemaRequiredKeys(schema))}`);
   if (Object.keys(normalized).length === 0) throw new AiReplyRejectedError(`The structured reply (${schema.name}) is empty ("{}").${expectedFields(schemaRequiredKeys(schema))}`);
+  const expected = expectedKeys(schema);
+  if (expected.length && !expected.some((key) => Object.prototype.hasOwnProperty.call(normalized, key))) {
+    throw new AiReplyRejectedError(`The structured reply (${schema.name}) has none of the expected fields.${expectedFields(expected)}`);
+  }
   return decodeStringifiedFields(normalized, schema);
 }
 
@@ -162,13 +199,24 @@ export function structuredFromReply(input: { toolArguments?: string | null; cont
   throw new AiReplyRejectedError(`The model returned an empty reply where JSON was expected.${expectedFields(required)}`);
 }
 
-export type StructuredFieldRule = "present" | "text" | "number" | "list";
+/**
+ * A score as the 0-10 scale: a number or numeric text (`7,5` too). Above 10 and up to 100 it is a percentage and is
+ * divided by ten, anything else is limited to 0-10. `null` when the value is not a number.
+ */
+export function normalizeScore(value: unknown): number | null {
+  const number = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value.trim().replace(/^(\d+),(\d+)$/, "$1.$2")) : Number.NaN;
+  if (!Number.isFinite(number)) return null;
+  return number > 10 && number <= 100 ? number / 10 : Math.min(10, Math.max(0, number));
+}
 
-const RULE_NAMES: Record<Exclude<StructuredFieldRule, "present">, string> = { text: "text", number: "a number", list: "a list" };
+export type StructuredFieldRule = "present" | "text" | "number" | "list" | "score";
+
+const RULE_NAMES: Record<Exclude<StructuredFieldRule, "present">, string> = { text: "text", number: "a number", list: "a list", score: "a number" };
 
 function satisfies(value: unknown, rule: StructuredFieldRule): boolean {
   if (rule === "list") return Array.isArray(value);
   if (rule === "text") return typeof value === "string";
+  if (rule === "score") return normalizeScore(value) !== null;
   if (rule === "number") return Number.isFinite(typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value.trim()) : Number.NaN);
   return true;
 }
