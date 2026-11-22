@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.92.0",
+    "date": "2026-11-22",
+    "en": {
+      "title": "A tidier book menu, an Autopilot with Live and Configuration, and models read from the endpoint",
+      "summary": "The book menu is grouped into Book, Autopilot, Profiles and Tools; the Autopilot has a Live page and a Configuration page where you can also edit your permanent rules; and an AI integration can read the models of its endpoint, with their limits and capabilities, and check that it answers.",
+      "changes": [
+        "The book menu is grouped into Book (Overview, Dashboard, Reader, Export), Autopilot (Live, Configuration), Profiles (Director, Ghostwriters, Evaluation style, Simulated readers) and Tools (Audit, Research, Assets), with Book settings at the bottom and the canon unchanged. Click a group title to open or close it: this device remembers it, and the group of the page you are on stays open.",
+        "The Autopilot has two pages. Live shows what it is doing: the band, the alerts, the result, the history, the plan, the interventions and where it runs. Configuration holds the brief and the settings: the book, the review, the publishing to GitHub (every step, every chapter or never), the profiles it follows with their state, and the reset.",
+        "Your permanent rules can now be edited and removed in Configuration (personal server 0.1.6 or later); a rule that changed in the meantime is never overwritten.",
+        "\"Add chapters\" and \"Start autopilot\" lead to Configuration, and a book that never ran the autopilot invites you to configure it.",
+        "OpenAI-compatible integrations can read the models of their endpoint, with the context window, the largest answer and the capabilities it declares (tool calls, streaming, reasoning, vision; LlmProxy's /models/details included), without overwriting what you wrote, and suggest the thinking parameter of Muse Glimmer. Image, speech and transcription models can be set from the same list.",
+        "\"Check the connection\" says whether an endpoint answers, how fast and with how many models, or why not, in the integration card and in the Autopilot's error panel."
+      ]
+    },
+    "it": {
+      "title": "Un menu del libro più ordinato, un Autopilot con In diretta e Configurazione, e i modelli letti dall'endpoint",
+      "summary": "Il menu del libro è diviso in Libro, Autopilot, Profili e Strumenti; l'Autopilot ha una pagina In diretta e una pagina Configurazione dove puoi anche modificare le regole permanenti; e un'integrazione AI può leggere i modelli del suo endpoint, con limiti e capacità, e verificare che risponda.",
+      "changes": [
+        "Il menu del libro è diviso in Libro (Panoramica, Dashboard, Reader, Esporta), Autopilot (In diretta, Configurazione), Profili (Direttore, Ghostwriter, Stile di valutazione, Lettori simulati) e Strumenti (Audit, Ricerche, Asset), con Impostazioni libro in fondo e il canone invariato. Il titolo di un gruppo lo apre e lo chiude: il dispositivo lo ricorda, e il gruppo della pagina in cui sei resta aperto.",
+        "L'Autopilot ha due pagine. In diretta mostra cosa sta facendo: la banda, gli avvisi, il risultato, la cronologia, il piano, gli interventi e dove gira. Configurazione contiene il brief e le impostazioni: il libro, la revisione, la pubblicazione su GitHub (a ogni passo, a ogni capitolo o mai), i profili che segue con il loro stato, e l'azzeramento.",
+        "Le regole permanenti ora si modificano e si rimuovono in Configurazione (server personale 0.1.6 o successivo); una regola cambiata nel frattempo non viene mai sovrascritta.",
+        "«Aggiungi capitoli» e «Avvia l'autopilot» portano alla Configurazione, e un libro che non ha mai avviato l'autopilot ti invita a configurarlo.",
+        "Le integrazioni compatibili OpenAI possono leggere i modelli del loro endpoint, con la finestra di contesto, la risposta massima e le capacità che dichiara (tool call, streaming, ragionamento, visione; compreso /models/details di LlmProxy), senza sovrascrivere ciò che hai scritto, e suggeriscono il parametro del thinking di Muse Glimmer. Dalla stessa lista si impostano i modelli di immagini, sintesi vocale e trascrizione.",
+        "«Verifica la connessione» dice se un endpoint risponde, in quanto tempo e con quanti modelli, o perché no, nella scheda dell'integrazione e nel pannello d'errore dell'Autopilot."
+      ]
+    }
+  },
+  {
     "version": "0.91.0",
     "date": "2026-11-22",
     "en": {
