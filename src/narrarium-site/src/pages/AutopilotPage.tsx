@@ -43,15 +43,17 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
+import { AutopilotResult } from "@/components/autopilot/AutopilotResult";
 import { AutopilotTimeline } from "@/components/autopilot/AutopilotTimeline";
 import { AutopilotBandDetails, AutopilotControlBand } from "@/components/autopilot/AutopilotControlBand";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import { PlanChapters } from "@/components/autopilot/PlanChapters";
 import { QuickCommands } from "@/components/autopilot/QuickCommands";
-import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
+import { ProfileProblemsNotice } from "@/components/autopilot/StopNotices";
+import { ErrorPanel } from "@/components/autopilot/ErrorPanel";
 import { SyncConflicts } from "@/components/autopilot/SyncConflicts";
 import { SyncSkipped } from "@/components/autopilot/SyncSkipped";
-import { closedChapterToRead, pageLayout } from "@/autopilot/bandModel";
+import { closedChapterToRead, finalReviewOf, pageLayout } from "@/autopilot/bandModel";
 import { useAutopilotRefresh, useBookAutopilotView } from "@/autopilot/hooks";
 import { setAutopilotHost } from "@/autopilot/host";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
@@ -166,6 +168,9 @@ export function AutopilotPage() {
   // The title of a chapter is looked up when a group asks for it: a plan has no maximum number of chapters, and the timeline shows a few.
   const planChapters = state?.plan?.chapters;
   const chapterTitle = useCallback((number: number) => planChapters?.find((chapter) => chapter.number === number)?.title, [planChapters]);
+  // The rounds of review the plan recorded (engine 0.1.6) and the verdict on the whole book: the history numbers and scores its rounds by them, and by the log for a state that has none.
+  const chapterRounds = useCallback((number: number) => planChapters?.find((chapter) => chapter.number === number)?.rounds, [planChapters]);
+  const finalReview = useMemo(() => finalReviewOf(summary, state), [summary, state]);
 
   // How wide the page has: two columns when it is wide, tabs when it is not, and on a phone a short band with the actions in a bar at the bottom.
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
@@ -192,9 +197,8 @@ export function AutopilotPage() {
   if (error && !structure && host === "browser") return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book || !bookId) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 
-  // The engine waits for the author without a question when a profile file has problems; a run that ended with an error is told apart too.
+  // The engine waits for the author without a question when a profile file has problems; a run that ended with an error has the panel of its own.
   const profileStop = isProfileProblemStop(summary);
-  const failure = status === "error" ? summary?.lastError ?? null : null;
   const compact = layout === "compact";
   const chapterHref = closedChapter?.slug && linkedChapters.has(closedChapter.slug) ? `/app/books/${encodeURIComponent(bookId)}/chapters/${encodeURIComponent(closedChapter.slug)}` : null;
 
@@ -220,7 +224,7 @@ export function AutopilotPage() {
   const alerts = (
     <div data-autopilot-alerts className="space-y-3 empty:hidden">
       {summary?.question && <QuestionCard bookId={bookId} question={summary.question} disabled={busy !== null || running} run={run} />}
-      {failure && <RunErrorNotice bookId={bookId} message={failure.message} />}
+      <ErrorPanel bookId={bookId} />
       {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} hintId={PROFILE_HINT_ID} />}
       {awaitingPlan && <Alert><AlertDescription>{t("autopilot.plan.awaiting")}</AlertDescription></Alert>}
       {noAi && <Alert><AlertTriangle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><span>{t("autopilot.errors.aiMissing")}</span><Button asChild size="sm" variant="outline"><Link to="/app/settings/ai-integrations">{t("settingsSection.aiIntegrationsTitle")}</Link></Button></AlertDescription></Alert>}
@@ -243,7 +247,8 @@ export function AutopilotPage() {
     </div>
   );
 
-  const timeline = <AutopilotTimeline bookId={bookId} loading={!loaded} activities={activities} chapterTitle={chapterTitle} currency={summary?.stats.currency ?? settings.costCurrency} />;
+  const result = <AutopilotResult bookId={bookId} linkedSlugs={linkedChapters} wide={layout === "wide"} />;
+  const timeline = <AutopilotTimeline bookId={bookId} loading={!loaded} activities={activities} chapterTitle={chapterTitle} chapterRounds={chapterRounds} finalReview={finalReview} currency={summary?.stats.currency ?? settings.costCurrency} />;
   const plan = state ? <PlanCard bookId={bookId} plan={state.plan} reviewNumber={state.review?.chapterNumber} linkedSlugs={linkedChapters} /> : null;
   const rules = state ? <RulesCard state={state} /> : null;
   const where = <WhereCard book={book} running={running} quiet />;
@@ -292,6 +297,7 @@ export function AutopilotPage() {
       {header}
       {band}
       {alerts}
+      {layout === "wide" && result}
       {layout === "wide" ? (
         <div className="grid grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-5">
           <div data-autopilot-main className="min-w-0 space-y-5">{timeline}</div>
@@ -310,6 +316,7 @@ export function AutopilotPage() {
             {tabs.map((tab) => <TabsTrigger key={tab} value={tab} className="px-1.5 text-xs sm:text-sm">{t(`autopilot.tabs.${tab}`)}</TabsTrigger>)}
           </TabsList>
           <TabsContent value="overview" className="space-y-4">
+            {result}
             <AutopilotBandDetails bookId={bookId} variant={compact ? "compact" : "slim"} />
             {intervene}
           </TabsContent>

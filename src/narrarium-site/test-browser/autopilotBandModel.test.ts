@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createAutopilotState, type AutopilotActivity, type AutopilotState, type PlannedChapter } from "narrarium-engine";
-import { bandPhases, budgetUse, chapterCycle, closedChapterToRead, cycleItems, finalVerdict, stageOfTask, workedTime } from "@/autopilot/bandModel";
+import { createAutopilotState, type AutopilotActivity, type AutopilotFinalReview, type AutopilotState, type PlannedChapter } from "narrarium-engine";
+import { bandPhases, budgetUse, chapterCycle, closedChapterToRead, cycleItems, finalReviewOf, finalVerdict, stageOfTask, workedTime } from "@/autopilot/bandModel";
 import { chapter, planOf } from "./helpers/autopilotFixtures";
 
 const T0 = "2026-11-21T10:00:00.000Z";
@@ -183,6 +183,55 @@ describe("the verdict of the director on the whole book", () => {
   });
 });
 
+describe("the verdict of the director on the whole book, when the engine says it as data", () => {
+  const given = (patch: Partial<AutopilotFinalReview> = {}): AutopilotFinalReview => ({ verdict: "approve", score: 8.5, text: "The arc holds: the ledger pays off.", at: "2026-11-21T10:30:00.000Z", ...patch });
+
+  it("is the verdict, the score and the words of the review the engine saved, before anything the log says", () => {
+    const log = [activityOf("final", { summary: "revise 6/10 — Too long." })];
+    expect(finalVerdict(log, given())).toEqual({ verdict: "approve", score: 8.5, text: "The arc holds: the ledger pays off." });
+  });
+
+  it("is there when the log has no final review any more: it is not in the last 200 steps", () => {
+    expect(finalVerdict([], given({ verdict: "revise", score: 7 }))).toEqual({ verdict: "revise", score: 7, text: "The arc holds: the ledger pays off." });
+  });
+
+  it("keeps a verdict that asks for a revision a revision: nothing is approved by default", () => {
+    expect(finalVerdict([activityOf("final", { summary: "approve 9/10 — Fine." })], given({ verdict: "revise", score: 6.5 }))).toMatchObject({ verdict: "revise", score: 6.5 });
+  });
+
+  it("is what the log says when the engine did not say (a state that an older engine wrote), as it always was", () => {
+    const log = [activityOf("final", { summary: "approve 8/10 — The arc holds." })];
+    expect(finalVerdict(log, null)).toEqual(finalVerdict(log));
+    expect(finalVerdict(log, undefined)).toEqual({ verdict: "approve", score: 8, text: "The arc holds." });
+    expect(finalVerdict([], null)).toBeNull();
+  });
+
+  describe("the review of the summary and the one of the saved state", () => {
+    const summaryOf = (review?: AutopilotFinalReview) => ({ finalReview: review });
+    const longer = (patch: Partial<AutopilotFinalReview> = {}) => given({ text: "The arc holds: the ledger pays off. The middle drags a little and the epilogue is rushed; a longer epilogue would earn the ending.", ...patch });
+
+    it("is the review of the summary, the one that is newest", () => {
+      const review = given();
+      expect(finalReviewOf(summaryOf(review), null)).toEqual(review);
+    });
+
+    it("takes the longer words of the saved state when it is the same review: the summary has them cut", () => {
+      expect(finalReviewOf(summaryOf(given({ text: "The arc holds: the ledger pays off. The middle…" })), { finalReview: longer() })).toEqual(longer());
+    });
+
+    it("does not take the words of another review: a book that was finished again has a new verdict, and the old words are not its", () => {
+      const newer = given({ at: "2026-11-21T12:00:00.000Z", score: 9, text: "Now it is tight." });
+      expect(finalReviewOf(summaryOf(newer), { finalReview: longer() })).toEqual(newer);
+    });
+
+    it("is none when the summary has none: the book was reopened, and nobody has judged it as it is now, whatever an older download says", () => {
+      expect(finalReviewOf(summaryOf(undefined), { finalReview: longer() })).toBeNull();
+      expect(finalReviewOf(null, null)).toBeNull();
+      expect(finalReviewOf(undefined, undefined)).toBeNull();
+    });
+  });
+});
+
 describe("how long the autopilot worked", () => {
   const step = (seconds: number, patch: Partial<AutopilotActivity> = {}) => activityOf("write", { startedAt: T0, endedAt: new Date(Date.parse(T0) + seconds * 1000).toISOString(), ...patch });
 
@@ -197,6 +246,22 @@ describe("how long the autopilot worked", () => {
   it("says the total is a minimum when the log is full: the oldest steps are no longer in it", () => {
     const full = Array.from({ length: 200 }, () => step(10));
     expect(workedTime(full)).toEqual({ milliseconds: 2_000_000, complete: false });
+  });
+
+  describe("when the engine counts it", () => {
+    it("is the time the engine counted, whole, whatever the log holds: it outlives the 200 steps of the log", () => {
+      const full = Array.from({ length: 200 }, () => step(10));
+      expect(workedTime(full, 13_260_000)).toEqual({ milliseconds: 13_260_000, complete: true });
+      expect(workedTime([], 90_000)).toEqual({ milliseconds: 90_000, complete: true });
+    });
+
+    it("is not the engine's number for a state that has none, nor for one that is zero or nonsense: the log says it, as it always did", () => {
+      const full = Array.from({ length: 200 }, () => step(10));
+      for (const absent of [undefined, 0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(workedTime(full, absent as number | undefined), String(absent)).toEqual({ milliseconds: 2_000_000, complete: false });
+      }
+      expect(workedTime([step(60)], undefined)).toEqual({ milliseconds: 60_000, complete: true });
+    });
   });
 });
 

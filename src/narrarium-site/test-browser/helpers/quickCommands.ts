@@ -1,6 +1,6 @@
 import { fireEvent, screen } from "@testing-library/react";
 import { vi } from "vitest";
-import { createAutopilotState, summarizeAutopilotState, type AutopilotLimitsSummary, type AutopilotPausePending, type AutopilotPublishMode, type AutopilotState, type AutopilotStateSummary, type AutopilotStatus, type DirectorQuestion, type ServerInfo } from "narrarium-engine";
+import { createAutopilotState, summarizeAutopilotState, type AutopilotLimitsSummary, type AutopilotPausePending, type AutopilotPublishMode, type AutopilotRetryInfo, type AutopilotState, type AutopilotStateSummary, type AutopilotStatus, type DirectorQuestion, type ServerInfo } from "narrarium-engine";
 import i18n from "@/i18n";
 import type { HandoverPlan } from "@/autopilot/handover";
 import { emptyView, useAutopilotStore } from "@/autopilot/store";
@@ -40,6 +40,8 @@ export interface BarSeed {
   pausePending?: AutopilotPausePending | null;
   limits?: AutopilotLimitsSummary | null;
   publish?: AutopilotPublishMode;
+  /** The retry the run waits for: when the next attempt is, and which one. Not saved, like the pause that waits. */
+  retry?: AutopilotRetryInfo;
   question?: DirectorQuestion | null;
   /** The personal server: none connected, verified (`online`), or unreachable; `old` is a server that predates the quick controls; `connecting` has not said what it can do yet. */
   server?: "none" | "online" | "old" | "offline" | "connecting";
@@ -74,6 +76,7 @@ export function seedBar(seed: BarSeed = {}): { book: BookEntry; state: Autopilot
         ...(seed.pausePending !== undefined ? { pausePending: seed.pausePending } : {}),
         ...(seed.limits !== undefined ? { limits: seed.limits } : {}),
         ...(seed.publish !== undefined ? { publish: seed.publish } : {}),
+        ...(seed.retry !== undefined ? { retry: seed.retry } : {}),
       }
     : null;
   const serverBook = { bookId: book.id, title: book.name, storage: { kind: "local" as const }, hasGithubToken: seed.serverHoldsToken ?? false, ready: true, revision: "r1", autopilot: null, running: false, lastSync: null };

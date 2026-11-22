@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { AutopilotActivity } from "narrarium-engine";
+import type { AutopilotActivity, ChapterRound } from "narrarium-engine";
 import {
   GROUP_ROWS,
   MAX_MARKERS,
@@ -451,5 +451,124 @@ describe("a long log", () => {
     expect(timeline.steps).toBe(200);
     expect(timeline.groups.reduce((sum, candidate) => sum + candidate.steps, 0)).toBe(200);
     expect(stepsOf(timeline).every((step) => step.notes.length === 1)).toBe(true);
+  });
+});
+
+describe("the rounds, when the plan records them", () => {
+  const record = (...votes: number[]): ChapterRound[] => votes.map((director) => ({ director, accepted: 1, rejected: 0 }));
+  const lookup = (rounds: Record<number, ChapterRound[]>) => (chapter: number) => rounds[chapter];
+  /** What the log still holds of a chapter of two rounds once its first review has left it (the log keeps the last 200 steps): the fix, the second round, the closing. */
+  const withoutFirstReview = (chapter: number) => {
+    const { activities } = chapterFlow(chapter, { rounds: 2 });
+    return activities.slice(activities.findIndex((activity) => activity.task === "director-review") + 1);
+  };
+
+  it("counts the rounds that came before the log: a chapter that the plan says had two rounds is in its second, though the log shows one review", () => {
+    const timeline = buildTimeline({ activities: withoutFirstReview(4), events: [], rounds: lookup({ 4: record(6, 8) }) });
+    expect(timeline.groups.map((candidate) => candidate.key)).toEqual(["chapter:4:2"]);
+    expect(group(timeline, "chapter:4:2").steps).toBe(4);
+  });
+
+  it("counts by the log when the plan has no record of the chapter (an older state), as it always did", () => {
+    const timeline = buildTimeline({ activities: withoutFirstReview(4), events: [], rounds: lookup({}) });
+    expect(timeline.groups.map((candidate) => candidate.key)).toEqual(["chapter:4:1"]);
+    expect(buildTimeline({ activities: withoutFirstReview(4), events: [] }).groups.map((candidate) => candidate.key)).toEqual(["chapter:4:1"]);
+  });
+
+  it("has the same rounds as the log says when the log holds every review of the chapter", () => {
+    const { activities } = chapterFlow(4, { rounds: 2 });
+    const timeline = buildTimeline({ activities, events: [], rounds: lookup({ 4: record(6, 8) }) });
+    expect(timeline.groups.map((candidate) => candidate.key)).toEqual(["chapter:4:2", "chapter:4:1"]);
+  });
+
+  it("does not use a record that is shorter than the log: the page has a step of the log a moment before it has the plan that records it, and a record may have begun in the middle of the chapter", () => {
+    const { activities } = chapterFlow(4, { rounds: 2 });
+    // The second review has just finished, and the plan the page holds knows only the first round.
+    const timeline = buildTimeline({ activities, events: [], rounds: lookup({ 4: [{ director: 6.5, readers: 7.2, accepted: 2, rejected: 1 }] }) });
+    expect(timeline.groups.map((candidate) => candidate.key)).toEqual(["chapter:4:2", "chapter:4:1"]);
+    // Each round keeps what its own review wrote: the vote of the first round is not put on the second, and nothing of the record is given to a round it may not belong to.
+    expect(group(timeline, "chapter:4:2").result).toEqual({ verdict: "approve", score: 8 });
+    expect(group(timeline, "chapter:4:1").result).toEqual({ verdict: "revise", score: 6 });
+  });
+
+  it("uses the record again as soon as the plan has caught up with the log", () => {
+    const { activities } = chapterFlow(4, { rounds: 2 });
+    const caughtUp = buildTimeline({ activities, events: [], rounds: lookup({ 4: [{ director: 6.5, readers: 7.2, accepted: 2, rejected: 1 }, { director: 8.5, accepted: 0, rejected: 0 }] }) });
+    expect(group(caughtUp, "chapter:4:1").result).toEqual({ verdict: "revise", score: 6.5, readers: 7.2, accepted: 2, rejected: 1 });
+    expect(group(caughtUp, "chapter:4:2").result).toEqual({ verdict: "approve", score: 8.5, accepted: 0, rejected: 0 });
+  });
+
+  it("puts the step that runs in the round after the last one that was recorded, though the log shows no review of the chapter", () => {
+    const repair = stepOf("repair", { from: 0, chapterNumber: 4, sceneNumber: 2 });
+    const running = stepOf("specialists", { from: 60, chapterNumber: 4, status: "running" });
+    const timeline = buildTimeline({ activities: [repair], events: [], running, rounds: lookup({ 4: record(6) }) });
+    expect(timeline.open).toBe("chapter:4:2");
+    expect(group(timeline, "chapter:4:2")).toMatchObject({ running: true, steps: 1 });
+    expect(buildTimeline({ activities: [repair], events: [], running }).open, "by the log alone it would be the first round").toBe("chapter:4:1");
+  });
+
+  it("gives a round the vote the plan recorded, and the readers and what the director decided, and keeps the verdict the review wrote", () => {
+    const { activities } = chapterFlow(4, { rounds: 2 });
+    const rounds = { 4: [{ director: 6.5, readers: 7.2, accepted: 2, rejected: 1 }, { director: 8.5, accepted: 0, rejected: 0 }] };
+    const timeline = buildTimeline({ activities, events: [], rounds: lookup(rounds) });
+    expect(group(timeline, "chapter:4:1").result).toEqual({ verdict: "revise", score: 6.5, readers: 7.2, accepted: 2, rejected: 1 });
+    expect(group(timeline, "chapter:4:2").result).toEqual({ verdict: "approve", score: 8.5, accepted: 0, rejected: 0 });
+  });
+
+  it("gives the vote of a round whose review the log cannot read, with no verdict: it is not guessed", () => {
+    const { activities } = chapterFlow(4, { rounds: 1 });
+    const unreadable = activities.map((activity) => (activity.task === "director-review" ? { ...activity, summary: "The chapter is fine." } : activity));
+    const timeline = buildTimeline({ activities: unreadable, events: [], rounds: lookup({ 4: record(7) }) });
+    const result = group(timeline, "chapter:4:1").result;
+    expect(result).toEqual({ score: 7, accepted: 1, rejected: 0 });
+    expect(result).not.toHaveProperty("verdict");
+    expect(group(buildTimeline({ activities: unreadable, events: [] }), "chapter:4:1").result, "without the record there is nothing to say").toBeNull();
+  });
+
+  it("gives a round that has no vote of its own what the review wrote", () => {
+    const { activities } = chapterFlow(4, { rounds: 1 });
+    const timeline = buildTimeline({ activities, events: [], rounds: lookup({ 4: [{ readers: 6, accepted: 1 }] }) });
+    expect(group(timeline, "chapter:4:1").result).toMatchObject({ verdict: "approve", score: 8, readers: 6 });
+  });
+
+  it("asks the plan only about the chapters the log has, and once for each: a plan has no maximum number of chapters", () => {
+    const asked: number[] = [];
+    const first = chapterFlow(3, { rounds: 1 });
+    const second = chapterFlow(4, { from: first.end + 10, rounds: 1 });
+    buildTimeline({ activities: [...first.activities, ...second.activities], events: [], rounds: (chapter) => { asked.push(chapter); return undefined; } });
+    expect([...new Set(asked)].sort()).toEqual([3, 4]);
+    expect(asked.length).toBeLessThanOrEqual(8);
+  });
+});
+
+describe("the verdict on the whole book, when the engine says it as data", () => {
+  const finalStep = (summary: string | undefined) => stepOf("final", { from: 0, summary });
+
+  it("is in the group of the review of the book: the verdict and the score the engine saved, before what the log says", () => {
+    const timeline = buildTimeline({ activities: [finalStep("approve 9/10 — Fine.")], events: [], finalReview: { verdict: "revise", score: 7 } });
+    expect(group(timeline, "final").result).toEqual({ verdict: "revise", score: 7 });
+  });
+
+  it("is there when the words of the step cannot be read", () => {
+    const timeline = buildTimeline({ activities: [finalStep("The book is good.")], events: [], finalReview: { verdict: "approve", score: 8.5 } });
+    expect(group(timeline, "final").result).toEqual({ verdict: "approve", score: 8.5 });
+  });
+
+  it("is what the log says when the engine did not say (a state that an older engine wrote), as it always was", () => {
+    const timeline = buildTimeline({ activities: [finalStep("approve 8/10 — The arc holds.")], events: [] });
+    expect(group(timeline, "final").result).toEqual({ verdict: "approve", score: 8 });
+    expect(group(buildTimeline({ activities: [finalStep("approve 8/10 — The arc holds.")], events: [], finalReview: null }), "final").result).toEqual({ verdict: "approve", score: 8 });
+  });
+
+  it("does not make a group for a review the log no longer has: it has nothing to show in it", () => {
+    const timeline = buildTimeline({ activities: chapterFlow(1, { rounds: 1 }).activities, events: [], finalReview: { verdict: "approve", score: 8 } });
+    expect(timeline.groups.map((candidate) => candidate.key)).toEqual(["chapter:1:1"]);
+  });
+
+  it("does not put the verdict of the book on the groups of the chapters", () => {
+    const flow = chapterFlow(1, { rounds: 1 });
+    const timeline = buildTimeline({ activities: [...flow.activities, stepOf("final", { from: flow.end + 10 })], events: [], finalReview: { verdict: "revise", score: 5 } });
+    expect(group(timeline, "chapter:1:1").result).toEqual({ verdict: "approve", score: 8 });
+    expect(group(timeline, "final").result).toEqual({ verdict: "revise", score: 5 });
   });
 });

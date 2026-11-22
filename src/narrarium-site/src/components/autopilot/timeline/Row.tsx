@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Ban, CheckCircle2, Loader2, RotateCw, XCircle } from "lucide-react";
 import type { ActivityStatus, AutopilotActivity } from "narrarium-engine";
 import { EventIcon } from "@/components/autopilot/AutopilotFeed";
+import { KindIcon } from "@/components/autopilot/KindIcon";
+import { isErrorKind } from "@/autopilot/errorModel";
 import { TONE_BORDER, TONE_TEXT, activityTitle, formatClock, formatCost, formatCount, formatDateTime, formatDuration, presentFeedEvent } from "@/autopilot/format";
 import type { TimelineMarker, TimelineNote, TimelineRow, TimelineStep } from "@/autopilot/timelineModel";
 import { cn } from "@/lib/utils";
@@ -43,12 +45,14 @@ function StepBody({ step, currency }: { step: TimelineStep; currency?: string })
   const { last } = step;
   const many = step.attempts.length > 1;
   const latest = (pick: (activity: AutopilotActivity) => string | undefined) => [...step.attempts].reverse().map((attempt) => pick(attempt.activity)).find(Boolean);
-  const model = latest((activity) => activity.model);
-  const provider = latest((activity) => activity.provider);
+  const model = latest((activity) => activity.model ?? activity.errorDetail?.model);
+  const provider = latest((activity) => activity.provider ?? activity.errorDetail?.provider);
+  const endpoint = latest((activity) => activity.errorDetail?.endpoint);
   const facts = [
     formatDateTime(step.startedAt),
     model,
     provider,
+    endpoint,
     step.tokens ? t("autopilot.timeline.row.tokens", { input: formatCount(step.tokens.input), output: formatCount(step.tokens.output), cached: formatCount(step.tokens.cached) }) : "",
     step.cost > 0 ? formatCost(step.cost, currency) : "",
     last.host ? t(`autopilot.host.${last.host}`) : "",
@@ -62,7 +66,12 @@ function StepBody({ step, currency }: { step: TimelineStep; currency?: string })
           <p className={cn("whitespace-pre-wrap", WRITES.has(last.task) && "font-serif italic text-muted-foreground")}>{last.summary}</p>
         </div>
       )}
-      {!many && last.error && <p className="whitespace-pre-wrap text-destructive">{last.error}</p>}
+      {!many && last.error && (
+        <div className="space-y-0.5 text-destructive">
+          {isErrorKind(last.errorKind) && <p className="font-medium">{t(`autopilot.failure.kind.${last.errorKind}.title`)}</p>}
+          <p className="whitespace-pre-wrap break-words">{last.error}</p>
+        </div>
+      )}
       {last.reason && <p className="text-muted-foreground"><span className="font-medium text-foreground/80">{t("autopilot.why")}:</span> {last.reason}</p>}
       {last.next && <p className="text-muted-foreground"><span className="font-medium text-foreground/80">{t("autopilot.next")}:</span> {last.next}</p>}
       {step.notes.length > 0 && (
@@ -78,15 +87,17 @@ function StepBody({ step, currency }: { step: TimelineStep; currency?: string })
             {step.attempts.map((attempt, index) => {
               const activity = attempt.activity;
               const retry = attempt.retry ? presentFeedEvent(t, attempt.retry.event, currency) : null;
+              const { attempt: retried, retries } = activity.errorDetail ?? {};
               return (
                 <li key={activity.id} className="space-y-0.5">
                   <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <StatusIcon status={activity.status} />
                     <span className="font-medium">{t("autopilot.timeline.row.attempt", { number: index + 1 })}</span>
-                    <span className="text-muted-foreground">{t(`autopilot.activity.status.${activity.status}`)} · {formatClock(activity.startedAt)}{activity.endedAt ? ` · ${formatDuration(Date.parse(activity.endedAt) - Date.parse(activity.startedAt))}` : ""}</span>
+                    <span className="text-muted-foreground">{t(`autopilot.activity.status.${activity.status}`)}{activity.status === "failed" && isErrorKind(activity.errorKind) ? ` · ${t(`autopilot.failure.kind.${activity.errorKind}.short`)}` : ""} · {formatClock(activity.startedAt)}{activity.endedAt ? ` · ${formatDuration(Date.parse(activity.endedAt) - Date.parse(activity.startedAt))}` : ""}</span>
                   </p>
                   {activity.error && <p className="whitespace-pre-wrap break-words pl-5 text-destructive">{activity.error}</p>}
                   {retry && <p className="flex items-start gap-1.5 pl-5 text-muted-foreground"><RotateCw className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{retry.text}</p>}
+                  {!retry && typeof retried === "number" && typeof retries === "number" && <p className="flex items-start gap-1.5 pl-5 text-muted-foreground"><RotateCw className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" /><span>{t("autopilot.timeline.row.retryOf", { attempt: retried, retries })}</span></p>}
                 </li>
               );
             })}
@@ -118,7 +129,15 @@ function StepRow({ step, currency }: { step: TimelineStep; currency?: string }) 
           {step.attempts.length > 1 && <span className={cn(badge, "bg-muted text-muted-foreground")}>{t("autopilot.timeline.row.attempts", { count: step.attempts.length })}</span>}
           {warnings > 0 && <span className={cn(badge, "bg-amber-500/15 text-amber-800 dark:text-amber-300")}>{t("autopilot.timeline.row.warnings", { count: warnings })}</span>}
           {/* How it went is said in words: for a step that worked only a screen reader needs them, the icon says it to the eye. */}
-          <span className={step.status === "succeeded" ? "sr-only" : cn(badge, failed ? "bg-red-500/15 text-red-800 dark:text-red-300" : "bg-amber-500/15 text-amber-800 dark:text-amber-300")}>{t(`autopilot.activity.status.${step.status}`)}</span>
+          {failed && isErrorKind(step.last.errorKind) ? (
+            <span className={cn(badge, "inline-flex items-center gap-1 bg-red-500/15 text-red-800 dark:text-red-300")}>
+              <KindIcon kind={step.last.errorKind} className="h-3.5 w-3.5 shrink-0" />
+              <span className="sr-only">{t("autopilot.activity.status.failed")} </span>
+              {t(`autopilot.failure.kind.${step.last.errorKind}.short`)}
+            </span>
+          ) : (
+            <span className={step.status === "succeeded" ? "sr-only" : cn(badge, failed ? "bg-red-500/15 text-red-800 dark:text-red-300" : "bg-amber-500/15 text-amber-800 dark:text-amber-300")}>{t(`autopilot.activity.status.${step.status}`)}</span>
+          )}
           <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatDuration(step.durationMs)}</span>
           {step.cost > 0 && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatCost(step.cost, currency)}</span>}
         </summary>

@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { AutopilotActivity, AutopilotEvent } from "narrarium-engine";
+import type { AutopilotActivity, AutopilotErrorDetail, AutopilotErrorKind, AutopilotEvent, ChapterRound } from "narrarium-engine";
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { AutopilotTimeline } from "@/components/autopilot/AutopilotTimeline";
@@ -519,5 +519,120 @@ describe("what the list needs to be read", () => {
     one.unmount();
     expect(show({ activities: flow.activities }).container.innerHTML).toBe(html);
     expect(sec(0)).toBe("2026-11-21T09:00:00.000Z");
+  });
+});
+
+describe("what kind of failure a step had", () => {
+  const DETAIL: AutopilotErrorDetail = { endpoint: "https://api.openai.com", model: "gpt-4.1", provider: "openai", integration: "ai-1", status: 429 };
+  const attempt = (from: number, patch: Partial<AutopilotActivity> = {}) => stepOf("write", { from, length: 10, chapterNumber: 5, sceneNumber: 2, title: "Writing scene 2", status: "failed", error: "429 Rate limit reached", errorKind: "rate_limit", errorDetail: DETAIL, ...patch });
+
+  it("is said in a word with an icon on the row of a step that failed, besides the word that says it failed: the kind of the engine, where the row said only how it ended", () => {
+    show({ activities: [attempt(0)] });
+    const summary = summaryOf("Writing scene 2");
+    expect(within(summary).getByText(t("autopilot.failure.kind.rate_limit.short"))).toBeInTheDocument();
+    expect(within(summary).getByText(t("autopilot.activity.status.failed"))).toBeInTheDocument();
+    expect(summary.querySelector("svg[aria-hidden='true']"), "an icon for the kind, which is decoration").not.toBeNull();
+  });
+
+  it.each(["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider", "unknown"] as AutopilotErrorKind[])("has a word for a failure of kind %s", (kind) => {
+    show({ activities: [attempt(0, { errorKind: kind })] });
+    expect(within(summaryOf("Writing scene 2")).getByText(t(`autopilot.failure.kind.${kind}.short`))).toBeInTheDocument();
+  });
+
+  it("says only that it failed, as it did, for a step that an older engine wrote: no kind is made up", () => {
+    show({ activities: [attempt(0, { errorKind: undefined, errorDetail: undefined })] });
+    const summary = summaryOf("Writing scene 2");
+    expect(within(summary).getByText(t("autopilot.activity.status.failed"))).toBeInTheDocument();
+    for (const kind of ["network", "unknown", "provider"]) expect(within(summary).queryByText(t(`autopilot.failure.kind.${kind}.short`))).not.toBeInTheDocument();
+  });
+
+  it("says nothing of a kind for a step that worked", () => {
+    show({ activities: [stepOf("write", { from: 0, chapterNumber: 5, sceneNumber: 2, title: "Writing scene 2" })] });
+    for (const kind of ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider", "unknown"]) {
+      expect(within(summaryOf("Writing scene 2")).queryByText(t(`autopilot.failure.kind.${kind}.short`)), kind).not.toBeInTheDocument();
+    }
+  });
+
+  it("says in the opened row, for each attempt, the kind and which retry it was, from the engine, though the feed has no notice of it", async () => {
+    const first = attempt(0, { errorDetail: { ...DETAIL, attempt: 1, retries: 3 } });
+    const second = attempt(40, { errorDetail: { ...DETAIL, attempt: 2, retries: 3 }, error: "429 Rate limit reached again" });
+    const worked = stepOf("write", { from: 140, length: 30, chapterNumber: 5, sceneNumber: 2, title: "Writing scene 2", summary: "640 words — done" });
+    show({ activities: [first, second, worked] });
+    fireEvent.click(summaryOf("Writing scene 2"));
+    const body = (await screen.findByText("429 Rate limit reached")).closest("details") as HTMLElement;
+    const list = within(body).getByRole("list", { name: t("autopilot.timeline.row.attemptsTitle") });
+    const items = within(list).getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent(t("autopilot.failure.kind.rate_limit.short"));
+    expect(items[0]).toHaveTextContent(t("autopilot.timeline.row.retryOf", { attempt: 1, retries: 3 }));
+    expect(items[1]).toHaveTextContent(t("autopilot.timeline.row.retryOf", { attempt: 2, retries: 3 }));
+    expect(items[1]).toHaveTextContent("429 Rate limit reached again");
+    // The endpoint of the failed calls is told once, with the other facts of the step.
+    expect(body).toHaveTextContent("https://api.openai.com");
+    expect(body).toHaveTextContent("gpt-4.1");
+  });
+
+  it("keeps the notice of the retry that the feed has, and does not say which retry it was twice", async () => {
+    const failed = attempt(0, { errorDetail: { ...DETAIL, attempt: 1, retries: 3 } });
+    const worked = stepOf("write", { from: 40, length: 20, chapterNumber: 5, sceneNumber: 2, title: "Writing scene 2" });
+    show({ activities: [failed, worked], events: [finishedEvent(failed), retryNotice(11, 1, 3, 20_000), finishedEvent(worked)] });
+    fireEvent.click(summaryOf("Writing scene 2"));
+    const body = (await screen.findByText("429 Rate limit reached")).closest("details") as HTMLElement;
+    expect(body).toHaveTextContent(t("autopilot.insight.failureRetry", { attempt: 1, retries: 3, seconds: 20 }));
+    expect(within(body).queryByText(t("autopilot.timeline.row.retryOf", { attempt: 1, retries: 3 }))).not.toBeInTheDocument();
+  });
+
+  it("says the kind in Italian", async () => {
+    await i18n.changeLanguage("it");
+    show({ activities: [attempt(0)] });
+    expect(within(summaryOf("Writing scene 2")).getByText("Limite richieste")).toBeInTheDocument();
+  });
+});
+
+describe("the rounds the plan records, and the verdict on the book, in the headers", () => {
+  const record = (...rounds: ChapterRound[]) => (chapter: number) => (chapter === 4 ? rounds : undefined);
+
+  it("gives a round the vote the plan recorded, in the header, with the words of the verdict that the review wrote", () => {
+    const { activities } = chapterFlow(4, { rounds: 2 });
+    show({ activities, chapterRounds: record({ director: 6.5, readers: 7.2, accepted: 2, rejected: 1 }, { director: 8.5, accepted: 0, rejected: 0 }) });
+    expect(groupHeader(new RegExp(t("autopilot.timeline.group.chapter", { chapter: 4, round: 2 })))).toHaveTextContent(`${t("director.opinion.verdict.approve")} 8.5/10`);
+    expect(groupHeader(new RegExp(t("autopilot.timeline.group.chapter", { chapter: 4, round: 1 })))).toHaveTextContent(`${t("director.opinion.verdict.revise")} 6.5/10`);
+  });
+
+  it("numbers the rounds from the plan when the log has lost the first review of the chapter", () => {
+    const { activities } = chapterFlow(4, { rounds: 2 });
+    const lost = activities.slice(activities.findIndex((activity) => activity.task === "director-review") + 1);
+    show({ activities: lost, chapterRounds: record({ director: 6 }, { director: 8 }) });
+    expect(groupHeader(new RegExp(t("autopilot.timeline.group.chapter", { chapter: 4, round: 2 })))).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: new RegExp(t("autopilot.timeline.group.chapter", { chapter: 4, round: 1 })) })).not.toBeInTheDocument();
+  });
+
+  it("tells, in the group that is open, what the readers gave and what the director decided in the round", () => {
+    const { activities } = chapterFlow(4, { rounds: 1 });
+    show({ activities, chapterRounds: record({ director: 6.5, readers: 7.2, accepted: 2, rejected: 1 }) });
+    const line = document.querySelector("[data-timeline-round]") as HTMLElement;
+    expect(line).toHaveTextContent([t("autopilot.timeline.round.readers", { score: 7.2 }), t("autopilot.timeline.round.accepted", { count: 2 }), t("autopilot.timeline.round.rejected", { count: 1 })].join(" · "));
+  });
+
+  it("tells only what is there: no line for a round that has no readers and nothing decided, and none for a state that has no record", () => {
+    const { activities } = chapterFlow(4, { rounds: 1 });
+    show({ activities, chapterRounds: record({ director: 8 }) });
+    expect(document.querySelector("[data-timeline-round]")).toBeNull();
+    cleanup();
+    show({ activities });
+    expect(document.querySelector("[data-timeline-round]")).toBeNull();
+  });
+
+  it("does not draw the line of a group that is closed", () => {
+    const first = chapterFlow(3, { rounds: 1 });
+    const second = chapterFlow(4, { from: first.end + 10, rounds: 1 });
+    show({ activities: [...first.activities, ...second.activities], chapterRounds: () => [{ director: 8, readers: 7, accepted: 1, rejected: 0 }] });
+    expect(document.querySelectorAll("[data-timeline-round]")).toHaveLength(1);
+  });
+
+  it("says the verdict of the engine on the whole book in the header of its review, before the words of the step", () => {
+    const final = stepOf("final", { from: 0, summary: "approve 9/10 — Fine." });
+    const review = { verdict: "revise" as const, score: 7, text: "Good, but the middle drags.", at: sec(40) };
+    show({ activities: [final], finalReview: review });
+    expect(groupHeader(new RegExp(t("autopilot.timeline.group.final")))).toHaveTextContent(`${t("autopilot.timeline.group.final")} · ${t("director.opinion.verdict.revise")} 7/10`);
   });
 });

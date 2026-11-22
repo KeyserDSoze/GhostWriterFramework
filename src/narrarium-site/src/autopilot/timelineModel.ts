@@ -1,11 +1,11 @@
-import type { ActivityStatus, AutopilotActivity, AutopilotEvent, AutopilotTaskKind, InsightTone } from "narrarium-engine";
+import type { ActivityStatus, AutopilotActivity, AutopilotEvent, AutopilotFinalReview, AutopilotTaskKind, ChapterRound, InsightTone } from "narrarium-engine";
 import { parseVerdictLine } from "@/autopilot/bandModel";
 
 /**
  * The history of a book as one list, made of what the interface receives: the activities of the log (what each step was, how it went, what it
  * cost) and the events of the feed (the insights and the warnings of the steps, the retries, the runs). Pure: the components only draw what is
- * here, so what the engine will give in a later version (the rounds of a chapter with their scores, the kind and the detail of a failure, the
- * time to the next retry, the verdict on the book, the working time) is added in this file, to the functions that say it, and not in a component.
+ * here. What the engine says as data (the rounds of a chapter with their votes, the verdict on the book) is read here, before what can be worked
+ * out from the steps; the steps are what a state that an older engine wrote has to go by.
  */
 
 /** The rows drawn in a group before the author asks for more, how many more each time, and the most there ever are in a group. */
@@ -121,10 +121,17 @@ export interface TimelineMarker {
 
 export type TimelineRow = TimelineStep | TimelineMarker;
 
-/** The director's verdict and score of a round, or of the book. */
+/**
+ * The director's verdict and score of a round, or of the book. The score is the vote the plan recorded for the round, when it did; the verdict is what the
+ * review wrote (the plan does not record it: a round that has no review in the log has a score and no verdict, and none is guessed). The readers' average (the
+ * first round only) and what the director decided are the plan's too.
+ */
 export interface RoundResult {
-  verdict: "approve" | "revise" | "rewrite";
+  verdict?: "approve" | "revise" | "rewrite";
   score: number;
+  readers?: number;
+  accepted?: number;
+  rejected?: number;
 }
 
 export type GroupKind = "chapter" | "plan" | "final" | "other";
@@ -165,6 +172,13 @@ export interface TimelineInput {
   running?: Pick<AutopilotActivity, "id" | "task" | "chapterNumber" | "startedAt"> | null;
   /** Hide what was over before this moment (an ISO time). */
   since?: string | null;
+  /**
+   * The rounds of review the plan recorded for a chapter, oldest first (`PlannedChapter.rounds`); `undefined` for a chapter without a record (a state from an engine
+   * that did not record them). Asked once for each chapter of the log, and not for the others: a plan has no maximum number of chapters.
+   */
+  rounds?: (chapter: number) => readonly ChapterRound[] | undefined;
+  /** What the engine says of the whole book, when it says it: the verdict and the score of the group of the final review. */
+  finalReview?: Pick<AutopilotFinalReview, "verdict" | "score"> | null;
 }
 
 const time = (iso: string | undefined): number => {
@@ -189,7 +203,7 @@ const BOOK_LEVEL: Partial<Record<AutopilotTaskKind, GroupKind>> = {
 };
 
 /** The log, with the steps that the feed finished and the log does not have yet, oldest first. A step is in once. */
-function mergeLog(activities: readonly AutopilotActivity[], events: readonly AutopilotEvent[], skip: string | undefined): AutopilotActivity[] {
+export function mergeLog(activities: readonly AutopilotActivity[], events: readonly AutopilotEvent[], skip: string | undefined): AutopilotActivity[] {
   const byId = new Map<string, AutopilotActivity>();
   for (const activity of activities) if (activity.id !== skip) byId.set(activity.id, activity);
   for (const event of events) if (event.type === "task-finished" && event.activity.id !== skip && !byId.has(event.activity.id)) byId.set(event.activity.id, event.activity);
@@ -222,11 +236,25 @@ function kindOf(key: string): GroupKind {
   return key.startsWith("chapter:") ? "chapter" : (key as GroupKind);
 }
 
-/** The verdict and the score of the director in a step that holds them. The only place that reads them, until the engine says them as fields. */
+/** The verdict and the score of the director in a step that holds them: what a round has when the plan did not record it (a state that an older engine wrote). */
 export function roundResultOf(step: TimelineStep): RoundResult | null {
   if (step.last.status !== "succeeded" || (step.last.task !== "director-review" && step.last.task !== "final")) return null;
   const line = parseVerdictLine(step.last.summary);
   return line ? { verdict: line.verdict, score: line.score } : null;
+}
+
+/** What the plan recorded of a round: its vote goes before the one in the words of the review, which keeps the verdict. A round that has no vote has what the review wrote. */
+function withRecord(written: RoundResult | null, entry: ChapterRound | undefined): RoundResult | null {
+  if (!entry) return written;
+  const score = typeof entry.director === "number" ? entry.director : written?.score;
+  if (score === undefined) return null;
+  return {
+    ...(written?.verdict ? { verdict: written.verdict } : {}),
+    score,
+    ...(typeof entry.readers === "number" ? { readers: entry.readers } : {}),
+    ...(typeof entry.accepted === "number" ? { accepted: entry.accepted } : {}),
+    ...(typeof entry.rejected === "number" ? { rejected: entry.rejected } : {}),
+  };
 }
 
 function toneOfMarker(event: AutopilotEvent): InsightTone {
@@ -292,7 +320,7 @@ function resultOf(rows: readonly TimelineRow[]): RoundResult | null {
 }
 
 /** The whole timeline of a book: the steps and what happened around them, in groups. */
-export function buildTimeline({ activities, events, running = null, since = null }: TimelineInput): Timeline {
+export function buildTimeline({ activities, events, running = null, since = null, rounds, finalReview = null }: TimelineInput): Timeline {
   const log = mergeLog(activities, events, running?.id);
 
   // The steps: an activity that repeats a step that did not work is one more attempt of it.
@@ -310,8 +338,37 @@ export function buildTimeline({ activities, events, running = null, since = null
     lastByKey.set(key, draft);
   }
 
-  // The rounds: how many reviews of the director a chapter had before a step says which round it is in.
+  // The plan's record of the rounds of a chapter, asked once for each chapter the log has.
+  const recorded = new Map<number, readonly ChapterRound[] | undefined>();
+  const recordOf = (chapter: number): readonly ChapterRound[] | undefined => {
+    if (!recorded.has(chapter)) recorded.set(chapter, rounds?.(chapter));
+    return recorded.get(chapter);
+  };
+
+  // The rounds: how many reviews of the director a chapter had before a step says which round it is in. The log keeps the last 200 steps, so the first reviews of
+  // the oldest chapter in it may be gone: the plan's record says how many there were (the log is the fallback, for a state that has no record). A record that is
+  // shorter than the log is not used for the chapter: the page has a step of the log a moment before it has the plan that records it, and a record may have begun in
+  // the middle of the chapter. Either way it cannot be said which round of the log each of its votes is, and a vote on the wrong round is worse than none.
   const reviews = new Map<number, number>();
+  const usable = new Map<number, readonly ChapterRound[]>();
+  if (rounds) {
+    const logged = new Map<number, number>();
+    const chapters = new Set<number>();
+    for (const draft of drafts) {
+      const last = draft.attempts[draft.attempts.length - 1];
+      if (last.chapterNumber === undefined) continue;
+      chapters.add(last.chapterNumber);
+      if (last.task === "director-review" && last.status === "succeeded") logged.set(last.chapterNumber, (logged.get(last.chapterNumber) ?? 0) + 1);
+    }
+    if (running?.chapterNumber !== undefined) chapters.add(running.chapterNumber);
+    for (const chapter of chapters) {
+      const record = recordOf(chapter);
+      const inLog = logged.get(chapter) ?? 0;
+      if (!record || record.length < inLog) continue;
+      usable.set(chapter, record);
+      if (record.length > inLog) reviews.set(chapter, record.length - inLog);
+    }
+  }
   for (const draft of drafts) {
     const last = draft.attempts[draft.attempts.length - 1];
     draft.group = groupOf(last, reviews);
@@ -418,6 +475,13 @@ export function buildTimeline({ activities, events, running = null, since = null
   if (running && runningGroup) ensure(runningGroup).running = true;
 
   // Each group: its rows from the newest to the oldest, what they add up to, and the verdict of the round.
+  const resultFor = (group: TimelineGroup, rows: readonly TimelineRow[]): RoundResult | null => {
+    const written = resultOf(rows);
+    if (group.kind === "final") return finalReview ? { verdict: finalReview.verdict, score: finalReview.score } : written;
+    if (group.kind !== "chapter" || group.chapterNumber === undefined || group.round === undefined) return written;
+    const record = usable.get(group.chapterNumber);
+    return withRecord(written, record && group.round >= 1 && group.round <= record.length ? record[group.round - 1] : undefined);
+  };
   const list: TimelineGroup[] = [];
   for (const group of groups.values()) {
     const rows = group.rows
@@ -426,7 +490,7 @@ export function buildTimeline({ activities, events, running = null, since = null
       .map((entry) => entry.row);
     const stepTimes = rows.filter((row) => row.kind === "step").map(rowTime);
     const at = stepTimes.length ? Math.max(...stepTimes) : rows.length ? rowTime(rows[0]) : time(running?.startedAt);
-    list.push({ ...group, rows, ...statsOf(rows), result: resultOf(rows), at });
+    list.push({ ...group, rows, ...statsOf(rows), result: resultFor(group, rows), at });
   }
   list.sort((a, b) => Number(b.running) - Number(a.running) || b.at - a.at);
   const steps = list.reduce((sum, group) => sum + group.steps, 0);

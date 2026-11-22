@@ -24,8 +24,8 @@ import { AutopilotDock } from "@/components/autopilot/AutopilotDock";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
-import { longPlan, planOf } from "./helpers/autopilotFixtures";
-import { activityOf, finishedEvent, runningStep, seedRun, stubWidth } from "./helpers/autopilotBand";
+import { judgedPlan, longPlan, planOf } from "./helpers/autopilotFixtures";
+import { activityOf, eventOf, finishedEvent, runningStep, seedRun, stubWidth } from "./helpers/autopilotBand";
 import { richHistory } from "./helpers/autopilotTimeline";
 import { LOCAL_BOOK, T0, makeRuntime, quickName, t } from "./helpers/quickCommands";
 
@@ -150,6 +150,14 @@ describe("what used to be on the page twice", () => {
     expect(within(bandOf()).getAllByText("Completed")).toHaveLength(1);
   });
 
+  /** A run that stopped on an error of a kind the engine told, after the same step failed `count` times in a row. */
+  function classifiedError(kind: "network" | "rate_limit" = "network", count = 4): Parameters<typeof seedRun>[0] {
+    const detail = { endpoint: "https://api.openai.com", model: "gpt-4.1", provider: "openai", integration: "ai-1", ...(kind === "rate_limit" ? { status: 429 } : {}), attempt: Math.min(count, 3), retries: 3 };
+    const message = kind === "network" ? "Connection error." : "429 Rate limit reached for gpt-4.1.";
+    const log = Array.from({ length: count }, (_, index) => activityOf("write", { id: `fail-${index}`, title: "Writing scene 2 of chapter 5 «Scene 2»", chapterNumber: 5, sceneNumber: 2, status: "failed", error: message, errorKind: kind, errorDetail: detail, startedAt: `2026-11-21T10:0${index}:00.000Z`, endedAt: `2026-11-21T10:0${index}:10.000Z` }));
+    return { status: "error", activities: log, feed: log.map((activity, index) => eventOf({ type: "task-finished", activity }, index + 1)), statePatch: { lastError: { message, at: "2026-11-21T10:03:10.000Z", task: "write", errorKind: kind, errorDetail: detail } } };
+  }
+
   const withHistory = (seed: Parameters<typeof seedRun>[0]): Parameters<typeof seedRun>[0] => {
     const rich = richHistory();
     return { ...seed, activities: [...(seed.activities ?? []), ...rich.activities], feed: [...(seed.feed ?? []), ...rich.feed] };
@@ -161,7 +169,10 @@ describe("what used to be on the page twice", () => {
     ["a question from the director", { status: "waiting-author", message: "The director has a question for you.", question: { id: "q-1", kind: "director", question: "Keep the ending open?", context: "The readers disagree.", options: ["Yes", "No"], askedAt: T0 } }],
     ["a chapter that was just closed", { status: "paused", message: "Chapter 4 approved: read it and resume.", activities: [activityOf("consolidate", { chapterNumber: 4, title: "Closing chapter 4" })] }],
     ["an error", { status: "error", message: "The provider answered 429: rate limit exceeded.", statePatch: { lastError: { message: "The provider answered 429: rate limit exceeded.", at: T0, task: "write" } } }],
+    ["an error the engine classified, said four times in a row", classifiedError()],
+    ["a failure that the runner is going to try again", { ...classifiedError("rate_limit", 2), status: "running", running: true, statePatch: {}, retry: { at: "2026-11-21T10:00:36.000Z", attempt: 2, retries: 3 } }],
     ["a book that is complete", { status: "completed", phase: "completed", chapters: longPlan(12, 12), message: "The book is complete.", statePatch: { finalDone: true }, activities: [activityOf("final", { summary: "approve 8/10 — The arc holds." })] }],
+    ["a book that is complete, with everything the engine says of it", { status: "completed", phase: "completed", chapters: judgedPlan(12).map((entry, index) => ({ ...entry, score: [8, 8, 9, 6, 9, 7, 8, 5, 9, 8, 9, 8][index] })), message: "The book is complete.", statePatch: { finalDone: true, finalReview: { verdict: "revise", score: 7, text: "Good, but the middle drags: chapters 8 to 11 repeat the same beat.", at: T0 } }, stats: { workedMs: 13_260_000, cost: 17.62, aiCalls: 366 }, activities: [activityOf("final", { summary: "revise 7/10 — Good, but the middle drags." })] }],
   ];
 
   // The history is one list now, and part of the scan: nothing on the page is said twice, from the band to the last group.
@@ -388,7 +399,7 @@ describe("the end of a chapter", () => {
 });
 
 describe("a book that is finished", () => {
-  const FINAL = activityOf("final", { phase: "final", title: "The director reviews the whole book", summary: "approve 8/10 — The arc holds: the ledger pays off in the last chapter.", startedAt: "2026-11-21T10:00:00.000Z", endedAt: "2026-11-21T10:00:41.000Z" });
+  const FINAL = activityOf("final", { phase: "final", title: "The director reviews the whole book", summary: "approve 8/10 — The arc holds: the ledger pays off in the last chapter.", startedAt: "2026-11-21T10:00:00.000Z", endedAt: "2026-11-21T10:00:41.000Z" })
   const done = (patch: Parameters<typeof seedRun>[0] = {}) => seedRun({
     status: "completed",
     phase: "completed",
@@ -399,6 +410,8 @@ describe("a book that is finished", () => {
     activities: [activityOf("write", { startedAt: "2026-11-21T09:00:00.000Z", endedAt: "2026-11-21T10:01:00.000Z" }), FINAL],
     ...patch,
   });
+  const resultOf = () => document.querySelector<HTMLElement>("[data-autopilot-result]") as HTMLElement;
+  const figure = (label: string) => within(resultOf()).getByText(label, { selector: "dt" }).closest("div")?.querySelector("dd") as HTMLElement;
 
   it("does not offer to resume a book that is complete: the main action is to add chapters", () => {
     done();
@@ -410,39 +423,64 @@ describe("a book that is finished", () => {
     expect(add).toHaveAttribute("href", "/app/books/book-1/autopilot#autopilot-setup");
   });
 
-  it("says how it went at the top: the verdict of the director on the whole book, the time, the cost, the words", () => {
+  it("says how it went in a card of its own, right under the band: the verdict of the director on the whole book, the time, the cost, the words", () => {
     done();
     render(<Page />);
-    const result = bandOf().querySelector<HTMLElement>("[data-band-result]") as HTMLElement;
-    expect(result, "a summary of the result in the band").not.toBeNull();
-    expect(result).toHaveTextContent("Approve");
-    expect(result).toHaveTextContent("8/10");
-    expect(result).toHaveTextContent("The arc holds: the ledger pays off in the last chapter.");
-    expect(result).toHaveTextContent("1h 01m");
-    expect(result).toHaveTextContent("$17.62");
+    expect(resultOf(), "a card of the result").not.toBeNull();
+    expect(resultOf().closest("[data-autopilot-band]"), "not in the band").toBeNull();
+    expect(resultOf()).toHaveTextContent(t("autopilot.result.verdict.approve"));
+    expect(resultOf().querySelector("[data-result-score]")).toHaveTextContent("8/10");
+    expect(resultOf()).toHaveTextContent("The arc holds: the ledger pays off in the last chapter.");
+    expect(figure(t("autopilot.result.numbers.time"))).toHaveTextContent("1h 01m");
+    expect(figure(t("autopilot.result.numbers.cost"))).toHaveTextContent("$17.62");
   });
 
-  it("does not count the chapters again in the summary of the result: the progress bar of the band already says 12 of 12", () => {
+  it("puts the card at the top of the content: after the band and the notices, before the history and the plan", () => {
     done();
     render(<Page />);
-    const result = bandOf().querySelector<HTMLElement>("[data-band-result]") as HTMLElement;
+    const after = (first: Element, second: Element) => Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(after(bandOf(), resultOf())).toBe(true);
+    expect(after(resultOf(), section(t("autopilot.activity.title")))).toBe(true);
+    expect(after(resultOf(), section(t("autopilot.plan.title")))).toBe(true);
+    expect(document.querySelectorAll("[data-autopilot-result]")).toHaveLength(1);
+  });
+
+  it("has the band go on saying how far the book is, and nothing of the result: it is said once, in the card", () => {
+    done();
+    render(<Page />);
     expect(within(bandOf()).getByRole("progressbar", { name: t("autopilot.progress.chapters") })).toHaveAttribute("aria-valuenow", "12");
-    expect([...result.querySelectorAll("dt")].map((item) => item.textContent)).toEqual([t("autopilot.band.result.time"), t("autopilot.band.result.cost")]);
+    expect(bandOf().querySelector("[data-band-result]")).toBeNull();
+    expect(within(bandOf()).queryByText("The arc holds: the ledger pays off in the last chapter.")).not.toBeInTheDocument();
+    expect(screen.getAllByText("The arc holds: the ledger pays off in the last chapter.")).toHaveLength(1);
   });
 
-  it("says the working time is a minimum when the log of the steps is full: the oldest ones are no longer in it", () => {
+  it("says the working time is a minimum when the engine did not count it and the log of the steps is full: the oldest ones are no longer in it", () => {
     done({ activities: [...Array.from({ length: 199 }, (_, index) => activityOf("write", { id: `w-${index}`, startedAt: "2026-11-21T09:00:00.000Z", endedAt: "2026-11-21T09:01:00.000Z" })), FINAL] });
     render(<Page />);
-    const result = bandOf().querySelector<HTMLElement>("[data-band-result]") as HTMLElement;
-    expect(result).toHaveTextContent(t("autopilot.band.result.timeAtLeast", { time: "3h 19m" }));
+    expect(figure(t("autopilot.result.numbers.time"))).toHaveTextContent(t("autopilot.result.numbers.timeAtLeast", { time: "3h 19m" }));
   });
 
-  it("has no verdict to show when the final review is no longer in the log, and says nothing instead of making one up", () => {
+  it("has no verdict to show when the final review is no longer in the log and the engine said none, and says nothing instead of making one up", () => {
     done({ activities: [] });
     render(<Page />);
-    const result = bandOf().querySelector<HTMLElement>("[data-band-result]") as HTMLElement;
-    expect(result).not.toHaveTextContent(t("autopilot.band.result.verdict"));
-    expect(result).toHaveTextContent("$17.62");
+    expect(resultOf().querySelector("[data-result-score]")).toBeNull();
+    expect(within(resultOf()).queryByText(t("autopilot.result.verdict.title"))).not.toBeInTheDocument();
+    expect(figure(t("autopilot.result.numbers.cost"))).toHaveTextContent("$17.62");
+  });
+
+  it("uses what the engine says of the book, and not the words of the log: the verdict it saved, the time it counted, the rounds it recorded", () => {
+    done({
+      chapters: judgedPlan(12),
+      statePatch: { finalDone: true, finalReview: { verdict: "revise", score: 7, text: "Good, but the middle drags.", at: T0 } },
+      stats: { cost: 17.62, aiCalls: 366, workedMs: 13_260_000 },
+    });
+    render(<Page />);
+    expect(resultOf()).toHaveTextContent(t("autopilot.result.verdict.revise"));
+    expect(resultOf().querySelector("[data-result-score]")).toHaveTextContent("7/10");
+    expect(resultOf()).toHaveTextContent("Good, but the middle drags.");
+    expect(resultOf()).not.toHaveTextContent("The arc holds");
+    expect(figure(t("autopilot.result.numbers.time"))).toHaveTextContent("3h 41m");
+    expect(within(resultOf()).getByRole("columnheader", { name: t("autopilot.result.scores.round", { number: 3 }) })).toBeInTheDocument();
   });
 
   it("takes the author to the settings, open, with the number of chapters in front of them", async () => {
@@ -452,6 +490,15 @@ describe("a book that is finished", () => {
     const field = await screen.findByLabelText(t("autopilot.setup.chapters"));
     await waitFor(() => expect(document.activeElement).toBe(field));
     expect(field.closest("details")).toHaveProperty("open", true);
+  });
+
+  it("offers the same way to the settings in the card, under a name of its own: two links of one name would be one too many for a screen reader", () => {
+    done();
+    render(<Page />);
+    const inCard = within(resultOf()).getByRole("link", { name: t("autopilot.result.actions.add") });
+    const inBand = within(bandOf()).getByRole("link", { name: quickName(t("autopilot.actions.addChapters")) });
+    expect(inCard).toHaveAttribute("href", inBand.getAttribute("href"));
+    expect(inCard.getAttribute("aria-label") ?? inCard.textContent).not.toBe(inBand.getAttribute("aria-label"));
   });
 
   it("offers to write the new chapters, and not to add more, once the settings ask for more than the plan has", async () => {
@@ -465,9 +512,103 @@ describe("a book that is finished", () => {
     await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledWith("book-1"));
   });
 
-  it("has no summary of the result while the book is not finished", () => {
+  it("has no card of the result while the book is not finished", () => {
     seedRun({ status: "paused" });
     render(<Page />);
+    expect(resultOf()).toBeNull();
     expect(bandOf().querySelector("[data-band-result]")).toBeNull();
+  });
+
+  it("says the card in Italian, and leads to the pages of the book in its own words", async () => {
+    await i18n.changeLanguage("it");
+    done();
+    render(<Page />);
+    expect(within(resultOf()).getByRole("heading", { level: 2, name: "Com'è venuto il libro" })).toBeInTheDocument();
+    expect(within(resultOf()).getByRole("link", { name: "Leggi il libro" })).toHaveAttribute("href", "/app/books/book-1/reader");
+    expect(within(resultOf()).getByRole("link", { name: "Esporta" })).toHaveAttribute("href", "/app/books/book-1/export");
+  });
+});
+
+describe("a run that stopped on an error", () => {
+  const failures = (count: number, message = "Connection error.") => Array.from({ length: count }, (_, index) => activityOf("write", { id: `fail-${index}`, title: "Writing scene 2 of chapter 5 «Scene 2»", chapterNumber: 5, sceneNumber: 2, status: "failed", error: message, errorKind: "network", errorDetail: { endpoint: "https://api.openai.com", model: "gpt-4.1", provider: "openai", integration: "ai-1", attempt: 3, retries: 3 }, startedAt: `2026-11-21T10:0${index}:00.000Z`, endedAt: `2026-11-21T10:0${index}:10.000Z` }));
+  const failed = (count = 4) => {
+    const log = failures(count);
+    return seedRun({
+      status: "error",
+      activities: log,
+      feed: [...log.map((activity, index) => eventOf({ type: "task-finished", activity }, index + 1)), eventOf({ type: "run-ended", runId: "run-1", status: "error", message: "Connection error." }, 20)],
+      statePatch: { lastError: { message: "Connection error.", at: "2026-11-21T10:03:10.000Z", task: "write", errorKind: "network", errorDetail: { endpoint: "https://api.openai.com", model: "gpt-4.1", provider: "openai", integration: "ai-1", attempt: 3, retries: 3 } } },
+    });
+  };
+  const panelOf = () => document.querySelector<HTMLElement>("[data-autopilot-error]") as HTMLElement;
+
+  it("is one panel under the band, with one alert, where there used to be a red banner and the words said again", () => {
+    failed();
+    render(<Page />);
+    expect(panelOf()).not.toBeNull();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(within(screen.getByRole("alert")).getByRole("heading", { level: 2, name: t("autopilot.failure.kind.network.title") })).toBeInTheDocument();
+    expect(screen.queryByText(t("autopilot.lastError"), { exact: false }), "no banner of the last error").not.toBeInTheDocument();
+    expect(bandOf().compareDocumentPosition(panelOf()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("says the words of the provider once on the whole page, though the step failed four times and the run ended with them: the history groups the attempts and does not say them again", () => {
+    failed(4);
+    render(<Page />);
+    expect(screen.getAllByText("Connection error.")).toHaveLength(1);
+    expect(within(panelOf()).getByText(t("autopilot.failure.repeats", { count: 4 }))).toBeInTheDocument();
+  });
+
+  it("has a band that the program can give the focus to, so that the panel can hand it over when it goes away", () => {
+    failed();
+    render(<Page />);
+    expect(bandOf()).toHaveAttribute("tabindex", "-1");
+    expect(bandOf()).toHaveAccessibleName();
+  });
+
+  it("keeps the panel above the history and the plan", () => {
+    failed();
+    render(<Page />);
+    expect(panelOf().compareDocumentPosition(section(t("autopilot.activity.title"))) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(panelOf().compareDocumentPosition(section(t("autopilot.plan.title"))) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("is above the tabs on a page that has them, whatever tab is open", async () => {
+    stubWidth(700);
+    failed();
+    render(<Page />);
+    const tab = screen.getByRole("tab", { name: t("autopilot.tabs.timeline") });
+    fireEvent.mouseDown(tab);
+    fireEvent.click(tab);
+    await waitFor(() => expect(tab).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("tablist").compareDocumentPosition(panelOf()) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(screen.getByRole("tabpanel")).not.toContainElement(panelOf());
+  });
+
+  it("retries with the button of the panel as the band does, and the band keeps its own", async () => {
+    failed();
+    render(<Page />);
+    expect(within(bandOf()).getByRole("button", { name: quickName(t("autopilot.actions.retry")) })).toBeInTheDocument();
+    fireEvent.click(within(panelOf()).getByRole("button", { name: quickName(t("autopilot.failure.actions.retry")) }));
+    await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledWith("book-1"));
+  });
+
+  it("keeps the message of the dock short, with the way to the page that has the panel", () => {
+    failed();
+    useAutopilotStore.setState({ dockOpen: true, dockTab: "book" });
+    render(<MemoryRouter initialEntries={["/app/books/book-1"]}><AutopilotDock /></MemoryRouter>);
+    const brief = screen.getAllByRole("alert");
+    expect(brief).toHaveLength(1);
+    expect(brief[0]).toHaveTextContent(t("autopilot.failure.kind.network.title"));
+    expect(within(brief[0]).getByRole("link", { name: t("autopilot.failure.seeDetails") })).toHaveAttribute("href", "/app/books/book-1/autopilot");
+    expect(screen.queryByRole("button", { name: t("autopilot.failure.actions.copy") }), "the buttons of the panel are on the page").not.toBeInTheDocument();
+  });
+
+  it("is the same panel in Italian", async () => {
+    await i18n.changeLanguage("it");
+    failed();
+    render(<Page />);
+    expect(within(screen.getByRole("alert")).getByRole("heading", { level: 2, name: "Problema di connessione" })).toBeInTheDocument();
+    expect(screen.getByText("Non è riuscito 4 volte di fila.")).toBeInTheDocument();
   });
 });

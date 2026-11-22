@@ -35,6 +35,15 @@ const LABELS = [
   "autopilot.timeline.filter.readers",
   "autopilot.timeline.filter.writing",
   "autopilot.timeline.hide",
+  "autopilot.result.title",
+  "autopilot.result.actions.add",
+  "autopilot.result.actions.read",
+  "autopilot.result.actions.export",
+  "autopilot.result.actions.ask",
+  "autopilot.result.scores.order.lowest",
+  "autopilot.failure.actions.retry",
+  "autopilot.failure.actions.integrations",
+  "autopilot.failure.actions.copy",
 ];
 
 beforeAll(async () => {
@@ -56,5 +65,14 @@ describe.each<Language>(["en", "it"])("the help of the autopilot (%s)", (languag
     expect(gone.filter((pattern) => pattern.test(help)).map(String)).toEqual([]);
     expect(help).toMatch(language === "en" ? /## The Autopilot page/ : /## La pagina Autopilot/);
     expect(help).toContain("mini-player");
+  });
+
+  it("describes the result of a finished book and the panel of an error, with the kinds of error by their titles", () => {
+    const t = i18n.getFixedT(language);
+    const help = helpOf(language);
+    for (const kind of ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider"]) {
+      expect(help, kind).toContain(t(`autopilot.failure.kind.${kind}.title`));
+    }
+    expect(help).toContain(language === "en" ? "countdown" : "conto alla rovescia");
   });
 });

@@ -1,4 +1,4 @@
-import { MAX_ACTIVITIES, type AutopilotActivity, type AutopilotOptions, type AutopilotPhase, type AutopilotState, type AutopilotStats, type AutopilotStatus, type AutopilotTaskKind } from "narrarium-engine";
+import { MAX_ACTIVITIES, type AutopilotActivity, type AutopilotFinalReview, type AutopilotOptions, type AutopilotPhase, type AutopilotState, type AutopilotStateSummary, type AutopilotStats, type AutopilotStatus, type AutopilotTaskKind } from "narrarium-engine";
 
 /**
  * What the control band shows of a book, worked out from what the page already has (the summary, the saved state, the log of the steps).
@@ -124,15 +124,31 @@ const VERDICT_LINE = /^(approve|revise|rewrite)\s+(\d+(?:[.,]\d+)?)\s*\/\s*10\s+
 
 /**
  * What the director's reviews write as the result of a step: “approve 8/10 — what it thinks” (the review of a chapter, the review of the book). The one
- * place that reads it: when the engine gives the verdict and the score as fields of their own, this is what is replaced.
+ * place that reads it. The engine now says the verdict on the whole book (`finalReview`) and the votes of the rounds of a chapter (`rounds`) as data: this
+ * is what stands in for them when a state does not have them, for a state that an older engine wrote.
  */
 export function parseVerdictLine(summary: string | undefined): { verdict: NonNullable<FinalVerdict["verdict"]>; score: number; text: string } | null {
   const match = summary ? VERDICT_LINE.exec(summary.trim()) : null;
   return match ? { verdict: match[1] as NonNullable<FinalVerdict["verdict"]>, score: Number(match[2].replace(",", ".")), text: match[3].trim() } : null;
 }
 
-/** The director's judgement on the whole book, from the last final review that worked (it writes “approve 8/10 — what it thinks”). */
-export function finalVerdict(activities: readonly AutopilotActivity[]): FinalVerdict | null {
+/**
+ * The review of the whole book that the engine saved. The summary is the newest word on the state of the book, so a book that was reopened has none even if an
+ * older download still has one; the saved state has the words whole (the summary cuts them), and they are taken from it when it is the same review.
+ */
+export function finalReviewOf(summary: Pick<AutopilotStateSummary, "finalReview"> | null | undefined, state: Pick<AutopilotState, "finalReview"> | null | undefined): AutopilotFinalReview | null {
+  const review = summary?.finalReview;
+  if (!review) return null;
+  const saved = state?.finalReview;
+  return saved && saved.at === review.at && saved.verdict === review.verdict && saved.score === review.score && saved.text.length > review.text.length ? saved : review;
+}
+
+/**
+ * The director's judgement on the whole book: the review the engine saved, when it did; else, for a state that an older engine wrote, what the last final review
+ * that worked wrote in the log (“approve 8/10 — what it thinks”).
+ */
+export function finalVerdict(activities: readonly AutopilotActivity[], review?: AutopilotFinalReview | null): FinalVerdict | null {
+  if (review) return { verdict: review.verdict, score: review.score, text: review.text };
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const activity = activities[index];
     if (activity.task !== "final" || activity.status !== "succeeded") continue;
@@ -143,8 +159,13 @@ export function finalVerdict(activities: readonly AutopilotActivity[]): FinalVer
   return null;
 }
 
-/** How long the steps in the log took, together. The log keeps the last `MAX_ACTIVITIES` steps: when it is full the older ones are missing, and the total is a minimum. */
-export function workedTime(activities: readonly AutopilotActivity[]): { milliseconds: number; complete: boolean } {
+/**
+ * How long the autopilot worked: what the engine counted (`stats.workedMs`, over every run, and not only for the steps in the log), when it did; else, for a state
+ * that an older engine wrote, how long the steps in the log took, together. The log keeps the last `MAX_ACTIVITIES` steps: when it is full the older ones are
+ * missing, and that total is a minimum.
+ */
+export function workedTime(activities: readonly AutopilotActivity[], workedMs?: number): { milliseconds: number; complete: boolean } {
+  if (typeof workedMs === "number" && Number.isFinite(workedMs) && workedMs > 0) return { milliseconds: workedMs, complete: true };
   let milliseconds = 0;
   for (const activity of activities) {
     if (!activity.endedAt) continue;

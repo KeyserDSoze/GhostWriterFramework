@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { AlertTriangle, Check, ChevronRight, CheckCircle2, Circle, CircleDot, CircleHelp, Laptop, Loader2, Pause, Server, XCircle } from "lucide-react";
 import type { AutopilotActivity, AutopilotOptions, AutopilotStateSummary, AutopilotStatus } from "narrarium-engine";
 import { useElapsed, useNow } from "@/autopilot/hooks";
-import { CYCLE_STAGES, bandPhases, budgetUse, cycleItems, finalVerdict, workedTime, type ChapterCycle } from "@/autopilot/bandModel";
+import { CYCLE_STAGES, bandPhases, budgetUse, cycleItems, type ChapterCycle } from "@/autopilot/bandModel";
 import { STATUS_BADGE, activityTitle, formatAgo, formatCost, formatCount, formatDuration } from "@/autopilot/format";
 import { lastSignalAt, useAutopilotStore } from "@/autopilot/store";
 import { cn } from "@/lib/utils";
@@ -261,37 +261,3 @@ export const UsageLine = memo(function UsageLine({ summary, options, currency, c
     </div>
   );
 });
-
-/** How a book that is complete went, minimally: the verdict of the director on the whole book, the time, the cost, the words. */
-export function ResultSummary({ summary, activities, currency }: { summary: AutopilotStateSummary; activities: readonly AutopilotActivity[]; currency: string | undefined }) {
-  const { t } = useTranslation();
-  const verdict = finalVerdict(activities);
-  const worked = workedTime(activities);
-  const items: Array<[string, ReactNode]> = [];
-  if (worked.milliseconds > 0) items.push([t("autopilot.band.result.time"), worked.complete ? formatDuration(worked.milliseconds) : t("autopilot.band.result.timeAtLeast", { time: formatDuration(worked.milliseconds) })]);
-  if (summary.stats.cost > 0) items.push([t("autopilot.band.result.cost"), formatCost(summary.stats.cost, currency)]);
-  if (summary.progress.words > 0) items.push([t("autopilot.band.result.words"), formatCount(summary.progress.words)]);
-  return (
-    <div data-band-result className="min-w-0 space-y-2">
-      <p className="text-xs font-semibold uppercase tracking-wide text-primary">{t("autopilot.band.result.title")}</p>
-      {verdict && (
-        <div className="space-y-0.5">
-          <p className="text-sm font-medium">
-            <span className="text-muted-foreground">{t("autopilot.band.result.verdict")}: </span>
-            {verdict.verdict ? t(`director.opinion.verdict.${verdict.verdict}`) : null}
-            {verdict.score !== undefined ? ` · ${verdict.score}/10` : null}
-          </p>
-          <p className="line-clamp-3 whitespace-pre-line text-sm text-muted-foreground">{verdict.text}</p>
-        </div>
-      )}
-      <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
-        {items.map(([label, value]) => (
-          <div key={label} className="flex items-baseline gap-1.5">
-            <dt className="text-muted-foreground">{label}</dt>
-            <dd className="font-semibold tabular-nums">{value}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-}

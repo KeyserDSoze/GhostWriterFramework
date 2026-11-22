@@ -253,3 +253,70 @@ test("every text of the timeline that names a count has a form for one and for m
     }
   }
 });
+
+test("the texts of the result of a book and of the error panel are in the bundle loaded with the autopilot, in both languages, written in Italian and with the same values to fill in", () => {
+  for (const [base, least] of [["autopilot.result", 45], ["autopilot.failure", 55]]) {
+    const keys = leaves(get(autopilotEn, base), base);
+    assert.ok(keys.length >= least, `${base} has its texts (saw ${keys.length})`);
+    for (const key of keys) {
+      for (const [language, locale] of [["en", autopilotEn], ["it", autopilotIt]]) {
+        assert.equal(typeof get(locale, key), "string", `${language}: ${key}`);
+        assert.ok(get(locale, key).trim(), `${language}: ${key} is not empty`);
+      }
+      assert.equal(get(en, key), undefined, `${key} is not repeated in the always-loaded bundle`);
+      assert.deepEqual(placeholders(get(autopilotIt, key)), placeholders(get(autopilotEn, key)), key);
+    }
+    assert.deepEqual(leaves(get(autopilotIt, base), base).sort(), keys.sort(), `the same texts of ${base} in both languages`);
+    const same = keys.filter((key) => get(autopilotIt, key) === get(autopilotEn, key) && get(autopilotEn, key).length > 12);
+    assert.deepEqual(same, [], `texts of ${base} copied from English`);
+  }
+});
+
+test("every kind of error the engine tells has a title, an explanation and a short word, in both languages, and the Italian titles are the ones of the design", () => {
+  const kinds = ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider", "unknown"];
+  for (const locale of [autopilotEn, autopilotIt]) {
+    assert.deepEqual(Object.keys(get(locale, "autopilot.failure.kind")).sort(), [...kinds].sort());
+    for (const kind of kinds) for (const part of ["title", "explain", "short"]) assert.ok(get(locale, `autopilot.failure.kind.${kind}.${part}`)?.trim(), `${kind}.${part}`);
+  }
+  assert.deepEqual(kinds.map((kind) => get(autopilotIt, `autopilot.failure.kind.${kind}.title`)), [
+    "Problema di connessione", "Accesso rifiutato dal provider", "Troppe richieste", "Risposta troppo lenta", "Risposta troncata dal limite di output", "Il provider ha rifiutato la richiesta",
+    "Il libro è cambiato altrove", "Budget raggiunto", "Limite raggiunto", "Un file del profilo ha problemi", "Errore del provider", "Errore",
+  ]);
+  // A title says what happened; the explanation says what it means and what to do, and is a sentence of its own.
+  for (const kind of kinds) assert.notEqual(get(autopilotEn, `autopilot.failure.kind.${kind}.title`), get(autopilotEn, `autopilot.failure.kind.${kind}.explain`));
+});
+
+test("every text of the result and of the error panel that names a count has a form for one and for many, in both languages", () => {
+  for (const base of ["autopilot.result.scores.showAll", "autopilot.result.read.why.rounds", "autopilot.result.read.why.both", "autopilot.failure.repeats", "autopilot.timeline.round.accepted", "autopilot.timeline.round.rejected"]) {
+    for (const locale of [autopilotEn, autopilotIt]) {
+      assert.equal(typeof get(locale, `${base}_one`), "string", `${base}_one`);
+      assert.ok(placeholders(get(locale, `${base}_other`)).includes("count"), `${base}_other says how many`);
+    }
+  }
+});
+
+test("the result speaks of the verdict, the figures and the next steps in the words of the site, in each language", () => {
+  const it_ = autopilotIt.autopilot.result;
+  const en_ = autopilotEn.autopilot.result;
+  assert.deepEqual([it_.verdict.approve, it_.verdict.revise, it_.verdict.rewrite], ["Approvato", "Da rivedere", "Da riscrivere"]);
+  assert.deepEqual([en_.verdict.approve, en_.verdict.revise], ["Approved", "Needs revision"]);
+  assert.deepEqual([it_.actions.add, it_.actions.read, it_.actions.export, it_.actions.ask], ["Aggiungi capitoli", "Leggi il libro", "Esporta", "Chiedi al direttore"]);
+  assert.deepEqual([en_.actions.add, en_.actions.read, en_.actions.export, en_.actions.ask], ["Add chapters", "Read the book", "Export", "Ask the director"]);
+  assert.equal(it_.numbers.time, "Tempo di lavoro");
+  assert.equal(it_.scores.round, "Giro {{number}}");
+  assert.equal(en_.scores.round, "Round {{number}}");
+});
+
+test("the error panel and the live regions around it use the words of the site, in each language", () => {
+  const it_ = autopilotIt.autopilot.failure;
+  const en_ = autopilotEn.autopilot.failure;
+  assert.equal(en_.actions.retry, "Retry now");
+  assert.equal(it_.actions.retry, "Riprova ora");
+  assert.equal(it_.actions.integrations, "Apri le integrazioni AI");
+  assert.equal(en_.actions.integrations, "Open AI Integrations");
+  assert.equal(it_.countdown.in, "Nuovo tentativo tra {{time}}");
+  assert.equal(en_.countdown.in, "Trying again in {{time}}");
+  // The announcements are sentences of their own: they say it once, when it starts and when it ends.
+  assert.ok(placeholders(it_.countdown.announceStart).includes("time") && placeholders(en_.countdown.announceStart).includes("time"));
+  assert.ok(!placeholders(en_.countdown.announceNow).length);
+});

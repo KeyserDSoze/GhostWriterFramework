@@ -18,6 +18,7 @@ import { ProgressBars, StatusMessage, StatusPill, StepNow } from "@/components/a
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
+import { isErrorKind } from "@/autopilot/errorModel";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { cn } from "@/lib/utils";
 
@@ -174,7 +175,7 @@ function MiniPlayer({ bookId, announce, heading }: { bookId: string; announce: b
       {model && (model.running ? <StepNow bookId={bookId} compact announce={announce} /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null)}
       {model && <ProgressBars summary={model.summary} scenes={false} context={t("autopilot.dockTitle")} />}
       {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} compact hintId={profileHintId} />}
-      {failure && <RunErrorNotice bookId={bookId} message={failure.message} compact />}
+      {failure && <RunErrorNotice bookId={bookId} message={failure.message} kind={isErrorKind(failure.kind ?? failure.errorKind) ? failure.kind ?? failure.errorKind : undefined} pageHref={pageHref} />}
       <OperationNotice bookId={bookId} />
       {view.busyInAnotherTab && <p className="text-xs text-muted-foreground">{t("autopilot.anotherTab")}</p>}
       {view.error && <p className="flex items-start gap-1.5 text-xs text-destructive"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{view.error}</p>}

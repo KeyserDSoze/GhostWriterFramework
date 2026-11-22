@@ -22,7 +22,10 @@ function useGroupLabel(group: TimelineGroup, chapterTitle: ((number: number) => 
       ? t("autopilot.timeline.group.chapterTitled", { chapter: group.chapterNumber, title, round: group.round })
       : t("autopilot.timeline.group.chapter", { chapter: group.chapterNumber, round: group.round });
   }
-  return group.result ? `${label} · ${t(`director.opinion.verdict.${group.result.verdict}`)} ${formatCount(group.result.score)}/10` : label;
+  if (!group.result) return label;
+  const score = formatCount(group.result.score);
+  // The plan records the vote of a round and not its verdict: a round whose review the log no longer has says the vote, and says whose it is.
+  return group.result.verdict ? `${label} · ${t(`director.opinion.verdict.${group.result.verdict}`)} ${score}/10` : `${label} · ${t("autopilot.plan.score", { score })}`;
 }
 
 /**
@@ -38,6 +41,14 @@ export const TimelineGroupView = memo(function TimelineGroupView({ group, open, 
   const expandable = group.rows.length > 0;
   const total = Math.min(group.rows.length, MAX_ROWS);
   const left = total - Math.min(limit, total);
+  // What the plan recorded of the round besides its vote: the readers' average (the first round only) and what the director decided. Only what is there, and no zero.
+  const details = group.result
+    ? [
+        group.result.readers !== undefined ? t("autopilot.timeline.round.readers", { score: formatCount(group.result.readers) }) : "",
+        group.result.accepted ? t("autopilot.timeline.round.accepted", { count: group.result.accepted }) : "",
+        group.result.rejected ? t("autopilot.timeline.round.rejected", { count: group.result.rejected }) : "",
+      ].filter(Boolean).join(" · ")
+    : "";
   const content = (
     <>
       <span className="min-w-0 flex-1 basis-44 text-sm font-medium">{label}</span>
@@ -60,6 +71,7 @@ export const TimelineGroupView = memo(function TimelineGroupView({ group, open, 
       </h3>
       {open && expandable && (
         <div id={regionId} className="space-y-1.5 border-t p-2">
+          {details && <p data-timeline-round className="px-1 text-xs text-muted-foreground">{details}</p>}
           <ol className="space-y-1.5">
             {group.rows.slice(0, Math.min(limit, total)).map((row) => <TimelineRowView key={row.key} row={row} currency={currency} />)}
           </ol>

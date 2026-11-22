@@ -21,8 +21,8 @@ import { AutopilotPage } from "@/pages/AutopilotPage";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
-import { freezeClock, runningStep, seedRun, stubWidth } from "./helpers/autopilotBand";
-import { longPlan, planOf } from "./helpers/autopilotFixtures";
+import { activityOf, freezeClock, runningStep, seedRun, stubWidth } from "./helpers/autopilotBand";
+import { judgedPlan, longPlan, planOf } from "./helpers/autopilotFixtures";
 import { richHistory } from "./helpers/autopilotTimeline";
 import { LOCAL_BOOK, T0, makeRuntime, quickGroupName, quickName, t } from "./helpers/quickCommands";
 
@@ -188,6 +188,35 @@ describe("the page on a phone (390 px wide)", () => {
       if (text.length >= 15) seen.set(text, (seen.get(text) ?? 0) + 1);
     }
     expect([...seen].filter(([, count]) => count > 1).map(([text]) => text)).toEqual([]);
+  });
+
+  it("has the result of a book that is finished at the top of the overview, under the band, and not in the other tabs", async () => {
+    seedRun({ status: "completed", phase: "completed", chapters: judgedPlan(12), message: "The book is complete.", statePatch: { finalDone: true, finalReview: { verdict: "approve", score: 8, text: "The arc holds.", at: T0 } }, stats: { workedMs: 13_260_000 } });
+    render(<Page />);
+    const result = document.querySelector<HTMLElement>("[data-autopilot-result]") as HTMLElement;
+    expect(result).not.toBeNull();
+    expect(panel()).toContainElement(result);
+    expect(bandOf().querySelector("[data-autopilot-result]")).toBeNull();
+    expect(bandOf().querySelector("[data-band-result]")).toBeNull();
+    expect(result.querySelector("[data-result-score]")).toHaveTextContent("8/10");
+    // The first thing the overview has: before the phases and the rest of what the band does not hold.
+    expect(result.compareDocumentPosition(within(panel()).getByRole("list", { name: t("autopilot.band.phases.label") })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.mouseDown(tab(TABS[1]));
+    fireEvent.click(tab(TABS[1]));
+    await waitFor(() => expect(tab(TABS[1])).toHaveAttribute("aria-selected", "true"));
+    expect(document.querySelector("[data-autopilot-result]")).toBeNull();
+  });
+
+  it("has the panel of an error above the tabs, with the buttons that a thumb reaches in the panel, and the band keeps its own", async () => {
+    const attempt = activityOf("write", { id: "fail-1", title: "Writing scene 2", chapterNumber: 5, sceneNumber: 2, status: "failed", error: "Connection error.", errorKind: "network", errorDetail: { model: "gpt-4.1" }, startedAt: T0, endedAt: "2026-11-21T10:00:10.000Z" });
+    seedRun({ status: "error", activities: [attempt], statePatch: { lastError: { message: "Connection error.", at: "2026-11-21T10:00:10.000Z", task: "write", errorKind: "network", errorDetail: { model: "gpt-4.1" } } } });
+    render(<Page />);
+    const error = document.querySelector<HTMLElement>("[data-autopilot-error]") as HTMLElement;
+    expect(error).not.toBeNull();
+    expect(screen.getByRole("tablist").compareDocumentPosition(error) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(panel()).not.toContainElement(error);
+    expect(within(error).getByRole("button", { name: quickName(t("autopilot.failure.actions.retry")) })).toBeInTheDocument();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
   });
 
   it("has the plan in the Plan tab", async () => {

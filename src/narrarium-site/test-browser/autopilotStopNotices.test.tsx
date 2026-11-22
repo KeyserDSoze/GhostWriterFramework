@@ -382,6 +382,14 @@ describe("a run that stopped because a file it was to rewrite has front matter t
     expect(detail.className).not.toMatch(/line-clamp/);
   });
 
+  it("says in the hub what kind of failure it was when the engine told it, with the words of the provider under it", () => {
+    seed({ status: "error", message: "401 Unauthorized", lastError: { message: "401 Unauthorized", at: T0, task: "write", errorKind: "auth", errorDetail: { status: 401 } } });
+    render(<MemoryRouter initialEntries={["/app/autopilot"]}><AutopilotHubPage /></MemoryRouter>);
+    const notices = alertsWith("401 Unauthorized");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toHaveTextContent(t("autopilot.failure.kind.auth.title"));
+  });
+
   it("explains the book in the hub, with the way to the file", () => {
     const text = failure(PATH);
     seed(failed(text));

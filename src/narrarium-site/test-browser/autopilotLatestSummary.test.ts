@@ -17,6 +17,31 @@ describe("the summary the page follows", () => {
     expect(latestSummary(downloaded, event)?.pausePending).toBe("after-chapter");
   });
 
+  it("is the summary of the newest event with the retry that waits in it, also when it has the time of the downloaded state: waiting to try again does not write the state", () => {
+    const downloaded = state();
+    const event = live({ retry: { at: "2026-11-21T10:00:36.000Z", attempt: 2, retries: 3 } });
+    expect(event.updatedAt).toBe(downloaded.updatedAt);
+    expect(latestSummary(downloaded, event)).toBe(event);
+    expect(latestSummary(downloaded, event)?.retry).toEqual({ at: "2026-11-21T10:00:36.000Z", attempt: 2, retries: 3 });
+  });
+
+  it("goes on with the next event, which has no retry in it: the summary is replaced whole, and the retry is gone with the wait", () => {
+    const downloaded = state();
+    const waiting = live({ retry: { at: "2026-11-21T10:00:36.000Z", attempt: 2, retries: 3 } });
+    const started = live();
+    expect(started.updatedAt).toBe(waiting.updatedAt);
+    expect(started.retry).toBeUndefined();
+    expect(latestSummary(downloaded, started)).toBe(started);
+    expect(latestSummary(downloaded, started)?.retry).toBeUndefined();
+  });
+
+  it("takes the retry that the engine says of its own session, from the download: the state alone cannot say it", () => {
+    const downloaded = state();
+    const fromTheSession = live({ retry: { at: "2026-11-21T10:00:36.000Z", attempt: 1, retries: 3 } });
+    expect(latestSummary(downloaded, undefined, fromTheSession)?.retry).toEqual({ at: "2026-11-21T10:00:36.000Z", attempt: 1, retries: 3 });
+    expect(latestSummary(downloaded, undefined, null)?.retry, "a summary made from the state file alone has none").toBeUndefined();
+  });
+
   it("is the downloaded state when it is newer than the last event", () => {
     const old = live({ pausePending: "after-step" });
     const newer = state({ updatedAt: T1, status: "paused" });

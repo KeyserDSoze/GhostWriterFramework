@@ -6,7 +6,7 @@ import { useBookAutopilotView } from "@/autopilot/hooks";
 import { useAutopilotStore } from "@/autopilot/store";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useAutopilotControl, type AutopilotControl } from "@/autopilot/useAutopilotControl";
-import { CycleList, HostChip, PhaseList, PreviewLine, ProgressBars, ResultSummary, SignalAge, StatusMessage, StatusPill, StepElapsed, StepNow, UsageLine } from "@/components/autopilot/band/parts";
+import { CycleList, HostChip, PhaseList, PreviewLine, ProgressBars, SignalAge, StatusMessage, StatusPill, StepElapsed, StepNow, UsageLine } from "@/components/autopilot/band/parts";
 import { useReserveSpace } from "@/hooks/useReserveSpace";
 import { useSettingsStore } from "@/store/settingsStore";
 import { cn } from "@/lib/utils";
@@ -118,7 +118,7 @@ export function AutopilotControlBand({ bookId, variant = "full", commands }: Aut
 
   return (
     <div ref={wrapper} data-autopilot-band-wrapper className="sticky top-0 z-20 bg-background pb-3 pt-1">
-      <section data-autopilot-band data-compact={compact ? "" : undefined} aria-label={t("autopilot.band.label", { book: model.bookName })} className="rounded-2xl border border-layer bg-card shadow-md">
+      <section data-autopilot-band data-compact={compact ? "" : undefined} tabIndex={-1} aria-label={t("autopilot.band.label", { book: model.bookName })} className="rounded-2xl border border-layer bg-card shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         {compact ? (
           <div className="space-y-2 p-3">
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
@@ -133,7 +133,7 @@ export function AutopilotControlBand({ bookId, variant = "full", commands }: Aut
           <div className={cn("gap-4 p-3 sm:p-4", full ? "grid grid-cols-[minmax(0,1fr)_auto]" : "space-y-3")}>
             <div className="min-w-0 space-y-3">
               {statusRow}
-              {running ? <StepNow bookId={bookId} showPreview={full} /> : completed ? <ResultSummary summary={summary} activities={model.activities} currency={model.currency} /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null}
+              {running ? <StepNow bookId={bookId} showPreview={full} /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null}
               <ProgressBars summary={summary} />
               {full && summary.progress.chapters > 0 && <PhaseList summary={summary} />}
               {full && model.cycle && <CycleList cycle={model.cycle} />}
@@ -160,7 +160,6 @@ export function AutopilotBandDetails({ bookId, variant }: { bookId: string; vari
     <div data-band-details className="space-y-3 rounded-2xl border border-layer bg-card p-3 shadow-sm">
       {compact && <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><HostLine model={model} /></div>}
       {running && <PreviewLine bookId={bookId} />}
-      {compact && completed && <ResultSummary summary={summary} activities={model.activities} currency={model.currency} />}
       {compact && <ProgressBars summary={summary} chapters={false} />}
       {summary.progress.chapters > 0 && <PhaseList summary={summary} />}
       {model.cycle && <CycleList cycle={model.cycle} />}

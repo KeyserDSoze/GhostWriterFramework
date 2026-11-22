@@ -11,6 +11,7 @@ import { loadAutopilotRuntime } from "@/autopilot/loader";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useServerConnection } from "@/autopilot/serverConnection";
 import { activityTitle, autopilotSummaryLine } from "@/autopilot/format";
+import { isErrorKind } from "@/autopilot/errorModel";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useSettingsStore } from "@/store/settingsStore";
 
@@ -81,7 +82,7 @@ export function AutopilotHubPage() {
                       </p>
                     )}
                     {isProfileProblemStop(summary) && <ProfileProblemsNotice bookId={book.id} message={summary?.message} compact />}
-                    {summary?.status === "error" && summary.lastError && <RunErrorNotice bookId={book.id} message={summary.lastError.message} compact />}
+                    {summary?.status === "error" && summary.lastError && <RunErrorNotice bookId={book.id} message={summary.lastError.message} kind={isErrorKind(summary.lastError.kind ?? summary.lastError.errorKind) ? summary.lastError.kind ?? summary.lastError.errorKind : undefined} />}
                     {current && <p className="truncate text-xs"><span className="font-medium text-primary">{t("autopilot.feed.now")}:</span> {activityTitle(t, current.activity)}</p>}
                     {!summary && view?.error && <p className="text-xs text-muted-foreground">{view.error}</p>}
                     <div className="flex flex-wrap gap-2">

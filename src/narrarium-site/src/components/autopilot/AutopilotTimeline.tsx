@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { EyeOff, ListChecks, Loader2 } from "lucide-react";
-import type { AutopilotActivity } from "narrarium-engine";
+import type { AutopilotActivity, AutopilotFinalReview, ChapterRound } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { TimelineFilters } from "@/components/autopilot/timeline/Filters";
 import { TimelineGroupView } from "@/components/autopilot/timeline/Group";
@@ -19,6 +19,10 @@ export interface AutopilotTimelineProps {
   activities: readonly AutopilotActivity[];
   /** The title of a chapter of the plan, for the header of its groups; asked only for the chapters that are shown. */
   chapterTitle?: (number: number) => string | undefined;
+  /** The rounds of review the plan recorded for a chapter, oldest first, for the numbers of the rounds and their votes; asked only for the chapters the log has. */
+  chapterRounds?: (number: number) => readonly ChapterRound[] | undefined;
+  /** What the engine says of the whole book, for the header of its review. */
+  finalReview?: Pick<AutopilotFinalReview, "verdict" | "score"> | null;
   currency?: string;
 }
 
@@ -28,13 +32,13 @@ export interface AutopilotTimelineProps {
  * It replaces the list of the steps and the live feed that said the same things twice. The page that holds it does not draw it again for what it
  * does not show: it is kept as it is until the log, the events of the book or what the author chose change.
  */
-export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loading = false, activities, chapterTitle, currency }: AutopilotTimelineProps) {
+export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loading = false, activities, chapterTitle, chapterRounds, finalReview, currency }: AutopilotTimelineProps) {
   const { t } = useTranslation();
   const feed = useAutopilotStore((state) => state.feed);
   const running = useAutopilotStore((state) => state.live[bookId]?.activity ?? null);
   const [prefs, change] = useTimelinePrefs(bookId);
   const events = useMemo(() => feed.filter((entry) => entry.event.bookId === bookId).map((entry) => entry.event), [feed, bookId]);
-  const timeline = useMemo(() => buildTimeline({ activities, events, running, since: prefs.since }), [activities, events, running, prefs.since]);
+  const timeline = useMemo(() => buildTimeline({ activities, events, running, since: prefs.since, rounds: chapterRounds, finalReview }), [activities, events, running, prefs.since, chapterRounds, finalReview]);
   const counts = useMemo(() => filterCounts(timeline), [timeline]);
   const shown = useMemo(() => filterTimeline(timeline, prefs.filter), [timeline, prefs.filter]);
   // Which groups the author opened or closed; the others are open or closed as the timeline says (the one in hand is open).
