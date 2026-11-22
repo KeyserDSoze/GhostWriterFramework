@@ -412,7 +412,11 @@ test("S7B admin panel: the audit is a table that loads older calls on demand, an
     for (let index = 0; index < 25; index += 1) await rpc.call("book_info");
     await server.mcp.audit.flush();
     const english = await openPanel(server);
-    const rows = await until(() => (english.browser.$("audit-rows").children.length ? english.browser.$("audit-rows").children : null));
+    // Until the calls arrive the table has one row that says there are none: what counts is the first page of calls.
+    const rows = await until(() => {
+      const children = english.browser.$("audit-rows").children;
+      return children.length > 1 || /book_info/.test(children[0]?.textContent ?? "") ? children : null;
+    });
     assert.equal(rows.length, 20, "twenty at first");
     assert.match(rows[0].textContent, /Claude Code.*book_info/s);
     await english.browser.$("audit-more").click();

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import * as testing from "../dist/testing.mjs";
+import { declareLarge } from "./api-helpers.mjs";
 import { until, withServer } from "./helpers.mjs";
 import { READ_TOOLS, RUN_TOOLS, TITLE, WRITE_TOOLS, issueToken, mcpClient, mcpFixture } from "./mcp-helpers.mjs";
 
@@ -217,7 +218,7 @@ test("S7: a batch is read by the 2025-03-26 protocol only, the MCP-Protocol-Vers
 
 test("S7: the endpoint offers no event stream and no session to end (GET, DELETE and the rest are 405 and name POST), a body that is not JSON is 415, one that is too big is 413", async () => {
   await withServer(async (server, client) => {
-    const { slug, rpc } = await mcpFixture(server, client);
+    const { slug, rpc, token } = await mcpFixture(server, client);
     for (const method of ["GET", "DELETE", "PUT", "PATCH"]) {
       const answer = await rpc.method(method, method === "GET" ? { accept: "text/event-stream" } : {});
       assert.equal(answer.status, 405, method);
@@ -225,8 +226,10 @@ test("S7: the endpoint offers no event stream and no session to end (GET, DELETE
     }
     assert.equal((await mcpClient(server, slug).method("GET")).status, 401, "who asks is checked before anything else is said");
     assert.equal((await rpc.post("ping", { "content-type": "text/plain" })).status, 415);
-    const big = await rpc.post(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: { padding: "x".repeat(1024 * 1024) } }));
-    assert.deepEqual([big.status, big.json.code], [413, "payload_too_large"]);
+    // Refused by its declared length, before a byte of it is read. A megabyte really sent would race the answer: the connection closes after an
+    // error, and on macOS the upload still going is reset before the client reads the 413 (C11 covers a body that is too big as it arrives).
+    const big = await declareLarge(server, "POST", `/mcp/${slug}`, token, 2 * 1024 * 1024);
+    assert.deepEqual([big.status, big.json?.code], [413, "payload_too_large"]);
     const withSession = await rpc.post(PING, { "mcp-session-id": "left-over-from-another-server" });
     assert.equal(withSession.status, 200, "a session id that came from somewhere else is ignored");
     assert.equal(withSession.headers.get("mcp-session-id"), null);
