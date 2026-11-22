@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.83.0",
+    "date": "2026-11-22",
+    "en": {
+      "title": "Google Drive and OneDrive stay connected",
+      "summary": "Account & Sync can keep Google Drive and OneDrive connected with long-lived credentials: Narrarium renews its access in the background, so you no longer reconnect every hour (Google) or every day (Microsoft).",
+      "changes": [
+        "Long-lived credentials for Google Drive and OneDrive. Narrarium renews the access by itself, at start-up and when you come back to the tab, without opening any window. It is offered when Narrarium's sign-in service is enabled; without it, everything works exactly as before.",
+        "The Google Drive and OneDrive cards say which kind of credentials each connection has (long-lived, long-lived for this tab only, or session) and explain the difference. A \"Switch to long-lived credentials\" button appears when it is possible and keeps your sync settings and history; \"Reconnect\" uses the new way too.",
+        "If a renewal is refused, the sync indicator in the header asks you to reconnect. A network or server problem is only a passing error: nothing is deleted and the sync tries again.",
+        "Disconnecting forgets the credentials on this device and revokes Google's access. Microsoft cannot be revoked from here, only from your Microsoft account, and the card says so. Disconnecting every account or deleting Narrarium's local data does the same.",
+        "The renewal credential is kept on this device only when \"Remember this connection on this device\" is on. It is stored sealed with a key that never leaves your browser (this protects the stored copy, not against code running in the page), and it is never part of synced data, exports or logs.",
+        "Signing in to Microsoft with long-lived credentials uses a new return page in its own window. The \"Remember this connection on this device\" switch is now properly labelled for screen readers."
+      ]
+    },
+    "it": {
+      "title": "Google Drive e OneDrive restano collegati",
+      "summary": "Account e sincronizzazione può tenere collegati Google Drive e OneDrive con credenziali durature: Narrarium rinnova l'accesso in background, così non devi più ricollegarti ogni ora (Google) o ogni giorno (Microsoft).",
+      "changes": [
+        "Credenziali durature per Google Drive e OneDrive. Narrarium rinnova l'accesso da solo, all'avvio e quando torni sulla scheda, senza aprire nessuna finestra. Vengono offerte quando il servizio di accesso di Narrarium è attivo; senza, tutto funziona esattamente come prima.",
+        "Le schede di Google Drive e OneDrive dicono che tipo di credenziali ha ogni collegamento (durature, durature solo per questa scheda, oppure di sessione) e ne spiegano la differenza. Quando è possibile compare il pulsante «Passa a credenziali durature», che conserva impostazioni e cronologia della sincronizzazione; anche «Riconnetti» usa il nuovo modo.",
+        "Se un rinnovo viene rifiutato, l'indicatore di sincronizzazione nell'header ti chiede di riconnetterti. Un problema di rete o del servizio è solo un errore passeggero: non viene cancellato nulla e la sincronizzazione riprova.",
+        "Disconnettere dimentica le credenziali su questo dispositivo e revoca l'accesso di Google. Microsoft non si può revocare da qui, solo dal tuo account Microsoft, e la scheda lo dice. Lo stesso vale per la disconnessione di tutti gli account e per l'eliminazione dei dati locali di Narrarium.",
+        "La credenziale di rinnovo resta su questo dispositivo solo se «Ricorda questa connessione sul dispositivo» è attivo. È conservata cifrata con una chiave che non lascia mai il browser (protegge la copia salvata, non da codice che gira nella pagina) e non fa mai parte dei dati sincronizzati, delle esportazioni o dei log.",
+        "L'accesso a Microsoft con credenziali durature usa una nuova pagina di ritorno in una finestra a parte. L'interruttore «Ricorda questa connessione sul dispositivo» ora ha un'etichetta corretta per gli screen reader."
+      ]
+    }
+  },
+  {
     "version": "0.82.0",
     "date": "2026-11-21",
     "en": {
