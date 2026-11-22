@@ -156,7 +156,7 @@ export class AutopilotSession {
     const event = { ...body, bookId: this.config.bookId, at: this.now().toISOString(), seq: ++this.seq } as AutopilotEvent;
     if (body.type === "state") this.summary = body.state;
     if (body.type === "task-started") this.live = { activity: body.activity, characters: 0, preview: "" };
-    else if (body.type === "task-progress" && this.live?.activity.id === body.activityId) this.live = { ...this.live, characters: body.characters, preview: body.preview };
+    else if (body.type === "task-progress" && this.live?.activity.id === body.activityId) this.live = { activity: this.live.activity, characters: body.characters, preview: body.preview, ...(body.bytes !== undefined ? { bytes: body.bytes } : {}) };
     else if (body.type === "task-finished" && this.live?.activity.id === body.activity.id) this.live = null;
     else if (body.type === "run-ended") this.live = null;
     // Streaming previews and heartbeats are only useful live; keep the replay buffer for meaningful events.

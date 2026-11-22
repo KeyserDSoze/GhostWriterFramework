@@ -297,11 +297,11 @@ test("onAttempt carries the effective request; onAttemptEnd reports the outcome,
   assert.equal(ends[1].currency, "EUR");
 });
 
-test("the attempt shows the JSON instruction a model without tools receives, and a failed attempt still reports what it cost", async () => {
+test("with Tools only off the attempt shows the JSON instruction a model without tools receives, and a failed attempt still reports what it cost", async () => {
   const attempts = [];
   const ends = [];
   const fetch = async () => Response.json({ choices: [{ message: { content: "cut" }, finish_reason: "length" }], usage: { prompt_tokens: 500, completion_tokens: 40 } });
-  const cfg = pickAiRuntimeConfig({ aiIntegrations: [integration("a", { chatModels: [{ id: "1", name: "m", capabilities: ["default"], supportsToolCalls: false, pricing: { inputPerMTok: 1, outputPerMTok: 2 } }] })] });
+  const cfg = pickAiRuntimeConfig({ aiToolsOnly: false, aiIntegrations: [integration("a", { chatModels: [{ id: "1", name: "m", capabilities: ["default"], supportsToolCalls: false, pricing: { inputPerMTok: 1, outputPerMTok: 2 } }] })] });
   const error = await createFetchAi(cfg, { fetch, onAttempt: (attempt) => attempts.push(attempt), onAttemptEnd: (end) => ends.push(end) }).complete({ ...ASK, json: SCHEMA }).then(() => null, (failure) => failure);
   assert.equal(error.truncated, true);
   assert.match(attempts[0].messages[0].content, /Reply with ONLY one JSON object/);

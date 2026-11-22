@@ -1386,8 +1386,8 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   review.score = score;
   review.summary = summaryText;
   review.repairQueue = [...new Set(accepted.map((decision) => decision.sceneNumber!))].sort((left, right) => left - right);
-  // The readers read the chapter once, in the first round of its review: their average is in the record of that round and of no other.
-  recordChapterRound(chapter, closedRound({ director: score, readers: review.history.length === 0 ? review.readerScores.map((entry) => entry.score) : undefined, accepted: accepted.length, rejected: rejected.length }));
+  // The readers read the chapter once, in the first round of its review: their average is in the record of that round and of no other. The verdict is the one the plan acts on.
+  recordChapterRound(chapter, closedRound({ director: score, readers: review.history.length === 0 ? review.readerScores.map((entry) => entry.score) : undefined, verdict, accepted: accepted.length, rejected: rejected.length }));
   review.history = [...review.history, { round: review.round, verdict, score, accepted: accepted.length, rejected: rejected.length }];
   ctx.state.directorNotes = mergeNotes(ctx.state.directorNotes, asStringList(output.guidance, 6));
   const question = asRecord(output.questionForAuthor);

@@ -1,4 +1,4 @@
-import type { AiChatModelConfig, AiIntegrationConfig, AiPricingConfig, AiRouteTarget, AiRuntimeConfig } from "./config.js";
+import { normalizeReasoningParameter, normalizeThinking, type AiChatModelConfig, type AiIntegrationConfig, type AiPricingConfig, type AiReasoningParameter, type AiRouteTarget, type AiRuntimeConfig, type AiThinking } from "./config.js";
 
 export interface AiCandidate {
   integration: AiIntegrationConfig;
@@ -8,6 +8,17 @@ export interface AiCandidate {
   maxOutputTokens?: number;
   underlyingModel?: string;
   supportsToolCalls?: boolean;
+  /** What the model's configuration declares (see `AiChatModelConfig`); absent when it does not say. */
+  supportsStreaming?: boolean;
+  supportsReasoning?: boolean;
+  supportsVision?: boolean;
+  /** How the model's thinking level is sent (see `AiChatModelConfig.reasoningParameter`); absent when the model does not say: `reasoning_effort`. */
+  reasoningParameter?: AiReasoningParameter;
+  /**
+   * The thinking level for this candidate: its route target's, else its integration's (`automatic` is a choice that sends nothing). Absent when
+   * neither says: the request carries no level.
+   */
+  thinking?: AiThinking;
 }
 
 /** Chat models of an integration, tolerant of the legacy single-model fields. */
@@ -23,7 +34,9 @@ function supports(model: AiChatModelConfig, capability: string): boolean {
   return model.capabilities.includes(capability) || model.capabilities.includes("default");
 }
 
-function candidate(integration: AiIntegrationConfig, model: AiChatModelConfig): AiCandidate {
+function candidate(integration: AiIntegrationConfig, model: AiChatModelConfig, target?: AiRouteTarget): AiCandidate {
+  const thinking = normalizeThinking(target?.thinking) ?? normalizeThinking(integration.thinking);
+  const reasoningParameter = normalizeReasoningParameter(model.reasoningParameter);
   return {
     integration,
     model: model.name,
@@ -32,6 +45,11 @@ function candidate(integration: AiIntegrationConfig, model: AiChatModelConfig): 
     maxOutputTokens: model.maxOutputTokens,
     underlyingModel: model.underlyingModel,
     supportsToolCalls: model.supportsToolCalls,
+    ...(typeof model.supportsStreaming === "boolean" ? { supportsStreaming: model.supportsStreaming } : {}),
+    ...(typeof model.supportsReasoning === "boolean" ? { supportsReasoning: model.supportsReasoning } : {}),
+    ...(typeof model.supportsVision === "boolean" ? { supportsVision: model.supportsVision } : {}),
+    ...(reasoningParameter ? { reasoningParameter } : {}),
+    ...(thinking ? { thinking } : {}),
   };
 }
 
@@ -40,7 +58,7 @@ function fromTarget(config: AiRuntimeConfig, target: AiRouteTarget, capability: 
   if (!integration || integration.provider === "m365_copilot") return null;
   const model = integrationChatModels(integration).find((entry) => entry.name === target.model.trim());
   if (!model || !supports(model, capability)) return null;
-  return candidate(integration, model);
+  return candidate(integration, model, target);
 }
 
 function writingIntegration(config: AiRuntimeConfig): AiIntegrationConfig | undefined {

@@ -29,7 +29,10 @@ export interface AiRequest {
   label: string;
   system: string;
   user: string;
-  /** When present the reply must be one JSON object matching this schema (forced tool call when supported). */
+  /**
+   * When present the reply must be one JSON object matching this schema, delivered as the forced call of a function. With "Tools only" off
+   * (`AiRuntimeConfig.toolsOnly`), a model marked as without tool calls gets the schema in the message instead, and a JSON in the text is read.
+   */
   json?: AiJsonSchema;
   maxOutputTokens?: number;
   /** Multiplies the output limit (after the structured floor and the reasoning margin, up to the model's own maximum). */
@@ -188,6 +191,17 @@ export class AiFallbackBlockedError extends AiProviderError {
   constructor(message: string) {
     super(message, undefined, false);
     this.name = "AiFallbackBlockedError";
+  }
+}
+
+/**
+ * "Tools only" is on and no model of the route can call a function, so a structured request has nowhere to go: nothing was sent, and the same
+ * configuration would end the same way. `models` are the names of the models that were left out. The message names them and says the two ways out.
+ */
+export class AiToolsRequiredError extends AiProviderError {
+  constructor(message: string, readonly models: string[] = []) {
+    super(message, undefined, false);
+    this.name = "AiToolsRequiredError";
   }
 }
 

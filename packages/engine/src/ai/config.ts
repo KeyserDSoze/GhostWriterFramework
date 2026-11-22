@@ -14,8 +14,28 @@ export interface AiChatModelConfig {
   name: string;
   underlyingModel?: string;
   capabilities: string[];
+  /** The model can be asked to answer through a function. Only `false` has an effect: with "Tools only" on, a structured request skips the model. */
   supportsToolCalls?: boolean;
+  /** The model streams its replies. Only `false` has an effect: the model is then called without `stream`, whatever the integration's `streamMode` says. */
+  supportsStreaming?: boolean;
+  /**
+   * The model reasons. `true`: it gets the margin of output for its reasoning (as a model known to reason by its name), a reply cut before it wrote a
+   * word is a reply cut while reasoning, and a thinking level may be sent. `false`: a thinking level is not sent to it. The name of a model that is known
+   * to reason is not undone by `false`.
+   */
+  supportsReasoning?: boolean;
+  /** The model reads images. Data only: nothing in a request depends on it. */
+  supportsVision?: boolean;
+  /**
+   * How the thinking level reaches this model ("Thinking parameter"): `reasoning_effort` (the OpenAI field; also what an absent value means, and the requests
+   * of a model that does not say are exactly the ones they always were), `chat_template_kwargs.reasoning_strength` (the level as an argument of the chat
+   * template: Muse Glimmer takes it so, and does not take `reasoning_effort`) or `none` (no level is sent, even when the task or the integration asks for one).
+   * `suggestedReasoningParameter` says what the documented sources know of a model name; the engine never applies it by itself.
+   */
+  reasoningParameter?: AiReasoningParameter;
+  /** The context window of the model: what a prompt and its answer may be together. The engine subtracts the answer and a margin itself. */
   maxInputTokens?: number;
+  /** The largest answer that can be asked of the model. */
   maxOutputTokens?: number;
   pricing?: AiPricingConfig;
 }
@@ -25,6 +45,33 @@ export interface AiChatModelConfig {
  * included, so that a provider that answers slowly is never silent; `off` never streams, for a provider or a proxy that cannot.
  */
 export type AiStreamMode = "auto" | "off";
+
+/**
+ * How hard a model is asked to think, per integration and per route target. `low`, `medium`, `high` and `xhigh` are sent to the provider as
+ * `reasoning_effort` (or as the argument of the chat template that the model's `reasoningParameter` says); `automatic` sends nothing (the provider's
+ * own default), even when the integration sets a level. Absent means nothing was chosen: a route target takes the level of its integration, and an
+ * integration without one sends nothing.
+ */
+export const AI_THINKING_LEVELS = ["automatic", "low", "medium", "high", "xhigh"] as const;
+export type AiThinking = (typeof AI_THINKING_LEVELS)[number];
+
+/** A thinking level as the engine keeps it: one of `AI_THINKING_LEVELS`, spelled exactly; anything else is no value. */
+export function normalizeThinking(value: unknown): AiThinking | undefined {
+  return typeof value === "string" && (AI_THINKING_LEVELS as readonly string[]).includes(value) ? value as AiThinking : undefined;
+}
+
+/**
+ * How a thinking level reaches a model: the setting of the model (`AiChatModelConfig.reasoningParameter`, "Thinking parameter"). `reasoning_effort` is the
+ * OpenAI field, and what is sent when a model says nothing; `chat_template_kwargs.reasoning_strength` sends the level as an argument of the model's chat
+ * template (`chat_template_kwargs: { reasoning_strength: <level> }`), which is how Muse Glimmer takes it; `none` sends no level to the model at all.
+ */
+export const AI_REASONING_PARAMETERS = ["reasoning_effort", "chat_template_kwargs.reasoning_strength", "none"] as const;
+export type AiReasoningParameter = (typeof AI_REASONING_PARAMETERS)[number];
+
+/** A thinking parameter as the engine keeps it: one of `AI_REASONING_PARAMETERS`, spelled exactly; anything else is no value. */
+export function normalizeReasoningParameter(value: unknown): AiReasoningParameter | undefined {
+  return typeof value === "string" && (AI_REASONING_PARAMETERS as readonly string[]).includes(value) ? value as AiReasoningParameter : undefined;
+}
 
 /** The longest silence the engine waits for between two pieces of a streamed reply, unless the integration says otherwise. */
 export const DEFAULT_IDLE_TIMEOUT_MS = 600_000;
@@ -48,6 +95,8 @@ export interface AiIntegrationConfig {
   idleTimeoutMs?: number;
   /** Absent: `auto`. */
   streamMode?: AiStreamMode;
+  /** The thinking level of every model of this integration, unless a route target says another. Absent: none is sent. */
+  thinking?: AiThinking;
   chatModels?: AiChatModelConfig[];
   /** @deprecated legacy single-model fields, still honored. */
   modelWriting?: string;
@@ -58,6 +107,8 @@ export interface AiIntegrationConfig {
 export interface AiRouteTarget {
   integrationId: string;
   model: string;
+  /** The thinking level for this task with this model. Absent: the integration's; `automatic`: none, even when the integration has one. */
+  thinking?: AiThinking;
 }
 
 export interface AiTaskRoute {
@@ -104,6 +155,11 @@ export interface AiRuntimeConfig {
   fallbackDisclosure?: AiFallbackDisclosure;
   /** Absent fields are not limited: a call has no total time, token or cost limit. A configuration sent by the web app has them all. */
   routingExecution?: Partial<AiRoutingExecution>;
+  /**
+   * "Tools only" (the settings call it `aiToolsOnly`): a structured reply must be the call of its function, and a model marked as without tool
+   * calls is not used for one. Absent or true: on. False: a model without tool calls gets the schema in the message, and a JSON in the reply's text is read.
+   */
+  toolsOnly?: boolean;
 }
 
 const PROVIDERS: AiProviderKind[] = ["azure_openai", "openai", "github_models", "m365_copilot"];
@@ -144,7 +200,8 @@ function target(value: unknown): AiRouteTarget | undefined {
   const source = record(value);
   const integrationId = text(source.integrationId);
   const model = text(source.model);
-  return integrationId && model ? { integrationId, model } : undefined;
+  const thinking = normalizeThinking(source.thinking);
+  return integrationId && model ? { integrationId, model, ...(thinking ? { thinking } : {}) } : undefined;
 }
 
 /** The routing limits with the web app's normalization: whole numbers within the same bounds, the same defaults. */
@@ -186,6 +243,10 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
         underlyingModel: text(model.underlyingModel),
         capabilities: Array.isArray(model.capabilities) ? model.capabilities.filter((capability): capability is string => typeof capability === "string") : [],
         supportsToolCalls: typeof model.supportsToolCalls === "boolean" ? model.supportsToolCalls : undefined,
+        ...(typeof model.supportsStreaming === "boolean" ? { supportsStreaming: model.supportsStreaming } : {}),
+        ...(typeof model.supportsReasoning === "boolean" ? { supportsReasoning: model.supportsReasoning } : {}),
+        ...(typeof model.supportsVision === "boolean" ? { supportsVision: model.supportsVision } : {}),
+        ...reasoningParameterOf(model.reasoningParameter),
         maxInputTokens: positive(model.maxInputTokens),
         maxOutputTokens: positive(model.maxOutputTokens),
         pricing: pricing(model.pricing),
@@ -193,6 +254,7 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
     }
     const idleTimeoutMs = idleTimeout(item.idleTimeoutMs);
     const mode = streamMode(item.streamMode);
+    const thinking = normalizeThinking(item.thinking);
     integrations.push({
       id,
       name: text(item.name) ?? provider,
@@ -203,6 +265,7 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
       requestTimeoutMs: positive(item.requestTimeoutMs),
       ...(idleTimeoutMs !== undefined ? { idleTimeoutMs } : {}),
       ...(mode ? { streamMode: mode } : {}),
+      ...(thinking ? { thinking } : {}),
       chatModels,
       modelWriting: text(item.modelWriting),
       modelReview: text(item.modelReview),
@@ -218,6 +281,8 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
   }
   const routingExecution = isObject(source.routingExecution) ? normalizeRoutingExecution(source.routingExecution) : undefined;
   const disclosure = isObject(source.fallbackDisclosure) ? source.fallbackDisclosure : undefined;
+  // The settings say `aiToolsOnly`; a configuration that was already picked (what a personal server stores and reads back) says `toolsOnly`.
+  const toolsOnly = typeof source.aiToolsOnly === "boolean" ? source.aiToolsOnly : typeof source.toolsOnly === "boolean" ? source.toolsOnly : undefined;
   return {
     aiIntegrations: integrations,
     taskRouting,
@@ -227,6 +292,7 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
     maxCandidates: routingExecution?.maxCandidates ?? positive(source.maxCandidates),
     ...(disclosure ? { fallbackDisclosure: { sameBoundaryOnly: disclosure.sameBoundaryOnly === true, requireAcknowledgement: disclosure.requireAcknowledgement === true } } : {}),
     ...(routingExecution ? { routingExecution } : {}),
+    ...(toolsOnly !== undefined ? { toolsOnly } : {}),
   };
 }
 
@@ -240,23 +306,106 @@ export interface RedactedAiIntegration {
   idleTimeoutMs?: number;
   /** Whether replies stream, when the integration says (absent: `auto`). */
   streamMode?: AiStreamMode;
-  models: Array<{ name: string; capabilities: string[] }>;
+  /** The thinking level of the integration, when it sets one. */
+  thinking?: AiThinking;
+  models: RedactedAiModel[];
+}
+
+/** A model as the safe view shows it: its name and routes, and what its configuration declares of it (only what it declares). */
+export interface RedactedAiModel {
+  name: string;
+  capabilities: string[];
+  supportsToolCalls?: boolean;
+  supportsStreaming?: boolean;
+  supportsReasoning?: boolean;
+  supportsVision?: boolean;
+  /** How the thinking level reaches the model, when the model says (absent: `reasoning_effort`). */
+  reasoningParameter?: AiReasoningParameter;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+}
+
+/** A route target as the safe view shows it: which model of which integration, and its thinking level when it sets one. */
+export interface RedactedAiRouteTarget {
+  integrationId: string;
+  model: string;
+  thinking?: AiThinking;
+}
+
+export interface RedactedAiTaskRoute {
+  primary?: RedactedAiRouteTarget;
+  fallbacks: RedactedAiRouteTarget[];
+}
+
+/** What `redactAiRuntimeConfig` says: nothing in it is a secret. */
+export interface RedactedAiRuntimeConfig {
+  integrations: RedactedAiIntegration[];
+  routedTasks: string[];
+  /** The route of every routed task (`{}` when none is), primary first, then the fallbacks in order. */
+  taskRouting: Record<string, RedactedAiTaskRoute>;
+  /** Whether "Tools only" is in force: true unless the configuration turned it off. */
+  toolsOnly: boolean;
+  fallbackDisclosure?: AiFallbackDisclosure;
+  routingExecution?: Partial<AiRoutingExecution>;
+}
+
+/** The field for a model that says how its thinking level is sent, and nothing for one that does not (or whose word is not one of the three). */
+function reasoningParameterOf(value: unknown): { reasoningParameter?: AiReasoningParameter } {
+  const parameter = normalizeReasoningParameter(value);
+  return parameter ? { reasoningParameter: parameter } : {};
+}
+
+function redactedModel(model: AiChatModelConfig): RedactedAiModel {
+  const flag = (value: unknown): boolean | undefined => (typeof value === "boolean" ? value : undefined);
+  const supportsToolCalls = flag(model.supportsToolCalls);
+  const supportsStreaming = flag(model.supportsStreaming);
+  const supportsReasoning = flag(model.supportsReasoning);
+  const supportsVision = flag(model.supportsVision);
+  const maxInputTokens = positive(model.maxInputTokens);
+  const maxOutputTokens = positive(model.maxOutputTokens);
+  return {
+    name: model.name,
+    capabilities: model.capabilities,
+    ...(supportsToolCalls !== undefined ? { supportsToolCalls } : {}),
+    ...(supportsStreaming !== undefined ? { supportsStreaming } : {}),
+    ...(supportsReasoning !== undefined ? { supportsReasoning } : {}),
+    ...(supportsVision !== undefined ? { supportsVision } : {}),
+    ...reasoningParameterOf(model.reasoningParameter),
+    ...(maxInputTokens !== undefined ? { maxInputTokens } : {}),
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+  };
+}
+
+function redactedTarget(entry: AiRouteTarget): RedactedAiRouteTarget {
+  const thinking = normalizeThinking(entry.thinking);
+  return { integrationId: entry.integrationId, model: entry.model, ...(thinking ? { thinking } : {}) };
 }
 
 /** Safe view of a configuration: never exposes API keys. */
-export function redactAiRuntimeConfig(config: AiRuntimeConfig): { integrations: RedactedAiIntegration[]; routedTasks: string[]; fallbackDisclosure?: AiFallbackDisclosure; routingExecution?: Partial<AiRoutingExecution> } {
+export function redactAiRuntimeConfig(config: AiRuntimeConfig): RedactedAiRuntimeConfig {
+  const taskRouting: Record<string, RedactedAiTaskRoute> = {};
+  for (const [task, route] of Object.entries(config.taskRouting ?? {})) {
+    if (!route || (!route.primary && !route.fallbacks?.length)) continue;
+    taskRouting[task] = { ...(route.primary ? { primary: redactedTarget(route.primary) } : {}), fallbacks: (route.fallbacks ?? []).map(redactedTarget) };
+  }
   return {
-    integrations: config.aiIntegrations.map((integration) => ({
-      id: integration.id,
-      name: integration.name,
-      provider: integration.provider,
-      endpoint: integration.endpoint,
-      hasApiKey: Boolean(integration.apiKey),
-      ...(integration.idleTimeoutMs !== undefined ? { idleTimeoutMs: integration.idleTimeoutMs } : {}),
-      ...(integration.streamMode ? { streamMode: integration.streamMode } : {}),
-      models: (integration.chatModels ?? []).map((model) => ({ name: model.name, capabilities: model.capabilities })),
-    })),
+    integrations: config.aiIntegrations.map((integration) => {
+      const thinking = normalizeThinking(integration.thinking);
+      return {
+        id: integration.id,
+        name: integration.name,
+        provider: integration.provider,
+        endpoint: integration.endpoint,
+        hasApiKey: Boolean(integration.apiKey),
+        ...(integration.idleTimeoutMs !== undefined ? { idleTimeoutMs: integration.idleTimeoutMs } : {}),
+        ...(integration.streamMode ? { streamMode: integration.streamMode } : {}),
+        ...(thinking ? { thinking } : {}),
+        models: (integration.chatModels ?? []).map(redactedModel),
+      };
+    }),
     routedTasks: Object.keys(config.taskRouting ?? {}).sort(),
+    taskRouting,
+    toolsOnly: config.toolsOnly !== false,
     ...(config.fallbackDisclosure ? { fallbackDisclosure: config.fallbackDisclosure } : {}),
     ...(config.routingExecution ? { routingExecution: config.routingExecution } : {}),
   };

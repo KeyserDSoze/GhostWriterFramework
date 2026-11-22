@@ -141,13 +141,20 @@ export interface PlannedChapter {
 
 /**
  * One round of review that closed, as the director judged it. Every field is optional: a round whose readers did not read has no
- * `readers`. The votes are on the 0-10 scale with one decimal at most, the counters are whole numbers.
+ * `readers`. The votes are on the 0-10 scale with one decimal at most, the counters are whole numbers. A round is told by its numbers: a
+ * `verdict` with no number is no round.
  */
 export interface ChapterRound {
   /** The director's vote. */
   director?: number;
   /** The average of the simulated readers' votes. They read a chapter once, in the first round of its review: later rounds have none. */
   readers?: number;
+  /**
+   * What the round decided: `approve` closed the chapter, `revise` sent it back for fixes. It is the verdict the plan acted on, which is
+   * not always the one the model gave (an approval under the director's approval score is withheld, and is a `revise`). Absent from a round
+   * saved by an engine that did not say it.
+   */
+  verdict?: "approve" | "revise";
   /** Findings the director accepted (and fixes it added) in this round. */
   accepted?: number;
   /** Findings the director rejected. */
@@ -295,6 +302,11 @@ export interface AutopilotStats {
    * retries. Whole and not negative; absent from the state of an engine that did not count it, and then it counts from zero.
    */
   workedMs?: number;
+  /**
+   * ISO time of the start of the first step that `workedMs` counted: written when the count is born, and never changed after. Absent from a
+   * state whose count began before it was written (a book started with an engine that did not say), and the engine does not make one up.
+   */
+  workedMsSince?: string;
 }
 
 /** The director's judgement of the whole book, as data: what the final step saved. */
@@ -314,12 +326,12 @@ export interface AutopilotFinalReview {
  * permission), `rate_limit` (429), `timeout` (the request ran out of time, 408), `truncated` (the reply was cut by the output limit),
  * `refused` (nothing was called: the privacy setting for fallbacks, or no model for the task), `conflict` (a file changed under the step),
  * `budget` (the routing limits leave nothing to call), `limit` (a limit of the run or of the context window), `profile` (a file of the book,
- * a profile or a chapter, that cannot be read: the author fixes it), `provider` (any other failure of the provider or of its reply) and
- * `unknown` (everything else).
+ * a profile or a chapter, that cannot be read: the author fixes it), `config` (the AI configuration has to change: with "Tools only" on, no
+ * model of the task can call a function), `provider` (any other failure of the provider or of its reply) and `unknown` (everything else).
  */
-export type AutopilotErrorKind = "network" | "auth" | "rate_limit" | "timeout" | "truncated" | "refused" | "conflict" | "budget" | "limit" | "profile" | "provider" | "unknown";
+export type AutopilotErrorKind = "network" | "auth" | "rate_limit" | "timeout" | "truncated" | "refused" | "conflict" | "budget" | "limit" | "profile" | "config" | "provider" | "unknown";
 
-export const AUTOPILOT_ERROR_KINDS: readonly AutopilotErrorKind[] = ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider", "unknown"];
+export const AUTOPILOT_ERROR_KINDS: readonly AutopilotErrorKind[] = ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "config", "provider", "unknown"];
 
 /** Where an error happened. Short, and never a secret: `endpoint` is the origin of the provider's address, never a path or a query. */
 export interface AutopilotErrorDetail {
@@ -331,6 +343,8 @@ export interface AutopilotErrorDetail {
   provider?: string;
   /** The id of the integration. */
   integration?: string;
+  /** What the provider asked for with `Retry-After` (a 429 or a 503), in milliseconds: the engine's client keeps at most five minutes of it. Present only when the provider said. */
+  retryAfterMs?: number;
   /** The retry this failure belongs to: the one that followed it, or the last one when the run gave up. Present only for a failure that is retried. */
   attempt?: number;
   /** How many retries this kind of failure gets. */
@@ -349,6 +363,8 @@ export interface AutopilotLastError {
   message: string;
   at: string;
   task?: AutopilotTaskKind;
+  /** The id of the activity (in the activity log) that failed. Absent for a failure that belongs to no step, and for one saved by an engine that did not say. */
+  activityId?: string;
   errorKind?: AutopilotErrorKind;
   errorDetail?: AutopilotErrorDetail;
 }
@@ -465,12 +481,16 @@ export type AutopilotMessageCode =
  * A `failureRetry` insight carries `attempt` (the retry about to happen), `retries` (how many this kind of failure
  * allows) and `waitMs` (how long the runner waits first); while it waits, the `state` events carry the same in `summary.retry`
  * (with the time of the next attempt), and one more `state` event says that nothing waits any more.
+ * `task-progress` says that the model of the running step is answering. A step that writes prose says it with its text so far (`preview`,
+ * the tail of it, and the `characters` so far, at most about three times a second); a step that answers with a structured value says it with
+ * numbers only (`bytes` of the reply that arrived, `characters` of its text or arguments, `preview` empty), at most once a second. It is never saved
+ * and never replayed to a client that connects later; `snapshot().live` carries the last one.
  */
 export type AutopilotEventBody =
   | { type: "run-started"; runId: string; host: "browser" | "server" }
   | { type: "run-ended"; runId: string; status: AutopilotStatus; message?: string | null; code?: AutopilotMessageCode }
   | { type: "task-started"; activity: AutopilotActivity }
-  | { type: "task-progress"; activityId: string; characters: number; preview: string }
+  | { type: "task-progress"; activityId: string; characters: number; preview: string; bytes?: number }
   | { type: "task-finished"; activity: AutopilotActivity }
   | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode; attempt?: number; retries?: number; waitMs?: number }
   | { type: "state"; state: AutopilotStateSummary }
@@ -552,8 +572,8 @@ export interface AutopilotSnapshot {
    */
   summary?: AutopilotStateSummary | null;
   activities: AutopilotActivity[];
-  /** Activity currently running with its streamed preview, if any. */
-  live: { activity: AutopilotActivity; characters: number; preview: string } | null;
+  /** Activity currently running with its streamed preview, if any. `bytes` is the last number a structured step said (see `task-progress`). */
+  live: { activity: AutopilotActivity; characters: number; preview: string; bytes?: number } | null;
   running: boolean;
   host: "browser" | "server" | null;
   /**

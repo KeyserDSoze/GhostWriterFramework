@@ -126,7 +126,7 @@ test("fetch client streams text, reads usage and falls back between candidates",
   assert.equal(response.currency, "EUR");
 });
 
-test("fetch client forces a tool call and falls back to JSON text when tools are unsupported", async () => {
+test("fetch client forces a tool call, and with Tools only off falls back to JSON text for a model whose tool calls are unsupported", async () => {
   const bodies = [];
   const fetch = async (_url, init) => {
     const body = JSON.parse(init.body);
@@ -139,7 +139,8 @@ test("fetch client forces a tool call and falls back to JSON text when tools are
   assert.deepEqual((await withTools.complete({ capability: "director", label: "t", system: "s", user: "u", json: schema })).json, { ok: true });
   assert.equal(bodies[0].tool_choice, "required", "llama.cpp and LM Studio only honor the required form");
   assert.equal(bodies[0].tools.length, 1);
-  const withoutTools = createFetchAi(pickAiRuntimeConfig({ aiIntegrations: [{ id: "a", name: "A", provider: "openai", apiKey: "", chatModels: [{ id: "1", name: "m", capabilities: ["default"], supportsToolCalls: false }] }] }), { fetch });
+  // "Tools only" is on unless the settings turn it off: a model without tool calls gets the schema in the message only then.
+  const withoutTools = createFetchAi(pickAiRuntimeConfig({ aiToolsOnly: false, aiIntegrations: [{ id: "a", name: "A", provider: "openai", apiKey: "", chatModels: [{ id: "1", name: "m", capabilities: ["default"], supportsToolCalls: false }] }] }), { fetch });
   assert.deepEqual((await withoutTools.complete({ capability: "director", label: "t", system: "s", user: "u", json: schema })).json, { ok: false });
   assert.match(bodies[1].messages[0].content, /Reply with ONLY one JSON object/);
 });
@@ -161,8 +162,8 @@ test("fetch client keeps the named tool_choice only for Azure API versions befor
   assert.deepEqual(forcedToolChoice("openai", "2023-05-15", "x"), "required", "only Azure versions matter");
 });
 
-function oneModel(fetch, model = {}) {
-  return createFetchAi(pickAiRuntimeConfig({ costCurrency: "EUR", aiIntegrations: [{ id: "a", name: "A", provider: "openai", endpoint: "http://localhost:1234/v1", apiKey: "", chatModels: [{ id: "1", name: "muse-glimmer", capabilities: ["default"], pricing: { inputPerMTok: 1, outputPerMTok: 2 }, ...model }] }] }), { fetch });
+function oneModel(fetch, model = {}, settings = {}) {
+  return createFetchAi(pickAiRuntimeConfig({ costCurrency: "EUR", ...settings, aiIntegrations: [{ id: "a", name: "A", provider: "openai", endpoint: "http://localhost:1234/v1", apiKey: "", chatModels: [{ id: "1", name: "muse-glimmer", capabilities: ["default"], pricing: { inputPerMTok: 1, outputPerMTok: 2 }, ...model }] }] }), { fetch });
 }
 
 const REVIEW_SCHEMA = { name: "director_review", description: "d", parameters: { type: "object", properties: { verdict: { type: "string" }, score: { type: "number" } }, required: ["verdict", "score"] } };
@@ -179,11 +180,23 @@ test("fetch client rejects empty tool arguments as a retryable reply error that 
   assert.equal(error.cost, (1000 * 1 + 10 * 2) / 1_000_000);
 });
 
-test("fetch client unwraps wrapped and double-encoded tool arguments, and reads JSON from the content when no tool is called", async () => {
+test("fetch client unwraps wrapped and double-encoded tool arguments", async () => {
   const replies = [
     { tool_calls: [{ function: { arguments: JSON.stringify(JSON.stringify({ verdict: "approve", score: 8 })) } }] },
     { tool_calls: [{ function: { arguments: JSON.stringify({ arguments: { verdict: "revise", score: 5 } }) } }] },
     { tool_calls: [{ function: { arguments: JSON.stringify({ result: JSON.stringify({ verdict: "approve", score: 9 }) }) } }] },
+  ];
+  let index = 0;
+  const fetch = async () => Response.json({ choices: [{ message: replies[index++], finish_reason: "stop" }] });
+  const ai = oneModel(fetch);
+  const ask = () => ai.complete({ capability: "director", label: "t", system: "s", user: "u", json: REVIEW_SCHEMA }).then((response) => response.json);
+  assert.deepEqual(await ask(), { verdict: "approve", score: 8 });
+  assert.deepEqual(await ask(), { verdict: "revise", score: 5 });
+  assert.deepEqual(await ask(), { verdict: "approve", score: 9 });
+});
+
+test("with Tools only off, fetch client reads JSON from the content when no tool is called", async () => {
+  const replies = [
     { content: "<think>schema first</think>{\"verdict\":\"approve\",\"score\":7}" },
     { content: "", tool_calls: [{ function: { arguments: "{}" } }], fallback: true },
   ];
@@ -193,11 +206,8 @@ test("fetch client unwraps wrapped and double-encoded tool arguments, and reads 
     if (message.fallback) return Response.json({ choices: [{ message: { content: "{\"verdict\":\"approve\",\"score\":6}", tool_calls: message.tool_calls }, finish_reason: "stop" }] });
     return Response.json({ choices: [{ message, finish_reason: "stop" }] });
   };
-  const ai = oneModel(fetch);
+  const ai = oneModel(fetch, {}, { aiToolsOnly: false });
   const ask = () => ai.complete({ capability: "director", label: "t", system: "s", user: "u", json: REVIEW_SCHEMA }).then((response) => response.json);
-  assert.deepEqual(await ask(), { verdict: "approve", score: 8 });
-  assert.deepEqual(await ask(), { verdict: "revise", score: 5 });
-  assert.deepEqual(await ask(), { verdict: "approve", score: 9 });
   assert.deepEqual(await ask(), { verdict: "approve", score: 7 });
   assert.deepEqual(await ask(), { verdict: "approve", score: 6 }, "empty arguments fall back to the JSON in the content");
 });
@@ -205,7 +215,7 @@ test("fetch client unwraps wrapped and double-encoded tool arguments, and reads 
 test("a JSON schema echoed before the answer is never taken for the answer", async () => {
   const echoed = `Schema: ${JSON.stringify(REVIEW_SCHEMA.parameters)}\nAnswer: {"verdict":"revise","score":4}`;
   const fetch = async () => Response.json({ choices: [{ message: { content: echoed }, finish_reason: "stop" }] });
-  const response = await oneModel(fetch, { supportsToolCalls: false }).complete({ capability: "director", label: "t", system: "s", user: "u", json: REVIEW_SCHEMA });
+  const response = await oneModel(fetch, { supportsToolCalls: false }, { aiToolsOnly: false }).complete({ capability: "director", label: "t", system: "s", user: "u", json: REVIEW_SCHEMA });
   assert.deepEqual(response.json, { verdict: "revise", score: 4 });
   assert.deepEqual(parseJsonReply(echoed, (value) => Boolean(value && typeof value === "object" && "verdict" in value && typeof value.verdict === "string")), { verdict: "revise", score: 4 });
 });

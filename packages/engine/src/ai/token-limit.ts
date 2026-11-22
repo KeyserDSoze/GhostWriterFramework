@@ -48,18 +48,19 @@ export function completionTokenLimit(provider: string, model: string, maxOutputT
 }
 
 /**
- * The request's output limit for a candidate: structured tasks get a floor, models known to reason get a margin for
- * their reasoning, a boost (the autopilot's second try after a reply cut while the model only reasoned) multiplies the
- * result, and the model's own maximum is never exceeded.
+ * The request's output limit for a candidate: structured tasks get a floor, models known to reason (by their name, or because their configuration
+ * declares it: `supportsReasoning`) get a margin for their reasoning, a boost (the autopilot's second try after a reply cut while the model only
+ * reasoned) multiplies the result, and the model's own maximum is never exceeded. What a model declares does not undo what its name says.
  */
 export function requestOutputLimit(
   request: Pick<AiRequest, "json" | "maxOutputTokens" | "outputBoost">,
-  candidate: Partial<Pick<AiCandidate, "maxOutputTokens" | "underlyingModel" | "model" | "integration">>,
+  candidate: Partial<Pick<AiCandidate, "maxOutputTokens" | "underlyingModel" | "model" | "integration" | "supportsReasoning">>,
 ): number | undefined {
   const requested = request.maxOutputTokens;
   if (!requested) return candidate.maxOutputTokens;
   let limit = request.json ? Math.max(requested, STRUCTURED_OUTPUT_FLOOR) : requested;
-  if (candidate.integration && candidate.model && isReasoningModel(candidate.integration.provider, candidate.model, candidate.underlyingModel)) limit += REASONING_OUTPUT_MARGIN;
+  const reasons = candidate.supportsReasoning === true || Boolean(candidate.integration && candidate.model && isReasoningModel(candidate.integration.provider, candidate.model, candidate.underlyingModel));
+  if (reasons) limit += REASONING_OUTPUT_MARGIN;
   if (request.outputBoost && request.outputBoost > 1) limit = Math.ceil(limit * request.outputBoost);
   return candidate.maxOutputTokens ? Math.min(limit, candidate.maxOutputTokens) : limit;
 }

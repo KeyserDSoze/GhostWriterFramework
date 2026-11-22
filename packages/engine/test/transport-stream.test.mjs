@@ -122,9 +122,9 @@ test("a reply without token counts is estimated from the characters of the argum
   assert.ok(response.usage.inputTokens > 0);
 });
 
-test("a model that answers a structured request in its text, streamed, still gives the JSON", async () => {
+test("with Tools only off, a model that answers a structured request in its text, streamed, still gives the JSON", async () => {
   const texts = [];
-  const response = await createFetchAi(configOf(), { fetch: async () => sse([content("Sure: "), content(JSON.stringify(ANSWER)), finish("stop"), DONE]) }).complete({ ...JSON_ASK, onText: (text) => texts.push(text) });
+  const response = await createFetchAi(configOf({}, { toolsOnly: false }), { fetch: async () => sse([content("Sure: "), content(JSON.stringify(ANSWER)), finish("stop"), DONE]) }).complete({ ...JSON_ASK, onText: (text) => texts.push(text) });
   assert.deepEqual(response.json, ANSWER);
   assert.deepEqual(texts, [], "and its text is no prose for the listener");
 });

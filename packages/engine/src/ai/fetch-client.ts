@@ -1,10 +1,11 @@
 import { abortError, isAbortError } from "../util/abort.js";
 import { randomId } from "../util/hash.js";
+import { discardBody, release } from "./body.js";
 import { likelyTextTokens } from "./budget.js";
 import type { AiPricingConfig, AiRuntimeConfig, AiStreamMode } from "./config.js";
 import { resolveDeadlines, startClock, timeoutMessage, type DeadlineClock, type ExpiredDeadline, type ResolvedDeadlines } from "./deadlines.js";
 import { redactSecrets } from "./redact.js";
-import { effectiveAiBase, endpointOrigin, type ChatRequest } from "./request.js";
+import { effectiveAiBase, endpointOrigin, type AiReasoningEffort, type ChatRequest } from "./request.js";
 import type { AiCandidate } from "./router.js";
 import { candidateBoundary, planAttempts, type PlannedAttempt } from "./routing.js";
 import { splitReasoningBlock, structuredFromReply } from "./structured.js";
@@ -66,6 +67,22 @@ export interface FetchAiAttempt {
   timeouts: FetchAiTimeouts;
   /** What the integration says about streaming (`auto` unless it says `off`). */
   streamMode: AiStreamMode;
+  /** "Tools only" was in force for this call: `false` only when the configuration turned it off. */
+  toolsOnly: boolean;
+  /** The thinking level the request carries: as `reasoning_effort`, or as the chat-template argument when `reasoningParameter` says so. Absent when none is sent (`automatic` sends nothing). */
+  thinking?: AiReasoningEffort;
+  /** Where the level went, when it went in the chat-template argument (`chat_template_kwargs.reasoning_strength`, the model's "Thinking parameter"). Absent: it went as `reasoning_effort`, or no level was sent. */
+  reasoningParameter?: "chat_template_kwargs.reasoning_strength";
+  /**
+   * The candidates of the route that this call does not ask, and why: with "Tools only" on, a structured request skips every model
+   * marked as without tool calls. Absent when none was skipped; the same list on every attempt of the call.
+   */
+  skipped?: Array<{ model: string; reason: "no-tool-calls" }>;
+  /**
+   * What this attempt does not do that the configuration asked, because of what the model declares or says: a thinking level that is not sent to a
+   * model that does not reason or whose thinking parameter is `none`, a stream that is not asked of a model that does not stream. In English, for a debug panel; absent when there is nothing to say.
+   */
+  notes?: string[];
 }
 
 export interface FetchAiAttemptEnd {
@@ -171,6 +188,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
       let startedAt = Date.now();
       const secrets = config.aiIntegrations.map((integration) => integration.apiKey);
       const plan = planAttempts(config, request, options.githubModelsBaseUrl);
+      const skipped = plan.skipped.map((entry) => ({ model: entry.candidate.model, reason: entry.reason }));
       const decisions = new Map<string, boolean>();
       const blocked: Array<{ candidate: AiCandidate; from: AiCandidate; asked: boolean }> = [];
       const spent: Spent = {};
@@ -220,6 +238,11 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           timeoutMs: deadlines.startMs,
           timeouts: { startMs: deadlines.startMs, idleMs: deadlines.idleMs, capMs: deadlines.capMs, ...(deadlines.raisedFrom !== undefined ? { raised: { from: deadlines.raisedFrom } } : {}) },
           streamMode: integration.streamMode === "off" ? "off" : "auto",
+          toolsOnly: config.toolsOnly !== false,
+          ...(attempt.built?.thinking ? { thinking: attempt.built.thinking } : {}),
+          ...(attempt.built?.reasoningParameter ? { reasoningParameter: attempt.built.reasoningParameter } : {}),
+          ...(skipped.length ? { skipped: skipped.map((entry) => ({ ...entry })) } : {}),
+          ...(attempt.built?.notes?.length ? { notes: [...attempt.built.notes] } : {}),
         });
         const attemptStarted = Date.now();
         const trace: AttemptTrace = { startedAt: attemptStarted, streamed: false, toolSeen: false };
@@ -256,6 +279,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
       }
       const notes: string[] = [];
       if (plan.excludedByBoundary > 0) notes.push(`Fallbacks in other accounts were not tried because "Never send fallback content outside the primary account" (fallbackDisclosure.sameBoundaryOnly) is on.`);
+      for (const entry of plan.skipped) notes.push(redactSecrets(`Skipped "${entry.candidate.model}" in "${entry.candidate.integration.name}": it is marked as without tool calls and "Tools only" is on.`, secrets));
       if (blocked.length) {
         const names = [...new Set(blocked.map((entry) => `"${entry.candidate.integration.name}"`))].join(", ");
         const from = `"${blocked[0].from.integration.name}"`;
@@ -392,15 +416,41 @@ function parseRetryAfter(value: string | null | undefined): number | undefined {
 }
 
 const TRANSIENT_STATUSES = new Set([408, 429, 502, 503, 504]);
+/**
+ * What a refusal of the thinking parameter says: the name of the one that the level travels in, in the provider's message or in the `param` of its error
+ * object (some providers say only `"param": "reasoning_effort"`): the OpenAI field, or the chat-template argument (`chat_template_kwargs`, `reasoning_strength`).
+ * Either name is a refusal of the level, whichever of the two was sent: a gateway may answer with the name of the one it translated it into, and the remedy is
+ * the same setting.
+ */
+const THINKING_PARAMETER = /reasoning[\s_-]?effort|reasoning[\s_-]?strength|chat[\s_-]?template[\s_-]?kwargs/i;
 
-async function providerError(response: Response, provider: string, model: string, redact: (text: string) => string): Promise<AiProviderError> {
+/** Where a thinking level was sent, for the author who has to change it: the integration it was asked for, and the parameter it travelled in. */
+interface SentThinking {
+  integration: string;
+  parameter: "reasoning_effort" | "chat_template_kwargs.reasoning_strength";
+}
+
+/** What to change when a model refuses its level: the "Thinking parameter" of the model (to the other of the two, or to none), or the thinking of the task or of the integration. */
+function thinkingRemedy(model: string, sent: SentThinking): string {
+  const other = sent.parameter === "reasoning_effort"
+    ? `"chat_template_kwargs.reasoning_strength" (the level as an argument of the chat template, as Muse Glimmer takes it)`
+    : `"reasoning_effort" (the OpenAI field)`;
+  return `Set "Thinking parameter" of the model "${model}" in AI Integrations to ${other} or to "none" (no level is sent), or set thinking to "Automatic" for this task in the AI Router, or for the integration "${sent.integration}" in AI Integrations.`;
+}
+
+/** The error of a response that is not OK. `sent` says where the level went when the request carried a thinking level: a refusal of that parameter is then said in the author's words. */
+async function providerError(response: Response, provider: string, model: string, redact: (text: string) => string, sent?: SentThinking): Promise<AiProviderError> {
   let detail = "";
+  /** The parameter the provider says it refuses, when its error object names one. */
+  let param = "";
   try {
     const text = await response.text();
     const raw = redact(text.length > 50_000 ? text.slice(0, 50_000) : text).slice(0, 2000);
     try {
-      const parsed = JSON.parse(raw) as { error?: { message?: unknown } | string; message?: unknown };
+      const parsed = JSON.parse(raw) as { error?: { message?: unknown; param?: unknown } | string; message?: unknown; param?: unknown };
       const message = typeof parsed.error === "string" ? parsed.error : parsed.error?.message ?? parsed.message;
+      const refused = typeof parsed.error === "object" && parsed.error ? parsed.error.param : parsed.param;
+      if (typeof refused === "string") param = refused;
       detail = typeof message === "string" ? message : raw;
     } catch {
       detail = raw;
@@ -411,8 +461,17 @@ async function providerError(response: Response, provider: string, model: string
   const status = response.status;
   const retryable = status === 408 || status === 409 || status === 429 || status >= 500;
   const retryAfterMs = status === 429 || status === 503 ? parseRetryAfter(response.headers?.get?.("retry-after")) : undefined;
+  const said = `HTTP ${status}${detail ? ` — ${detail.replace(/\s+/g, " ").slice(0, 400)}` : ""}`;
+  // A level was sent and the provider refuses the parameter: the same request would be refused again, so it is no use to repeat it.
+  if (sent !== undefined && (status === 400 || status === 422) && THINKING_PARAMETER.test(`${detail} ${param}`)) {
+    return new AiProviderError(
+      redact(`${provider} ${model}: the model does not accept a thinking level (${said}). Nothing was applied. ${thinkingRemedy(model, sent)}`),
+      status,
+      false,
+    );
+  }
   return new AiProviderError(
-    redact(`${provider} ${model}: HTTP ${status}${detail ? ` — ${detail.replace(/\s+/g, " ").slice(0, 400)}` : ""}`),
+    redact(`${provider} ${model}: ${said}`),
     status,
     retryable,
     { ...(TRANSIENT_STATUSES.has(status) ? { transient: true } : {}), ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) },
@@ -434,24 +493,6 @@ class StreamReadError extends Error {
   constructor(readonly reason: unknown) {
     super("The stream could not be read.");
     this.name = "StreamReadError";
-  }
-}
-
-/** Stops reading without waiting for the other side: whatever it does with the cancel, the call must not hang on it. */
-function release(reader: ReadableStreamDefaultReader<Uint8Array>): void {
-  try {
-    void reader.cancel().catch(() => undefined);
-  } catch {
-    // A reader that cannot be cancelled is of no use any more.
-  }
-}
-
-/** Lets a body go that nobody is going to read (a reply that arrived too late, or that the call gave up). */
-function discardBody(response: Response): void {
-  try {
-    void response.body?.cancel().catch(() => undefined);
-  } catch {
-    // A body that is locked or already read has nothing left to discard.
   }
 }
 
@@ -825,7 +866,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     stage = "other";
     if (!response.ok) {
       trace.firstByteMs ??= elapsed();
-      const failure = await clock.guard(providerError(response, integration.provider, model, redact));
+      const failure = await clock.guard(providerError(response, integration.provider, model, redact, built.thinking ? { integration: integration.name, parameter: built.reasoningParameter ?? "reasoning_effort" } : undefined));
       // A provider that cannot stream says so with a 400: tell where to switch streaming off.
       if (built.stream && (failure.status === 400 || failure.status === 422) && /stream/i.test(failure.message.replace(label, ""))) {
         failure.message = redact(`${failure.message}${/[.!?]$/.test(failure.message) ? "" : "."} If this provider cannot stream its replies, set "Streaming" of the integration "${integration.name}" to "off".`);
@@ -877,9 +918,12 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     const toolArguments = callArguments();
     const answered = Boolean(text.trim() || toolArguments.trim());
     if (outcome === "truncated") {
-      const reasoned = !answered && reasoningCharacters > 0;
+      const seen = !answered && reasoningCharacters > 0;
+      // A model that is declared as reasoning and wrote nothing spent its limit on a reasoning that it does not show: the reply is cut the same way.
+      const declared = !answered && !seen && candidate.supportsReasoning === true;
+      const reasoned = seen || declared;
       throw new AiProviderError(
-        `${label}: ${reasoned ? "the model used its output limit while reasoning, before writing the reply" : "the reply was cut by the output token limit"}. Nothing was applied.`,
+        `${label}: ${seen ? "the model used its output limit while reasoning, before writing the reply" : declared ? "the model, which is declared as reasoning, used its output limit before writing the reply (its reasoning counts in the limit)" : "the reply was cut by the output token limit"}. Nothing was applied.`,
         undefined,
         false,
         details({ truncated: true, ...(reasoned ? { reasoningOnly: true, ...(candidate.maxOutputTokens && (built.outputLimit ?? 0) >= candidate.maxOutputTokens ? { limitReached: true } : {}) } : {}) }),
@@ -891,8 +935,17 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     const measured = measure();
     let json: unknown;
     if (request.json) {
+      // With "Tools only" (on unless the configuration turned it off) the answer is the call of the function: the text of the reply is never
+      // read, neither as the answer nor as a fallback to empty or wrong arguments. A reply with no call at all is refused and the next candidate is tried.
+      const toolsOnly = config.toolsOnly !== false;
+      if (toolsOnly && !toolArguments.trim()) {
+        throw new AiReplyRejectedError(
+          redact(`${label}: the model answered in text instead of calling the function "${request.json.name}": "Tools only" is on, so the text of a reply is never read as the answer. If this model cannot call functions, turn off "Tools only" in the AI Router.`),
+          details(),
+        );
+      }
       try {
-        json = structuredFromReply({ toolArguments, content: text, schema: request.json });
+        json = structuredFromReply({ toolArguments, content: toolsOnly ? "" : text, schema: request.json });
       } catch (error) {
         throw new AiReplyRejectedError(redact(`${label}: ${error instanceof Error ? error.message : "invalid structured reply"}`), details());
       }

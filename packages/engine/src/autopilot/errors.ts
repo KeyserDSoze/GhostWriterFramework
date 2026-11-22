@@ -1,6 +1,6 @@
 import { redactSecrets } from "../ai/redact.js";
 import { endpointOrigin } from "../ai/request.js";
-import { AiFallbackBlockedError, AiProviderError, AiPromptTooLargeError, AiReplyRejectedError, AiRoutingBudgetError, AiUnavailableError, type AiTimeoutPhase } from "../ai/types.js";
+import { AiFallbackBlockedError, AiProviderError, AiPromptTooLargeError, AiReplyRejectedError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, type AiTimeoutPhase } from "../ai/types.js";
 import { isBookConflictError } from "../book/store.js";
 import { FrontmatterError } from "../markdown/frontmatter.js";
 import { StructuredReplyError } from "../util/json.js";
@@ -11,7 +11,7 @@ import { AUTOPILOT_ERROR_KINDS, type AutopilotErrorDetail, type AutopilotErrorKi
 const MAX_DETAIL_CHARACTERS = 160;
 /** Retries are counted up to this, far above any the engine grants: a number from a file can never be bigger. */
 const MAX_RETRY_COUNT = 99;
-/** The longest deadline a detail read from a file can name: a day, far above the four hours the engine allows. */
+/** The longest deadline or wait a detail read from a file can name: a day, far above the four hours and the five minutes the engine allows. */
 const MAX_TIMEOUT_MS = 86_400_000;
 const TIMEOUT_PHASES: readonly AiTimeoutPhase[] = ["start", "idle", "total"];
 
@@ -51,6 +51,7 @@ function kindOf(error: unknown): AutopilotErrorKind {
   if (source.code === "frontmatter_invalid" || isA(error, "FrontmatterError", FrontmatterError)) return "profile";
   if (isA(error, "AiPromptTooLargeError", AiPromptTooLargeError)) return "limit";
   if (isA(error, "AiRoutingBudgetError", AiRoutingBudgetError)) return "budget";
+  if (isA(error, "AiToolsRequiredError", AiToolsRequiredError)) return "config";
   if (isA(error, "AiFallbackBlockedError", AiFallbackBlockedError) || isA(error, "AiUnavailableError", AiUnavailableError)) return "refused";
   if (source.truncated === true) return "truncated";
   if (source.timedOut === true) return "timeout";
@@ -84,6 +85,13 @@ function timeoutMilliseconds(value: unknown): number | undefined {
   return milliseconds >= 1 && milliseconds <= MAX_TIMEOUT_MS ? milliseconds : undefined;
 }
 
+/** A wait in milliseconds, as a provider's `Retry-After` says it: a whole number from zero (a provider that says "now" says a value) up to a day; a fraction is rounded. */
+function waitMilliseconds(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const milliseconds = Math.round(value) || 0;
+  return milliseconds >= 0 && milliseconds <= MAX_TIMEOUT_MS ? milliseconds : undefined;
+}
+
 function timeoutPhase(value: unknown): AiTimeoutPhase | undefined {
   return TIMEOUT_PHASES.find((phase) => phase === value);
 }
@@ -96,6 +104,9 @@ function detailOf(error: unknown): AutopilotErrorDetail {
   const model = shortText(source.model) ?? shortText(target.model);
   const provider = shortText(source.provider) ?? shortText(target.provider);
   const integration = shortText(source.integrationId) ?? shortText(target.integrationId);
+  // What the provider asked to wait, when it said: a 429 or a 503 with `Retry-After`. The client folds the wait of an earlier candidate into the error it ends with, so that the run waits
+  // long enough; for any other status it is not what this failure says, and is left out.
+  const retryAfterMs = status === 429 || status === 503 ? waitMilliseconds(source.retryAfterMs) : undefined;
   // The deadline that ran out, for a request of the engine's client that timed out.
   const timeout = record(source.timeout);
   const timeoutMs = timeoutMilliseconds(timeout.ms);
@@ -106,6 +117,7 @@ function detailOf(error: unknown): AutopilotErrorDetail {
     ...(model ? { model } : {}),
     ...(provider ? { provider } : {}),
     ...(integration ? { integration } : {}),
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(phase ? { timeoutPhase: phase } : {}),
   };
@@ -114,13 +126,14 @@ function detailOf(error: unknown): AutopilotErrorDetail {
 /**
  * What kind of failure an error is, and where it happened, from what the engine knows of its own errors: a status (401 and 403 are
  * `auth`, 429 `rate_limit`, 408 `timeout`, any other 4xx or 5xx `provider`), the flags of `AiProviderError` (`timedOut`, `truncated`,
- * `transient`), its subclasses (`AiPromptTooLargeError` is `limit`, `AiRoutingBudgetError` `budget`, `AiFallbackBlockedError` and
- * `AiUnavailableError` `refused`), `FrontmatterError` (`profile`) and a file conflict (`conflict`); an error that says none of these
+ * `transient`), its subclasses (`AiPromptTooLargeError` is `limit`, `AiRoutingBudgetError` `budget`, `AiToolsRequiredError` `config`,
+ * `AiFallbackBlockedError` and `AiUnavailableError` `refused`), `FrontmatterError` (`profile`) and a file conflict (`conflict`); an error that says none of these
  * is read by its words (a provider that does not say `timedOut` still says "timed out"), and what is still nothing is `unknown`.
  * A class, a status or a flag always decides before the words do. The detail holds the status, the origin of the integration's address
  * (never its path or query), the model, the provider and the integration, with no credential in any of them: whatever the error carries
  * is redacted, and the endpoint is cut down to its origin. For a timeout of the engine's client it also says which deadline ran out
- * (`timeoutPhase`) and how long it was (`timeoutMs`). It is empty for an error that knows none of this.
+ * (`timeoutPhase`) and how long it was (`timeoutMs`), and for a 429 or a 503 whose provider said when to come back, the wait (`retryAfterMs`).
+ * It is empty for an error that knows none of this.
  */
 export function classifyAutopilotError(error: unknown): { kind: AutopilotErrorKind; detail: AutopilotErrorDetail } {
   // It runs where a run has just failed: whatever the error is (a getter that throws, a proxy), it must not fail again.
@@ -166,6 +179,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
   const model = shortText(source.model);
   const provider = shortText(source.provider);
   const integration = shortText(source.integration);
+  const retryAfterMs = waitMilliseconds(source.retryAfterMs);
   const attempt = retryCount(source.attempt);
   const retries = retryCount(source.retries);
   const timeoutMs = timeoutMilliseconds(source.timeoutMs);
@@ -176,6 +190,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
     ...(model ? { model } : {}),
     ...(provider ? { provider } : {}),
     ...(integration ? { integration } : {}),
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     ...(attempt !== undefined ? { attempt } : {}),
     ...(retries !== undefined ? { retries } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),

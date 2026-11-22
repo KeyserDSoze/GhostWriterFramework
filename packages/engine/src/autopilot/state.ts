@@ -203,21 +203,44 @@ function readDuration(value: unknown): number | undefined {
   return number === undefined ? undefined : Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.round(number)));
 }
 
-/** One round as a plan keeps it: only the four numbers, valid. `null` when the entry holds none (it is no round). */
+/** A verdict as a round keeps it: `approve` or `revise` (case and surrounding spaces do not matter); anything else is no verdict. */
+function readVerdict(value: unknown): ChapterRound["verdict"] | undefined {
+  const verdict = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return verdict === "approve" || verdict === "revise" ? verdict : undefined;
+}
+
+/** A date (`2026-02-01`) or a date and time with its zone (`2026-02-01T10:00:00Z`, `...+02:00`): the shapes of an ISO 8601 moment that read the same anywhere. */
+const MOMENT_SHAPE = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
+
+/** A moment as the state keeps it: ISO 8601 in UTC (`toISOString`), whatever zone the file wrote it in; anything that is not one is no value. */
+function readMoment(value: unknown): string | undefined {
+  if (typeof value !== "string" || !MOMENT_SHAPE.test(value.trim())) return undefined;
+  const time = Date.parse(value.trim());
+  return Number.isNaN(time) ? undefined : new Date(time).toISOString();
+}
+
+/** The id of an activity as a file says it: what the engine's own ids are made of, and short. Anything else is no value. */
+function readActivityId(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z0-9_.:-]{1,120}$/.test(value) ? value : undefined;
+}
+
+/** One round as a plan keeps it: the four numbers and the verdict, valid. `null` when the entry holds no number (a verdict alone is no round). */
 function normalizeRound(value: unknown): ChapterRound | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
   const director = readVote(source.director);
   const readers = readVote(source.readers);
+  const verdict = readVerdict(source.verdict);
   const accepted = readCount(source.accepted);
   const rejected = readCount(source.rejected);
-  const round: ChapterRound = {
+  if (director === undefined && readers === undefined && accepted === undefined && rejected === undefined) return null;
+  return {
     ...(director !== undefined ? { director } : {}),
     ...(readers !== undefined ? { readers } : {}),
+    ...(verdict ? { verdict } : {}),
     ...(accepted !== undefined ? { accepted } : {}),
     ...(rejected !== undefined ? { rejected } : {}),
   };
-  return Object.keys(round).length ? round : null;
 }
 
 /** The rounds of a chapter as a file says them: the valid ones, at most the newest `MAX_CHAPTER_ROUNDS`; `undefined` when there is none. */
@@ -228,12 +251,12 @@ function normalizeRounds(value: unknown): ChapterRound[] | undefined {
 
 /**
  * The record of a round the director has just judged: its vote, the average of the readers' votes when they read the chapter in this round
- * (they read it once, in the first round of its review) and what the director decided. Made with the rules a file is read with, so that it
- * is the same before and after it is saved.
+ * (they read it once, in the first round of its review), the verdict the plan acted on and what the director decided. Made with the rules a
+ * file is read with, so that it is the same before and after it is saved.
  */
-export function closedRound(input: { director: number; readers?: number[]; accepted: number; rejected: number }): ChapterRound {
+export function closedRound(input: { director: number; readers?: number[]; verdict?: ChapterRound["verdict"]; accepted: number; rejected: number }): ChapterRound {
   const readers = input.readers?.length ? input.readers.reduce((sum, vote) => sum + vote, 0) / input.readers.length : undefined;
-  return normalizeRound({ director: input.director, readers, accepted: input.accepted, rejected: input.rejected }) ?? {};
+  return normalizeRound({ director: input.director, readers, verdict: input.verdict, accepted: input.accepted, rejected: input.rejected }) ?? {};
 }
 
 /** Add a round to the history of a chapter, which keeps at most `MAX_CHAPTER_ROUNDS`: the oldest leave first. */
@@ -488,9 +511,12 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
   const usageUnknownCalls = asInteger(stats.usageUnknownCalls, 0, 0, Number.MAX_SAFE_INTEGER);
   const costUnknownCalls = asInteger(stats.costUnknownCalls, 0, 0, Number.MAX_SAFE_INTEGER);
   const workedMs = readDuration(stats.workedMs);
+  // The moment the count began means something only next to the count itself.
+  const workedMsSince = workedMs === undefined ? undefined : readMoment(stats.workedMsSince);
   const finalReview = normalizeFinalReview(source.finalReview);
   const concept = asRecord(source.concept);
   const lastError = asRecord(source.lastError);
+  const activityId = readActivityId(lastError.activityId);
   const errorKind = normalizeErrorKind(lastError.errorKind);
   const errorDetail = normalizeErrorDetail(lastError.errorDetail);
   const runner = asRecord(source.runner);
@@ -531,6 +557,7 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
       ...(usageUnknownCalls ? { usageUnknownCalls } : {}),
       ...(costUnknownCalls ? { costUnknownCalls } : {}),
       ...(workedMs !== undefined ? { workedMs } : {}),
+      ...(workedMsSince ? { workedMsSince } : {}),
     },
     message: asString(source.message) || null,
     lastError: asString(lastError.message)
@@ -538,6 +565,7 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
         message: asString(lastError.message),
         at: asString(lastError.at),
         task: (asString(lastError.task) || undefined) as AutopilotTaskKind | undefined,
+        ...(activityId ? { activityId } : {}),
         ...(errorKind ? { errorKind } : {}),
         ...(errorDetail ? { errorDetail } : {}),
       }
@@ -579,11 +607,11 @@ export function inspectAutopilotState(raw: string | null | undefined, now = new 
   }
 }
 
-/** An object made only of the numbers of a round, as `JSON.stringify` indents it: one field to a line. */
-const ROUND_OBJECT = /\{\n(?: +"(?:director|readers|accepted|rejected)": -?\d+(?:\.\d+)?,?\n)+ *\}/g;
+/** An object made only of the numbers and the verdict of a round, as `JSON.stringify` indents it: one field to a line. */
+const ROUND_OBJECT = /\{\n(?: +"(?:(?:director|readers|accepted|rejected)": -?\d+(?:\.\d+)?|verdict": "(?:approve|revise)"),?\n)+ *\}/g;
 
 /**
- * The state file: JSON, indented, with every round of a chapter's history (four small numbers) on one line, so that a book of thousands
+ * The state file: JSON, indented, with every round of a chapter's history (four small numbers and a verdict) on one line, so that a book of thousands
  * of chapters does not spend the file on indentation. An engine that does not know the rounds reads the file all the same.
  */
 export function serializeAutopilotState(state: AutopilotState): string {

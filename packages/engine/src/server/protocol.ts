@@ -1,4 +1,4 @@
-import type { AiRuntimeConfig, RedactedAiIntegration } from "../ai/config.js";
+import type { AiRuntimeConfig, RedactedAiIntegration, RedactedAiTaskRoute } from "../ai/config.js";
 import type { EvaluationTarget } from "../book/paths.js";
 import type { BookFileChange, BookFileContent, BookFileEntry } from "../book/store.js";
 import type { DirectorOpinion } from "../director/opinion.js";
@@ -189,11 +189,16 @@ export interface AskDirectorResponse {
 
 export interface ServerAiStatus {
   configured: boolean;
+  /** Every integration, without its key; an integration that sets a thinking level says it (`thinking`). */
   integrations: RedactedAiIntegration[];
   routedTasks: string[];
   updatedAt: string | null;
   /** AI endpoint origins the server owner still has to approve in the admin panel before they can be called. */
   pendingApproval?: string[];
+  /** Whether "Tools only" is in force (`AiRuntimeConfig.toolsOnly`: true unless the configuration turned it off). Absent from a server that does not say. */
+  toolsOnly?: boolean;
+  /** The route of every routed task, with the thinking level of each target when it sets one (`redactAiRuntimeConfig(...).taskRouting`). Absent from a server that does not say. */
+  taskRouting?: Record<string, RedactedAiTaskRoute>;
 }
 
 export interface PutAiConfigRequest {

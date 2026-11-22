@@ -1,8 +1,9 @@
 import { likelyMessageTokens, likelyTextTokens, resolveModelTokenBudgets } from "./budget.js";
 import type { AiRuntimeConfig } from "./config.js";
+import { redactSecrets } from "./redact.js";
 import { buildChatRequest, type ChatRequest } from "./request.js";
 import { resolveAiCandidates, type AiCandidate } from "./router.js";
-import { AiPromptTooLargeError, AiProviderError, AiRoutingBudgetError, AiUnavailableError, type AiRequest } from "./types.js";
+import { AiPromptTooLargeError, AiProviderError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, type AiRequest } from "./types.js";
 
 /** What a fallback's privacy boundary is: the integration (one provider account). Same as the web app's `candidateBoundary`. */
 export function candidateBoundary(candidate: Pick<AiCandidate, "integration">): string {
@@ -41,13 +42,23 @@ export interface PlannedAttempt {
   estimate: AttemptEstimate;
 }
 
+/** A candidate that will not be asked, and why: with "Tools only" on, a structured request skips a model marked as without tool calls. */
+export interface SkippedAttempt {
+  candidate: AiCandidate;
+  /** Position in the route's order: 0 is the primary. */
+  index: number;
+  reason: "no-tool-calls";
+}
+
 export interface AttemptPlan {
   attempts: PlannedAttempt[];
-  /** The first candidate of the route: the boundary content is meant to stay in. */
+  /** The first candidate of the route: the boundary content is meant to stay in (also when "Tools only" skips it). */
   primary: AiCandidate;
   limits: RoutingLimits;
   /** Candidates left out because `sameBoundaryOnly` keeps content inside the primary's account. */
   excludedByBoundary: number;
+  /** Candidates left out because "Tools only" is on and they are marked as without tool calls; empty for a request without a function. */
+  skipped: SkippedAttempt[];
 }
 
 export function routingLimits(config: AiRuntimeConfig): RoutingLimits {
@@ -65,15 +76,31 @@ function estimateAttempt(candidate: AiCandidate, inputTokens: number, outputLimi
 
 /**
  * The candidates a call will try, in order, with the request each would get: the route's order, minus the fallbacks the
- * privacy policy excludes, minus the candidates whose context window cannot hold the prompt (a prompt is never cut),
- * kept while the estimated attempts stay within the token and cost limits. A prompt no window holds, or a first attempt
- * that alone exceeds the limits, is refused before anything is sent.
+ * privacy policy excludes, minus (for a structured request, with "Tools only" on, which is the default) the models marked as without
+ * tool calls, minus the candidates whose context window cannot hold the prompt (a prompt is never cut),
+ * kept while the estimated attempts stay within the token and cost limits. A prompt no window holds, a first attempt
+ * that alone exceeds the limits, or a route where no model can call a function, is refused before anything is sent.
+ * The privacy policy is applied to the whole route first, so a primary that is skipped is still the account content is meant to stay in.
  */
 export function planAttempts(config: AiRuntimeConfig, request: AiRequest, githubModelsBaseUrl?: string): AttemptPlan {
   const resolved = resolveAiCandidates(config, request.capability);
   if (!resolved.length) throw new AiUnavailableError(request.capability);
   const limits = routingLimits(config);
-  const allowed = applySameBoundaryPolicy(config, resolved);
+  const inBoundary = applySameBoundaryPolicy(config, resolved);
+  const toolsOnly = config.toolsOnly !== false && Boolean(request.json);
+  const skipped: SkippedAttempt[] = [];
+  const allowed = inBoundary.filter((candidate) => {
+    if (!toolsOnly || candidate.supportsToolCalls !== false) return true;
+    skipped.push({ candidate, index: resolved.indexOf(candidate), reason: "no-tool-calls" });
+    return false;
+  });
+  if (!allowed.length) {
+    const secrets = config.aiIntegrations.map((integration) => integration.apiKey);
+    throw new AiToolsRequiredError(
+      redactSecrets(toolsRequiredMessage(skipped), secrets),
+      skipped.map((entry) => redactSecrets(entry.candidate.model, secrets)),
+    );
+  }
   const planned: PlannedAttempt[] = allowed.map((candidate) => {
     const index = resolved.indexOf(candidate);
     try {
@@ -118,5 +145,10 @@ export function planAttempts(config: AiRuntimeConfig, request: AiRequest, github
     tokens += attempt.estimate.tokens;
     cost += attempt.estimate.cost;
   }
-  return { attempts, primary: resolved[0], limits, excludedByBoundary: resolved.length - allowed.length };
+  return { attempts, primary: resolved[0], limits, excludedByBoundary: resolved.length - inBoundary.length, skipped };
+}
+
+function toolsRequiredMessage(skipped: readonly SkippedAttempt[]): string {
+  const models = skipped.map(({ candidate }) => `"${candidate.model}" in "${candidate.integration.name}"`).join(", ");
+  return `"Tools only" is on, and every model this task can use is marked as without tool calls (${models}), so a structured answer has nowhere to go. Turn on "Forced tool calls" for the model in AI Integrations, or turn off "Tools only" in the AI Router. Nothing was sent.`;
 }

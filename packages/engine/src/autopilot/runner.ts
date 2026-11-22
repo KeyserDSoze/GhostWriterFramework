@@ -1,5 +1,5 @@
 import { redactSecrets } from "../ai/redact.js";
-import { AiProviderError, AiReplyRejectedError, type AiPort, type AiRequest, type AiResponse, type AiUsage } from "../ai/types.js";
+import { AiProviderError, AiReplyRejectedError, type AiPort, type AiProgress, type AiRequest, type AiResponse, type AiUsage } from "../ai/types.js";
 import { activeReaders, isThinDocument, loadDirectorProfile, loadReaderPanel, readBody } from "../book/context.js";
 import { AUTOPILOT_ACTIVITY_FILE, AUTOPILOT_STATE_FILE, STORY_DESIGN_FILE } from "../book/paths.js";
 import { SnapshotCache, loadBookSnapshot, type BookSnapshot } from "../book/snapshot.js";
@@ -361,6 +361,8 @@ const MAX_TRANSIENT_RETRIES = 3;
 const BASE_RETRY_DELAY_MS = 4000;
 /** What a reply cut while the model only reasoned gets its output limit multiplied by, for the rest of the run. */
 const OUTPUT_BOOST = 3;
+/** The shortest time between two `task-progress` events of a step that answers with a structured value (the client reports up to four times a second; the stream of the server is not flooded). */
+const STRUCTURED_PROGRESS_INTERVAL_MS = 1000;
 
 /**
  * How a failed step may be repeated: a provider failure up to three times with a growing wait; a rejected reply or a
@@ -930,6 +932,7 @@ export class AutopilotRun {
         this.current = activity;
         this.emit({ type: "task-started", activity });
         let lastProgress = 0;
+        let lastStructuredProgress: number | undefined;
         const ai = async (request: Omit<AiRequest, "signal">): Promise<AiResponse> => {
           lastLabel = request.label;
           const onText = request.json ? undefined : (text: string) => {
@@ -938,11 +941,18 @@ export class AutopilotRun {
             lastProgress = at;
             this.emit({ type: "task-progress", activityId: activity.id, characters: text.length, preview: tail(text, 700) });
           };
+          // A structured reply has no text to show: the client reports how much has arrived (up to four times a second), and one report a second is said, as numbers only.
+          const onProgress = request.json ? (progress: AiProgress) => {
+            const at = this.now().getTime();
+            if (lastStructuredProgress !== undefined && at - lastStructuredProgress < STRUCTURED_PROGRESS_INTERVAL_MS) return;
+            lastStructuredProgress = at;
+            this.emit({ type: "task-progress", activityId: activity.id, characters: progress.characters, bytes: progress.bytes, preview: "" });
+          } : undefined;
           const user = correction?.label === request.label ? `${request.user}\n\n${currentRequest(correction.note)}` : request.user;
           let response: AiResponse;
           const boost = this.outputBoosts.get(boostKey) ?? 1;
           try {
-            response = await this.config.ai.complete({ ...request, user, signal: stepController.signal, onText: request.onText ?? onText, ...(boost > 1 ? { outputBoost: boost } : {}) });
+            response = await this.config.ai.complete({ ...request, user, signal: stepController.signal, onText: request.onText ?? onText, ...(onProgress ? { onProgress: request.onProgress ?? onProgress } : {}), ...(boost > 1 ? { outputBoost: boost } : {}) });
           } catch (error) {
             // A failed attempt may still have been billed: count what the provider reported.
             if (error instanceof AiProviderError && (error.usage || error.cost !== undefined || error.model)) recordSpend(spend, error);
@@ -1000,8 +1010,14 @@ export class AutopilotRun {
         let next: AutopilotState = {
           ...working,
           interventions: working.interventions.map((entry) => applied.has(entry.id) ? { ...entry, status: "applied" as const, appliedAt: finishedAt.toISOString(), appliedBy: activity.id } : entry),
-          // The time of the step that is saved, from its start to its end (a clock that went back counts for nothing).
-          stats: { ...withSpend(working.stats, spend), tasks: working.stats.tasks + 1, workedMs: (working.stats.workedMs ?? 0) + Math.max(0, Math.round(finishedAt.getTime() - startedAt.getTime())) },
+          // The time of the step that is saved, from its start to its end (a clock that went back counts for nothing). The count is born with the
+          // first step it counts, and the moment that step began is the moment the count began: said once, never moved, and not made up for a count that was born without it.
+          stats: {
+            ...withSpend(working.stats, spend),
+            tasks: working.stats.tasks + 1,
+            workedMs: (working.stats.workedMs ?? 0) + Math.max(0, Math.round(finishedAt.getTime() - startedAt.getTime())),
+            ...(working.stats.workedMs === undefined && working.stats.workedMsSince === undefined ? { workedMsSince: startedAt.toISOString() } : {}),
+          },
           runner: state.runner ? { ...state.runner, heartbeatAt: finishedAt.toISOString() } : null,
           lastError: null,
         };
@@ -1125,7 +1141,7 @@ export class AutopilotRun {
         state = await this.finish({
           ...state,
           stats: { ...state.stats, failures: state.stats.failures + 1 },
-          lastError: { message: describeError(error), at: this.now().toISOString(), task: task?.kind, ...failure },
+          lastError: { message: describeError(error), at: this.now().toISOString(), task: task?.kind, ...(activity ? { activityId: activity.id } : {}), ...failure },
         }, "error", describeError(error));
         break;
       } finally {

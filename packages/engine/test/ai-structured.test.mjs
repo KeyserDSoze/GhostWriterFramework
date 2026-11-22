@@ -94,8 +94,8 @@ test("the client moves on to the next candidate when the first one's tool call s
   assert.deepEqual(hosts, ["a.test", "b.test"], "the second candidate was tried");
 });
 
-test("a model that ignores the tool and answers in the text still works end to end", async () => {
-  const cfg = pickAiRuntimeConfig({ aiIntegrations: [{ id: "a", name: "A", provider: "openai", endpoint: "http://a.test/v1", apiKey: "k", chatModels: [{ id: "1", name: "m", capabilities: ["default"] }] }] });
+test("with Tools only off, a model that ignores the tool and answers in the text still works end to end", async () => {
+  const cfg = pickAiRuntimeConfig({ aiToolsOnly: false, aiIntegrations: [{ id: "a", name: "A", provider: "openai", endpoint: "http://a.test/v1", apiKey: "k", chatModels: [{ id: "1", name: "m", capabilities: ["default"] }] }] });
   const fetch = async () => Response.json({ choices: [{ message: { content: `Here you go:\n${JSON.stringify(answer)}`, tool_calls: [{ function: { arguments: "{\"foo\":1}" } }] }, finish_reason: "stop" }] });
   assert.deepEqual((await createFetchAi(cfg, { fetch }).complete({ ...ASK, json: schema })).json, answer);
   const textOnly = async () => Response.json({ choices: [{ message: { content: JSON.stringify(answer) }, finish_reason: "stop" }] });

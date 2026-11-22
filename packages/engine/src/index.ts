@@ -28,6 +28,9 @@ export * from "./ai/structured.js";
 export * from "./ai/request.js";
 export * from "./ai/routing.js";
 export * from "./ai/fetch-client.js";
+export * from "./ai/catalog.js";
+export * from "./ai/catalog-fetch.js";
+export * from "./ai/probe.js";
 
 export * from "./director/opinion.js";
 

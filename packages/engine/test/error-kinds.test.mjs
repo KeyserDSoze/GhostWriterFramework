@@ -10,6 +10,7 @@ const {
   AiProviderError,
   AiReplyRejectedError,
   AiRoutingBudgetError,
+  AiToolsRequiredError,
   AiUnavailableError,
   AutopilotSession,
   BookConflictError,
@@ -27,7 +28,7 @@ const {
 const STATE = "autopilot/state.json";
 const FAST = { readers: false, readersOnPlan: false, pauseAfterPlan: false };
 const ONE = { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }, options: FAST };
-const KINDS = ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider", "unknown"];
+const KINDS = ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "config", "provider", "unknown"];
 
 function reply(json) {
   return { text: JSON.stringify(json), json, usage: { inputTokens: 100, outputTokens: 50, cachedInputTokens: 0 }, model: "fake-model", provider: "fake", cost: 0.001, currency: "USD" };
@@ -106,6 +107,8 @@ const CASES = [
   ["a prompt no context window holds", () => new AiPromptTooLargeError("The prompt is larger than the context window.", 9000, 4000), "limit"],
   ["a fallback the privacy setting blocks", () => new AiFallbackBlockedError("The fallback was not used."), "refused"],
   ["no model routed to the task", () => new AiUnavailableError("autopilot"), "refused"],
+  ["Tools only is on and no model can call a function", () => new AiToolsRequiredError("None of the models can call a function. Nothing was sent.", ["m"]), "config"],
+  ["the same, as another host's copy of the error knows it", () => Object.assign(new Error("None of the models can call a function."), { name: "AiToolsRequiredError" }), "config"],
   ["a reply that was rejected", () => new AiReplyRejectedError("The concept was rejected: the field \"storyDesign\" is missing."), "provider"],
   ["a reply that is not JSON", () => new StructuredReplyError("The model reply is not valid JSON."), "provider"],
   ["a frontmatter that cannot be read", () => new FrontmatterError("story-design.md", "bad indentation", 3, "en"), "profile"],

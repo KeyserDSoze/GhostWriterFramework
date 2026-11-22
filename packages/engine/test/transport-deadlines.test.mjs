@@ -418,8 +418,8 @@ test("the end of an attempt says whether the reply was streamed, when its first 
   assert.equal(ends[1].firstByteMs, 800);
   assert.equal(ends[1].toolCalled, true);
 
-  // A structured request that the model answered in the text: no function was called. A plain request has no such thing.
-  await createFetchAi(configOf(), { fetch: async () => sse([content("{\"ok\":true}"), finish("stop"), DONE]), onAttemptEnd }).complete(JSON_ASK);
+  // A structured request that the model answered in the text (it is read only with Tools only off): no function was called. A plain request has no such thing.
+  await createFetchAi(configOf({}, { toolsOnly: false }), { fetch: async () => sse([content("{\"ok\":true}"), finish("stop"), DONE]), onAttemptEnd }).complete(JSON_ASK);
   await createFetchAi(configOf(), { fetch: async () => sse([content("Prose."), finish("stop"), DONE]), onAttemptEnd }).complete({ ...ASK, onText: () => undefined });
   assert.equal(ends[2].toolCalled, false);
   assert.equal(ends[2].streamed, true);
