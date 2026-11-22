@@ -1,5 +1,35 @@
 [
   {
+    "version": "0.86.0",
+    "date": "2026-11-22",
+    "en": {
+      "title": "Quick commands for the autopilot: pause, run one step, publish, hand over",
+      "summary": "A quick-commands bar on the Autopilot page and in the live panel lets you pause at the end of the chapter, run just one step or one chapter, choose when the book is published to GitHub, and pass the autopilot between this browser and your server whenever you like.",
+      "changes": [
+        "New quick-commands bar on the Autopilot page and in the live panel next to the Copilot. In \"Live\" it commands the book you are in, or the only one that is running, with a selector when several are.",
+        "Pause after this step, pause at the end of the chapter, or take a pause back with the ✕ on its chip. \"Stop now\" is still there. You can also run just one step or one chapter and stop.",
+        "Choose when the book is published to GitHub: never, after every chapter or after every step. The choice also changes while the autopilot runs, and \"Publish now\" pushes at once.",
+        "Pass the autopilot between this browser and your server whenever you like: after this step, now, or run one step there and bring it back. If something fails, the book stays safe where it was and the message says where it is. A quick switch never sends keys or tokens: if the server still needs them, it opens the \"Where it runs\" card.",
+        "Pausing at the end of the chapter, running one step and changing the publishing choice while the autopilot runs need personal server 0.1.5. With an older server the bar says so and keeps those commands off.",
+        "Personal server 0.1.5 adds the routes for those controls, and its publishing to GitHub now follows your choice instead of always pushing after every step.",
+        "The page now declares its language: with the interface in Italian, screen readers read it as Italian."
+      ]
+    },
+    "it": {
+      "title": "Comandi rapidi per l'autopilot: pausa, un solo passo, pubblicazione, passaggio di mano",
+      "summary": "Una barra di comandi rapidi nella pagina Autopilot e nel pannello in diretta permette di mettere in pausa a fine capitolo, eseguire un solo passo o un solo capitolo, scegliere quando il libro viene pubblicato su GitHub e passare l'autopilot tra questo browser e il tuo server quando vuoi.",
+      "changes": [
+        "Nuova barra di comandi rapidi nella pagina Autopilot e nel pannello in diretta vicino al Copilot. In «In diretta» comanda il libro in cui sei, o l'unico che sta girando, con un selettore quando ce ne sono più di uno.",
+        "Pausa dopo questo passo, pausa a fine capitolo, oppure annulli una pausa con la ✕ sulla sua etichetta. «Ferma subito» c'è ancora. Puoi anche eseguire un solo passo o un solo capitolo e fermarti.",
+        "Scegli quando il libro viene pubblicato su GitHub: mai, a ogni capitolo o a ogni passo. La scelta si cambia anche mentre l'autopilot gira, e «Pubblica ora» invia subito.",
+        "Passa l'autopilot tra questo browser e il tuo server quando vuoi: dopo questo passo, subito, oppure esegui un passo lì e riportalo qui. Se qualcosa non va, il libro resta al sicuro dov'era e il messaggio dice dove si trova. Un passaggio rapido non invia mai chiavi o token: se il server li richiede ancora, si apre la scheda «Dove gira».",
+        "La pausa a fine capitolo, l'esecuzione di un solo passo e il cambio della scelta di pubblicazione mentre l'autopilot gira richiedono il server personale 0.1.5. Con un server più vecchio la barra lo dice e tiene spenti quei comandi.",
+        "Il server personale 0.1.5 aggiunge le rotte per questi controlli e la sua pubblicazione su GitHub ora segue la tua scelta invece di inviare sempre a ogni passo.",
+        "La pagina ora dichiara la sua lingua: con l'interfaccia in italiano gli screen reader la leggono come italiana."
+      ]
+    }
+  },
+  {
     "version": "0.85.0",
     "date": "2026-11-22",
     "en": {
