@@ -657,9 +657,10 @@ describe("the commands that start the autopilot", () => {
   it("are for a book that is completed too, on the page, where the author adds chapters instead of resuming; the live panel leaves it alone", () => {
     seedBar({ status: "completed" });
     const view = renderBar();
-    // A book that is complete is not resumed: the main action is to add chapters, in the settings (the plan is extended when the run starts again).
+    // A book that is complete is not resumed: the main action is to add chapters, in the configuration (the plan is extended when the run starts again).
     expect(maybeButton("autopilot.actions.resume")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: name("autopilot.actions.addChapters") })).toHaveAttribute("href", "/app/books/book-1/autopilot#autopilot-setup");
+    // Changed on purpose (the menu in groups): the configuration is a page of its own, with the number of chapters in front.
+    expect(screen.getByRole("link", { name: name("autopilot.actions.addChapters") })).toHaveAttribute("href", "/app/books/book-1/autopilot/settings#autopilot-chapters");
     expect(maybeButton("autopilot.quick.run.menu")).not.toBeInTheDocument();
     view.unmount();
     renderBar("dock");

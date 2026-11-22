@@ -20,6 +20,7 @@ vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast: mocks.to
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { AutopilotPage } from "@/pages/AutopilotPage";
+import { AutopilotSettingsPage } from "@/pages/AutopilotSettingsPage";
 import { AutopilotDock } from "@/components/autopilot/AutopilotDock";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -272,13 +273,14 @@ describe("what comes first on the page", () => {
     expect(screen.getAllByText(/The provider failed/)).toHaveLength(1);
   });
 
-  it("keeps the secondary things in a column of their own, after the history: the plan, the rules, where it runs, the settings", () => {
+  // Changed on purpose (the menu in groups): the settings moved to the configuration of the autopilot, a page of their own.
+  it("keeps the secondary things in a column of their own, after the history: the plan, the rules and where it runs", () => {
     seedRun({ status: "paused" });
     render(<Page />);
     const side = document.querySelector<HTMLElement>("[data-autopilot-side]") as HTMLElement;
     expect(side, "a secondary column").not.toBeNull();
     for (const title of [t("autopilot.plan.title"), t("autopilot.rules.title"), t("autopilot.where.title")]) expect(side).toContainElement(screen.getByRole("heading", { name: title }));
-    expect(side).toContainElement(screen.getByText(t("autopilot.setup.settingsTitle")));
+    expect(screen.queryByLabelText(t("autopilot.setup.idea")), "the brief is in the configuration").not.toBeInTheDocument();
     const main = document.querySelector<HTMLElement>("[data-autopilot-main]") as HTMLElement;
     expect(main).toContainElement(section(t("autopilot.activity.title")));
     expect(main).not.toContainElement(section(t("autopilot.plan.title")));
@@ -325,29 +327,13 @@ describe("intervening", () => {
 });
 
 describe("the danger zone", () => {
-  const zone = () => screen.getByRole("region", { name: t("autopilot.danger.title") });
-
-  it("is the last thing of the secondary column, apart from everything else, with the Reset in it", () => {
+  // Changed on purpose (the menu in groups): the reset is the last section of the configuration of the autopilot, with the same question
+  // before it forgets anything (see autopilotSettingsPage.test.tsx). The live page has none.
+  it("is not on the live page: it is in the configuration", () => {
     seedRun({ status: "paused" });
     render(<Page />);
-    const side = document.querySelector<HTMLElement>("[data-autopilot-side]") as HTMLElement;
-    const last = side.children[side.children.length - 1] as HTMLElement;
-    expect(last).toBe(zone());
-    expect(within(zone()).getByText(t("autopilot.danger.description"))).toBeInTheDocument();
-    expect(within(zone()).getByRole("button", { name: t("autopilot.actions.reset") })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: t("autopilot.actions.reset") })).toHaveLength(1);
-  });
-
-  it("asks before it forgets anything", async () => {
-    seedRun({ status: "paused" });
-    render(<Page />);
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    fireEvent.click(within(zone()).getByRole("button", { name: t("autopilot.actions.reset") }));
-    expect(confirm).toHaveBeenCalledWith(t("autopilot.actions.resetConfirm"));
-    expect(mocks.runtime.reset).not.toHaveBeenCalled();
-    confirm.mockReturnValue(true);
-    fireEvent.click(within(zone()).getByRole("button", { name: t("autopilot.actions.reset") }));
-    await waitFor(() => expect(mocks.runtime.reset).toHaveBeenCalledWith("book-1"));
+    expect(screen.queryByRole("region", { name: t("autopilot.danger.title") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("autopilot.actions.reset") })).not.toBeInTheDocument();
   });
 
   it("is not there while the autopilot runs: it cannot be reset then", () => {
@@ -420,7 +406,8 @@ describe("a book that is finished", () => {
     expect(within(group).queryByRole("button", { name: quickName(t("autopilot.actions.resume")) })).not.toBeInTheDocument();
     const add = within(group).getByRole("link", { name: quickName(t("autopilot.actions.addChapters")) });
     expect(add.className).toMatch(/(^|\s)bg-primary(\s|$)/);
-    expect(add).toHaveAttribute("href", "/app/books/book-1/autopilot#autopilot-setup");
+    // Changed on purpose (the menu in groups): the number of chapters is in the configuration, a page of its own.
+    expect(add).toHaveAttribute("href", "/app/books/book-1/autopilot/settings#autopilot-chapters");
   });
 
   it("says how it went in a card of its own, right under the band: the verdict of the director on the whole book, the time, the cost, the words", () => {
@@ -483,13 +470,21 @@ describe("a book that is finished", () => {
     expect(within(resultOf()).getByRole("columnheader", { name: t("autopilot.result.scores.round", { number: 3 }) })).toBeInTheDocument();
   });
 
-  it("takes the author to the settings, open, with the number of chapters in front of them", async () => {
+  // Changed on purpose (the menu in groups): the settings are a page of their own, the configuration; the number of chapters takes the focus there.
+  it("takes the author to the configuration, with the number of chapters in front of them", async () => {
     done();
-    render(<Page />);
+    render(
+      <MemoryRouter initialEntries={["/app/books/book-1/autopilot"]}>
+        <Routes>
+          <Route path="/app/books/:bookId/autopilot" element={<AutopilotPage />} />
+          <Route path="/app/books/:bookId/autopilot/settings" element={<AutopilotSettingsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
     fireEvent.click(within(bandOf()).getByRole("link", { name: quickName(t("autopilot.actions.addChapters")) }));
     const field = await screen.findByLabelText(t("autopilot.setup.chapters"));
     await waitFor(() => expect(document.activeElement).toBe(field));
-    expect(field.closest("details")).toHaveProperty("open", true);
+    expect(screen.getByRole("heading", { level: 1, name: t("autopilot.config.title") })).toBeInTheDocument();
   });
 
   it("offers the same way to the settings in the card, under a name of its own: two links of one name would be one too many for a screen reader", () => {

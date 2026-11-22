@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { parseAppRoute } from "@/assistant/context";
 import { useBookAutopilotView, useAutopilotRefresh } from "@/autopilot/hooks";
-import { isAutopilotPage } from "@/autopilot/pageRoute";
+import { isAutopilotLivePage, isAutopilotPage, autopilotSettingsHref } from "@/autopilot/pageRoute";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useFocusBook } from "@/autopilot/useFocusBook";
 import { useReserveSpace } from "@/hooks/useReserveSpace";
@@ -36,6 +36,8 @@ export function AutopilotDock() {
   const location = useLocation();
   const hidden = useUiStore((state) => state.floatingHidden);
   const onPage = isAutopilotPage(location.pathname);
+  // The configuration is a page of the autopilot, but it does not show the run: brought back there, the panel says the step and lists the events.
+  const pageShowsRun = isAutopilotLivePage(location.pathname);
   const dockOpen = useAutopilotStore((state) => state.dockOpen);
   const pageDockOpen = useAutopilotStore((state) => state.pageDockOpen);
   const setDockOpen = useAutopilotStore((state) => state.setDockOpen);
@@ -79,7 +81,7 @@ export function AutopilotDock() {
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {tab === "book" && bookId ? <DockBookPanel bookId={bookId} announce={!onPage} /> : <DockLivePanel announce={!onPage} showBook={Boolean(bookId)} onPage={onPage ? (bookId ? "book" : "all") : null} pageBook={bookId} />}
+        {tab === "book" && bookId ? <DockBookPanel bookId={bookId} announce={!pageShowsRun} /> : <DockLivePanel announce={!pageShowsRun} showBook={Boolean(bookId)} onPage={pageShowsRun ? (bookId ? "book" : "all") : null} pageBook={bookId} />}
       </div>
     </section>
   );
@@ -150,7 +152,7 @@ function DockBookPanel({ bookId, announce }: { bookId: string; announce: boolean
 
 /**
  * One book in the small: its name and its state, the step it does now with its time, how far it is, what is wrong when something is (the question,
- * the problems of a profile, the error), and its commands. A book that never started has the way to its page, where it starts. `announce` says
+ * the problems of a profile, the error), and its commands. A book that never started has the way to its configuration, where it starts. `announce` says
  * whether the step is read out as it changes: not when the page of the autopilot is on the screen and does it already.
  */
 function MiniPlayer({ bookId, announce, heading }: { bookId: string; announce: boolean; heading?: ReactNode }) {
@@ -188,7 +190,7 @@ function MiniPlayer({ bookId, announce, heading }: { bookId: string; announce: b
       <QuickCommands bookId={bookId} variant="dock" heading={null} profileHintId={profileHintId} />
       {!model && (
         <Button asChild size="sm">
-          <Link to={pageHref}>{t("autopilot.actions.start")}</Link>
+          <Link to={autopilotSettingsHref(bookId)}>{t("autopilot.actions.start")}</Link>
         </Button>
       )}
     </div>

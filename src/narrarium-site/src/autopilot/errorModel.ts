@@ -139,6 +139,14 @@ export function errorActions(kind: AutopilotErrorKind, { configurationBlocks = t
   return { retry: configurationFirst ? "secondary" : "main", integrations: IN_INTEGRATIONS.has(kind), router: false, first: configurationFirst ? "integrations" : "retry" };
 }
 
+/**
+ * The failures that a check of the connection can say something about: an endpoint that is off or cannot be reached (`network`), that refuses the key (`auth`), that does not answer in time
+ * (`timeout`) or that fails (`provider`). The others (a limit, an answer that was cut, a file of the book, the configuration) are not about the connection, and a check would tell nothing.
+ */
+const CONNECTION_CHECK: ReadonlySet<AutopilotErrorKind> = new Set(["network", "auth", "timeout", "provider"]);
+
+export const offersConnectionCheck = (kind: AutopilotErrorKind): boolean => CONNECTION_CHECK.has(kind);
+
 export interface TimeoutNote {
   /** Which deadline ran out: the provider did not begin answering, it went silent while it answered, or the call took longer than any call may. */
   phase: "start" | "idle" | "total";

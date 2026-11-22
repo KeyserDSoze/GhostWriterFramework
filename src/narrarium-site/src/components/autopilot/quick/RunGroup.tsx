@@ -5,6 +5,7 @@ import { ChevronDown, CircleHelp, Loader2, Pause, Play, Plus, SkipForward, Squar
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { QUICK_CONTROLS_SERVER_VERSION } from "@/autopilot/quickControls";
+import { autopilotSettingsHref } from "@/autopilot/pageRoute";
 import type { QuickModel } from "@/components/autopilot/quick/model";
 import { MENU_CONTENT, MENU_ITEM, MenuText, Reason } from "@/components/autopilot/quick/parts";
 
@@ -12,7 +13,7 @@ import { MENU_CONTENT, MENU_ITEM, MenuText, Reason } from "@/components/autopilo
  * The first group of the bar: what runs. A run that goes on has a pause (after the step, which is what a click does, or at the end of the
  * chapter, or taken back) and a stop. One that is stopped has Resume and a menu to run one step, one chapter, or until the author stops it.
  * The one main action is the one with the colour of the main action, and it changes with the state: Pause, Approve the plan and continue,
- * Resume, Answer the question, Retry; for a book that is complete, Add chapters (the settings are where more chapters are asked for), or
+ * Resume, Answer the question, Retry; for a book that is complete, Add chapters (the configuration is where more chapters are asked for), or
  * Write the new chapters once the settings ask for more than the plan has. `runExtra` is whatever the page puts next to it (Read chapter 4);
  * `trailing` ends the row (the button that opens the other groups of a bar that is condensed).
  */
@@ -109,7 +110,7 @@ function Stopped({ model, profileHintId, runExtra, trailing }: { model: QuickMod
     return (
       <div className="flex flex-wrap items-center gap-2">
         <Button asChild size="sm">
-          <Link to={{ pathname: model.pageHref, hash: "autopilot-setup" }} aria-label={named(t("autopilot.actions.addChapters"))}>
+          <Link to={{ pathname: autopilotSettingsHref(model.bookId), hash: "autopilot-chapters" }} aria-label={named(t("autopilot.actions.addChapters"))}>
             <Plus className="h-4 w-4" aria-hidden />{t("autopilot.actions.addChapters")}
           </Link>
         </Button>

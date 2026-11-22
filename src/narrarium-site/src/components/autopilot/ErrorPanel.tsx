@@ -4,11 +4,12 @@ import { useTranslation } from "react-i18next";
 import { Copy, Loader2, Play, Timer } from "lucide-react";
 import { ENGINE_VERSION, type AutopilotActivity, type AutopilotEvent } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
+import { ConnectionCheck } from "@/components/autopilot/ConnectionCheck";
 import { ErrorFiles } from "@/components/autopilot/StopNotices";
 import { KindIcon } from "@/components/autopilot/KindIcon";
 import { APP_VERSION } from "@/config/version";
 import { useBookAutopilotView, useNow } from "@/autopilot/hooks";
-import { diagnosticsText, errorActions, errorFacts, failureSource, formatCountdown, formatLimit, retryAfterSeconds, secondsLeft, timeoutOf, type ErrorFact, type FailureSource, type TimeoutNote } from "@/autopilot/errorModel";
+import { diagnosticsText, errorActions, errorFacts, failureSource, formatCountdown, formatLimit, offersConnectionCheck, retryAfterSeconds, secondsLeft, timeoutOf, type ErrorFact, type FailureSource, type TimeoutNote } from "@/autopilot/errorModel";
 import { taskLabel } from "@/autopilot/format";
 import { useAutopilotStore, type FeedEntry } from "@/autopilot/store";
 import { mergeLog } from "@/autopilot/timelineModel";
@@ -163,6 +164,8 @@ export function ErrorPanel({ bookId }: { bookId: string }) {
   const retryAfter = retryAfterSeconds(source.detail);
   const retryLabel = t("autopilot.failure.actions.retry");
   const integrationId = source.detail.integration;
+  // A check of the connection is for the failures an endpoint can cause, on the integration of the step that failed when this browser has it and it has a list to ask (OpenAI-compatible).
+  const checked = offersConnectionCheck(kind) && integrationId ? integrations.find((entry) => entry.id === integrationId && entry.provider === "openai") : undefined;
 
   async function copyDiagnostics() {
     try {
@@ -228,6 +231,7 @@ export function ErrorPanel({ bookId }: { bookId: string }) {
         </Button>
         <p role="status" data-error-copy className="min-w-0 text-xs text-muted-foreground">{copied === "done" ? t("autopilot.failure.actions.copied") : copied === "failed" ? t("autopilot.failure.actions.copyFailed") : ""}</p>
       </div>
+      {checked && <ConnectionCheck key={failureKey} integration={checked} hostedOnServer={host === "server"} />}
       {source.ended && actions.retry === "hidden" && <p data-error-retry-hint className="text-xs text-muted-foreground">{t("autopilot.failure.config.retryHint")}</p>}
       {!WORDS_ARE_THE_POINT.has(kind) && source.message && (
         <details className="text-xs">

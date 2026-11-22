@@ -29,6 +29,7 @@ import { setAutopilotHost } from "@/autopilot/host";
 import { AutopilotOperationBusyError, BookOperations, type AutopilotOperationKind } from "@/autopilot/operations";
 import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
 import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
+import { AutopilotRulesUnsupportedError, serverEditsRules } from "@/autopilot/rules";
 import { RefreshCoordinator } from "@/autopilot/refreshCoordinator";
 import { ServerAddressError, validateServerAddress } from "@/autopilot/serverAddress";
 import { ServerIdentityError, verifiedServer, type VerifiedServer, type VerifiedServerOptions } from "@/autopilot/serverIdentity";
@@ -710,6 +711,40 @@ export class BrowserAutopilotRuntime {
         return;
       }
       await this.localSession(book, resolveBookBranch(book)).configure(options);
+      await this.refresh(bookId);
+    });
+  }
+
+  /**
+   * Change the text of the permanent rule at `index`, also while a run goes on (the run merges it when its step ends). `expectedText` is the
+   * rule as the author saw it: a rule that changed in the meantime is never overwritten, and the refusal carries the engine's code
+   * (`rule_changed`, `rule_not_found`, `rule_too_long`, `rule_duplicate`, `rule_empty`). A server that predates the rules is not asked.
+   */
+  updateRule(bookId: string, index: number, text: string, expectedText: string): Promise<void> {
+    return this.operations.run(bookId, "configure", async () => {
+      const book = findBook(bookId);
+      if (autopilotHostOf(book) === "server") {
+        const { client, info } = await this.requireServer();
+        if (!serverEditsRules(info)) throw new AutopilotRulesUnsupportedError();
+        this.applySnapshot(bookId, await client.updateRule(book.id, index, text, expectedText));
+        return;
+      }
+      await this.localSession(book, resolveBookBranch(book)).updateRule(index, text, expectedText);
+      await this.refresh(bookId);
+    });
+  }
+
+  /** Remove the permanent rule at `index`, with the same guard as `updateRule`: the rules after it move up. */
+  removeRule(bookId: string, index: number, expectedText: string): Promise<void> {
+    return this.operations.run(bookId, "configure", async () => {
+      const book = findBook(bookId);
+      if (autopilotHostOf(book) === "server") {
+        const { client, info } = await this.requireServer();
+        if (!serverEditsRules(info)) throw new AutopilotRulesUnsupportedError();
+        this.applySnapshot(bookId, await client.removeRule(book.id, index, expectedText));
+        return;
+      }
+      await this.localSession(book, resolveBookBranch(book)).removeRule(index, expectedText);
       await this.refresh(bookId);
     });
   }

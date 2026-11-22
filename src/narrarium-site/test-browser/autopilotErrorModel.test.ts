@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AutopilotActivity, AutopilotErrorDetail, AutopilotRetryInfo, AutopilotStateSummary } from "narrarium-engine";
-import { ERROR_KINDS, diagnosticsText, errorActions, errorFacts, errorKindOf, failureSource, formatCountdown, formatLimit, retryAfterSeconds, secondsLeft, timeoutOf } from "@/autopilot/errorModel";
+import { ERROR_KINDS, diagnosticsText, errorActions, errorFacts, errorKindOf, failureSource, formatCountdown, formatLimit, offersConnectionCheck, retryAfterSeconds, secondsLeft, timeoutOf } from "@/autopilot/errorModel";
 
 const T0 = "2026-11-21T10:00:00.000Z";
 const at = (seconds: number) => new Date(Date.parse(T0) + seconds * 1000).toISOString();
@@ -63,6 +63,20 @@ describe("what can be done about each kind", () => {
 
   it("does not let the state of the configuration change what the other kinds offer", () => {
     for (const kind of ERROR_KINDS.filter((entry) => entry !== "config")) expect(errorActions(kind, { configurationBlocks: true })).toEqual(errorActions(kind, { configurationBlocks: false }));
+  });
+});
+
+describe("which failures offer a check of the connection", () => {
+  it("are the ones that an endpoint which is off, which refuses the key or which fails can cause: network, auth, timeout and provider, in the order the engine lists them", () => {
+    expect(ERROR_KINDS.filter((kind) => offersConnectionCheck(kind))).toEqual(["network", "auth", "timeout", "provider"]);
+  });
+
+  it("are not the failures of the limits, of the answer, of the files or of the configuration: a probe of the connection would say nothing about them", () => {
+    for (const kind of ["rate_limit", "truncated", "refused", "conflict", "budget", "limit", "profile", "config", "unknown"] as const) expect(offersConnectionCheck(kind), kind).toBe(false);
+  });
+
+  it("do not change what the panel offers otherwise: the actions of every kind are what they were", () => {
+    for (const kind of ERROR_KINDS.filter((entry) => entry !== "config")) expect(Object.keys(errorActions(kind)).sort(), kind).toEqual(["first", "integrations", "retry", "router"]);
   });
 });
 

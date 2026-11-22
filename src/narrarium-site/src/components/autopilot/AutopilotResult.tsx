@@ -8,6 +8,7 @@ import { ScoresBlock } from "@/components/autopilot/result/Scores";
 import { useBandModel } from "@/components/autopilot/AutopilotControlBand";
 import { finalReviewOf, finalVerdict, workedSince, workedTime, type FinalVerdict } from "@/autopilot/bandModel";
 import { formatCost, formatCount, formatDate, formatDuration } from "@/autopilot/format";
+import { autopilotSettingsHref } from "@/autopilot/pageRoute";
 import { chapterScores, readFirst } from "@/autopilot/resultModel";
 import { openAskDirector } from "@/store/askDirectorStore";
 import { cn } from "@/lib/utils";
@@ -87,7 +88,7 @@ function NumbersBlock({ items }: { items: Array<[string, ReactNode]> }) {
   );
 }
 
-/** What to do with a book that is finished: read it, export it, ask the director, add chapters (the same way as the band: the settings, with the number of chapters in front). */
+/** What to do with a book that is finished: read it, export it, ask the director, add chapters (the same way as the band: the configuration, with the number of chapters in front). */
 function ActionsBar({ bookId }: { bookId: string }) {
   const { t } = useTranslation();
   const root = `/app/books/${encodeURIComponent(bookId)}`;
@@ -103,7 +104,7 @@ function ActionsBar({ bookId }: { bookId: string }) {
         <Clapperboard className="h-4 w-4" aria-hidden="true" />{t("autopilot.result.actions.ask")}
       </Button>
       <Button asChild size="sm" variant="outline">
-        <Link to={{ pathname: `${root}/autopilot`, hash: "autopilot-setup" }}><Plus className="h-4 w-4" aria-hidden="true" />{t("autopilot.result.actions.add")}</Link>
+        <Link to={{ pathname: autopilotSettingsHref(bookId), hash: "autopilot-chapters" }}><Plus className="h-4 w-4" aria-hidden="true" />{t("autopilot.result.actions.add")}</Link>
       </Button>
     </div>
   );

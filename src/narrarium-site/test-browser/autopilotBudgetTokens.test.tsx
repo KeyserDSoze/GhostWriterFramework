@@ -28,7 +28,8 @@ vi.mock("@/autopilot/browserStore", async (importOriginal) => ({
 
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
-import { AutopilotPage, SetupCard } from "@/pages/AutopilotPage";
+import { AutopilotPage } from "@/pages/AutopilotPage";
+import { SetupCard } from "@/components/autopilot/config/SetupCard";
 import { autopilotRuntime } from "@/autopilot/runtime";
 import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useAuthStore } from "@/store/authStore";

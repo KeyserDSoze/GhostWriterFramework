@@ -86,6 +86,13 @@ export interface ChatModel {
   /** False when this model cannot execute OpenAI-compatible forced function calls. */
   supportsToolCalls?: boolean;
   /**
+   * What the endpoint declares of the model, kept as the author's own data: the model streams, reasons, reads images. They are read from `/models/details` and stored only when they are
+   * `true` (a gateway says `false` for everything it has not declared, which is no restriction), and the engine takes them from the model as it takes `supportsToolCalls`.
+   */
+  supportsStreaming?: boolean;
+  supportsReasoning?: boolean;
+  supportsVision?: boolean;
+  /**
    * How the level of thinking is sent to this model (see `ReasoningParameter`). Absent: `reasoning_effort`, as it always was. It is the author's word and is never set by itself:
    * the card of the integration only suggests it for the names the engine's `suggestedReasoningParameter` knows. A value this version does not know is kept as it is, and not used.
    */

@@ -33,6 +33,16 @@ describe("the doc of the autopilot says what the page does with what the engine 
     for (const word of ["Tools only", "aiToolsOnly", "Forced tool calls", "Default thinking", "Default", "Thinking parameter", "reasoningParameter", "suggestedReasoningParameter", "chat_template_kwargs.reasoning_strength"]) expect(router, word).toContain(word);
   });
 
+  it("says that the card of an OpenAI-compatible integration reads the models of its endpoint and checks the connection, and what an update never does, in the section of the AI router", () => {
+    const router = section("AI router tasks");
+    for (const word of ["fetchModelCatalog", "modelFieldsFromCatalogEntry", "probeEndpoint", "Read the models from the endpoint", "Check the connection", "/models/details", "/modalities", "never overwrites", "`false`"]) expect(router, word).toContain(word);
+  });
+
+  it("says that the error panel offers the same check, for which kinds, on which integration and where it leads", () => {
+    const page = section("Where it runs");
+    for (const word of ["probeEndpoint", "Check the connection", "`network`", "`timeout`", "`auth`", "`provider`", "errorDetail.integration", "#integration-", "offersConnectionCheck"]) expect(page, word).toContain(word);
+  });
+
   it("describes what the debug panel keeps of an attempt, and that it is metadata only", () => {
     const debug = section("What the debug panel keeps of an attempt");
     for (const word of ["metadata only", "onAttempt", "attemptBadges", "chat template"]) expect(debug, word).toContain(word);

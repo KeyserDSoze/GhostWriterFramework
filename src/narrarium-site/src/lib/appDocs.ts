@@ -44,6 +44,10 @@ Narrarium is a browser application for writing books whose repository is the sou
 - editorial and simulated-reader evaluations;
 - reader preview and DOCX, PDF and EPUB export;
 - local Git working copy with commit, pull, push, branch and PR operations.
+
+## The menu of a book
+
+When a book is open, the menu groups its pages: **Book** (Overview, Dashboard, Reader, Export), **Autopilot** (Live, Configuration), **Profiles** (Director, Ghostwriters, Evaluation style, Simulated readers) and **Tools** (Audit, Research, Assets). **Book settings** is at the bottom of the menu of the book, apart, and the canon comes after it. The title of a group opens and closes it: this device remembers the groups you closed, and the group of the page you are on is always open.
 `,
   }, {
     title: "Come funziona Narrarium",
@@ -71,6 +75,10 @@ Narrarium è un'applicazione browser per scrivere libri in cui il repository è 
 - valutazioni editoriali e con lettori simulati;
 - reader preview ed export DOCX, PDF ed EPUB;
 - working copy Git locale con commit, pull, push, branch e PR.
+
+## Il menu di un libro
+
+Quando un libro è aperto, il menu raggruppa le sue pagine: **Libro** (Panoramica, Dashboard, Reader, Esporta), **Autopilot** (In diretta, Configurazione), **Profili** (Direttore, Ghostwriter, Stile di valutazione, Lettori simulati) e **Strumenti** (Audit, Ricerche, Asset). **Impostazioni libro** sta in fondo al menu del libro, a parte, e il canone viene subito dopo. Il titolo di un gruppo lo apre e lo chiude: questo dispositivo ricorda i gruppi che hai chiuso, e il gruppo della pagina in cui sei è sempre aperto.
 `,
   }),
   entry("first-book", "guides", {
@@ -196,6 +204,18 @@ Narrarium uses your AI integrations. Add Azure OpenAI, OpenAI-compatible endpoin
 
 Create a GitHub PAT authorized for GitHub Models, add a **GitHub Models** integration in **AI Integrations**, load the model catalog and assign capabilities to the models you want to use.
 
+## Reading the models of an endpoint
+
+In the card of an **OpenAI / compatible** integration, two buttons next to the key work with the address and the key as they are written. They are not there for Azure OpenAI, GitHub Models or Microsoft 365 Copilot, which have no such list.
+
+**Check the connection** asks the endpoint one short question, its list of models, and says in one line how fast it answered and how many models it lists («Responds in 120 ms · 6 models»), or what to correct: error 401 is the key, 404 an address that does not end with the version path (for example */v1*), 429 and 5xx an endpoint that is limiting requests or busy. When nothing answers, a browser cannot tell a server that is off from a wrong address or from a server that does not allow this site (CORS), and the line says so; the engine's own words are in the technical details. The error panel of the autopilot offers the same check, with the same result and a link to the card, on the integration of the step that failed, for network, authentication, timeout and provider failures; when the run is on your personal server, the check still asks from your browser.
+
+**Read the models from the endpoint** opens a list of what the endpoint says it has, by kind (text, images, text-to-speech, transcription, embedding, other), with the context window, the largest answer and what each model can do (tool calls, streaming, reasoning, vision), and whether the integration already has it. It reads */models* (the list, needed) and, when the gateway has them, */models/details* and */modalities* (LlmProxy's: the limits, the capabilities and the kind of each model). Without them the dialog says «Only /models», lists every model as text and ticks none, because nothing says which of them chat.
+
+Tick what to add or update and press **Add/update N models**. The new text models are ticked at first. A model you already have is updated only where it is empty (its limits and the capabilities the endpoint declares); what you wrote is never overwritten: your numbers, a capability you set (a switch turned off included), its roles, names, prices and Thinking parameter. A capability the endpoint does not declare is not turned into a restriction. A new model gets what the endpoint declares of it, and the first model of an integration that has none takes the default roles. For a name that the engine knows (Muse Glimmer today) the dialog suggests the **Thinking parameter** *chat_template_kwargs.reasoning_strength*, already ticked, and you can untick it before confirming. A model that is not for chat can be set as the image, text-to-speech or transcription model of the integration while that field is empty.
+
+**Load models from API**, in the list of chat models, still works, for endpoints that answer in a simpler way.
+
 ## Task routing
 
 **AI Router** has one table for each kind of task: **Text (chat)**, **Text-to-speech (TTS)**, **Speech-to-text (STT)** and **Images**. A table lists the endpoint (the integration) and the model of each task; the text table also has **Thinking**, and its first row, **Default**, is used by every task that has no route of its own. A row without a choice of its own shows, dimmed, what Narrarium would use. The privacy of fallbacks and the execution limits are in the box **Routing options**.
@@ -244,6 +264,18 @@ Narrarium usa le tue integrazioni AI. Aggiungi Azure OpenAI, endpoint compatibil
 ## Avvio rapido GitHub Models
 
 Crea un PAT GitHub abilitato a GitHub Models, aggiungi un'integrazione **GitHub Models** in **Integrazioni AI**, carica il catalogo e assegna ai modelli le capability desiderate.
+
+## Leggere i modelli di un endpoint
+
+Nella scheda di un'integrazione **OpenAI / compatibile** due pulsanti accanto alla chiave lavorano con l'indirizzo e la chiave così come li hai scritti. Non ci sono per Azure OpenAI, GitHub Models e Microsoft 365 Copilot, che non hanno un elenco di questo tipo.
+
+**Verifica la connessione** fa all'endpoint una domanda breve, il suo elenco di modelli, e dice in una riga quanto ci ha messo a rispondere e quanti modelli elenca («Risponde in 120 ms · 6 modelli»), o che cosa correggere: l'errore 401 è la chiave, il 404 un indirizzo che non finisce con il percorso della versione (per esempio */v1*), il 429 e i 5xx un endpoint che limita le richieste o è occupato. Quando nessuno risponde, un browser non sa distinguere un server spento da un indirizzo sbagliato o da un server che non ammette questo sito (CORS), e la riga lo dice; le parole del motore sono nei dettagli tecnici. Il pannello d'errore dell'autopilot offre la stessa verifica, con lo stesso risultato e il collegamento alla scheda, sull'integrazione del passo fallito, per gli errori di rete, di autenticazione, di timeout e del provider; se l'esecuzione è sul tuo server personale, la verifica parte comunque dal browser.
+
+**Leggi i modelli dall'endpoint** apre un elenco di ciò che l'endpoint dice di avere, per tipo (testo, immagini, sintesi vocale, trascrizione, embedding, altro), con la finestra di contesto, la risposta massima e ciò che ogni modello sa fare (tool call, streaming, ragionamento, visione), e se l'integrazione lo ha già. Legge */models* (l'elenco, necessario) e, quando il gateway li ha, */models/details* e */modalities* (quelli di LlmProxy: i limiti, le capacità e il tipo di ogni modello). Senza di essi la finestra dice «Solo /models», elenca ogni modello come testo e non ne seleziona nessuno, perché niente dice quali conversano.
+
+Seleziona cosa aggiungere o aggiornare e premi **Aggiungi/aggiorna N modelli**. I modelli di testo nuovi sono selezionati all'inizio. Un modello che hai già viene aggiornato solo dove è vuoto (i limiti e le capacità che l'endpoint dichiara); ciò che hai scritto non viene mai sovrascritto: i tuoi numeri, una capacità che hai impostato (anche un interruttore spento), i ruoli, i nomi, i prezzi e il Parametro del thinking. Una capacità che l'endpoint non dichiara non diventa una restrizione. Un modello nuovo prende ciò che l'endpoint dichiara, e il primo modello di un'integrazione che non ne ha prende i ruoli predefiniti. Per un nome che il motore conosce (oggi Muse Glimmer) la finestra suggerisce il **Parametro del thinking** *chat_template_kwargs.reasoning_strength*, già selezionato, e puoi togliere la spunta prima di confermare. Un modello che non è di chat può essere impostato come modello per le immagini, di sintesi vocale o di trascrizione dell'integrazione finché quel campo è vuoto.
+
+**Carica modelli dall'API**, nell'elenco dei modelli chat, funziona ancora, per gli endpoint che rispondono in modo più semplice.
 
 ## Routing dei task
 
@@ -480,27 +512,33 @@ Gli hash sorgente identificano feedback non aggiornati dopo la modifica del test
     summary: "Let the autopilot write while the director decides as your stand-in, follow it live, intervene, and run it on your own server.",
     markdown: `# Autopilot, director and personal server
 
-The autopilot writes the book step by step: concept, chapter plan, scenes, simulated readers, specialists and the director's decisions. Open it from the book sidebar (**Autopilot**) or from **Autopilot** in the library.
+The autopilot writes the book step by step: concept, chapter plan, scenes, simulated readers, specialists and the director's decisions. In the menu of a book its group has two pages: **Live**, what the autopilot is doing, and **Configuration**, its brief and its settings. **Autopilot** in the library shows every book.
 
 ## Start
 
-Write an idea (one sentence is enough) or a binding chapter-by-chapter synopsis, choose chapters, scenes per chapter and words per scene, then **Start autopilot**. By default it pauses when the plan is ready: read it, then **Approve the plan and continue**. A book that already has chapters is continued after the last one.
+Open **Configuration**, write an idea (one sentence is enough) or a binding chapter-by-chapter synopsis, choose chapters, scenes per chapter and words per scene, then **Start autopilot** at the bottom of the page: the autopilot starts and **Live** opens. A book that never started shows **Configure the autopilot** on its live page. By default it pauses when the plan is ready: read it, then **Approve the plan and continue**. A book that already has chapters is continued after the last one.
+
+## The configuration
+
+**Configuration** has the brief and the settings in three parts. **The book** has the idea, the chapters, the scenes per chapter, the words per scene, the genre, the audience and the chapter-by-chapter synopsis (soon replaced by the Outline). **Review** has the simulated readers and how many they are, their reactions to the plan, the specialists, the pause when the plan is ready, **Pause after every chapter**, the chapters per session and the two budgets. **Publishing**, for a book kept on GitHub, chooses where it is published: every step, every chapter or never. **Save settings** saves them while the autopilot is stopped. While it runs, only where it publishes and the pause after every chapter can change (they apply from the next step); the rest is locked and the page says why.
+
+**Permanent rules** lists the rules you gave with **Intervene** → **From now on**: **Edit** changes one and **Remove** takes it away, also while the autopilot runs. A rule is at most 800 characters, and a rule that changed in the meantime (on another device, or with your answer to the director) is never overwritten: the page says so and shows it as it is now. A personal server older than 0.1.6 cannot change the rules: there they are only listed, with a note to update it. **Profiles used** leads to **Director**, **Ghostwriters**, **Evaluation style** and **Simulated readers**, each with its state: in the book, the defaults, or with problems. The **Danger zone** holds **Reset**, which asks before it forgets anything. The button at the bottom of the page, **Resume** for a book that is stopped, saves what you changed and starts the autopilot again.
 
 ## The director
 
-The director is your stand-in. It approves the plan, decides on every finding of readers and specialists, scores each chapter and keeps standing guidance for the next ones. Configure it on the **Director** page: persona, autonomy (decide alone, ask only on critical matters, or let you review the plan and every chapter), strictness, approval score, review rounds, priorities, taste, red lines and the weight of each simulated reader. The profile is saved in **director.md**.
+The director is your stand-in. It approves the plan, decides on every finding of readers and specialists, scores each chapter and keeps standing guidance for the next ones. Configure it on the **Director** page (in **Profiles**, and in **Profiles used** of the configuration): persona, autonomy (decide alone, ask only on critical matters, or let you review the plan and every chapter), strictness, approval score, review rounds, priorities, taste, red lines and the weight of each simulated reader. The profile is saved in **director.md**.
 
 On any book, chapter or scene, **Ask the director** gives its opinion, answers your question and can keep the opinion in **evaluations/director/**.
 
 ## The Autopilot page
 
-A band at the top of the page stays in sight while you scroll and says everything at a glance: whether the autopilot is running, paused, waiting for you, stopped by an error or finished (always with an icon and in words), where it runs (this browser or your personal server, and how long ago the server last made itself heard), what it is doing now and for how long (while the model answers a step that asks for a value, a line says «The model is answering…» with how much has arrived, in KB; nothing of the reply), how far the book has got, the phases, the steps of the chapter in progress (write, readers, specialists, director, fix) and, on one line, the cost and the tokens used against the budget. The quick commands are in the band too. When it has to wait for you, what it needs is right under the band: the director's question, the error, the profile problems or the plan to approve.
+**Live** is the page of what is happening. A band at the top of the page stays in sight while you scroll and says everything at a glance: whether the autopilot is running, paused, waiting for you, stopped by an error or finished (always with an icon and in words), where it runs (this browser or your personal server, and how long ago the server last made itself heard), what it is doing now and for how long (while the model answers a step that asks for a value, a line says «The model is answering…» with how much has arrived, in KB; nothing of the reply), how far the book has got, the phases, the steps of the chapter in progress (write, readers, specialists, director, fix) and, on one line, the cost and the tokens used against the budget. The quick commands are in the band too. When it has to wait for you, what it needs is right under the band: the director's question, the error, the profile problems or the plan to approve.
 
 Below that comes the history, **Everything that happened**: one list for the steps and for what happened around them. It is grouped by chapter and by round of the review (round 1 is everything up to the first judgement of the director; each judgement that asks for fixes starts a new round; the numbers of the rounds are the ones the plan recorded, so they stay right when the log has lost the first reviews of a chapter), and the header of a round gives the director's verdict and score when there is one; open the group to see what the readers gave and what the director decided in that round. The chapter in hand is open and the others are closed. The step in progress is not a row, because the band says what it is, but the text it is writing is at the top of the list. Open a step to see why it was done, what it wrote, the model, the tokens, the cost, the files it changed and the notes of the readers, the specialists and the director; a step that failed shows what kind of failure it was, with an icon and a word, and one that was repeated is one row with every attempt in it, each retry told in words. **All**, **Errors and warnings**, **Director**, **Readers** and **Writing** choose what the list shows (the choice is kept for as long as you work), **Hide until now** hides what is over, and a button at the end of a long group gives more rows. The notes of the runs (started, paused, stopped) are in the group where they happened. The log keeps the last 200 steps, and the notes of a step are there when this browser followed it.
 
-On a wide screen the plan, **Intervene**, the rules, **Where it runs**, the settings and a **Danger zone** (it holds **Reset**, which asks before it forgets anything) sit in a second column. On a narrower screen the page has four tabs, **Overview**, **Timeline**, **Plan** and **Rules**, and the **Plan** tab opens by itself while the plan waits for you. On a phone the band is short and the commands move to a bar at the bottom of the screen.
+On a wide screen the plan, **Intervene**, the rules and **Where it runs** sit in a second column; the rules are there to read, and **Edit the rules** leads to the configuration. On a narrower screen the page has four tabs, **Overview**, **Timeline**, **Plan** and **Rules**, and the **Plan** tab opens by itself while the plan waits for you. On a phone the band is short and the commands move to a bar at the bottom of the screen. **Configuration**, at the top of the page, leads to the brief and the settings.
 
-When the autopilot is paused after closing a chapter, **Read chapter N** sits next to **Resume**. After an error the main button is **Retry**, and a panel under the band says what went wrong (see *When something goes wrong*). A finished book offers **Add chapters** (the settings open with the number of chapters ready to change), or **Write the new chapters** when the settings already ask for more chapters than the plan has, and a card under the band says how it went (see *The result of a finished book*).
+When the autopilot is paused after closing a chapter, **Read chapter N** sits next to **Resume**. After an error the main button is **Retry**, and a panel under the band says what went wrong (see *When something goes wrong*). A finished book offers **Add chapters** (the configuration opens with the number of chapters ready to change), or **Write the new chapters** when the settings already ask for more chapters than the plan has, and a card under the band says how it went (see *The result of a finished book*).
 
 ## The result of a finished book
 
@@ -531,7 +569,7 @@ Besides a question of the director, the autopilot can stop with **Waiting for yo
 
 ## Budgets and costs
 
-Each book can have a money budget (it needs the prices of your models in AI Integrations) and a **token budget** (it works with every model, even without prices); 0 means no limit. The autopilot stops before the next call once a budget is reached. The cost line of the band says how many calls had no token count or no price, so you know how much of the totals is an estimate.
+Each book can have a money budget (it needs the prices of your models in AI Integrations) and a **token budget** (it works with every model, even without prices), both in **Review** of the configuration; 0 means no limit. The autopilot stops before the next call once a budget is reached. The cost line of the band says how many calls had no token count or no price, so you know how much of the totals is an estimate.
 
 ## Personal server
 
@@ -540,7 +578,7 @@ Run \`npx narrarium-server\` on the computer that will keep your books (Node.js 
 1. In the admin panel choose **Generate a pairing code**.
 2. In **Settings → Personal server** type the nine digits and choose **Pair**, then approve the request in the admin panel. Tick **allow updates** if this device may update the server.
 3. Send your AI configuration and approve its AI endpoints in the admin panel.
-4. On a book's Autopilot page choose **Move to my server**: the autopilot keeps working with the browser closed. GitHub books travel through GitHub; local books are synced file by file.
+4. On the **Live** page of a book's autopilot, in **Where it runs**, choose **Move to my server**: the autopilot keeps working with the browser closed. GitHub books travel through GitHub; local books are synced file by file.
 
 Narrarium checks the server's signed identity at every connection and refuses a server whose key changed. **Version and updates** in the same settings page shows when a newer verified release exists and installs it: the server stops, installs the package after checking its npm signature and provenance, and restarts; if anything fails the previous version stays. To use the server from other devices, publish it over HTTPS, for example with the Cloudflare connector in its admin panel.
 
@@ -555,27 +593,33 @@ Route the **Autopilot** and **Director** tasks in **Settings → AI Router**; th
     summary: "Lascia scrivere l'autopilot mentre il direttore decide al posto tuo, seguilo in diretta, intervieni e fallo girare sul tuo server.",
     markdown: `# Autopilot, direttore e server personale
 
-L'autopilot scrive il libro passo dopo passo: concept, piano dei capitoli, scene, lettori simulati, specialisti e decisioni del direttore. Aprilo dalla barra laterale del libro (**Autopilot**) o da **Autopilot** nella libreria.
+L'autopilot scrive il libro passo dopo passo: concept, piano dei capitoli, scene, lettori simulati, specialisti e decisioni del direttore. Nel menu di un libro il suo gruppo ha due pagine: **In diretta**, cosa sta facendo l'autopilot, e **Configurazione**, il suo brief e le sue impostazioni. **Autopilot** nella libreria mostra tutti i libri.
 
 ## Avvio
 
-Scrivi un'idea (basta una frase) oppure una sinossi capitolo per capitolo vincolante, scegli capitoli, scene per capitolo e parole per scena, poi **Avvia l'autopilot**. Di norma si ferma quando il piano è pronto: rileggilo, poi **Approva il piano e continua**. Un libro che ha già capitoli prosegue dopo l'ultimo.
+Apri **Configurazione**, scrivi un'idea (basta una frase) oppure una sinossi capitolo per capitolo vincolante, scegli capitoli, scene per capitolo e parole per scena, poi **Avvia l'autopilot** in fondo alla pagina: l'autopilot parte e si apre **In diretta**. Un libro che non è mai partito mostra **Configura l'autopilot** nella sua pagina In diretta. Di norma si ferma quando il piano è pronto: rileggilo, poi **Approva il piano e continua**. Un libro che ha già capitoli prosegue dopo l'ultimo.
+
+## La configurazione
+
+**Configurazione** ha il brief e le impostazioni in tre parti. **Il libro** ha l'idea, i capitoli, le scene per capitolo, le parole per scena, il genere, il pubblico e la sinossi capitolo per capitolo (presto sostituita dalla Scaletta). **Revisione** ha i lettori simulati e quanti sono, le loro reazioni al piano, gli specialisti, la pausa quando il piano è pronto, **Fermati dopo ogni capitolo**, i capitoli per sessione e i due budget. **Pubblicazione**, per un libro su GitHub, sceglie dove si pubblica: a ogni passo, a ogni capitolo o mai. **Salva impostazioni** le salva mentre l'autopilot è fermo. Mentre lavora si possono cambiare solo dove pubblica e la pausa dopo ogni capitolo (valgono dal prossimo passo); il resto è bloccato e la pagina dice perché.
+
+**Regole permanenti** elenca le regole che hai dato con **Intervieni** → **D'ora in poi**: **Modifica** ne cambia una e **Rimuovi** la toglie, anche mentre l'autopilot lavora. Una regola ha al massimo 800 caratteri, e una regola cambiata nel frattempo (su un altro dispositivo, o con la tua risposta al direttore) non viene mai sovrascritta: la pagina lo dice e la mostra com'è adesso. Un server personale più vecchio della 0.1.6 non sa cambiare le regole: lì sono solo elencate, con l'invito ad aggiornarlo. **Profili usati** porta a **Direttore**, **Ghostwriter**, **Stile di valutazione** e **Lettori simulati**, ognuno con il suo stato: nel libro, predefinito o con problemi. La **Zona pericolosa** contiene **Azzera**, che chiede conferma prima di dimenticare qualcosa. Il pulsante in fondo alla pagina, **Riprendi** per un libro fermo, salva ciò che hai cambiato e fa ripartire l'autopilot.
 
 ## Il direttore
 
-Il direttore ti sostituisce. Approva il piano, decide su ogni rilievo di lettori e specialisti, dà un voto a ogni capitolo e conserva indicazioni per i successivi. Configuralo nella pagina **Direttore**: personalità, autonomia (decide da solo, chiede solo le questioni critiche, oppure ti fa rileggere piano e capitoli), severità, voto di approvazione, giri di revisione, priorità, gusto, linee rosse e peso di ogni lettore simulato. Il profilo è salvato in **director.md**.
+Il direttore ti sostituisce. Approva il piano, decide su ogni rilievo di lettori e specialisti, dà un voto a ogni capitolo e conserva indicazioni per i successivi. Configuralo nella pagina **Direttore** (in **Profili**, e in **Profili usati** della configurazione): personalità, autonomia (decide da solo, chiede solo le questioni critiche, oppure ti fa rileggere piano e capitoli), severità, voto di approvazione, giri di revisione, priorità, gusto, linee rosse e peso di ogni lettore simulato. Il profilo è salvato in **director.md**.
 
 Su qualsiasi libro, capitolo o scena, **Chiedi al direttore** restituisce il suo parere, risponde alla tua domanda e può conservare il parere in **evaluations/director/**.
 
 ## La pagina Autopilot
 
-In cima alla pagina una fascia resta in vista mentre scorri e dice tutto a colpo d'occhio: se l'autopilot sta lavorando, è in pausa, aspetta te, si è fermato per un errore o ha finito (sempre con un'icona e a parole), dove gira (questo browser o il tuo server personale e, per il server, da quanto tempo non si fa sentire), cosa sta facendo adesso e da quanto (mentre il modello risponde a un passo che chiede un valore, una riga dice «Il modello sta rispondendo…» con quanto è arrivato, in KB; nulla della risposta), a che punto è il libro, le fasi, i passi del capitolo in corso (scrittura, lettori, specialisti, direttore, correzioni) e, in una riga, il costo e i token usati rispetto al budget. Nella fascia ci sono anche i comandi rapidi. Se deve aspettare te, ciò che serve sta subito sotto la fascia: la domanda del direttore, l'errore, i problemi di un profilo o il piano da approvare.
+**In diretta** è la pagina di ciò che succede. In cima alla pagina una fascia resta in vista mentre scorri e dice tutto a colpo d'occhio: se l'autopilot sta lavorando, è in pausa, aspetta te, si è fermato per un errore o ha finito (sempre con un'icona e a parole), dove gira (questo browser o il tuo server personale e, per il server, da quanto tempo non si fa sentire), cosa sta facendo adesso e da quanto (mentre il modello risponde a un passo che chiede un valore, una riga dice «Il modello sta rispondendo…» con quanto è arrivato, in KB; nulla della risposta), a che punto è il libro, le fasi, i passi del capitolo in corso (scrittura, lettori, specialisti, direttore, correzioni) e, in una riga, il costo e i token usati rispetto al budget. Nella fascia ci sono anche i comandi rapidi. Se deve aspettare te, ciò che serve sta subito sotto la fascia: la domanda del direttore, l'errore, i problemi di un profilo o il piano da approvare.
 
 Più sotto c'è la cronologia, **Tutto ciò che è successo**: un'unica lista per i passi e per ciò che è successo intorno a loro. È raggruppata per capitolo e per giro di revisione (il giro 1 è tutto fino al primo giudizio del direttore; ogni giudizio che chiede correzioni apre un nuovo giro; i numeri dei giri sono quelli che il piano ha registrato, quindi restano giusti anche quando il registro ha perso le prime revisioni di un capitolo), e l'intestazione di un giro riporta il verdetto e il voto del direttore quando ci sono; apri il gruppo per vedere cosa hanno dato i lettori e cosa ha deciso il direttore in quel giro. Il capitolo in corso è aperto e gli altri sono chiusi. Il passo in corso non è una riga, perché lo dice la fascia, ma il testo che sta scrivendo è in cima alla lista. Apri un passo per vedere perché è stato fatto, cosa ha scritto, il modello, i token, il costo, i file modificati e le note di lettori, specialisti e direttore; un passo che è fallito mostra che tipo di errore è stato, con un'icona e una parola, e uno che è stato ripetuto è una sola riga con dentro ogni tentativo, e ogni ripetizione è raccontata a parole. **Tutto**, **Errori e avvisi**, **Direttore**, **Lettori** e **Scrittura** scelgono cosa mostra la lista (la scelta resta finché lavori), **Nascondi fino a ora** nasconde ciò che è finito, e un pulsante in fondo a un gruppo lungo mostra altre righe. Le note delle esecuzioni (partita, in pausa, fermata) stanno nel gruppo in cui sono successe. Il registro conserva gli ultimi 200 passi, e le note di un passo ci sono se questo browser lo ha seguito.
 
-Su uno schermo largo il piano, **Intervieni**, le regole, **Dove gira**, le impostazioni e una **Zona pericolosa** (contiene **Azzera**, che chiede conferma prima di dimenticare qualcosa) stanno in una seconda colonna. Su uno schermo più stretto la pagina ha quattro schede, **Panoramica**, **Cronologia**, **Piano** e **Regole**, e la scheda **Piano** si apre da sola mentre il piano aspetta te. Sul telefono la fascia è corta e i comandi passano in una barra in fondo allo schermo.
+Su uno schermo largo il piano, **Intervieni**, le regole e **Dove gira** stanno in una seconda colonna; le regole sono lì da leggere, e **Modifica le regole** porta alla configurazione. Su uno schermo più stretto la pagina ha quattro schede, **Panoramica**, **Cronologia**, **Piano** e **Regole**, e la scheda **Piano** si apre da sola mentre il piano aspetta te. Sul telefono la fascia è corta e i comandi passano in una barra in fondo allo schermo. **Configurazione**, in cima alla pagina, porta al brief e alle impostazioni.
 
-Quando l'autopilot è in pausa dopo aver chiuso un capitolo, **Leggi il capitolo N** sta accanto a **Riprendi**. Dopo un errore il pulsante principale è **Riprova**, e un pannello sotto la fascia dice cosa è andato storto (vedi *Quando qualcosa va storto*). Un libro finito propone **Aggiungi capitoli** (le impostazioni si aprono con il numero di capitoli pronto da cambiare), oppure **Scrivi i nuovi capitoli** quando le impostazioni ne chiedono già più di quanti ne ha il piano, e una scheda sotto la fascia dice com'è andata (vedi *Il risultato di un libro finito*).
+Quando l'autopilot è in pausa dopo aver chiuso un capitolo, **Leggi il capitolo N** sta accanto a **Riprendi**. Dopo un errore il pulsante principale è **Riprova**, e un pannello sotto la fascia dice cosa è andato storto (vedi *Quando qualcosa va storto*). Un libro finito propone **Aggiungi capitoli** (si apre la configurazione con il numero di capitoli pronto da cambiare), oppure **Scrivi i nuovi capitoli** quando le impostazioni ne chiedono già più di quanti ne ha il piano, e una scheda sotto la fascia dice com'è andata (vedi *Il risultato di un libro finito*).
 
 ## Il risultato di un libro finito
 
@@ -606,7 +650,7 @@ Oltre a una domanda del direttore, l'autopilot può fermarsi con **Aspetta te** 
 
 ## Budget e costi
 
-Ogni libro può avere un budget in denaro (richiede i prezzi dei tuoi modelli in Integrazioni AI) e un **budget in token** (vale con qualsiasi modello, anche senza prezzi); 0 significa nessun limite. L'autopilot si ferma prima della chiamata successiva quando un budget è raggiunto. La riga del costo nella fascia dice quante chiamate non avevano il conteggio dei token o il prezzo, così sai quanta parte dei totali è una stima.
+Ogni libro può avere un budget in denaro (richiede i prezzi dei tuoi modelli in Integrazioni AI) e un **budget in token** (vale con qualsiasi modello, anche senza prezzi), entrambi in **Revisione** della configurazione; 0 significa nessun limite. L'autopilot si ferma prima della chiamata successiva quando un budget è raggiunto. La riga del costo nella fascia dice quante chiamate non avevano il conteggio dei token o il prezzo, così sai quanta parte dei totali è una stima.
 
 ## Server personale
 
@@ -615,7 +659,7 @@ Esegui \`npx narrarium-server\` sul computer che custodirà i tuoi libri (Node.j
 1. Nel pannello di amministrazione scegli **Genera un codice di abbinamento**.
 2. In **Impostazioni → Server personale** digita le nove cifre e scegli **Abbina**, poi approva la richiesta nel pannello. Spunta **consenti aggiornamenti** se questo dispositivo può aggiornare il server.
 3. Invia la configurazione AI e approva i suoi endpoint AI nel pannello di amministrazione.
-4. Nella pagina Autopilot di un libro scegli **Sposta sul mio server**: l'autopilot continua anche a browser chiuso. I libri GitHub viaggiano tramite GitHub; quelli locali sono sincronizzati file per file.
+4. Nella pagina **In diretta** dell'autopilot di un libro, in **Dove gira**, scegli **Sposta sul mio server**: l'autopilot continua anche a browser chiuso. I libri GitHub viaggiano tramite GitHub; quelli locali sono sincronizzati file per file.
 
 Narrarium verifica l'identità firmata del server a ogni connessione e rifiuta un server la cui chiave è cambiata. **Versione e aggiornamenti** nella stessa pagina delle impostazioni mostra quando esiste una release verificata più recente e la installa: il server si ferma, installa il pacchetto dopo averne verificato firma npm e provenienza, e riparte; se qualcosa va storto resta la versione precedente. Per usare il server da altri dispositivi pubblicalo in HTTPS, per esempio con il connettore Cloudflare del suo pannello di amministrazione.
 

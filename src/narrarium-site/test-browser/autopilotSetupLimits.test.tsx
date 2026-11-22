@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { DEFAULT_BRIEF, DEFAULT_OPTIONS, normalizeBrief, normalizeOptions, type AutopilotState } from "narrarium-engine";
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
-import { SetupCard } from "@/pages/AutopilotPage";
+import { SetupCard } from "@/components/autopilot/config/SetupCard";
 import type { BookEntry } from "@/types/settings";
 
 const t = (key: string) => i18n.t(key) as string;

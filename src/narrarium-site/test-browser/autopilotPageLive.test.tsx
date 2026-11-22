@@ -199,7 +199,8 @@ describe("the status and the statistics of a run", () => {
     seed(null, false);
     await ingest(stateEvent(summary({}, 80), 8));
     render(<Page />);
-    expect(screen.getByText(i18n.t("autopilot.setup.title"))).toBeInTheDocument();
+    // Changed on purpose (the menu in groups): a book that never started invites to the configuration instead of showing the form to start.
+    expect(screen.getByText(i18n.t("autopilot.live.inviteTitle"))).toBeInTheDocument();
     expect(screen.queryByText("Running")).not.toBeInTheDocument();
     expect(screen.queryByText(/ calls$/)).not.toBeInTheDocument();
   });

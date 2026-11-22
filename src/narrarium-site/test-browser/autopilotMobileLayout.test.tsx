@@ -228,15 +228,18 @@ describe("the page on a phone (390 px wide)", () => {
     expect(within(panel()).queryByRole("heading", { name: t("autopilot.activity.title") })).not.toBeInTheDocument();
   });
 
-  it("has the rules, where it runs, the settings and the danger zone in the Rules tab", async () => {
+  // Changed on purpose (the menu in groups): the brief, the settings and the reset moved to a page of their own, the configuration of the
+  // autopilot. The Rules tab keeps the rules, to read, with the way to change them there, and where it runs.
+  it("has the rules and where it runs in the Rules tab, and the way to the configuration, which has the settings and the danger zone now", async () => {
     seedRun({ status: "paused" });
     render(<Page />);
     fireEvent.mouseDown(tab(TABS[3]));
     fireEvent.click(tab(TABS[3]));
     await waitFor(() => expect(within(panel()).getByRole("heading", { name: t("autopilot.rules.title") })).toBeInTheDocument());
     expect(within(panel()).getByRole("heading", { name: t("autopilot.where.title") })).toBeInTheDocument();
-    expect(within(panel()).getByText(t("autopilot.setup.settingsTitle"))).toBeInTheDocument();
-    expect(within(panel()).getByRole("region", { name: t("autopilot.danger.title") })).toBeInTheDocument();
+    expect(within(panel()).getByRole("link", { name: t("autopilot.live.editRules") })).toHaveAttribute("href", "/app/books/book-1/autopilot/settings#autopilot-rules");
+    expect(within(panel()).queryByLabelText(t("autopilot.setup.idea"))).not.toBeInTheDocument();
+    expect(within(panel()).queryByRole("region", { name: t("autopilot.danger.title") })).not.toBeInTheDocument();
   });
 
   it("opens on the Plan tab while the plan waits for the author, and keeps whatever tab the person picks afterwards", async () => {

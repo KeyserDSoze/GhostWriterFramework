@@ -1,19 +1,17 @@
+import { useId, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   BookOpen,
   Bot,
-  Clapperboard,
+  ChevronDown,
   ClipboardCheck,
   Clock,
   Cloud,
   Columns2,
-  Download,
   EyeOff,
   FileEdit,
   FileText,
-  Images,
-  LayoutDashboard,
   Library,
   MapPin,
   Network,
@@ -25,7 +23,6 @@ import {
   Search,
   Server,
   Settings,
-  ShieldAlert,
   Wand2,
   Shield,
   Users,
@@ -36,10 +33,12 @@ import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
+import { useNavGroupsStore } from "@/store/navGroupsStore";
 import { parseAppRoute } from "@/assistant/context";
 import { APP_VERSION } from "@/config/version";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 import { getDocGroups, localizedDoc, normalizeDocLang } from "@/lib/docs";
+import { bookMenuGroupOf, bookMenuGroups, type BookMenuGroupId } from "@/components/layout/bookMenu";
 
 interface NavItem {
   label: string;
@@ -60,6 +59,7 @@ function NavLink({
     <Link
       to={item.href}
       onClick={onNavigate}
+      aria-current={active ? "page" : undefined}
       className={cn(
         "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
         active
@@ -70,6 +70,33 @@ function NavLink({
       {item.icon}
       {item.label}
     </Link>
+  );
+}
+
+/**
+ * A group of the menu of a book: a title that is a heading (screen readers list it and jump to it) and the button that opens and closes the
+ * group, which says whether it is open and names the list it controls.
+ */
+function NavSection({ title, open, onToggle, children }: { title: string; open: boolean; onToggle: () => void; children: ReactNode }) {
+  const id = useId();
+  return (
+    <section aria-labelledby={`${id}-title`}>
+      <h2 id={`${id}-title`}>
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={`${id}-list`}
+          onClick={onToggle}
+          className="flex w-full items-center gap-1.5 rounded-md px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ChevronDown aria-hidden="true" className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", !open && "-rotate-90")} />
+          <span className="min-w-0 flex-1 truncate">{title}</span>
+        </button>
+      </h2>
+      <ul id={`${id}-list`} hidden={!open} className="mt-0.5 space-y-1">
+        {children}
+      </ul>
+    </section>
   );
 }
 
@@ -88,23 +115,21 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const paragraph = paragraphNum && chapter ? chapter.paragraphs.find((p) => p.number === paragraphNum) : undefined;
   const book = bookId ? settings.books.find((b) => b.id === bookId) : undefined;
 
-  const bookNav: NavItem[] = bookId
-    ? [
-        { label: t("nav.bookOverview"), href: `/app/books/${bookId}`, icon: <BookOpen className="h-4 w-4" /> },
-        { label: t("dashboard.title"), href: `/app/books/${bookId}/dashboard`, icon: <LayoutDashboard className="h-4 w-4" /> },
-        { label: t("autopilot.title"), href: `/app/books/${bookId}/autopilot`, icon: <Plane className="h-4 w-4" /> },
-        { label: t("director.title"), href: `/app/books/${bookId}/director`, icon: <Clapperboard className="h-4 w-4" /> },
-        { label: t("ghostwriters.title"), href: `/app/books/${bookId}/ghostwriters`, icon: <Users className="h-4 w-4" /> },
-        { label: t("evaluationStyle.title"), href: `/app/books/${bookId}/evaluation-style`, icon: <ClipboardCheck className="h-4 w-4" /> },
-        { label: t("audit.title"), href: `/app/books/${bookId}/audit`, icon: <ShieldAlert className="h-4 w-4" /> },
-        { label: t("readerPersonas.title"), href: `/app/books/${bookId}/simulated-readers`, icon: <Users className="h-4 w-4" /> },
-        { label: t("assets.title"), href: `/app/books/${bookId}/assets`, icon: <Images className="h-4 w-4" /> },
-        { label: t("research.title"), href: `/app/books/${bookId}/research`, icon: <Search className="h-4 w-4" /> },
-        { label: t("reader.title"), href: `/app/books/${bookId}/reader`, icon: <BookOpen className="h-4 w-4" /> },
-        { label: t("export.title"), href: `/app/books/${bookId}/export`, icon: <Download className="h-4 w-4" /> },
-        { label: t("bookPage.bookSettings"), href: `/app/books/${bookId}/settings`, icon: <Settings className="h-4 w-4" /> },
-      ]
-    : [];
+  // The menu of the book, in groups. The group of the page that is open is always open; the others stay as the author left them on this
+  // device. A group closed by hand on one of its own pages stays closed on that page, and opens again on the next one.
+  const groups = bookId ? bookMenuGroups(bookId) : [];
+  const currentGroup = bookMenuGroupOf(groups, location.pathname);
+  const collapsed = useNavGroupsStore((state) => state.collapsed);
+  const setCollapsed = useNavGroupsStore((state) => state.setCollapsed);
+  const [closedHere, setClosedHere] = useState<{ group: BookMenuGroupId; pathname: string } | null>(null);
+  const isOpen = (group: BookMenuGroupId) => group === currentGroup
+    ? !(closedHere?.group === group && closedHere.pathname === location.pathname)
+    : !collapsed.includes(group);
+  const toggleGroup = (group: BookMenuGroupId) => {
+    const open = isOpen(group);
+    if (group === currentGroup) setClosedHere(open ? { group, pathname: location.pathname } : null);
+    setCollapsed(group, open);
+  };
 
   const canonNav: NavItem[] = bookId
     ? [
@@ -228,10 +253,21 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         {!inSettings && !inDocs && bookId && (
           <>
             <NavGroup label={book?.name ?? t("nav.currentBook")} first={paragraphNav.length === 0 && chapterNav.length === 0} />
-            <nav className="px-2 space-y-1">
-              {bookNav.map((item) => (
-                <NavLink key={item.href} item={item} active={location.pathname === item.href} onNavigate={onNavigate} />
+            <nav aria-label={book?.name ?? t("nav.currentBook")} className="space-y-2 px-2">
+              {groups.map((group) => (
+                <NavSection key={group.id} title={t(group.titleKey)} open={isOpen(group.id)} onToggle={() => toggleGroup(group.id)}>
+                  {group.items.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <li key={item.href}>
+                        <NavLink item={{ label: t(item.labelKey), href: item.href, icon: <Icon className="h-4 w-4" aria-hidden="true" /> }} active={location.pathname === item.href} onNavigate={onNavigate} />
+                      </li>
+                    );
+                  })}
+                </NavSection>
               ))}
+              <Separator className="my-2" />
+              <NavLink item={{ label: t("bookPage.bookSettings"), href: `/app/books/${bookId}/settings`, icon: <Settings className="h-4 w-4" /> }} active={location.pathname === `/app/books/${bookId}/settings`} onNavigate={onNavigate} />
             </nav>
             <NavGroup label={t("nav.canon")} />
             <nav className="px-2 space-y-1">

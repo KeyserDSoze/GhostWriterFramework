@@ -51,6 +51,7 @@ export const router = createBrowserRouter([
       { path: "books/:bookId", lazy: component(() => import("@/pages/BookPage"), "BookPage") },
       { path: "books/:bookId/dashboard", lazy: component(() => import("@/pages/BookDashboardPage"), "BookDashboardPage") },
       { path: "books/:bookId/autopilot", lazy: component(withAutopilotTranslations(() => import("@/pages/AutopilotPage")), "AutopilotPage") },
+      { path: "books/:bookId/autopilot/settings", lazy: component(withAutopilotTranslations(() => import("@/pages/AutopilotSettingsPage")), "AutopilotSettingsPage") },
       { path: "books/:bookId/director", lazy: component(withAutopilotTranslations(() => import("@/pages/DirectorPage")), "DirectorPage") },
       { path: "books/:bookId/assets", lazy: component(() => import("@/pages/AssetGalleryPage"), "AssetGalleryPage") },
       { path: "books/:bookId/reader", lazy: component(() => import("@/pages/ReaderPreviewPage"), "ReaderPreviewPage") },

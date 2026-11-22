@@ -10,6 +10,8 @@ import { SecretInput } from "@/components/ui/secret-input";
 import { PersonalServerSettingsBody } from "@/components/settings/PersonalServerSettingsBody";
 import { IntegrationRequestFields } from "@/components/settings/IntegrationRequestFields";
 import { ReasoningParameterField } from "@/components/settings/ReasoningParameterField";
+import { EndpointTools } from "@/components/settings/endpoint/EndpointTools";
+import { integrationAnchor } from "@/components/settings/endpoint/anchor";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
@@ -475,12 +477,32 @@ function catalogMaxOutputTokens(model: GitHubCatalogModel): number | undefined {
   return firstFiniteNumber(model.max_output_tokens, model.limits?.max_output_tokens);
 }
 
+/** The text after the `#` of an address, as it was written; an address with a broken escape names nothing. */
+function hashName(hash: string): string {
+  try {
+    return decodeURIComponent(hash.replace(/^#/, ""));
+  } catch {
+    return "";
+  }
+}
+
 function IntegrationAccordion({ integration, children }: { integration: AIIntegration; children: ReactNode }) {
   const { t } = useTranslation();
+  const location = useLocation();
+  const card = useRef<HTMLDetailsElement>(null);
   const providerText = providerLabel(t, integration.provider);
   const modelCount = integration.chatModels?.length ?? 0;
+  const anchor = integrationAnchor(integration.id);
+  // A link to `#integration-<id>` does not scroll by itself in the app: the card it names opens, comes into view and gives the focus to its title, where a keyboard or a screen reader starts reading.
+  useEffect(() => {
+    const element = card.current;
+    if (!element || hashName(location.hash) !== anchor) return;
+    element.open = true;
+    element.scrollIntoView?.({ block: "center" });
+    element.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
+  }, [location.hash, location.key, anchor]);
   return (
-    <details className="group min-w-0 rounded-2xl border border-layer bg-card shadow-sm [&[open]>summary_.chev]:rotate-90">
+    <details ref={card} id={anchor} className="group min-w-0 rounded-2xl border border-layer bg-card shadow-sm [&[open]>summary_.chev]:rotate-90">
       <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
         <ChevronRight className="chev h-4 w-4 shrink-0 text-muted-foreground transition-transform" />
         <div className="min-w-0 flex-1">
@@ -550,6 +572,7 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
             {isGithub && <p id={`${id}-key-hint`} className="text-xs text-muted-foreground">{t("settings.githubModelsHint")}</p>}
           </div>
         )}
+        {integration.provider === "openai" && <EndpointTools integration={integration} onChange={onChange} disabled={credentialsDisabled} />}
         {integration.provider !== "m365_copilot" && (
           <IntegrationRequestFields integration={integration} onChange={onChange} />
         )}

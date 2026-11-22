@@ -15,7 +15,8 @@ import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { AutopilotDock } from "@/components/autopilot/AutopilotDock";
 import { AutopilotLauncher } from "@/components/autopilot/AutopilotLauncher";
-import { AutopilotPage, SetupCard, WhereCard } from "@/pages/AutopilotPage";
+import { AutopilotPage, WhereCard } from "@/pages/AutopilotPage";
+import { SetupCard } from "@/components/autopilot/config/SetupCard";
 import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
@@ -87,11 +88,12 @@ describe("the autopilot page", () => {
     expect(screen.getByRole("button", { name: "Altri modi di mettere in pausa — The Glass Harbor" })).toBeInTheDocument();
   });
 
-  it("shows nothing of the bar for a book that never started, and its setup form as before", () => {
+  // Changed on purpose (the menu in groups): the form to start is in the configuration, and the live page leads there.
+  it("shows nothing of the bar for a book that never started, and the way to the configuration, where it starts", () => {
     seedBar({ noState: true });
     render(<Page />);
     expect(screen.queryByRole("group", { name: quickGroupName() })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("autopilot.actions.start") })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: t("autopilot.live.configure") })).toHaveAttribute("href", "/app/books/book-1/autopilot/settings");
   });
 
   it("brings the card it is linked to into view and gives it the focus: the question, or “Where it runs”", async () => {
@@ -267,56 +269,61 @@ describe("the page and the live panel on the same screen", () => {
   });
 });
 
-describe("the switch for publishing in the settings of the autopilot", () => {
+// Changed on purpose (the configuration of the autopilot): the switch “Publish to GitHub after every chapter” is now a choice of three, every step,
+// every chapter or never, the same as the quick commands offer. It keeps the older switch in agreement, as the switch did.
+describe("the choice of publishing in the configuration of the autopilot", () => {
   const runtime = { configure: vi.fn(async () => undefined), start: vi.fn(async () => undefined) };
   const run = vi.fn(async (_name: string, action: (runtime: unknown, bookId: string) => Promise<unknown>) => { await action(runtime, "book-1"); return true; });
   const stateWith = (options: Record<string, unknown>) => seedBar({ book: GITHUB_BOOK, status: "paused", statePatch: { options: { ...seedBar({ book: GITHUB_BOOK }).state!.options, ...options } as never } }).state;
-  const toggle = () => screen.getByRole("switch", { name: t("autopilot.setup.syncAfterChapter") });
+  const choice = (mode: "step" | "chapter" | "off") => screen.getByRole("radio", { name: t(`autopilot.quick.publish.choice.${mode}`) });
+  const save = () => fireEvent.click(screen.getByRole("button", { name: t("autopilot.setup.save") }));
 
   beforeEach(() => { runtime.configure.mockClear(); run.mockClear(); });
 
   function openSetup(options: Record<string, unknown>) {
     const state = stateWith(options);
     render(<MemoryRouter><SetupCard book={GITHUB_BOOK} state={state} existingChapters={1} running={false} busy={false} disabled={false} run={run as never} /></MemoryRouter>);
-    fireEvent.click(screen.getByText(t("autopilot.setup.settingsTitle")));
   }
 
   it("shows how the author chose to publish from the quick commands, not an older option that says otherwise", () => {
     openSetup({ syncAfterChapter: false, publishEvery: "step" });
-    expect(toggle()).toBeChecked();
+    expect(choice("step")).toBeChecked();
     cleanup();
     openSetup({ syncAfterChapter: true, publishEvery: "off" });
-    expect(toggle()).not.toBeChecked();
+    expect(choice("off")).toBeChecked();
   });
 
   it("follows the older option when the author did not choose", () => {
     openSetup({ syncAfterChapter: true });
-    expect(toggle()).toBeChecked();
+    expect(choice("chapter")).toBeChecked();
+    cleanup();
+    openSetup({ syncAfterChapter: false });
+    expect(choice("off")).toBeChecked();
   });
 
-  it("changes both when it is flipped off, so that the two never disagree", async () => {
+  it("changes both when Never is chosen, so that the two never disagree", async () => {
     openSetup({ syncAfterChapter: true, publishEvery: "step" });
-    fireEvent.click(toggle());
-    fireEvent.click(screen.getByRole("button", { name: t("autopilot.setup.save") }));
+    fireEvent.click(choice("off"));
+    save();
     await waitFor(() => expect(runtime.configure).toHaveBeenCalledTimes(1));
     expect(runtime.configure).toHaveBeenLastCalledWith("book-1", { brief: expect.anything(), options: expect.objectContaining({ syncAfterChapter: false, publishEvery: "off" }) });
   });
 
-  it("changes both when it is flipped on: every chapter, the way that was always meant by it", async () => {
+  it("changes both when every chapter is chosen: the way the older switch always meant it", async () => {
     openSetup({ syncAfterChapter: false, publishEvery: "off" });
-    fireEvent.click(toggle());
-    fireEvent.click(screen.getByRole("button", { name: t("autopilot.setup.save") }));
+    fireEvent.click(choice("chapter"));
+    save();
     await waitFor(() => expect(runtime.configure).toHaveBeenCalledTimes(1));
     expect(runtime.configure).toHaveBeenLastCalledWith("book-1", { brief: expect.anything(), options: expect.objectContaining({ syncAfterChapter: true, publishEvery: "chapter" }) });
   });
 
-  it("changes only the older option when the author never chose, as it always did", async () => {
+  it("leaves the older option to decide, as it always did, when the author does not touch the choice", async () => {
     openSetup({ syncAfterChapter: true });
-    fireEvent.click(toggle());
-    fireEvent.click(screen.getByRole("button", { name: t("autopilot.setup.save") }));
+    fireEvent.click(screen.getByRole("switch", { name: t("autopilot.setup.specialists") }));
+    save();
     await waitFor(() => expect(runtime.configure).toHaveBeenCalledTimes(1));
     const options = (runtime.configure.mock.calls[0] as unknown as [string, { options: Record<string, unknown> }])[1].options;
-    expect(options.syncAfterChapter).toBe(false);
+    expect(options.syncAfterChapter).toBe(true);
     expect(options).not.toHaveProperty("publishEvery");
   });
 });
