@@ -30,7 +30,8 @@ function addManifestEntry(key, target = shellModuleAssets) {
 }
 for (const source of sourceKeys) {
   const expectedName = path.basename(source, path.extname(source));
-  const key = Object.keys(manifest).find((candidate) => candidate === source || manifest[candidate].src === source || (source === "index.html" ? manifest[candidate].isEntry : manifest[candidate].name === expectedName));
+  // The exact key first: the other HTML entries (the sign-in return pages) are entries too, and Vite sorts the keys.
+  const key = manifest[source] ? source : Object.keys(manifest).find((candidate) => manifest[candidate].src === source || (source === "index.html" ? manifest[candidate].isEntry : manifest[candidate].name === expectedName));
   if (!key) throw new Error(`Precache manifest entry not found for ${source}.`);
   addManifestEntry(key);
 }

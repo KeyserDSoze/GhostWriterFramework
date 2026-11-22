@@ -1,4 +1,5 @@
 import { findMicrosoftAccountIn, ensureMsalInitialized, microsoftMsalInstance, microsoftSilentRequest } from "@/config/msal";
+import { acquireBrokerAccessToken, type AcquireOptions } from "@/account/brokerAccessToken";
 import { AccountCredentialError, useConnectionStore } from "@/account/connectionStore";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 import { useAuthStore } from "@/store/authStore";
@@ -9,9 +10,16 @@ function requiresMicrosoftInteraction(error: unknown): boolean {
   return /interaction_required|login_required|consent_required|no_account/.test(detail);
 }
 
-export async function acquireMicrosoftConnectionToken(): Promise<string> {
+/**
+ * The access token for syncing with OneDrive.
+ *
+ * A connection with a refresh token (long-lived credentials) is renewed through the broker, which rotates the refresh
+ * token on every use. A connection made with MSAL has none and keeps using MSAL, exactly as before.
+ */
+export async function acquireMicrosoftConnectionToken(options: AcquireOptions = {}): Promise<string> {
   const connection = useConnectionStore.getState().configuration.microsoft;
   if (!connection) throw new AccountCredentialError("onedrive", "missing");
+  if (connection.refreshToken) return acquireBrokerAccessToken("onedrive", options);
   const instance = microsoftMsalInstance(connection.rememberMe);
   await ensureMsalInitialized(instance);
   const account = findMicrosoftAccountIn(connection, instance.getAllAccounts());
@@ -19,7 +27,8 @@ export async function acquireMicrosoftConnectionToken(): Promise<string> {
 
   let result;
   try {
-    const forceRefresh = connection.replica.errorKind === "credential-expired"
+    const forceRefresh = options.force === true
+      || connection.replica.errorKind === "credential-expired"
       || !connection.accessTokenExpiry
       || connection.accessTokenExpiry <= Date.now() + 60_000;
     result = await instance.acquireTokenSilent({ ...microsoftSilentRequest(account), forceRefresh });

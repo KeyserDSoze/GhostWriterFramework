@@ -58,7 +58,8 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
 
   const microsoftPopupPath = new URL("msal-popup.html", scopeUrl()).pathname;
-  if (request.mode === "navigate" && url.pathname === microsoftPopupPath) {
+  const microsoftCallbackPath = new URL("auth/microsoft-callback.html", scopeUrl()).pathname;
+  if (request.mode === "navigate" && (url.pathname === microsoftPopupPath || url.pathname === microsoftCallbackPath)) {
     event.respondWith(fetch(request, { cache: "no-store" }));
     return;
   }

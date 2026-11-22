@@ -87,6 +87,12 @@ export interface LocalGoogleConnection {
   identity: ProviderIdentity;
   accessToken?: string;
   accessTokenExpiry?: number;
+  /**
+   * The long-lived credential issued through the token broker. It lives in memory and, with `rememberMe`, sealed in the
+   * credential vault: it is never part of the persisted configuration, of the synchronized account data or of any export.
+   * A connection without one has "session" credentials that stop working after about an hour.
+   */
+  refreshToken?: string;
   rememberMe: boolean;
   replica: LocalReplicaState;
 }
@@ -97,6 +103,8 @@ export interface LocalMicrosoftConnection {
   identity: ProviderIdentity;
   accessToken?: string;
   accessTokenExpiry?: number;
+  /** As for Google: memory and the credential vault only. Microsoft rotates it on every renewal. A connection made with MSAL has none. */
+  refreshToken?: string;
   homeAccountId: string;
   localAccountId: string;
   rememberMe: boolean;

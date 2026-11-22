@@ -13,6 +13,8 @@ import { refreshAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { mergeLocalDeviceSettings } from "@/account/dataProjection";
 import { acquireMicrosoftConnectionToken } from "@/account/microsoftConnectionToken";
+import { acquireGoogleConnectionToken } from "@/account/googleConnectionToken";
+import { BrokerError } from "@/account/credentialBroker";
 
 export interface ReplicaCandidate {
   id: "local" | AccountSyncBackendKind;
@@ -70,7 +72,7 @@ function activeBackendKinds(): AccountSyncBackendKind[] {
 
 async function createBackend(kind: AccountSyncBackendKind): Promise<AccountSyncBackend> {
   const configuration = useConnectionStore.getState().configuration;
-  const token = kind === "onedrive" ? await acquireMicrosoftConnectionToken() : accountBackendToken(kind);
+  const token = kind === "onedrive" ? await acquireMicrosoftConnectionToken() : kind === "google-drive" ? await acquireGoogleConnectionToken() : accountBackendToken(kind);
   if (kind === "google-drive") {
     const connection = configuration.google;
     if (!connection) throw new AccountCredentialError(kind, "missing");
@@ -118,7 +120,8 @@ function describeAccountSyncError(error: unknown): string | undefined {
   return message ? message.slice(0, MAX_ERROR_MESSAGE_LENGTH) : undefined;
 }
 
-async function setReplicaFailure(kind: AccountSyncBackendKind, error: unknown): Promise<void> {
+/** Records why a replica could not be reached: a lost login needs the owner, anything else is an error or being offline. */
+export async function setReplicaFailure(kind: AccountSyncBackendKind, error: unknown): Promise<void> {
   const errorKind = classifyAccountSyncError(error);
   const patch = errorKind === "credential-expired" || errorKind === "credential-missing"
     ? { status: "needs-auth" as const, errorKind }
@@ -130,6 +133,9 @@ async function setReplicaFailure(kind: AccountSyncBackendKind, error: unknown): 
 
 export function classifyAccountSyncError(error: unknown) {
   if (error instanceof AccountCredentialError) return error.reason === "expired" ? "credential-expired" as const : "credential-missing" as const;
+  // The broker says what it means: only a refused refresh token (or a broker that no longer serves) needs the owner.
+  // Everything else is a passing problem and must never be mistaken for a lost login by the heuristics below.
+  if (error instanceof BrokerError) return error.code === "rate_limited" ? "rate-limited" as const : error.code === "invalid_grant" || error.code === "not_configured" ? "credential-expired" as const : "network" as const;
   const value = error && typeof error === "object" ? error as { status?: unknown; code?: unknown; message?: unknown } : {};
   const message = typeof value.message === "string" ? value.message.toLowerCase() : "";
   const statusMatch = message.match(/(?:^|[\s:(])([1-5]\d{2})(?:[\s).]|$)/);

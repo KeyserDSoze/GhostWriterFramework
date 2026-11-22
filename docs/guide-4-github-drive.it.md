@@ -43,6 +43,16 @@ Google Drive e OneDrive restano disponibili come repliche account e destinazioni
 
 La disconnessione lascia intatti dati locali e remoti. La cancellazione remota è un'azione separata e confermata esplicitamente.
 
+### Credenziali durature
+
+Di norma una connessione Google o OneDrive ha un access token che dura circa un'ora (Google) o fino a 24 ore (Microsoft), poi la replica ti chiede di riconnetterti. Con il servizio di accesso di Narrarium (il Worker Cloudflare che fa anche da proxy per GitHub Models), Account e sincronizzazione può invece collegarsi con **credenziali durature**. Si rinnovano da sole, in silenzio e senza finestre, quindi la sincronizzazione continua; le schede Google Drive e OneDrive dicono che tipo di credenziali ha la connessione e propongono **Passa a credenziali durature** quando il servizio è disponibile. Senza il servizio non cambia nulla.
+
+- **Google:** nessuna scadenza finché non revochi l'accesso (la schermata di consenso OAuth deve essere **In produzione**; in *Testing* scadono dopo 7 giorni). Google le rilascia solo quando dai il consenso: se una riconnessione non le porta, la scheda lo dice e spiega come ottenerle.
+- **Microsoft:** 90 giorni, rinnovati a ogni uso.
+- Restano solo su questo dispositivo, e solo se è attivo **Ricorda la connessione su questo dispositivo**: sigillate con una chiave che non si può esportare, mai nei dati account sincronizzati, nelle esportazioni o nei log. Proteggono la copia conservata; non proteggono da uno script che gira nella pagina.
+- **Disconnetti** le dimentica su questo dispositivo e revoca quelle di Google. Microsoft non offre al servizio una revoca: revoca dalla pagina delle autorizzazioni delle app del tuo account Microsoft.
+- Un rinnovo rifiutato porta la replica su **Accesso necessario** e l'indicatore nell'header ti invita a riconnetterti. Una connessione interrotta o un servizio occupato sono solo un errore e si riprova più tardi.
+
 ## Costi ed esportazioni
 
 I contatori dei costi vengono salvati subito in locale e partecipano alla versione account. DOCX, PDF, EPUB, pacchetti di submission e chat esportate restano artefatti generati, scaricabili o caricabili in una cartella Drive scelta.

@@ -43,6 +43,16 @@ Google Drive and OneDrive remain supported as optional account replicas and expo
 
 Disconnecting a provider leaves local and remote data intact. Remote deletion is a separate, explicitly confirmed action.
 
+### Long-lived credentials
+
+By default a Google or OneDrive connection holds an access token that lasts about an hour (Google) or up to 24 hours (Microsoft), and then the replica asks you to reconnect. With the Narrarium token service (the Cloudflare Worker that also proxies GitHub Models), Account & Sync can connect with **long-lived credentials** instead. They renew themselves quietly, with no window, so syncing keeps going; the Google Drive and OneDrive cards say which kind a connection has and offer **Switch to long-lived credentials** when the service is available. Without the service nothing changes.
+
+- **Google:** no expiry until you revoke the access (the OAuth consent screen must be **In production**; in *Testing* they expire after 7 days). Google issues them only when you consent, so if a reconnect brings none, the card says so and tells you how to get them.
+- **Microsoft:** 90 days, renewed at every use.
+- They are kept on this device only, and only if **Remember connection on this device** is on: sealed with a key that cannot be exported, never in the synchronized account data, in exports or in logs. This guards the stored copy; it does not guard against a script running in the page.
+- **Disconnect** forgets them on this device and revokes Google's. Microsoft offers no revocation to the service: revoke from the app-permissions page of your Microsoft account.
+- A refused renewal moves the replica to **Login needed** and the header indicator asks you to reconnect. A broken connection or a busy service is only an error and is retried later.
+
 ## Costs and exports
 
 Cost counters are stored locally immediately and participate in account versioning. DOCX, PDF, EPUB, submission packages, and exported chat files remain generated artifacts that can be downloaded or uploaded to a selected Drive folder.

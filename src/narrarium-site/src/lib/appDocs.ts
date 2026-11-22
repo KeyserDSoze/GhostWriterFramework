@@ -534,6 +534,14 @@ Gli export supportano Word, PDF, EPUB e submission package, libro completo o dem
 
 Narrarium does not store your book or credentials on Narrarium servers. GitHub stores the book; your Drive stores private settings and app data; configured AI providers process AI requests.
 
+## Staying signed in to Google Drive and OneDrive
+
+Account & Sync connects with **long-lived credentials** when the Narrarium token service is available, so you do not have to sign in again every hour. The service is a Cloudflare Worker that keeps the Google and Microsoft client secrets and renews tokens for your browser; it stores nothing. Your browser keeps the refresh token, only if you chose **Remember connection on this device**, sealed with a key that cannot be exported. It never goes into synced data, exports or logs. This protects the stored copy, not against a script running in the page.
+
+- **Google:** no expiry until you revoke access (the app must be published, otherwise 7 days). **Microsoft:** 90 days, renewed at every use.
+- **Disconnect** forgets the credentials on this device and revokes Google's; Microsoft's can only be revoked from your Microsoft account.
+- Without the service nothing changes: the usual one-hour (Google) or 24-hour (Microsoft) sign-in applies and no offer appears.
+
 ## Settings
 
 Configure AI Integrations, AI Router, Deep Search, Copilot tools, GitHub credentials, speech and local repository synchronization. Book-specific settings control branches, dedicated PATs, reader/export metadata and Drive export destinations.
@@ -552,6 +560,14 @@ Repository tools provide backup ZIP, remote-wins pull, local-source-of-truth rep
     markdown: `# Impostazioni, privacy e recupero
 
 Narrarium non conserva libro o credenziali su server Narrarium. GitHub conserva il libro; il tuo Drive conserva impostazioni e dati privati; i provider configurati elaborano le richieste AI.
+
+## Restare collegati a Google Drive e OneDrive
+
+Account e sincronizzazione si collega con **credenziali durature** quando il servizio di accesso di Narrarium è disponibile, così non devi accedere di nuovo ogni ora. Il servizio è un Worker Cloudflare che custodisce i segreti client di Google e Microsoft e rinnova i token per il tuo browser; non conserva nulla. Il refresh token lo tiene il tuo browser, solo se hai scelto **Ricorda la connessione su questo dispositivo**, sigillato con una chiave che non si può esportare. Non finisce mai nei dati sincronizzati, nelle esportazioni o nei log. Questo protegge la copia conservata, non da uno script che gira nella pagina.
+
+- **Google:** nessuna scadenza finché non revochi l'accesso (l'app deve essere pubblicata, altrimenti 7 giorni). **Microsoft:** 90 giorni, rinnovati a ogni uso.
+- **Disconnetti** le dimentica su questo dispositivo e revoca quelle di Google; quelle di Microsoft si possono revocare solo dal tuo account Microsoft.
+- Senza il servizio non cambia nulla: vale l'accesso di sempre, di un'ora (Google) o di 24 ore (Microsoft), e non compare nessuna offerta.
 
 ## Impostazioni
 

@@ -58,6 +58,7 @@ export default defineConfig({
       input: {
         index: path.resolve(__dirname, "index.html"),
         "msal-popup": path.resolve(__dirname, "msal-popup.html"),
+        "microsoft-callback": path.resolve(__dirname, "auth/microsoft-callback.html"),
       },
       output: {
         manualChunks(id) {

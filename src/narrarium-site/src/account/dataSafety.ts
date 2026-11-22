@@ -1,6 +1,7 @@
 import { deleteAllLocalAccountData, loadLocalAccountSnapshot } from "@/account/accountLocalStore";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
-import { useConnectionStore } from "@/account/connectionStore";
+import { revokeGoogleRefreshToken, useConnectionStore } from "@/account/connectionStore";
+import { deleteCredentialVault } from "@/account/credentialVault";
 import { deleteAllLocalRepositoryData, getLocalRepositoryByBook, localStatus } from "@/repository/localRepository";
 import { deleteAllLocalRewriteOperationData } from "@/repository/localRewriteOperationStore";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -82,12 +83,19 @@ export async function getFullDeviceSafetyReport(): Promise<DeviceSafetyReport> {
 
 export async function deleteAllNarrariumLocalData(confirmation: string): Promise<void> {
   if (confirmation !== "DELETE") throw new Error("Type DELETE to remove all local Narrarium data.");
+  // Long-lived Google credentials are revoked on the way out (best effort); the stored tokens and their key go with the rest.
+  const connections = useConnectionStore.getState();
+  if (!connections.hydrated) await connections.hydrate().catch(() => undefined);
+  const googleRefreshToken = useConnectionStore.getState().configuration.google?.refreshToken;
   await Promise.all([
     deleteAllLocalAccountData(),
     deleteAllLocalRepositoryData(),
     deleteAllLocalRewriteOperationData(),
     deleteLocalCloudWriteBarrierData(),
+    deleteCredentialVault(),
+    revokeGoogleRefreshToken(googleRefreshToken),
   ]);
+  useConnectionStore.setState({ configuration: {} });
   useAuthStore.getState().clearAuth();
   await clearMicrosoftAuthCaches().catch(() => undefined);
   for (let index = localStorage.length - 1; index >= 0; index -= 1) {

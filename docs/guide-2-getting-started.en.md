@@ -26,6 +26,7 @@ Open **Account & Sync** to independently enable Google Drive, OneDrive, or GitHu
 - Logical account data uses a UTC manifest, content hash, and vector clock.
 - A remote error leaves the local copy safe and marks only that replica pending or in error.
 - Divergent replicas require an explicit authoritative-copy decision.
+- Google Drive and OneDrive can stay connected with **long-lived credentials** that renew themselves, so you do not have to sign in again every hour. The cards on **Account & Sync** show which kind each connection has and offer **Switch to long-lived credentials**. This needs the Narrarium token service (a Cloudflare Worker); without it, the usual one-hour (Google) or 24-hour (Microsoft) sign-in applies and nothing else changes. Google keeps them until you revoke access (the app must be published, not in testing: otherwise 7 days); Microsoft keeps them for 90 days, renewed at every use. **Disconnect** forgets them on this device and revokes Google's; Microsoft's can only be revoked from your Microsoft account.
 
 GitHub PAT is the currently functional static-browser connection. The OAuth PKCE flow is implemented, but GitHub's token endpoint does not expose a browser-readable CORS response; see `docs/github-oauth-static-client.md`.
 

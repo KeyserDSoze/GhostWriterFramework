@@ -3,10 +3,12 @@ import { Shell } from "@/components/layout/Shell";
 import { installAccountScopeIsolation } from "@/auth/accountScope";
 import { installAccountDirtyPropagation } from "@/account/connectionStore";
 import { installAutomaticAccountSync } from "@/account/accountSync";
+import { installProactiveCredentialRefresh } from "@/account/proactiveCredentialRefresh";
 
 const accountScopeReady = installAccountScopeIsolation();
 installAccountDirtyPropagation();
 installAutomaticAccountSync();
+installProactiveCredentialRefresh();
 
 export function AppShellRoute() {
   const [ready, setReady] = useState(false);

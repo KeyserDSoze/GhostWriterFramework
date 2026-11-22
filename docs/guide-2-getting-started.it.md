@@ -26,6 +26,7 @@ Apri **Account e sincronizzazione** per abilitare indipendentemente Google Drive
 - I dati logici dell'account usano manifest UTC, hash dei contenuti e vector clock.
 - Un errore remoto lascia al sicuro la copia locale e marca soltanto quella replica come in attesa o in errore.
 - Le repliche divergenti richiedono una scelta esplicita della copia autorevole.
+- Google Drive e OneDrive possono restare collegati con **credenziali durature** che si rinnovano da sole, così non devi accedere di nuovo ogni ora. Le schede di **Account e sincronizzazione** mostrano che tipo di credenziali ha ogni connessione e propongono **Passa a credenziali durature**. Serve il servizio di accesso di Narrarium (un Worker Cloudflare); senza, vale l'accesso di sempre, di un'ora (Google) o di 24 ore (Microsoft), e non cambia altro. Google le mantiene finché non revochi l'accesso (l'app deve essere pubblicata, non in test: altrimenti 7 giorni); Microsoft le mantiene per 90 giorni, rinnovati a ogni uso. **Disconnetti** le dimentica su questo dispositivo e revoca quelle di Google; quelle di Microsoft si possono revocare solo dal tuo account Microsoft.
 
 Il PAT GitHub è il collegamento attualmente funzionante nel browser statico. Il flusso OAuth PKCE è implementato, ma il token endpoint GitHub non espone una risposta CORS leggibile dal browser; vedi `docs/github-oauth-static-client.md`.
 

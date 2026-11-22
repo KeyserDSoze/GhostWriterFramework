@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawn } from "node:child_process";
+import vm from "node:vm";
 
 function run(script, cwd) {
   return new Promise((resolve, reject) => {
@@ -188,4 +189,117 @@ test("repository maintenance loads JSZip only inside backup operations", async (
 test("authenticated startup does not warm the app shell again after route assets loaded", async () => {
   const route = await readFile(new URL("../src/routes/AppShellRoute.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(route, /cacheAppShellPwaAssets/);
+});
+
+test("the Microsoft broker callback is its own static page outside the SPA, with a locked-down policy", async () => {
+  const page = await readFile(new URL("../auth/microsoft-callback.html", import.meta.url), "utf8");
+  const script = await readFile(new URL("../src/microsoftCallback.ts", import.meta.url), "utf8");
+  const vite = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
+  assert.match(page, /<meta name="robots" content="noindex, nofollow"/);
+  assert.match(page, /<meta name="referrer" content="no-referrer"/);
+  const policy = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(page)?.[1] ?? "";
+  assert.match(policy, /default-src 'none'/);
+  assert.match(policy, /script-src 'self'(?:;|$)/);
+  assert.match(policy, /base-uri 'none'/);
+  assert.match(policy, /form-action 'none'/);
+  assert.doesNotMatch(policy, /unsafe-inline|unsafe-eval|https?:/);
+  assert.match(page, /<script type="module" src="\/src\/microsoftCallback\.ts"><\/script>/);
+  assert.equal((page.match(/<script\b/g) ?? []).length, 1, "the page carries exactly one script, and it is external");
+  assert.doesNotMatch(page, /<(?:form|iframe|link|img)\b/);
+  assert.match(vite, /"microsoft-callback": path\.resolve\(__dirname, "auth\/microsoft-callback\.html"\)/);
+  assert.doesNotMatch(script, /console\./);
+});
+
+function loadServiceWorker(scope) {
+  const source = readFile(new URL("../public/sw.js", import.meta.url), "utf8");
+  return source.then((code) => {
+    const listeners = new Map();
+    const network = [];
+    const cacheLookups = [];
+    const cache = { match: async (request) => { cacheLookups.push(typeof request === "string" ? request : request.url); return undefined; }, addAll: async () => undefined, keys: async () => [], delete: async () => true, put: async () => undefined };
+    const sandbox = {
+      URL, Promise, Array, Object, Set, Map,
+      importScripts() {},
+      fetch: async (request, init) => { network.push({ url: request.url, cache: init?.cache }); return { fromNetwork: true }; },
+      caches: { open: async () => cache, keys: async () => [], match: async () => undefined, delete: async () => true },
+    };
+    sandbox.self = { location: new URL("sw.js?v=1.2.3", scope), registration: { scope }, addEventListener: (type, listener) => listeners.set(type, listener), clients: { claim: async () => undefined }, skipWaiting() {} };
+    vm.runInNewContext(code, sandbox);
+    /** @param {string} url @returns {Promise<{ fromNetwork?: boolean }>} */
+    async function navigate(url) {
+      /** @type {Promise<{ fromNetwork?: boolean }> | undefined} */
+      let response;
+      listeners.get("fetch")({ request: { method: "GET", url, mode: "navigate", destination: "document" }, respondWith(promise) { response = promise; } });
+      if (response === undefined) throw new Error(`The service worker did not answer ${url}.`);
+      return await response;
+    }
+    return { navigate, network, cacheLookups };
+  });
+}
+
+test("the service worker hands the Microsoft sign-in return pages to the network, so the SPA shell never answers for them", async () => {
+  const worker = await loadServiceWorker("https://narrarium.net/");
+  for (const page of ["msal-popup.html", "auth/microsoft-callback.html"]) {
+    const url = `https://narrarium.net/${page}?code=abc&state=xyz`;
+    const response = await worker.navigate(url);
+    assert.equal(response.fromNetwork, true, `${page} comes from the network`);
+    assert.deepEqual(worker.network[worker.network.length - 1], { url, cache: "no-store" });
+  }
+  assert.deepEqual(worker.cacheLookups, [], "the shell cache is never consulted for them");
+
+  await worker.navigate("https://narrarium.net/app/books");
+  assert.ok(worker.cacheLookups.length > 0, "ordinary navigations still use the cached shell");
+  assert.equal(worker.network[worker.network.length - 1].cache, undefined);
+});
+
+test("the service worker follows the base path of a site published under a sub-path", async () => {
+  const worker = await loadServiceWorker("https://writer.github.io/narrarium/");
+  const url = "https://writer.github.io/narrarium/auth/microsoft-callback.html?code=abc&state=xyz";
+  const response = await worker.navigate(url);
+  assert.equal(response.fromNetwork, true);
+  assert.deepEqual(worker.network[worker.network.length - 1], { url, cache: "no-store" });
+  assert.deepEqual(worker.cacheLookups, []);
+});
+
+test("precache generation keeps choosing the application entry when another HTML entry sorts before it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "narrarium-precache-entries-"));
+  try {
+    const scripts = path.join(root, "scripts");
+    const dist = path.join(root, "dist");
+    await mkdir(scripts);
+    await mkdir(path.join(dist, "assets"), { recursive: true });
+    await mkdir(path.join(dist, "auth"), { recursive: true });
+    await mkdir(path.join(dist, ".vite"), { recursive: true });
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ version: "1.2.3" }));
+    await writeFile(path.join(dist, "index.html"), "index");
+    await writeFile(path.join(dist, "msal-popup.html"), "msal");
+    await writeFile(path.join(dist, "auth", "microsoft-callback.html"), "callback");
+    for (const asset of ["entry", "framework", "polyfill", "microsoft-callback", "msal-popup", "home", "docs", "auth", "app-shell", "books"]) await writeFile(path.join(dist, "assets", `${asset}.js`), asset);
+    // Vite sorts the keys of its manifest, so the callback page's entry comes before "index.html".
+    await writeFile(path.join(dist, ".vite", "manifest.json"), JSON.stringify({
+      "_modulepreload-polyfill.js": { file: "assets/polyfill.js", name: "modulepreload-polyfill" },
+      "auth/microsoft-callback.html": { file: "assets/microsoft-callback.js", name: "microsoft-callback", src: "auth/microsoft-callback.html", isEntry: true, imports: ["_modulepreload-polyfill.js"] },
+      "index.html": { file: "assets/entry.js", name: "index", src: "index.html", isEntry: true, imports: ["_modulepreload-polyfill.js", "framework"] },
+      "msal-popup.html": { file: "assets/msal-popup.js", name: "msal-popup", src: "msal-popup.html", isEntry: true, imports: ["_modulepreload-polyfill.js"] },
+      framework: { file: "assets/framework.js" },
+      "src/pages/public/PublicBasics.tsx": { file: "assets/home.js", src: "src/pages/public/PublicBasics.tsx", isDynamicEntry: true, imports: ["framework"] },
+      "src/pages/public/PublicDocs.tsx": { file: "assets/docs.js", src: "src/pages/public/PublicDocs.tsx", isDynamicEntry: true, imports: ["framework"] },
+      "src/routes/AuthProvidersRoute.tsx": { file: "assets/auth.js", name: "AuthProvidersRoute", src: "src/routes/AuthProvidersRoute.tsx", isDynamicEntry: true, imports: ["framework"] },
+      "src/routes/AppShellRoute.tsx": { file: "assets/app-shell.js", name: "AppShellRoute", src: "src/routes/AppShellRoute.tsx", isDynamicEntry: true, imports: ["framework"] },
+      "src/pages/BooksPage.tsx": { file: "assets/books.js", name: "BooksPage", src: "src/pages/BooksPage.tsx", isDynamicEntry: true, imports: ["framework"] },
+    }));
+    const script = path.join(scripts, "generate-precache.mjs");
+    await writeFile(script, await readFile(new URL("../scripts/generate-precache.mjs", import.meta.url)));
+
+    await run(script, root);
+
+    const manifest = await readFile(path.join(dist, "precache-manifest.js"), "utf8");
+    const precache = JSON.parse(/__NARRARIUM_PRECACHE__=(\[[^;]+\])/.exec(manifest)?.[1] ?? "[]");
+    assert.ok(precache.includes("assets/entry.js"), "the application entry is precached");
+    assert.ok(precache.includes("assets/framework.js"), "its framework chunk is precached");
+    assert.ok(!precache.includes("assets/microsoft-callback.js"), "the callback page is not part of the shell");
+    assert.ok(!precache.includes("auth/microsoft-callback.html"), "and neither is its HTML");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

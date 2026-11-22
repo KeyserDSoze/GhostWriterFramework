@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
-import { ACCOUNT_LOCAL_CHANGED_EVENT, loadLocalSyncConfiguration, saveLocalSyncConfiguration } from "@/account/accountLocalStore";
+import { ACCOUNT_LOCAL_CHANGED_EVENT, loadLocalSyncConfiguration, saveLocalSyncConfiguration, withoutRefreshTokens } from "@/account/accountLocalStore";
+import { revoke } from "@/account/credentialBroker";
+import { deleteRefreshToken, loadRefreshToken, saveRefreshToken, type VaultProvider } from "@/account/credentialVault";
 import type {
   AccountSyncBackendKind,
   LocalGitHubConnection,
@@ -14,16 +16,54 @@ import { setConnectedGitHubToken } from "@/github/githubCredentialRuntime";
 
 const idleReplica = (enabled = false): LocalReplicaState => ({ enabled, status: enabled ? "dirty" : "disabled" });
 
-function persistedConfiguration(configuration: LocalSyncConfiguration): LocalSyncConfiguration {
+/**
+ * What may be written to the device database. A refresh token is never part of it, not even for a remembered
+ * connection: those are sealed in the credential vault instead (see credentialVault.ts).
+ */
+export function persistedConfiguration(configuration: LocalSyncConfiguration): LocalSyncConfiguration {
   const sanitize = <T extends { rememberMe: boolean; accessToken?: string }>(connection: T | undefined): T | undefined => {
     if (!connection || connection.rememberMe) return connection;
     const { accessToken: _accessToken, ...safe } = connection;
     return safe as T;
   };
-  const github = configuration.github && !configuration.github.rememberMe
-    ? { ...configuration.github, token: undefined }
-    : configuration.github;
-  return { google: sanitize(configuration.google), microsoft: sanitize(configuration.microsoft), github };
+  const withoutSecrets = withoutRefreshTokens(configuration);
+  const github = withoutSecrets.github && !withoutSecrets.github.rememberMe
+    ? { ...withoutSecrets.github, token: undefined }
+    : withoutSecrets.github;
+  return { google: sanitize(withoutSecrets.google), microsoft: sanitize(withoutSecrets.microsoft), github };
+}
+
+type DriveBackend = "google-drive" | "onedrive";
+type DriveConnection = LocalGoogleConnection | LocalMicrosoftConnection;
+
+const vaultProvider = (backend: DriveBackend): VaultProvider => (backend === "google-drive" ? "google" : "microsoft");
+const driveKey = (backend: DriveBackend): "google" | "microsoft" => (backend === "google-drive" ? "google" : "microsoft");
+
+/** Keeps the connection's refresh token on this device (sealed) when it is remembered, and drops any older one otherwise. */
+async function rememberRefreshToken(backend: DriveBackend, connection: DriveConnection): Promise<void> {
+  if (connection.refreshToken && connection.rememberMe) await saveRefreshToken(vaultProvider(backend), connection.identity.providerAccountId, connection.refreshToken);
+  else await deleteRefreshToken(vaultProvider(backend));
+}
+
+/** The refresh tokens of remembered connections, unsealed into memory when the app starts. */
+async function withRestoredRefreshTokens(configuration: LocalSyncConfiguration): Promise<LocalSyncConfiguration> {
+  const restored = { ...configuration };
+  for (const backend of ["google-drive", "onedrive"] as const) {
+    const key = driveKey(backend);
+    const connection = restored[key];
+    if (!connection || !connection.rememberMe) continue;
+    const token = await loadRefreshToken(vaultProvider(backend), connection.identity.providerAccountId);
+    if (token) restored[key] = { ...connection, refreshToken: token } as never;
+  }
+  return restored;
+}
+
+const REVOKE_TIMEOUT_MS = 5_000;
+
+/** Revokes a Google refresh token through the broker. A failure never stops the disconnection, so it is not reported. */
+export async function revokeGoogleRefreshToken(refreshToken: string | undefined): Promise<void> {
+  if (!refreshToken) return;
+  try { await revoke("google", refreshToken, { timeoutMs: REVOKE_TIMEOUT_MS }); } catch { /* best effort */ }
 }
 
 interface ConnectionState {
@@ -35,6 +75,12 @@ interface ConnectionState {
   connectGitHub: (connection: Omit<LocalGitHubConnection, "backend" | "repositoryName" | "replica"> & { replica?: LocalReplicaState }) => Promise<void>;
   setEnabled: (backend: AccountSyncBackendKind, enabled: boolean) => Promise<void>;
   updateAccessToken: (backend: "google-drive" | "onedrive", accessToken: string, accessTokenExpiry: number) => Promise<void>;
+  /** Saves what a renewal returned: the new access token, its expiry and, when there is one, the new refresh token. */
+  updateCredentials: (backend: DriveBackend, credentials: { accessToken: string; accessTokenExpiry: number; refreshToken?: string }) => Promise<void>;
+  /** Forgets a refresh token that no longer works, here and on the device. The connection itself stays. */
+  clearRefreshToken: (backend: DriveBackend) => Promise<void>;
+  /** Adopts what another tab saved on the device meanwhile (a fresher access token, a rotated refresh token). */
+  reloadCredentialsFromDevice: (backend: DriveBackend) => Promise<void>;
   updateReplica: (backend: AccountSyncBackendKind, patch: Partial<LocalReplicaState>) => Promise<void>;
   disconnect: (backend: AccountSyncBackendKind) => Promise<void>;
 }
@@ -92,18 +138,21 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       }
       await persist(configuration);
     }
-    setConnectedGitHubToken(configuration.github?.token, configuration.github?.credentialKind === "oauth" ? "oauth" : "connected-pat");
-    set({ configuration, hydrated: true });
+    const restored = await withRestoredRefreshTokens(configuration);
+    setConnectedGitHubToken(restored.github?.token, restored.github?.credentialKind === "oauth" ? "oauth" : "connected-pat");
+    set({ configuration: restored, hydrated: true });
   },
   connectGoogle: async (connection) => {
     const configuration = { ...get().configuration, google: { ...connection, backend: "google-drive" as const, method: "google" as const, replica: connection.replica ?? idleReplica(true) } };
     set({ configuration });
     await persist(configuration);
+    await rememberRefreshToken("google-drive", configuration.google);
   },
   connectMicrosoft: async (connection) => {
     const configuration = { ...get().configuration, microsoft: { ...connection, backend: "onedrive" as const, method: "microsoft" as const, replica: connection.replica ?? idleReplica(true) } };
     set({ configuration });
     await persist(configuration);
+    await rememberRefreshToken("onedrive", configuration.microsoft);
   },
   connectGitHub: async (connection) => {
     const configuration = { ...get().configuration, github: { ...connection, backend: "github" as const, repositoryName: "narrarium.settings" as const, replica: connection.replica ?? idleReplica(connection.accountSyncEnabled) } };
@@ -129,6 +178,46 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     set({ configuration });
     await persist(configuration);
   },
+  updateCredentials: async (backend, credentials) => {
+    const key = driveKey(backend);
+    const current = get().configuration[key];
+    if (!current) throw new AccountCredentialError(backend, "missing");
+    // Google sends no new refresh token: the one in use stays. Microsoft sends a rotated one every time: that one replaces it.
+    const refreshToken = credentials.refreshToken ?? current.refreshToken;
+    const next = { ...current, accessToken: credentials.accessToken, accessTokenExpiry: credentials.accessTokenExpiry, ...(refreshToken ? { refreshToken } : {}) } as DriveConnection;
+    set({ configuration: { ...get().configuration, [key]: next } as LocalSyncConfiguration });
+    // The rotated token is the one that must survive a crash, so it is sealed before the rest is written.
+    if (credentials.refreshToken && credentials.refreshToken !== current.refreshToken) await rememberRefreshToken(backend, next);
+    await persist(get().configuration);
+  },
+  clearRefreshToken: async (backend) => {
+    const key = driveKey(backend);
+    const current = get().configuration[key];
+    if (!current?.refreshToken) return;
+    const { refreshToken: _forgotten, ...rest } = current;
+    set({ configuration: { ...get().configuration, [key]: rest } as LocalSyncConfiguration });
+    await deleteRefreshToken(vaultProvider(backend));
+    await persist(get().configuration);
+  },
+  reloadCredentialsFromDevice: async (backend) => {
+    const key = driveKey(backend);
+    const known = get().configuration[key];
+    if (!known?.rememberMe) return;
+    const accountId = known.identity.providerAccountId;
+    let stored: DriveConnection | undefined;
+    try { stored = (await loadLocalSyncConfiguration())[key]; } catch { stored = undefined; }
+    const sealed = await loadRefreshToken(vaultProvider(backend), accountId);
+    const current = get().configuration[key];
+    if (!current || current.identity.providerAccountId !== accountId) return;
+    const sameAccount = stored?.identity.providerAccountId === accountId && (backend === "google-drive" || (stored as LocalMicrosoftConnection).homeAccountId === (current as LocalMicrosoftConnection).homeAccountId);
+    const patch: Partial<DriveConnection> = {};
+    if (stored && sameAccount && stored.accessToken && (stored.accessTokenExpiry ?? 0) > (current.accessTokenExpiry ?? 0)) {
+      patch.accessToken = stored.accessToken;
+      patch.accessTokenExpiry = stored.accessTokenExpiry;
+    }
+    if (sealed && sealed !== current.refreshToken) patch.refreshToken = sealed;
+    if (Object.keys(patch).length) set({ configuration: { ...get().configuration, [key]: { ...current, ...patch } } as LocalSyncConfiguration });
+  },
   updateReplica: async (backend, patch) => {
     const key = connectionKey(backend);
     const current = get().configuration[key];
@@ -139,11 +228,18 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   },
   disconnect: async (backend) => {
     const key = connectionKey(backend);
+    const previous = get().configuration[key];
     const configuration = { ...get().configuration };
     delete configuration[key];
     set({ configuration });
     if (backend === "github") setConnectedGitHubToken(undefined);
     await persist(configuration);
+    if (backend === "github") return;
+    // The connection is gone from this device before anything is asked of Google. Microsoft has nothing to revoke a
+    // refresh token with: it is only forgotten here.
+    const refreshToken = (previous as DriveConnection | undefined)?.refreshToken;
+    await deleteRefreshToken(vaultProvider(backend));
+    if (backend === "google-drive") await revokeGoogleRefreshToken(refreshToken);
   },
 }));
 

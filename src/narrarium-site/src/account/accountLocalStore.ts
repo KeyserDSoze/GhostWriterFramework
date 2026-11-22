@@ -335,10 +335,24 @@ export async function loadLocalSyncConfiguration(): Promise<LocalSyncConfigurati
   return stored?.value ?? {};
 }
 
+/** The connections without their refresh tokens: those are only ever kept in memory and in the credential vault. */
+export function withoutRefreshTokens(value: LocalSyncConfiguration): LocalSyncConfiguration {
+  const strip = <T extends { refreshToken?: string }>(connection: T | undefined): T | undefined => {
+    if (!connection) return connection;
+    const { refreshToken: _refreshToken, ...rest } = connection;
+    return rest as T;
+  };
+  const stripped = { ...value };
+  if (value.google) stripped.google = strip(value.google);
+  if (value.microsoft) stripped.microsoft = strip(value.microsoft);
+  return stripped;
+}
+
 export async function saveLocalSyncConfiguration(value: LocalSyncConfiguration): Promise<void> {
   const db = await openDb();
   const tx = db.transaction("deviceConfiguration", "readwrite");
-  tx.objectStore("deviceConfiguration").put({ key: CURRENT_KEY, value } satisfies StoredConfiguration);
+  // Whatever the caller passes, a refresh token can never reach this record in plain text.
+  tx.objectStore("deviceConfiguration").put({ key: CURRENT_KEY, value: withoutRefreshTokens(value) } satisfies StoredConfiguration);
   await transactionDone(tx);
 }
 

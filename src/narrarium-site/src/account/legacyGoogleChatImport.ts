@@ -2,7 +2,8 @@ import { hydrateAssistantSessionArchive, listAssistantSessionsStrict, loadAssist
 import { refreshAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { normalizeAssistantSession, type AssistantSession } from "@/assistant/store";
 import { loadLocalAccountSnapshot, LocalAccountSnapshotChangedError, replaceLocalAccountSnapshot } from "@/account/accountLocalStore";
-import { accountBackendToken, useConnectionStore } from "@/account/connectionStore";
+import { useConnectionStore } from "@/account/connectionStore";
+import { acquireGoogleConnectionToken } from "@/account/googleConnectionToken";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 
 export interface LegacyGoogleChatImportPlan {
@@ -26,7 +27,7 @@ function sameSession(left: AssistantSession, right: AssistantSession): boolean {
 export async function prepareLegacyGoogleChatImport(): Promise<LegacyGoogleChatImportPlan> {
   const connection = useConnectionStore.getState().configuration.google;
   if (!connection) throw new Error("Google Drive is not connected on this device.");
-  const token = accountBackendToken("google-drive");
+  const token = await acquireGoogleConnectionToken();
   registerCloudAccount("google", token, connection.identity.providerAccountId);
 
   const metas = await listAssistantSessionsStrict("google", token);
