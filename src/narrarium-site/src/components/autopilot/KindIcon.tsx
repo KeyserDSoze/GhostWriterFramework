@@ -1,4 +1,4 @@
-import { CircleAlert, FileWarning, Gauge, GitMerge, KeyRound, Ruler, Scissors, ServerCrash, ShieldBan, Timer, Wallet, WifiOff, type LucideIcon } from "lucide-react";
+import { CircleAlert, FileWarning, Gauge, GitMerge, KeyRound, Ruler, Scissors, ServerCrash, ShieldBan, SlidersHorizontal, Timer, Wallet, WifiOff, type LucideIcon } from "lucide-react";
 import type { AutopilotErrorKind } from "narrarium-engine";
 
 /** A shape for each kind of failure, so that what went wrong is never told by colour alone. */
@@ -13,6 +13,7 @@ const KIND_ICON: Record<AutopilotErrorKind, LucideIcon> = {
   budget: Wallet,
   limit: Ruler,
   profile: FileWarning,
+  config: SlidersHorizontal,
   provider: ServerCrash,
   unknown: CircleAlert,
 };

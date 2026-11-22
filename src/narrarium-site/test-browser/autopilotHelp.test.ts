@@ -70,7 +70,7 @@ describe.each<Language>(["en", "it"])("the help of the autopilot (%s)", (languag
   it("describes the result of a finished book and the panel of an error, with the kinds of error by their titles", () => {
     const t = i18n.getFixedT(language);
     const help = helpOf(language);
-    for (const kind of ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider"]) {
+    for (const kind of ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "config", "provider"]) {
       expect(help, kind).toContain(t(`autopilot.failure.kind.${kind}.title`));
     }
     expect(help).toContain(language === "en" ? "countdown" : "conto alla rovescia");

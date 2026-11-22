@@ -48,11 +48,15 @@ function OrderChoice({ bookId, value, onChange }: { bookId: string; value: Score
   );
 }
 
-/** A score, or, for a chapter or a round that has none, words that say so: not a bare dash, which a screen reader may not say at all. */
-function ScoreCell({ value, none, strong = false }: { value: number | null; none: string; strong?: boolean }) {
+/**
+ * A score, or, for a chapter or a round that has none, words that say so: not a bare dash, which a screen reader may not say at all. A round that sent the chapter back (`revised`
+ * holds the words) has a sign before its score, so that the digits of the column stay under one another at the right edge, and the words after it for whoever does not see the sign:
+ * the verdict is never told by a colour, and a screen reader hears the score first.
+ */
+function ScoreCell({ value, none, strong = false, revised }: { value: number | null; none: string; strong?: boolean; revised?: string }) {
   return (
     <td className={cn("px-2 py-1 text-right tabular-nums", strong && "font-semibold")}>
-      {value === null ? <><span aria-hidden="true">—</span><span className="sr-only">{none}</span></> : formatCount(value)}
+      {value === null ? <><span aria-hidden="true">—</span><span className="sr-only">{none}</span></> : <>{revised && <><span aria-hidden="true" data-round-verdict="revise">↻</span>{"\u00a0"}</>}{formatCount(value)}{revised && <span className="sr-only"> {revised}</span>}</>}
     </td>
   );
 }
@@ -75,6 +79,9 @@ export function ScoresBlock({ bookId, scores, linkedSlugs, titleOf }: { bookId: 
   const readers = useMemo(() => scores.some((entry) => entry.readers !== null), [scores]);
   const next = moreRows(limit, total);
   const none = t("autopilot.result.scores.none");
+  const revised = t("autopilot.result.scores.revised");
+  // The sign is explained once, when a cell on show has it.
+  const anyRevised = sorted.slice(0, limit).some((entry) => entry.verdicts?.includes("revise"));
   if (!total) return null;
 
   return (
@@ -103,7 +110,7 @@ export function ScoresBlock({ bookId, scores, linkedSlugs, titleOf }: { bookId: 
                     {linkedSlugs.has(entry.slug) ? <Link to={chapterHref(bookId, entry.slug)} className="inline-flex min-h-6 items-center underline decoration-foreground/40 underline-offset-4 hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{label}</Link> : label}
                   </th>
                   <ScoreCell value={entry.final} none={none} strong />
-                  {Array.from({ length: rounds }, (_, index) => <ScoreCell key={index} value={entry.rounds[index] ?? null} none={none} />)}
+                  {Array.from({ length: rounds }, (_, index) => <ScoreCell key={index} value={entry.rounds[index] ?? null} none={none} revised={entry.verdicts?.[index] === "revise" ? revised : undefined} />)}
                   {readers && <ScoreCell value={entry.readers} none={none} />}
                 </tr>
               );
@@ -111,6 +118,7 @@ export function ScoresBlock({ bookId, scores, linkedSlugs, titleOf }: { bookId: 
           </tbody>
         </table>
       </div>
+      {anyRevised && <p className="text-xs text-muted-foreground">{t("autopilot.result.scores.reviseLegend")}</p>}
       {(limit < total || total > first) && (
         <button type="button" onClick={() => setShown(limit < total ? next : null)} className="inline-flex min-h-8 items-center rounded-md border px-3 text-xs font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           {limit < total ? (next === total ? t("autopilot.result.scores.showAll", { count: total }) : t("autopilot.result.scores.showMore", { count: next - limit })) : t("autopilot.result.scores.showFewer")}

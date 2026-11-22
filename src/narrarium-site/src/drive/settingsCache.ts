@@ -8,7 +8,7 @@ const LEGACY_UNSAFE_CACHE_PREFIX = "narrarium-settings-cache-v1:";
 
 export const SAFE_SETTINGS_KEYS = [
   "azureOpenAI", "aiIntegrations", "defaultWritingIntegrationId", "defaultReviewIntegrationId", "taskRouting", "fallbackDisclosure",
-  "routingExecution", "costCurrency", "ui", "speech", "repository", "deepSearch", "copilotTools", "reader", "customActionsSchemaVersion",
+  "routingExecution", "aiToolsOnly", "costCurrency", "ui", "speech", "repository", "deepSearch", "copilotTools", "reader", "customActionsSchemaVersion",
   "customActions", "books",
 ] as const;
 
@@ -153,6 +153,7 @@ export function projectSafeSettings(settings: AppSettings): SafeSettingsProjecti
     taskRouting: settings.taskRouting,
     fallbackDisclosure: settings.fallbackDisclosure,
     routingExecution: settings.routingExecution,
+    ...(settings.aiToolsOnly !== undefined ? { aiToolsOnly: settings.aiToolsOnly } : {}),
     costCurrency: settings.costCurrency,
     ui: settings.ui,
     speech: settings.speech,

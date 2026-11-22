@@ -95,7 +95,7 @@ describe("the labels that used to be hard-coded English", () => {
   });
 
   it("the Italian texts are translated, not copied from English", () => {
-    for (const key of ["routing.maxCandidates", "routing.maxTotalDuration", "routing.maxTokenAttempts", "routing.maxEstimatedCost", "routing.browserBoundary", "routing.targetIntegration", "routing.targetModel", "settings.forcedToolCalls", "settings.modelOrDeployment", "settings.maxOutputTokens", "nav.accountSync"]) {
+    for (const key of ["routing.maxCandidates", "routing.maxTotalDuration", "routing.maxTokenAttempts", "routing.maxEstimatedCost", "routing.browserBoundary", "routing.cell.endpoint", "routing.cell.model", "settings.forcedToolCalls", "settings.modelOrDeployment", "settings.maxOutputTokens", "nav.accountSync"]) {
       expect(i18n.t(key, { lng: "it" }), key).not.toBe(i18n.t(key, { lng: "en" }));
       expect(i18n.t(key, { lng: "it" }), key).not.toBe(key);
     }

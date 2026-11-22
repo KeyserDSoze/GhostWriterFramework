@@ -55,8 +55,9 @@ describe("non-Copilot page safety contracts", () => {
     expect(source("src/pages/ReaderPreviewPage.tsx")).toContain('window.confirm(t("reader.deleteBookmarkConfirm"))');
     expect(source("src/pages/ReaderSettingsPage.tsx")).toContain('window.confirm(t("reader.deleteBookmarkConfirm"))');
     expect(source("src/pages/CustomActionsPage.tsx")).toContain('window.confirm(t("customActions.deleteConfirm"))');
-    expect(settings).toContain('aria-label={t("routing.removeTarget")}');
-    expect(settings).toContain('window.confirm(t("routing.removeTargetConfirm"))');
+    // The old trash button of a routing target (with its confirmation) is gone: a target is now cleared from its own cell, with an undo, and what
+    // removes many things at once, deleting a whole tab of the router, still asks first and says how many rows lose it.
+    expect(source("src/components/settings/router/RouterSection.tsx")).toContain('window.confirm(t("routing.tabs.deleteConfirm"');
     expect(settings).toContain("credentialsDisabled={false}");
     expect(source("src/pages/AddBookPage.tsx")).toContain('value="local-only"');
     expect(source("src/pages/BookSettingsPage.tsx")).toContain("attachLocalBookToGitHub");

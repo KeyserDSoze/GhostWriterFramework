@@ -3,8 +3,10 @@ import {
   AiPromptTooLargeError,
   AiProviderError,
   AiRoutingBudgetError,
+  classifyAutopilotError,
   createFetchAi,
   pickAiRuntimeConfig,
+  redactAiRuntimeConfig,
   type AiPort,
   type AiRequest,
   type AiResponse,
@@ -20,7 +22,7 @@ import { putLocalRepository, removeLocalRepository } from "@/repository/localRep
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
-import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type BookEntry, type ChatModel } from "@/types/settings";
+import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type BookEntry, type ChatModel, type ReasoningParameter } from "@/types/settings";
 import {
   answer,
   assertProvidersClean,
@@ -228,7 +230,8 @@ describe("autopilot calls reach the provider exactly as the personal server's do
       it.each(SHAPES)("$name", async (shape) => {
         const model = provider.model(family);
         const fixture = provider.fixture(family, [chatModel(model, { supportsToolCalls: shape.tools })]);
-        const settings = settingsOf([fixture]);
+        // The JSON asked in the message is the way of a model without tools when «Tools only» is off: with it on (the default) such a model is not asked at all (see below).
+        const settings = settingsOf([fixture], shape.json && !shape.tools ? { aiToolsOnly: false } : {});
         const request: AiRequest = { ...ASK, maxOutputTokens: 1000, temperature: 0.4, ...(shape.json ? { json: SCHEMA } : {}), ...(shape.stream ? { onText: () => undefined } : {}) };
 
         const { browser, server } = await runBoth([fixture], settings, request);
@@ -270,6 +273,153 @@ describe("autopilot calls reach the provider exactly as the personal server's do
     expect(direct.calls[0].url).toBe("https://models.github.ai/inference/chat/completions");
     expect(browser.calls[0].headers).toEqual(direct.calls[0].headers);
     expect(browser.calls[0].rawBody).toBe(direct.calls[0].rawBody);
+  });
+});
+
+// ─── «Tools only» and thinking: the author's choices reach both hosts ───────
+
+describe("«Tools only» works the same way in both hosts", () => {
+  const lame = () => compatible("a", [chatModel("lame", { supportsToolCalls: false })]);
+
+  it("does not ask a model without tool calls for a structured answer, while it is on (the default): nothing is sent, and both hosts end with the same configuration error", async () => {
+    const fixture = lame();
+    const { browser, server } = await runBoth([fixture], settingsOf([fixture]), { ...ASK, json: SCHEMA });
+    expectSameRun(browser, server);
+    expect(browser.calls).toHaveLength(0);
+    const error = errorOf(browser.outcome);
+    expect(error).toBeInstanceOf(AiProviderError);
+    expect(error).toMatchObject({ name: "AiToolsRequiredError", retryable: false });
+    expect(error.message).toContain("Tools only");
+    expect(error.message).toContain("lame");
+    expect(classifyAutopilotError(error).kind).toBe("config");
+  });
+
+  it("asks it, with the JSON in the message, once the author turned it off: the same request in both hosts", async () => {
+    const fixture = lame();
+    const { browser, server } = await runBoth([fixture], settingsOf([fixture], { aiToolsOnly: false }), { ...ASK, json: SCHEMA });
+    expectSameRun(browser, server);
+    expect(browser.calls).toHaveLength(1);
+    expect(browser.calls[0].body).not.toHaveProperty("tools");
+    expect(browser.calls[0].body.messages[0].content).toMatch(/Reply with ONLY one JSON object/);
+  });
+
+  it("goes on to the fallback that can call functions, and sends nothing to the one that cannot: the same in both hosts", async () => {
+    const a = lame();
+    const b = compatible("b");
+    const { browser, server } = await runBoth([a, b], routed([a, b]), { ...ASK, json: SCHEMA });
+    expectSameRun(browser, server);
+    expect(hostsOf(browser)).toEqual(["b"]);
+    expect(responseOf(browser.outcome).json).toEqual({ ok: true });
+  });
+
+  it("does not touch a request for prose: a model without tool calls writes a scene as it always did", async () => {
+    const fixture = lame();
+    const { browser, server } = await runBoth([fixture], settingsOf([fixture]), ASK);
+    expectSameRun(browser, server);
+    expect(browser.calls).toHaveLength(1);
+    expect(responseOf(browser.outcome).text).toBe("The scene.");
+  });
+});
+
+describe("the level of thinking reaches the provider the same way from both hosts", () => {
+  const effort = (run: Finished) => run.calls[0].body.reasoning_effort;
+
+  it.each([
+    ["the level of the integration, when the task names none", { thinking: "medium" as const }, undefined, "medium"],
+    ["the level of the route, over the integration's", { thinking: "medium" as const }, "xhigh" as const, "xhigh"],
+    ["nothing, when the route says «automatic»: it wins over the integration's level", { thinking: "high" as const }, "automatic" as const, undefined],
+    ["nothing, when neither says a level", {}, undefined, undefined],
+  ])("sends %s", async (_name, integrationLevel, targetLevel, expected) => {
+    const fixture = compatible("a", undefined, integrationLevel);
+    const settings = settingsOf([fixture], { taskRouting: { autopilot: { primary: { integrationId: "a", model: "model-a", ...(targetLevel ? { thinking: targetLevel } : {}) }, fallbacks: [] } } });
+    const { browser, server } = await runBoth([fixture], settings, ASK);
+    expectSameRun(browser, server);
+    expect(effort(browser)).toBe(expected);
+    expect("reasoning_effort" in browser.calls[0].body).toBe(expected !== undefined);
+  });
+
+  it("keeps each candidate's own level: the fallback has its own, and the primary's is not carried to it", async () => {
+    const a = compatible("a");
+    const b = compatible("b");
+    const settings = settingsOf([a, b], { taskRouting: { autopilot: { primary: { integrationId: "a", model: "model-a", thinking: "high" }, fallbacks: [{ integrationId: "b", model: "model-b" }] } } });
+    const { browser, server } = await runBoth([a, b], settings, ASK, (call) => (call.url.includes("a.example.test") ? failReply(503, "overloaded") : answer(call)));
+    expectSameRun(browser, server);
+    expect(hostsOf(browser)).toEqual(["a", "b"]);
+    expect(browser.calls[0].body.reasoning_effort).toBe("high");
+    expect("reasoning_effort" in browser.calls[1].body).toBe(false);
+  });
+
+  it("shows the personal server what the author chose: the levels of the integrations and of the routes, and «Tools only», without a secret", () => {
+    const a = compatible("a", undefined, { thinking: "low" });
+    const settings = settingsOf([a], { aiToolsOnly: false, taskRouting: { director: { primary: { integrationId: "a", model: "model-a", thinking: "xhigh" }, fallbacks: [] } } });
+    const shown = redactAiRuntimeConfig(pickAiRuntimeConfig(JSON.parse(JSON.stringify(pickAiRuntimeConfig(settings)))));
+    expect(shown.toolsOnly).toBe(false);
+    expect(shown.integrations[0].thinking).toBe("low");
+    expect(shown.taskRouting.director).toEqual({ primary: { integrationId: "a", model: "model-a", thinking: "xhigh" }, fallbacks: [] });
+    expect(JSON.stringify(shown)).not.toContain("sk-a-0123456789abcdef");
+  });
+});
+
+describe("the thinking parameter of a model reaches the provider the same way from both hosts", () => {
+  const TEMPLATE = "chat_template_kwargs.reasoning_strength";
+  /** A model of the gateway that gets a level from its integration, and says (or does not say) how that level is sent. */
+  const muse = (parameter?: unknown) => compatible("a", [chatModel("muse-glimmer-30b", parameter === undefined ? {} : { reasoningParameter: parameter as ReasoningParameter })], { thinking: "high" });
+  const ask = async (parameter: unknown, request: AiRequest = ASK) => {
+    const fixture = muse(parameter);
+    const { browser, server } = await runBoth([fixture], settingsOf([fixture]), request);
+    expectSameRun(browser, server);
+    return browser.calls[0].body;
+  };
+
+  it.each([[undefined], ["reasoning_effort"]])("sends the level as reasoning_effort when the model says %s: a model that does not say is called as it always was", async (parameter) => {
+    const body = await ask(parameter);
+    expect(body.reasoning_effort).toBe("high");
+    expect("chat_template_kwargs" in body).toBe(false);
+  });
+
+  it("sends the level as the argument of the chat template, and no reasoning_effort, when the model says so", async () => {
+    const body = await ask(TEMPLATE);
+    expect(body.chat_template_kwargs).toEqual({ reasoning_strength: "high" });
+    expect("reasoning_effort" in body).toBe(false);
+  });
+
+  it("does the same for a structured request: the forced function call and the level of the chat template travel together", async () => {
+    const body = await ask(TEMPLATE, { ...ASK, json: SCHEMA });
+    expect(body).toMatchObject({ tools: [{ type: "function", function: SCHEMA }], tool_choice: "required", chat_template_kwargs: { reasoning_strength: "high" } });
+    expect("reasoning_effort" in body).toBe(false);
+  });
+
+  it("sends no level at all for none: it is not a way of turning thinking off, it is no level", async () => {
+    const body = await ask("none");
+    expect("reasoning_effort" in body).toBe(false);
+    expect("chat_template_kwargs" in body).toBe(false);
+  });
+
+  it.each([["a word that is not one of the three", "reasoning-effort"], ["a number", 3]])("calls the model as it always was for %s: the engine drops it, and so does the site", async (_name, parameter) => {
+    const body = await ask(parameter);
+    expect(body.reasoning_effort).toBe("high");
+    expect("chat_template_kwargs" in body).toBe(false);
+  });
+
+  it("keeps each model's own word: the fallback is not given the way of the primary", async () => {
+    const a = compatible("a", [chatModel("muse-glimmer-30b", { reasoningParameter: TEMPLATE })], { thinking: "high" });
+    const b = compatible("b", [chatModel("legacy")], { thinking: "low" });
+    const { browser, server } = await runBoth([a, b], routed([a, b]), ASK, (call) => (call.url.includes("a.example.test") ? failReply(503, "overloaded") : answer(call)));
+    expectSameRun(browser, server);
+    expect(hostsOf(browser)).toEqual(["a", "b"]);
+    expect(browser.calls[0].body.chat_template_kwargs).toEqual({ reasoning_strength: "high" });
+    expect("reasoning_effort" in browser.calls[0].body).toBe(false);
+    expect(browser.calls[1].body.reasoning_effort).toBe("low");
+    expect("chat_template_kwargs" in browser.calls[1].body).toBe(false);
+  });
+
+  it("shows the personal server how the level goes to each model, without a secret: only the models that say it", () => {
+    const a = compatible("a", [chatModel("muse-glimmer-30b", { reasoningParameter: TEMPLATE }), chatModel("quiet"), chatModel("silent", { reasoningParameter: "none" })]);
+    const shown = redactAiRuntimeConfig(pickAiRuntimeConfig(JSON.parse(JSON.stringify(pickAiRuntimeConfig(settingsOf([a])))))).integrations[0].models;
+    expect(shown.find((entry) => entry.name === "muse-glimmer-30b")?.reasoningParameter).toBe(TEMPLATE);
+    expect(shown.find((entry) => entry.name === "silent")?.reasoningParameter).toBe("none");
+    expect(shown.find((entry) => entry.name === "quiet")).not.toHaveProperty("reasoningParameter");
+    expect(JSON.stringify(shown)).not.toContain("sk-a-0123456789abcdef");
   });
 });
 

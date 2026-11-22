@@ -1,6 +1,7 @@
 import { CHAT_CAPABILITIES, DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel, type CustomAction, type RoutingTarget } from "@/types/settings";
 import type { AuthProvider } from "@/store/authStore";
 import { BROWSER_ROUTING_ID, sanitizeTaskRouting } from "@/assistant/router";
+import { normalizeThinking } from "@/router/thinking";
 import { ensureGoogleAppFolder, listVerifiedGoogleAppFolders, selectCanonicalGoogleAppFolder } from "@/drive/googleAppFolder";
 import { assertCloudReadAllowed, beginCloudWrite, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
 import { ensureMicrosoftAppMarker, graphPath, ONE_DRIVE_APP_FOLDER, verifyMicrosoftAppFolder } from "@/drive/microsoftAppFolder";
@@ -362,7 +363,7 @@ export function migrateSettingsWithDiagnostics(raw: unknown): { settings: AppSet
   const aiIntegrations = [
     ...(Array.isArray(source.aiIntegrations) ? source.aiIntegrations : []),
     ...(migratedAzureIntegration ? [migratedAzureIntegration] : []),
-  ].map(ensureChatModels);
+  ].map(ensureChatModels).map(sanitizeIntegrationThinking);
   const sourceReader = typeof source.reader === "object" && source.reader ? source.reader : {};
 
   const customActions = source.customActionsSchemaVersion !== undefined && source.customActionsSchemaVersion !== 1
@@ -407,6 +408,8 @@ export function migrateSettingsWithDiagnostics(raw: unknown): { settings: AppSet
     routingExecution: normalizeRoutingExecution(source.routingExecution),
     personalServer: normalizePersonalServer(source.personalServer),
   };
+  // «Tools only» is a flag, and anything else is no value (the engine ignores it too): it is never turned off by accident, and it is not made up.
+  if (typeof settings.aiToolsOnly !== "boolean") delete settings.aiToolsOnly;
   return { settings, diagnostics };
 }
 
@@ -541,23 +544,33 @@ function normalizeTaskRouting(
     if (!integration || !target.model) return false;
     return true;
   };
-  const normalizeTarget = (target: RoutingTarget): RoutingTarget => {
+  const normalizeTarget = (target: RoutingTarget, task: string): RoutingTarget => {
     if (target.integrationId === BROWSER_ROUTING_ID) {
       return { integrationId: BROWSER_ROUTING_ID, model: "browser" };
     }
-    return { integrationId: target.integrationId, model: target.model.trim() };
+    // Thinking belongs to chat targets: a value that is not a level, or one on a media target, is not kept.
+    const thinking = (CHAT_CAPABILITIES as string[]).includes(task) ? normalizeThinking(target.thinking) : undefined;
+    return { integrationId: target.integrationId, model: target.model.trim(), ...(thinking ? { thinking } : {}) };
   };
   const out: NonNullable<AppSettings["taskRouting"]> = {};
   for (const [task, route] of Object.entries(raw as Record<string, unknown>)) {
     if (!route || typeof route !== "object") continue;
     const r = route as { primary?: unknown; fallbacks?: unknown };
-    const primary = validTarget(r.primary, task) ? normalizeTarget(r.primary as RoutingTarget) : undefined;
+    const primary = validTarget(r.primary, task) ? normalizeTarget(r.primary as RoutingTarget, task) : undefined;
     const fallbacks = Array.isArray(r.fallbacks)
-      ? r.fallbacks.filter((target) => validTarget(target, task)).map((target) => normalizeTarget(target as RoutingTarget))
+      ? r.fallbacks.filter((target) => validTarget(target, task)).map((target) => normalizeTarget(target as RoutingTarget, task))
       : [];
     if (primary || fallbacks.length) out[task as keyof typeof out] = { primary, fallbacks };
   }
   return sanitizeTaskRouting(Object.keys(out).length ? out : undefined, integrations);
+}
+
+/** The thinking level of an integration is one of the five values, or it is not there. */
+function sanitizeIntegrationThinking(integration: AIIntegration): AIIntegration {
+  if (!("thinking" in integration)) return integration;
+  const { thinking, ...rest } = integration;
+  const level = normalizeThinking(thinking);
+  return level ? { ...rest, thinking: level } : rest;
 }
 
 /**

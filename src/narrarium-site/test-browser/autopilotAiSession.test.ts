@@ -103,10 +103,12 @@ describe("a whole book written through the browser's AI port", () => {
       expect(run.state.stats.failures, "the rate limit did not fail the run").toBe(0);
     }
     // The two hosts count the same calls, tokens and cost. The time the steps took is the clock's and differs from one run to the next.
-    const { workedMs: browserWorked, ...browserStats } = browser.state.stats;
-    const { workedMs: serverWorked, ...serverStats } = server.state.stats;
+    // `workedMsSince` is the moment the first step began: a time of the clock, as the working time is, and it differs from one run to the next.
+    const { workedMs: browserWorked, workedMsSince: browserSince, ...browserStats } = browser.state.stats;
+    const { workedMs: serverWorked, workedMsSince: serverSince, ...serverStats } = server.state.stats;
     expect(browserStats).toEqual(serverStats);
     for (const worked of [browserWorked, serverWorked]) expect(Number.isInteger(worked) && (worked as number) >= 0, "the working time is a whole number of milliseconds").toBe(true);
+    for (const since of [browserSince, serverSince]) expect(since, "the moment the count began, as a date in UTC").toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
     // What the autopilot counted is what the browser recorded for the costs, and every request has its entry in the panel.
     const ledger = useCostsStore.getState().file.books["book-1"];

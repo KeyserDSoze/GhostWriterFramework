@@ -28,12 +28,30 @@ export type RoutingTaskKind = ChatCapability | "tts" | "stt" | "image";
 
 export const ROUTING_TASKS: RoutingTaskKind[] = ["default", "editor-actions", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director", "tts", "stt", "image"];
 
+/**
+ * How much a chat model is asked to think before it answers (by default the provider's `reasoning_effort`; see `ReasoningParameter`).
+ * `automatic` is a choice of its own: the parameter is not sent, even if an integration names a level.
+ */
+export type ThinkingLevel = "automatic" | "low" | "medium" | "high" | "xhigh";
+
+export const THINKING_LEVELS: readonly ThinkingLevel[] = ["automatic", "low", "medium", "high", "xhigh"];
+
+/**
+ * How the level of thinking reaches a model: the "Thinking parameter" of the model, which the engine's `AI_REASONING_PARAMETERS` pins (a test compares the two). `reasoning_effort` is the
+ * OpenAI field and what a model that says nothing gets; `chat_template_kwargs.reasoning_strength` is the argument of the chat template that Muse Glimmer takes (llama.cpp ignores
+ * `reasoning_effort`); `none` sends no level, and it does not turn thinking off.
+ */
+export const REASONING_PARAMETERS = ["reasoning_effort", "chat_template_kwargs.reasoning_strength", "none"] as const;
+export type ReasoningParameter = (typeof REASONING_PARAMETERS)[number];
+
 /** A concrete integration+model target the router points a task at. */
 export interface RoutingTarget {
   /** References AIIntegration.id */
   integrationId: string;
   /** Chat: ChatModel.name. Media: the integration's tts/stt/image model string. */
   model: string;
+  /** Chat only. Absent: the level of the integration (and, without one, nothing is sent). It belongs to this target: the primary and each fallback have their own. */
+  thinking?: ThinkingLevel;
 }
 
 /** Primary target + ordered fallbacks tried when the primary errors (e.g. 429/network). */
@@ -67,6 +85,11 @@ export interface ChatModel {
   capabilities: ChatCapability[];
   /** False when this model cannot execute OpenAI-compatible forced function calls. */
   supportsToolCalls?: boolean;
+  /**
+   * How the level of thinking is sent to this model (see `ReasoningParameter`). Absent: `reasoning_effort`, as it always was. It is the author's word and is never set by itself:
+   * the card of the integration only suggests it for the names the engine's `suggestedReasoningParameter` knows. A value this version does not know is kept as it is, and not used.
+   */
+  reasoningParameter?: ReasoningParameter;
   /** Provider-specific tier label. Currently populated from GitHub Models rate_limit_tier. */
   tier?: string;
   /** Total model context window; prompt budgeting reserves output and a safety margin within it. */
@@ -141,6 +164,8 @@ export interface AIIntegration {
   apiVersion?: string;
   /** Optional unit prices for spend tracking. */
   pricing?: AIPricing;
+  /** The thinking level of this integration's chat models, unless a routing target names its own. */
+  thinking?: ThinkingLevel;
 }
 
 // ─── GitHub token entry ───────────────────────────────────────────────────────
@@ -532,6 +557,11 @@ export interface AppSettings {
   taskRouting?: Partial<Record<RoutingTaskKind, TaskRoute>>;
   fallbackDisclosure: FallbackDisclosurePolicy;
   routingExecution: RoutingExecutionLimits;
+  /**
+   * "Tools only" (the engine reads it as `toolsOnly`): every agent of the autopilot answers by calling its own function, models marked as without tool calls are skipped,
+   * and a reply in text instead of the call is refused. Absent means on; it is stored as a flag when the author switches it, and anything else is dropped.
+   */
+  aiToolsOnly?: boolean;
   /** Currency symbol/code used for cost display (e.g. "USD", "EUR", "GBP"). Default: "USD". */
   costCurrency: string;
   ui: {

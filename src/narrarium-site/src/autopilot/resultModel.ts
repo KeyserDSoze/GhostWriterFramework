@@ -27,9 +27,15 @@ export interface ChapterScore {
   /** The average of the readers' votes, which they give in the first round; `null` when the plan has none. */
   readers: number | null;
   roundCount: number;
+  /**
+   * What each round decided, in the order of the votes: `approve` closed the chapter, `revise` sent it back. Only there when the plan says it for at least one round (an engine that
+   * records the verdict wrote it); `null` for a round that has none, and for a word that is not one of the two.
+   */
+  verdicts?: Array<"approve" | "revise" | null>;
 }
 
 const vote = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
+const verdictOf = (value: unknown): "approve" | "revise" | null => (value === "approve" || value === "revise" ? value : null);
 
 /** The chapters the director scored, in the order of the plan. */
 export function chapterScores(chapters: readonly Pick<PlannedChapter, "number" | "slug" | "score" | "rounds">[]): ChapterScore[] {
@@ -40,7 +46,8 @@ export function chapterScores(chapters: readonly Pick<PlannedChapter, "number" |
     const final = vote(chapter.score) ?? lastRound;
     const readers = (chapter.rounds ?? []).map((round) => vote(round?.readers)).find((value) => value !== null) ?? null;
     if (final === null && rounds.every((value) => value === null) && readers === null) continue;
-    scores.push({ number: chapter.number, slug: chapter.slug, final, rounds, readers, roundCount: rounds.length });
+    const verdicts = (chapter.rounds ?? []).map((round) => verdictOf(round?.verdict));
+    scores.push({ number: chapter.number, slug: chapter.slug, final, rounds, readers, roundCount: rounds.length, ...(verdicts.some((entry) => entry !== null) ? { verdicts } : {}) });
   }
   return scores;
 }

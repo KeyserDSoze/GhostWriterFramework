@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { ReadFirstBlock } from "@/components/autopilot/result/ReadFirst";
 import { ScoresBlock } from "@/components/autopilot/result/Scores";
 import { useBandModel } from "@/components/autopilot/AutopilotControlBand";
-import { finalReviewOf, finalVerdict, workedTime, type FinalVerdict } from "@/autopilot/bandModel";
-import { formatCost, formatCount, formatDuration } from "@/autopilot/format";
+import { finalReviewOf, finalVerdict, workedSince, workedTime, type FinalVerdict } from "@/autopilot/bandModel";
+import { formatCost, formatCount, formatDate, formatDuration } from "@/autopilot/format";
 import { chapterScores, readFirst } from "@/autopilot/resultModel";
 import { openAskDirector } from "@/store/askDirectorStore";
 import { cn } from "@/lib/utils";
@@ -142,7 +142,13 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true }: AutopilotR
   if (progress.chapters > 0) numbers.push([t("autopilot.result.numbers.chapters"), formatCount(progress.chapters)]);
   if (progress.scenesWritten > 0) numbers.push([t("autopilot.result.numbers.scenes"), formatCount(progress.scenesWritten)]);
   if (progress.words > 0) numbers.push([t("autopilot.result.numbers.words"), formatCount(progress.words)]);
-  if (worked.milliseconds > 0) numbers.push([t("autopilot.result.numbers.time"), worked.complete ? formatDuration(worked.milliseconds) : t("autopilot.result.numbers.timeAtLeast", { time: formatDuration(worked.milliseconds) })]);
+  // A book that is older than the count says since when its time is counted; the one whose count began with it has nothing to add.
+  const since = workedSince(summary.stats, state?.createdAt);
+  if (worked.milliseconds > 0) {
+    numbers.push([t("autopilot.result.numbers.time"), worked.complete
+      ? <>{formatDuration(worked.milliseconds)}{since && <span className="ml-1.5 inline-block text-xs font-normal text-muted-foreground">{t("autopilot.result.numbers.timeSince", { date: formatDate(since) })}</span>}</>
+      : t("autopilot.result.numbers.timeAtLeast", { time: formatDuration(worked.milliseconds) })]);
+  }
   if (stats.cost > 0) numbers.push([t("autopilot.result.numbers.cost"), formatCost(stats.cost, currency)]);
   if (stats.inputTokens + stats.outputTokens > 0) numbers.push([t("autopilot.result.numbers.tokens"), formatCount(stats.inputTokens + stats.outputTokens)]);
   if (stats.aiCalls > 0) numbers.push([t("autopilot.result.numbers.calls"), formatCount(stats.aiCalls)]);

@@ -515,6 +515,41 @@ describe("the rounds, when the plan records them", () => {
     expect(group(timeline, "chapter:4:2").result).toEqual({ verdict: "approve", score: 8.5, accepted: 0, rejected: 0 });
   });
 
+  it("gives a round the verdict the plan recorded, before the words of the review: the plan says what it did, and that is not always what the model said", () => {
+    const { activities } = chapterFlow(4, { rounds: 2 });
+    // The review of the second round says «approve 8/10»; the plan withheld that approval, because it is under the approval score of the director, and sent the chapter back.
+    const rounds = { 4: [{ director: 6.5, verdict: "revise" as const }, { director: 7.1, verdict: "revise" as const }] };
+    const timeline = buildTimeline({ activities, events: [], rounds: lookup(rounds) });
+    expect(group(timeline, "chapter:4:2").result).toEqual({ verdict: "revise", score: 7.1 });
+    expect(group(timeline, "chapter:4:1").result).toEqual({ verdict: "revise", score: 6.5 });
+  });
+
+  it("gives an approval of the plan to a round that the words of the log called a revision: the plan closed the chapter", () => {
+    const { activities } = chapterFlow(4, { rounds: 2 });
+    const timeline = buildTimeline({ activities, events: [], rounds: lookup({ 4: [{ director: 6.5, verdict: "approve" as const }, { director: 8.5, verdict: "approve" as const }] }) });
+    expect(group(timeline, "chapter:4:1").result).toMatchObject({ verdict: "approve", score: 6.5 });
+  });
+
+  it("gives the verdict of the plan to a round whose review the log cannot read: it is data, and nothing is guessed", () => {
+    const { activities } = chapterFlow(4, { rounds: 1 });
+    const unreadable = activities.map((activity) => (activity.task === "director-review" ? { ...activity, summary: "The chapter is fine." } : activity));
+    const timeline = buildTimeline({ activities: unreadable, events: [], rounds: lookup({ 4: [{ director: 7, verdict: "approve" as const, accepted: 1, rejected: 0 }] }) });
+    expect(group(timeline, "chapter:4:1").result).toEqual({ verdict: "approve", score: 7, accepted: 1, rejected: 0 });
+  });
+
+  it("falls back to the words of the log when the plan records no verdict for the round: a state written before the verdict was", () => {
+    const { activities } = chapterFlow(4, { rounds: 2 });
+    const timeline = buildTimeline({ activities, events: [], rounds: lookup({ 4: [{ director: 6.5 }, { director: 8.5, verdict: "approve" as const }] }) });
+    expect(group(timeline, "chapter:4:1").result).toEqual({ verdict: "revise", score: 6.5 });
+    expect(group(timeline, "chapter:4:2").result).toEqual({ verdict: "approve", score: 8.5 });
+  });
+
+  it("does not take a verdict that is not one of the two for the plan's: it falls back to the log", () => {
+    const { activities } = chapterFlow(4, { rounds: 1 });
+    const odd = { director: 8, verdict: "rewrite" } as unknown as ChapterRound;
+    expect(group(buildTimeline({ activities, events: [], rounds: lookup({ 4: [odd] }) }), "chapter:4:1").result).toMatchObject({ verdict: "approve", score: 8 });
+  });
+
   it("gives the vote of a round whose review the log cannot read, with no verdict: it is not guessed", () => {
     const { activities } = chapterFlow(4, { rounds: 1 });
     const unreadable = activities.map((activity) => (activity.task === "director-review" ? { ...activity, summary: "The chapter is fine." } : activity));

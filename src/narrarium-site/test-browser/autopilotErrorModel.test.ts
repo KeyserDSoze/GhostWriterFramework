@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AutopilotActivity, AutopilotErrorDetail, AutopilotRetryInfo, AutopilotStateSummary } from "narrarium-engine";
-import { ERROR_KINDS, diagnosticsText, errorFacts, errorKindOf, failureSource, formatCountdown, secondsLeft } from "@/autopilot/errorModel";
+import { ERROR_KINDS, diagnosticsText, errorActions, errorFacts, errorKindOf, failureSource, formatCountdown, formatLimit, retryAfterSeconds, secondsLeft, timeoutOf } from "@/autopilot/errorModel";
 
 const T0 = "2026-11-21T10:00:00.000Z";
 const at = (seconds: number) => new Date(Date.parse(T0) + seconds * 1000).toISOString();
@@ -18,8 +18,8 @@ const lastError = (patch: Record<string, unknown> = {}) => ({ message: "Connecti
 const DETAIL: AutopilotErrorDetail = { endpoint: "https://api.openai.com", model: "gpt-4.1", provider: "openai", integration: "ai-1", status: 429, attempt: 3, retries: 3 };
 
 describe("the kinds of error", () => {
-  it("are the twelve the engine tells, in the order it lists them", () => {
-    expect([...ERROR_KINDS]).toEqual(["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider", "unknown"]);
+  it("are the thirteen the engine tells, in the order it lists them: the configuration to correct is one of them", () => {
+    expect([...ERROR_KINDS]).toEqual(["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "config", "provider", "unknown"]);
   });
 
   it("is the kind the engine said, whatever the words of the message are", () => {
@@ -36,6 +36,33 @@ describe("the kinds of error", () => {
   it("reads a profile problem from the words, for a state that an older engine wrote and said no kind of: the refusal to rewrite a file whose front matter cannot be read", () => {
     expect(errorKindOf(undefined, "The frontmatter of chapters/001-the-arrival/chapter.md (line 4: a mapping is not allowed here) cannot be read: the autopilot will not rewrite it.")).toBe("profile");
     expect(errorKindOf(undefined, "Il frontmatter di chapters/002-la-diga/001-alba.md (riga 4: una mappa non è permessa qui) non è leggibile.")).toBe("profile");
+  });
+});
+
+describe("what can be done about each kind", () => {
+  it.each(["network", "rate_limit", "timeout", "truncated", "provider"] as const)("is to retry first, and to open the integrations, for a failure of the provider (%s)", (kind) => {
+    expect(errorActions(kind)).toEqual({ retry: "main", integrations: true, router: false, first: "retry" });
+  });
+
+  it.each(["auth", "refused", "budget", "limit"] as const)("puts the configuration before the retry when the integrations are what to correct (%s)", (kind) => {
+    expect(errorActions(kind)).toEqual({ retry: "secondary", integrations: true, router: false, first: "integrations" });
+  });
+
+  it.each(["conflict", "profile", "unknown"] as const)("leaves the integrations out when they are not what is wrong (%s)", (kind) => {
+    expect(errorActions(kind)).toEqual({ retry: "main", integrations: false, router: false, first: "retry" });
+  });
+
+  it("sends a configuration error to the integrations and to the router, and offers no retry while the configuration still gives the same error", () => {
+    expect(errorActions("config", { configurationBlocks: true })).toEqual({ retry: "hidden", integrations: true, router: true, first: "integrations" });
+    expect(errorActions("config"), "it assumes the worst when it is not told").toEqual(errorActions("config", { configurationBlocks: true }));
+  });
+
+  it("offers the retry again, as the main action, once the configuration no longer blocks", () => {
+    expect(errorActions("config", { configurationBlocks: false })).toEqual({ retry: "main", integrations: true, router: true, first: "retry" });
+  });
+
+  it("does not let the state of the configuration change what the other kinds offer", () => {
+    for (const kind of ERROR_KINDS.filter((entry) => entry !== "config")) expect(errorActions(kind, { configurationBlocks: true })).toEqual(errorActions(kind, { configurationBlocks: false }));
   });
 });
 
@@ -116,6 +143,99 @@ describe("the same failure, said once", () => {
     const review = failed({ task: "director-review", sceneNumber: undefined, error: "Connection error." });
     const source = failureSource(summary({ lastError: lastError({ task: "write", at: review.endedAt }) }), [write, review]);
     expect(source?.step).toBe(write);
+  });
+});
+
+describe("the step that failed, by the id the engine gives it", () => {
+  it("is the activity whose id the last error carries, though the clock would not have found it: the id says which step, so the page does not guess", () => {
+    const old = failed({ id: "old-step", startedAt: at(0), endedAt: at(10) });
+    const newer = failed({ id: "newer-step", task: "director-review", sceneNumber: undefined, startedAt: at(500), endedAt: at(510) });
+    const source = failureSource(summary({ lastError: lastError({ at: at(5000), activityId: "old-step" }) }), [old, newer]);
+    expect(source?.step).toBe(old);
+  });
+
+  it("takes the step of that id even when another step failed around the time the run ended: the clock would have chosen that one", () => {
+    const named = failed({ id: "named", task: "write", startedAt: at(100), endedAt: at(110) });
+    const nearer = failed({ id: "nearer", task: "write", sceneNumber: 9, startedAt: at(150), endedAt: at(160), error: "another way" });
+    const source = failureSource(summary({ lastError: lastError({ at: at(161), activityId: "named" }) }), [named, nearer]);
+    expect(source?.step).toBe(named);
+    expect(failureSource(summary({ lastError: lastError({ at: at(161) }) }), [named, nearer])?.step, "without the id it is the nearest, as it always was").toBe(nearer);
+  });
+
+  it("counts the attempts of that step that failed in a row, up to the attempt the id names", () => {
+    const attempts = [failed({ id: "t1" }), failed({ id: "t2" }), failed({ id: "t3" })];
+    expect(failureSource(summary({ lastError: lastError({ at: at(9000), activityId: "t3" }) }), attempts)?.repeats).toBe(3);
+    expect(failureSource(summary({ lastError: lastError({ at: at(9000), activityId: "t2" }) }), attempts)?.repeats).toBe(2);
+  });
+
+  it("is no step when the id names an activity the log does not have: none is guessed from the clock, though a step failed right then", () => {
+    const near = failed({ id: "near", startedAt: at(100), endedAt: at(110) });
+    const source = failureSource(summary({ lastError: lastError({ at: at(111), activityId: "gone" }) }), [near]);
+    expect(source).toMatchObject({ step: null, repeats: 1 });
+  });
+
+  it("falls back to the clock, as it always did, for a state with no id: an older engine wrote it", () => {
+    const near = failed({ id: "near", startedAt: at(100), endedAt: at(110) });
+    expect(failureSource(summary({ lastError: lastError({ at: at(111) }) }), [near])?.step).toBe(near);
+    expect(failureSource(summary({ lastError: lastError({ at: at(111), activityId: undefined }) }), [near])?.step).toBe(near);
+  });
+
+  it.each([["a number", 42], ["an empty text", ""], ["an object", {}]])("falls back to the clock when the id is %s: it is not an id", (_name, id) => {
+    const near = failed({ id: "near", startedAt: at(100), endedAt: at(110) });
+    expect(failureSource(summary({ lastError: lastError({ at: at(111), activityId: id as never }) }), [near])?.step).toBe(near);
+  });
+
+  it("leaves the failure that is waiting to be retried as it was: it is the last step of the log, and that needs no id", () => {
+    const attempt = failed({ id: "last" });
+    const source = failureSource({ status: "running", lastError: null, retry: { at: at(60), attempt: 1, retries: 3 } }, [attempt]);
+    expect(source?.step).toBe(attempt);
+  });
+});
+
+describe("which limit ran out", () => {
+  it.each([["start", 30_000], ["idle", 600_000], ["total", 14_400_000]] as const)("is the deadline the engine says: the %s, and how long it was", (phase, ms) => {
+    expect(timeoutOf({ timeoutPhase: phase, timeoutMs: ms })).toEqual({ phase, ms });
+  });
+
+  it("says which deadline when it does not say how long: nothing is made up for the length", () => {
+    expect(timeoutOf({ timeoutPhase: "idle" })).toEqual({ phase: "idle" });
+    expect(timeoutOf({ timeoutPhase: "idle", timeoutMs: 0 })).toEqual({ phase: "idle" });
+    expect(timeoutOf({ timeoutPhase: "idle", timeoutMs: Number.NaN })).toEqual({ phase: "idle" });
+  });
+
+  it("is nothing without the phase, or for a phase this version does not know: a length alone does not say which limit it was", () => {
+    expect(timeoutOf({})).toBeNull();
+    expect(timeoutOf({ timeoutMs: 30_000 })).toBeNull();
+    expect(timeoutOf({ timeoutPhase: "later" as never, timeoutMs: 30_000 })).toBeNull();
+  });
+
+  it.each([
+    [150, "150 ms"], [999, "999 ms"], [1_000, "1 s"], [30_000, "30 s"], [45_500, "45.5 s"], [59_000, "59 s"], [600_000, "600 s"],
+    [3_600_000, "1 h"], [5_400_000, "1.5 h"], [14_400_000, "4 h"],
+  ])("writes %i ms as %s", (ms, text) => {
+    expect(formatLimit(ms, "en")).toBe(text);
+  });
+
+  it("writes the figures as the language does", () => {
+    expect(formatLimit(5_400_000, "it")).toBe("1,5 h");
+    expect(formatLimit(45_500, "it")).toBe("45,5 s");
+  });
+});
+
+describe("how long the provider asks to wait", () => {
+  it("is the seconds of the wait the engine says, rounded up so that it never reads shorter than what was asked", () => {
+    expect(retryAfterSeconds({ retryAfterMs: 20_000 })).toBe(20);
+    expect(retryAfterSeconds({ retryAfterMs: 20_001 })).toBe(21);
+    expect(retryAfterSeconds({ retryAfterMs: 1 })).toBe(1);
+    expect(retryAfterSeconds({ retryAfterMs: 300_000 })).toBe(300);
+  });
+
+  it("is nothing when the provider asked for nothing: no wait, a wait of zero (a provider that says «now»), or a value that is no number", () => {
+    expect(retryAfterSeconds({})).toBeNull();
+    expect(retryAfterSeconds({ retryAfterMs: 0 })).toBeNull();
+    expect(retryAfterSeconds({ retryAfterMs: -3 })).toBeNull();
+    expect(retryAfterSeconds({ retryAfterMs: Number.NaN })).toBeNull();
+    expect(retryAfterSeconds({ retryAfterMs: "20000" as never })).toBeNull();
   });
 });
 

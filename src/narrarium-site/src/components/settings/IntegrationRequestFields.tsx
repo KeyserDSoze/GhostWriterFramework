@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DEFAULT_PROVIDER_TIMEOUT_MS } from "@/assistant/executionLimits";
-import type { AIIntegration } from "@/types/settings";
+import "@/i18n/aiRouter";
+import { THINKING_LEVELS, type AIIntegration, type ThinkingLevel } from "@/types/settings";
 
 /** The idle timeout the engine will use for what was typed: a whole number of milliseconds between its limits. */
 const keepIdleTimeout = (typed: number) => Math.min(MAX_IDLE_TIMEOUT_MS, Math.max(MIN_IDLE_TIMEOUT_MS, Math.round(typed)));
@@ -77,12 +78,36 @@ function StreamingField({ value, onChange }: { value: AIIntegration["streamMode"
   );
 }
 
+const NO_LEVEL = "__none__";
+
 /**
- * How long a slow model is given, and whether its replies stream, for one integration: the provider timeout, the idle timeout and
- * Streaming. They sit in the grid of the integration card (this renders its cells), and are not for Microsoft 365 Copilot.
+ * How hard the models of the integration think when a task does not name a level in the AI Router (the level of a route wins). «None» is no value at all, so a settings
+ * file stays as an older app wrote it; «Automatic» is a value of its own that sends nothing.
+ */
+function ThinkingDefaultField({ value, onChange }: { value: ThinkingLevel | undefined; onChange: (value: ThinkingLevel | undefined) => void }) {
+  const { t } = useTranslation();
+  const id = useId();
+  return (
+    <div className="grid gap-1">
+      <Label htmlFor={id} className="text-xs">{t("settings.thinkingDefault")}</Label>
+      <Select value={value ?? NO_LEVEL} onValueChange={(next) => onChange(next === NO_LEVEL ? undefined : next as ThinkingLevel)}>
+        <SelectTrigger id={id} aria-describedby={`${id}-hint`} className="h-8 text-sm"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NO_LEVEL}>{t("settings.thinkingNone")}</SelectItem>
+          {THINKING_LEVELS.map((level) => <SelectItem key={level} value={level}>{t(`routing.thinking.${level}`)}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <p id={`${id}-hint`} className="text-xs text-muted-foreground">{t("settings.thinkingDefaultHint")}</p>
+    </div>
+  );
+}
+
+/**
+ * How long a slow model is given, whether its replies stream and how hard it thinks, for one integration: the provider timeout, the idle timeout, Streaming and the
+ * default thinking. They sit in the grid of the integration card (this renders its cells), and are not for Microsoft 365 Copilot.
  * The figures in the hints are the engine's own, so a hint never says something the engine does not do.
  */
-export function IntegrationRequestFields({ integration, onChange }: { integration: Pick<AIIntegration, "requestTimeoutMs" | "idleTimeoutMs" | "streamMode">; onChange: (patch: Partial<AIIntegration>) => void }) {
+export function IntegrationRequestFields({ integration, onChange }: { integration: Pick<AIIntegration, "requestTimeoutMs" | "idleTimeoutMs" | "streamMode" | "thinking">; onChange: (patch: Partial<AIIntegration>) => void }) {
   const { t, i18n } = useTranslation();
   const format = (value: number) => new Intl.NumberFormat(i18n.resolvedLanguage ?? i18n.language).format(value);
   const idleHint = t("settings.idleTimeoutHint", { min: format(MIN_IDLE_TIMEOUT_MS), max: format(MAX_IDLE_TIMEOUT_MS), empty: format(DEFAULT_IDLE_TIMEOUT_MS), minutes: DEFAULT_IDLE_TIMEOUT_MS / 60_000 });
@@ -108,6 +133,7 @@ export function IntegrationRequestFields({ integration, onChange }: { integratio
         onChange={(idleTimeoutMs) => onChange({ idleTimeoutMs })}
       />
       <StreamingField value={integration.streamMode} onChange={(streamMode) => onChange({ streamMode })} />
+      <ThinkingDefaultField value={integration.thinking} onChange={(thinking) => onChange({ thinking })} />
     </>
   );
 }

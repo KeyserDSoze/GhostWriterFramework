@@ -45,6 +45,36 @@ export interface LlmDebugEntry {
   outputTokens?: number;
   /** EUR cost of this single request, when pricing is configured. */
   cost?: number;
+  /**
+   * How the engine asked, and what came back, for a chat request of the autopilot: metadata only, every field optional (an entry saved before they existed has none). The store
+   * keeps only flags, numbers and a few words of the engine, whatever it is given.
+   */
+  /** The request asked for a structured answer (a value, as the agents of the autopilot do), and not prose. */
+  structured?: boolean;
+  /** The structured answer was asked for as the forced call of a function (`true`) or as JSON in the message (`false`). */
+  tools?: boolean;
+  /** The request asked the provider to stream its reply. */
+  stream?: boolean;
+  /** What the integration says about streaming. */
+  streamMode?: "auto" | "off";
+  /** The level that was sent; absent when none was. */
+  thinking?: "low" | "medium" | "high" | "xhigh";
+  /** Where the level went, only when it went as the argument of the chat template (the model's "Thinking parameter"); absent: it went as `reasoning_effort`, or no level was sent. */
+  reasoningParameter?: "chat_template_kwargs.reasoning_strength";
+  /** «Tools only» was in force for the call. */
+  toolsOnly?: boolean;
+  /** The models of the route that the call did not ask, and why. */
+  skipped?: Array<{ model: string; reason: "no-tool-calls" }>;
+  /** The deadlines the attempt ran with, in milliseconds; `raisedFrom` is the provider timeout the minimum lifted. */
+  timeouts?: { startMs: number; idleMs: number; capMs: number; raisedFrom?: number };
+  /** At the end: the reply was read as a stream. */
+  streamed?: boolean;
+  /** At the end: milliseconds to the first byte of the reply. */
+  firstByteMs?: number;
+  /** At the end, for a structured request: whether the model delivered the answer as a function call. */
+  toolCalled?: boolean;
+  /** For a timeout: which deadline ran out. */
+  timeoutPhase?: "start" | "idle" | "total";
 }
 
 function storageKey(identity: string): string {
@@ -91,14 +121,71 @@ function redactError(value: unknown): string | undefined {
     .slice(0, 1000);
 }
 
+const THINKING = new Set(["low", "medium", "high", "xhigh"]);
+/** The engine says where the level went only when it went as the argument of the chat template: the other two ways say nothing, so nothing else is kept. */
+const REASONING_PARAMETERS = new Set(["chat_template_kwargs.reasoning_strength"]);
+const STREAM_MODES = new Set(["auto", "off"]);
+const TIMEOUT_PHASES = new Set(["start", "idle", "total"]);
+const MAX_SKIPPED_MODELS = 8;
+const MAX_MODEL_NAME = 120;
+
+const flag = (value: unknown): boolean | undefined => (typeof value === "boolean" ? value : undefined);
+const milliseconds = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined);
+const word = (value: unknown, allowed: ReadonlySet<string>): string | undefined => (typeof value === "string" && allowed.has(value) ? value : undefined);
+
+function skippedModels(value: unknown): LlmDebugEntry["skipped"] {
+  if (!Array.isArray(value)) return undefined;
+  const kept: NonNullable<LlmDebugEntry["skipped"]> = [];
+  for (const item of value) {
+    if (kept.length >= MAX_SKIPPED_MODELS || !item || typeof item !== "object") continue;
+    const { model, reason } = item as { model?: unknown; reason?: unknown };
+    if (reason !== "no-tool-calls" || typeof model !== "string" || !model.trim()) continue;
+    kept.push({ model: (redactError(model.trim()) ?? "").slice(0, MAX_MODEL_NAME), reason });
+  }
+  return kept.length ? kept : undefined;
+}
+
+function deadlines(value: unknown): LlmDebugEntry["timeouts"] {
+  if (!value || typeof value !== "object") return undefined;
+  const { startMs, idleMs, capMs, raisedFrom } = value as Record<string, unknown>;
+  const start = milliseconds(startMs);
+  const idle = milliseconds(idleMs);
+  const cap = milliseconds(capMs);
+  if (start === undefined || idle === undefined || cap === undefined) return undefined;
+  const raised = milliseconds(raisedFrom);
+  return { startMs: start, idleMs: idle, capMs: cap, ...(raised !== undefined ? { raisedFrom: raised } : {}) };
+}
+
+/** What the store keeps of how an attempt was asked: flags, numbers and the few words of the engine, and nothing else, whatever it is given. A field that is not valid is left out. */
+function attemptFields(entry: LlmDebugEntry): Partial<LlmDebugEntry> {
+  const fields: Record<string, unknown> = {
+    structured: flag(entry.structured),
+    tools: flag(entry.tools),
+    stream: flag(entry.stream),
+    streamMode: word(entry.streamMode, STREAM_MODES),
+    thinking: word(entry.thinking, THINKING),
+    reasoningParameter: word(entry.reasoningParameter, REASONING_PARAMETERS),
+    toolsOnly: flag(entry.toolsOnly),
+    skipped: skippedModels(entry.skipped),
+    timeouts: deadlines(entry.timeouts),
+    streamed: flag(entry.streamed),
+    firstByteMs: milliseconds(entry.firstByteMs),
+    toolCalled: flag(entry.toolCalled),
+    timeoutPhase: word(entry.timeoutPhase, TIMEOUT_PHASES),
+  };
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as Partial<LlmDebugEntry>;
+}
+
 function storageErrorMessage(error: unknown, fallback: string): string {
   if (error && typeof error === "object" && "message" in error && typeof error.message === "string") return error.message;
   return fallback;
 }
 
 export function redactLlmDebugEntry(entry: LlmDebugEntry): LlmDebugEntry {
+  const { structured: _s, tools: _t, stream: _st, streamMode: _sm, thinking: _th, reasoningParameter: _rp, toolsOnly: _to, skipped: _sk, timeouts: _ti, streamed: _sd, firstByteMs: _fb, toolCalled: _tc, timeoutPhase: _tp, ...rest } = entry;
   return {
-    ...entry,
+    ...rest,
+    ...attemptFields(entry),
     label: redactError(entry.label),
     model: redactError(entry.model) ?? "",
     provider: entry.provider && SAFE_PROVIDERS.has(entry.provider) ? entry.provider : undefined,

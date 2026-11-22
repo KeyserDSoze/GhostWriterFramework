@@ -76,7 +76,8 @@ describe("the autopilot's AI port in the browser", () => {
 
     it("shows the JSON instruction a model without tools receives as a message of the attempt, never its content", async () => {
       const fixture = compatible("a", [chatModel("m", { supportsToolCalls: false })]);
-      useProvider([fixture], settingsOf([fixture]), () => textReply(JSON.stringify({ ok: true }), USAGE, "stop"));
+      // With «Tools only» on, which is the default, such a model is not asked at all: the JSON in the message is the way of the author who turned it off.
+      useProvider([fixture], settingsOf([fixture], { aiToolsOnly: false }), () => textReply(JSON.stringify({ ok: true }), USAGE, "stop"));
       await createBrowserAi().complete({ ...ASK, json: SCHEMA });
       expect(entries()[0].messages?.map((message) => message.role)).toEqual(["system", "user"]);
       expect(JSON.stringify(entries())).not.toContain("Reply with ONLY one JSON object");

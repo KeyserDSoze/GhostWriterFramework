@@ -4,6 +4,8 @@ import { Trash2, ChevronRight } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useUiStore } from "@/store/uiStore";
+import "@/i18n/debugAttempt";
+import { attemptBadges } from "@/debug/attemptBadges";
 import { useLlmDebugStore, type LlmDebugEntry, type LlmRequestKind } from "@/debug/llmDebugStore";
 
 function eur(value?: number): string {
@@ -103,7 +105,8 @@ function StatusDot({ entry }: { entry: LlmDebugEntry }) {
 }
 
 function RequestDetail({ entry }: { entry: LlmDebugEntry }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const badges = attemptBadges(entry, i18n.resolvedLanguage ?? i18n.language);
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
@@ -118,6 +121,12 @@ function RequestDetail({ entry }: { entry: LlmDebugEntry }) {
         <Stat label={t("debug.failureKind")} value={entry.failureKind ? t(`debug.failure.${entry.failureKind}`) : "—"} />
         <Stat label={t("debug.timeout")} value={entry.timeoutMs == null ? "—" : `${entry.timeoutMs} ms`} />
       </div>
+
+      {badges.length > 0 && (
+        <ul aria-label={t("debug.attempt.title")} className="flex flex-wrap gap-1.5">
+          {badges.map((badge) => <li key={badge.id} className="rounded-full border border-layer bg-muted/30 px-2.5 py-1 text-xs font-medium">{t(badge.key, badge.params)}</li>)}
+        </ul>
+      )}
 
       {entry.error && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">{entry.error}</div>

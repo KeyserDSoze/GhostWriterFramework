@@ -243,13 +243,17 @@ export function roundResultOf(step: TimelineStep): RoundResult | null {
   return line ? { verdict: line.verdict, score: line.score } : null;
 }
 
-/** What the plan recorded of a round: its vote goes before the one in the words of the review, which keeps the verdict. A round that has no vote has what the review wrote. */
+/**
+ * What the plan recorded of a round: its vote goes before the one in the words of the review, and so does its verdict (what the round decided, which is not always what the model
+ * said: an approval under the approval score of the director is withheld). A round that has no vote has what the review wrote, and one that has no verdict keeps the verdict of the words.
+ */
 function withRecord(written: RoundResult | null, entry: ChapterRound | undefined): RoundResult | null {
   if (!entry) return written;
   const score = typeof entry.director === "number" ? entry.director : written?.score;
   if (score === undefined) return null;
+  const verdict = entry.verdict === "approve" || entry.verdict === "revise" ? entry.verdict : written?.verdict;
   return {
-    ...(written?.verdict ? { verdict: written.verdict } : {}),
+    ...(verdict ? { verdict } : {}),
     score,
     ...(typeof entry.readers === "number" ? { readers: entry.readers } : {}),
     ...(typeof entry.accepted === "number" ? { accepted: entry.accepted } : {}),

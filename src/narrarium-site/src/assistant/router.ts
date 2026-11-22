@@ -1,4 +1,5 @@
-import type { AIIntegration, AIPricing, AppSettings, ChatCapability, RoutingTarget, RoutingTaskKind, TaskRoute } from "@/types/settings";
+import type { AIIntegration, AIPricing, AppSettings, ChatCapability, ReasoningParameter, RoutingTarget, RoutingTaskKind, TaskRoute, ThinkingLevel } from "@/types/settings";
+import { effectiveThinking } from "@/router/thinking";
 import { integrationChatModels, modelSupportsCapability, resolveReviewIntegration, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmFinishReport, type LlmMessage, type LlmResult, type LlmUsageReport } from "@/assistant/llm";
 import { executeCompletionFallback } from "@/assistant/completionFallback";
 import { runWithCandidateTimeout } from "@/assistant/executionLimits";
@@ -24,6 +25,10 @@ export interface TaskCandidate {
   maxOutputTokens?: number;
   underlyingModel?: string;
   supportsToolCalls?: boolean;
+  /** Chat only: the level this attempt goes out with (the target's own, else the integration's); only an explicit level is sent. */
+  thinking?: ThinkingLevel;
+  /** Chat only: how that level is sent to this model (the "Thinking parameter" of the model); absent: `reasoning_effort`. */
+  reasoningParameter?: ReasoningParameter;
   /** True for the browser TTS/STT engine (no integration). */
   browser?: boolean;
 }
@@ -169,14 +174,14 @@ export function reconcileTaskRouting(
 }
 
 /** Chat: pricing = model's own price, else integration price. */
-function chatCandidateFromTarget(settings: AppSettings, target: RoutingTarget, task: ChatCapability): TaskCandidate | null {
+function chatCandidateFromTarget(settings: AppSettings, target: RoutingTarget, task: ChatCapability, ownThinking = true): TaskCandidate | null {
   const integration = findIntegration(settings, target.integrationId);
   if (!integration || integration.provider === "m365_copilot") return null;
   const model = target.model?.trim();
   if (!model) return null;
   const modelEntry = integrationChatModels(integration).find((m) => m.name === model);
   if (!modelEntry || !modelSupportsCapability(modelEntry, task)) return null;
-  return { integration, model, pricing: modelEntry.pricing ?? integration.pricing, maxInputTokens: modelEntry.maxInputTokens, maxOutputTokens: modelEntry.maxOutputTokens, underlyingModel: modelEntry.underlyingModel, supportsToolCalls: modelEntry.supportsToolCalls };
+  return { integration, model, pricing: modelEntry.pricing ?? integration.pricing, maxInputTokens: modelEntry.maxInputTokens, maxOutputTokens: modelEntry.maxOutputTokens, underlyingModel: modelEntry.underlyingModel, supportsToolCalls: modelEntry.supportsToolCalls, thinking: effectiveThinking(ownThinking ? target : undefined, integration), reasoningParameter: modelEntry.reasoningParameter };
 }
 
 /** Media (tts/stt/image): the browser engine, or an OpenAI/Azure integration. */
@@ -212,8 +217,10 @@ function routerCandidates(settings: AppSettings, task: RoutingTaskKind): TaskCan
   const route = settings.taskRouting?.[task] ?? (inheritedDefault ? settings.taskRouting?.default : undefined);
   if (!route) return [];
   const targets: RoutingTarget[] = [...(route.primary ? [route.primary] : []), ...(route.fallbacks ?? [])];
+  // The Default route only chooses where the tasks without a route go, whether they inherit it or it is asked for itself: its level of thinking is not used, the integration's is.
+  const ownThinking = task !== "default" && !inheritedDefault;
   const mapped = targets.map((target) => isChatTask(task)
-    ? chatCandidateFromTarget(settings, target, inheritedDefault ? "default" : task)
+    ? chatCandidateFromTarget(settings, target, inheritedDefault ? "default" : task, ownThinking)
     : mediaCandidateFromTarget(settings, target, task));
   return mapped.filter((c): c is TaskCandidate => Boolean(c));
 }
@@ -230,7 +237,7 @@ function legacyChatCandidates(settings: AppSettings, capability: ChatCapability)
   const push = (integration: AIIntegration, model?: string, pricing?: AIPricing) => {
     if (!model || integration.provider === "m365_copilot") return;
     const entry = integrationChatModels(integration).find((candidate) => candidate.name === model);
-    out.push({ integration, model, pricing, maxInputTokens: entry?.maxInputTokens, maxOutputTokens: entry?.maxOutputTokens, underlyingModel: entry?.underlyingModel, supportsToolCalls: entry?.supportsToolCalls });
+    out.push({ integration, model, pricing, maxInputTokens: entry?.maxInputTokens, maxOutputTokens: entry?.maxOutputTokens, underlyingModel: entry?.underlyingModel, supportsToolCalls: entry?.supportsToolCalls, thinking: effectiveThinking(undefined, integration), reasoningParameter: entry?.reasoningParameter });
   };
   // Review precedence: explicit route (handled by the caller) → default review integration
   // → capability tags → default writing integration → any remaining integration.
@@ -366,6 +373,8 @@ export async function completeTextRouted(
         usedFallback: candidate.routeCandidateIndex > 0,
         maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidateOutput).outputTokens,
         underlyingModel: candidate.underlyingModel,
+        thinking: candidate.thinking,
+        reasoningParameter: candidate.reasoningParameter,
         accountScope: operation.accountScope,
       });
       options.validateText?.(text);
@@ -413,7 +422,7 @@ export async function completeToolRouted<T>(
     options.onAttempt?.(candidateIndex);
     try {
       const budgetedMessages = options.overflow === "fail" ? messages : budgetForcedToolMessages(messages, budgeted, tool);
-      const result = await runWithCandidateTimeout((signal) => completeToolWith<T>(candidate.integration!, candidate.model!, candidate.pricing, budgetedMessages, capability, tool, { accountScope: operation.accountScope, signal, label: options.label, currency: settings.costCurrency, validate: options.validate, onFinish: options.onFinish, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, maxOutputTokens: resolveModelTokenBudgets(budgeted.maxInputTokens, budgeted.maxOutputTokens).outputTokens, underlyingModel: candidate.underlyingModel }), total.signal, candidate.integration.requestTimeoutMs);
+      const result = await runWithCandidateTimeout((signal) => completeToolWith<T>(candidate.integration!, candidate.model!, candidate.pricing, budgetedMessages, capability, tool, { accountScope: operation.accountScope, signal, label: options.label, currency: settings.costCurrency, validate: options.validate, onFinish: options.onFinish, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, maxOutputTokens: resolveModelTokenBudgets(budgeted.maxInputTokens, budgeted.maxOutputTokens).outputTokens, underlyingModel: candidate.underlyingModel, thinking: candidate.thinking, reasoningParameter: candidate.reasoningParameter }), total.signal, candidate.integration.requestTimeoutMs);
       return {
         ...result,
         output: options?.validate ? options.validate(result.output) : result.output as T,
@@ -470,7 +479,7 @@ export async function classifyConfirmationRouted(settings: AppSettings, utteranc
       const budgetedUtterance = budgetedMessages[0]?.content;
       if (typeof budgetedUtterance !== "string") throw new CandidateInputBudgetError();
       return await runWithCandidateTimeout(
-        (signal) => classifyConfirmationWith(candidate.integration!, candidate.model!, candidate.pricing, budgetedUtterance, { accountScope: operation.accountScope, signal, maxOutputTokens: Math.min(32, resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens), routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, underlyingModel: candidate.underlyingModel }),
+        (signal) => classifyConfirmationWith(candidate.integration!, candidate.model!, candidate.pricing, budgetedUtterance, { accountScope: operation.accountScope, signal, maxOutputTokens: Math.min(32, resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens), routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, underlyingModel: candidate.underlyingModel, thinking: candidate.thinking, reasoningParameter: candidate.reasoningParameter }),
         total.signal,
         candidate.integration.requestTimeoutMs,
       );

@@ -273,14 +273,14 @@ test("the texts of the result of a book and of the error panel are in the bundle
 });
 
 test("every kind of error the engine tells has a title, an explanation and a short word, in both languages, and the Italian titles are the ones of the design", () => {
-  const kinds = ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider", "unknown"];
+  const kinds = ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "config", "provider", "unknown"];
   for (const locale of [autopilotEn, autopilotIt]) {
     assert.deepEqual(Object.keys(get(locale, "autopilot.failure.kind")).sort(), [...kinds].sort());
     for (const kind of kinds) for (const part of ["title", "explain", "short"]) assert.ok(get(locale, `autopilot.failure.kind.${kind}.${part}`)?.trim(), `${kind}.${part}`);
   }
   assert.deepEqual(kinds.map((kind) => get(autopilotIt, `autopilot.failure.kind.${kind}.title`)), [
     "Problema di connessione", "Accesso rifiutato dal provider", "Troppe richieste", "Risposta troppo lenta", "Risposta troncata dal limite di output", "Il provider ha rifiutato la richiesta",
-    "Il libro è cambiato altrove", "Budget raggiunto", "Limite raggiunto", "Un file del profilo ha problemi", "Errore del provider", "Errore",
+    "Il libro è cambiato altrove", "Budget raggiunto", "Limite raggiunto", "Un file del profilo ha problemi", "Configurazione dell'AI da correggere", "Errore del provider", "Errore",
   ]);
   // A title says what happened; the explanation says what it means and what to do, and is a sentence of its own.
   for (const kind of kinds) assert.notEqual(get(autopilotEn, `autopilot.failure.kind.${kind}.title`), get(autopilotEn, `autopilot.failure.kind.${kind}.explain`));

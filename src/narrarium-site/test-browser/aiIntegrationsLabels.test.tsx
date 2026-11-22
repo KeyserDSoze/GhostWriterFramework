@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -148,20 +148,27 @@ describe("AI Router: every control is found by its label", () => {
     expect(useSettingsStore.getState().settings.routingExecution?.maxCandidates).toBe(3);
   });
 
-  it.each(LANGUAGES)("names the integration and the model of every route, inside a group named after the task (%s)", async (language) => {
+  // The old page drew one box per task, with a group named after the task; the new one is a table per kind of task with a tab per level,
+  // so a control is named after its task AND its tab ("Model for Director, Fallback 1").
+  it.each(LANGUAGES)("names the endpoint and the model of every route after its task and its tab, in the table of the text tasks (%s)", async (language) => {
     await routerPage({ aiIntegrations: ALL, taskRouting: ROUTES }, language);
-    const route = within(screen.getByRole("group", { name: t("routing.task.default") }));
+    const text = within(screen.getByRole("region", { name: t("routing.sections.text.title") }));
+    const task = t("routing.table.defaultRow");
 
-    const rows: Array<[string, string, string]> = [
-      [t("routing.primary"), "Studio Azure", "gpt-4o"],
-      [t("routing.fallbackN", { n: 1 }), "Compat", "llama"],
-      [t("routing.fallbackN", { n: 2 }), "Hub", "gpt-4.1"],
+    const levels: Array<[number, string, string]> = [
+      [0, "Studio Azure", "gpt-4o"],
+      [1, "Compat", "llama"],
+      [2, "Hub", "gpt-4.1"],
     ];
-    for (const [target, integration, model] of rows) {
-      expect(route.getByRole("combobox", { name: t("routing.targetIntegration", { target }) }), target).toHaveTextContent(integration);
-      expect(route.getByRole("combobox", { name: t("routing.targetModel", { target }) }), target).toHaveTextContent(model);
+    for (const [level, integration, model] of levels) {
+      const tabName = level === 0 ? t("routing.primary") : t("routing.fallbackN", { n: level });
+      fireEvent.mouseDown(text.getByRole("tab", { name: tabName }));
+      fireEvent.click(text.getByRole("tab", { name: tabName }));
+      await waitFor(() => expect(text.getByRole("tab", { name: tabName })).toHaveAttribute("aria-selected", "true"));
+      expect(text.getByRole("combobox", { name: t("routing.cell.endpoint", { task, tab: tabName }) }), tabName).toHaveTextContent(integration);
+      expect(text.getByRole("combobox", { name: t("routing.cell.model", { task, tab: tabName }) }), tabName).toHaveTextContent(model);
     }
-    expect(screen.getByRole("group", { name: t("routing.task.audit") })).toBeInTheDocument();
+    expect(text.getByRole("rowheader", { name: new RegExp(t("routing.task.audit")) })).toBeInTheDocument();
   });
 });
 

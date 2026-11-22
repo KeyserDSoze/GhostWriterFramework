@@ -193,6 +193,35 @@ describe("the figures", () => {
     expect(figure(t("autopilot.result.numbers.calls"))).toHaveTextContent("366");
   });
 
+  it.each([["en", "counted since Nov 25, 2026"], ["it", "contato dal 25 nov 2026"]] as const)("say since when the time is counted, for a book that is older than the count: what was done before is not in it (%s)", async (language, words) => {
+    await i18n.changeLanguage(language);
+    done({ stats: { workedMs: 13_260_000, workedMsSince: "2026-11-25T12:00:00.000Z" } });
+    show();
+    const time = figure(t("autopilot.result.numbers.time"));
+    expect(time).toHaveTextContent("3h 41m");
+    expect(time).toHaveTextContent(words);
+    expect(time).not.toHaveTextContent(t("autopilot.result.numbers.timeAtLeast", { time: "3h 41m" }));
+    // In a narrow column the phrase goes to the next line whole, and is not cut between «counted» and «since».
+    expect(within(time).getByText(words).className).toMatch(/\binline-block\b/);
+  });
+
+  it("say nothing of the beginning of the count when the engine did not say it, or when the count began with the book", () => {
+    done({ stats: { workedMs: 13_260_000 } });
+    show();
+    expect(figure(t("autopilot.result.numbers.time"))).not.toHaveTextContent(/counted since/);
+    cleanup();
+    done({ stats: { workedMs: 13_260_000, workedMsSince: "2026-11-21T10:00:30.000Z" } });
+    show();
+    expect(figure(t("autopilot.result.numbers.time"))).not.toHaveTextContent(/counted since/);
+  });
+
+  it("say nothing of it, and make no date up, when the moment the engine gives is not a date", () => {
+    done({ stats: { workedMs: 13_260_000, workedMsSince: "yesterday" } });
+    show();
+    expect(figure(t("autopilot.result.numbers.time"))).toHaveTextContent("3h 41m");
+    expect(figure(t("autopilot.result.numbers.time"))).not.toHaveTextContent(/counted since/);
+  });
+
   it("have the time of the log, said to be a minimum, when the engine did not count it and the log is full: the oldest steps are gone", () => {
     const full = [...Array.from({ length: 199 }, (_, index) => activityOf("write", { id: `w-${index}`, startedAt: "2026-11-21T09:00:00.000Z", endedAt: "2026-11-21T09:01:00.000Z" })), FINAL_STEP];
     done({ stats: { workedMs: undefined }, activities: full });
@@ -236,6 +265,65 @@ describe("the scores of the chapters", () => {
     const fourth = rowsOf()[3];
     expect(within(fourth).getByRole("rowheader")).toHaveTextContent("4 · Title 4");
     expect([...fourth.querySelectorAll("td")].map((cell) => cell.textContent?.replace(/\s+/g, " ").trim())).toEqual(["6", "4.5", "5.5", "6", "6.5"]);
+  });
+
+  describe("and what each round decided, when the plan says it", () => {
+    /** The plan of an engine that records the verdict: every round but the last sent the chapter back, the last closed it. */
+    const withVerdicts = (chapters: PlannedChapter[]): PlannedChapter[] => chapters.map((entry) => (entry.rounds ? { ...entry, rounds: entry.rounds.map((one, index, all) => ({ ...one, verdict: index === all.length - 1 ? ("approve" as const) : ("revise" as const) })) } : entry));
+    const roundCells = (row: HTMLElement) => [...row.querySelectorAll("td")].slice(1, 4);
+
+    it.each([["en"], ["it"]] as const)("tells in words, next to the score of a round that sent the chapter back, and not by a colour (%s)", async (language) => {
+      await i18n.changeLanguage(language);
+      done({ chapters: withVerdicts(judged()) });
+      show();
+      const fourth = rowsOf()[3];
+      const [first, second, third] = roundCells(fourth);
+      for (const cell of [first, second]) {
+        expect(cell.querySelector("[data-round-verdict=revise]")).not.toBeNull();
+        expect(cell).toHaveTextContent(t("autopilot.result.scores.revised"));
+      }
+      expect(third.querySelector("[data-round-verdict]")).toBeNull();
+      expect(third).not.toHaveTextContent(t("autopilot.result.scores.revised"));
+      expect(t("autopilot.result.scores.revised")).toBe(language === "en" ? "sent back for revision" : "rimandato in revisione");
+    });
+
+    it("explains the sign once, in a line under the table, when the table has such a round", () => {
+      done({ chapters: withVerdicts(judged()) });
+      show();
+      expect(screen.getAllByText(t("autopilot.result.scores.reviseLegend"))).toHaveLength(1);
+      expect(t("autopilot.result.scores.reviseLegend")).toBe("↻ The round sent the chapter back for fixes.");
+    });
+
+    it("says nothing of a verdict, and shows no sign and no legend, for a plan that records none: an older state", () => {
+      done();
+      show();
+      expect(card().querySelector("[data-round-verdict]")).toBeNull();
+      expect(screen.queryByText(t("autopilot.result.scores.reviseLegend"))).not.toBeInTheDocument();
+    });
+
+    it("keeps the cells of a round as they were for the readers of the table: the score, and the words after it only for a round that sent the chapter back", () => {
+      done({ chapters: withVerdicts(judged()) });
+      show();
+      const fourth = rowsOf()[3];
+      expect([...fourth.querySelectorAll("td")].map((cell) => cell.textContent?.replace(/\s+/g, " ").trim())).toEqual(["6", "↻ 4.5 sent back for revision", "↻ 5.5 sent back for revision", "6", "6.5"]);
+    });
+
+    it("puts the sign before the score, so that the digits of a right-aligned column stay under one another, and says the score first to a screen reader, then the words", () => {
+      done({ chapters: withVerdicts(judged()) });
+      show();
+      const [flagged, , plain] = roundCells(rowsOf()[3]);
+      const sign = flagged.querySelector("[data-round-verdict]") as HTMLElement;
+      expect(sign).toHaveAttribute("aria-hidden", "true");
+      // The sign comes before the score in the cell: the score is the last thing the eye sees at the right edge, as in the cells that have no sign.
+      expect(flagged.textContent?.trimStart().startsWith("↻")).toBe(true);
+      // They are held together by a space that does not break: in a narrow cell (a phone) the sign must not be left alone on a line above the score.
+      expect(flagged.textContent).toContain("↻\u00a04.5");
+      expect(plain.textContent?.trim()).toBe("6");
+      // What is read out: the score, then what the round decided; never the sign.
+      const heard = flagged.cloneNode(true) as HTMLElement;
+      heard.querySelectorAll("[aria-hidden=true]").forEach((node) => node.remove());
+      expect(heard.textContent?.replace(/\s+/g, " ").trim()).toBe("4.5 sent back for revision");
+    });
   });
 
   it("say that a round has no score in words, not with a bare dash", () => {

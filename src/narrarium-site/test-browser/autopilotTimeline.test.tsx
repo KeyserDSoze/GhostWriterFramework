@@ -534,7 +534,7 @@ describe("what kind of failure a step had", () => {
     expect(summary.querySelector("svg[aria-hidden='true']"), "an icon for the kind, which is decoration").not.toBeNull();
   });
 
-  it.each(["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider", "unknown"] as AutopilotErrorKind[])("has a word for a failure of kind %s", (kind) => {
+  it.each(["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "config", "provider", "unknown"] as AutopilotErrorKind[])("has a word for a failure of kind %s", (kind) => {
     show({ activities: [attempt(0, { errorKind: kind })] });
     expect(within(summaryOf("Writing scene 2")).getByText(t(`autopilot.failure.kind.${kind}.short`))).toBeInTheDocument();
   });
@@ -548,7 +548,7 @@ describe("what kind of failure a step had", () => {
 
   it("says nothing of a kind for a step that worked", () => {
     show({ activities: [stepOf("write", { from: 0, chapterNumber: 5, sceneNumber: 2, title: "Writing scene 2" })] });
-    for (const kind of ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider", "unknown"]) {
+    for (const kind of ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "config", "provider", "unknown"]) {
       expect(within(summaryOf("Writing scene 2")).queryByText(t(`autopilot.failure.kind.${kind}.short`)), kind).not.toBeInTheDocument();
     }
   });

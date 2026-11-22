@@ -151,8 +151,10 @@ describe("AI Router page", () => {
     expect(heading(1, t("settingsSection.aiRouterTitle"))).toBeInTheDocument();
     expect(screen.getByText(t("settingsSection.aiRouterDescription"))).toBeInTheDocument();
     expect(screen.getByText(t("routing.title"))).toBeInTheDocument();
-    expect(screen.getAllByText(t("routing.primary"))).toHaveLength(ROUTING_TASKS.length);
-    for (const task of ROUTING_TASKS) expect(screen.getAllByText(t(`routing.task.${task}`)).length, task).toBeGreaterThan(0);
+    // One table per kind of task (text, speech out, speech in, images), each with its own tabs: the Primary tab is no longer repeated for every task.
+    expect(screen.getAllByRole("tab", { name: t("routing.primary") })).toHaveLength(4);
+    // The default route is the first row of the text table, named "Default" there.
+    for (const task of ROUTING_TASKS) expect(screen.getAllByText(task === "default" ? t("routing.table.defaultRow") : t(`routing.task.${task}`)).length, task).toBeGreaterThan(0);
     expect(screen.getByText(t("routing.sameBoundaryOnly"))).toBeInTheDocument();
     expect(screen.getByText(t("routing.requireAcknowledgement"))).toBeInTheDocument();
     expect(screen.getAllByRole("spinbutton")).toHaveLength(4);
@@ -182,7 +184,9 @@ describe("AI Router page", () => {
 
   it("keeps the fallback disclosure and the execution limits editable", async () => {
     await show("/app/settings/ai-router", { aiIntegrations: [AZURE] });
-    const [sameBoundary, acknowledgement] = screen.getAllByRole("switch");
+    // By name: the «Tools only» switch is the first one on the page now, and the two of the privacy of fallbacks follow it in the box of the options.
+    const sameBoundary = screen.getByRole("switch", { name: t("routing.sameBoundaryOnly") });
+    const acknowledgement = screen.getByRole("switch", { name: t("routing.requireAcknowledgement") });
     fireEvent.click(sameBoundary);
     expect(useSettingsStore.getState().settings.fallbackDisclosure?.sameBoundaryOnly).toBe(true);
     fireEvent.click(acknowledgement);

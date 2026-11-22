@@ -1,6 +1,8 @@
 import { AUTOPILOT_ERROR_KINDS, redactSecrets, type AutopilotActivity, type AutopilotErrorDetail, type AutopilotErrorKind, type AutopilotRetryInfo, type AutopilotStateSummary, type AutopilotTaskKind } from "narrarium-engine";
 import { filesInError } from "@/autopilot/stopReason";
 
+export { formatLimit } from "@/lib/formatLimit";
+
 /**
  * What went wrong in a run, as the page tells it: the kind of failure the engine says (`errorKind`), where it happened (`errorDetail`), the failure that the
  * runner is going to try again (`summary.retry`), and, for a state that an older engine wrote, what can be read from the words of the message. Pure: the
@@ -62,8 +64,16 @@ function repeatsAt(activities: readonly AutopilotActivity[], index: number): num
   return count;
 }
 
-/** The step the error of a run came from: the newest one that failed (of the kind the error says, when it says), if it ended around the time the run did. */
-function stepOfError(activities: readonly AutopilotActivity[], at: string | undefined, task: AutopilotTaskKind | undefined): { step: AutopilotActivity | null; repeats: number } {
+/**
+ * The step the error of a run came from: the activity whose id the engine gives (`activityId`), when it does, and no step if the log does not have it (none is guessed from
+ * the clock then); else, for a state that an older engine wrote, the newest step that failed (of the kind the error says, when it says), if it ended around the time the run did.
+ */
+function stepOfError(activities: readonly AutopilotActivity[], error: { at?: string; task?: AutopilotTaskKind; activityId?: unknown }): { step: AutopilotActivity | null; repeats: number } {
+  const { at, task } = error;
+  if (typeof error.activityId === "string" && error.activityId.trim()) {
+    const found = activities.findIndex((attempt) => attempt.id === error.activityId);
+    return found >= 0 ? { step: activities[found], repeats: repeatsAt(activities, found) } : { step: null, repeats: 1 };
+  }
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const attempt = activities[index];
     if (attempt.status !== "failed" || (task && attempt.task !== task)) continue;
@@ -92,7 +102,7 @@ export function failureSource(summary: SummaryLike | null | undefined, activitie
     const error = summary.lastError;
     if (!error) return null;
     const told = error.kind ?? error.errorKind;
-    const { step, repeats } = stepOfError(activities, error.at, error.task);
+    const { step, repeats } = stepOfError(activities, error);
     return { kind: errorKindOf(told, error.message), classified: isKind(told), detail: error.detail ?? error.errorDetail ?? {}, message: error.message ?? "", at: error.at ?? null, task: error.task, ended: true, retry: null, repeats, step };
   }
   if (summary.status === "running" && summary.retry) {
@@ -100,6 +110,56 @@ export function failureSource(summary: SummaryLike | null | undefined, activitie
     return { kind: errorKindOf(step?.errorKind, step?.error), classified: isKind(step?.errorKind), detail: step?.errorDetail ?? {}, message: step?.error ?? "", at: step?.endedAt ?? null, task: step?.task, ended: false, retry: summary.retry, repeats, step };
   }
   return null;
+}
+
+/** What the panel of an error offers to do about a kind of failure. */
+export interface ErrorActions {
+  /** The button that resumes the run: the main action, a second one (the configuration comes first), or not offered at all. */
+  retry: "main" | "secondary" | "hidden";
+  /** «Open AI Integrations». */
+  integrations: boolean;
+  /** «Open the AI Router», at the «Tools only» switch. */
+  router: boolean;
+  /** Which of the two is the main action of the panel. */
+  first: "retry" | "integrations";
+}
+
+/** The failures that come from the provider or from how it is set up: where a person can change the model, the key, the address or the limits. */
+const IN_INTEGRATIONS: ReadonlySet<AutopilotErrorKind> = new Set(["network", "auth", "rate_limit", "timeout", "truncated", "refused", "budget", "limit", "provider", "config"]);
+/** The failures that the integrations are the first thing to correct: retrying does nothing until they are. */
+const CONFIGURATION_FIRST: ReadonlySet<AutopilotErrorKind> = new Set(["auth", "refused", "budget", "limit"]);
+
+/**
+ * What can be done about a failure. A configuration error is repeated by the same configuration, so the retry is not offered while the configuration still gives it
+ * (`configurationBlocks`, which is assumed when it is not said); once it does not, retrying is the main action.
+ */
+export function errorActions(kind: AutopilotErrorKind, { configurationBlocks = true }: { configurationBlocks?: boolean } = {}): ErrorActions {
+  if (kind === "config") return configurationBlocks ? { retry: "hidden", integrations: true, router: true, first: "integrations" } : { retry: "main", integrations: true, router: true, first: "retry" };
+  const configurationFirst = CONFIGURATION_FIRST.has(kind);
+  return { retry: configurationFirst ? "secondary" : "main", integrations: IN_INTEGRATIONS.has(kind), router: false, first: configurationFirst ? "integrations" : "retry" };
+}
+
+export interface TimeoutNote {
+  /** Which deadline ran out: the provider did not begin answering, it went silent while it answered, or the call took longer than any call may. */
+  phase: "start" | "idle" | "total";
+  /** How long the deadline was, in milliseconds, when the engine says it. */
+  ms?: number;
+}
+
+const TIMEOUT_PHASES = ["start", "idle", "total"] as const;
+
+/** The deadline that ran out, as the engine says it: the phase, and how long it was when that is said too. A length alone does not say which limit it was. */
+export function timeoutOf(detail: AutopilotErrorDetail): TimeoutNote | null {
+  const phase = TIMEOUT_PHASES.find((entry) => entry === detail.timeoutPhase);
+  if (!phase) return null;
+  const ms = detail.timeoutMs;
+  return typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? { phase, ms } : { phase };
+}
+
+/** How many whole seconds the provider asked to wait (`Retry-After`), rounded up so that it never reads shorter than what was asked; `null` when it asked for nothing. */
+export function retryAfterSeconds(detail: AutopilotErrorDetail): number | null {
+  const ms = detail.retryAfterMs;
+  return typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? Math.ceil(ms / 1000) : null;
 }
 
 export type ErrorFact =

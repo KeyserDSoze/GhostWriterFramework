@@ -1,6 +1,7 @@
 import OpenAI, { AzureOpenAI } from "openai";
 import { completionTokenLimit, forcedToolChoice, isEmptyToolArguments, parseStructuredText, splitReasoningBlock } from "narrarium-engine";
-import type { AIIntegration, AIPricing, AppSettings, ChatCapability, ChatModel } from "@/types/settings";
+import type { AIIntegration, AIPricing, AppSettings, ChatCapability, ChatModel, ReasoningParameter, ThinkingLevel } from "@/types/settings";
+import { reasoningParams } from "@/router/thinking";
 import { chatDelta, useCostsStore } from "@/costs/costsStore";
 import { flattenLlmContent, useLlmDebugStore, type LlmDebugMessage } from "@/debug/llmDebugStore";
 import { GITHUB_MODELS_INFERENCE_URL } from "@/config/githubModels";
@@ -255,7 +256,7 @@ export async function completeText(
   integration: AIIntegration,
   messages: LlmMessage[],
   purpose: "writing" | "review" = "writing",
-  options: { accountScope: string | null; signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string; onText?: (text: string) => void; onUsage?: (usage: LlmUsageReport) => void; onFinish?: (report: LlmFinishReport) => void; routeCandidateIndex?: number; usedFallback?: boolean; maxOutputTokens?: number; underlyingModel?: string },
+  options: { accountScope: string | null; signal?: AbortSignal; capability?: ChatCapability; modelName?: string; label?: string; onText?: (text: string) => void; onUsage?: (usage: LlmUsageReport) => void; onFinish?: (report: LlmFinishReport) => void; routeCandidateIndex?: number; usedFallback?: boolean; maxOutputTokens?: number; underlyingModel?: string; thinking?: ThinkingLevel; reasoningParameter?: ReasoningParameter },
 ): Promise<string> {
   const operation = beginAccountScopedAiOperation(options.signal, options.accountScope);
   let debugId = "";
@@ -297,7 +298,7 @@ export async function completeText(
         dangerouslyAllowBrowser: true,
       });
       if (options?.onText) {
-        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true }, ...completionTokenLimit(integration.provider, model, options.maxOutputTokens, options.underlyingModel, integration.apiVersion) } as never, { signal: operation.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
+        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true }, ...completionTokenLimit(integration.provider, model, options.maxOutputTokens, options.underlyingModel, integration.apiVersion), ...reasoningParams(options.thinking, options.reasoningParameter) } as never, { signal: operation.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
         let text = "";
         let usage: unknown;
         let filtered = false;
@@ -321,7 +322,7 @@ export async function completeText(
         if (filtered) throw new ContentFilteredCompletionError();
         return text;
       }
-      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never, ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel, integration.apiVersion) }, { signal: operation.signal });
+      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never, ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel, integration.apiVersion), ...reasoningParams(options?.thinking, options?.reasoningParameter) }, { signal: operation.signal });
       recordChatUsage(model, pricing, response.usage);
       reportUsage(response.usage);
       const text = response.choices[0]?.message?.content ?? "";
@@ -338,7 +339,7 @@ export async function completeText(
         dangerouslyAllowBrowser: true,
       });
       if (options?.onText) {
-        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true }, ...completionTokenLimit(integration.provider, model, options.maxOutputTokens, options.underlyingModel, integration.apiVersion) } as never, { signal: operation.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
+        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true }, ...completionTokenLimit(integration.provider, model, options.maxOutputTokens, options.underlyingModel, integration.apiVersion), ...reasoningParams(options.thinking, options.reasoningParameter) } as never, { signal: operation.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
         let text = "";
         let usage: unknown;
         let filtered = false;
@@ -362,7 +363,7 @@ export async function completeText(
         if (filtered) throw new ContentFilteredCompletionError();
         return text;
       }
-      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never, ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel, integration.apiVersion) }, { signal: operation.signal });
+      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never, ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel, integration.apiVersion), ...reasoningParams(options?.thinking, options?.reasoningParameter) }, { signal: operation.signal });
       recordChatUsage(model, pricing, response.usage);
       reportUsage(response.usage);
       const text = response.choices[0]?.message?.content ?? "";
@@ -391,7 +392,7 @@ export async function completeToolWith<T>(
   messages: LlmMessage[],
   capability: ChatCapability,
   tool: ForcedToolDefinition,
-  options: { accountScope: string | null; signal?: AbortSignal; label?: string; currency?: string; validate?: (output: unknown) => T; onFinish?: (report: LlmFinishReport) => void; routeCandidateIndex?: number; usedFallback?: boolean; maxOutputTokens?: number; underlyingModel?: string },
+  options: { accountScope: string | null; signal?: AbortSignal; label?: string; currency?: string; validate?: (output: unknown) => T; onFinish?: (report: LlmFinishReport) => void; routeCandidateIndex?: number; usedFallback?: boolean; maxOutputTokens?: number; underlyingModel?: string; thinking?: ThinkingLevel; reasoningParameter?: ReasoningParameter },
 ): Promise<LlmResult<T>> {
   const operation = beginAccountScopedAiOperation(options.signal, options.accountScope);
   let debugId = "";
@@ -415,6 +416,7 @@ export async function completeToolWith<T>(
       // Only one tool is sent: "required" forces it on llama.cpp and LM Studio too, which ignore the named form.
       tool_choice: toolChoiceFor(integration, tool.name),
       ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel, integration.apiVersion),
+      ...reasoningParams(options?.thinking, options?.reasoningParameter),
     } as never, { signal: operation.signal });
     const usage = response.usage;
     recordChatUsage(model, pricing, usage);
@@ -474,7 +476,7 @@ export async function classifyConfirmationWith(
   model: string,
   pricing: AIPricing | undefined,
   framedRequest: string,
-  options: { accountScope: string | null; signal?: AbortSignal; maxOutputTokens?: number; routeCandidateIndex?: number; usedFallback?: boolean; underlyingModel?: string },
+  options: { accountScope: string | null; signal?: AbortSignal; maxOutputTokens?: number; routeCandidateIndex?: number; usedFallback?: boolean; underlyingModel?: string; thinking?: ThinkingLevel; reasoningParameter?: ReasoningParameter },
 ): Promise<"yes" | "no" | "unclear"> {
   const operation = beginAccountScopedAiOperation(options.signal, options.accountScope);
   let debugId = "";
@@ -489,6 +491,7 @@ export async function classifyConfirmationWith(
     tools,
     tool_choice: toolChoiceFor(integration, CONFIRMATION_TOOL_DEFINITION.name),
     ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel, integration.apiVersion),
+    ...reasoningParams(options?.thinking, options?.reasoningParameter),
   };
 
   debugId = useLlmDebugStore.getState().begin({ kind: "chat", contentKinds: ["text"], label: "confirm", model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: options?.routeCandidateIndex, usedFallback: options?.usedFallback, messages: [{ role: "user", content: framedRequest }] });

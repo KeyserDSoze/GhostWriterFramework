@@ -18,7 +18,7 @@ import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { longPlan } from "./helpers/autopilotFixtures";
-import { eventOf, finishedEvent, freezeClock, ingest, runningStep, seedRun } from "./helpers/autopilotBand";
+import { eventOf, finishedEvent, freezeClock, ingest, runningStep, seedRun, stubWidth } from "./helpers/autopilotBand";
 import { LOCAL_BOOK, T0, makeRuntime, quickGroupName, quickName, t } from "./helpers/quickCommands";
 
 const PREVIEW = "The keeper climbed the stairs counting the steps under his breath, as he had for thirty years, and on every landing the wind changed its note in the stairwell. On the third floor the door to the gallery stood ajar and a thin line of light lay across the boards.";
@@ -184,6 +184,64 @@ describe("the step that runs now", () => {
     render(<Page />);
     expect(screen.getAllByText("Chapter 4 approved: read it and resume.")).toHaveLength(1);
     expect(nowOf()).toContainElement(screen.getByText("Chapter 4 approved: read it and resume."));
+  });
+});
+
+describe("the model is answering, said in the row of what happens now in every layout of the page", () => {
+  /** What the engine says of a step that answers with a value: numbers only, and an empty preview. */
+  const structured = (seq: number, bytes: number) => eventOf({ type: "task-progress", activityId: LIVE.id, characters: 300, bytes, preview: "" }, seq);
+  const progress = () => document.querySelector<HTMLElement>("[data-autopilot-band] [data-band-progress]");
+
+  // The page chooses the band by the width of its own column: at 1280 px, with the sidebar and the dossier open, it is the middle one («slim»), where the tail of the scene is not drawn.
+  it.each([
+    [1000, "wide", "The model is answering… (12 KB)"],
+    [700, "tabs", "The model is answering… (12 KB)"],
+    [390, "compact", "Answering… 12 KB"],
+  ] as const)("is there at %i px (the %s layout), in the row of the step", async (width, _layout, words) => {
+    stubWidth(width);
+    seedRun(RUNNING);
+    render(<Page />);
+    expect(progress()).toBeNull();
+    await ingest(structured(20, 12_288));
+    expect(progress(), "the line is in the band").not.toBeNull();
+    expect(nowOf()).toContainElement(progress());
+    expect(progress()).toHaveTextContent(words);
+    await ingest(structured(21, 51_200));
+    expect(progress()).toHaveTextContent(words.replace("12 KB", "50 KB"));
+  });
+
+  it("is in no live region in any of them: the one status of the row says the step, and the number that changes every second is not announced", async () => {
+    for (const width of [1000, 700, 390]) {
+      stubWidth(width);
+      seedRun(RUNNING);
+      const view = render(<Page />);
+      await ingest(structured(20, 12_288));
+      expect(progress()!.closest('[aria-live], [role="status"], [role="alert"], [role="log"], [role="timer"]'), `at ${width} px`).toBeNull();
+      view.unmount();
+      cleanup();
+    }
+  });
+
+  it("does not bring the tail of the scene into the middle layout, which leaves it to the timeline: only the line of the answer is added", async () => {
+    stubWidth(700);
+    seedRun(RUNNING);
+    render(<Page />);
+    await ingest(eventOf({ type: "task-progress", activityId: LIVE.id, characters: PREVIEW.length + 10, preview: `${PREVIEW} And then.` }, 20));
+    expect(bandOf().querySelector("[data-band-preview]")).toBeNull();
+    await ingest(structured(21, 4_096));
+    expect(progress()).toHaveTextContent("The model is answering… (4 KB)");
+    expect(bandOf().querySelector("[data-band-preview]")).toBeNull();
+  });
+
+  it("goes when the step ends, and the next step starts without it", async () => {
+    stubWidth(700);
+    seedRun(RUNNING);
+    render(<Page />);
+    await ingest(structured(20, 12_288));
+    expect(progress()).not.toBeNull();
+    await ingest(finishedEvent(LIVE, 21));
+    await ingest(eventOf({ type: "task-started", activity: runningStep("reader", "Ada reads chapter 5", { id: "live-reader", chapterNumber: 5 }) }, 22));
+    expect(progress()).toBeNull();
   });
 });
 

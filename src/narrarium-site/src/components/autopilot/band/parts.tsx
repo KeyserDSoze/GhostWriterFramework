@@ -4,7 +4,7 @@ import { AlertTriangle, Check, ChevronRight, CheckCircle2, Circle, CircleDot, Ci
 import type { AutopilotActivity, AutopilotOptions, AutopilotStateSummary, AutopilotStatus } from "narrarium-engine";
 import { useElapsed, useNow } from "@/autopilot/hooks";
 import { CYCLE_STAGES, bandPhases, budgetUse, cycleItems, type ChapterCycle } from "@/autopilot/bandModel";
-import { STATUS_BADGE, activityTitle, formatAgo, formatCost, formatCount, formatDuration } from "@/autopilot/format";
+import { STATUS_BADGE, activityTitle, formatAgo, formatBytes, formatCost, formatCount, formatDuration } from "@/autopilot/format";
 import { lastSignalAt, useAutopilotStore } from "@/autopilot/store";
 import { cn } from "@/lib/utils";
 
@@ -75,12 +75,28 @@ export function previewTail(text: string): string {
   return `…${space > 0 && space < 24 ? cut.slice(space + 1) : cut}`;
 }
 
-/** The text that streams, on one line. It follows the store by itself, so the page and the rest of the band are not drawn again for every chunk. Not read out: it is not live. */
+/**
+ * The text that streams, on one line. It follows the store by itself, so the page and the rest of the band are not drawn again for every chunk. Not read out: it is not live.
+ * While a step answers with a value (the bytes come in) the tail of a scene that was written before is not what is going on now, and the line of the answer takes its place.
+ */
 export function PreviewLine({ bookId }: { bookId: string }) {
   const preview = useAutopilotStore((state) => state.live[bookId]?.preview ?? "");
+  const answering = useAutopilotStore((state) => state.live[bookId]?.bytes !== undefined);
   const tail = previewTail(preview);
-  if (!tail) return null;
+  if (!tail || answering) return null;
   return <p data-band-preview className="truncate font-serif text-xs italic text-muted-foreground">{tail}</p>;
+}
+
+/**
+ * «The model is answering… (12 KB)», for a step that answers with a value: the bytes of the reply that have arrived, which is all that is known of it (never a word). It follows
+ * the store by itself and is never read out: the one status of the row says the step and only the step, and a number that changes every second is not announced.
+ */
+export function ModelAnswering({ bookId, short = false }: { bookId: string; short?: boolean }) {
+  const { t } = useTranslation();
+  const bytes = useAutopilotStore((state) => state.live[bookId]?.bytes);
+  if (bytes === undefined) return null;
+  const size = formatBytes(bytes);
+  return <p data-band-progress className="truncate text-xs text-muted-foreground">{short ? t("autopilot.band.answeringShort", { size }) : t("autopilot.band.answering", { size })}</p>;
 }
 
 export function whereOf(t: (key: string, options?: Record<string, unknown>) => string, activity: Pick<AutopilotActivity, "chapterNumber" | "sceneNumber">): string | null {
@@ -108,7 +124,8 @@ export const StepNow = memo(function StepNow({ bookId, compact = false, showPrev
         {!compact && where && <span data-band-where className="shrink-0 text-xs text-muted-foreground">{where}</span>}
         {activity && !hideElapsed && <ElapsedTime since={activity.startedAt} />}
       </div>
-      {showPreview && !compact && <PreviewLine bookId={bookId} />}
+      {!compact && showPreview && <PreviewLine bookId={bookId} />}
+      <ModelAnswering bookId={bookId} short={compact} />
     </div>
   );
 });

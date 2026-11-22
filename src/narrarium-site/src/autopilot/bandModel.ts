@@ -175,6 +175,23 @@ export function workedTime(activities: readonly AutopilotActivity[], workedMs?: 
   return { milliseconds, complete: activities.length < MAX_ACTIVITIES };
 }
 
+/** How much older than the count a book has to be for the card to say since when the time is counted: a count that begins with the book has nothing to say. */
+const SAME_BEGINNING_MS = 3_600_000;
+
+/**
+ * The moment the working time began to be counted (`stats.workedMsSince`), when it is worth saying: the book is older than the count, so the time before it was never counted (a book
+ * that was started before the engine counted, and went on after). Nothing when the engine did not say it (a count that began before the moment was written has none, and none is made
+ * up), when it is not a date, when there is no count to say it of, and when the book's own start is not known to compare it with.
+ */
+export function workedSince(stats: { workedMs?: number; workedMsSince?: string }, bookStartedAt: string | undefined): string | null {
+  const worked = stats.workedMs;
+  if (typeof worked !== "number" || !Number.isFinite(worked) || worked <= 0) return null;
+  const since = typeof stats.workedMsSince === "string" ? Date.parse(stats.workedMsSince) : Number.NaN;
+  const started = typeof bookStartedAt === "string" ? Date.parse(bookStartedAt) : Number.NaN;
+  if (!Number.isFinite(since) || !Number.isFinite(started)) return null;
+  return since - started > SAME_BEGINNING_MS ? (stats.workedMsSince as string) : null;
+}
+
 export interface BudgetFigure {
   value: number;
   /** The budget, or `null` when there is none (zero is no limit). */

@@ -38,6 +38,13 @@ export function formatClock(iso: string | undefined): string {
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+/** The day of a moment, as the language writes it: "Nov 25, 2026", "25 nov 2026". */
+export function formatDate(iso: string | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString(locale(), { dateStyle: "medium" });
+}
+
 export function formatDateTime(iso: string | undefined): string {
   if (!iso) return "";
   const date = new Date(iso);

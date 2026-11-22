@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createAutopilotState, type AutopilotActivity, type AutopilotFinalReview, type AutopilotState, type PlannedChapter } from "narrarium-engine";
-import { bandPhases, budgetUse, chapterCycle, closedChapterToRead, cycleItems, finalReviewOf, finalVerdict, stageOfTask, workedTime } from "@/autopilot/bandModel";
+import { bandPhases, budgetUse, chapterCycle, closedChapterToRead, cycleItems, finalReviewOf, finalVerdict, stageOfTask, workedSince, workedTime } from "@/autopilot/bandModel";
 import { chapter, planOf } from "./helpers/autopilotFixtures";
 
 const T0 = "2026-11-21T10:00:00.000Z";
@@ -229,6 +229,42 @@ describe("the verdict of the director on the whole book, when the engine says it
       expect(finalReviewOf(null, null)).toBeNull();
       expect(finalReviewOf(undefined, undefined)).toBeNull();
     });
+  });
+});
+
+describe("since when the working time is counted", () => {
+  const BEGUN = T0;
+  const later = (hours: number) => new Date(Date.parse(T0) + hours * 3_600_000).toISOString();
+
+  it("is the moment the engine says, for a book that is older than the count: the time before it was never counted, and the card says so", () => {
+    expect(workedSince({ workedMs: 7_200_000, workedMsSince: later(72) }, BEGUN)).toBe(later(72));
+  });
+
+  it("is nothing for a book whose count began with the book: there is nothing to say, the whole of it is counted", () => {
+    expect(workedSince({ workedMs: 7_200_000, workedMsSince: later(0) }, BEGUN)).toBeNull();
+    expect(workedSince({ workedMs: 7_200_000, workedMsSince: later(0.5) }, BEGUN)).toBeNull();
+    expect(workedSince({ workedMs: 7_200_000, workedMsSince: later(1) }, BEGUN)).toBeNull();
+    expect(workedSince({ workedMs: 7_200_000, workedMsSince: later(1.01) }, BEGUN)).toBe(later(1.01));
+  });
+
+  it("is nothing when the engine did not say it: a count that began before the moment was written has no moment, and none is made up", () => {
+    expect(workedSince({ workedMs: 7_200_000 }, BEGUN)).toBeNull();
+    expect(workedSince({ workedMs: 7_200_000, workedMsSince: undefined }, BEGUN)).toBeNull();
+  });
+
+  it.each([["words", "yesterday"], ["an empty text", ""], ["a number", 5], ["a date that is no date", "2026-13-45T99:00:00.000Z"]])("is nothing for %s: it is not a moment", (_name, value) => {
+    expect(workedSince({ workedMs: 7_200_000, workedMsSince: value as never }, BEGUN)).toBeNull();
+  });
+
+  it("is nothing without a count to say it of, and nothing when the book's own start is not known: the moment is not compared with what is not there", () => {
+    expect(workedSince({ workedMsSince: later(72) }, BEGUN)).toBeNull();
+    expect(workedSince({ workedMs: 0, workedMsSince: later(72) }, BEGUN)).toBeNull();
+    expect(workedSince({ workedMs: 7_200_000, workedMsSince: later(72) }, undefined)).toBeNull();
+    expect(workedSince({ workedMs: 7_200_000, workedMsSince: later(72) }, "not a date")).toBeNull();
+  });
+
+  it("is nothing when the moment is before the start of the book: it cannot be, and it is not shown as if it were", () => {
+    expect(workedSince({ workedMs: 7_200_000, workedMsSince: later(-5) }, BEGUN)).toBeNull();
   });
 });
 

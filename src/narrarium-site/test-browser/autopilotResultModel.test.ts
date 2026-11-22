@@ -13,6 +13,22 @@ describe("the scores of the chapters, read from the plan", () => {
     expect(first).toEqual({ number: 1, slug: "001-chapter-1", final: 8, rounds: [6, 8], readers: 7.2, roundCount: 2 });
   });
 
+  it("takes the verdict of each round when the plan says it, in the order of the votes: what the round decided is data, and no longer a text of the log", () => {
+    const [recorded] = chapterScores([chapter(1, 8, [{ director: 6, verdict: "revise", accepted: 1, rejected: 0 }, { director: 8, verdict: "approve", accepted: 0, rejected: 0 }])]);
+    expect(recorded).toMatchObject({ rounds: [6, 8], verdicts: ["revise", "approve"] });
+  });
+
+  it("has no list of verdicts for a plan that records none (an older state): none is made up", () => {
+    const [older] = chapterScores([chapter(1, 8, [round(6, 7.2, 3, 1), round(8)])]);
+    expect(older).not.toHaveProperty("verdicts");
+    expect(older).toEqual({ number: 1, slug: "001-chapter-1", final: 8, rounds: [6, 8], readers: 7.2, roundCount: 2 });
+  });
+
+  it("says null for a round that has no verdict among the ones that do, and for a word that is not one of the two", () => {
+    const [mixed] = chapterScores([chapter(1, 8, [{ director: 6 }, { director: 7, verdict: "rewrite" as never }, { director: 8, verdict: "approve" }])]);
+    expect(mixed.verdicts).toEqual([null, null, "approve"]);
+  });
+
   it("takes the vote of the last round for a chapter whose final score is not there (a chapter closed by an older engine has one, but not the other)", () => {
     expect(chapterScores([chapter(2, undefined, [round(5), round(7)])])[0]).toMatchObject({ final: 7, rounds: [5, 7] });
   });

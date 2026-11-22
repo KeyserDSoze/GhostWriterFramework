@@ -69,8 +69,15 @@ export interface FeedEntry {
 
 export interface LivePreview {
   activity: AutopilotActivity;
+  /** The characters of the text the step has written so far. */
   characters: number;
+  /** The tail of that text. */
   preview: string;
+  /**
+   * How much of the reply of a step that answers with a value (a function call: the concept, the plan, an evaluation, a decision) has arrived: numbers only, never a word of the
+   * reply. Absent for a step that writes prose, and as soon as prose follows.
+   */
+  bytes?: number;
 }
 
 export interface ServerConnectionState {
@@ -204,7 +211,11 @@ export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
     if (event.type === "task-progress") {
       const current = state.live[event.bookId];
       if (!current || current.activity.id !== event.activityId) return {};
-      return { live: { ...state.live, [event.bookId]: { ...current, characters: event.characters, preview: event.preview } } };
+      // A step that answers with a value says numbers only, and an empty preview: the text of the scene that came before it stays where it was, and so do its characters.
+      if (typeof event.bytes === "number" && Number.isFinite(event.bytes) && event.bytes >= 0) return { live: { ...state.live, [event.bookId]: { ...current, bytes: event.bytes } } };
+      // Prose: the function, if there was one, is over.
+      const { bytes: _answered, ...text } = current;
+      return { live: { ...state.live, [event.bookId]: { ...text, characters: event.characters, preview: typeof event.preview === "string" ? event.preview : current.preview } } };
     }
     if (event.type === "state") return { summaries: { ...state.summaries, [event.bookId]: event.state } };
     let live = state.live;

@@ -168,9 +168,11 @@ describe("an integration with streaming off asks for a whole reply, in both host
       const streaming = provider.make({}, models);
       const whole = provider.make({ streamMode: "off" }, models);
       const request: AiRequest = { ...ASK, maxOutputTokens: 1000, temperature: 0.4, ...shape.request };
+      // The JSON asked in the message is the way of a model without tools when «Tools only» is off; with it on (the default) such a model is not asked at all.
+      const extra = shape.tools ? {} : { aiToolsOnly: false };
 
-      const asked = await runBoth([streaming], settingsOf([streaming]), request);
-      const refused = await runBoth([whole], settingsOf([whole]), request);
+      const asked = await runBoth([streaming], settingsOf([streaming], extra), request);
+      const refused = await runBoth([whole], settingsOf([whole], extra), request);
 
       expectSameRun(asked.browser, asked.server);
       expectSameRun(refused.browser, refused.server);

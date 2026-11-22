@@ -12,10 +12,11 @@ vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast: mocks.to
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { ErrorPanel } from "@/components/autopilot/ErrorPanel";
+import { RunErrorNotice } from "@/components/autopilot/StopNotices";
 import { APP_VERSION } from "@/config/version";
 import { useAutopilotStore, type FeedEntry } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
-import { DEFAULT_SETTINGS } from "@/types/settings";
+import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings } from "@/types/settings";
 import { activityOf, seedRun } from "./helpers/autopilotBand";
 import { LOCAL_BOOK, T0, makeRuntime, quickName, t } from "./helpers/quickCommands";
 
@@ -55,7 +56,7 @@ const panel = () => document.querySelector<HTMLElement>("[data-autopilot-error]"
 const alerts = () => screen.queryAllByRole("alert");
 const title = (kind: AutopilotErrorKind) => t(`autopilot.failure.kind.${kind}.title`);
 const fact = (label: string) => within(panel() as HTMLElement).getByText(label, { selector: "dt" }).nextElementSibling as HTMLElement;
-const KINDS: AutopilotErrorKind[] = ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider", "unknown"];
+const KINDS: AutopilotErrorKind[] = ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "config", "provider", "unknown"];
 
 function show() {
   return render(<MemoryRouter><ErrorPanel bookId="book-1" /></MemoryRouter>);
@@ -212,7 +213,7 @@ describe("the title of each kind, in the words of the app", () => {
   it.each([
     ["network", "Problema di connessione"], ["auth", "Accesso rifiutato dal provider"], ["rate_limit", "Troppe richieste"], ["timeout", "Risposta troppo lenta"],
     ["truncated", "Risposta troncata dal limite di output"], ["refused", "Il provider ha rifiutato la richiesta"], ["conflict", "Il libro è cambiato altrove"], ["budget", "Budget raggiunto"],
-    ["limit", "Limite raggiunto"], ["profile", "Un file del profilo ha problemi"], ["provider", "Errore del provider"], ["unknown", "Errore"],
+    ["limit", "Limite raggiunto"], ["profile", "Un file del profilo ha problemi"], ["config", "Configurazione dell'AI da correggere"], ["provider", "Errore del provider"], ["unknown", "Errore"],
   ] as const)("says %s in Italian: %s", async (kind, words) => {
     await i18n.changeLanguage("it");
     failing({ kind });
@@ -280,6 +281,205 @@ describe("a conflict", () => {
     failing({ kind: "conflict", message: "The book changed while the step was running.", detail: {} });
     show();
     expect(screen.queryByRole("link", { name: new RegExp(t("autopilot.fileError.openFile")) })).not.toBeInTheDocument();
+  });
+});
+
+describe("a configuration error: «Tools only» is on and no model of the task can call a function", () => {
+  const MESSAGE = '"Tools only" is on, and every model this task can use is marked as without tool calls ("alpha-model" in "Alpha"), so a structured answer has nowhere to go. Turn on "Forced tool calls" for the model in AI Integrations, or turn off "Tools only" in the AI Router. Nothing was sent.';
+  const ALPHA: AIIntegration = { id: "ai-alpha", name: "Alpha", provider: "openai", endpoint: "https://alpha.example.test/v1", apiKey: "sk-alpha-0123456789abcdef", chatModels: [{ id: "m1", name: "alpha-model", capabilities: ["default"], supportsToolCalls: false }] };
+  /** The settings the error was made of: every model there is lacks tool calls, and «Tools only» is on (it is by default). */
+  const configured = (patch: Partial<AppSettings> = {}) => useSettingsStore.setState((state) => ({ settings: { ...state.settings, aiIntegrations: [ALPHA], defaultWritingIntegrationId: "ai-alpha", ...patch } }));
+  const broken = () => { failing({ kind: "config", message: MESSAGE, detail: {} }); configured(); show(); };
+  const retry = () => screen.queryByRole("button", { name: quickName(t("autopilot.failure.actions.retry")) });
+
+  it.each(["en", "it"] as const)("is one alert with its title, what it means and the models the engine left out (%s)", async (language) => {
+    await i18n.changeLanguage(language);
+    broken();
+    expect(alerts()).toHaveLength(1);
+    expect(panel()?.getAttribute("data-kind")).toBe("config");
+    expect(within(alerts()[0]).getByRole("heading", { level: 2, name: title("config") })).toBeInTheDocument();
+    expect(alerts()[0]).toHaveTextContent(t("autopilot.failure.kind.config.explain"));
+    // The words name the models: they are what the author has to look for, so they are in the alert and not only in the technical details.
+    expect(alerts()[0]).toHaveTextContent(MESSAGE);
+    expect(title("config")).toBe(language === "en" ? "The AI configuration needs fixing" : "Configurazione dell'AI da correggere");
+    // The engine wrote that sentence in English whatever the language of the app: a screen reader is told so, and reads it with the right voice.
+    expect(alerts()[0].querySelector("[lang=en]")).toHaveTextContent(MESSAGE);
+    expect(alerts()[0].querySelector("[lang=en]")).not.toHaveTextContent(t("autopilot.lastError"));
+  });
+
+  it("draws an icon of its own: what went wrong is not told by the colour alone", () => {
+    broken();
+    const icon = (panel() as HTMLElement).querySelector("h2 svg");
+    expect(icon).not.toBeNull();
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it.each(["en", "it"] as const)("offers the AI integrations and the AI Router, and the link to the router goes straight to the «Tools only» switch (%s)", async (language) => {
+    await i18n.changeLanguage(language);
+    broken();
+    expect(screen.getByRole("link", { name: t("autopilot.failure.actions.integrations") })).toHaveAttribute("href", "/app/settings/ai-integrations");
+    expect(screen.getByRole("link", { name: t("autopilot.failure.config.openRouter") })).toHaveAttribute("href", "/app/settings/ai-router#tools-only");
+    expect(t("autopilot.failure.config.openRouter")).toBe(language === "en" ? "Open the AI Router" : "Apri il Router AI");
+  });
+
+  it("does not offer to retry while the configuration is the same, and says why, outside the alert: retrying would give the same error", () => {
+    broken();
+    expect(retry()).not.toBeInTheDocument();
+    const hint = within(panel() as HTMLElement).getByText(t("autopilot.failure.config.retryHint"));
+    expect(alerts()[0]).not.toContainElement(hint);
+  });
+
+  it("offers it again as soon as «Tools only» is turned off: the error cannot come back", () => {
+    broken();
+    act(() => configured({ aiToolsOnly: false }));
+    expect(retry()).toBeEnabled();
+    expect(within(panel() as HTMLElement).queryByText(t("autopilot.failure.config.retryHint"))).not.toBeInTheDocument();
+  });
+
+  it("offers it again as soon as the model can call functions", () => {
+    broken();
+    act(() => configured({ aiIntegrations: [{ ...ALPHA, chatModels: [{ ...ALPHA.chatModels![0], supportsToolCalls: true }] }] }));
+    expect(retry()).toBeEnabled();
+  });
+
+  it("offers it again once a model that can call functions is among the routes", () => {
+    broken();
+    const beta: AIIntegration = { ...ALPHA, id: "ai-beta", name: "Beta", chatModels: [{ id: "m2", name: "beta-model", capabilities: ["default"] }] };
+    act(() => configured({ aiIntegrations: [ALPHA, beta], taskRouting: { autopilot: { primary: { integrationId: "ai-alpha", model: "alpha-model" }, fallbacks: [{ integrationId: "ai-beta", model: "beta-model" }] }, director: { primary: { integrationId: "ai-beta", model: "beta-model" }, fallbacks: [] }, "reader-evaluation": { primary: { integrationId: "ai-beta", model: "beta-model" }, fallbacks: [] }, "reader-evaluation-summary": { primary: { integrationId: "ai-beta", model: "beta-model" }, fallbacks: [] }, review: { primary: { integrationId: "ai-beta", model: "beta-model" }, fallbacks: [] }, "simple-tasks": { primary: { integrationId: "ai-beta", model: "beta-model" }, fallbacks: [] } } }));
+    expect(retry()).toBeEnabled();
+  });
+
+  it("retries as the band does, with the command that resumes, once it is offered", async () => {
+    broken();
+    act(() => configured({ aiToolsOnly: false }));
+    fireEvent.click(retry() as HTMLElement);
+    await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledWith("book-1"));
+  });
+
+  it("copies the diagnostics with the kind of the problem", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    broken();
+    fireEvent.click(screen.getByRole("button", { name: t("autopilot.failure.actions.copy") }));
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    expect((writeText.mock.calls[0] as unknown as [string])[0]).toContain("Problem: config");
+  });
+
+  it.each(["en", "it"] as const)("is told by its title in the short notice of the dock and of the list of books, with the way to the whole panel (%s)", async (language) => {
+    await i18n.changeLanguage(language);
+    render(<MemoryRouter><RunErrorNotice bookId="book-1" message={MESSAGE} kind="config" pageHref="/app/books/book-1/autopilot" /></MemoryRouter>);
+    const notice = screen.getByRole("alert");
+    expect(notice).toHaveTextContent(title("config"));
+    expect(notice).toHaveTextContent("every model this task can use is marked as without tool calls");
+    expect(within(notice).getByRole("link", { name: t("autopilot.failure.seeDetails") })).toHaveAttribute("href", "/app/books/book-1/autopilot");
+  });
+
+  it("has a word of its own for the history, which no other kind has: the short word says it in the row of a step", () => {
+    expect(t("autopilot.failure.kind.config.short")).toBe("Configuration");
+    for (const kind of KINDS.filter((entry) => entry !== "config")) expect(t(`autopilot.failure.kind.${kind}.short`), kind).not.toBe(t("autopilot.failure.kind.config.short"));
+  });
+});
+
+describe("a timeout says which limit ran out", () => {
+  const timeout = (timeoutPhase?: "start" | "idle" | "total", timeoutMs?: number, extra: Partial<AutopilotErrorDetail> = {}) =>
+    failing({ kind: "timeout", message: "openai muse-glimmer-30b: the provider did not start answering within 30 s", detail: { endpoint: "https://api.openai.com", model: "muse-glimmer-30b", integration: "mock", ...(timeoutPhase ? { timeoutPhase } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...extra } });
+  const note = () => panel()?.querySelector<HTMLElement>("[data-error-timeout]") ?? null;
+
+  it.each([
+    ["en", "start", 30_000, "Time limit reached: waiting for the response to begin (30 s)", "Provider timeout"],
+    ["en", "idle", 600_000, "Time limit reached: silence between two pieces of the response (600 s)", "Idle timeout"],
+    ["en", "total", 14_400_000, "Time limit reached: overall limit of one request (4 h)", ""],
+    ["it", "start", 30_000, "Limite scaduto: attesa dell'inizio della risposta (30 s)", "Timeout provider"],
+    ["it", "idle", 600_000, "Limite scaduto: silenzio tra due pezzi (600 s)", "Inattività massima"],
+    ["it", "total", 14_400_000, "Limite scaduto: tetto totale (4 h)", ""],
+  ] as const)("says it in %s for the %s deadline, with how long it was, and where to change it", async (language, phase, ms, words, field) => {
+    await i18n.changeLanguage(language);
+    timeout(phase, ms);
+    show();
+    expect(note()).not.toBeNull();
+    expect(note()).toHaveTextContent(words);
+    if (field) {
+      expect(note()).toHaveTextContent(t("autopilot.failure.timeout.change", { field }));
+      // The name is the one of the field on the card of the integration, so that a person finds it by what the panel says.
+      expect(t(phase === "start" ? "settings.requestTimeoutMs" : "settings.idleTimeoutMs")).toContain(field);
+      expect(screen.getByRole("link", { name: t("autopilot.failure.actions.integrations") })).toHaveAttribute("href", "/app/settings/ai-integrations");
+    } else {
+      expect(note()).toHaveTextContent(t("autopilot.failure.timeout.fixed"));
+      expect(note()).not.toHaveTextContent(t("autopilot.failure.timeout.change", { field: "" }).slice(0, 12));
+    }
+  });
+
+  it("is outside the alert, which holds what does not change from one attempt to the next: the deadline that ran out can", () => {
+    timeout("start", 30_000);
+    show();
+    expect(alerts()[0]).not.toContainElement(note());
+    expect(alerts()).toHaveLength(1);
+  });
+
+  it("says nothing of a limit for a timeout that does not say which: an older engine wrote it, and none is made up", () => {
+    timeout();
+    show();
+    expect(note()).toBeNull();
+    expect(within(panel() as HTMLElement).getByRole("heading", { level: 2, name: title("timeout") })).toBeInTheDocument();
+  });
+
+  it("says which limit it was when it does not say how long, without a length", () => {
+    timeout("idle");
+    show();
+    expect(note()).toHaveTextContent("Time limit reached: silence between two pieces of the response");
+    expect(note()).not.toHaveTextContent(/\(\d/);
+  });
+
+  it("is only said for a timeout: the same words on another kind would be wrong", () => {
+    failing({ kind: "network", detail: { ...DETAIL, timeoutPhase: "start", timeoutMs: 30_000 } });
+    show();
+    expect(note()).toBeNull();
+  });
+});
+
+describe("the provider asks to wait", () => {
+  const asked = (retryAfterMs: number | undefined, extra: Failure = {}) =>
+    failing({ kind: "rate_limit", message: "429 Rate limit reached", detail: { ...DETAIL, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) }, ...extra });
+  const line = () => panel()?.querySelector<HTMLElement>("[data-error-retry-after]") ?? null;
+
+  it.each([["en", "The provider asks to wait 20 s"], ["it", "Il provider chiede di aspettare 20 s"]] as const)("says how long, next to the countdown of the retry (%s)", async (language, words) => {
+    await i18n.changeLanguage(language);
+    asked(20_000, { count: 2, retry: { at: at(36), attempt: 2, retries: 3 } });
+    show();
+    expect(line()).toHaveTextContent(words);
+    const timer = panel()?.querySelector("[data-error-countdown]") as HTMLElement;
+    expect(timer).not.toBeNull();
+    expect(line()!.compareDocumentPosition(timer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(line()!.parentElement).toBe(timer.parentElement?.parentElement);
+  });
+
+  it("is said for a run that stopped too, where there is no countdown", () => {
+    asked(20_000);
+    show();
+    expect(line()).toHaveTextContent("The provider asks to wait 20 s");
+    expect(panel()?.querySelector("[data-error-countdown]")).toBeNull();
+  });
+
+  it("is said in minutes from a minute on, as the countdown is", () => {
+    failing({ kind: "provider", message: "503 overloaded", detail: { status: 503, retryAfterMs: 120_000 } });
+    show();
+    expect(line()).toHaveTextContent("The provider asks to wait 2 min 00 s");
+  });
+
+  it("is not there when the provider did not ask, or asked for no wait: «now» is no wait to tell", () => {
+    asked(undefined);
+    show();
+    expect(line()).toBeNull();
+    cleanup();
+    asked(0);
+    show();
+    expect(line()).toBeNull();
+  });
+
+  it("is outside the alert: a number that comes with the attempt must not be announced again", () => {
+    asked(20_000);
+    show();
+    expect(alerts()[0]).not.toContainElement(line());
   });
 });
 

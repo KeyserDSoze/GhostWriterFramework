@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, ArrowUp, ArrowUpDown, Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plug, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
+import { ArrowRight, Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plug, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { SecretInput } from "@/components/ui/secret-input";
 import { PersonalServerSettingsBody } from "@/components/settings/PersonalServerSettingsBody";
 import { IntegrationRequestFields } from "@/components/settings/IntegrationRequestFields";
+import { ReasoningParameterField } from "@/components/settings/ReasoningParameterField";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
@@ -18,13 +19,14 @@ import { fetchGitHubModelsCatalog, type GitHubCatalogModel } from "@/github/gith
 import { fetchOpenAICompatibleModels, type OpenAICompatibleModel } from "@/ai/openaiModelsCatalog";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
-import { CHAT_CAPABILITIES, DEFAULT_SETTINGS, ROUTING_TASKS, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel, type RoutingTarget, type RoutingTaskKind, type TaskRoute } from "@/types/settings";
-import { integrationChatModels } from "@/assistant/llm";
-import { BROWSER_ROUTING_ID, reconcileTaskRouting, resolveEffectiveTaskCandidates, routingIssues } from "@/assistant/router";
+import { CHAT_CAPABILITIES, DEFAULT_SETTINGS, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel } from "@/types/settings";
+import { reconcileTaskRouting, routingIssues } from "@/assistant/router";
 import { DeepSearchSettingsBody } from "@/components/settings/DeepSearchSettingsBody";
 import { CopilotToolsSettingsBody } from "@/components/settings/CopilotToolsSettingsBody";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
-import { candidateBoundaryLabel, clearFallbackAcknowledgements } from "@/assistant/fallbackDisclosure";
+import { clearFallbackAcknowledgements } from "@/assistant/fallbackDisclosure";
+import { RouterSections } from "@/components/settings/router/RouterSections";
+import { ToolsOnlyField } from "@/components/settings/router/ToolsOnlyField";
 
 const PROVIDERS: Array<{ value: AIProviderType; labelKey: string; fallback: string }> = [
   { value: "azure_openai", labelKey: "settings.providers.azure_openai", fallback: "Azure OpenAI" },
@@ -61,7 +63,7 @@ function useBrowserVoices(): SpeechSynthesisVoice[] {
 }
 
 /** Collapsible settings section (closed by default) styled like a card. */
-function Section({ title, description, icon, defaultOpen, children }: { title: string; description?: string; icon?: ReactNode; defaultOpen?: boolean; children: ReactNode }) {
+function Section({ title, description, icon, defaultOpen, contentClassName = "px-6 pb-6", children }: { title: string; description?: string; icon?: ReactNode; defaultOpen?: boolean; contentClassName?: string; children: ReactNode }) {
   return (
     <details open={defaultOpen} className="rounded-xl border border-layer bg-card text-card-foreground shadow-sm [&[open]>summary_.chev]:rotate-90">
       <summary className="flex cursor-pointer list-none items-center gap-2 p-4 [&::-webkit-details-marker]:hidden">
@@ -72,7 +74,7 @@ function Section({ title, description, icon, defaultOpen, children }: { title: s
           {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
         </div>
       </summary>
-      <div className="px-6 pb-6">{children}</div>
+      <div className={contentClassName}>{children}</div>
     </details>
   );
 }
@@ -262,7 +264,7 @@ export function SettingsPage() {
           {aiIntegrations.length > 0 ? (
             <>
               <p className="text-sm text-muted-foreground">{t("routing.modelsFromIntegrations")} <Link to="/app/settings/ai-integrations" className="font-medium text-primary underline underline-offset-2">{t("settingsSection.aiIntegrationsTitle")}</Link>.</p>
-              <Section title={t("routing.title")} description={t("routing.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen><TaskRoutingBody settings={settings} patchSettings={patchSettings} /></Section>
+              <Section title={t("routing.title")} description={t("routing.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen contentClassName="px-3 pb-4 sm:px-4"><TaskRoutingBody settings={settings} patchSettings={patchSettings} /></Section>
             </>
           ) : (
             <RoutingEmptyState />
@@ -704,6 +706,8 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networ
         <div className="min-w-[12rem] flex-1">
           <p className="text-sm font-medium">{t("settings.chatModels")}</p>
           <p className="text-xs text-muted-foreground">{t("settings.chatModelsHint")}</p>
+          <p id={`${id}-tools-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.forcedToolCallsHint")}</p>
+          <p id={`${id}-thinking-parameter-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.thinkingParameterHint")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {provider === "github_models" && (
@@ -769,8 +773,9 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networ
               <TokenLimitField label={t("settings.maxOutputTokens")} value={model.maxOutputTokens} onChange={(v) => patchModel(model.id, { maxOutputTokens: v })} />
               <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
                 <Label htmlFor={`${id}-${model.id}-tools`} className="text-xs">{t("settings.forcedToolCalls")}</Label>
-                <Switch id={`${id}-${model.id}-tools`} checked={model.supportsToolCalls !== false} onCheckedChange={(supportsToolCalls) => patchModel(model.id, { supportsToolCalls })} />
+                <Switch id={`${id}-${model.id}-tools`} aria-describedby={`${id}-tools-hint`} checked={model.supportsToolCalls !== false} onCheckedChange={(supportsToolCalls) => patchModel(model.id, { supportsToolCalls })} />
               </div>
+              <ReasoningParameterField model={model} hintId={`${id}-thinking-parameter-hint`} onChange={(reasoningParameter) => patchModel(model.id, { reasoningParameter })} />
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
               {CHAT_CAPABILITIES.map((capability) => {
@@ -899,49 +904,6 @@ function integrationToAzureCompat(integrations: AIIntegration[]): AppSettings["a
 
 // ─── Task routing ─────────────────────────────────────────────────────────────
 
-const MEDIA_TASKS = new Set<RoutingTaskKind>(["tts", "stt", "image"]);
-
-function isMediaTask(task: RoutingTaskKind): boolean {
-  return MEDIA_TASKS.has(task);
-}
-
-interface IntegrationChoice { id: string; label: string; }
-
-/** Integration options for a task's selects, including a "Browser" pseudo-entry for tts/stt. */
-function taskIntegrationChoices(integrations: AIIntegration[], task: RoutingTaskKind, t: (k: string) => string): IntegrationChoice[] {
-  const choices: IntegrationChoice[] = [];
-  if (task === "tts" || task === "stt") choices.push({ id: BROWSER_ROUTING_ID, label: t("routing.browser") });
-  const list = isMediaTask(task)
-    ? integrations.filter((i) => i.provider === "openai" || i.provider === "azure_openai")
-    : integrations.filter((i) => i.provider !== "m365_copilot");
-  for (const i of list) choices.push({ id: i.id, label: i.name || i.provider });
-  return choices;
-}
-
-/** Model options for a given selected integrationId + task. Browser → ["browser"]. */
-function modelChoicesFor(integrations: AIIntegration[], integrationId: string | undefined, task: RoutingTaskKind): string[] {
-  if (integrationId === BROWSER_ROUTING_ID) return ["browser"];
-  const integration = integrations.find((i) => i.id === integrationId);
-  if (!integration) return [];
-  if (!isMediaTask(task)) return integrationChatModels(integration).filter((model) => model.capabilities.includes(task as ChatCapability) || model.capabilities.includes("default")).map((m) => m.name).filter(Boolean);
-  const media = task === "tts" ? integration.modelTextToSpeech
-    : task === "stt" ? integration.modelSpeechToText
-    : integration.modelImageGeneration;
-  return media?.trim() ? [media.trim()] : [];
-}
-
-/** Browser-routed TTS/STT must always persist with a concrete sentinel model. */
-function normalizeRoutingTarget(target: RoutingTarget | undefined, task: RoutingTaskKind): RoutingTarget | undefined {
-  if (!target) return undefined;
-  if (target.integrationId === BROWSER_ROUTING_ID) {
-    return (task === "tts" || task === "stt")
-      ? { integrationId: BROWSER_ROUTING_ID, model: "browser" }
-      : undefined;
-  }
-  const model = target.model?.trim();
-  return model ? { integrationId: target.integrationId, model } : undefined;
-}
-
 function RoutingEmptyState() {
   const { t } = useTranslation();
   return (
@@ -957,183 +919,39 @@ function RoutingEmptyState() {
 function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
   const { t } = useTranslation();
   const id = useId();
-  const integrations = settings.aiIntegrations ?? [];
-  const routing = settings.taskRouting ?? {};
   const execution = settings.routingExecution ?? DEFAULT_SETTINGS.routingExecution;
-
-  function setRoute(task: RoutingTaskKind, route: TaskRoute | undefined) {
-    const next: NonNullable<AppSettings["taskRouting"]> = { ...routing };
-    if (route && (route.primary || route.fallbacks.length)) next[task] = { ...route, fallbacks: route.fallbacks.slice(0, execution.maxCandidates - 1) };
-    else delete next[task];
-    patchSettings({ taskRouting: next });
-  }
 
   return (
     <div className="space-y-4">
-      <div className="space-y-3 rounded-lg border bg-muted/10 p-3">
-        <div className="flex items-center justify-between gap-4">
-          <div><Label htmlFor={`${id}-boundary`}>{t("routing.sameBoundaryOnly")}</Label><p id={`${id}-boundary-hint`} className="text-xs text-muted-foreground">{t("routing.sameBoundaryOnlyHint")}</p></div>
-          <Switch id={`${id}-boundary`} aria-describedby={`${id}-boundary-hint`} checked={settings.fallbackDisclosure?.sameBoundaryOnly ?? false} onCheckedChange={(sameBoundaryOnly) => patchSettings({ fallbackDisclosure: { ...settings.fallbackDisclosure, sameBoundaryOnly } })} />
-        </div>
-        <div className="flex items-center justify-between gap-4">
-          <div><Label htmlFor={`${id}-acknowledge`}>{t("routing.requireAcknowledgement")}</Label><p id={`${id}-acknowledge-hint`} className="text-xs text-muted-foreground">{t("routing.requireAcknowledgementHint")}</p></div>
-          <Switch id={`${id}-acknowledge`} aria-describedby={`${id}-acknowledge-hint`} checked={settings.fallbackDisclosure?.requireAcknowledgement ?? false} onCheckedChange={(requireAcknowledgement) => { clearFallbackAcknowledgements(); patchSettings({ fallbackDisclosure: { ...settings.fallbackDisclosure, requireAcknowledgement } }); }} />
-        </div>
-      </div>
-      <div className="grid gap-3 rounded-lg border bg-muted/10 p-3 sm:grid-cols-2">
-        <TokenLimitField label={t("routing.maxCandidates")} value={execution.maxCandidates} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxCandidates: Math.min(8, Math.max(1, value ?? 4)) } })} />
-        <TokenLimitField label={t("routing.maxTotalDuration")} value={execution.maxTotalDurationMs} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxTotalDurationMs: Math.min(600_000, Math.max(1_000, value ?? 180_000)) } })} />
-        <TokenLimitField label={t("routing.maxTokenAttempts")} value={execution.maxTokenAttempts} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxTokenAttempts: Math.min(2_000_000, Math.max(1_000, value ?? 200_000)) } })} />
-        <PriceField label={t("routing.maxEstimatedCost")} value={execution.maxEstimatedCost} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxEstimatedCost: Math.min(1_000, Math.max(0.01, value ?? 5)) } })} />
-      </div>
-      {ROUTING_TASKS.map((task) => (
-        <TaskRouteEditor
-          key={task}
-          task={task}
-          settings={settings}
-          integrations={integrations}
-          route={routing[task]}
-          onChange={(route) => setRoute(task, route)}
-        />
-      ))}
-    </div>
-  );
-}
-
-function TaskRouteEditor({ task, settings, integrations, route, onChange }: { task: RoutingTaskKind; settings: AppSettings; integrations: AIIntegration[]; route?: TaskRoute; onChange: (route: TaskRoute | undefined) => void }) {
-  const { t } = useTranslation();
-  const id = useId();
-  const current: TaskRoute = route ?? { primary: undefined, fallbacks: [] };
-  const execution = settings.routingExecution ?? DEFAULT_SETTINGS.routingExecution;
-  const firstChoice = taskIntegrationChoices(integrations, task, t)[0];
-
-  function setPrimary(target: RoutingTarget | undefined) {
-    onChange({ ...current, primary: normalizeRoutingTarget(target, task) });
-  }
-  function setFallback(index: number, target: RoutingTarget | undefined) {
-    const fallbacks = [...current.fallbacks];
-    const normalized = normalizeRoutingTarget(target, task);
-    if (normalized) fallbacks[index] = normalized; else fallbacks.splice(index, 1);
-    onChange({ ...current, fallbacks });
-  }
-  function addFallback() {
-    const model = modelChoicesFor(integrations, firstChoice?.id, task)[0] ?? "";
-    const target = normalizeRoutingTarget({ integrationId: firstChoice?.id ?? "", model }, task);
-    if (!target) return;
-    onChange({ ...current, fallbacks: [...current.fallbacks, target] });
-  }
-  function swapPrimaryWithFirstFallback() {
-    if (!current.primary || current.fallbacks.length === 0) return;
-    const [firstFallback, ...rest] = current.fallbacks;
-    onChange({
-      primary: normalizeRoutingTarget(firstFallback, task),
-      fallbacks: [normalizeRoutingTarget(current.primary, task), ...rest].filter((entry): entry is RoutingTarget => Boolean(entry)),
-    });
-  }
-  function moveFallbackUp(index: number) {
-    if (index <= 0 || index >= current.fallbacks.length) return;
-    const fallbacks = [...current.fallbacks];
-    [fallbacks[index - 1], fallbacks[index]] = [fallbacks[index], fallbacks[index - 1]];
-    onChange({ ...current, fallbacks });
-  }
-
-  const label = t(`routing.task.${task}`);
-  const boundaries = resolveEffectiveTaskCandidates(settings, task).map((candidate) => `${candidate.browser ? t("routing.browserBoundary") : candidateBoundaryLabel(candidate)} (${candidate.browser ? "browser" : candidate.model})`);
-
-  return (
-    <div role="group" aria-labelledby={`${id}-title`} className="rounded-lg border bg-muted/10 p-3">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <p id={`${id}-title`} className="text-sm font-medium">{label}</p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-7 px-2 text-xs"
-          onClick={swapPrimaryWithFirstFallback}
-          disabled={!current.primary || current.fallbacks.length === 0}
-        >
-          <ArrowUpDown className="mr-1 h-3.5 w-3.5" />
-          {t("routing.swapPrimaryFallback")}
-        </Button>
-      </div>
-      {boundaries.length > 0 && <p className="mb-2 text-xs text-muted-foreground">{t("routing.boundaryChain", { chain: boundaries.join(" → ") })}</p>}
-      <div className="grid gap-2">
-        <div className="grid min-w-0 gap-1">
-          <Label htmlFor={`${id}-primary-integration`} className="text-xs">{t("routing.primary")}</Label>
-          <TargetRow idBase={`${id}-primary`} label={t("routing.primary")} task={task} integrations={integrations} target={current.primary} onChange={setPrimary} clearable />
-        </div>
-        {current.fallbacks.map((fb, i) => (
-          <div key={i} className="grid min-w-0 gap-1">
-            <Label htmlFor={`${id}-fallback${i}-integration`} className="text-xs">{t("routing.fallbackN", { n: i + 1 })}</Label>
-            <div className="flex items-center gap-2">
-              <div className="min-w-0 flex-1">
-                <TargetRow idBase={`${id}-fallback${i}`} label={t("routing.fallbackN", { n: i + 1 })} task={task} integrations={integrations} target={fb} onChange={(t2) => setFallback(i, t2)} clearable onRemove={() => setFallback(i, undefined)} />
-              </div>
-              {i > 0 && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={() => moveFallbackUp(i)}
-                  aria-label={t("routing.moveFallbackUp", { n: i + 1 })}
-                  title={t("routing.moveFallbackUp", { n: i + 1 })}
-                >
-                  <ArrowUp className="h-4 w-4" />
-                </Button>
-              )}
+      <ToolsOnlyField settings={settings} patchSettings={patchSettings} />
+      <details className="rounded-lg border border-layer bg-card [&[open]>summary_.chev]:rotate-90">
+        <summary className="flex cursor-pointer list-none items-center gap-2 p-3 [&::-webkit-details-marker]:hidden">
+          <ChevronRight className="chev h-4 w-4 shrink-0 text-muted-foreground transition-transform" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{t("routing.options.title")}</p>
+            <p className="text-xs text-muted-foreground">{t("routing.options.description")}</p>
+          </div>
+        </summary>
+        <div className="space-y-4 border-t border-layer p-3">
+          <div className="space-y-3 rounded-lg border bg-muted/10 p-3">
+            <div className="flex items-center justify-between gap-4">
+              <div><Label htmlFor={`${id}-boundary`}>{t("routing.sameBoundaryOnly")}</Label><p id={`${id}-boundary-hint`} className="text-xs text-muted-foreground">{t("routing.sameBoundaryOnlyHint")}</p></div>
+              <Switch id={`${id}-boundary`} aria-describedby={`${id}-boundary-hint`} checked={settings.fallbackDisclosure?.sameBoundaryOnly ?? false} onCheckedChange={(sameBoundaryOnly) => patchSettings({ fallbackDisclosure: { ...settings.fallbackDisclosure, sameBoundaryOnly } })} />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <div><Label htmlFor={`${id}-acknowledge`}>{t("routing.requireAcknowledgement")}</Label><p id={`${id}-acknowledge-hint`} className="text-xs text-muted-foreground">{t("routing.requireAcknowledgementHint")}</p></div>
+              <Switch id={`${id}-acknowledge`} aria-describedby={`${id}-acknowledge-hint`} checked={settings.fallbackDisclosure?.requireAcknowledgement ?? false} onCheckedChange={(requireAcknowledgement) => { clearFallbackAcknowledgements(); patchSettings({ fallbackDisclosure: { ...settings.fallbackDisclosure, requireAcknowledgement } }); }} />
             </div>
           </div>
-        ))}
-        <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={addFallback} disabled={!current.primary || current.fallbacks.length >= execution.maxCandidates - 1}>
-          <Plus className="mr-1 h-3.5 w-3.5" />{t("routing.addFallback")}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function TargetRow({ idBase, label, task, integrations, target, onChange, clearable, onRemove }: { idBase: string; label: string; task: RoutingTaskKind; integrations: AIIntegration[]; target?: RoutingTarget; onChange: (target: RoutingTarget | undefined) => void; clearable?: boolean; onRemove?: () => void }) {
-  const { t } = useTranslation();
-  const integrationChoices = taskIntegrationChoices(integrations, task, t);
-  const models = modelChoicesFor(integrations, target?.integrationId, task);
-  const browserSelected = target?.integrationId === BROWSER_ROUTING_ID;
-
-  return (
-    <div className="flex min-w-0 items-center gap-2">
-      <Select
-        value={target?.integrationId ?? ""}
-        onValueChange={(integrationId) => {
-          const firstModel = modelChoicesFor(integrations, integrationId, task)[0] ?? "";
-          onChange({ integrationId, model: firstModel });
-        }}
-      >
-        <SelectTrigger id={`${idBase}-integration`} aria-label={t("routing.targetIntegration", { target: label })} className="h-8 min-w-0 flex-1 text-sm"><SelectValue placeholder={t("routing.pickIntegration")} /></SelectTrigger>
-        <SelectContent>{integrationChoices.map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}</SelectContent>
-      </Select>
-      {browserSelected ? (
-        <div className="h-8 flex-1 rounded-md border bg-muted/40 px-3 text-sm leading-8 text-muted-foreground">{t("routing.browser")}</div>
-      ) : (
-        <Select
-          value={target?.model ?? ""}
-          onValueChange={(model) => target && onChange({ ...target, model })}
-        >
-          <SelectTrigger id={`${idBase}-model`} aria-label={t("routing.targetModel", { target: label })} className="h-8 min-w-0 flex-1 text-sm"><SelectValue placeholder={t("routing.pickModel")} /></SelectTrigger>
-          <SelectContent>
-            {models.length === 0 ? (
-              <SelectItem value="__none__" disabled>{t("routing.noModel")}</SelectItem>
-            ) : models.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      )}
-      {clearable && target && (
-        <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label={t("routing.removeTarget")} onClick={() => {
-          if (!window.confirm(t("routing.removeTargetConfirm"))) return;
-          if (onRemove) onRemove(); else onChange(undefined);
-        }}>
-          <Trash2 className="h-4 w-4 text-muted-foreground" />
-        </Button>
-      )}
+          <div className="grid gap-3 rounded-lg border bg-muted/10 p-3 sm:grid-cols-2">
+            <TokenLimitField label={t("routing.maxCandidates")} value={execution.maxCandidates} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxCandidates: Math.min(8, Math.max(1, value ?? 4)) } })} />
+            <TokenLimitField label={t("routing.maxTotalDuration")} value={execution.maxTotalDurationMs} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxTotalDurationMs: Math.min(600_000, Math.max(1_000, value ?? 180_000)) } })} />
+            <TokenLimitField label={t("routing.maxTokenAttempts")} value={execution.maxTokenAttempts} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxTokenAttempts: Math.min(2_000_000, Math.max(1_000, value ?? 200_000)) } })} />
+            <PriceField label={t("routing.maxEstimatedCost")} value={execution.maxEstimatedCost} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxEstimatedCost: Math.min(1_000, Math.max(0.01, value ?? 5)) } })} />
+          </div>
+        </div>
+      </details>
+      <RouterSections settings={settings} patchSettings={patchSettings} />
     </div>
   );
 }
