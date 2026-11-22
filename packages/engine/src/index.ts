@@ -33,6 +33,7 @@ export * from "./director/opinion.js";
 
 export * from "./autopilot/types.js";
 export * from "./autopilot/state.js";
+export * from "./autopilot/errors.js";
 export * from "./autopilot/planner.js";
 export * from "./autopilot/outline.js";
 export * from "./autopilot/story-so-far.js";

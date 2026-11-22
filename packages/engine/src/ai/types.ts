@@ -58,8 +58,23 @@ export class AiUnavailableError extends Error {
   }
 }
 
+/**
+ * The integration a failed request was sent to (the last candidate tried), so that a client can say where it failed. Never a key, and the
+ * endpoint is only the origin of its address. It is separate from `model`, `provider` and `integrationId` of the error, whose presence
+ * means that the model had started to answer (and is billed).
+ */
+export interface AiErrorTarget {
+  provider: string;
+  model: string;
+  integrationId: string;
+  /** The origin (`https://api.openai.com`) of the integration's address: never its path or its query. */
+  endpoint?: string;
+}
+
 /** What a failed attempt already cost: the provider may bill a reply the engine rejects. */
 export interface AiProviderErrorDetails {
+  /** Where the request went. Set by the engine's client on the errors of the candidates it tried. */
+  target?: AiErrorTarget;
   usage?: AiUsage;
   /** `false` when the provider reported no tokens and `usage` is an estimate. */
   usageKnown?: boolean;
@@ -84,6 +99,7 @@ export interface AiProviderErrorDetails {
 }
 
 export class AiProviderError extends Error {
+  target?: AiErrorTarget;
   usage?: AiUsage;
   usageKnown?: boolean;
   cost?: number;

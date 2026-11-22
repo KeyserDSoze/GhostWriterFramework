@@ -214,6 +214,19 @@ export function serverSupportsAutopilotControls(info: { features?: unknown } | n
   return Array.isArray(features) && features.includes(SERVER_FEATURE_AUTOPILOT_CONTROLS);
 }
 
+/**
+ * The `ServerInfo.features` entry of a server that implements the routes that edit the permanent rules of the autopilot:
+ * `PUT` and `DELETE /api/v1/books/:id/autopilot/rules/:index` (see `UpdateAutopilotRuleRequest`). A server without it answers 404 to them:
+ * a client checks `serverSupportsAutopilotRules` before it offers to edit or remove a rule.
+ */
+export const SERVER_FEATURE_AUTOPILOT_RULES = "autopilot-rules";
+
+/** Whether the server announces that it implements the routes that edit the permanent rules. Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsAutopilotRules(info: { features?: unknown } | null | undefined): boolean {
+  const features = info?.features;
+  return Array.isArray(features) && features.includes(SERVER_FEATURE_AUTOPILOT_RULES);
+}
+
 /** The `mode`s of `POST /api/v1/books/:id/autopilot/pause`: `now`, `after-step` and `after-chapter` pause (see `AutopilotPauseMode`); `cancel` takes back a pause that waits. */
 export const PAUSE_AUTOPILOT_MODES = ["now", "after-step", "after-chapter", "cancel"] as const;
 
@@ -224,6 +237,15 @@ export type StartAutopilotRequest = StartOptions & { force?: boolean };
 export type PauseAutopilotRequest = { mode: PauseAutopilotMode };
 /** The body of `PUT /api/v1/books/:id/autopilot/options`: at least one of the two settings that can change while a run goes on. */
 export type UpdateAutopilotOptionsRequest = AutopilotLiveOptions;
+/**
+ * The body of `PUT /api/v1/books/:id/autopilot/rules/:index`: the new text of the rule at that index of `state.constraints`, and the text the
+ * author saw there (`expectedText`), so that a rule that changed in the meantime is never overwritten (`DELETE …/rules/:index?expectedText=…`
+ * takes it as a query parameter). Both answer the snapshot, like `configure`.
+ */
+export interface UpdateAutopilotRuleRequest {
+  text: string;
+  expectedText?: string;
+}
 export type InterveneRequest = InterventionInput;
 export type AnswerRequest = QuestionAnswer;
 

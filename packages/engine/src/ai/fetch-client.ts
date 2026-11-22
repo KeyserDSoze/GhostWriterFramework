@@ -3,7 +3,7 @@ import { randomId } from "../util/hash.js";
 import { likelyTextTokens } from "./budget.js";
 import type { AiPricingConfig, AiRuntimeConfig } from "./config.js";
 import { redactSecrets } from "./redact.js";
-import { effectiveAiBase, type ChatRequest } from "./request.js";
+import { effectiveAiBase, endpointOrigin, type ChatRequest } from "./request.js";
 import type { AiCandidate } from "./router.js";
 import { candidateBoundary, planAttempts, type PlannedAttempt } from "./routing.js";
 import { splitReasoningBlock, structuredFromReply } from "./structured.js";
@@ -201,6 +201,10 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           const cancelled = Boolean(request.signal?.aborted) && isAbortError(error);
           notify(options.onAttemptEnd, failedAttempt(identity, error, cancelled, timeoutMs, Date.now() - attemptStarted, secrets));
           if (cancelled) throw error;
+          if (error instanceof AiProviderError && !error.target) {
+            const origin = endpointOrigin(effectiveAiBase(integration, options.githubModelsBaseUrl));
+            error.target = { provider: integration.provider, model: candidate.model, integrationId: integration.id, ...(origin ? { endpoint: origin } : {}) };
+          }
           addSpent(spent, error);
           lastError = error;
           request.onText?.("");

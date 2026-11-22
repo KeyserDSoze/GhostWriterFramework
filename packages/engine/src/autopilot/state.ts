@@ -1,9 +1,12 @@
 import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
-import { countWords } from "../util/text.js";
+import { clipText, countWords } from "../util/text.js";
+import { normalizeErrorDetail, normalizeErrorKind } from "./errors.js";
 import { AUTOPILOT_PUBLISH_MODES } from "./types.js";
 import type {
   AutopilotActivity,
   AutopilotBrief,
+  AutopilotFinalReview,
+  AutopilotLastErrorSummary,
   AutopilotLimitsSummary,
   AutopilotOptions,
   AutopilotPausePending,
@@ -11,6 +14,7 @@ import type {
   AutopilotPlan,
   AutopilotProgress,
   AutopilotPublishMode,
+  AutopilotRetryInfo,
   AutopilotRunLimits,
   AutopilotState,
   AutopilotStateSummary,
@@ -18,6 +22,7 @@ import type {
   AutopilotTaskKind,
   AuthorIntervention,
   ChapterReview,
+  ChapterRound,
   ConceptSecret,
   DirectorQuestion,
   PlannedChapter,
@@ -32,6 +37,11 @@ export const MAX_CONSTRAINTS = 80;
 /** A rule goes into every request the autopilot makes: longer text is refused, never cut. */
 export const MAX_RULE_CHARACTERS = 800;
 export const MAX_REVISION_NOTES = 40;
+/** The rounds of review a chapter keeps in the plan (`PlannedChapter.rounds`): when there are more, the oldest leave. */
+export const MAX_CHAPTER_ROUNDS = 8;
+/** Characters of the text of the final review in the state, and in the summary the live events carry. */
+export const FINAL_REVIEW_TEXT_CHARACTERS = 1200;
+export const FINAL_REVIEW_SUMMARY_CHARACTERS = 400;
 /**
  * Upper bound for any chapter number or chapter count read from a file or a reply. It only guards against typos and
  * garbage: a book has no maximum length, and nothing below this value is ever clamped.
@@ -48,7 +58,18 @@ export function capConstraints(constraints: string[]): string[] {
   return newestList(constraints, MAX_CONSTRAINTS);
 }
 
-export type AutopilotRuleErrorCode = "rule_empty" | "rule_too_long" | "rule_not_found" | "rule_changed" | "rule_duplicate";
+/**
+ * The codes of `AutopilotRuleError`, which are also the codes of the personal server's answers to the routes that edit the rules
+ * (see the README, "The personal server client"): one list the engine, the server and a host agree on.
+ */
+export const AUTOPILOT_RULE_ERROR_CODES = ["rule_empty", "rule_too_long", "rule_not_found", "rule_changed", "rule_duplicate"] as const;
+
+export type AutopilotRuleErrorCode = (typeof AUTOPILOT_RULE_ERROR_CODES)[number];
+
+/** Whether a code (of a `ServerRequestError`, say) is one the rules can be refused with. Never throws. */
+export function isAutopilotRuleErrorCode(code: unknown): code is AutopilotRuleErrorCode {
+  return typeof code === "string" && (AUTOPILOT_RULE_ERROR_CODES as readonly string[]).includes(code);
+}
 
 /** A rule that cannot be saved as asked. The message says why; `code` lets a host say it in the author's language. */
 export class AutopilotRuleError extends Error {
@@ -158,6 +179,82 @@ export function normalizeOptions(value: unknown, base: AutopilotOptions = DEFAUL
   };
 }
 
+/** A number read from a file or a reply: a number, or text that is one. `undefined` for anything else (an empty text is not zero). */
+function readNumber(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value.trim()) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/** A vote on the 0-10 scale with one decimal at most; `undefined` for what is not a number. */
+function readVote(value: unknown): number | undefined {
+  const number = readNumber(value);
+  return number === undefined ? undefined : Math.round(Math.min(10, Math.max(0, number)) * 10) / 10;
+}
+
+/** A counter: a whole number from 0 to 999, as the history of a review has them. */
+function readCount(value: unknown): number | undefined {
+  const number = readNumber(value);
+  return number === undefined ? undefined : Math.round(Math.min(999, Math.max(0, number)));
+}
+
+/** A duration in milliseconds: whole, not negative, and a number the engine can add to. */
+function readDuration(value: unknown): number | undefined {
+  const number = readNumber(value);
+  return number === undefined ? undefined : Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.round(number)));
+}
+
+/** One round as a plan keeps it: only the four numbers, valid. `null` when the entry holds none (it is no round). */
+function normalizeRound(value: unknown): ChapterRound | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const director = readVote(source.director);
+  const readers = readVote(source.readers);
+  const accepted = readCount(source.accepted);
+  const rejected = readCount(source.rejected);
+  const round: ChapterRound = {
+    ...(director !== undefined ? { director } : {}),
+    ...(readers !== undefined ? { readers } : {}),
+    ...(accepted !== undefined ? { accepted } : {}),
+    ...(rejected !== undefined ? { rejected } : {}),
+  };
+  return Object.keys(round).length ? round : null;
+}
+
+/** The rounds of a chapter as a file says them: the valid ones, at most the newest `MAX_CHAPTER_ROUNDS`; `undefined` when there is none. */
+function normalizeRounds(value: unknown): ChapterRound[] | undefined {
+  const rounds = asArray(value).map(normalizeRound).filter((round): round is ChapterRound => round !== null).slice(-MAX_CHAPTER_ROUNDS);
+  return rounds.length ? rounds : undefined;
+}
+
+/**
+ * The record of a round the director has just judged: its vote, the average of the readers' votes when they read the chapter in this round
+ * (they read it once, in the first round of its review) and what the director decided. Made with the rules a file is read with, so that it
+ * is the same before and after it is saved.
+ */
+export function closedRound(input: { director: number; readers?: number[]; accepted: number; rejected: number }): ChapterRound {
+  const readers = input.readers?.length ? input.readers.reduce((sum, vote) => sum + vote, 0) / input.readers.length : undefined;
+  return normalizeRound({ director: input.director, readers, accepted: input.accepted, rejected: input.rejected }) ?? {};
+}
+
+/** Add a round to the history of a chapter, which keeps at most `MAX_CHAPTER_ROUNDS`: the oldest leave first. */
+export function recordChapterRound(chapter: PlannedChapter, round: ChapterRound): void {
+  chapter.rounds = [...(chapter.rounds ?? []), round].slice(-MAX_CHAPTER_ROUNDS);
+}
+
+/** The final review as the state keeps it (the text at most `FINAL_REVIEW_TEXT_CHARACTERS`). Anything that is not a verdict with a score is no final review. */
+export function normalizeFinalReview(value: unknown): AutopilotFinalReview | undefined {
+  const source = asRecord(value);
+  const verdict = typeof source.verdict === "string" ? source.verdict.trim().toLowerCase() : "";
+  const score = readVote(source.score);
+  if ((verdict !== "approve" && verdict !== "revise") || score === undefined) return undefined;
+  return {
+    verdict,
+    score,
+    text: clipText(typeof source.text === "string" ? source.text.trim() : "", FINAL_REVIEW_TEXT_CHARACTERS),
+    at: typeof source.at === "string" ? source.at.trim() : "",
+  };
+}
+
 function normalizeScene(value: unknown, index: number): PlannedScene {
   const source = asRecord(value);
   return {
@@ -180,6 +277,7 @@ function normalizeScene(value: unknown, index: number): PlannedScene {
 function normalizeChapter(value: unknown, index: number): PlannedChapter {
   const source = asRecord(value);
   const number = asInteger(source.number, index + 1, 1, MAX_BOOK_CHAPTERS);
+  const rounds = normalizeRounds(source.rounds);
   return {
     number,
     title: asString(source.title) || `Chapter ${number}`,
@@ -195,6 +293,7 @@ function normalizeChapter(value: unknown, index: number): PlannedChapter {
     scenes: asArray(source.scenes).map(normalizeScene),
     score: typeof source.score === "number" ? source.score : undefined,
     storySoFarAtClose: asString(source.storySoFarAtClose) || undefined,
+    ...(rounds ? { rounds } : {}),
   };
 }
 
@@ -388,8 +487,12 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
   const stats = asRecord(source.stats);
   const usageUnknownCalls = asInteger(stats.usageUnknownCalls, 0, 0, Number.MAX_SAFE_INTEGER);
   const costUnknownCalls = asInteger(stats.costUnknownCalls, 0, 0, Number.MAX_SAFE_INTEGER);
+  const workedMs = readDuration(stats.workedMs);
+  const finalReview = normalizeFinalReview(source.finalReview);
   const concept = asRecord(source.concept);
   const lastError = asRecord(source.lastError);
+  const errorKind = normalizeErrorKind(lastError.errorKind);
+  const errorDetail = normalizeErrorDetail(lastError.errorDetail);
   const runner = asRecord(source.runner);
   return {
     schemaVersion: 1,
@@ -402,6 +505,7 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
     review: normalizeReview(source.review),
     revision: normalizeRevision(source.revision),
     finalDone: asBoolean(source.finalDone, false),
+    ...(finalReview ? { finalReview } : {}),
     constraints: newestList(source.constraints, MAX_CONSTRAINTS),
     interventions: normalizeInterventions(source.interventions),
     directorNotes: newestList(source.directorNotes, MAX_DIRECTOR_NOTES),
@@ -426,10 +530,17 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
       failures: asInteger(stats.failures, 0, 0, Number.MAX_SAFE_INTEGER),
       ...(usageUnknownCalls ? { usageUnknownCalls } : {}),
       ...(costUnknownCalls ? { costUnknownCalls } : {}),
+      ...(workedMs !== undefined ? { workedMs } : {}),
     },
     message: asString(source.message) || null,
     lastError: asString(lastError.message)
-      ? { message: asString(lastError.message), at: asString(lastError.at), task: (asString(lastError.task) || undefined) as AutopilotTaskKind | undefined }
+      ? {
+        message: asString(lastError.message),
+        at: asString(lastError.at),
+        task: (asString(lastError.task) || undefined) as AutopilotTaskKind | undefined,
+        ...(errorKind ? { errorKind } : {}),
+        ...(errorDetail ? { errorDetail } : {}),
+      }
       : null,
     createdAt: asString(source.createdAt) || base.createdAt,
     updatedAt: asString(source.updatedAt) || base.updatedAt,
@@ -468,8 +579,16 @@ export function inspectAutopilotState(raw: string | null | undefined, now = new 
   }
 }
 
+/** An object made only of the numbers of a round, as `JSON.stringify` indents it: one field to a line. */
+const ROUND_OBJECT = /\{\n(?: +"(?:director|readers|accepted|rejected)": -?\d+(?:\.\d+)?,?\n)+ *\}/g;
+
+/**
+ * The state file: JSON, indented, with every round of a chapter's history (four small numbers) on one line, so that a book of thousands
+ * of chapters does not spend the file on indentation. An engine that does not know the rounds reads the file all the same.
+ */
 export function serializeAutopilotState(state: AutopilotState): string {
-  return `${JSON.stringify(state, null, 2)}\n`;
+  const text = JSON.stringify(state, null, 2);
+  return `${text.includes("\"rounds\"") ? text.replace(ROUND_OBJECT, (round) => round.replace(/\n */g, " ")) : text}\n`;
 }
 
 export function parseActivityLog(raw: string | null | undefined): AutopilotActivity[] {
@@ -512,6 +631,14 @@ export interface AutopilotSummaryContext {
   limits?: AutopilotLimitsSummary | null;
   /** Where the host publishes when the author has not chosen (see `hostDefaultPublish`). */
   defaultPublish?: AutopilotPublishMode;
+  /** The retry the run is waiting for, when it is: the summary says it, and says nothing otherwise. */
+  retry?: AutopilotRetryInfo | null;
+}
+
+/** The last error as the summary says it: as the state has it, and with its kind and its detail also under the names `kind` and `detail`. */
+function summarizeLastError(lastError: AutopilotState["lastError"]): AutopilotLastErrorSummary | null {
+  if (!lastError || (!lastError.errorKind && !lastError.errorDetail)) return lastError;
+  return { ...lastError, ...(lastError.errorKind ? { kind: lastError.errorKind } : {}), ...(lastError.errorDetail ? { detail: lastError.errorDetail } : {}) };
 }
 
 /**
@@ -525,15 +652,17 @@ export function summarizeAutopilotState(state: AutopilotState, context: Autopilo
     message: state.message,
     progress: autopilotProgress(state),
     question: state.question,
-    lastError: state.lastError,
+    lastError: summarizeLastError(state.lastError),
     runner: state.runner,
     stats: state.stats,
     pendingNotes: state.interventions.filter((entry) => entry.scope === "next_step" && entry.status === "pending").length,
     constraints: state.constraints.length,
     updatedAt: state.updatedAt,
+    ...(state.finalReview ? { finalReview: { ...state.finalReview, text: clipText(state.finalReview.text, FINAL_REVIEW_SUMMARY_CHARACTERS) } } : {}),
     ...(context.pausePending === undefined ? {} : { pausePending: context.pausePending }),
     ...(context.limits === undefined ? {} : { limits: context.limits }),
     publish: effectivePublish(state.options, context.defaultPublish),
+    ...(context.retry ? { retry: context.retry } : {}),
   };
 }
 

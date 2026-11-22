@@ -219,16 +219,19 @@ export class AutopilotSession {
   private announcePause(run: AutopilotRun): void {
     const summary = this.summary;
     if (this.run !== run || !summary?.runner || summary.runner.runId !== run.runId) return;
-    this.emit({ type: "state", state: { ...summary, ...run.runtime(), runner: this.liveRunner(summary.runner) ?? summary.runner } });
+    // The retry is the run's own word, said as it is now: one the run no longer waits for must not be carried over from the last summary.
+    const { retry: _earlier, ...rest } = summary;
+    this.emit({ type: "state", state: { ...rest, ...run.runtime(), runner: this.liveRunner(summary.runner) ?? summary.runner } });
   }
 
-  /** The summary of a state as a client of this session sees it: with the pause that waits, the limits of the run, and where the book is published. */
+  /** The summary of a state as a client of this session sees it: with the pause that waits, the limits of the run, the retry it waits for, and where the book is published. */
   private summarize(state: AutopilotState): AutopilotStateSummary {
     const runtime = this.run?.runtime();
     const waiting: AutopilotPausePending | null = this.pendingPause === "after-step" || this.pendingPause === "after-chapter" ? this.pendingPause : null;
     const summary = summarizeAutopilotState(state, {
       pausePending: runtime ? runtime.pausePending : this.starting ? waiting : null,
       limits: runtime?.limits ?? null,
+      retry: runtime?.retry ?? null,
       defaultPublish: hostDefaultPublish(this.config.host, this.config.defaultPublish),
     });
     return summary.runner ? { ...summary, runner: this.liveRunner(summary.runner) } : summary;
@@ -241,14 +244,19 @@ export class AutopilotSession {
   }
 
   async snapshot(): Promise<AutopilotSnapshot> {
-    const stored = await readStoredAutopilot(this.config.store);
+    const wasRunning = this.running;
+    let stored = await readStoredAutopilot(this.config.store);
+    // A run that began or ended while the files were being read leaves what was read older than what `running` says now: a stopped run
+    // would read as "interrupted" (its state still says it runs) and a run that began would show the state of the one before it. Read again.
+    if (this.running !== wasRunning) stored = await readStoredAutopilot(this.config.store);
+    const running = this.running;
     let state = stored.state;
     if (state?.runner && this.liveRunner(state.runner) !== state.runner) state = { ...state, runner: this.liveRunner(state.runner) };
     const interrupted = "Interrupted: resume to continue from the last saved step.";
-    if (state && !this.running && state.status === "running" && this.isOwnRunner(state.runner) && !(await this.ownRunnerAliveElsewhere())) {
+    if (state && !running && state.status === "running" && this.isOwnRunner(state.runner) && !(await this.ownRunnerAliveElsewhere())) {
       state = { ...state, status: "paused", runner: null, message: state.message ?? interrupted };
     }
-    if (state && !this.running && runnerActivity(state, this.now()) === "stale") {
+    if (state && !running && runnerActivity(state, this.now()) === "stale") {
       state = { ...state, status: "paused", runner: null, message: interrupted };
     }
     const activities: AutopilotActivity[] = [...stored.activities];
@@ -260,8 +268,8 @@ export class AutopilotSession {
       summary: state ? this.summarize(state) : null,
       activities,
       live: this.live,
-      running: this.running,
-      host: this.running ? this.config.host : state?.status === "running" ? state.runner?.host ?? null : null,
+      running,
+      host: running ? this.config.host : state?.status === "running" ? state.runner?.host ?? null : null,
       ...(stored.corrupt ? { stateError: { code: "state_corrupt" as const, message: new AutopilotStateCorruptError(stored.corrupt).message } } : {}),
     };
   }

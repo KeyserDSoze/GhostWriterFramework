@@ -24,6 +24,20 @@ export function effectiveAiBase(integration: Pick<AiIntegrationConfig, "provider
   return null;
 }
 
+/**
+ * The origin (`https://host:port`) of a web address, and nothing else: never its path, its query, its fragment or the credentials in
+ * it, which is what may be shown and saved about where a request went. `undefined` for anything that is not an http or https address.
+ */
+export function endpointOrigin(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 interface RequestTarget {
   url: string;
   headers: Record<string, string>;

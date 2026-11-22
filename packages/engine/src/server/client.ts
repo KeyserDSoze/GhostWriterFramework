@@ -30,6 +30,7 @@ import {
   type ServerUpdateInfo,
   type ServerUpdateRequest,
   type UpdateAutopilotOptionsRequest,
+  type UpdateAutopilotRuleRequest,
 } from "./protocol.js";
 
 export class ServerRequestError extends Error {
@@ -221,6 +222,23 @@ export class NarrariumServerClient {
   /** The short name of `updateAutopilotOptions`. */
   updateOptions(bookId: string, input: UpdateAutopilotOptionsRequest): Promise<AutopilotSnapshot> {
     return this.updateAutopilotOptions(bookId, input);
+  }
+
+  /**
+   * Replace the text of the permanent rule at `index`: `PUT …/autopilot/rules/:index` with `{ text, expectedText? }` (a server that announces
+   * `SERVER_FEATURE_AUTOPILOT_RULES`; an older one answers 404). `expectedText` is the rule as the author saw it: when the rule is no longer
+   * that, nothing is written and the server answers 409 `rule_changed`. Answers the snapshot, like `configureAutopilot`; a rule it refuses
+   * is a `ServerRequestError` with the status and the code of the server (`rule_empty`, `rule_too_long`, `rule_duplicate`, `rule_not_found`).
+   */
+  updateRule(bookId: string, index: number, text: string, expectedText?: string): Promise<AutopilotSnapshot> {
+    const body: UpdateAutopilotRuleRequest = { text, ...(expectedText === undefined ? {} : { expectedText }) };
+    return this.request("PUT", bookRoute(bookId, `/autopilot/rules/${encodeURIComponent(String(index))}`), body);
+  }
+
+  /** Remove the permanent rule at `index`, with the same check of `expectedText` (in the query): `DELETE …/autopilot/rules/:index?expectedText=…`. Answers the snapshot. */
+  removeRule(bookId: string, index: number, expectedText?: string): Promise<AutopilotSnapshot> {
+    const query = expectedText === undefined ? "" : `?expectedText=${encodeURIComponent(expectedText)}`;
+    return this.request("DELETE", bookRoute(bookId, `/autopilot/rules/${encodeURIComponent(String(index))}${query}`));
   }
 
   intervene(bookId: string, input: InterventionInput): Promise<AutopilotSnapshot> {

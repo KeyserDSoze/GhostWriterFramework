@@ -131,6 +131,27 @@ export interface PlannedChapter {
    * "before" synopsis of the next chapter; a later re-consolidation of an earlier chapter clears it.
    */
   storySoFarAtClose?: string;
+  /**
+   * The rounds of review of this chapter that closed, oldest first, at most `MAX_CHAPTER_ROUNDS`: a compact history that outlives the
+   * chapter's review (`AutopilotState.review` is the round in progress, and is cleared when the chapter closes). A chapter that is
+   * rewritten adds the rounds of its new review; the oldest leave when there are too many. Absent for a chapter that was never reviewed.
+   */
+  rounds?: ChapterRound[];
+}
+
+/**
+ * One round of review that closed, as the director judged it. Every field is optional: a round whose readers did not read has no
+ * `readers`. The votes are on the 0-10 scale with one decimal at most, the counters are whole numbers.
+ */
+export interface ChapterRound {
+  /** The director's vote. */
+  director?: number;
+  /** The average of the simulated readers' votes. They read a chapter once, in the first round of its review: later rounds have none. */
+  readers?: number;
+  /** Findings the director accepted (and fixes it added) in this round. */
+  accepted?: number;
+  /** Findings the director rejected. */
+  rejected?: number;
 }
 
 export interface ReaderReaction {
@@ -268,6 +289,75 @@ export interface AutopilotStats {
   usageUnknownCalls?: number;
   /** Calls whose cost could not be measured (the model has no price, or the tokens were estimated): `cost` leaves them out or estimates them. */
   costUnknownCalls?: number;
+  /**
+   * Milliseconds the autopilot worked, over every run: the sum of the durations of the steps that were saved (each from its start to its end,
+   * as its activity shows). Not the wait for the author, not the pauses between runs, not the attempts that failed or the waits between
+   * retries. Whole and not negative; absent from the state of an engine that did not count it, and then it counts from zero.
+   */
+  workedMs?: number;
+}
+
+/** The director's judgement of the whole book, as data: what the final step saved. */
+export interface AutopilotFinalReview {
+  /** `approve`, or `revise` for anything else (a withheld approval, a rewrite). */
+  verdict: "approve" | "revise";
+  /** 0-10, normalized like the score of a chapter. */
+  score: number;
+  /** The director's judgement in words (at most `FINAL_REVIEW_TEXT_CHARACTERS`; the summary of the state carries `FINAL_REVIEW_SUMMARY_CHARACTERS`). */
+  text: string;
+  /** When the director gave it. */
+  at: string;
+}
+
+/**
+ * What went wrong, in a closed list a client can act on: `network` (the provider could not be reached), `auth` (401, 403: a key or a
+ * permission), `rate_limit` (429), `timeout` (the request ran out of time, 408), `truncated` (the reply was cut by the output limit),
+ * `refused` (nothing was called: the privacy setting for fallbacks, or no model for the task), `conflict` (a file changed under the step),
+ * `budget` (the routing limits leave nothing to call), `limit` (a limit of the run or of the context window), `profile` (a file of the book,
+ * a profile or a chapter, that cannot be read: the author fixes it), `provider` (any other failure of the provider or of its reply) and
+ * `unknown` (everything else).
+ */
+export type AutopilotErrorKind = "network" | "auth" | "rate_limit" | "timeout" | "truncated" | "refused" | "conflict" | "budget" | "limit" | "profile" | "provider" | "unknown";
+
+export const AUTOPILOT_ERROR_KINDS: readonly AutopilotErrorKind[] = ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "provider", "unknown"];
+
+/** Where an error happened. Short, and never a secret: `endpoint` is the origin of the provider's address, never a path or a query. */
+export interface AutopilotErrorDetail {
+  /** The HTTP status the provider answered, when it answered. */
+  status?: number;
+  /** The origin (`https://api.openai.com`) of the integration that was called. */
+  endpoint?: string;
+  model?: string;
+  provider?: string;
+  /** The id of the integration. */
+  integration?: string;
+  /** The retry this failure belongs to: the one that followed it, or the last one when the run gave up. Present only for a failure that is retried. */
+  attempt?: number;
+  /** How many retries this kind of failure gets. */
+  retries?: number;
+}
+
+/** A failure the run could not get past: what it said, when, in which step, and what kind it was. */
+export interface AutopilotLastError {
+  message: string;
+  at: string;
+  task?: AutopilotTaskKind;
+  errorKind?: AutopilotErrorKind;
+  errorDetail?: AutopilotErrorDetail;
+}
+
+/** The last error as the summary says it: the state's own fields, and the same kind and detail under their short names. */
+export interface AutopilotLastErrorSummary extends AutopilotLastError {
+  kind?: AutopilotErrorKind;
+  detail?: AutopilotErrorDetail;
+}
+
+/** While the run waits to try a failed step again: when the next attempt is, which retry it is and how many there are. Never saved. */
+export interface AutopilotRetryInfo {
+  /** ISO time of the next attempt. */
+  at: string;
+  attempt: number;
+  retries: number;
 }
 
 export interface AutopilotState {
@@ -283,6 +373,11 @@ export interface AutopilotState {
   revision: RevisionRequest | null;
   /** The director's final review of the whole book has been written. */
   finalDone: boolean;
+  /**
+   * What the director said of the whole book when the final step was done. Absent until then, and again when the book is not complete
+   * any more (its chapters were extended, or a rewrite reopened it): nobody has judged it as it is now.
+   */
+  finalReview?: AutopilotFinalReview;
   /** Permanent author rules ("from now on"). */
   constraints: string[];
   interventions: AuthorIntervention[];
@@ -293,7 +388,7 @@ export interface AutopilotState {
   stats: AutopilotStats;
   /** Short human message about the current status ("Plan ready for review"). */
   message: string | null;
-  lastError: { message: string; at: string; task?: AutopilotTaskKind } | null;
+  lastError: AutopilotLastError | null;
   createdAt: string;
   updatedAt: string;
   /** Incremented at every saved change of this file. */
@@ -327,6 +422,10 @@ export interface AutopilotActivity {
   usage?: AiUsage;
   cost?: number;
   error?: string;
+  /** What kind of failure `error` is (set with it, never on a step the author cancelled). */
+  errorKind?: AutopilotErrorKind;
+  /** Where it happened, and how far the retries got. */
+  errorDetail?: AutopilotErrorDetail;
   interventionIds?: string[];
   host?: "browser" | "server";
 }
@@ -357,7 +456,8 @@ export type AutopilotMessageCode =
  * `chapterPause`: the author asked to pause at the end of the chapter and the chapter is closed; `stepLimit` and
  * `chapterLimit`: the steps or the chapters the run was limited to are done).
  * A `failureRetry` insight carries `attempt` (the retry about to happen), `retries` (how many this kind of failure
- * allows) and `waitMs` (how long the runner waits first).
+ * allows) and `waitMs` (how long the runner waits first); while it waits, the `state` events carry the same in `summary.retry`
+ * (with the time of the next attempt), and one more `state` event says that nothing waits any more.
  */
 export type AutopilotEventBody =
   | { type: "run-started"; runId: string; host: "browser" | "server" }
@@ -408,12 +508,15 @@ export interface AutopilotStateSummary {
   message: string | null;
   progress: AutopilotProgress;
   question: DirectorQuestion | null;
-  lastError: AutopilotState["lastError"];
+  /** The last error with its kind and detail, the state's `errorKind` and `errorDetail` also under the names `kind` and `detail`. */
+  lastError: AutopilotLastErrorSummary | null;
   runner: AutopilotRunnerInfo | null;
   stats: AutopilotStats;
   pendingNotes: number;
   constraints: number;
   updatedAt: string;
+  /** What the director said of the whole book (the text at most `FINAL_REVIEW_SUMMARY_CHARACTERS` long). Absent until the final step is done, and when the book was reopened. */
+  finalReview?: AutopilotFinalReview;
   /**
    * Not saved: what only a live session knows, so it is absent from a summary made from the state file alone. The pause the author
    * asked for that the run has not reached yet; `null` when none waits. It changes without the state being written, so `updatedAt`
@@ -424,6 +527,12 @@ export interface AutopilotStateSummary {
   limits?: AutopilotLimitsSummary | null;
   /** Derived, not saved: where the book is published now (`effectivePublish` of the options and of the host's default). */
   publish?: AutopilotPublishMode;
+  /**
+   * Not saved, and absent when nothing waits: while the run waits to try a failed step again, when the next attempt is and which retry it
+   * is, so that a client can count down. Every change of it is a `state` event: it appears when the wait begins and goes when the attempt
+   * starts (or the run ends). Absent from a summary made from the state file alone.
+   */
+  retry?: AutopilotRetryInfo;
 }
 
 /** What a client needs to render the autopilot of one book. */

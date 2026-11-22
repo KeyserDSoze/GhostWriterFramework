@@ -11,6 +11,7 @@ import { randomId } from "../util/hash.js";
 import { StructuredReplyError } from "../util/json.js";
 import { currentRequest, unescapePromptDataDeep } from "../prompt/trust.js";
 import { isItalian, languageCode, tail, truncate } from "../util/text.js";
+import { autopilotErrorFields } from "./errors.js";
 import { advanceState, extensionNote, nextStep, phaseOf, type PlanNote, type PlannerContext, type TaskDescriptor } from "./planner.js";
 import { profileProblems, profileProblemsMessage, profileProblemsTitle } from "./profile-check.js";
 import {
@@ -40,6 +41,7 @@ import {
   type AutopilotMessageCode,
   type AutopilotPausePending,
   type AutopilotPublishMode,
+  type AutopilotRetryInfo,
   type AutopilotRunLimits,
   type AutopilotState,
   type AutopilotStateSummary,
@@ -177,6 +179,7 @@ function applyRewrite(next: AutopilotState, text: string, at: string): void {
       next.revision = { id: randomId("revision"), instruction: text, createdAt: at, targets: null, cursor: 0, ...(revisedChapters.length ? { revisedChapters } : {}) };
     }
     next.finalDone = false;
+    delete next.finalReview;
   } else if (next.plan) {
     // A new note concerns the whole book: the batches an earlier revision still had to regenerate are no longer the only ones.
     const { revisionBatches: _batches, ...plan } = next.plan;
@@ -243,7 +246,7 @@ function withoutLiveOptions(options: AutopilotState["options"]): unknown {
 
 /** The state without what only the author changes and what every write changes: what is left must be the same before and after. */
 function withoutAuthorParts(state: AutopilotState): unknown {
-  const { version: _version, updatedAt: _updatedAt, interventions: _interventions, constraints: _constraints, revision: _revision, finalDone: _finalDone, options, plan, runner, ...rest } = state;
+  const { version: _version, updatedAt: _updatedAt, interventions: _interventions, constraints: _constraints, revision: _revision, finalDone: _finalDone, finalReview: _finalReview, options, plan, runner, ...rest } = state;
   return {
     ...rest,
     options: withoutLiveOptions(options),
@@ -293,8 +296,10 @@ export function extendPlanIfNeeded(state: AutopilotState): AutopilotState {
   const plan = state.plan;
   if (!plan?.approved || plan.chapters.length >= state.brief.targetChapters) return state;
   if (!plan.chapters.every((chapter) => chapter.status === "done")) return state;
+  // The book is not complete any more: nobody has judged it as it is going to be.
+  const { finalReview: _finalReview, ...reopened } = state;
   return {
-    ...state,
+    ...reopened,
     finalDone: false,
     plan: {
       ...plan,
@@ -380,6 +385,36 @@ function dependsOnTheMoment(error: unknown): boolean {
   if (error.transient === true) return true;
   if (typeof error.status === "number") return TIME_DEPENDENT_STATUSES.has(error.status);
   return TIME_DEPENDENT_WORDS.test(error.message);
+}
+
+/** What a failed step is owed: the retry it gets, if any, and how far the retries of its kind have got. */
+interface RetryPlan {
+  kind: "boost" | "transient" | "rejected" | "other";
+  /** What the failure says (redacted), remembered to tell the same failure twice in a row. */
+  message: string;
+  /** Whether the retry is granted: the failure is not one that repeats, and the retries of its kind are not used up. */
+  granted: boolean;
+  /** The retry this failure belongs to: the one that follows it, or the last one made when none does. */
+  attempt: number;
+  /** How many retries this kind of failure gets. */
+  retries: number;
+}
+
+/**
+ * The retry a failure gets, from what the run has used so far (`transient` retries of a provider failure, `other` retries of anything else,
+ * and the last failure's words). Pure: the run applies it, and the same plan is what the failed activity and `lastError` say.
+ * `null` for a failure that is never retried.
+ */
+function planRetry(error: unknown, used: { transient: number; other: number; lastFailure: string }): RetryPlan | null {
+  const kind = retryKindOf(error);
+  if (!kind) return null;
+  const message = describeError(error);
+  if (kind === "boost") return { kind, message, granted: true, attempt: 1, retries: 1 };
+  const repeated = used.lastFailure === message && !dependsOnTheMoment(error);
+  const made = kind === "transient" ? used.transient : used.other;
+  const retries = kind === "transient" ? MAX_TRANSIENT_RETRIES : 1;
+  const granted = !repeated && made < retries;
+  return { kind, message, granted, attempt: granted ? made + 1 : made, retries };
 }
 
 function formatWait(milliseconds: number): string {
@@ -524,6 +559,8 @@ export class AutopilotRun {
   private readonly outputBoosts = new Map<string, number>();
   /** The wait between two tries of a failed step, ended early by a pause. */
   private waiting: AbortController | null = null;
+  /** While the run waits to try a failed step again: when, and which retry. Told in the summary, never saved. */
+  private retry: AutopilotRetryInfo | null = null;
   /** The run already said that the money budget cannot apply to a model without a price. */
   private budgetWarned = false;
   /** What the planner reported during this run, so that each finding is said once however many steps it takes. */
@@ -597,14 +634,18 @@ export class AutopilotRun {
     return limits.length ? Math.min(...limits) : 0;
   }
 
-  /** What the run knows that the state file does not: the pause that waits, and the limits of the run with how far it got. A run that is over has neither. */
-  runtime(): { pausePending: AutopilotPausePending | null; limits: AutopilotLimitsSummary | null } {
+  /**
+   * What the run knows that the state file does not: the pause that waits, the limits of the run with how far it got, and the retry it is
+   * waiting for (only while it is). A run that is over has none of them.
+   */
+  runtime(): { pausePending: AutopilotPausePending | null; limits: AutopilotLimitsSummary | null; retry?: AutopilotRetryInfo } {
     if (this.closed) return { pausePending: null, limits: null };
     const steps = this.limits.steps ?? 0;
     const chapters = this.chaptersLimit(this.known?.options.chaptersPerRun ?? 0);
     return {
       pausePending: this.pausePending,
       limits: steps || chapters ? { ...(steps ? { steps } : {}), ...(chapters ? { chapters } : {}), stepsDone: this.stepsThisRun, chaptersDone: this.chaptersThisRun } : null,
+      ...(this.retry ? { retry: this.retry } : {}),
     };
   }
 
@@ -653,13 +694,18 @@ export class AutopilotRun {
     this.emit({ type: "insight", tone: note.tone, title: note.title, ...(note.detail ? { detail: note.detail } : {}) });
   }
 
-  /** Waits before a retry; `false` when a pause ended the wait (or came before it). A pause at the end of the chapter does not, for a step of the chapter. */
-  private async waitBeforeRetry(milliseconds: number): Promise<boolean> {
+  /**
+   * Waits before a retry; `false` when a pause ended the wait (or came before it). A pause at the end of the chapter does not, for a step of the chapter.
+   * While it waits the summary says when the next attempt is (`retry`, with a `state` event), and it says so no more once the wait is over.
+   */
+  private async waitBeforeRetry(milliseconds: number, state: AutopilotState, retry: { attempt: number; retries: number }): Promise<boolean> {
     if (this.stopRequested || this.controller.signal.aborted || (this.chapterStopRequested && !this.inChapter)) return false;
     const waiting = new AbortController();
     const onStop = () => waiting.abort();
     this.controller.signal.addEventListener("abort", onStop, { once: true });
     this.waiting = waiting;
+    this.retry = { at: new Date(this.now().getTime() + Math.max(0, milliseconds)).toISOString(), attempt: retry.attempt, retries: retry.retries };
+    this.emit({ type: "state", state: this.summarize(state) });
     try {
       await sleep(milliseconds, waiting.signal);
       return true;
@@ -667,6 +713,7 @@ export class AutopilotRun {
       return false;
     } finally {
       this.waiting = null;
+      this.retry = null;
       this.controller.signal.removeEventListener("abort", onStop);
     }
   }
@@ -791,7 +838,7 @@ export class AutopilotRun {
         break;
       }
       if (steps > runStepCeiling(state)) {
-        state = await this.finish({ ...state, lastError: { message: "Too many steps in one run.", at: this.now().toISOString() } }, "error", "Too many steps in one run.");
+        state = await this.finish({ ...state, lastError: { message: "Too many steps in one run.", at: this.now().toISOString(), errorKind: "limit" } }, "error", "Too many steps in one run.");
         break;
       }
       let task: TaskDescriptor | null = null;
@@ -863,6 +910,7 @@ export class AutopilotRun {
         const correction = retry?.key === key ? retry : null;
         retry = null;
         const notes = task.acceptsNotes ? pendingNotes(state) : [];
+        const startedAt = this.now();
         const activity: AutopilotActivity = {
           id: randomId("activity"),
           runId: this.runId,
@@ -875,7 +923,7 @@ export class AutopilotRun {
           sceneNumber: task.sceneNumber,
           reader: task.readerName ?? task.reader,
           status: "running",
-          startedAt: this.now().toISOString(),
+          startedAt: startedAt.toISOString(),
           host: this.config.host,
           interventionIds: notes.map((note) => note.id),
         };
@@ -952,7 +1000,8 @@ export class AutopilotRun {
         let next: AutopilotState = {
           ...working,
           interventions: working.interventions.map((entry) => applied.has(entry.id) ? { ...entry, status: "applied" as const, appliedAt: finishedAt.toISOString(), appliedBy: activity.id } : entry),
-          stats: { ...withSpend(working.stats, spend), tasks: working.stats.tasks + 1 },
+          // The time of the step that is saved, from its start to its end (a clock that went back counts for nothing).
+          stats: { ...withSpend(working.stats, spend), tasks: working.stats.tasks + 1, workedMs: (working.stats.workedMs ?? 0) + Math.max(0, Math.round(finishedAt.getTime() - startedAt.getTime())) },
           runner: state.runner ? { ...state.runner, heartbeatAt: finishedAt.toISOString() } : null,
           lastError: null,
         };
@@ -1014,6 +1063,9 @@ export class AutopilotRun {
         const runAborted = this.controller.signal.aborted;
         const interrupted = this.interrupted && isAbortError(error) && !runAborted;
         this.interrupted = false;
+        // What the failure is owed is known before it is saved, so that its activity says how far the retries of its kind have got. A step the author cancelled is no failure.
+        const plan = isAbortError(error) ? null : planRetry(error, { transient: transientRetries, other: otherRetries, lastFailure });
+        const failure = isAbortError(error) ? {} : autopilotErrorFields(error, plan ? { attempt: plan.attempt, retries: plan.retries } : undefined);
         if (activity) {
           const spent = spentSomething(spend);
           const failed: AutopilotActivity = {
@@ -1021,6 +1073,7 @@ export class AutopilotRun {
             status: isAbortError(error) ? "cancelled" : "failed",
             endedAt: this.now().toISOString(),
             error: describeError(error),
+            ...failure,
             ...(spent ? { model: spend.model, provider: spend.provider, usage: spend.usage, cost: spend.cost || undefined } : {}),
           };
           this.emit({ type: "task-finished", activity: failed });
@@ -1038,47 +1091,41 @@ export class AutopilotRun {
           this.emit({ type: "insight", tone: "warning", code: "conflictRetry", title: "The book changed during the step: repeating it on the latest version.", detail: describeError(error) });
           continue;
         }
-        const kind = retryKindOf(error);
-        if (kind) {
-          const message = describeError(error);
-          const repeated = lastFailure === message && !dependsOnTheMoment(error);
-          lastFailure = message;
-          const granted = kind === "boost" || (!repeated && (kind === "transient" ? transientRetries < MAX_TRANSIENT_RETRIES : otherRetries < 1));
-          if (granted) {
+        if (plan) {
+          lastFailure = plan.message;
+          if (plan.granted) {
             const base = this.config.retryDelayMs ?? BASE_RETRY_DELAY_MS;
             const scale = base / BASE_RETRY_DELAY_MS;
-            let attempt = 1;
-            let retries = 1;
             let waitMs = Math.round(base);
             let title = "The step failed: retrying once.";
-            if (kind === "boost") {
+            if (plan.kind === "boost") {
               waitMs = 0;
               title = `The model used all its output tokens while reasoning: retrying once with a ${OUTPUT_BOOST}× larger limit.`;
-            } else if (kind === "transient") {
+            } else if (plan.kind === "transient") {
               transientRetries += 1;
-              attempt = transientRetries;
-              retries = MAX_TRANSIENT_RETRIES;
               const jitter = 0.75 + (this.config.random ?? Math.random)() * 0.5;
               const retryAfter = error instanceof AiProviderError && typeof error.retryAfterMs === "number" ? error.retryAfterMs : 0;
-              waitMs = Math.round(Math.max(BASE_RETRY_DELAY_MS * 3 ** (attempt - 1) * jitter * scale, retryAfter * scale));
-              title = `The step failed: retry ${attempt} of ${MAX_TRANSIENT_RETRIES} in ${formatWait(waitMs)}.`;
+              waitMs = Math.round(Math.max(BASE_RETRY_DELAY_MS * 3 ** (plan.attempt - 1) * jitter * scale, retryAfter * scale));
+              title = `The step failed: retry ${plan.attempt} of ${MAX_TRANSIENT_RETRIES} in ${formatWait(waitMs)}.`;
             } else {
               otherRetries += 1;
             }
             const note = retryNoteFor(error);
             if (task && note && lastLabel) retry = { key: taskKey(task), label: lastLabel, note };
-            this.emit({ type: "insight", tone: "warning", code: "failureRetry", title, detail: message, attempt, retries, waitMs });
-            if (!(await this.waitBeforeRetry(waitMs))) {
+            this.emit({ type: "insight", tone: "warning", code: "failureRetry", title, detail: plan.message, attempt: plan.attempt, retries: plan.retries, waitMs });
+            if (!(await this.waitBeforeRetry(waitMs, state, plan))) {
               state = await this.finish(state, "paused", null);
               break;
             }
+            // The attempt starts now: nothing waits any more.
+            this.emit({ type: "state", state: this.summarize(state) });
             continue;
           }
         }
         state = await this.finish({
           ...state,
           stats: { ...state.stats, failures: state.stats.failures + 1 },
-          lastError: { message: describeError(error), at: this.now().toISOString(), task: task?.kind },
+          lastError: { message: describeError(error), at: this.now().toISOString(), task: task?.kind, ...failure },
         }, "error", describeError(error));
         break;
       } finally {

@@ -73,7 +73,7 @@ import {
   specialistsSystemPrompt,
   writerSystemPrompt,
 } from "./prompts.js";
-import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES } from "./state.js";
+import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES, closedRound, normalizeFinalReview, recordChapterRound } from "./state.js";
 import { STORY_SO_FAR_MAX_WORDS, STORY_SO_FAR_TARGET_WORDS, pruneStorySnapshots, readStorySoFar, renderTotalResumeBody, storySoFarExcess } from "./story-so-far.js";
 import type { AuthorIntervention, AutopilotPlan, AutopilotState, InsightTone, PlannedChapter, PlannedScene, ReviewDecision, ReviewFinding, RevisionRequest } from "./types.js";
 
@@ -610,7 +610,9 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
   const known = new Map((previous?.chapters ?? []).map((chapter) => [chapter.slug, chapter]));
   const imported = importedChapters(ctx.snapshot).map((chapter) => {
     const earlier = known.get(chapter.slug);
-    return earlier?.storySoFarAtClose ? { ...chapter, storySoFarAtClose: earlier.storySoFarAtClose, ...(earlier.score !== undefined ? { score: earlier.score } : {}) } : chapter;
+    const kept = earlier?.storySoFarAtClose ? { ...chapter, storySoFarAtClose: earlier.storySoFarAtClose, ...(earlier.score !== undefined ? { score: earlier.score } : {}) } : chapter;
+    // The history of the rounds of a chapter that was reviewed outlives the plan being made again around it (the book is being extended).
+    return earlier?.rounds?.length ? { ...kept, rounds: earlier.rounds } : kept;
   });
   const range = planRange(imported, ctx.state.brief.targetChapters);
   const batch = nextPlanBatch(previous, range);
@@ -1384,6 +1386,8 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   review.score = score;
   review.summary = summaryText;
   review.repairQueue = [...new Set(accepted.map((decision) => decision.sceneNumber!))].sort((left, right) => left - right);
+  // The readers read the chapter once, in the first round of its review: their average is in the record of that round and of no other.
+  recordChapterRound(chapter, closedRound({ director: score, readers: review.history.length === 0 ? review.readerScores.map((entry) => entry.score) : undefined, accepted: accepted.length, rejected: rejected.length }));
   review.history = [...review.history, { round: review.round, verdict, score, accepted: accepted.length, rejected: rejected.length }];
   ctx.state.directorNotes = mergeNotes(ctx.state.directorNotes, asStringList(output.guidance, 6));
   const question = asRecord(output.questionForAuthor);
@@ -1709,6 +1713,9 @@ async function runFinal(ctx: TaskContext): Promise<TaskResult> {
     instruction: "Every chapter has been approved: judge the arcs, the promises made to the reader, the open threads and the ending, and list what the author should still consider.",
   });
   ctx.state.finalDone = true;
+  const finalReview = normalizeFinalReview({ verdict: result.opinion.verdict === "approve" ? "approve" : "revise", score: result.opinion.score, text: result.opinion.summary, at: result.opinion.createdAt });
+  if (finalReview) ctx.state.finalReview = finalReview;
+  else delete ctx.state.finalReview;
   const change = await changeFor(ctx, result.path, () => renderDirectorOpinion(result.opinion, ctx.language));
   ctx.insight(result.opinion.verdict === "approve" ? "ok" : "warning", isItalian(ctx.language) ? `Giudizio finale del direttore: ${result.opinion.score}/10` : `Director's final judgement: ${result.opinion.score}/10`, result.opinion.summary);
   return { changes: compact([change]), summary: `${result.opinion.verdict} ${result.opinion.score}/10 — ${result.opinion.summary}` };
