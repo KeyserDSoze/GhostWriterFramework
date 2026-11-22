@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SecretInput } from "@/components/ui/secret-input";
 import { PersonalServerSettingsBody } from "@/components/settings/PersonalServerSettingsBody";
+import { IntegrationRequestFields } from "@/components/settings/IntegrationRequestFields";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
@@ -525,7 +526,7 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
         )}
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid items-start gap-3 sm:grid-cols-2">
         {usesEndpoint && (
           <div className="grid gap-2 sm:col-span-2">
             <Label htmlFor={`${id}-endpoint`}>{t("settings.endpoint")}</Label>
@@ -548,7 +549,7 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
           </div>
         )}
         {integration.provider !== "m365_copilot" && (
-          <TokenLimitField label={t("settings.requestTimeoutMs")} value={integration.requestTimeoutMs} onChange={(requestTimeoutMs) => onChange({ requestTimeoutMs })} />
+          <IntegrationRequestFields integration={integration} onChange={onChange} />
         )}
         {usesMedia && (
           <>

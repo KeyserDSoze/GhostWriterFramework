@@ -206,7 +206,6 @@ const PROVIDERS: ProviderCase[] = [
 ];
 
 function expectedBody(family: Family, shape: Shape, model: string) {
-  const streamed = shape.stream && !shape.json;
   const asksInThePrompt = shape.json && !shape.tools;
   return {
     model,
@@ -217,7 +216,9 @@ function expectedBody(family: Family, shape: Shape, model: string) {
     [family.limit]: (shape.json ? 4096 : 1000) + family.margin,
     ...(family.temperature ? { temperature: 0.4 } : {}),
     ...(shape.json && shape.tools ? { tools: [{ type: "function", function: SCHEMA }], tool_choice: "required" } : {}),
-    ...(streamed ? { stream: true, stream_options: { include_usage: true } } : {}),
+    // Every chat request streams, structured ones included (the integration's `streamMode` is "auto"): a slow model keeps the connection alive.
+    stream: true,
+    stream_options: { include_usage: true },
   };
 }
 
@@ -235,12 +236,11 @@ describe("autopilot calls reach the provider exactly as the personal server's do
         expectSameRun(browser, server);
         expect(browser.calls).toHaveLength(1);
         const [call] = browser.calls;
-        const streamed = shape.stream && !shape.json;
         expect(call.method).toBe("POST");
         expect(call.url).toBe(provider.url(model));
         expect(call.headers).toEqual({
           "content-type": "application/json",
-          accept: streamed ? "text/event-stream" : "application/json",
+          accept: "text/event-stream",
           ...(fixture.endpoint.auth === "api-key" ? { "api-key": fixture.endpoint.apiKey } : { authorization: `Bearer ${fixture.endpoint.apiKey}` }),
         });
         expect(call.body).toEqual(expectedBody(family, shape, model));
@@ -253,7 +253,7 @@ describe("autopilot calls reach the provider exactly as the personal server's do
         expect(response.provider).toBe(fixture.integration.provider);
         expect(response.usage).toEqual({ inputTokens: 120, outputTokens: 30, cachedInputTokens: 20 });
         expect(response.cost).toBeCloseTo((100 * 2 + 20 * 1 + 30 * 8) / 1_000_000, 10);
-        if (streamed) expect(browser.progress[browser.progress.length - 1]).toBe("The scene.");
+        if (shape.stream && !shape.json) expect(browser.progress[browser.progress.length - 1]).toBe("The scene.");
       });
     });
   });
@@ -464,7 +464,7 @@ describe("autopilot calls end as they do on the personal server", () => {
       const outcome = await run.outcome;
       expect(errorOf(outcome)).toBeInstanceOf(AiProviderError);
       expect(errorOf(outcome)).toMatchObject({ timedOut: true, retryable: true, transient: true });
-      expect(errorOf(outcome).message).toMatch(/timed out/);
+      expect(errorOf(outcome).message).toMatch(/did not start answering within 600 s/);
     });
 
     it.each(["browser", "server"] as const)("%s: the integration's own timeout wins", async (host) => {

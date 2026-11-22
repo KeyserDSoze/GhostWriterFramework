@@ -202,6 +202,16 @@ In **AI Router**, each task can have a primary integration/model and ordered fal
 
 Browser TTS and STT are virtual Router integrations and do not consume AI tokens.
 
+## Timeouts and streaming
+
+Every integration in **AI Integrations** has three settings that decide how long a slow model is given. The autopilot uses them, in the browser and on your personal server (they go with your AI configuration, so send it again after a change).
+
+- **Provider timeout (ms)**: how long the provider may take to start answering. The minimum is 30,000 ms (a lower value is raised to it, and the setting keeps what you wrote) and empty means 600,000 ms (10 minutes). Copilot, voice and images count it as the time of the whole request instead, 60,000 ms when it is empty.
+- **Idle timeout (ms)**: the longest silence between two pieces of a streamed reply, from 30,000 to 3,600,000 ms; empty means 600,000 ms. Every piece that arrives starts the count again, so a model that keeps writing is never cut off, however long it takes (one call lasts four hours at most). It is not used while Streaming is Off.
+- **Streaming**: with **Automatic (recommended)** every reply of the autopilot arrives in pieces, the structured ones too, so a slow model is not cut off by a proxy or a tunnel that closes a connection that stays silent. Choose **Off** only if the provider refuses streamed replies together with function calls: its error is a 400 that mentions stream, and the message tells you to set **Streaming** of the integration to off. With Off the whole reply has to arrive within the provider timeout.
+
+When a step fails because the response was too slow, the technical details of the error say which wait ran out and which of these settings to change. A personal server older than 0.1.7 does not know **Idle timeout (ms)** and **Streaming**: it waits as it always did until you update it (**Version and updates** in **Settings → Personal server**).
+
 ## Costs
 
 When pricing is configured in AI Integrations, Narrarium records input, cached-input and output tokens plus media costs. Reader evaluations save their own provider/model/token/cost metadata while using the same cost engine.
@@ -222,6 +232,16 @@ Crea un PAT GitHub abilitato a GitHub Models, aggiungi un'integrazione **GitHub 
 In **AI Router**, ogni task può avere integrazione/modello primario e fallback ordinati. I task includono Copilot, review, task semplici, resume chat, deep research, valutazione lettore, sintesi valutazioni, TTS, STT e immagini.
 
 TTS e STT browser sono integrazioni virtuali del Router e non consumano token AI.
+
+## Timeout e streaming
+
+Ogni integrazione in **Integrazioni AI** ha tre impostazioni che decidono quanto tempo ha un modello lento. Le usa l'autopilot, nel browser e sul tuo server personale (viaggiano con la configurazione AI, quindi dopo una modifica inviala di nuovo).
+
+- **Timeout provider (ms)**: quanto tempo può impiegare il provider per cominciare a rispondere (nei messaggi di errore si chiama *Provider timeout*). Il minimo è 30.000 ms (un valore più basso viene portato a quel minimo, e l'impostazione conserva quello che hai scritto) e vuoto significa 600.000 ms (10 minuti). Copilot, voce e immagini lo contano invece come tempo dell'intera richiesta, 60.000 ms se è vuoto.
+- **Inattività massima (ms)**: il silenzio più lungo ammesso tra due pezzi di una risposta in streaming (nei messaggi di errore si chiama *Idle timeout*), da 30.000 a 3.600.000 ms; vuoto significa 600.000 ms. Ogni pezzo che arriva fa ripartire il conteggio, quindi un modello che continua a scrivere non viene mai interrotto, per quanto ci metta (una chiamata dura al massimo quattro ore). Non vale quando Streaming è Spento.
+- **Streaming**: con **Automatico (consigliato)** ogni risposta dell'autopilot arriva a pezzi, anche quelle strutturate, così un modello lento non viene interrotto da un proxy o da un tunnel che chiude una connessione rimasta in silenzio. Scegli **Spento** solo se il provider rifiuta le risposte in streaming insieme alle chiamate di funzione: il suo errore è un 400 che parla di stream, e il messaggio ti dice di portare **Streaming** dell'integrazione su off. Con Spento l'intera risposta deve arrivare entro il timeout provider.
+
+Quando un passo fallisce perché la risposta è stata troppo lenta, i dettagli tecnici dell'errore dicono quale attesa è scaduta e quale di queste impostazioni cambiare. Un server personale più vecchio della 0.1.7 non conosce **Inattività massima (ms)** e **Streaming**: aspetta come ha sempre fatto finché non lo aggiorni (**Versione e aggiornamenti** in **Impostazioni → Server personale**).
 
 ## Costi
 
@@ -452,7 +472,7 @@ When the book is complete, a card under the band, **How the book turned out**, s
 
 ## When something goes wrong
 
-When a step fails and the autopilot is going to try again, or when it stops on an error, one panel under the band says what happened. It has a title: Connection problem, Access refused by the provider, Too many requests, The response was too slow, Response cut off by the output limit, The provider refused the request, The book changed elsewhere, Budget reached, Limit reached, A profile file has problems, Provider error or Error. It says what that means, how many times the step failed in a row (said once, not once for each attempt) and where it happened: the endpoint, the model, the provider, the integration, the HTTP status and which retry. While the autopilot waits to try again by itself, a countdown says when the next attempt is; a screen reader is told only when it begins and when it ends. **Retry now** resumes the run, **Open AI Integrations** goes to where the key, the model and the limits are, an error that names a file of the book has **Open the file**, and **Copy diagnostics** copies a short text, with no key, no path of your computer and nothing of the book, to send to whoever helps you. The words of the provider are under **Technical details**.
+When a step fails and the autopilot is going to try again, or when it stops on an error, one panel under the band says what happened. It has a title: Connection problem, Access refused by the provider, Too many requests, The response was too slow, Response cut off by the output limit, The provider refused the request, The book changed elsewhere, Budget reached, Limit reached, A profile file has problems, Provider error or Error. It says what that means, how many times the step failed in a row (said once, not once for each attempt) and where it happened: the endpoint, the model, the provider, the integration, the HTTP status and which retry. While the autopilot waits to try again by itself, a countdown says when the next attempt is; a screen reader is told only when it begins and when it ends. **Retry now** resumes the run, **Open AI Integrations** goes to where the key, the model and the limits are, an error that names a file of the book has **Open the file**, and **Copy diagnostics** copies a short text, with no key, no path of your computer and nothing of the book, to send to whoever helps you. The words of the provider are under **Technical details**. For a response that was too slow they say which wait ran out; the settings to change, **Provider timeout (ms)**, **Idle timeout (ms)** and **Streaming**, are in the card of the integration in **AI Integrations**.
 
 ## Follow and intervene
 
@@ -527,7 +547,7 @@ Quando il libro è completo, una scheda sotto la fascia, **Com'è venuto il libr
 
 ## Quando qualcosa va storto
 
-Quando un passo fallisce e l'autopilot sta per riprovare, o quando si ferma per un errore, un solo pannello sotto la fascia dice cosa è successo. Ha un titolo: Problema di connessione, Accesso rifiutato dal provider, Troppe richieste, Risposta troppo lenta, Risposta troncata dal limite di output, Il provider ha rifiutato la richiesta, Il libro è cambiato altrove, Budget raggiunto, Limite raggiunto, Un file del profilo ha problemi, Errore del provider o Errore. Dice cosa significa, quante volte di fila il passo non è riuscito (detto una volta sola, non una per ogni tentativo) e dove è successo: l'indirizzo, il modello, il provider, l'integrazione, lo stato HTTP e quale tentativo era. Mentre l'autopilot aspetta per riprovare da solo, un conto alla rovescia dice quando parte il prossimo tentativo; un lettore di schermo lo sente solo quando comincia e quando finisce. **Riprova ora** riprende la corsa, **Apri le integrazioni AI** porta dove stanno la chiave, il modello e i limiti, un errore che nomina un file del libro ha **Apri il file**, e **Copia la diagnostica** copia un breve testo, senza chiavi, senza percorsi del tuo computer e senza nulla del libro, da mandare a chi ti aiuta. Le parole del provider sono sotto **Dettagli tecnici**.
+Quando un passo fallisce e l'autopilot sta per riprovare, o quando si ferma per un errore, un solo pannello sotto la fascia dice cosa è successo. Ha un titolo: Problema di connessione, Accesso rifiutato dal provider, Troppe richieste, Risposta troppo lenta, Risposta troncata dal limite di output, Il provider ha rifiutato la richiesta, Il libro è cambiato altrove, Budget raggiunto, Limite raggiunto, Un file del profilo ha problemi, Errore del provider o Errore. Dice cosa significa, quante volte di fila il passo non è riuscito (detto una volta sola, non una per ogni tentativo) e dove è successo: l'indirizzo, il modello, il provider, l'integrazione, lo stato HTTP e quale tentativo era. Mentre l'autopilot aspetta per riprovare da solo, un conto alla rovescia dice quando parte il prossimo tentativo; un lettore di schermo lo sente solo quando comincia e quando finisce. **Riprova ora** riprende la corsa, **Apri le integrazioni AI** porta dove stanno la chiave, il modello e i limiti, un errore che nomina un file del libro ha **Apri il file**, e **Copia la diagnostica** copia un breve testo, senza chiavi, senza percorsi del tuo computer e senza nulla del libro, da mandare a chi ti aiuta. Le parole del provider sono sotto **Dettagli tecnici**. Per una risposta troppo lenta dicono quale attesa è scaduta; le impostazioni da cambiare, **Timeout provider (ms)**, **Inattività massima (ms)** e **Streaming**, sono nella scheda dell'integrazione in **Integrazioni AI**.
 
 ## Seguire e intervenire
 

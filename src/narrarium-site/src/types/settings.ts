@@ -105,8 +105,23 @@ export interface AIIntegration {
   endpoint?: string;
   /** Not used by Microsoft 365 Copilot. */
   apiKey: string;
-  /** Maximum duration of one provider request before the router tries its next candidate. */
+  /**
+   * Maximum duration of one provider request before the router tries its next candidate. For the autopilot it is how long the
+   * provider may take to start answering: at least 30 000 ms (a lower value is raised to it when the call is made) and, when
+   * empty, 600 000 ms.
+   */
   requestTimeoutMs?: number;
+  /**
+   * Autopilot: the longest silence between two pieces of a streamed reply, in milliseconds, kept between 30 000 and 3 600 000.
+   * Empty: 600 000. It does not apply when `streamMode` is `off`.
+   */
+  idleTimeoutMs?: number;
+  /**
+   * Autopilot: whether replies are asked for in pieces. Empty or `auto` (recommended): every request streams, the structured ones
+   * included, so a slow model is never silent. `off` is for a provider that refuses streamed replies with function calls (HTTP 400
+   * that mentions stream); the reply then arrives whole, within the provider timeout.
+   */
+  streamMode?: "auto" | "off";
   /**
    * Chat models offered by this integration, each with its own roles and pricing.
    * Replaces the single modelWriting/modelReview fields (kept below for back-compat).
