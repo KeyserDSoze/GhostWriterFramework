@@ -4,7 +4,7 @@ import { AlertTriangle, Ban, CheckCircle2, Cloud, Flag, Info, Loader2, Play, Spa
 import type { AutopilotEvent, AutopilotStatus } from "narrarium-engine";
 import { Badge } from "@/components/ui/badge";
 import { useElapsed } from "@/autopilot/hooks";
-import { TONE_BORDER, TONE_TEXT, STATUS_BADGE, formatClock, formatDuration, presentFeedEvent } from "@/autopilot/format";
+import { TONE_BORDER, TONE_TEXT, STATUS_BADGE, activityTitle, formatClock, formatDuration, presentFeedEvent } from "@/autopilot/format";
 import { useAutopilotStore, type LivePreview } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { cn } from "@/lib/utils";
@@ -33,7 +33,7 @@ export function AutopilotLiveCard({ preview, bookTitle, className }: { preview: 
         {bookTitle && <span className="min-w-0 truncate normal-case tracking-normal text-muted-foreground">· {bookTitle}</span>}
         <span className="ml-auto shrink-0 tabular-nums normal-case tracking-normal text-muted-foreground">{formatDuration(elapsed)}</span>
       </div>
-      <p className="mt-1.5 text-sm font-medium leading-snug">{activity.title}</p>
+      <p className="mt-1.5 text-sm font-medium leading-snug">{activityTitle(t, activity)}</p>
       {activity.reason && <p className="mt-1 text-xs text-muted-foreground"><span className="font-medium text-foreground/80">{t("autopilot.why")}:</span> {activity.reason}</p>}
       {activity.next && <p className="mt-0.5 text-xs text-muted-foreground"><span className="font-medium text-foreground/80">{t("autopilot.next")}:</span> {activity.next}</p>}
       {preview.preview && (
@@ -95,7 +95,7 @@ export function AutopilotFeed({ bookId, showBook = false, limit = 200, className
                 <EventIcon event={entry.event} className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", TONE_TEXT[view.tone])} />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm leading-snug">{view.text}</p>
-                  {view.detail && <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground">{view.detail}</p>}
+                  {view.detail && <p className={cn("mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground", !view.full && "line-clamp-3")}>{view.detail}</p>}
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
                     <span className="tabular-nums">{formatClock(entry.event.at)}</span>
                     {showBook && <span> · {titles.get(entry.event.bookId) ?? entry.bookTitle}</span>}

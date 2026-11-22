@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
-import { formatAgo, formatClock, formatCost, formatCount, formatDateTime } from "@/autopilot/format";
+import { formatAgo, formatClock, formatCost, formatCount, formatDateTime, formatSize } from "@/autopilot/format";
 
 const WHEN = "2026-11-21T14:05:09.000Z";
 
@@ -103,5 +103,31 @@ describe("what used to be written in one language only", () => {
   it.each(["en", "it"])("has a name in %s for the button that shows more activity", (language) => {
     expect(i18n.exists("autopilot.activity.more", { lng: language })).toBe(true);
     expect(i18n.t("autopilot.activity.more", { lng: language })).not.toBe("…");
+  });
+});
+
+describe("the size of a file, in the units a computer counts it in", () => {
+  const MIB = 1024 * 1024;
+
+  it.each([
+    ["en", 0, "0 B"],
+    ["en", 100, "100 B"],
+    ["en", 1023, "1,023 B"],
+    ["en", 1536, "1.5 KiB"],
+    ["en", 512 * 1024, "512 KiB"],
+    ["en", 10 * MIB, "10 MiB"],
+    ["it", 1536, "1,5 KiB"],
+    ["it", Math.round(1.5 * MIB), "1,5 MiB"],
+    ["it", 1500, "1,5 KiB"],
+  ])("in %s, %i bytes is “%s”", async (language, bytes, expected) => {
+    await i18n.changeLanguage(language);
+    expect(formatSize(bytes)).toBe(expected);
+  });
+
+  it("rounds up to a tenth, so a file over a limit never reads as exactly the limit", async () => {
+    await i18n.changeLanguage("en");
+    expect(formatSize(8 * MIB)).toBe("8 MiB");
+    expect(formatSize(8 * MIB + 1)).toBe("8.1 MiB");
+    expect(formatSize(1025)).toBe("1.1 KiB");
   });
 });

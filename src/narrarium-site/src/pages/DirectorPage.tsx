@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/components/ui/use-toast";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { FileChangedNotice } from "@/components/book/FileChangedNotice";
+import { ProfileWarnings, confirmProfileSave } from "@/components/book/ProfileWarnings";
 import { DirectorVerdictBadge } from "@/components/director/DirectorOpinionView";
 import { createBrowserBookStore } from "@/autopilot/browserStore";
 import { formatDateTime } from "@/autopilot/format";
@@ -120,11 +121,14 @@ export function DirectorPage() {
       toast({ title: t("director.saveFailed"), variant: "destructive" });
       return false;
     }
+    // The file is rewritten from the form: what the engine could not read of it would be lost.
+    if (!confirmProfileSave(t, current.warnings)) return false;
     setBusy(true);
     try {
       const { hash } = await saveDirectorProfile({ book, branch, profile: current, expectedHash: file.baseVersion() });
       file.adopt(hash);
       setSavedContent(renderDirectorFile(current, null));
+      setProfile((previous) => (previous ? { ...previous, warnings: [] } : previous));
       setExists(true);
       toast({ title: t("director.saved") });
       await reload();
@@ -181,6 +185,7 @@ export function DirectorPage() {
           <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div>
         ) : (
           <>
+            <ProfileWarnings warnings={profile.warnings} />
             {!exists && <Alert><AlertDescription>{t("director.defaults")}</AlertDescription></Alert>}
             <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
               <div className="space-y-1.5"><Label htmlFor="director-name">{t("director.name")}</Label><Input id="director-name" value={profile.name} onChange={(event) => patch({ name: event.target.value })} /></div>

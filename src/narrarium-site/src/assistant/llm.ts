@@ -297,7 +297,7 @@ export async function completeText(
         dangerouslyAllowBrowser: true,
       });
       if (options?.onText) {
-        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true }, ...completionTokenLimit(integration.provider, model, options.maxOutputTokens, options.underlyingModel) } as never, { signal: operation.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
+        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true }, ...completionTokenLimit(integration.provider, model, options.maxOutputTokens, options.underlyingModel, integration.apiVersion) } as never, { signal: operation.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
         let text = "";
         let usage: unknown;
         let filtered = false;
@@ -321,7 +321,7 @@ export async function completeText(
         if (filtered) throw new ContentFilteredCompletionError();
         return text;
       }
-      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never, ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel) }, { signal: operation.signal });
+      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never, ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel, integration.apiVersion) }, { signal: operation.signal });
       recordChatUsage(model, pricing, response.usage);
       reportUsage(response.usage);
       const text = response.choices[0]?.message?.content ?? "";
@@ -338,7 +338,7 @@ export async function completeText(
         dangerouslyAllowBrowser: true,
       });
       if (options?.onText) {
-        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true }, ...completionTokenLimit(integration.provider, model, options.maxOutputTokens, options.underlyingModel) } as never, { signal: operation.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
+        const stream = await client.chat.completions.create({ model, messages: normalizedMessages as never, stream: true, stream_options: { include_usage: true }, ...completionTokenLimit(integration.provider, model, options.maxOutputTokens, options.underlyingModel, integration.apiVersion) } as never, { signal: operation.signal }) as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string | null }; finish_reason?: string | null }>; usage?: unknown }>;
         let text = "";
         let usage: unknown;
         let filtered = false;
@@ -362,7 +362,7 @@ export async function completeText(
         if (filtered) throw new ContentFilteredCompletionError();
         return text;
       }
-      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never, ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel) }, { signal: operation.signal });
+      const response = await client.chat.completions.create({ model, messages: normalizedMessages as never, ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel, integration.apiVersion) }, { signal: operation.signal });
       recordChatUsage(model, pricing, response.usage);
       reportUsage(response.usage);
       const text = response.choices[0]?.message?.content ?? "";
@@ -414,7 +414,7 @@ export async function completeToolWith<T>(
       tools: [{ type: "function", function: tool }],
       // Only one tool is sent: "required" forces it on llama.cpp and LM Studio too, which ignore the named form.
       tool_choice: toolChoiceFor(integration, tool.name),
-      ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel),
+      ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel, integration.apiVersion),
     } as never, { signal: operation.signal });
     const usage = response.usage;
     recordChatUsage(model, pricing, usage);
@@ -488,7 +488,7 @@ export async function classifyConfirmationWith(
     messages: [{ role: "user", content: framedRequest }],
     tools,
     tool_choice: toolChoiceFor(integration, CONFIRMATION_TOOL_DEFINITION.name),
-    ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel),
+    ...completionTokenLimit(integration.provider, model, options?.maxOutputTokens, options?.underlyingModel, integration.apiVersion),
   };
 
   debugId = useLlmDebugStore.getState().begin({ kind: "chat", contentKinds: ["text"], label: "confirm", model, provider: integration.provider, integrationId: integration.id, routeCandidateIndex: options?.routeCandidateIndex, usedFallback: options?.usedFallback, messages: [{ role: "user", content: framedRequest }] });

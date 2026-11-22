@@ -32,9 +32,21 @@ describe("provider output limits", () => {
     await completeText(azure, [{ role: "user", content: "reason" }], "writing", { accountScope: null, modelName: "private-review-deployment", underlyingModel: "o3-mini", maxOutputTokens: 111 });
     expect(mocks.create.mock.calls[1][0]).toMatchObject({ max_completion_tokens: 111 });
 
+    // A deployment that declares no model is recognized by its name when the name says it reasons. One that stays unknown gets
+    // max_completion_tokens, which every model accepts from API 2024-09-01 (the default here), and max_tokens before: the rule of
+    // the personal server, which uses the same function.
     await completeText(azure, [{ role: "user", content: "reason" }], "writing", { accountScope: null, modelName: "o3-looking-deployment", maxOutputTokens: 99 });
+    expect(mocks.create.mock.calls[2][0]).toMatchObject({ max_completion_tokens: 99 });
     expect(mocks.create.mock.calls[2][0]).not.toHaveProperty("max_tokens");
-    expect(mocks.create.mock.calls[2][0]).not.toHaveProperty("max_completion_tokens");
+
+    await completeText(azure, [{ role: "user", content: "reason" }], "writing", { accountScope: null, modelName: "private-review-deployment", maxOutputTokens: 98 });
+    expect(mocks.create.mock.calls[3][0]).toMatchObject({ max_completion_tokens: 98 });
+    expect(mocks.create.mock.calls[3][0]).not.toHaveProperty("max_tokens");
+
+    const older = { ...azure, apiVersion: "2024-06-01" };
+    await completeText(older, [{ role: "user", content: "reason" }], "writing", { accountScope: null, modelName: "private-review-deployment", maxOutputTokens: 97 });
+    expect(mocks.create.mock.calls[4][0]).toMatchObject({ max_tokens: 97 });
+    expect(mocks.create.mock.calls[4][0]).not.toHaveProperty("max_completion_tokens");
   });
 
   it("sends the configured output limit for forced-tool completions", async () => {

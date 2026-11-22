@@ -440,6 +440,14 @@ On any book, chapter or scene, **Ask the director** gives its opinion, answers y
 
 The **Autopilot** button next to Copilot shows what is happening now and opens a live panel that stays open while you work; Copilot has an **Autopilot** tab too. You can pause after the current step or stop now, answer the director's questions, and intervene for the next step only, from now on, or to revise what is already written (the director picks the scenes to rewrite). Your instructions always win.
 
+## When the autopilot waits for you
+
+Besides a question of the director, the autopilot can stop with **Waiting for you** because a profile file has a problem: the director, a ghostwriter or a simulated reader with YAML that cannot be read, or with a value nobody knows. It stops before spending anything, lists the problems, and replaces nothing with the defaults. Correct the files in **Director**, **Ghostwriters** or **Simulated readers** (each page shows what it could not read, and asks before you save over the file), then choose **Resume**: the files are checked again. If a step stops because a chapter, scene or canon file has front matter that cannot be read, the error names the file and the line: correct it and resume.
+
+## Budgets and costs
+
+Each book can have a money budget (it needs the prices of your models in AI Integrations) and a **token budget** (it works with every model, even without prices); 0 means no limit. The autopilot stops before the next call once a budget is reached. The progress card says how many calls had no token count or no price, so you know how much of the totals is an estimate.
+
 ## Personal server
 
 Run \`npx narrarium-server\` on the computer that will keep your books (Node.js 22.14 or newer). It installs a copy verified on npm and opens an admin panel at \`http://127.0.0.1:24243\` on that computer; \`npx narrarium-server admin-code\` shows the code to sign in.
@@ -450,6 +458,8 @@ Run \`npx narrarium-server\` on the computer that will keep your books (Node.js 
 4. On a book's Autopilot page choose **Move to my server**: the autopilot keeps working with the browser closed. GitHub books travel through GitHub; local books are synced file by file.
 
 Narrarium checks the server's signed identity at every connection and refuses a server whose key changed. **Version and updates** in the same settings page shows when a newer verified release exists and installs it: the server stops, installs the package after checking its npm signature and provenance, and restarts; if anything fails the previous version stays. To use the server from other devices, publish it over HTTPS, for example with the Cloudflare connector in its admin panel.
+
+While you pair, the page shows four digits: check that the admin panel shows the same ones next to the request, and cancel if it does not. If the server and the app speak different versions, a notice says which one to update. **Disconnect** signs the device out on the server before it forgets the token. A sync that leaves files out (too large, not text, not a safe path) lists them with the reason instead of saying everything is synced.
 
 ## AI router
 
@@ -476,6 +486,14 @@ Su qualsiasi libro, capitolo o scena, **Chiedi al direttore** restituisce il suo
 
 Il pulsante **Autopilot** accanto a Copilot mostra cosa sta succedendo e apre un pannello in diretta che resta aperto mentre lavori; anche Copilot ha una scheda **Autopilot**. Puoi mettere in pausa dopo il passo corrente o fermare subito, rispondere alle domande del direttore e intervenire solo per il prossimo passo, d'ora in poi, oppure per rivedere quanto già scritto (il direttore sceglie le scene da riscrivere). Le tue istruzioni vincono sempre.
 
+## Quando l'autopilot aspetta te
+
+Oltre a una domanda del direttore, l'autopilot può fermarsi con **Aspetta te** perché un file di profilo ha un problema: il direttore, un ghostwriter o un lettore simulato con un YAML che non si legge, o con un valore che nessuno conosce. Si ferma prima di spendere qualsiasi cosa, elenca i problemi e non sostituisce nulla con i valori predefiniti. Correggi i file in **Direttore**, **Ghostwriter** o **Lettori simulati** (ogni pagina mostra ciò che non ha saputo leggere e chiede conferma prima che tu salvi sopra il file), poi scegli **Riprendi**: i file vengono controllati di nuovo. Se un passo si ferma perché un capitolo, una scena o un file di canone ha un frontmatter che non si legge, l'errore indica il file e la riga: correggila e riprendi.
+
+## Budget e costi
+
+Ogni libro può avere un budget in denaro (richiede i prezzi dei tuoi modelli in Integrazioni AI) e un **budget in token** (vale con qualsiasi modello, anche senza prezzi); 0 significa nessun limite. L'autopilot si ferma prima della chiamata successiva quando un budget è raggiunto. La scheda di avanzamento dice quante chiamate non avevano il conteggio dei token o il prezzo, così sai quanta parte dei totali è una stima.
+
 ## Server personale
 
 Esegui \`npx narrarium-server\` sul computer che custodirà i tuoi libri (Node.js 22.14 o successivo). Installa una copia verificata su npm e apre un pannello di amministrazione su \`http://127.0.0.1:24243\` su quel computer; \`npx narrarium-server admin-code\` mostra il codice per accedere.
@@ -486,6 +504,8 @@ Esegui \`npx narrarium-server\` sul computer che custodirà i tuoi libri (Node.j
 4. Nella pagina Autopilot di un libro scegli **Sposta sul mio server**: l'autopilot continua anche a browser chiuso. I libri GitHub viaggiano tramite GitHub; quelli locali sono sincronizzati file per file.
 
 Narrarium verifica l'identità firmata del server a ogni connessione e rifiuta un server la cui chiave è cambiata. **Versione e aggiornamenti** nella stessa pagina delle impostazioni mostra quando esiste una release verificata più recente e la installa: il server si ferma, installa il pacchetto dopo averne verificato firma npm e provenienza, e riparte; se qualcosa va storto resta la versione precedente. Per usare il server da altri dispositivi pubblicalo in HTTPS, per esempio con il connettore Cloudflare del suo pannello di amministrazione.
+
+Mentre abbini, la pagina mostra quattro cifre: controlla che il pannello di amministrazione mostri le stesse accanto alla richiesta, e annulla se non è così. Se server e app parlano versioni diverse, un avviso dice quale aggiornare. **Scollega** disconnette il dispositivo sul server prima di dimenticare il token. Una sincronizzazione che lascia fuori dei file (troppo grandi, non di testo, percorso non sicuro) li elenca con il motivo invece di dire che è tutto sincronizzato.
 
 ## Router AI
 

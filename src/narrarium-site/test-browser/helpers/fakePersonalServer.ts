@@ -45,6 +45,8 @@ export interface FakeServer {
   /** Client token the server accepts. */
   token: string;
   label?: string;
+  /** The API version it announces (default 1); `null` announces none, like a server that is older than the field. */
+  apiVersion?: number | null;
   /** Answer `/info` without a signature, like a server that cannot prove who it is. */
   unsigned?: boolean;
   /** Announce `identity` but sign with another key. */
@@ -53,12 +55,32 @@ export interface FakeServer {
   failWith?: number;
   /** Authenticated requests wait for this promise (and for an abort) before they are served. */
   hold?: Promise<void>;
+  /** What the server says while a device pairs with it: the digits it shows the owner, and when the owner approves. */
+  pairing?: {
+    /** Four digits next to the pending request in the admin panel. Sent with the request's answer. */
+    requestVerification?: string;
+    /** Four digits next to the client once approved. Sent with the token. */
+    tokenVerification?: string;
+    /** The owner has not approved until this promise is settled: the polls for the result wait for it (and for an abort). */
+    approval?: Promise<void>;
+  };
   books?: unknown[];
   aiConfig?: unknown;
   registered?: Array<{ bookId: string; body: unknown }>;
 }
 
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+/** Waits for `promise`, but ends with the abort of `signal`. */
+async function waitUnlessAborted(promise: Promise<void> | undefined, signal: AbortSignal | null | undefined): Promise<void> {
+  if (!promise) return;
+  await new Promise<void>((resolve, reject) => {
+    const abort = () => reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    if (signal?.aborted) abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    void promise.then(resolve);
+  });
+}
 
 /** A fetch that serves fake personal servers by origin and records everything sent to them. */
 export function createFakeNetwork(servers: Record<string, FakeServer>) {
@@ -80,7 +102,7 @@ export function createFakeNetwork(servers: Record<string, FakeServer>) {
       const signer = server.forgeWith ?? server.identity;
       const info: ServerInfo = {
         name: "narrarium-server",
-        apiVersion: 1,
+        ...(server.apiVersion === null ? {} : { apiVersion: server.apiVersion ?? 1 }),
         serverVersion: "0.1.0",
         engineVersion: "0.1.1",
         serverId: server.identity.serverId,
@@ -90,10 +112,14 @@ export function createFakeNetwork(servers: Record<string, FakeServer>) {
         publicKey: server.identity.publicKey,
         fingerprint: server.identity.fingerprint,
         ...(nonce && !server.unsigned ? { nonce, signature: await signer.sign(nonce) } : {}),
-      };
+      } as ServerInfo;
       return json(200, info);
     }
-    if (method === "POST" && url.pathname === "/api/v1/pairings") return json(200, { id: "pairing-1" });
+    if (method === "POST" && url.pathname === "/api/v1/pairings") return json(200, { id: "pairing-1", ...(server.pairing?.requestVerification ? { verification: server.pairing.requestVerification } : {}) });
+    if (method === "POST" && /^\/api\/v1\/pairings\/[^/]+\/result$/.test(url.pathname)) {
+      await waitUnlessAborted(server.pairing?.approval, init?.signal);
+      return json(200, { token: server.token, ...(server.pairing?.tokenVerification ? { verification: server.pairing.tokenVerification } : {}) });
+    }
 
     if (headers.get("authorization") !== `Bearer ${server.token}`) return json(401, { code: "unauthorized", message: "Unknown client token." });
     if (server.hold) {

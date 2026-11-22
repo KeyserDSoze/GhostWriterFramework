@@ -52,13 +52,16 @@ import { AutopilotFeed, AutopilotLiveCard, AutopilotStatusBadge } from "@/compon
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import { PlanChapters } from "@/components/autopilot/PlanChapters";
 import { RemoteRunNotice } from "@/components/autopilot/RemoteRunNotice";
+import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
 import { SyncConflicts } from "@/components/autopilot/SyncConflicts";
+import { SyncSkipped } from "@/components/autopilot/SyncSkipped";
 import { useAutopilotRefresh, useBookAutopilotView, useElapsed } from "@/autopilot/hooks";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useAutopilotStore, type SyncOutcome } from "@/autopilot/store";
 import { useServerConnection } from "@/autopilot/serverConnection";
-import { formatCost, formatCount, formatDateTime, formatDuration, syncStatusText } from "@/autopilot/format";
+import { activityTitle, formatCost, formatCount, formatDateTime, formatDuration, syncStatusText } from "@/autopilot/format";
+import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettings } from "@/drive/useSettings";
@@ -68,9 +71,14 @@ import { cn } from "@/lib/utils";
 
 const SCOPES: InterventionScope[] = ["next_step", "from_now", "rewrite"];
 
+/** The sentence under a run that waits for its profile files: the button that resumes is described by it. */
+const PROFILE_HINT_ID = "autopilot-profile-problems-hint";
+
 // A typo guard, not a product limit: a book has no maximum number of chapters. The engine accepts the same range;
 // the number is written here instead of imported so the form does not depend on the engine's build.
 const MAX_CHAPTERS = 100_000;
+// The same kind of guard for the token budget: a trillion tokens is more than any book will ever use, and a typo stays a typo.
+const MAX_BUDGET_TOKENS = 1_000_000_000_000;
 
 function Card({ title, icon, actions, children, className }: { title: string; icon?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
@@ -116,6 +124,9 @@ export function AutopilotPage() {
 
   const resume = () => void run("start", (runtime, id) => runtime.start(id));
   const awaitingPlan = Boolean(state?.plan?.awaitingAuthor);
+  // The engine waits for the author without a question when a profile file has problems; a run that ended with an error is told apart too.
+  const profileStop = isProfileProblemStop(summary);
+  const failure = status === "error" ? summary?.lastError ?? null : null;
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">
@@ -142,7 +153,7 @@ export function AutopilotPage() {
               </Button>
             </>
           ) : summary && !summary.question ? (
-            <Button variant={status === "completed" ? "outline" : "default"} disabled={busy !== null || noAi} onClick={resume}>
+            <Button variant={status === "completed" ? "outline" : "default"} disabled={busy !== null || noAi} aria-describedby={profileStop ? PROFILE_HINT_ID : undefined} onClick={resume}>
               {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               {awaitingPlan ? t("autopilot.actions.approvePlan") : t("autopilot.actions.resume")}
             </Button>
@@ -176,10 +187,9 @@ export function AutopilotPage() {
       {host === "server" && serverStatus === "reconnecting" && <Alert><Cloud className="h-4 w-4" /><AlertDescription>{t("autopilot.serverReconnecting")}</AlertDescription></Alert>}
       {view.busyInAnotherTab && <Alert><AlertDescription>{t("autopilot.anotherTab")}</AlertDescription></Alert>}
       <RemoteRunNotice bookId={bookId} control={control} id={remoteNoteId} />
-      {summary?.message && !running && <Alert><AlertDescription>{summary.message}</AlertDescription></Alert>}
-      {summary?.lastError && status === "error" && (
-        <Alert variant="destructive"><XCircle className="h-4 w-4" /><AlertDescription><span className="font-medium">{t("autopilot.lastError")}:</span> {summary.lastError.message}</AlertDescription></Alert>
-      )}
+      {summary?.message && !running && !profileStop && summary.message !== failure?.message && <Alert><AlertDescription>{summary.message}</AlertDescription></Alert>}
+      {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} hintId={PROFILE_HINT_ID} />}
+      {failure && <RunErrorNotice bookId={bookId} message={failure.message} />}
 
       {summary?.question && <QuestionCard bookId={bookId} question={summary.question} disabled={busy !== null || running} run={run} />}
 
@@ -266,6 +276,9 @@ const ProgressCard = memo(function ProgressCard({ summary }: { summary: Autopilo
   const { t } = useTranslation();
   const { progress, stats: spent } = summary;
   const phaseIndex = AUTOPILOT_PHASES.indexOf(summary.phase);
+  // Calls the totals cannot be sure of: the provider reported no tokens (the engine estimated them), or the model has no price.
+  const usageUnknown = spent.usageUnknownCalls ?? 0;
+  const costUnknown = spent.costUnknownCalls ?? 0;
   const stats: Array<[string, string]> = [
     [t("autopilot.progress.chapters"), `${progress.chaptersDone}/${progress.chapters}`],
     [t("autopilot.progress.scenes"), `${progress.scenesWritten}/${progress.scenes}`],
@@ -291,6 +304,12 @@ const ProgressCard = memo(function ProgressCard({ summary }: { summary: Autopilo
           </div>
         ))}
       </dl>
+      {(usageUnknown > 0 || costUnknown > 0) && (
+        <ul className="space-y-1.5 text-xs">
+          {usageUnknown > 0 && <li><span className="font-medium">{t("autopilot.progress.usageUnknown", { count: usageUnknown })}</span> <span className="text-muted-foreground">{t("autopilot.progress.usageUnknownHint")}</span></li>}
+          {costUnknown > 0 && <li><span className="font-medium">{t("autopilot.progress.costUnknown", { count: costUnknown })}</span> <span className="text-muted-foreground">{t("autopilot.progress.costUnknownHint")}</span></li>}
+        </ul>
+      )}
     </Card>
   );
 });
@@ -349,7 +368,7 @@ function ActivityRow({ activity, currency }: { activity: AutopilotActivity; curr
     <details className="rounded-lg border">
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
         <ActivityIcon activity={activity} />
-        <span className="min-w-0 flex-1 truncate text-sm">{activity.title}</span>
+        <span className="min-w-0 flex-1 truncate text-sm">{activityTitle(t, activity)}</span>
         <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{formatDuration(duration)}</span>
       </summary>
       <div className="space-y-1.5 border-t px-3 py-2 text-xs">
@@ -447,6 +466,7 @@ function syncToast(t: TFunction, outcome: SyncOutcome): Parameters<ReturnType<ty
     case "synced": return { title: t("autopilot.where.synced") };
     case "up-to-date": return { title: t("autopilot.where.upToDate") };
     case "published": return { title: t("autopilot.where.published") };
+    case "partial": return { title: t("autopilot.where.partial"), variant: "destructive" };
     case "local-changes": return { title: t("autopilot.where.localChanges"), variant: "destructive" };
     case "conflicts": return { title: t("autopilot.where.conflicts", { count: outcome.conflicts.length }), variant: "destructive" };
     default: return { title: t("autopilot.errors.action"), description: outcome.message, variant: "destructive" };
@@ -455,7 +475,7 @@ function syncToast(t: TFunction, outcome: SyncOutcome): Parameters<ReturnType<ty
 
 function SyncIcon({ kind }: { kind: SyncOutcome["kind"] }) {
   if (kind === "error") return <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />;
-  if (kind === "conflicts" || kind === "local-changes") return <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />;
+  if (kind === "conflicts" || kind === "local-changes" || kind === "partial") return <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />;
   return <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />;
 }
 
@@ -579,6 +599,7 @@ export function WhereCard({ book, running }: { book: BookEntry; running: boolean
         </div>
       )}
       {sync && <SyncConflicts conflicts={sync.conflictDetails} disabled={busy !== null} onResolve={settle} />}
+      {sync && <SyncSkipped skipped={sync.skipped} />}
     </Card>
   );
 }
@@ -588,7 +609,7 @@ interface SetupForm {
   options: AutopilotOptions;
 }
 
-function NumberField({ id, label, value, min, max, step = 1, disabled, onChange }: { id: string; label: string; value: number; min: number; max: number; step?: number; disabled?: boolean; onChange: (value: number) => void }) {
+function NumberField({ id, label, value, min, max, step = 1, disabled, describedBy, onChange }: { id: string; label: string; value: number; min: number; max: number; step?: number; disabled?: boolean; describedBy?: string; onChange: (value: number) => void }) {
   const [text, setText] = useState(String(value));
   useEffect(() => setText(String(value)), [value]);
   const parse = (raw: string) => (raw.trim() === "" ? Number.NaN : Number(raw));
@@ -604,6 +625,7 @@ function NumberField({ id, label, value, min, max, step = 1, disabled, onChange 
         step={step}
         value={text}
         disabled={disabled}
+        aria-describedby={describedBy}
         className="h-9"
         onChange={(event) => {
           setText(event.target.value);
@@ -675,12 +697,17 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
             <Switch checked={Boolean(form.options[key])} disabled={locked} onCheckedChange={(checked) => options({ [key]: checked } as Partial<AutopilotOptions>)} />
           </label>
         ))}
-        <div className="grid grid-cols-2 gap-3 pt-1 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 pt-1">
           <NumberField id="autopilot-readers" label={t("autopilot.setup.maxReaders")} value={form.options.maxReaders} min={1} max={20} disabled={locked} onChange={(value) => options({ maxReaders: value })} />
           <NumberField id="autopilot-per-run" label={t("autopilot.setup.chaptersPerRun")} value={form.options.chaptersPerRun} min={0} max={MAX_CHAPTERS} disabled={locked} onChange={(value) => options({ chaptersPerRun: value })} />
-          <NumberField id="autopilot-budget" label={t("autopilot.setup.budget")} value={form.options.budgetLimit} min={0} max={1_000_000} step={0.5} disabled={locked} onChange={(value) => options({ budgetLimit: value })} />
         </div>
-        <p className="text-xs text-muted-foreground">{t("autopilot.setup.budgetHint")} {t("autopilot.modelHint")}</p>
+        <div className="grid grid-cols-2 gap-3">
+          <NumberField id="autopilot-budget" label={t("autopilot.setup.budget")} value={form.options.budgetLimit} min={0} max={1_000_000} step={0.5} disabled={locked} describedBy="autopilot-budget-hint" onChange={(value) => options({ budgetLimit: value })} />
+          <NumberField id="autopilot-budget-tokens" label={t("autopilot.setup.budgetTokens")} value={form.options.budgetTokens ?? 0} min={0} max={MAX_BUDGET_TOKENS} step={1000} disabled={locked} describedBy="autopilot-budget-tokens-hint" onChange={(value) => options({ budgetTokens: value })} />
+        </div>
+        <p id="autopilot-budget-hint" className="text-xs text-muted-foreground">{t("autopilot.setup.budgetHint")}</p>
+        <p id="autopilot-budget-tokens-hint" className="text-xs text-muted-foreground">{t("autopilot.setup.budgetTokensHint")}</p>
+        <p className="text-xs text-muted-foreground">{t("autopilot.modelHint")}</p>
       </div>
       <div className="flex flex-wrap gap-2">
         {fresh ? (

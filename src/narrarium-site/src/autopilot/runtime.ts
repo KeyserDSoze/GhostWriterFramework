@@ -204,6 +204,7 @@ function outcomeText(kind: SyncOutcomeKind, conflicts: number): string {
     case "synced": return i18n.t("autopilot.where.synced");
     case "up-to-date": return i18n.t("autopilot.where.upToDate");
     case "published": return i18n.t("autopilot.where.published");
+    case "partial": return i18n.t("autopilot.where.partial");
     case "local-changes": return i18n.t("autopilot.where.localChanges");
     case "conflicts": return i18n.t("autopilot.where.conflicts", { count: conflicts });
     default: return "";
@@ -217,6 +218,7 @@ function syncOutcome(kind: SyncOutcomeKind, extra: Partial<SyncOutcome> = {}): S
     kind,
     conflicts,
     conflictDetails: [],
+    skipped: [],
     message: outcomeText(kind, conflicts.length),
     firstSync: false,
     uploaded: 0,
@@ -834,10 +836,12 @@ export class BrowserAutopilotRuntime {
       baseSaved = false;
     }
     const conflictDetails = await describeConflicts({ conflicts: result.conflicts, local: { store: local.store, hashes: local.hashes() }, remote: { store: remote.store, hashes: remote.hashes() }, base });
-    const kind: SyncOutcomeKind = result.conflicts.length ? "conflicts" : !baseSaved ? "error" : result.uploaded.length + result.downloaded.length === 0 ? "up-to-date" : "synced";
+    // Files left out are said, never ignored: a sync that moved everything it could is still not "all synced" while some stay behind.
+    const kind: SyncOutcomeKind = result.conflicts.length ? "conflicts" : !baseSaved ? "error" : result.skipped.length ? "partial" : result.uploaded.length + result.downloaded.length === 0 ? "up-to-date" : "synced";
     return syncOutcome(kind, {
       conflicts: result.conflicts,
       conflictDetails,
+      skipped: result.skipped,
       firstSync: !found,
       uploaded: result.uploaded.length,
       downloaded: result.downloaded.length,

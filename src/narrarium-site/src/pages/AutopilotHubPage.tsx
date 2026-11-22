@@ -6,10 +6,12 @@ import { summarizeAutopilotState, type AutopilotStateSummary } from "narrarium-e
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AutopilotFeed, AutopilotStatusBadge } from "@/components/autopilot/AutopilotFeed";
+import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useServerConnection } from "@/autopilot/serverConnection";
-import { autopilotSummaryLine } from "@/autopilot/format";
+import { activityTitle, autopilotSummaryLine } from "@/autopilot/format";
+import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useSettingsStore } from "@/store/settingsStore";
 
 /** Every book's autopilot at a glance, plus everything that happens, live. */
@@ -78,7 +80,9 @@ export function AutopilotHubPage() {
                         {autopilotSummaryLine(t, summary)}
                       </p>
                     )}
-                    {current && <p className="truncate text-xs"><span className="font-medium text-primary">{t("autopilot.feed.now")}:</span> {current.activity.title}</p>}
+                    {isProfileProblemStop(summary) && <ProfileProblemsNotice bookId={book.id} message={summary?.message} compact />}
+                    {summary?.status === "error" && summary.lastError && <RunErrorNotice bookId={book.id} message={summary.lastError.message} compact />}
+                    {current && <p className="truncate text-xs"><span className="font-medium text-primary">{t("autopilot.feed.now")}:</span> {activityTitle(t, current.activity)}</p>}
                     {!summary && view?.error && <p className="text-xs text-muted-foreground">{view.error}</p>}
                     <div className="flex flex-wrap gap-2">
                       <Button asChild size="sm" variant="outline"><Link to={`/app/books/${encodeURIComponent(book.id)}/autopilot`}><Plane className="h-3.5 w-3.5" />{t("autopilot.hub.open")}</Link></Button>

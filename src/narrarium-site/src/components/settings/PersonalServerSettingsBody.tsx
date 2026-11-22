@@ -5,9 +5,11 @@ import {
   DEFAULT_ADMIN_PORT,
   DEFAULT_SERVER_PORT,
   ServerRequestError,
-  pairWithServer,
+  pairWithServerDetailed,
   pickAiRuntimeConfig,
+  serverCompatibility,
   type ServerAiStatus,
+  type ServerCompatibility,
   type ServerSession,
   type ServerUpdateInfo,
   type ServerUpdateResult,
@@ -62,6 +64,34 @@ function devicePlatform(): string {
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+/**
+ * The server and this app do not speak the same version of the API: the engine says which is the older, and what to update. A
+ * notice for as long as it is true, never a block: the author decides. The engine's own sentence is English, and is marked as such.
+ */
+function ServerCompatibilityNotice({ compatibility }: { compatibility: ServerCompatibility | null | undefined }) {
+  const { t } = useTranslation();
+  if (!compatibility || compatibility.status === "ok") return null;
+  return (
+    <div role="alert" className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100">
+      <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+      <p>
+        {t(compatibility.status === "server-older" ? "personalServer.compat.older" : "personalServer.compat.newer")}{" "}
+        <span lang="en" className="block text-xs">{compatibility.message}</span>
+      </p>
+    </div>
+  );
+}
+
+/** The four digits of a verification code, read one at a time: a screen reader would otherwise say a number. */
+function VerificationCode({ code }: { code: string }) {
+  return (
+    <strong className="font-mono text-lg tracking-widest">
+      <span aria-hidden="true">{code}</span>
+      <span className="sr-only">{code.split("").join(" ")}</span>
+    </strong>
+  );
+}
+
 /** Settings → Personal server: pair with the npx server, send the AI router, keep it up to date. */
 export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void; onSave?: () => Promise<void> }) {
   const { t } = useTranslation();
@@ -78,7 +108,7 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
   const [session, setSession] = useState<ServerSession | null>(null);
   const [pairCode, setPairCode] = useState("");
   const [deviceName, setDeviceName] = useState(() => t("personalServer.pair.deviceDefault", { platform: devicePlatform() }));
-  const [pairing, setPairing] = useState<{ stage: "checking" | "sending" | "waiting"; fingerprint?: string } | null>(null);
+  const [pairing, setPairing] = useState<{ stage: "checking" | "sending" | "waiting"; fingerprint?: string; verification?: string; compatibility?: ServerCompatibility } | null>(null);
   const [showManual, setShowManual] = useState(false);
   const [updates, setUpdates] = useState<ServerUpdateInfo | null>(null);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
@@ -173,12 +203,14 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
       if (target.ok === false) throw new ServerAddressError(target.reason);
       const { info, fingerprint } = await probeServerIdentity(target.url, undefined, { signal: controller.signal });
       setPairing({ stage: "sending", fingerprint });
-      const token = await pairWithServer({ baseUrl: target.url, code: pairCode, label, signal: controller.signal, onWaitingApproval: () => setPairing({ stage: "waiting", fingerprint }) });
+      // While the owner approves, the four digits of the request are shown: the owner sees the same ones next to it, so a request made by someone else is told apart.
+      const paired = await pairWithServerDetailed({ baseUrl: target.url, code: pairCode, label, signal: controller.signal, onWaitingApproval: ({ verification, compatibility }) => setPairing({ stage: "waiting", fingerprint, verification, compatibility }) });
+      const token = paired.token;
       // The server must still be the one whose identity was checked before the code was sent.
       await probeServerIdentity(target.url, fingerprint, { signal: controller.signal });
       patchSettings({ personalServer: { url, token, serverId: info.serverId, fingerprint, clientLabel: label } });
       setPairCode("");
-      toast({ title: t("personalServer.pair.done", { label: info.label }) });
+      toast({ title: t("personalServer.pair.done", { label: info.label }), ...(paired.verification ? { description: t("personalServer.pair.doneCode", { code: paired.verification }) } : {}) });
       await onSave?.();
       await reconnect();
     } catch (error) {
@@ -231,15 +263,16 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
 
   async function disconnect() {
     if (connection.token && !window.confirm(t("personalServer.disconnectConfirm"))) return;
-    // Revoke the token on the server first, but only on the server this device paired with.
+    // Sign out on the server first (its answer is the one place the token is revoked), but only on the server this device paired with.
+    // A token the server no longer knows is already signed out; any other failure (the server is off, offline, another one) leaves it
+    // valid there, and the author is told. Either way the token is forgotten here: nothing waits for a server that cannot answer.
     let revoked = true;
     if (configured) {
       try {
         const { client } = await verifiedServer({ connection });
-        await client.forgetSession();
-      } catch (error) {
-        // A server that does not accept the token anyway has nothing left to revoke.
-        revoked = error instanceof ServerRequestError && error.status === 401;
+        await client.signOut();
+      } catch {
+        revoked = false;
       }
     }
     patchSettings({ personalServer: undefined });
@@ -363,12 +396,21 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
             {pairing && <Button variant="ghost" onClick={cancelPairing}><X className="h-4 w-4" />{t("personalServer.pair.cancel")}</Button>}
           </div>
           {pairing && (
-            <p className="text-sm text-muted-foreground" role="status">
-              {pairing.stage === "waiting" && pairing.fingerprint
-                ? t("personalServer.pair.waiting", { label: deviceName.trim() || "Narrarium", fingerprint: shortFingerprint(pairing.fingerprint) })
-                : t(pairing.stage === "checking" ? "personalServer.pair.checking" : "personalServer.pair.sending")}
-            </p>
+            <div className="space-y-2 text-sm text-muted-foreground" role="status">
+              <p>
+                {pairing.stage === "waiting" && pairing.fingerprint
+                  ? t("personalServer.pair.waiting", { label: deviceName.trim() || "Narrarium", fingerprint: shortFingerprint(pairing.fingerprint) })
+                  : t(pairing.stage === "checking" ? "personalServer.pair.checking" : "personalServer.pair.sending")}
+              </p>
+              {pairing.stage === "waiting" && pairing.verification && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-foreground">
+                  <p>{t("personalServer.pair.verification")} <VerificationCode code={pairing.verification} /></p>
+                  <p className="mt-1 text-xs">{t("personalServer.pair.verificationWarning")}</p>
+                </div>
+              )}
+            </div>
           )}
+          <ServerCompatibilityNotice compatibility={pairing?.compatibility} />
           <button type="button" className="text-xs font-medium text-primary underline-offset-4 hover:underline" onClick={() => setShowManual((value) => !value)} aria-expanded={showManual}>
             {t("personalServer.pair.manual")}
           </button>
@@ -413,6 +455,7 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
           {server.info && <span className="text-xs text-muted-foreground">{server.info.label} · {server.info.serverVersion}</span>}
         </div>
         {server.message && server.status !== "online" && <p className="text-xs text-muted-foreground">{server.message}</p>}
+        {configured && server.info && <ServerCompatibilityNotice compatibility={serverCompatibility(server.info)} />}
         {configured && (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Fingerprint className="h-3.5 w-3.5 shrink-0" />

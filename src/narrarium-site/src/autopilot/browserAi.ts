@@ -1,158 +1,102 @@
 import {
-  AiProviderError,
-  AiReplyRejectedError,
-  AiUnavailableError,
-  structuredReply,
+  createFetchAi,
+  integrationChatModels,
+  pickAiRuntimeConfig,
   type AiPort,
-  type AiProviderErrorDetails,
+  type AiPricingConfig,
   type AiRequest,
   type AiResponse,
-  type AiUsage,
+  type AiRuntimeConfig,
+  type FetchAiAttempt,
+  type FetchAiAttemptEnd,
+  type FetchAiFallbackTarget,
 } from "narrarium-engine";
-import {
-  completeTextRouted,
-  completeToolRouted,
-  NoCompletionCandidatesError,
-  StaleRoutingConfigurationError,
-} from "@/assistant/router";
-import { CompletionFallbackError } from "@/assistant/completionFallback";
-import type { LlmFinishReport } from "@/assistant/llm";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
+import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
+import { acknowledgeCrossBoundaryFallback, type BoundaryCandidate } from "@/assistant/fallbackDisclosure";
+import { GITHUB_MODELS_BASE } from "@/config/githubModels";
+import { chatDelta, useCostsStore } from "@/costs/costsStore";
+import { flattenLlmContent, useLlmDebugStore } from "@/debug/llmDebugStore";
 import { useSettingsStore } from "@/store/settingsStore";
-import type { ChatCapability } from "@/types/settings";
 
-/** Failures that end the same way when repeated: retrying would only bill again (names set by their constructors). */
-const FINAL_ERRORS = new Set([
-  "PromptBudgetExceededError",
-  "CandidateInputBudgetError",
-  "RoutingExecutionBudgetError",
-  "ContentFilteredCompletionError",
-]);
-
-function isAbort(error: unknown): boolean {
-  return typeof error === "object" && error !== null && (error as { name?: unknown }).name === "AbortError";
+function boundaryOf(target: FetchAiFallbackTarget): BoundaryCandidate {
+  return { integration: { id: target.integrationId, name: target.integrationName, provider: target.provider } };
 }
 
-function transientStatus(status: number): boolean {
-  return status === 408 || status === 409 || status === 429 || status >= 500;
+/** The price an attempt is billed at: its model's own, else its integration's. */
+function pricingOf(config: AiRuntimeConfig, integrationId: string, model: string): AiPricingConfig | undefined {
+  const integration = config.aiIntegrations.find((entry) => entry.id === integrationId);
+  return integration ? integrationChatModels(integration).find((entry) => entry.name === model)?.pricing ?? integration.pricing : undefined;
 }
 
-/** Everything the provider reported for this request, failed fallback attempts included. */
-function spent(attempts: LlmFinishReport[]): AiProviderErrorDetails {
-  if (!attempts.length) return {};
-  const last = attempts[attempts.length - 1];
-  const costs = attempts.map((attempt) => attempt.cost).filter((cost): cost is number => typeof cost === "number");
-  return {
-    usage: attempts.reduce<AiUsage>((total, attempt) => ({
-      inputTokens: total.inputTokens + attempt.inputTokens,
-      outputTokens: total.outputTokens + attempt.outputTokens,
-      cachedInputTokens: total.cachedInputTokens + attempt.cachedInputTokens,
-    }), { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }),
-    cost: costs.length ? costs.reduce((total, cost) => total + cost, 0) : undefined,
-    model: last.model,
-    provider: last.provider,
-    integrationId: last.integrationId,
-  };
+/** A pending entry in the debug panel for an attempt about to be sent: roles only, the store never keeps the content. */
+function openDebugEntry(attempt: FetchAiAttempt): string {
+  return useLlmDebugStore.getState().begin({
+    kind: "chat",
+    contentKinds: ["text"],
+    label: attempt.label,
+    model: attempt.model,
+    provider: attempt.provider,
+    integrationId: attempt.integrationId,
+    routeCandidateIndex: attempt.index,
+    usedFallback: attempt.index > 0,
+    messages: attempt.messages.map((message) => ({ role: message.role, content: flattenLlmContent(message.content) })),
+  });
 }
 
 /**
- * The web app's failures in the engine's vocabulary, so the shared runner applies the same rules
- * as on the personal server: truncation and configuration problems are final, rejected replies
- * and transport failures are retried once, and what the attempts cost is never lost.
+ * Closes the panel entry of an attempt and records what the provider billed for it, failed attempts included. Only
+ * tokens the provider reported are recorded: an estimate is not a measurement, and a model with no price has no cost.
  */
-export function toEngineError(error: unknown, capability: string, current: LlmFinishReport | null, attempts: LlmFinishReport[]): unknown {
-  if (isAbort(error)) return error;
-  if (error instanceof NoCompletionCandidatesError || error instanceof StaleRoutingConfigurationError) return new AiUnavailableError(capability);
-  const details = spent(attempts);
-  if (error instanceof AiProviderError) {
-    if (error.usage === undefined) error.usage = details.usage;
-    if (error.cost === undefined) error.cost = details.cost;
-    if (error.model === undefined) error.model = details.model;
-    if (error.provider === undefined) error.provider = details.provider;
-    return error;
+function closeAttempt(config: AiRuntimeConfig, debugId: string | undefined, end: FetchAiAttemptEnd): void {
+  const pricing = pricingOf(config, end.integrationId, end.model);
+  const usage = end.usageKnown && end.usage
+    ? { inputTokens: end.usage.inputTokens, cachedTokens: end.usage.cachedInputTokens, outputTokens: end.usage.outputTokens }
+    : undefined;
+  const delta = usage ? chatDelta(usage, pricing) : undefined;
+  const cost = pricing ? delta?.chatCost : undefined;
+  if (debugId) {
+    useLlmDebugStore.getState().finish(debugId, end.outcome === "ok"
+      ? { status: "done", response: end.text, ...usage, cost }
+      : { status: "error", error: end.error, failureKind: end.failureKind, timeoutMs: end.timeoutMs, ...usage, cost });
   }
-  const label = current ? `${current.provider} ${current.model}: ` : "";
-  if (current?.finishReason === "length") {
-    return new AiProviderError(`${label}${current.replyCharacters === 0 && current.reasoningCharacters > 0 ? "the model used its output limit while reasoning, before writing the reply" : "the reply was cut by the output token limit"}. Nothing was applied.`, undefined, false, { ...details, truncated: true });
-  }
-  if (current && current.replyCharacters === 0) {
-    return new AiProviderError(`${label}${current.reasoningCharacters > 0 ? "the model finished after reasoning without a reply" : "the provider returned an empty reply"}.`, undefined, true, details);
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  const cause = error instanceof CompletionFallbackError ? error.causes[error.causes.length - 1] : error instanceof Error ? { name: error.name, status: (error as { status?: unknown }).status } : undefined;
-  const status = cause?.status;
-  if (cause && FINAL_ERRORS.has(cause.name)) return new AiProviderError(message, undefined, false, details);
-  if (typeof status === "number") return new AiProviderError(message, status, transientStatus(status), details);
-  if (cause?.name === "SyntaxError") return new AiReplyRejectedError("The structured reply is not valid JSON.", details);
-  // Network failures, timeouts and exhausted fallbacks: one more attempt, as before.
-  return new AiProviderError(message, undefined, true, details);
+  if (usage && delta && pricing && (usage.inputTokens || usage.outputTokens)) useCostsStore.getState().recordCurrent(delta, end.model);
 }
 
 /**
- * The engine's `AiPort` over the web app's AI router: routes, fallbacks, cost tracking and the
- * debug panel keep working for autopilot and director calls. Prompts arrive already framed by
- * the shared engine (`currentRequest` / `untrustedData`), so they are forwarded unchanged, and
- * never cut: a prompt that does not fit is refused with a clear message.
+ * The engine's `AiPort` in the browser: the same client as the personal server (`createFetchAi`), so a book gets the
+ * same requests and the same outcomes in either host. The browser adds only what is its own: the account the call
+ * belongs to, the debug panel, the costs, and the author's confirmation before content goes to another account.
+ * Prompts arrive framed by the shared engine and go on unchanged; one that does not fit is refused, never cut.
  */
 export function createBrowserAi(): AiPort {
   return {
     async complete(request: AiRequest): Promise<AiResponse> {
       const settings = useSettingsStore.getState().settings;
-      const messages = [
-        { role: "system" as const, content: request.system },
-        { role: "user" as const, content: request.user },
-      ];
-      const capability = request.capability as ChatCapability;
-      const attempts: LlmFinishReport[] = [];
-      let current: LlmFinishReport | null = null;
-      const onAttempt = () => {
-        current = null;
-      };
-      const onFinish = (report: LlmFinishReport) => {
-        current = report;
-        attempts.push(report);
-      };
+      const config = pickAiRuntimeConfig(settings);
+      const debugEntries = new Map<string, string>();
+      const operation = beginAccountScopedAiOperation(request.signal, localWorkspaceScope());
       try {
-        if (request.json) {
-          const schema = request.json;
-          const result = await completeToolRouted<Record<string, unknown>>(settings, messages, capability, schema, {
-            accountScope: localWorkspaceScope(),
-            signal: request.signal,
-            label: request.label,
-            fallbackMaxOutputTokens: request.maxOutputTokens,
-            validate: (output) => structuredReply(output, schema),
-            onAttempt,
-            onFinish,
-            overflow: "fail",
-          });
-          const usage = spent(attempts);
-          return {
-            text: JSON.stringify(result.output),
-            json: result.output,
-            usage: usage.usage ?? { inputTokens: result.metadata.inputTokens, outputTokens: result.metadata.outputTokens, cachedInputTokens: result.metadata.cachedInputTokens },
-            model: result.metadata.model,
-            provider: result.metadata.provider,
-            integrationId: result.metadata.integrationId,
-            cost: usage.cost ?? result.metadata.cost,
-            currency: result.metadata.currency ?? settings.costCurrency,
-            truncated: (current as LlmFinishReport | null)?.finishReason === "length",
-          };
-        }
-        const text = await completeTextRouted(settings, messages, capability, {
-          accountScope: localWorkspaceScope(),
-          signal: request.signal,
-          label: request.label,
-          onText: request.onText,
-          onAttempt,
-          onFinish,
-          overflow: "fail",
-          fallbackMaxOutputTokens: request.maxOutputTokens,
+        const ai = createFetchAi(config, {
+          fetch: (input, init) => fetch(input, init),
+          githubModelsBaseUrl: GITHUB_MODELS_BASE,
+          onAttempt: (attempt) => {
+            debugEntries.set(attempt.attemptId, openDebugEntry(attempt));
+          },
+          onAttemptEnd: (end) => {
+            const debugId = debugEntries.get(end.attemptId);
+            debugEntries.delete(end.attemptId);
+            closeAttempt(config, debugId, end);
+          },
+          // The author refusing cancels the call (an AbortError: the run pauses); the engine only asks when the policy requires it.
+          acknowledgeFallback: (from, to) => {
+            acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: boundaryOf(from), to: boundaryOf(to), accountScope: operation.accountScope });
+            return true;
+          },
         });
-        const last = current as LlmFinishReport | null;
-        const usage = spent(attempts);
-        return { text, usage: usage.usage, model: last?.model, provider: last?.provider, integrationId: last?.integrationId, cost: usage.cost, currency: settings.costCurrency, truncated: last?.finishReason === "length" };
-      } catch (error) {
-        throw toEngineError(error, capability, current, attempts);
+        return await ai.complete({ ...request, signal: operation.signal });
+      } finally {
+        operation.dispose();
       }
     },
   };

@@ -13,6 +13,8 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { AutopilotFeed, AutopilotStatusBadge } from "@/components/autopilot/AutopilotFeed";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import { RemoteRunNotice } from "@/components/autopilot/RemoteRunNotice";
+import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
+import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { cn } from "@/lib/utils";
 
 /**
@@ -80,6 +82,10 @@ function DockBookPanel({ bookId }: { bookId: string }) {
   const pageHref = `/app/books/${encodeURIComponent(bookId)}/autopilot`;
   const noteId = `dock-remote-run-${bookId}`;
   const explained = controllable ? undefined : noteId;
+  // A run that waits for the author without a question has a profile file with problems; one that ended with an error says why.
+  const profileStop = isProfileProblemStop(summary);
+  const failure = summary?.status === "error" ? summary.lastError ?? null : null;
+  const profileHintId = `dock-profile-problems-${bookId}`;
 
   return (
     <div className="space-y-3">
@@ -94,7 +100,9 @@ function DockBookPanel({ bookId }: { bookId: string }) {
             {autopilotSummaryLine(t, summary)}
           </p>
         )}
-        {summary?.message && <p className="text-xs">{summary.message}</p>}
+        {summary?.message && !profileStop && summary.message !== failure?.message && <p className="text-xs">{summary.message}</p>}
+        {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} compact hintId={profileHintId} />}
+        {failure && <RunErrorNotice bookId={bookId} message={failure.message} compact />}
         <OperationNotice bookId={bookId} />
         {view.busyInAnotherTab && <p className="text-xs text-muted-foreground">{t("autopilot.anotherTab")}</p>}
         <RemoteRunNotice bookId={bookId} control={control} id={noteId} />
@@ -116,7 +124,7 @@ function DockBookPanel({ bookId }: { bookId: string }) {
               </Button>
             </>
           ) : summary && summary.status !== "completed" && !summary.question ? (
-            <Button size="sm" disabled={busy !== null || view.busyInAnotherTab} onClick={() => void run("start", (runtime, id) => runtime.start(id))}>
+            <Button size="sm" disabled={busy !== null || view.busyInAnotherTab} aria-describedby={profileStop ? profileHintId : undefined} onClick={() => void run("start", (runtime, id) => runtime.start(id))}>
               {busy === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
               {awaitingPlan ? t("autopilot.actions.approvePlan") : t("autopilot.actions.resume")}
             </Button>

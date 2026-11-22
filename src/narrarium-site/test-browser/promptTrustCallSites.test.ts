@@ -20,8 +20,8 @@ const ROUTED_CALL_SITES = [
 
 const DIRECT_PROVIDER_CALL_SITES = ["src/assistant/llm.ts", "src/assistant/speech.ts", "src/assets/assetImages.ts", "src/azure-openai/openaiClient.ts"];
 
-/** Adapters that forward prompts already framed by the shared engine (packages/engine). */
-const ENGINE_FRAMED_CALL_SITES = ["src/autopilot/browserAi.ts"];
+/** Adapters that hand prompts already framed by the shared engine (packages/engine) to the engine's own AI client. */
+const ENGINE_AI_ADAPTERS = ["src/autopilot/browserAi.ts"];
 const ENGINE_PROMPT_MODULES = ["../../packages/engine/src/autopilot/tasks.ts", "../../packages/engine/src/director/opinion.ts"];
 
 describe("LLM call-site trust contract", () => {
@@ -33,11 +33,15 @@ describe("LLM call-site trust contract", () => {
     expect(source).toContain("untrustedData(");
   });
 
-  it.each(ENGINE_FRAMED_CALL_SITES)("forwards engine-framed prompts unchanged at %s", (path) => {
+  it.each(ENGINE_AI_ADAPTERS)("hands the engine-framed prompts to the engine's client unchanged at %s", (path) => {
     const source = readFileSync(resolve(process.cwd(), path), "utf8");
-    expect(source).toMatch(/complete(?:Text|Tool)Routed(?:\s*<|\s*\()/);
-    expect(source).toContain("content: request.system");
-    expect(source).toContain("content: request.user");
+    expect(source).toContain("createFetchAi(");
+    expect(source).toMatch(/\.complete\(\{ \.\.\.request,/);
+    // The same client as the personal server: neither the site's routed completions nor its SDK, and no second framing.
+    expect(source).not.toMatch(/complete(?:Text|Tool)Routed/);
+    expect(source).not.toMatch(/from "openai"/);
+    expect(source).not.toContain("currentRequest(");
+    expect(source).not.toContain("untrustedData(");
   });
 
   it.each(ENGINE_PROMPT_MODULES)("frames dynamic data in the shared engine at %s", (path) => {
@@ -48,7 +52,7 @@ describe("LLM call-site trust contract", () => {
   });
 
   it("audits every application module that calls routed completion", () => {
-    const expected = [...ROUTED_CALL_SITES, ...ENGINE_FRAMED_CALL_SITES, "src/assistant/service.ts"].sort();
+    const expected = [...ROUTED_CALL_SITES, "src/assistant/service.ts"].sort();
     const discovered = fg.sync("src/**/*.{ts,tsx}", { cwd: process.cwd() })
       .filter((path) => path !== "src/assistant/router.ts")
       .filter((path) => /complete(?:Text|Tool)Routed(?:\s*<|\s*\()/.test(readFileSync(resolve(process.cwd(), path), "utf8")))
@@ -61,6 +65,15 @@ describe("LLM call-site trust contract", () => {
       .filter((path) => /(?:chat\.completions|audio\.(?:transcriptions|speech)|images)\.(?:create|generate)\(/.test(readFileSync(resolve(process.cwd(), path), "utf8")))
       .sort();
     expect(discovered).toEqual([...DIRECT_PROVIDER_CALL_SITES].sort());
+    for (const path of discovered) expect(readFileSync(resolve(process.cwd(), path), "utf8")).toContain("beginAccountScopedAiOperation");
+  });
+
+  it("builds the engine's AI client only in the autopilot adapter, which runs it behind operation cancellation", () => {
+    // The generated documentation quotes the engine's README: prose, not a call.
+    const discovered = fg.sync("src/**/*.{ts,tsx}", { cwd: process.cwd(), ignore: ["src/lib/generated-docs.ts"] })
+      .filter((path) => /\bcreateFetchAi\s*\(/.test(readFileSync(resolve(process.cwd(), path), "utf8")))
+      .sort();
+    expect(discovered).toEqual([...ENGINE_AI_ADAPTERS].sort());
     for (const path of discovered) expect(readFileSync(resolve(process.cwd(), path), "utf8")).toContain("beginAccountScopedAiOperation");
   });
 

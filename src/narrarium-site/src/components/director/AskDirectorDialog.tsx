@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { ProfileWarnings } from "@/components/book/ProfileWarnings";
 import { DirectorOpinionView } from "@/components/director/DirectorOpinionView";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
 import { useAskDirectorStore } from "@/store/askDirectorStore";
@@ -101,6 +102,7 @@ export function AskDirectorDialog() {
 
         {result ? (
           <div className="space-y-4">
+            <ProfileWarnings warnings={result.warnings} description={t("profileFile.directorOpinionNote")} />
             <DirectorOpinionView opinion={result.opinion} />
             {result.saved && <p className="text-xs text-muted-foreground">{t("director.opinion.saved", { path: result.path })}</p>}
             <div className="flex flex-wrap gap-2">

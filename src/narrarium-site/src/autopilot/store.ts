@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AutopilotActivity, AutopilotEvent, AutopilotSnapshot, AutopilotStateSummary, InterventionInput, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo } from "narrarium-engine";
+import type { AutopilotActivity, AutopilotEvent, AutopilotSnapshot, AutopilotStateSummary, InterventionInput, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
 import type { BookOperation } from "@/autopilot/operations";
 import type { PersonalServerSettings } from "@/types/settings";
 
@@ -7,7 +7,8 @@ export type AutopilotHostKind = "browser" | "server";
 /** `reconnecting`: the connection was online and went quiet or closed, and is being opened again. */
 export type ServerConnectionStatus = "disabled" | "connecting" | "online" | "offline" | "error" | "reconnecting";
 
-export type SyncOutcomeKind = "synced" | "up-to-date" | "published" | "local-changes" | "conflicts" | "error";
+/** `partial`: the sync went through, but some files could not be moved (see `SyncOutcome.skipped`): it is not "all synced". */
+export type SyncOutcomeKind = "synced" | "up-to-date" | "published" | "partial" | "local-changes" | "conflicts" | "error";
 /** What happened to a file on one side since the last sync: it was edited, it is new there, or it was deleted there. */
 export type ConflictSide = "modified" | "added" | "deleted";
 
@@ -28,6 +29,8 @@ export interface SyncOutcome {
   conflicts: string[];
   /** The same files with what happened on each side. */
   conflictDetails: SyncConflict[];
+  /** Files the sync did not move, and why (too large, not a safe path, not text): said again at every sync until they can be moved. Absent in a status from before this was reported. */
+  skipped?: SyncSkippedFile[];
   /** In the language of the app: what happened, or why it failed. */
   message: string;
   /** No base was ever saved for this book and server: nothing is deleted, files missing on one side are copied back. */

@@ -14,6 +14,7 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { FileChangedNotice } from "@/components/book/FileChangedNotice";
+import { ProfileWarnings, confirmProfileSave } from "@/components/book/ProfileWarnings";
 import { useGuardedDocumentLoad } from "@/hooks/useGuardedDocumentLoad";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { resolveBookToken } from "@/types/settings";
@@ -91,6 +92,8 @@ export function GhostwritersPage() {
       toast({ title: t("ghostwriters.invalidProfile"), variant: "destructive" });
       return false;
     }
+    // The file is rewritten from the form: what the engine could not read of it would be lost.
+    if (!confirmProfileSave(t, profile.warnings)) return false;
     setBusy(true);
     try {
       const content = serializeGhostwriter(profile);
@@ -104,6 +107,7 @@ export function GhostwritersPage() {
       await commitImmediateMutation({ token, book, branch, snapshot, content, message: `Update ghostwriter ${profile.slug}` });
       file.adopt(content);
       setSavedProfile(content);
+      setProfile((previous) => (previous ? { ...previous, warnings: [] } : previous));
       toast({ title: t("common.saved") });
       await reload();
       return true;
@@ -222,6 +226,7 @@ export function GhostwritersPage() {
         ) : (
            <div className="min-w-0 space-y-4">
              {file.changedElsewhere && <FileChangedNotice message={t("ghostwriters.changedElsewhere")} reloadLabel={t("ghostwriters.reloadFile")} onReload={file.reload} />}
+             <ProfileWarnings warnings={profile.warnings} />
              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                <h2 className="min-w-0 truncate font-serif text-xl font-semibold">{profile.name}</h2>
                <div className="flex max-w-full flex-wrap gap-2">

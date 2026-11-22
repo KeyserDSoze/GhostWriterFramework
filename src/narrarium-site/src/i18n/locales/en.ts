@@ -1228,7 +1228,15 @@ const en = {
     customPrompt: "Custom prompt",
     notes: "Additional profile notes",
     types: { standard: "Standard", genre: "Genre", custom: "Custom" },
-    filters: { all: "All", standard: "Standard", genre: "Genre", custom: "Custom" }
+    filters: { all: "All", standard: "Standard", genre: "Genre", custom: "Custom" },
+    hasProblems: "Has problems",
+  },
+  profileFile: {
+    warningsTitle_one: "This file has a problem",
+    warningsTitle_other: "This file has {{count}} problems",
+    warningsBody: "What the app could not read was replaced by the default values you see in the form. Saving rewrites the file with these values, and what the lines below say is lost.",
+    saveConfirm: "This file has problems (listed at the top of the page). Saving rewrites it with the values that could be read, and what could not be read is lost. Save anyway?",
+    directorOpinionNote: "The director answered with the values of director.md that could be read. The file was not changed: correct it on the director page.",
   },
   readerEvaluations: {
     title: "Reader evaluations",
@@ -2596,6 +2604,7 @@ const en = {
     title: "Autopilot",
     launcher: "Autopilot",
     openDock: "Show what the autopilot is doing",
+    launcherProfileProblems: "Profile problems",
   },
   director: {
     title: "Director",

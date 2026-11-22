@@ -97,6 +97,11 @@ export class FakeBookServer {
         await server.serve("pauseAutopilot");
         return server.snapshot(bookId);
       },
+      async configureAutopilot(bookId: string, options: unknown) {
+        await server.serve("configureAutopilot");
+        server.configured.push(options);
+        return server.snapshot(bookId);
+      },
       async listBooks() {
         await server.serve("listBooks");
         return [server.summary("book-1")];
@@ -113,4 +118,6 @@ export class FakeBookServer {
 
   /** What `startAutopilot` was called with. */
   readonly started: unknown[] = [];
+  /** What `configureAutopilot` was called with. */
+  readonly configured: unknown[] = [];
 }

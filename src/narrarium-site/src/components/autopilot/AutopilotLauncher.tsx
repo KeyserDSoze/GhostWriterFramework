@@ -3,6 +3,8 @@ import { useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Plane } from "lucide-react";
 import { parseAppRoute } from "@/assistant/context";
+import { activityTitle } from "@/autopilot/format";
+import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { autopilotChannel, useAutopilotStore } from "@/autopilot/store";
 import { cn } from "@/lib/utils";
 
@@ -24,15 +26,19 @@ export function AutopilotLauncher() {
 
   const current = useMemo(() => (bookId ? live[bookId] : null) ?? Object.values(live).find(Boolean) ?? null, [bookId, live]);
   const waiting = useMemo(() => Object.values(summaries).some((summary) => summary.status === "waiting-author"), [summaries]);
-  const label = current ? current.activity.title : t("autopilot.launcher");
+  // A book that waits without a question has a profile file with problems: said in words, since the amber dot is only a colour.
+  const profileProblems = useMemo(() => Object.values(summaries).some(isProfileProblemStop), [summaries]);
+  const stopped = !current && profileProblems ? t("autopilot.launcherProfileProblems") : null;
+  const label = current ? activityTitle(t, current.activity) : stopped ?? t("autopilot.launcher");
+  const name = stopped ? `${t("autopilot.openDock")}: ${stopped}` : t("autopilot.openDock");
 
   return (
     <button
       type="button"
       onClick={() => setDockOpen(!dockOpen)}
       aria-expanded={dockOpen}
-      aria-label={t("autopilot.openDock")}
-      title={current ? `${t("autopilot.openDock")} — ${current.activity.title}` : t("autopilot.openDock")}
+      aria-label={name}
+      title={current ? `${t("autopilot.openDock")} — ${activityTitle(t, current.activity)}` : name}
       className={cn(
         "flex min-w-0 items-center gap-2 rounded-full border bg-card px-3 py-2.5 text-sm font-medium text-card-foreground shadow-lg transition hover:bg-accent",
         dockOpen && "border-primary/50 bg-accent",

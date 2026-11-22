@@ -1228,7 +1228,15 @@ const it = {
     customPrompt: "Prompt personalizzato",
     notes: "Note aggiuntive del profilo",
     types: { standard: "Standard", genre: "Genere", custom: "Custom" },
-    filters: { all: "Tutti", standard: "Standard", genre: "Genere", custom: "Custom" }
+    filters: { all: "Tutti", standard: "Standard", genre: "Genere", custom: "Custom" },
+    hasProblems: "Ha dei problemi",
+  },
+  profileFile: {
+    warningsTitle_one: "Questo file ha un problema",
+    warningsTitle_other: "Questo file ha {{count}} problemi",
+    warningsBody: "Ciò che l'app non ha saputo leggere è stato sostituito dai valori predefiniti che vedi nel modulo. Salvando, il file viene riscritto con questi valori e ciò che dicono le righe qui sotto va perso.",
+    saveConfirm: "Questo file ha dei problemi (elencati in cima alla pagina). Salvando lo riscrivi con i valori che si sono potuti leggere, e ciò che non si è potuto leggere va perso. Salvare comunque?",
+    directorOpinionNote: "Il direttore ha risposto con i valori di director.md che si sono potuti leggere. Il file non è stato modificato: correggilo nella pagina del direttore.",
   },
   readerEvaluations: {
     title: "Valutazioni dei lettori",
@@ -2836,6 +2844,7 @@ const it = {
     title: "Autopilot",
     launcher: "Autopilot",
     openDock: "Mostra cosa sta facendo l'autopilot",
+    launcherProfileProblems: "Problemi nei profili",
   },
   director: {
     title: "Direttore",

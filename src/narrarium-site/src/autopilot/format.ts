@@ -1,5 +1,5 @@
 import i18next, { type TFunction } from "i18next";
-import type { AutopilotEvent, AutopilotStateSummary, AutopilotStatus, InsightTone } from "narrarium-engine";
+import type { AutopilotActivity, AutopilotEvent, AutopilotStateSummary, AutopilotStatus, AutopilotTaskKind, InsightTone } from "narrarium-engine";
 import type { BookSyncStatus } from "@/autopilot/store";
 
 export type FeedTone = InsightTone;
@@ -65,6 +65,17 @@ export function formatBytes(bytes: number): string {
   return `${number(bytes / (1024 * 1024), 1)} MB`;
 }
 
+/**
+ * "300 B", "1.5 KiB", "10 MiB": the size of a file in the units a computer counts it in. Rounded up to a tenth, so a file that is
+ * over a limit never reads as exactly the limit.
+ */
+export function formatSize(bytes: number): string {
+  const number = (value: number) => new Intl.NumberFormat(locale(), { maximumFractionDigits: 1 }).format(Math.ceil(value * 10) / 10);
+  if (bytes < 1024) return `${new Intl.NumberFormat(locale()).format(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${number(bytes / 1024)} KiB`;
+  return `${number(bytes / (1024 * 1024))} MiB`;
+}
+
 export function formatDuration(milliseconds: number): string {
   if (!Number.isFinite(milliseconds)) return "—";
   const seconds = Math.max(0, Math.round(milliseconds / 1000));
@@ -101,6 +112,46 @@ export interface FeedPresentation {
   text: string;
   detail?: string;
   meta?: string;
+  /** The detail is what the author must read to act (a failure, the problems of a file): it is shown whole, never cut to a few lines. */
+  full?: boolean;
+}
+
+type Notice = Extract<AutopilotEvent, { type: "insight" | "sync" }>;
+
+/**
+ * What a kind of step is called, with the chapter it is about when it has one. The engine gives every step its own title, in the
+ * language of the book; this is what stands in for it when it gives none. A kind this version does not know reads generically,
+ * never as a key.
+ */
+export function taskLabel(t: TFunction, kind: AutopilotTaskKind | undefined, chapterNumber?: number): string {
+  const key = `autopilot.task.${kind}`;
+  const label = kind && i18next.exists(key) ? t(key, { number: chapterNumber ?? "" }) : t("autopilot.task.unknown", { defaultValue: "Autopilot step" });
+  return String(label).trim();
+}
+
+/** The title of a step: the engine's own, or the name of its kind when it has none. */
+export function activityTitle(t: TFunction, activity: Pick<AutopilotActivity, "task" | "title" | "chapterNumber">): string {
+  return activity.title?.trim() ? activity.title : taskLabel(t, activity.task, activity.chapterNumber);
+}
+
+/**
+ * The runner's retry notice in the UI language. The engine says which retry this is and how long it waits (`attempt`,
+ * `retries`, `waitMs`); a retry that does not wait is the one with a larger output limit. Notices saved in the feed by
+ * an earlier version carry no numbers: they only say that the step is retried once.
+ */
+function retryText(t: TFunction, event: Extract<Notice, { type: "insight" }>): string {
+  const { attempt, retries, waitMs } = event;
+  const key = "autopilot.insight.failureRetry";
+  if (typeof attempt === "number" && typeof retries === "number" && retries > 1 && typeof waitMs === "number") {
+    return t(key, { attempt, retries, seconds: Math.round(waitMs / 1000), defaultValue: event.title });
+  }
+  return t(key, { context: waitMs === 0 ? "larger" : "once", defaultValue: event.title });
+}
+
+function noticeText(t: TFunction, event: Notice): string {
+  if (!event.code) return event.title;
+  if (event.type === "insight" && event.code === "failureRetry") return retryText(t, event);
+  return t(`autopilot.insight.${event.code}`, { defaultValue: event.title });
 }
 
 /** How an autopilot event reads in the feed, in the UI language where the engine gives a code. */
@@ -113,21 +164,24 @@ export function presentFeedEvent(t: TFunction, event: AutopilotEvent, currency?:
         tone: event.status === "completed" ? "ok" : event.status === "error" ? "critical" : event.status === "waiting-author" ? "warning" : "info",
         text: t("autopilot.feed.runEnded", { status: t(`autopilot.status.${event.status}`) }),
         detail: event.message ?? undefined,
+        ...(event.status === "error" ? { full: true } : {}),
       };
     case "task-finished": {
       const activity = event.activity;
       const tone: FeedTone = activity.status === "succeeded" ? "ok" : activity.status === "failed" ? "critical" : "warning";
       const meta = [activity.model, activity.cost ? formatCost(activity.cost, currency) : ""].filter(Boolean).join(" · ");
+      const title = activityTitle(t, activity);
       return {
         tone,
-        text: activity.status === "succeeded" ? activity.title : `${activity.title} — ${t(`autopilot.activity.status.${activity.status}`)}`,
+        text: activity.status === "succeeded" ? title : `${title} — ${t(`autopilot.activity.status.${activity.status}`)}`,
         detail: activity.status === "succeeded" ? activity.summary : activity.error,
         meta: meta || undefined,
+        ...(tone === "critical" ? { full: true } : {}),
       };
     }
     case "insight":
     case "sync":
-      return { tone: event.tone, text: event.code ? t(`autopilot.insight.${event.code}`, { defaultValue: event.title }) : event.title, detail: event.detail };
+      return { tone: event.tone, text: noticeText(t, event), detail: event.detail, ...(event.tone === "critical" || event.code === "profileProblems" ? { full: true } : {}) };
     default:
       return null;
   }
@@ -140,6 +194,7 @@ export function syncStatusText(t: TFunction, sync: BookSyncStatus | null): strin
     case "synced": return t("autopilot.where.synced");
     case "up-to-date": return t("autopilot.where.upToDate");
     case "published": return t("autopilot.where.published");
+    case "partial": return t("autopilot.where.partial");
     case "local-changes": return t("autopilot.where.localChanges");
     case "conflicts": return t("autopilot.where.conflicts", { count: sync.conflicts.length });
     default: return sync.message;

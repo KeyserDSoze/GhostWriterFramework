@@ -14,6 +14,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
+import { ProfileWarnings, confirmProfileSave } from "@/components/book/ProfileWarnings";
 import { resolveBookToken } from "@/types/settings";
 import { deleteReaderPersonaOverride, findOrphanReaderEvaluationPaths, loadReaderPersonas, saveReaderPersona } from "@/narrarium/readerEvaluations";
 import { emptyReaderPersona, type ReaderPersonaProfile } from "@/narrarium/readerPersona";
@@ -76,12 +77,15 @@ export function ReaderPersonasPage() {
     return true;
   }
 
-  async function persist(profile: ReaderPersonaProfile): Promise<boolean> {
+  /** `confirmed`: the author was already asked about the problems of this file (a switch or a move asks before it changes what is shown). */
+  async function persist(profile: ReaderPersonaProfile, confirmed = false): Promise<boolean> {
     if (!book || !token) return false;
+    // The file is rewritten from the form: what the engine could not read of it would be lost.
+    if (!confirmed && !confirmProfileSave(t, profile.warnings)) return false;
     setBusy(true);
     try {
       const slug = profile.slug || slugifyAny(profile.name, "reader", true);
-      const saved = { ...profile, slug };
+      const saved = { ...profile, slug, warnings: [] };
       await saveReaderPersona({ token, book, branch, profile: saved });
       if (saved.id === selectedId) {
         setDraft(saved);
@@ -102,10 +106,11 @@ export function ReaderPersonasPage() {
 
   async function toggle(profile: ReaderPersonaProfile) {
     if (dirty) return;
+    if (!confirmProfileSave(t, profile.warnings)) return;
     const next = { ...profile, enabled: !profile.enabled };
     setProfiles((current) => current.map((entry) => entry.id === profile.id ? next : entry));
     if (draft?.id === profile.id) setDraft(next);
-    await persist(next);
+    await persist(next, true);
   }
 
   async function reset(profile: ReaderPersonaProfile) {
@@ -138,10 +143,11 @@ export function ReaderPersonasPage() {
     const otherIndex = index + direction;
     if (index < 0 || otherIndex < 0 || otherIndex >= sorted.length) return;
     const other = sorted[otherIndex];
+    if (!confirmProfileSave(t, profile.warnings) || !confirmProfileSave(t, other.warnings)) return;
     const next = { ...profile, order: other.order };
     const nextOther = { ...other, order: profile.order };
     setProfiles(sorted.map((entry) => entry.id === next.id ? next : entry.id === nextOther.id ? nextOther : entry).sort((a, b) => a.order - b.order));
-    await Promise.all([persist(next), persist(nextOther)]);
+    await Promise.all([persist(next, true), persist(nextOther, true)]);
   }
 
   if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
@@ -161,7 +167,7 @@ export function ReaderPersonasPage() {
           <Button variant="outline" className="w-full justify-start" onClick={() => { const next = emptyReaderPersona(structure?.language, 1000 + profiles.length); void select(next, false).then((changed) => { if (changed) setProfiles((current) => [...current, next]); }); }}><Plus className="mr-2 h-4 w-4" />{t("readerPersonas.new")}</Button>
           {loading ? <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div> : visible.map((profile) => (
             <div key={profile.id} className={selectedId === profile.id ? "rounded-xl border border-primary bg-primary/5 p-3" : "rounded-xl border p-3"}>
-              <button className="w-full text-left" onClick={() => void select(profile)}><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-medium">{profile.name}</span><Badge variant="outline">{t(`readerPersonas.types.${profile.readerType}`)}</Badge></div><p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{profile.description}</p></button>
+              <button className="w-full text-left" onClick={() => void select(profile)}><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-medium">{profile.name}</span>{profile.warnings?.length ? <Badge variant="outline" className="border-amber-500/50 text-amber-700 dark:text-amber-300">{t("readerPersonas.hasProblems")}</Badge> : null}<Badge variant="outline">{t(`readerPersonas.types.${profile.readerType}`)}</Badge></div><p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{profile.description}</p></button>
               <div className="mt-3 flex items-center gap-1"><Switch checked={profile.enabled} disabled={busy || dirty} onCheckedChange={() => void toggle(profile)} aria-label={`${profile.name}: ${profile.enabled ? t("common.enabled") : t("common.disabled")}`} /><span className="mr-auto text-xs text-muted-foreground">{profile.enabled ? t("common.enabled") : t("common.disabled")}</span><Button size="icon" variant="ghost" className="h-7 w-7" disabled={busy || dirty} onClick={() => void move(profile, -1)} aria-label={`${t("common.moveUp")}: ${profile.name}`}><ArrowUp className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" className="h-7 w-7" disabled={busy || dirty} onClick={() => void move(profile, 1)} aria-label={`${t("common.moveDown")}: ${profile.name}`}><ArrowDown className="h-3.5 w-3.5" /></Button></div>
             </div>
           ))}
@@ -178,6 +184,7 @@ function ReaderPersonaEditor({ profile, onChange, onSave, onDuplicate, onReset, 
   const { t } = useTranslation();
   const patch = (next: Partial<ReaderPersonaProfile>) => onChange({ ...profile, ...next });
   return <div className="space-y-4 rounded-2xl border bg-card p-5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-xl font-semibold">{profile.name || t("readerPersonas.untitled")}</h2><p className="font-mono text-xs text-muted-foreground">{profile.id}</p></div><div className="flex gap-1"><Button size="sm" variant="outline" onClick={onDuplicate}><Copy className="mr-1 h-4 w-4" />{t("readerPersonas.duplicate")}</Button>{profile.builtin ? <Button size="sm" variant="outline" onClick={onReset}><RotateCcw className="mr-1 h-4 w-4" />{t("readerPersonas.reset")}</Button> : <Button size="icon" variant="ghost" onClick={onDelete} aria-label={`${t("common.delete")}: ${profile.name}`}><Trash2 className="h-4 w-4 text-destructive" /></Button>}</div></div>
+    <ProfileWarnings warnings={profile.warnings} />
     <Field label={t("readerPersonas.name")} value={profile.name} onChange={(value) => patch({ name: value, slug: profile.path ? profile.slug : slugifyAny(value, "reader", true) })} />
     <Field label={t("readerPersonas.descriptionLabel")} value={profile.description} onChange={(value) => patch({ description: value })} multiline />
     <Field label={t("readerPersonas.profile")} value={profile.profile} onChange={(value) => patch({ profile: value })} multiline />
