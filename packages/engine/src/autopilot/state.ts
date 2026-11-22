@@ -1,12 +1,17 @@
 import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
 import { countWords } from "../util/text.js";
+import { AUTOPILOT_PUBLISH_MODES } from "./types.js";
 import type {
   AutopilotActivity,
   AutopilotBrief,
+  AutopilotLimitsSummary,
   AutopilotOptions,
+  AutopilotPausePending,
   AutopilotPhase,
   AutopilotPlan,
   AutopilotProgress,
+  AutopilotPublishMode,
+  AutopilotRunLimits,
   AutopilotState,
   AutopilotStateSummary,
   AutopilotStatus,
@@ -102,8 +107,42 @@ export function normalizeBrief(value: unknown, base: AutopilotBrief = DEFAULT_BR
   };
 }
 
+/** The way of publishing a value names, read like every word of the options is (any case, spaces around); `undefined` for anything else. */
+function publishModeOf(value: unknown): AutopilotPublishMode | undefined {
+  const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return (AUTOPILOT_PUBLISH_MODES as readonly string[]).includes(text) ? text as AutopilotPublishMode : undefined;
+}
+
+/**
+ * Where the book is published now: the author's choice (`options.publishEvery`), else the host's default, else what the older option
+ * `syncAfterChapter` says (every chapter when it is on, never when it is off). A value nobody knows is no choice.
+ */
+export function effectivePublish(options: Partial<Pick<AutopilotOptions, "publishEvery" | "syncAfterChapter">> | null | undefined, defaultPublish?: AutopilotPublishMode): AutopilotPublishMode {
+  return publishModeOf(options?.publishEvery) ?? publishModeOf(defaultPublish) ?? (options?.syncAfterChapter ? "chapter" : "off");
+}
+
+/**
+ * The default of a host that did not say where it publishes: a server publishes after every step, as its hook has always been called
+ * (and as `syncAfterChapter` documents: "the server publishes after every step"); a browser has none, so the option `syncAfterChapter`
+ * decides, as it always did.
+ */
+export function hostDefaultPublish(host: "browser" | "server", defaultPublish?: AutopilotPublishMode): AutopilotPublishMode | undefined {
+  return publishModeOf(defaultPublish) ?? (host === "server" ? "step" : undefined);
+}
+
+/** The limits of a run as the engine takes them: only a whole number above zero is a limit; anything else (also `null`, a string, `0`) is none. `undefined` when there is no limit at all. */
+export function normalizeRunLimits(value: unknown): AutopilotRunLimits | undefined {
+  const source = asRecord(value);
+  const limit = (entry: unknown): number | undefined => (typeof entry === "number" && Number.isSafeInteger(entry) && entry > 0 ? entry : undefined);
+  const steps = limit(source.steps);
+  const chapters = limit(source.chapters);
+  return steps || chapters ? { ...(steps ? { steps } : {}), ...(chapters ? { chapters } : {}) } : undefined;
+}
+
 export function normalizeOptions(value: unknown, base: AutopilotOptions = DEFAULT_OPTIONS): AutopilotOptions {
   const source = asRecord(value);
+  // `null` takes the author's choice back, so that the host decides again; a value nobody knows leaves it as it was.
+  const publishEvery = source.publishEvery === null ? undefined : publishModeOf(source.publishEvery) ?? base.publishEvery;
   return {
     readers: asBoolean(source.readers, base.readers),
     maxReaders: asInteger(source.maxReaders, base.maxReaders, 1, 20),
@@ -115,6 +154,7 @@ export function normalizeOptions(value: unknown, base: AutopilotOptions = DEFAUL
     budgetLimit: asNumber(source.budgetLimit, base.budgetLimit, 0, 1_000_000),
     budgetTokens: asInteger(source.budgetTokens, base.budgetTokens ?? 0, 0, Number.MAX_SAFE_INTEGER),
     syncAfterChapter: asBoolean(source.syncAfterChapter, base.syncAfterChapter),
+    ...(publishEvery ? { publishEvery } : {}),
   };
 }
 
@@ -466,7 +506,19 @@ export function autopilotProgress(state: AutopilotState | null): AutopilotProgre
   };
 }
 
-export function summarizeAutopilotState(state: AutopilotState): AutopilotStateSummary {
+/** What only a live session knows, for the summary of a state: the pause that waits, the limits of the run, and the default of the host. */
+export interface AutopilotSummaryContext {
+  pausePending?: AutopilotPausePending | null;
+  limits?: AutopilotLimitsSummary | null;
+  /** Where the host publishes when the author has not chosen (see `hostDefaultPublish`). */
+  defaultPublish?: AutopilotPublishMode;
+}
+
+/**
+ * The summary of a state, as the `state` events carry it. Made from the file alone it has no `pausePending` and no `limits`
+ * (nothing there tells them); a live session adds them, `null` when nothing waits and no limit applies.
+ */
+export function summarizeAutopilotState(state: AutopilotState, context: AutopilotSummaryContext = {}): AutopilotStateSummary {
   return {
     status: state.status,
     phase: state.phase,
@@ -479,6 +531,9 @@ export function summarizeAutopilotState(state: AutopilotState): AutopilotStateSu
     pendingNotes: state.interventions.filter((entry) => entry.scope === "next_step" && entry.status === "pending").length,
     constraints: state.constraints.length,
     updatedAt: state.updatedAt,
+    ...(context.pausePending === undefined ? {} : { pausePending: context.pausePending }),
+    ...(context.limits === undefined ? {} : { limits: context.limits }),
+    publish: effectivePublish(state.options, context.defaultPublish),
   };
 }
 

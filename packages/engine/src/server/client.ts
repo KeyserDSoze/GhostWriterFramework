@@ -15,6 +15,7 @@ import {
   type EventsResponse,
   type PairingRequest,
   type PairingResult,
+  type PauseAutopilotMode,
   type ReadFilesResponse,
   type RegisterBookRequest,
   type ServerAiStatus,
@@ -28,6 +29,7 @@ import {
   type ServerUpdateAccepted,
   type ServerUpdateInfo,
   type ServerUpdateRequest,
+  type UpdateAutopilotOptionsRequest,
 } from "./protocol.js";
 
 export class ServerRequestError extends Error {
@@ -191,12 +193,34 @@ export class NarrariumServerClient {
     return this.request("GET", bookRoute(bookId, "/autopilot"));
   }
 
+  /**
+   * Start or resume the autopilot: `POST …/autopilot/start`. `limits` (`{ steps?, chapters? }`: pause after that many steps or chapters
+   * of this run) need a server that announces `SERVER_FEATURE_AUTOPILOT_CONTROLS`: an older one ignores them and runs on.
+   */
   startAutopilot(bookId: string, options: StartOptions & { force?: boolean } = {}): Promise<AutopilotSnapshot> {
     return this.request("POST", bookRoute(bookId, "/autopilot/start"), options, { timeoutMs: 300_000 });
   }
 
-  pauseAutopilot(bookId: string, mode: "now" | "after-step"): Promise<AutopilotSnapshot> {
+  /**
+   * Pause the autopilot (`now`, `after-step`, `after-chapter`), or take back a pause that waits (`cancel`): `POST …/autopilot/pause`.
+   * `after-chapter` and `cancel` need a server that announces `SERVER_FEATURE_AUTOPILOT_CONTROLS`: an older one takes them for `after-step`.
+   */
+  pauseAutopilot(bookId: string, mode: PauseAutopilotMode): Promise<AutopilotSnapshot> {
     return this.request("POST", bookRoute(bookId, "/autopilot/pause"), { mode });
+  }
+
+  /**
+   * Change where the book is published and whether the run pauses after every chapter, also while a run goes on:
+   * `PUT …/autopilot/options` (a server that announces `SERVER_FEATURE_AUTOPILOT_CONTROLS`). `publishEvery: null` takes the choice back.
+   * Answers the snapshot, like `configureAutopilot`.
+   */
+  updateAutopilotOptions(bookId: string, input: UpdateAutopilotOptionsRequest): Promise<AutopilotSnapshot> {
+    return this.request("PUT", bookRoute(bookId, "/autopilot/options"), input);
+  }
+
+  /** The short name of `updateAutopilotOptions`. */
+  updateOptions(bookId: string, input: UpdateAutopilotOptionsRequest): Promise<AutopilotSnapshot> {
+    return this.updateAutopilotOptions(bookId, input);
   }
 
   intervene(bookId: string, input: InterventionInput): Promise<AutopilotSnapshot> {

@@ -14,18 +14,24 @@ import {
   stateChange,
   type AutopilotHooks,
 } from "./runner.js";
-import { AutopilotRuleError, createAutopilotState, normalizeBrief, normalizeOptions, normalizeRuleText, summarizeAutopilotState } from "./state.js";
-import type {
-  AutopilotActivity,
-  AutopilotEvent,
-  AutopilotEventBody,
-  AutopilotRunnerInfo,
-  AutopilotSnapshot,
-  AutopilotState,
-  AutopilotStateSummary,
-  InterventionInput,
-  QuestionAnswer,
-  StartOptions,
+import { AutopilotRuleError, DEFAULT_OPTIONS, createAutopilotState, hostDefaultPublish, normalizeBrief, normalizeOptions, normalizeRuleText, summarizeAutopilotState } from "./state.js";
+import {
+  LIVE_AUTOPILOT_OPTIONS,
+  type AutopilotActivity,
+  type AutopilotEvent,
+  type AutopilotEventBody,
+  type AutopilotOptions,
+  type AutopilotOptionsUpdate,
+  type AutopilotPauseMode,
+  type AutopilotPausePending,
+  type AutopilotPublishMode,
+  type AutopilotRunnerInfo,
+  type AutopilotSnapshot,
+  type AutopilotState,
+  type AutopilotStateSummary,
+  type InterventionInput,
+  type QuestionAnswer,
+  type StartOptions,
 } from "./types.js";
 
 /** Minutes after which a `running` state without heartbeat is treated as interrupted. */
@@ -71,6 +77,12 @@ export interface AutopilotSessionConfig {
   ownRunnerAlive?: () => boolean | Promise<boolean>;
   now?: () => Date;
   hooks?: AutopilotHooks;
+  /**
+   * Where the host publishes the book when the author has not chosen (`options.publishEvery`): after every step, after every
+   * chapter, or never. The engine calls `hooks.afterCommit` (every step) and `hooks.afterChapter` (every chapter) accordingly. Without
+   * it a server host publishes after every step, as it always did, and a browser host as `options.syncAfterChapter` says.
+   */
+  defaultPublish?: AutopilotPublishMode;
   /** Live events kept in memory for late subscribers (default 400). */
   maxEvents?: number;
   /** Base delay before a retry of a failed step (ms, default 4000): see `AutopilotRunConfig`. */
@@ -100,8 +112,8 @@ export class AutopilotSession {
   private runPromise: Promise<AutopilotState> | null = null;
   /** A `start()` in flight: from its first line until the run has saved its start, or the start has failed. */
   private starting: Promise<void> | null = null;
-  /** A pause asked for while a start was in flight: it is applied as soon as the run exists. */
-  private pendingPause: "now" | "after-step" | null = null;
+  /** A pause asked for while a start was in flight: it is applied as soon as the run exists. The stricter request is the one kept: `now`, then `after-step`, then `after-chapter`. */
+  private pendingPause: AutopilotPauseMode | null = null;
   private seq = 0;
   private events: AutopilotEvent[] = [];
   private readonly listeners = new Set<AutopilotListener>();
@@ -200,6 +212,28 @@ export class AutopilotSession {
     this.emit({ type: "state", state: { ...summary, runner: { ...summary.runner, heartbeatAt: this.liveHeartbeatAt } } }, { replay: false });
   }
 
+  /**
+   * A pause asked for or taken back changes what a client shows, and nothing is written for it: the summary of the active run is
+   * said again with the pause as it is now. Nothing is said before the run has told its first summary (its first one carries it).
+   */
+  private announcePause(run: AutopilotRun): void {
+    const summary = this.summary;
+    if (this.run !== run || !summary?.runner || summary.runner.runId !== run.runId) return;
+    this.emit({ type: "state", state: { ...summary, ...run.runtime(), runner: this.liveRunner(summary.runner) ?? summary.runner } });
+  }
+
+  /** The summary of a state as a client of this session sees it: with the pause that waits, the limits of the run, and where the book is published. */
+  private summarize(state: AutopilotState): AutopilotStateSummary {
+    const runtime = this.run?.runtime();
+    const waiting: AutopilotPausePending | null = this.pendingPause === "after-step" || this.pendingPause === "after-chapter" ? this.pendingPause : null;
+    const summary = summarizeAutopilotState(state, {
+      pausePending: runtime ? runtime.pausePending : this.starting ? waiting : null,
+      limits: runtime?.limits ?? null,
+      defaultPublish: hostDefaultPublish(this.config.host, this.config.defaultPublish),
+    });
+    return summary.runner ? { ...summary, runner: this.liveRunner(summary.runner) } : summary;
+  }
+
   /** The runner as the active run's own session knows it: its heartbeat is the one in memory when that is newer than the saved one. */
   private liveRunner(runner: AutopilotRunnerInfo | null): AutopilotRunnerInfo | null {
     if (!runner || !this.run || !this.liveHeartbeatAt || runner.runId !== this.run.runId) return runner;
@@ -223,6 +257,7 @@ export class AutopilotSession {
     return {
       bookId: this.config.bookId,
       state,
+      summary: state ? this.summarize(state) : null,
       activities,
       live: this.live,
       running: this.running,
@@ -231,7 +266,10 @@ export class AutopilotSession {
     };
   }
 
-  /** Start or resume. Resolves once the run has saved its start, rejects if it could not start. */
+  /**
+   * Start or resume. Resolves once the run has saved its start, rejects if it could not start. `options.limits` bound this run only
+   * (pause after that many steps or chapters; see `AutopilotRunLimits`): they are not saved, and the next run starts without them.
+   */
   async start(options: StartOptions & { force?: boolean } = {}): Promise<void> {
     // The claim is taken before anything is awaited: two concurrent calls can never both create a run.
     if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
@@ -268,6 +306,7 @@ export class AutopilotSession {
       hostId: this.config.hostId,
       now: this.config.now,
       hooks: this.config.hooks,
+      defaultPublish: this.config.defaultPublish,
       retryDelayMs: this.config.retryDelayMs,
       random: this.config.random,
       persistHeartbeatMs: this.config.persistHeartbeatMs,
@@ -297,19 +336,53 @@ export class AutopilotSession {
     this.pendingPause = null;
     if (pause === "now") run.stop();
     else if (pause === "after-step") run.stopAfterStep();
+    else if (pause === "after-chapter") run.stopAfterChapter();
     await started;
   }
 
-  /** `now` abandons the request in flight; `after-step` lets the current step finish and save. */
-  pause(mode: "now" | "after-step" = "after-step"): boolean {
-    if (this.run) {
-      if (mode === "now") this.run.stop();
-      else this.run.stopAfterStep();
+  /**
+   * `now` abandons the request in flight; `after-step` lets the current step finish and save, then pauses; `after-chapter` goes on to
+   * the end of the chapter in progress (its closing and its publishing included), then pauses (with no chapter in progress it is
+   * `after-step`). The stricter request is the one that counts: `after-step` is not undone by a later `after-chapter`, and `now`
+   * by neither. Every change of the pause that waits is a `state` event (`pausePending` of the summary).
+   */
+  pause(mode: AutopilotPauseMode = "after-step"): boolean {
+    const asked: AutopilotPauseMode = mode === "now" || mode === "after-chapter" ? mode : "after-step";
+    const run = this.run;
+    if (run) {
+      const before = run.pausePending;
+      if (asked === "now") run.stop();
+      else if (asked === "after-chapter") run.stopAfterChapter();
+      else run.stopAfterStep();
+      if (run.pausePending !== before) this.announcePause(run);
       return true;
     }
     if (!this.starting) return false;
-    this.pendingPause = mode === "now" || this.pendingPause === "now" ? "now" : "after-step";
+    const strictest = (left: AutopilotPauseMode | null, right: AutopilotPauseMode): AutopilotPauseMode => {
+      const rank = { "after-chapter": 1, "after-step": 2, now: 3 };
+      return left && rank[left] > rank[right] ? left : right;
+    };
+    this.pendingPause = strictest(this.pendingPause, asked);
     return true;
+  }
+
+  /**
+   * Take back a pause that is waiting (`after-step`, `after-chapter`) without stopping anything: `true` when there was one. A `now`
+   * that already happened is not waiting, and cannot be taken back.
+   */
+  cancelPause(): boolean {
+    const run = this.run;
+    if (run) {
+      const before = run.pausePending;
+      const cancelled = run.cancelPause();
+      if (run.pausePending !== before) this.announcePause(run);
+      return cancelled;
+    }
+    if (this.starting && (this.pendingPause === "after-step" || this.pendingPause === "after-chapter")) {
+      this.pendingPause = null;
+      return true;
+    }
+    return false;
   }
 
   /** Resolves when no run is active, and no start is about to create one. */
@@ -329,8 +402,7 @@ export class AutopilotSession {
       const next = stampState(changed, this.now());
       try {
         await this.config.store.commit([stateChange(next, stored.stateHash)], message);
-        const summary = summarizeAutopilotState(next);
-        this.emit({ type: "state", state: summary.runner ? { ...summary, runner: this.liveRunner(summary.runner) } : summary });
+        this.emit({ type: "state", state: this.summarize(next) });
         return next;
       } catch (error) {
         if (!isBookConflictError(error) || attempt === 4) throw error;
@@ -400,6 +472,29 @@ export class AutopilotSession {
       brief: normalizeBrief(input.brief ?? {}, state.brief),
       options: normalizeOptions(input.options ?? {}, state.options),
     }));
+  }
+
+  /**
+   * Change the options, also while a run goes on, for the settings that can: where the book is published (`publishEvery`; `null`
+   * takes the choice back, so that the host decides again) and whether to pause after every chapter (`pauseAfterEachChapter`).
+   * They are saved at once with a compare-and-swap commit, as an intervention is: the step that is running neither fails nor is
+   * repeated, and the run reads the new value at the end of that step (or of the chapter). Any other option is refused while a run is
+   * active, as `configure` refuses it (`AutopilotBusyError`), and nothing of such a request is applied; with no run active any
+   * option can change. A value nobody knows changes nothing, and a request that changes nothing writes nothing. Answers the saved state.
+   */
+  async updateOptions(input: AutopilotOptionsUpdate): Promise<AutopilotState> {
+    const source: Record<string, unknown> = input && typeof input === "object" ? { ...input } : {};
+    if (this.running) {
+      const live = new Set<string>(LIVE_AUTOPILOT_OPTIONS);
+      const options = new Set<string>([...Object.keys(DEFAULT_OPTIONS), "publishEvery"]);
+      if (Object.keys(source).some((key) => options.has(key) && !live.has(key) && source[key] !== undefined)) throw new AutopilotBusyError(this.config.hostLabel);
+      for (const key of Object.keys(source)) if (!live.has(key)) delete source[key];
+    }
+    return this.mutate("Autopilot: options", (state) => {
+      const options = normalizeOptions(source, state.options);
+      const keys = new Set<keyof AutopilotOptions>([...Object.keys(state.options), ...Object.keys(options)] as Array<keyof AutopilotOptions>);
+      return [...keys].every((key) => options[key] === state.options[key]) ? state : { ...state, options };
+    });
   }
 
   /** Forget the autopilot state (plan, history, rules). The book's chapters are never touched. */

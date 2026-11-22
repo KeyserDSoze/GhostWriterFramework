@@ -38,6 +38,11 @@ export interface AutopilotBrief {
   audience: string;
 }
 
+/** Where the book is published to GitHub: after every committed step (and again when a chapter is closed), after every chapter that is closed, or never. */
+export type AutopilotPublishMode = "off" | "chapter" | "step";
+
+export const AUTOPILOT_PUBLISH_MODES: readonly AutopilotPublishMode[] = ["off", "chapter", "step"];
+
 export interface AutopilotOptions {
   /** Simulated readers evaluate every finished chapter. */
   readers: boolean;
@@ -60,9 +65,30 @@ export interface AutopilotOptions {
    * also works for models without a price, and with providers that report no tokens (their use is estimated).
    */
   budgetTokens?: number;
-  /** Publish to GitHub after every approved chapter (browser host; the server publishes after every step). */
+  /**
+   * Publish to GitHub after every approved chapter (browser host; the server publishes after every step). Older than
+   * `publishEvery`, which wins when it is set; it stays what decides for a host that says nothing, and in the files of older engines.
+   */
   syncAfterChapter: boolean;
+  /**
+   * Where the book is published: after every committed step, after every chapter that is closed, or never. Chosen by the author, and
+   * it can change while a run goes on (`AutopilotSession.updateOptions`). Absent: the host decides (`defaultPublish`), and a host that
+   * says nothing publishes after every step when it is a server, and as `syncAfterChapter` says when it is a browser.
+   */
+  publishEvery?: AutopilotPublishMode;
 }
+
+/** The options that can change while a run goes on: the run reads them again at the end of every step and of every chapter. */
+export const LIVE_AUTOPILOT_OPTIONS = ["publishEvery", "pauseAfterEachChapter"] as const;
+
+/** What the author can change while a run goes on. `publishEvery: null` takes the choice back, so that the host decides again. */
+export interface AutopilotLiveOptions {
+  publishEvery?: AutopilotPublishMode | null;
+  pauseAfterEachChapter?: boolean;
+}
+
+/** What `AutopilotSession.updateOptions` takes: the settings above at any time, and any other option when no run is active. */
+export type AutopilotOptionsUpdate = Partial<Omit<AutopilotOptions, "publishEvery">> & AutopilotLiveOptions;
 
 export type SceneStatus = "planned" | "written" | "reviewed";
 export type ChapterStatus = "planned" | "writing" | "review" | "done";
@@ -320,11 +346,16 @@ export type AutopilotMessageCode =
   | "publishFailed"
   | "finalStateFailed"
   | "budgetNotApplicable"
-  | "profileProblems";
+  | "profileProblems"
+  | "chapterPause"
+  | "stepLimit"
+  | "chapterLimit";
 
 /**
  * Live events: everything the autopilot does, as it happens. `run-ended` carries a `code` when the run ended for a
- * reason a client can translate (`takenOver`: another runner owns the book now, so this run stopped without saving).
+ * reason a client can translate (`takenOver`: another runner owns the book now, so this run stopped without saving;
+ * `chapterPause`: the author asked to pause at the end of the chapter and the chapter is closed; `stepLimit` and
+ * `chapterLimit`: the steps or the chapters the run was limited to are done).
  * A `failureRetry` insight carries `attempt` (the retry about to happen), `retries` (how many this kind of failure
  * allows) and `waitMs` (how long the runner waits first).
  */
@@ -348,6 +379,29 @@ export interface AutopilotProgress {
   words: number;
 }
 
+/** A pause the author asked for that has not happened yet. `now` is not one: it abandons the request in flight and is over at once. */
+export type AutopilotPausePending = "after-step" | "after-chapter";
+
+/**
+ * How a run is asked to pause: `now` abandons the request in flight; `after-step` lets the step finish and save, then pauses;
+ * `after-chapter` goes on to the end of the chapter in progress (its closing and its publishing included), then pauses.
+ */
+export type AutopilotPauseMode = "now" | AutopilotPausePending;
+
+/** What bounds one run. Not saved: it is for this run only. A value that is not a whole number above zero is no limit. */
+export interface AutopilotRunLimits {
+  /** Pause after this many steps were saved by this run. */
+  steps?: number;
+  /** Pause after this many chapters were completed by this run (`options.chaptersPerRun` is the same limit, saved; the stricter counts). */
+  chapters?: number;
+}
+
+/** The limits of the run in progress and how far it got. */
+export interface AutopilotLimitsSummary extends AutopilotRunLimits {
+  stepsDone: number;
+  chaptersDone: number;
+}
+
 export interface AutopilotStateSummary {
   status: AutopilotStatus;
   phase: AutopilotPhase;
@@ -360,12 +414,27 @@ export interface AutopilotStateSummary {
   pendingNotes: number;
   constraints: number;
   updatedAt: string;
+  /**
+   * Not saved: what only a live session knows, so it is absent from a summary made from the state file alone. The pause the author
+   * asked for that the run has not reached yet; `null` when none waits. It changes without the state being written, so `updatedAt`
+   * does not move: a `state` event is emitted whenever it does.
+   */
+  pausePending?: AutopilotPausePending | null;
+  /** Not saved, and absent like `pausePending`: the limits of the run in progress and how far it got; `null` when the run has none, or is over. */
+  limits?: AutopilotLimitsSummary | null;
+  /** Derived, not saved: where the book is published now (`effectivePublish` of the options and of the host's default). */
+  publish?: AutopilotPublishMode;
 }
 
 /** What a client needs to render the autopilot of one book. */
 export interface AutopilotSnapshot {
   bookId: string;
   state: AutopilotState | null;
+  /**
+   * The summary of `state` with what only the live session knows (the pause that waits, the limits of the run, how the book is
+   * published): what the `state` events say, for a client that connects later. Absent from an older host.
+   */
+  summary?: AutopilotStateSummary | null;
   activities: AutopilotActivity[];
   /** Activity currently running with its streamed preview, if any. */
   live: { activity: AutopilotActivity; characters: number; preview: string } | null;
@@ -398,4 +467,6 @@ export interface QuestionAnswer {
 export interface StartOptions {
   brief?: Partial<AutopilotBrief>;
   options?: Partial<AutopilotOptions>;
+  /** Limits of this run only: they are not saved. See `AutopilotRunLimits`. */
+  limits?: AutopilotRunLimits;
 }

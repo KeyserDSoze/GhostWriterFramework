@@ -18,10 +18,13 @@ import {
   MAX_REVISION_NOTES,
   capConstraints,
   createAutopilotState,
+  effectivePublish,
+  hostDefaultPublish,
   inspectAutopilotState,
   normalizeBrief,
   normalizeOptions,
   normalizeRuleText,
+  normalizeRunLimits,
   parseActivityLog,
   pendingNotes,
   serializeActivityLog,
@@ -29,22 +32,36 @@ import {
   summarizeAutopilotState,
 } from "./state.js";
 import { TASK_EXECUTORS, type TaskContext } from "./tasks.js";
-import type {
-  AutopilotActivity,
-  AutopilotEventBody,
-  AutopilotState,
-  AuthorIntervention,
-  InterventionInput,
-  QuestionAnswer,
-  StartOptions,
+import {
+  LIVE_AUTOPILOT_OPTIONS,
+  type AutopilotActivity,
+  type AutopilotEventBody,
+  type AutopilotLimitsSummary,
+  type AutopilotMessageCode,
+  type AutopilotPausePending,
+  type AutopilotPublishMode,
+  type AutopilotRunLimits,
+  type AutopilotState,
+  type AutopilotStateSummary,
+  type AuthorIntervention,
+  type InterventionInput,
+  type QuestionAnswer,
+  type StartOptions,
 } from "./types.js";
 
+/**
+ * What a host gives the run. Which of the two `after…` hooks are called, and when, is decided by the engine from where the book is
+ * published (`options.publishEvery`, else the host's `defaultPublish`, else `options.syncAfterChapter`: see `effectivePublish`),
+ * so a host only says how to publish: `afterCommit` is called after every saved step when the book is published after every step,
+ * `afterChapter` when a chapter is closed and the book is published after every chapter or every step, and neither when it is not
+ * published. A publish that fails is reported (`sync` event) and never stops the run.
+ */
 export interface AutopilotHooks {
   /** Before every step, e.g. fast-forward the working copy from GitHub (server). */
   beforeStep?(signal: AbortSignal): Promise<void>;
-  /** After every committed step, e.g. push to GitHub (server). */
+  /** After every committed step, when the book is published after every step: e.g. push to GitHub (server). */
   afterCommit?(info: { task: TaskDescriptor; message: string; paths: string[] }): Promise<void>;
-  /** After a chapter is approved, e.g. publish the local commits to GitHub (browser). */
+  /** After a chapter is approved, when the book is published after every chapter or every step: e.g. publish the local commits to GitHub (browser). */
   afterChapter?(info: { chapterNumber: number; title: string }): Promise<void>;
 }
 
@@ -58,6 +75,11 @@ export interface AutopilotRunConfig {
   hostId?: string;
   now?: () => Date;
   hooks?: AutopilotHooks;
+  /**
+   * Where the host publishes when the author has not chosen (`options.publishEvery`). Without it a server host publishes after every
+   * step, as it always did, and a browser host as `options.syncAfterChapter` says.
+   */
+  defaultPublish?: AutopilotPublishMode;
   emit: (event: AutopilotEventBody) => void;
   /**
    * Base delay before the automatic retry of a failed step (ms, default 4000). Transient provider errors are retried up
@@ -212,11 +234,19 @@ export function applyAnswer(state: AutopilotState, answer: QuestionAnswer, now: 
   return next;
 }
 
+/** The options the author can change while a run goes on, without the rest: the run does not write them, and the rest can only change when nobody runs. */
+function withoutLiveOptions(options: AutopilotState["options"]): unknown {
+  const kept: Record<string, unknown> = { ...options };
+  for (const key of LIVE_AUTOPILOT_OPTIONS) delete kept[key];
+  return kept;
+}
+
 /** The state without what only the author changes and what every write changes: what is left must be the same before and after. */
 function withoutAuthorParts(state: AutopilotState): unknown {
-  const { version: _version, updatedAt: _updatedAt, interventions: _interventions, constraints: _constraints, revision: _revision, finalDone: _finalDone, plan, runner, ...rest } = state;
+  const { version: _version, updatedAt: _updatedAt, interventions: _interventions, constraints: _constraints, revision: _revision, finalDone: _finalDone, options, plan, runner, ...rest } = state;
   return {
     ...rest,
+    options: withoutLiveOptions(options),
     plan: plan ? (({ approved: _approved, awaitingAuthor: _awaitingAuthor, revisionNotes: _notes, revisionBatches: _batches, ...others }) => others)(plan) : plan,
     runner: runner ? (({ heartbeatAt: _heartbeatAt, ...others }) => others)(runner) : runner,
   };
@@ -225,23 +255,33 @@ function withoutAuthorParts(state: AutopilotState): unknown {
 /**
  * What the author saved in the state file while a step ran, carried into the state that step produced. `base` is the state
  * as the run last read it, `stored` the file as it is now and `working` the run's own. The author owns the interventions,
- * the rules and what a rewrite changes: they are merged (interventions by id, rules by text, the effects of a new rewrite land
- * on `working`, as they did when they were handed over in memory), and the run wins on everything else. `foreign` says that
- * `stored` differs from `base` in something the author does not own or the run does not write by itself (its own heartbeat):
- * that is a conflict.
+ * the rules, what a rewrite changes and the settings that can change during a run (`LIVE_AUTOPILOT_OPTIONS`: where the book is
+ * published and whether to pause after every chapter): they are merged (interventions by id, rules by text, the effects of a new
+ * rewrite land on `working`, as they did when they were handed over in memory, a setting by its value as the author left it), and
+ * the run wins on everything else. `foreign` says that `stored` differs from `base` in something the author does not own or the run
+ * does not write by itself (its own heartbeat): that is a conflict.
  */
 export function reconcileAuthorChanges(working: AutopilotState, base: AutopilotState, stored: AutopilotState): { state: AutopilotState; foreign: boolean } {
   const foreign = JSON.stringify(withoutAuthorParts(base)) !== JSON.stringify(withoutAuthorParts(stored));
   const known = new Set(working.interventions.map((entry) => entry.id));
   const added = stored.interventions.filter((entry) => !known.has(entry.id));
   const rulesChanged = stored.constraints.length !== base.constraints.length || stored.constraints.some((rule, index) => rule !== base.constraints[index]);
-  if (!added.length && !rulesChanged) return { state: working, foreign };
+  const optionsChanged = LIVE_AUTOPILOT_OPTIONS.filter((key) => stored.options[key] !== base.options[key]);
+  if (!added.length && !rulesChanged && !optionsChanged.length) return { state: working, foreign };
   const merged = structuredClone(working);
   if (rulesChanged) {
     // The author's list as it is now, and the rules the run itself added to its own copy.
     const before = new Set(base.constraints);
     const now = new Set(stored.constraints);
     merged.constraints = capConstraints([...stored.constraints, ...working.constraints.filter((rule) => !before.has(rule) && !now.has(rule))]);
+  }
+  if (optionsChanged.length) {
+    const options: Record<string, unknown> = { ...merged.options };
+    for (const key of optionsChanged) {
+      if (stored.options[key] === undefined) delete options[key];
+      else options[key] = stored.options[key];
+    }
+    merged.options = options as unknown as AutopilotState["options"];
   }
   merged.interventions = [...merged.interventions, ...added].slice(-MAX_INTERVENTIONS);
   for (const entry of added) if (entry.scope === "rewrite") applyRewrite(merged, entry.text, entry.createdAt);
@@ -418,6 +458,31 @@ export function runStepCeiling(state: Pick<AutopilotState, "brief" | "plan">): n
   return 500 + 80 * Math.max(state.brief.targetChapters, state.plan?.chapters.length ?? 0);
 }
 
+/**
+ * Whether a step is part of a chapter that is in progress: the chapter has its scenes planned and is not closed. A pause at the end
+ * of the chapter goes on to the end of such a chapter; the concept, the plan, the summaries of the author's chapters, the first step
+ * of a chapter that has not started and the final judgement belong to none, so for them it is a pause after the step.
+ */
+function chapterInProgress(state: AutopilotState, task: TaskDescriptor): boolean {
+  if (task.chapterNumber === undefined) return false;
+  const status = state.plan?.chapters.find((chapter) => chapter.number === task.chapterNumber)?.status;
+  return status === "writing" || status === "review";
+}
+
+function chapterPauseMessage(italian: boolean, chapter: number): string {
+  return italian ? `Capitolo ${chapter} completato: in pausa, come hai chiesto.` : `Chapter ${chapter} completed: paused, as you asked.`;
+}
+
+function stepLimitMessage(italian: boolean, steps: number): string {
+  if (italian) return steps === 1 ? "Passo eseguito come richiesto: in pausa." : `${steps} passi eseguiti come richiesto: in pausa.`;
+  return steps === 1 ? "Step done as requested: paused." : `${steps} steps done as requested: paused.`;
+}
+
+function chapterLimitMessage(italian: boolean, chapters: number): string {
+  if (italian) return chapters === 1 ? "1 capitolo completato in questa sessione." : `${chapters} capitoli completati in questa sessione.`;
+  return chapters === 1 ? "1 chapter completed in this session." : `${chapters} chapters completed in this session.`;
+}
+
 interface StepContext {
   planner: PlannerContext;
   director: DirectorProfile;
@@ -431,7 +496,12 @@ export class AutopilotRun {
   readonly runId = randomId("run");
   private readonly controller = new AbortController();
   private stepController: AbortController | null = null;
+  /** A pause now or after the step was asked for: the run stops as soon as the step in flight is saved (or abandoned, for now). */
   private stopRequested = false;
+  /** A pause at the end of the chapter was asked for: the run goes on until the chapter in progress is closed and published. */
+  private chapterStopRequested = false;
+  /** The step in flight, or waiting to be retried, is part of a chapter in progress: a pause at the end of the chapter does not cut its wait. */
+  private inChapter = false;
   private interrupted = false;
   /** Another run is recorded as the owner of the book: this one saves nothing more and ends. */
   private leaseLost = false;
@@ -439,7 +509,16 @@ export class AutopilotRun {
   private readonly cache = new SnapshotCache();
   private readonly store: BookStore;
   private readonly now: () => Date;
+  /** Steps this run saved, and chapters it closed: what the limits of the run count. A step that failed or was abandoned is not one. */
+  private stepsThisRun = 0;
   private chaptersThisRun = 0;
+  /** The limits of this run, as `StartOptions.limits` gave them. They are not saved. */
+  private limits: AutopilotRunLimits = {};
+  /** The chapter the step saved last closed, until another step is saved: a pause at the end of the chapter asked right then says which. */
+  private closedChapter: number | null = null;
+  /** Why the run ended, when a client can say it in its language (`run-ended`'s `code`). */
+  private endCode: AutopilotMessageCode | undefined;
+  private readonly defaultPublish: AutopilotPublishMode | undefined;
   private current: AutopilotActivity | null = null;
   /** Output limit multiplier per kind of step, raised after a reply cut while the model only reasoned; kept for the run, never saved. */
   private readonly outputBoosts = new Map<string, number>();
@@ -462,6 +541,7 @@ export class AutopilotRun {
   constructor(private readonly config: AutopilotRunConfig) {
     this.now = config.now ?? (() => new Date());
     this.store = transientStore(config.store);
+    this.defaultPublish = hostDefaultPublish(config.host, config.defaultPublish);
     this.persistHeartbeatMs = typeof config.persistHeartbeatMs === "number" && Number.isFinite(config.persistHeartbeatMs) ? config.persistHeartbeatMs : DEFAULT_PERSIST_HEARTBEAT_MS;
   }
 
@@ -479,6 +559,58 @@ export class AutopilotRun {
   stopAfterStep(): void {
     this.stopRequested = true;
     this.waiting?.abort();
+  }
+
+  /**
+   * Finish and save the current step and go on to the end of the chapter in progress (its closing and its publishing included),
+   * then pause. With no chapter in progress (the concept, the plan, the first step of a chapter that has not started, the final
+   * judgement) it is `stopAfterStep`, and so is a wait before a retry of such a step (after the final judgement the book is complete,
+   * and the run says so); the wait before the retry of a step of the chapter goes on, because the chapter still has to be finished.
+   */
+  stopAfterChapter(): void {
+    this.chapterStopRequested = true;
+    if (!this.inChapter) this.waiting?.abort();
+  }
+
+  /**
+   * Take back a pause that is waiting (`stopAfterStep`, `stopAfterChapter`): `true` when there was one. A `stop` that already
+   * happened cannot be undone, nor can a pause of a run that is closing.
+   */
+  cancelPause(): boolean {
+    if (this.closed || this.controller.signal.aborted) return false;
+    const waiting = this.stopRequested || this.chapterStopRequested;
+    this.stopRequested = false;
+    this.chapterStopRequested = false;
+    return waiting;
+  }
+
+  /** The pause that waits for the run to reach it; `null` when none does (a stop that happened is not waiting). */
+  get pausePending(): AutopilotPausePending | null {
+    if (this.closed || this.controller.signal.aborted) return null;
+    if (this.stopRequested) return "after-step";
+    return this.chapterStopRequested ? "after-chapter" : null;
+  }
+
+  /** The limit of chapters of this run: the stricter of the one the run was started with and the saved option `chaptersPerRun` (0 = none). */
+  private chaptersLimit(chaptersPerRun: number): number {
+    const limits = [this.limits.chapters ?? 0, chaptersPerRun].filter((limit) => limit > 0);
+    return limits.length ? Math.min(...limits) : 0;
+  }
+
+  /** What the run knows that the state file does not: the pause that waits, and the limits of the run with how far it got. A run that is over has neither. */
+  runtime(): { pausePending: AutopilotPausePending | null; limits: AutopilotLimitsSummary | null } {
+    if (this.closed) return { pausePending: null, limits: null };
+    const steps = this.limits.steps ?? 0;
+    const chapters = this.chaptersLimit(this.known?.options.chaptersPerRun ?? 0);
+    return {
+      pausePending: this.pausePending,
+      limits: steps || chapters ? { ...(steps ? { steps } : {}), ...(chapters ? { chapters } : {}), stepsDone: this.stepsThisRun, chaptersDone: this.chaptersThisRun } : null,
+    };
+  }
+
+  /** The summary of a state as this run says it: with the pause that waits, its limits, and where the book is published. */
+  private summarize(state: AutopilotState): AutopilotStateSummary {
+    return summarizeAutopilotState(state, { ...this.runtime(), defaultPublish: this.defaultPublish });
   }
 
   /** Queue an intervention in memory (a session saves it at once instead); with `interrupt` the running step is abandoned and repeated with it. */
@@ -521,9 +653,9 @@ export class AutopilotRun {
     this.emit({ type: "insight", tone: note.tone, title: note.title, ...(note.detail ? { detail: note.detail } : {}) });
   }
 
-  /** Waits before a retry; `false` when a pause ended the wait (or came before it). */
+  /** Waits before a retry; `false` when a pause ended the wait (or came before it). A pause at the end of the chapter does not, for a step of the chapter. */
   private async waitBeforeRetry(milliseconds: number): Promise<boolean> {
-    if (this.stopRequested || this.controller.signal.aborted) return false;
+    if (this.stopRequested || this.controller.signal.aborted || (this.chapterStopRequested && !this.inChapter)) return false;
     const waiting = new AbortController();
     const onStop = () => waiting.abort();
     this.controller.signal.addEventListener("abort", onStop, { once: true });
@@ -604,6 +736,7 @@ export class AutopilotRun {
 
   async execute(start: StartOptions = {}): Promise<AutopilotState> {
     const { store } = this;
+    this.limits = normalizeRunLimits(start.limits) ?? {};
     const stored = await readStoredAutopilot(store);
     assertStoredStateReadable(stored);
     let state = stored.state ?? createAutopilotState(this.now(), start.brief, start.options);
@@ -622,7 +755,7 @@ export class AutopilotRun {
     await store.commit([stateChange(state, stored.stateHash)], "Autopilot: started");
     this.known = state;
     this.emit({ type: "run-started", runId: this.runId, host: this.config.host });
-    this.emit({ type: "state", state: summarizeAutopilotState(state) });
+    this.emit({ type: "state", state: this.summarize(state) });
     this.armHeartbeat();
     try {
       return await this.runSteps(state);
@@ -696,6 +829,17 @@ export class AutopilotRun {
           break;
         }
         const italian = isItalian(context.planner.language);
+        // A pause at the end of the chapter asked when the next step is not part of a chapter that is in progress (the run is between two chapters, or in the plan): there is no chapter to finish, so the run pauses here, before spending anything.
+        if (this.chapterStopRequested && !chapterInProgress(state, step.task)) {
+          const closed = this.closedChapter;
+          state = await this.finish(state, "paused", closed === null ? null : chapterPauseMessage(italian, closed), closed === null ? undefined : "chapterPause");
+          break;
+        }
+        // The steps this run was limited to are done. The planner has had its say first, so a limit never takes the place of a reason to stop the book has (the plan waits for the author, the book is complete).
+        if (this.limits.steps && this.stepsThisRun >= this.limits.steps) {
+          state = await this.finish(state, "paused", stepLimitMessage(italian, this.limits.steps), "stepLimit");
+          break;
+        }
         // A profile the autopilot cannot read as it is written (a typo in director.md, a ghostwriter with broken YAML) is the author's to correct: nothing is spent, and no file is replaced by the defaults.
         const problems = await profileProblems({ store, snapshot, state, director: context.director, panel: context.panel, task: step.task });
         if (problems.length) {
@@ -712,6 +856,7 @@ export class AutopilotRun {
           break;
         }
         task = step.task;
+        this.inChapter = chapterInProgress(state, task);
         const boostKey = step.task.kind;
         const key = taskKey(task);
         if (key === lastSuccessKey && successRepeats >= 2) throw new Error(`The autopilot is not making progress on "${task.title}".`);
@@ -828,25 +973,38 @@ export class AutopilotRun {
         lastFailure = "";
         successRepeats = key === lastSuccessKey ? successRepeats + 1 : 0;
         lastSuccessKey = key;
+        // The counts of the run include this step before anybody is told about it.
+        this.stepsThisRun += 1;
+        if (task.kind === "consolidate") this.chaptersThisRun += 1;
+        this.closedChapter = task.kind === "consolidate" ? task.chapterNumber ?? null : null;
         this.emit({ type: "task-finished", activity: done });
-        this.emit({ type: "state", state: summarizeAutopilotState(state) });
-        await this.config.hooks?.afterCommit?.({ task, message, paths: done.changedPaths ?? [] }).catch((error) => {
-          this.emit({ type: "sync", activityId: done.id, tone: "warning", code: "syncFailed", title: italian ? "Sincronizzazione dopo il passo non riuscita." : "Sync after the step failed.", detail: describeError(error) });
-        });
+        this.emit({ type: "state", state: this.summarize(state) });
+        // Where the book is published is read from the state this step saved, which holds what the author changed while it ran: a change takes hold at the end of the step that is running.
+        const publish = effectivePublish(state.options, this.defaultPublish);
+        if (publish === "step") {
+          await this.config.hooks?.afterCommit?.({ task, message, paths: done.changedPaths ?? [] }).catch((error) => {
+            this.emit({ type: "sync", activityId: done.id, tone: "warning", code: "syncFailed", title: italian ? "Sincronizzazione dopo il passo non riuscita." : "Sync after the step failed.", detail: describeError(error) });
+          });
+        }
         if (task.kind === "consolidate") {
-          this.chaptersThisRun += 1;
           const chapter = state.plan?.chapters.find((entry) => entry.number === task!.chapterNumber);
-          if (chapter && state.options.syncAfterChapter && this.config.hooks?.afterChapter) {
+          if (chapter && publish !== "off" && this.config.hooks?.afterChapter) {
             await this.config.hooks.afterChapter({ chapterNumber: chapter.number, title: chapter.title }).catch((error) => {
               this.emit({ type: "sync", activityId: done.id, tone: "warning", code: "publishFailed", title: italian ? "Pubblicazione del capitolo non riuscita." : "Publishing the chapter failed.", detail: describeError(error) });
             });
+          }
+          // The chapter is closed and published: the pause the author asked for at its end happens now. What was asked just now is what is said, before the option that pauses after every chapter.
+          if (this.chapterStopRequested) {
+            state = await this.finish(state, "paused", chapterPauseMessage(italian, task.chapterNumber ?? 0), "chapterPause");
+            break;
           }
           if (state.options.pauseAfterEachChapter || context.director.autonomy === "ask-always") {
             state = await this.finish(state, "paused", italian ? `Capitolo ${task.chapterNumber} approvato: rileggilo e riprendi.` : `Chapter ${task.chapterNumber} approved: read it and resume.`);
             break;
           }
-          if (state.options.chaptersPerRun > 0 && this.chaptersThisRun >= state.options.chaptersPerRun) {
-            state = await this.finish(state, "paused", italian ? `${this.chaptersThisRun} capitoli completati in questa sessione.` : `${this.chaptersThisRun} chapters completed in this session.`);
+          const chaptersLimit = this.chaptersLimit(state.options.chaptersPerRun);
+          if (chaptersLimit > 0 && this.chaptersThisRun >= chaptersLimit) {
+            state = await this.finish(state, "paused", chapterLimitMessage(italian, this.chaptersThisRun), "chapterLimit");
             break;
           }
         }
@@ -926,12 +1084,14 @@ export class AutopilotRun {
       } finally {
         this.controller.signal.removeEventListener("abort", onRunAbort);
         this.stepController = null;
+        this.inChapter = false;
         // An interrupt that came when the step was already over must not make a later abort look like one.
         this.interrupted = false;
       }
     }
     if (this.leaseLost) state = { ...state, status: "paused", message: TAKEN_OVER, runner: null };
-    this.emit({ type: "run-ended", runId: this.runId, status: state.status, message: state.message, ...(this.leaseLost ? { code: "takenOver" as const } : {}) });
+    const code: AutopilotMessageCode | undefined = this.leaseLost ? "takenOver" : this.endCode;
+    this.emit({ type: "run-ended", runId: this.runId, status: state.status, message: state.message, ...(code ? { code } : {}) });
     return state;
   }
 
@@ -1017,8 +1177,12 @@ export class AutopilotRun {
     }
   }
 
-  /** Close the run with a final status, persisted together with any queued intervention and with what the author saved since the run last read the state. */
-  private async finish(state: AutopilotState, status: AutopilotState["status"], message: string | null): Promise<AutopilotState> {
+  /**
+   * Close the run with a final status, persisted together with any queued intervention and with what the author saved since the run last read the state.
+   * `code` is the reason a client can say in its language (`run-ended`'s `code`), when there is one.
+   */
+  private async finish(state: AutopilotState, status: AutopilotState["status"], message: string | null, code?: AutopilotMessageCode): Promise<AutopilotState> {
+    this.endCode = code;
     this.closed = true;
     this.disarmHeartbeat();
     await this.heartbeatInFlight;
@@ -1041,7 +1205,7 @@ export class AutopilotRun {
       final = stampState(this.drainQueue({ ...closing, phase: phaseOf(closing) }, message ?? status), this.now());
       try {
         await this.store.commit([stateChange(final, stored.stateHash)], `Autopilot: ${final.status}`);
-        this.emit({ type: "state", state: summarizeAutopilotState(final) });
+        this.emit({ type: "state", state: this.summarize(final) });
         return final;
       } catch (error) {
         if (!isBookConflictError(error)) {

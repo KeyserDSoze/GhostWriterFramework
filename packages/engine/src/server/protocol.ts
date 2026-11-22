@@ -2,7 +2,7 @@ import type { AiRuntimeConfig, RedactedAiIntegration } from "../ai/config.js";
 import type { EvaluationTarget } from "../book/paths.js";
 import type { BookFileChange, BookFileContent, BookFileEntry } from "../book/store.js";
 import type { DirectorOpinion } from "../director/opinion.js";
-import type { AutopilotEvent, AutopilotSnapshot, AutopilotStateSummary, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
+import type { AutopilotEvent, AutopilotLiveOptions, AutopilotPauseMode, AutopilotSnapshot, AutopilotStateSummary, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
 
 export const SERVER_API_VERSION = 1;
 /** The oldest and the newest `ServerInfo.apiVersion` a server may speak for this engine to talk to it (see `serverCompatibility`). */
@@ -200,8 +200,30 @@ export interface PutAiConfigRequest {
   config: AiRuntimeConfig;
 }
 
+/**
+ * The `ServerInfo.features` entry of a server that implements the quick controls of the autopilot: the pause modes `after-chapter` and
+ * `cancel`, the `limits` of `start`, and `PUT /api/v1/books/:id/autopilot/options` (see `AutopilotLiveOptions`). A server without it
+ * ignores `limits` (the run would not stop after the step or the chapter that was asked for) and takes every pause mode but `now` for
+ * `after-step` (a `cancel` would pause): a client checks `serverSupportsAutopilotControls` before it sends them.
+ */
+export const SERVER_FEATURE_AUTOPILOT_CONTROLS = "autopilot-controls";
+
+/** Whether the server announces that it implements the quick controls of the autopilot. Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsAutopilotControls(info: { features?: unknown } | null | undefined): boolean {
+  const features = info?.features;
+  return Array.isArray(features) && features.includes(SERVER_FEATURE_AUTOPILOT_CONTROLS);
+}
+
+/** The `mode`s of `POST /api/v1/books/:id/autopilot/pause`: `now`, `after-step` and `after-chapter` pause (see `AutopilotPauseMode`); `cancel` takes back a pause that waits. */
+export const PAUSE_AUTOPILOT_MODES = ["now", "after-step", "after-chapter", "cancel"] as const;
+
+/** How a client asks the server to pause (one of `PAUSE_AUTOPILOT_MODES`). */
+export type PauseAutopilotMode = AutopilotPauseMode | "cancel";
+
 export type StartAutopilotRequest = StartOptions & { force?: boolean };
-export type PauseAutopilotRequest = { mode: "now" | "after-step" };
+export type PauseAutopilotRequest = { mode: PauseAutopilotMode };
+/** The body of `PUT /api/v1/books/:id/autopilot/options`: at least one of the two settings that can change while a run goes on. */
+export type UpdateAutopilotOptionsRequest = AutopilotLiveOptions;
 export type InterveneRequest = InterventionInput;
 export type AnswerRequest = QuestionAnswer;
 
