@@ -23,6 +23,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { freezeClock, runningStep, seedRun, stubWidth } from "./helpers/autopilotBand";
 import { longPlan, planOf } from "./helpers/autopilotFixtures";
+import { richHistory } from "./helpers/autopilotTimeline";
 import { LOCAL_BOOK, T0, makeRuntime, quickGroupName, quickName, t } from "./helpers/quickCommands";
 
 const PREVIEW = "The keeper climbed the stairs counting the steps under his breath, and on every landing the wind changed its note in the stairwell.";
@@ -168,6 +169,25 @@ describe("the page on a phone (390 px wide)", () => {
     await waitFor(() => expect(tab(TABS[1])).toHaveAttribute("aria-selected", "true"));
     expect(within(panel()).getByRole("heading", { name: t("autopilot.activity.title") })).toBeInTheDocument();
     expect(within(panel()).queryByRole("heading", { name: t("autopilot.plan.title") })).not.toBeInTheDocument();
+  });
+
+  it("has one list in the Timeline tab, the group of the chapter in hand open, and no text twice on the page", async () => {
+    const rich = richHistory();
+    seedRun({ status: "paused", activities: rich.activities, feed: rich.feed });
+    render(<Page />);
+    fireEvent.mouseDown(tab(TABS[1]));
+    fireEvent.click(tab(TABS[1]));
+    await waitFor(() => expect(tab(TABS[1])).toHaveAttribute("aria-selected", "true"));
+    expect(within(panel()).getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent)).toEqual([t("autopilot.activity.title")]);
+    expect(panel().querySelectorAll("[data-autopilot-timeline]")).toHaveLength(1);
+    expect(within(panel()).getAllByRole("button").filter((button) => button.getAttribute("aria-expanded") === "true")).toHaveLength(1);
+    const seen = new Map<string, number>();
+    for (const element of document.body.querySelectorAll<HTMLElement>("*")) {
+      if (element.children.length > 0 || element.closest("[aria-hidden='true'], .sr-only, [hidden], script, style")) continue;
+      const text = element.textContent?.replace(/\s+/g, " ").trim() ?? "";
+      if (text.length >= 15) seen.set(text, (seen.get(text) ?? 0) + 1);
+    }
+    expect([...seen].filter(([, count]) => count > 1).map(([text]) => text)).toEqual([]);
   });
 
   it("has the plan in the Plan tab", async () => {

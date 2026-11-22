@@ -46,7 +46,7 @@ export function AutopilotLiveCard({ preview, bookTitle, className }: { preview: 
   );
 }
 
-function EventIcon({ event, className }: { event: AutopilotEvent; className?: string }) {
+export function EventIcon({ event, className }: { event: AutopilotEvent; className?: string }) {
   if (event.type === "run-started") return <Play className={className} />;
   if (event.type === "run-ended") return <Flag className={className} />;
   if (event.type === "sync") return <Cloud className={className} />;
@@ -65,9 +65,10 @@ function EventIcon({ event, className }: { event: AutopilotEvent; className?: st
 /**
  * Everything the autopilot did, newest first: finished steps with their result, the director's and
  * readers' insights, sync notices, and the step running now with its live text (unless `showLive` is off: a page that has a box of its
- * own for it does not draw a second one). `compact` is for the live panel: one line for each event, without the long texts.
+ * own for it does not draw a second one). `exceptBook` leaves out the events of one book: the page of that book lists them itself. `compact`
+ * is for the live panel: one line for each event, without the long texts.
  */
-export function AutopilotFeed({ bookId, showBook = false, limit = 200, className, emptyText, showLive = true, compact = false }: { bookId?: string; showBook?: boolean; limit?: number; className?: string; emptyText?: string; showLive?: boolean; compact?: boolean }) {
+export function AutopilotFeed({ bookId, exceptBook, showBook = false, limit = 200, className, emptyText, showLive = true, compact = false }: { bookId?: string; exceptBook?: string; showBook?: boolean; limit?: number; className?: string; emptyText?: string; showLive?: boolean; compact?: boolean }) {
   const { t } = useTranslation();
   const feed = useAutopilotStore((state) => state.feed);
   const live = useAutopilotStore((state) => state.live);
@@ -75,9 +76,9 @@ export function AutopilotFeed({ bookId, showBook = false, limit = 200, className
   const currency = useSettingsStore((state) => state.settings.costCurrency);
   const titles = useMemo(() => new Map(books.map((book) => [book.id, book.name])), [books]);
   const entries = useMemo(() => feed
-    .filter((entry) => (bookId ? entry.event.bookId === bookId : titles.has(entry.event.bookId)) && entry.event.type !== "task-started")
+    .filter((entry) => (bookId ? entry.event.bookId === bookId : titles.has(entry.event.bookId)) && entry.event.bookId !== exceptBook && entry.event.type !== "task-started")
     .slice(-limit)
-    .reverse(), [feed, bookId, limit, titles]);
+    .reverse(), [feed, bookId, exceptBook, limit, titles]);
   const running = useMemo(() => (showLive ? Object.entries(live)
     .filter((entry): entry is [string, LivePreview] => Boolean(entry[1]) && (bookId ? entry[0] === bookId : titles.has(entry[0]))) : []), [live, bookId, titles, showLive]);
 

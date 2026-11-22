@@ -28,6 +28,13 @@ const LABELS = [
   "autopilot.dockLive",
   "autopilot.dockBook",
   "autopilot.where.title",
+  "autopilot.activity.title",
+  "autopilot.timeline.filter.all",
+  "autopilot.timeline.filter.problems",
+  "autopilot.timeline.filter.director",
+  "autopilot.timeline.filter.readers",
+  "autopilot.timeline.filter.writing",
+  "autopilot.timeline.hide",
 ];
 
 beforeAll(async () => {
@@ -45,7 +52,7 @@ describe.each<Language>(["en", "it"])("the help of the autopilot (%s)", (languag
 
   it("describes the control band, the tabs and the mini-player, and no longer the panels they replace", () => {
     const help = helpOf(language);
-    const gone = language === "en" ? [/progress card/i, /live panel/i] : [/scheda di avanzamento/i, /pannello in diretta/i];
+    const gone = language === "en" ? [/progress card/i, /live panel/i, /live feed/i] : [/scheda di avanzamento/i, /pannello in diretta/i, /feed in diretta/i];
     expect(gone.filter((pattern) => pattern.test(help)).map(String)).toEqual([]);
     expect(help).toMatch(language === "en" ? /## The Autopilot page/ : /## La pagina Autopilot/);
     expect(help).toContain("mini-player");

@@ -122,6 +122,15 @@ export interface FinalVerdict {
 
 const VERDICT_LINE = /^(approve|revise|rewrite)\s+(\d+(?:[.,]\d+)?)\s*\/\s*10\s+[—–-]\s+([\s\S]+)$/;
 
+/**
+ * What the director's reviews write as the result of a step: “approve 8/10 — what it thinks” (the review of a chapter, the review of the book). The one
+ * place that reads it: when the engine gives the verdict and the score as fields of their own, this is what is replaced.
+ */
+export function parseVerdictLine(summary: string | undefined): { verdict: NonNullable<FinalVerdict["verdict"]>; score: number; text: string } | null {
+  const match = summary ? VERDICT_LINE.exec(summary.trim()) : null;
+  return match ? { verdict: match[1] as NonNullable<FinalVerdict["verdict"]>, score: Number(match[2].replace(",", ".")), text: match[3].trim() } : null;
+}
+
 /** The director's judgement on the whole book, from the last final review that worked (it writes “approve 8/10 — what it thinks”). */
 export function finalVerdict(activities: readonly AutopilotActivity[]): FinalVerdict | null {
   for (let index = activities.length - 1; index >= 0; index -= 1) {
@@ -129,9 +138,7 @@ export function finalVerdict(activities: readonly AutopilotActivity[]): FinalVer
     if (activity.task !== "final" || activity.status !== "succeeded") continue;
     const summary = activity.summary?.trim();
     if (!summary) return null;
-    const match = VERDICT_LINE.exec(summary);
-    if (!match) return { text: summary };
-    return { verdict: match[1] as FinalVerdict["verdict"], score: Number(match[2].replace(",", ".")), text: match[3].trim() };
+    return parseVerdictLine(summary) ?? { text: summary };
   }
   return null;
 }

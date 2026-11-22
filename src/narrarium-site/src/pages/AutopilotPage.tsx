@@ -4,14 +4,12 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
   AlertTriangle,
-  Ban,
   BookOpen,
   BookOpenCheck,
   CheckCircle2,
   Clapperboard,
   Cloud,
   Laptop,
-  ListChecks,
   Loader2,
   MessageSquarePlus,
   Play,
@@ -45,7 +43,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
-import { AutopilotFeed } from "@/components/autopilot/AutopilotFeed";
+import { AutopilotTimeline } from "@/components/autopilot/AutopilotTimeline";
 import { AutopilotBandDetails, AutopilotControlBand } from "@/components/autopilot/AutopilotControlBand";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import { PlanChapters } from "@/components/autopilot/PlanChapters";
@@ -54,13 +52,13 @@ import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/St
 import { SyncConflicts } from "@/components/autopilot/SyncConflicts";
 import { SyncSkipped } from "@/components/autopilot/SyncSkipped";
 import { closedChapterToRead, pageLayout } from "@/autopilot/bandModel";
-import { useAutopilotRefresh, useBookAutopilotView, useElapsed } from "@/autopilot/hooks";
+import { useAutopilotRefresh, useBookAutopilotView } from "@/autopilot/hooks";
 import { setAutopilotHost } from "@/autopilot/host";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useAutopilotStore, type SyncOutcome } from "@/autopilot/store";
 import { useServerConnection } from "@/autopilot/serverConnection";
-import { activityTitle, formatCost, formatCount, formatDateTime, formatDuration, syncStatusText } from "@/autopilot/format";
+import { formatDateTime, syncStatusText } from "@/autopilot/format";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useContainerWidth } from "@/hooks/useContainerWidth";
@@ -165,6 +163,9 @@ export function AutopilotPage() {
   const existingChapters = structure?.chapters.filter((chapter) => chapter.paragraphs.length > 0).length ?? 0;
   const linkedChapters = useMemo(() => new Set(structure?.chapters.map((chapter) => chapter.slug) ?? []), [structure?.chapters]);
   const closedChapter = useMemo(() => closedChapterToRead(state, activities, status), [state, activities, status]);
+  // The title of a chapter is looked up when a group asks for it: a plan has no maximum number of chapters, and the timeline shows a few.
+  const planChapters = state?.plan?.chapters;
+  const chapterTitle = useCallback((number: number) => planChapters?.find((chapter) => chapter.number === number)?.title, [planChapters]);
 
   // How wide the page has: two columns when it is wide, tabs when it is not, and on a phone a short band with the actions in a bar at the bottom.
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
@@ -242,16 +243,7 @@ export function AutopilotPage() {
     </div>
   );
 
-  const timeline = (
-    <>
-      <Card title={t("autopilot.activity.title")} icon={<ListChecks className="h-4 w-4 text-primary" />}>
-        <ActivityList loading={!loaded} activities={activities} currency={summary?.stats.currency ?? settings.costCurrency} />
-      </Card>
-      <Card title={t("autopilot.dockLive")} icon={<Rocket className="h-4 w-4 text-primary" />}>
-        <AutopilotFeed bookId={bookId} limit={120} showLive={false} />
-      </Card>
-    </>
-  );
+  const timeline = <AutopilotTimeline bookId={bookId} loading={!loaded} activities={activities} chapterTitle={chapterTitle} currency={summary?.stats.currency ?? settings.costCurrency} />;
   const plan = state ? <PlanCard bookId={bookId} plan={state.plan} reviewNumber={state.review?.chapterNumber} linkedSlugs={linkedChapters} /> : null;
   const rules = state ? <RulesCard state={state} /> : null;
   const where = <WhereCard book={book} running={running} quiet />;
@@ -410,62 +402,6 @@ export const PlanCard = memo(function PlanCard({ bookId, plan, reviewNumber, lin
   );
 });
 
-function ActivityIcon({ activity }: { activity: AutopilotActivity }) {
-  if (activity.status === "running") return <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />;
-  if (activity.status === "succeeded") return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />;
-  if (activity.status === "cancelled") return <Ban className="h-3.5 w-3.5 text-amber-700 dark:text-amber-600" />;
-  return <XCircle className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />;
-}
-
-function ActivityList({ loading, activities, currency }: { loading: boolean; activities: AutopilotActivity[]; currency?: string }) {
-  const { t } = useTranslation();
-  const [limit, setLimit] = useState(40);
-  const ordered = useMemo(() => [...activities].reverse(), [activities]);
-  if (loading) return <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</p>;
-  if (!ordered.length) return <p className="text-sm text-muted-foreground">{t("autopilot.activity.empty")}</p>;
-  return (
-    <div className="space-y-1.5">
-      {ordered.slice(0, limit).map((activity) => <ActivityRow key={activity.id} activity={activity} currency={currency} />)}
-      {ordered.length > limit && <Button variant="ghost" size="sm" className="w-full" onClick={() => setLimit((value) => value + 40)}>{t("autopilot.activity.more")}</Button>}
-    </div>
-  );
-}
-
-function ActivityRow({ activity, currency }: { activity: AutopilotActivity; currency?: string }) {
-  const { t } = useTranslation();
-  const elapsed = useElapsed(activity.status === "running" ? activity.startedAt : undefined);
-  const duration = activity.endedAt ? Date.parse(activity.endedAt) - Date.parse(activity.startedAt) : elapsed;
-  const tokens = activity.usage ? activity.usage.inputTokens + activity.usage.outputTokens : 0;
-  return (
-    <details className="rounded-lg border">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
-        <ActivityIcon activity={activity} />
-        <span className="min-w-0 flex-1 truncate text-sm">{activityTitle(t, activity)}</span>
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatDuration(duration)}</span>
-      </summary>
-      <div className="space-y-1.5 border-t px-3 py-2 text-xs">
-        {activity.summary && <p className="whitespace-pre-wrap">{activity.summary}</p>}
-        {activity.error && <p className="whitespace-pre-wrap text-destructive">{activity.error}</p>}
-        {activity.reason && <p className="text-muted-foreground"><span className="font-medium text-foreground/80">{t("autopilot.why")}:</span> {activity.reason}</p>}
-        {activity.next && <p className="text-muted-foreground"><span className="font-medium text-foreground/80">{t("autopilot.next")}:</span> {activity.next}</p>}
-        <p className="text-muted-foreground">
-          {formatDateTime(activity.startedAt)} · {t(`autopilot.activity.status.${activity.status}`)}
-          {activity.model ? ` · ${activity.model}` : ""}
-          {tokens ? ` · ${formatCount(tokens)} ${t("autopilot.progress.tokens").toLowerCase()}` : ""}
-          {activity.cost ? ` · ${formatCost(activity.cost, currency)}` : ""}
-          {activity.host ? ` · ${t(`autopilot.host.${activity.host}`)}` : ""}
-        </p>
-        {activity.changedPaths && activity.changedPaths.length > 0 && (
-          <div>
-            <p className="font-medium">{t("autopilot.activity.changed")}</p>
-            <ul className="mt-0.5 space-y-0.5 font-mono text-xs text-muted-foreground">{activity.changedPaths.map((path) => <li key={path} className="break-all">{path}</li>)}</ul>
-          </div>
-        )}
-      </div>
-    </details>
-  );
-}
-
 type InterventionProps = { state: AutopilotState; asking: boolean; running: boolean; controllable: boolean; busy: boolean; run: RunAction };
 
 /**
@@ -554,11 +490,12 @@ function InterventionForm({ state, asking, running, controllable, busy, run, onD
 
 function RulesCard({ state }: { state: AutopilotState }) {
   const { t } = useTranslation();
-  const list = (items: string[]) => items.length ? <ul className="list-disc space-y-1 pl-5 text-sm">{items.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="text-sm text-muted-foreground">{t("autopilot.rules.none")}</p>;
+  // Each list says in its own words that it is empty: two lists that say “none yet” say the same text twice.
+  const list = (items: string[], none: string) => items.length ? <ul className="list-disc space-y-1 pl-5 text-sm">{items.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="text-sm text-muted-foreground">{none}</p>;
   return (
     <Card title={t("autopilot.rules.title")} icon={<Scale className="h-4 w-4 text-primary" />} quiet>
-      <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground">{t("autopilot.rules.constraints")}</p>{list(state.constraints)}</div>
-      <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground">{t("autopilot.rules.directorNotes")}</p>{list(state.directorNotes)}</div>
+      <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground">{t("autopilot.rules.constraints")}</p>{list(state.constraints, t("autopilot.rules.noConstraints"))}</div>
+      <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground">{t("autopilot.rules.directorNotes")}</p>{list(state.directorNotes, t("autopilot.rules.noNotes"))}</div>
     </Card>
   );
 }

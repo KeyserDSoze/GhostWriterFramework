@@ -211,3 +211,45 @@ test("the counts of the band have a form for one and for many, in both languages
     }
   }
 });
+
+test("the texts of the timeline are in the bundle loaded with the autopilot, in both languages, written in Italian and with the same values to fill in", () => {
+  const keys = leaves(get(autopilotEn, "autopilot.timeline"), "autopilot.timeline");
+  assert.ok(keys.length >= 30, `the timeline has its texts (saw ${keys.length})`);
+  for (const key of keys) {
+    for (const [language, locale] of [["en", autopilotEn], ["it", autopilotIt]]) {
+      assert.equal(typeof get(locale, key), "string", `${language}: ${key}`);
+      assert.ok(get(locale, key).trim(), `${language}: ${key} is not empty`);
+    }
+    assert.equal(get(en, key), undefined, `${key} is not repeated in the always-loaded bundle`);
+    assert.deepEqual(placeholders(get(autopilotIt, key)), placeholders(get(autopilotEn, key)), key);
+  }
+  assert.deepEqual(leaves(get(autopilotIt, "autopilot.timeline"), "autopilot.timeline").sort(), keys.sort(), "the same texts in both languages");
+  const same = keys.filter((key) => get(autopilotIt, key) === get(autopilotEn, key) && get(autopilotEn, key).length > 12);
+  assert.deepEqual(same, [], "texts copied from English");
+  for (const key of ["autopilot.dock.pageLists", "autopilot.dock.pageListsAll"]) {
+    assert.ok(get(autopilotEn, key) && get(autopilotIt, key), key);
+    assert.notEqual(get(autopilotIt, key), get(autopilotEn, key), `${key} is written in Italian`);
+  }
+});
+
+test("the timeline speaks of steps, chapters and rounds in the words of the site, in each language", () => {
+  const it_ = autopilotIt.autopilot.timeline;
+  const en_ = autopilotEn.autopilot.timeline;
+  assert.deepEqual(["all", "problems", "director", "readers", "writing"].map((key) => it_.filter[key]), ["Tutto", "Errori e avvisi", "Direttore", "Lettori", "Scrittura"]);
+  assert.deepEqual(["all", "problems", "director", "readers", "writing"].map((key) => en_.filter[key]), ["All", "Errors and warnings", "Director", "Readers", "Writing"]);
+  assert.equal(it_.group.chapter, "Capitolo {{chapter}} · giro {{round}}");
+  assert.equal(en_.group.chapter, "Chapter {{chapter}} · round {{round}}");
+  assert.equal(it_.hide, "Nascondi fino a ora");
+  assert.equal(en_.hide, "Hide until now");
+  assert.match(it_.more, /Mostra/);
+  assert.ok(placeholders(it_.more).includes("count") && placeholders(en_.more).includes("count"));
+});
+
+test("every text of the timeline that names a count has a form for one and for many, in both languages", () => {
+  for (const base of ["autopilot.timeline.hidden", "autopilot.timeline.group.steps", "autopilot.timeline.group.failed", "autopilot.timeline.row.attempts", "autopilot.timeline.row.warnings"]) {
+    for (const locale of [autopilotEn, autopilotIt]) {
+      assert.equal(typeof get(locale, `${base}_one`), "string", `${base}_one`);
+      assert.ok(placeholders(get(locale, `${base}_other`)).includes("count"), `${base}_other says how many`);
+    }
+  }
+});

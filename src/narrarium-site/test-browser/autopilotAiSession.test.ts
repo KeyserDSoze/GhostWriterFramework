@@ -102,7 +102,11 @@ describe("a whole book written through the browser's AI port", () => {
       expect(run.retries.map((event) => event.type === "insight" && [event.attempt, event.retries, event.waitMs])).toEqual([[1, 3, 200]]);
       expect(run.state.stats.failures, "the rate limit did not fail the run").toBe(0);
     }
-    expect(browser.state.stats).toEqual(server.state.stats);
+    // The two hosts count the same calls, tokens and cost. The time the steps took is the clock's and differs from one run to the next.
+    const { workedMs: browserWorked, ...browserStats } = browser.state.stats;
+    const { workedMs: serverWorked, ...serverStats } = server.state.stats;
+    expect(browserStats).toEqual(serverStats);
+    for (const worked of [browserWorked, serverWorked]) expect(Number.isInteger(worked) && (worked as number) >= 0, "the working time is a whole number of milliseconds").toBe(true);
 
     // What the autopilot counted is what the browser recorded for the costs, and every request has its entry in the panel.
     const ledger = useCostsStore.getState().file.books["book-1"];

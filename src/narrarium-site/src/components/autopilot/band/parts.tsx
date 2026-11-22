@@ -63,7 +63,8 @@ export function StepElapsed({ bookId, className }: { bookId: string; className?:
   return since ? <ElapsedTime since={since} className={className} /> : null;
 }
 
-const PREVIEW_CHARACTERS = 120;
+/** How much of the end of the text that streams the band shows, on one line. The timeline shows the text whole, and only when it has more than this to show. */
+export const PREVIEW_CHARACTERS = 120;
 
 /** The end of the text, the words that are being written now, on one line. */
 export function previewTail(text: string): string {

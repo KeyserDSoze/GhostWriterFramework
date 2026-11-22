@@ -100,9 +100,10 @@ describe("counts are written as one or many", () => {
 });
 
 describe("what used to be written in one language only", () => {
-  it.each(["en", "it"])("has a name in %s for the button that shows more activity", (language) => {
-    expect(i18n.exists("autopilot.activity.more", { lng: language })).toBe(true);
-    expect(i18n.t("autopilot.activity.more", { lng: language })).not.toBe("…");
+  it.each(["en", "it"])("has a name in %s for the button that shows more activity, which says how many it shows", (language) => {
+    expect(i18n.exists("autopilot.timeline.more", { lng: language })).toBe(true);
+    expect(i18n.t("autopilot.timeline.more", { lng: language, count: 40 })).toMatch(/40/);
+    expect(i18n.t("autopilot.timeline.more", { lng: language, count: 40 })).not.toBe("…");
   });
 });
 

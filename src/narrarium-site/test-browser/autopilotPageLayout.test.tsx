@@ -25,7 +25,8 @@ import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { longPlan, planOf } from "./helpers/autopilotFixtures";
-import { activityOf, finishedEvent, runningStep, seedRun } from "./helpers/autopilotBand";
+import { activityOf, finishedEvent, runningStep, seedRun, stubWidth } from "./helpers/autopilotBand";
+import { richHistory } from "./helpers/autopilotTimeline";
 import { LOCAL_BOOK, T0, makeRuntime, quickName, t } from "./helpers/quickCommands";
 
 const PREVIEW = "The keeper climbed the stairs counting the steps under his breath and on every landing the wind changed its note in the stairwell.";
@@ -93,6 +94,8 @@ beforeEach(async () => {
 afterEach(async () => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  sessionStorage.clear();
   useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [], dockOpen: false, pageDockOpen: false, dockTab: "live", whereIntent: null, server: { status: "disabled", info: null, message: null, books: [], updates: null, connection: null } });
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
   await i18n.changeLanguage("en");
@@ -103,8 +106,11 @@ describe("what used to be on the page twice", () => {
     seedRun({ status: "running", running: true, live: { activity: LIVE, characters: PREVIEW.length, preview: PREVIEW }, ...history() });
     render(<Page />);
     expect(screen.getAllByText(/^Now$/i)).toHaveLength(1);
-    // The text that streams is written once, too.
-    expect(screen.getAllByText(PREVIEW.slice(-60), { exact: false })).toHaveLength(1);
+    // The text that streams is short in the band (one line) and whole in the timeline: two places, and never the same text twice.
+    const places = screen.getAllByText(PREVIEW.slice(-60), { exact: false });
+    expect(places).toHaveLength(2);
+    expect(new Set(places.map((place) => place.textContent)).size).toBe(2);
+    expect(bandOf().contains(places[0]) || bandOf().contains(places[1])).toBe(true);
   });
 
   it("says once that the plan is ready, and once what the author can do about it", () => {
@@ -144,6 +150,11 @@ describe("what used to be on the page twice", () => {
     expect(within(bandOf()).getAllByText("Completed")).toHaveLength(1);
   });
 
+  const withHistory = (seed: Parameters<typeof seedRun>[0]): Parameters<typeof seedRun>[0] => {
+    const rich = richHistory();
+    return { ...seed, activities: [...(seed.activities ?? []), ...rich.activities], feed: [...(seed.feed ?? []), ...rich.feed] };
+  };
+
   const SCENES: Array<[string, Parameters<typeof seedRun>[0]]> = [
     ["a run in the middle of a chapter", { status: "running", running: true, live: { activity: LIVE, characters: PREVIEW.length, preview: PREVIEW }, ...history() }],
     ["a plan that waits for the author", { status: "paused", message: "The plan is ready: read it and resume when you want.", chapters: longPlan(12, 0, () => "planned"), statePatch: { plan: { ...planOf(longPlan(12, 0, () => "planned")), awaitingAuthor: true } } }],
@@ -153,11 +164,58 @@ describe("what used to be on the page twice", () => {
     ["a book that is complete", { status: "completed", phase: "completed", chapters: longPlan(12, 12), message: "The book is complete.", statePatch: { finalDone: true }, activities: [activityOf("final", { summary: "approve 8/10 — The arc holds." })] }],
   ];
 
-  // The history and the live feed list the same steps while they are two cards: the history is left out of the scan until they become one.
-  it.each(SCENES)("shows no text twice on the screen: %s", (_name, seed) => {
-    seedRun(seed);
+  // The history is one list now, and part of the scan: nothing on the page is said twice, from the band to the last group.
+  it.each(SCENES)("shows no text twice on the screen, the history included: %s", (_name, seed) => {
+    seedRun(withHistory(seed));
     render(<Page />);
-    expect(repeatedTexts([section(t("autopilot.activity.title"))])).toEqual([]);
+    expect(screen.getByRole("heading", { name: t("autopilot.activity.title") })).toBeInTheDocument();
+    expect(repeatedTexts()).toEqual([]);
+  });
+
+  it.each(["a run in the middle of a chapter", "a book that is complete"])("shows no text twice on the screen in Italian, too: %s", async (name) => {
+    await i18n.changeLanguage("it");
+    const seed = SCENES.find(([title]) => title === name)![1];
+    seedRun(withHistory(seed));
+    render(<Page />);
+    expect(screen.getByRole("heading", { name: "Tutto ciò che è successo" })).toBeInTheDocument();
+    expect(repeatedTexts()).toEqual([]);
+  });
+
+  it("says what is empty in the rules card in its own words, one for the rules and one for the guidance of the director", () => {
+    seedRun({ status: "paused" });
+    render(<Page />);
+    const rules = section(t("autopilot.rules.title"));
+    const texts = [t("autopilot.rules.noConstraints"), t("autopilot.rules.noNotes")];
+    expect(new Set(texts).size).toBe(2);
+    for (const text of texts) expect(within(rules).getByText(text)).toBeInTheDocument();
+  });
+
+  it("shows no text twice with the Timeline tab open, on a page that has tabs", async () => {
+    stubWidth(700);
+    seedRun(withHistory({ status: "running", running: true, live: { activity: LIVE, characters: PREVIEW.length, preview: PREVIEW } }));
+    render(<Page />);
+    const tab = screen.getByRole("tab", { name: t("autopilot.tabs.timeline") });
+    fireEvent.mouseDown(tab);
+    fireEvent.click(tab);
+    await waitFor(() => expect(tab).toHaveAttribute("aria-selected", "true"));
+    expect(repeatedTexts()).toEqual([]);
+  });
+
+  it("has one history, one list, and no second card for the live feed, in the two columns and in the tabs", async () => {
+    seedRun(withHistory({ status: "running", running: true, live: { activity: LIVE } }));
+    const wide = render(<Page />);
+    expect(document.querySelectorAll("[data-autopilot-timeline]")).toHaveLength(1);
+    expect(document.querySelector("[data-autopilot-main]")).toContainElement(document.querySelector("[data-autopilot-timeline]") as HTMLElement);
+    expect(screen.queryByRole("heading", { name: t("autopilot.dockLive") })).not.toBeInTheDocument();
+    wide.unmount();
+
+    stubWidth(700);
+    render(<Page />);
+    const tab = screen.getByRole("tab", { name: t("autopilot.tabs.timeline") });
+    fireEvent.mouseDown(tab);
+    fireEvent.click(tab);
+    await waitFor(() => expect(document.querySelectorAll("[data-autopilot-timeline]")).toHaveLength(1));
+    expect(screen.queryByRole("heading", { name: t("autopilot.dockLive") })).not.toBeInTheDocument();
   });
 });
 

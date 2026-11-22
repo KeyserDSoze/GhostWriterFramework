@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createAutopilotState, type AutopilotEvent, type AutopilotState, type AutopilotStateSummary, type PlannedChapter } from "narrarium-engine";
+import { createAutopilotState, type AutopilotActivity, type AutopilotEvent, type AutopilotState, type AutopilotStateSummary, type PlannedChapter } from "narrarium-engine";
 
 const mocks = vi.hoisted(() => ({ book: null as unknown, refresh: vi.fn(async () => null), toast: vi.fn(), save: vi.fn(), reload: vi.fn() }));
 
@@ -18,6 +18,7 @@ import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
 import { countTitleReads, longPlan, planOf } from "./helpers/autopilotFixtures";
+import { countActivityReads, richHistory } from "./helpers/autopilotTimeline";
 
 const T0 = "2026-11-21T10:00:00.000Z";
 const BOOK: BookEntry = { id: "book-1", owner: "local", repo: "book-1", name: "The Glass Harbor", tokenIndex: null, storageMode: "local-only", addedAt: T0, autopilotHost: "server" };
@@ -46,9 +47,9 @@ function stateOf(chapters: PlannedChapter[], patch: Partial<AutopilotState> = {}
   };
 }
 
-function seed(state: AutopilotState | null, running = true) {
+function seed(state: AutopilotState | null, running = true, activities: AutopilotActivity[] = []) {
   useAutopilotStore.setState({
-    views: { [BOOK.id]: { ...emptyView(BOOK.id), snapshot: { bookId: BOOK.id, state, activities: [], live: null, running, host: "server" } } },
+    views: { [BOOK.id]: { ...emptyView(BOOK.id), snapshot: { bookId: BOOK.id, state, activities, live: null, running, host: "server" } } },
     summaries: {},
     live: {},
     feed: [],
@@ -124,6 +125,20 @@ describe("a long plan while the autopilot streams its text", () => {
     for (let step = 1; step <= 40; step += 1) await ingest(stateEvent(summary({ stats: { ...STATS, aiCalls: 5 + step } }, 10 + step), step));
     expect(bandOf().getByText("45 calls")).toBeInTheDocument();
     expect(total(reads)).toBe(drawn);
+  });
+
+  it("does not draw the rows of the history again for the live preview or for the summaries that come with every step", async () => {
+    const reads = new Map<string, number>();
+    seed(stateOf(longPlan(2000, 999)), true, countActivityReads(richHistory().activities, reads));
+    render(<Page />);
+    await ingest(started);
+    const drawn = [...reads.values()].reduce((sum, count) => sum + count, 0);
+    expect(drawn, "the rows of the group that is open are drawn").toBeGreaterThan(0);
+
+    for (let step = 1; step <= 60; step += 1) await ingest(progress(step));
+    for (let step = 1; step <= 40; step += 1) await ingest(stateEvent(summary({ stats: { ...STATS, aiCalls: 5 + step } }, 10 + step), 100 + step));
+    expect(screen.getAllByText("Words streamed so far, step 60").length).toBeGreaterThan(0);
+    expect([...reads.values()].reduce((sum, count) => sum + count, 0)).toBe(drawn);
   });
 
   it("draws only the chapters of the window again when a new download replaces the plan", async () => {

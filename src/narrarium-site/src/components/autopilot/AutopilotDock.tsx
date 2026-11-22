@@ -78,7 +78,7 @@ export function AutopilotDock() {
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {tab === "book" && bookId ? <DockBookPanel bookId={bookId} announce={!onPage} /> : <DockLivePanel announce={!onPage} showBook={Boolean(bookId)} />}
+        {tab === "book" && bookId ? <DockBookPanel bookId={bookId} announce={!onPage} /> : <DockLivePanel announce={!onPage} showBook={Boolean(bookId)} onPage={onPage ? (bookId ? "book" : "all") : null} pageBook={bookId} />}
       </div>
     </section>
   );
@@ -88,10 +88,12 @@ export function AutopilotDock() {
  * The “Live” tab: the last events of every book, in one line each. Without a book in the page (and so without the other tab) it also has the mini-player of the book in
  * focus (the one that runs, else the one that was active last), with the name of the book always on it; with several books to choose from the author picks which one.
  */
-function DockLivePanel({ announce, showBook }: { announce: boolean; showBook: boolean }) {
+function DockLivePanel({ announce, showBook, onPage, pageBook }: { announce: boolean; showBook: boolean; onPage: "book" | "all" | null; pageBook: string | undefined }) {
   const { t } = useTranslation();
   const { focus, candidates, choose } = useFocusBook();
   useAutopilotRefresh(focus?.id);
+  // A page of the autopilot lists the events itself (the timeline of the book, the feed of every book): the panel does not say them again.
+  const pageLists = onPage === "all" ? t("autopilot.dock.pageListsAll") : null;
   return (
     <div className="space-y-3">
       {!showBook && focus && (
@@ -103,7 +105,7 @@ function DockLivePanel({ announce, showBook }: { announce: boolean; showBook: bo
       )}
       <div className="space-y-1.5">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("autopilot.dock.latest")}</h3>
-        <AutopilotFeed showBook limit={LATEST_EVENTS} compact showLive={false} />
+        {pageLists ? <p className="rounded-xl border border-dashed p-3 text-center text-xs text-muted-foreground">{pageLists}</p> : <AutopilotFeed showBook limit={LATEST_EVENTS} compact showLive={false} exceptBook={onPage === "book" ? pageBook : undefined} emptyText={onPage === "book" ? t("autopilot.dock.pageLists") : undefined} />}
       </div>
       {showBook && (
         <Button asChild variant="ghost" size="sm" className="w-full">

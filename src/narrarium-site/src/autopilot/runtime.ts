@@ -1305,7 +1305,11 @@ export class BrowserAutopilotRuntime {
             if (!snapshot.running && !view.busyInAnotherTab) {
               const end = lastRunEnd(bookId);
               const heard = end && end.at >= since ? end : undefined;
-              return finish(() => resolve({ status: snapshot.state?.status ?? heard?.status ?? null, message: snapshot.state?.message ?? null, ...(heard?.code ? { code: heard.code } : {}) }));
+              // What the run announced as it ended is how it ended: a download of the book can have been read while it ended, and a server that
+              // predates the fix calls the stop of a pause an interruption in it. The download tells only when the end was not heard.
+              return finish(() => resolve(heard
+                ? { status: heard.status, message: heard.message, ...(heard.code ? { code: heard.code } : {}) }
+                : { status: snapshot.state?.status ?? null, message: snapshot.state?.message ?? null }));
             }
           } while (again);
         } finally {

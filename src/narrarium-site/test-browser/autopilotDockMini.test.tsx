@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AutopilotActivity } from "narrarium-engine";
@@ -17,7 +17,7 @@ import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { activityOf, finishedEvent, freezeClock, runningStep, seedRun } from "./helpers/autopilotBand";
-import { makeRuntime, quickGroupName, t } from "./helpers/quickCommands";
+import { LOCAL_BOOK, makeRuntime, quickGroupName, t } from "./helpers/quickCommands";
 
 const LIVE = runningStep("write", "Writing scene 2 of chapter 5 «Scene 2»", { chapterNumber: 5, sceneNumber: 2 });
 const PREVIEW = "The keeper climbed the stairs counting the steps under his breath.";
@@ -161,6 +161,51 @@ describe("the live panel, tab “Live”: the feed of every book, in short", () 
     seedRun({ ...RUNNING, ...finished(40) });
     show("/app/books", "live");
     expect(within(open()).getAllByRole("link", { name: t("autopilot.openPage") }).map((link) => link.getAttribute("href"))).toContain("/app/autopilot");
+  });
+
+  describe("on the pages that list the events themselves", () => {
+    const OTHER = { ...LOCAL_BOOK, id: "book-2", name: "The Lighthouse Ledger" };
+    const withOtherBook = () => {
+      seedRun({ ...RUNNING, ...finished(5) });
+      const other = finishedEvent(activityOf("write", { id: "other-1", title: "Writing scene 1 of chapter 9", chapterNumber: 9, sceneNumber: 1 }), 900, "book-2");
+      act(() => {
+        useSettingsStore.setState((state) => ({ settings: { ...state.settings, books: [...state.settings.books, OTHER] } }));
+        useAutopilotStore.setState((state) => ({ feed: [...state.feed, { event: other, bookTitle: OTHER.name }] }));
+        useAutopilotStore.getState().setPageDockOpen(true);
+      });
+    };
+
+    it("leaves out the events of the book whose page it is on, which the page lists, and says so", () => {
+      withOtherBook();
+      show("/app/books/book-1/autopilot", "live");
+      expect(within(open()).queryByText(/Writing scene 3 of chapter 4/)).not.toBeInTheDocument();
+      // The events of the other books are still its business.
+      expect(within(open()).getByText(/Writing scene 1 of chapter 9/)).toBeInTheDocument();
+    });
+
+    it("says the page lists the events when there is nothing else to show", () => {
+      seedRun({ ...RUNNING, ...finished(5) });
+      act(() => { useAutopilotStore.getState().setPageDockOpen(true); });
+      show("/app/books/book-1/autopilot", "live");
+      expect(within(open()).getByText(t("autopilot.dock.pageLists"))).toBeInTheDocument();
+      expect(within(open()).queryAllByRole("listitem")).toHaveLength(0);
+    });
+
+    it("leaves out everything on the page of all the books, which lists every event", () => {
+      withOtherBook();
+      show("/app/autopilot", "live");
+      expect(within(open()).getByText(t("autopilot.dock.pageListsAll"))).toBeInTheDocument();
+      expect(within(open()).queryAllByRole("listitem")).toHaveLength(0);
+    });
+
+    it("lists them as ever on the pages that do not", () => {
+      withOtherBook();
+      act(() => { useAutopilotStore.getState().setDockOpen(true); });
+      show("/app/books/book-1", "live");
+      expect(within(open()).getByText(/Writing scene 3 of chapter 4/)).toBeInTheDocument();
+      expect(within(open()).getByText(/Writing scene 1 of chapter 9/)).toBeInTheDocument();
+      expect(within(open()).queryByText(t("autopilot.dock.pageLists"))).not.toBeInTheDocument();
+    });
   });
 
   it("has no box of “now” of its own for the book of the page: it is in the other tab, with the commands", () => {

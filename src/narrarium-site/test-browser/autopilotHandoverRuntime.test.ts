@@ -366,6 +366,31 @@ describe("server → browser", () => {
     expect(mocks.save).toHaveBeenCalledTimes(1);
   });
 
+  it("goes on here when the run ended by the pause that was asked, even if the download of that moment calls the stop an interruption", async () => {
+    await runtime.armHandover(BOOK.id, { to: "browser" }, { saveSettings: mocks.save });
+    expect(server.paused).toEqual(["after-step"]);
+    hold();
+    // A server that reads its state while the run ends can call the stop an interruption in what it answers (the engine that fixed it is 0.1.6);
+    // the event the run announced as it ended says how it ended.
+    server.stop("paused", "Interrupted: resume to continue from the last saved step.");
+    seq += 1;
+    runtime.onServerMessage({ event: "autopilot", data: { bookId: BOOK.id, at: new Date().toISOString(), seq, type: "run-ended", runId: "run-server", status: "paused", message: null } });
+    await untilPhase("done");
+    expect(hostOf()).toBe("browser");
+    expect(runtime.isRunningHere(BOOK.id)).toBe(true);
+  });
+
+  it("does not go on when the event the run announced says it stopped for another reason, whatever the download says", async () => {
+    await runtime.armHandover(BOOK.id, { to: "browser" }, { saveSettings: mocks.save });
+    hold();
+    server.stop("paused", null);
+    seq += 1;
+    runtime.onServerMessage({ event: "autopilot", data: { bookId: BOOK.id, at: new Date().toISOString(), seq, type: "run-ended", runId: "run-server", status: "paused", message: "Budget reached: raise the limit to continue." } });
+    await untilPhase("done");
+    expect(hostOf()).toBe("browser");
+    expect(runtime.isRunningHere(BOOK.id)).toBe(false);
+  });
+
   it("notices the end of the run by looking, when the live connection lost the event", async () => {
     await runtime.armHandover(BOOK.id, { to: "browser" }, { saveSettings: mocks.save });
     hold();
