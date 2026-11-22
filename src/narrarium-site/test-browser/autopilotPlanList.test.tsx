@@ -9,7 +9,7 @@ import { chapter, countTitleReads, longPlan, planOf, scene } from "./helpers/aut
 import smallPlanMarkup from "./helpers/autopilotPlanSmall.html?raw";
 
 function show(chapters: PlannedChapter[], reviewNumber?: number, linked: string[] = []) {
-  const props = { bookId: "book-1", plan: planOf(chapters), reviewNumber, linkedSlugs: new Set(linked) as ReadonlySet<string>, awaitingPlan: false };
+  const props = { bookId: "book-1", plan: planOf(chapters), reviewNumber, linkedSlugs: new Set(linked) as ReadonlySet<string> };
   const view = render(<MemoryRouter><PlanCard {...props} /></MemoryRouter>);
   return {
     ...view,
@@ -215,7 +215,7 @@ describe("the rows of a long plan", () => {
 
 describe("the plan of another book", () => {
   it("does not inherit what the author opened in the plan of the previous one", () => {
-    const props = { plan: planOf(longPlan(2000, 999)), reviewNumber: 1000, linkedSlugs: new Set<string>() as ReadonlySet<string>, awaitingPlan: false };
+    const props = { plan: planOf(longPlan(2000, 999)), reviewNumber: 1000, linkedSlugs: new Set<string>() as ReadonlySet<string> };
     const view = render(<MemoryRouter><PlanCard bookId="book-1" {...props} /></MemoryRouter>);
     fireEvent.click(run(/989 chapters approved/));
     expect(screen.getByText("Title 55")).toBeInTheDocument();

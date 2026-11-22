@@ -1,0 +1,172 @@
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AutopilotActivity } from "narrarium-engine";
+
+const mocks = vi.hoisted(() => ({ runtime: null as unknown as ReturnType<typeof import("./helpers/quickCommands").makeRuntime>, toast: vi.fn(), save: vi.fn(async () => true) }));
+
+vi.mock("@/autopilot/loader", () => ({ loadAutopilotRuntime: async () => mocks.runtime }));
+vi.mock("@/drive/useSettings", () => ({ useSettings: () => ({ save: mocks.save }) }));
+vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast: mocks.toast }), toast: mocks.toast }));
+
+import i18n from "@/i18n";
+import { loadAutopilotTranslations } from "@/i18n/autopilot";
+import { AutopilotDock } from "@/components/autopilot/AutopilotDock";
+import { AutopilotLauncher } from "@/components/autopilot/AutopilotLauncher";
+import { useAutopilotStore } from "@/autopilot/store";
+import { useSettingsStore } from "@/store/settingsStore";
+import { DEFAULT_SETTINGS } from "@/types/settings";
+import { activityOf, finishedEvent, freezeClock, runningStep, seedRun } from "./helpers/autopilotBand";
+import { makeRuntime, quickGroupName, t } from "./helpers/quickCommands";
+
+const LIVE = runningStep("write", "Writing scene 2 of chapter 5 «Scene 2»", { chapterNumber: 5, sceneNumber: 2 });
+const PREVIEW = "The keeper climbed the stairs counting the steps under his breath.";
+
+/** Finished steps of the book, in the log and in the feed: the dock must not list them again. */
+function finished(count: number): { activities: AutopilotActivity[]; feed: ReturnType<typeof finishedEvent>[] } {
+  const activities = Array.from({ length: count }, (_, index) => activityOf("write", { id: `done-${index}`, title: `Writing scene ${index + 1} of chapter 4`, chapterNumber: 4, sceneNumber: index + 1, summary: `What happened in scene ${index + 1}, in words that take a long line.`, model: "fake-model" }));
+  return { activities, feed: activities.map((activity, index) => finishedEvent(activity, index + 1)) };
+}
+
+const RUNNING = { status: "running", running: true, dockOpen: true, live: { activity: LIVE, characters: PREVIEW.length, preview: PREVIEW } } as const;
+const dock = () => screen.queryByRole("region", { name: t("autopilot.dockTitle") });
+const open = () => dock() as HTMLElement;
+
+function Dock({ path, launcher = false }: { path: string; launcher?: boolean }) {
+  return <MemoryRouter initialEntries={[path]}>{launcher && <AutopilotLauncher />}<AutopilotDock /></MemoryRouter>;
+}
+
+/** The panel open on a tab: set before it is drawn, so that nothing changes under the test while it is looked at. */
+function show(path: string, tab: "live" | "book", launcher = false) {
+  useAutopilotStore.setState({ dockTab: tab });
+  return render(<Dock path={path} launcher={launcher} />);
+}
+
+beforeAll(async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  await loadAutopilotTranslations();
+});
+
+beforeEach(async () => {
+  await i18n.changeLanguage("en");
+  mocks.runtime = makeRuntime();
+  mocks.toast.mockReset();
+});
+
+afterEach(async () => {
+  cleanup();
+  vi.useRealTimers();
+  useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [], dockOpen: false, pageDockOpen: false, dockTab: "live", dockFocusBook: null, whereIntent: null, server: { status: "disabled", info: null, message: null, books: [], updates: null, connection: null } });
+  useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+  await i18n.changeLanguage("en");
+});
+
+describe("the live panel on the pages of the autopilot", () => {
+  it.each(["/app/books/book-1/autopilot", "/app/autopilot"])("hides itself on %s: the page shows everything the panel would", (path) => {
+    seedRun(RUNNING);
+    render(<Dock path={path} />);
+    expect(dock()).not.toBeInTheDocument();
+  });
+
+  it.each(["/app/books/book-1", "/app/books", "/app/books/book-1/director", "/app/settings/ai-integrations"])("stays as it was on %s", (path) => {
+    seedRun(RUNNING);
+    render(<Dock path={path} />);
+    expect(dock()).toBeInTheDocument();
+  });
+
+  it("has a small button to bring it back, and the author can close it again, without changing what they chose for the other pages", () => {
+    freezeClock();
+    seedRun(RUNNING);
+    render(<Dock path="/app/books/book-1/autopilot" launcher />);
+    const reopen = screen.getByRole("button", { name: t("autopilot.openDock") });
+    // A small button: an icon, without the title of the step that the band of the page already says.
+    expect(reopen.textContent?.trim()).toBe("");
+    expect(screen.queryByText(LIVE.title)).not.toBeInTheDocument();
+    expect(reopen).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(reopen);
+    expect(dock()).toBeInTheDocument();
+    expect(reopen).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(within(dock()!).getByRole("button", { name: t("autopilot.close") }));
+    expect(dock()).not.toBeInTheDocument();
+    expect(useAutopilotStore.getState().dockOpen, "what the author chose for the other pages is left alone").toBe(true);
+  });
+
+  it("keeps the launcher as it was, with the step in words, on the other pages", () => {
+    seedRun({ ...RUNNING, dockOpen: false });
+    render(<Dock path="/app/books/book-1" launcher />);
+    expect(screen.getByRole("button", { name: t("autopilot.openDock") })).toHaveTextContent(LIVE.title);
+  });
+});
+
+describe("the live panel as a mini-player", () => {
+  it("says what the autopilot is, what it does now, how far it is, and has its commands and the way to the page", () => {
+    freezeClock();
+    seedRun(RUNNING);
+    show("/app/books/book-1", "book");
+    const panel = open();
+    expect(within(panel).getByText("Running")).toBeInTheDocument();
+    expect(within(panel).getByText(LIVE.title)).toBeInTheDocument();
+    expect(within(panel).getByText("1m 26s")).toBeInTheDocument();
+    expect(within(panel).getByRole("progressbar", { name: t("autopilot.band.named", { label: t("autopilot.progress.chapters"), context: t("autopilot.dockTitle") }) })).toHaveAttribute("aria-valuenow", "4");
+    expect(within(panel).getByRole("group", { name: quickGroupName("dock") })).toBeInTheDocument();
+    expect(within(panel).getAllByRole("link", { name: t("autopilot.openPage") }).map((link) => link.getAttribute("href"))).toContain("/app/books/book-1/autopilot");
+  });
+
+  it("does not list the steps of the book: they are on its page, and in the feed of everything", () => {
+    seedRun({ ...RUNNING, ...finished(5) });
+    show("/app/books/book-1", "book");
+    expect(screen.queryByText(/Writing scene 1 of chapter 4/)).not.toBeInTheDocument();
+    expect(within(open()).queryByRole("list")).not.toBeInTheDocument();
+    expect(within(open()).queryByText(/What happened in scene/)).not.toBeInTheDocument();
+  });
+
+  it("announces the step as a status that changes with the step, on a page that does not say it", () => {
+    freezeClock();
+    seedRun(RUNNING);
+    show("/app/books/book-1", "book");
+    expect(within(open()).getByText(LIVE.title).closest('[role="status"]')).not.toBeNull();
+    expect(within(open()).getByText("1m 26s", { exact: false }).closest("[aria-live], [role='status']")).toBeNull();
+  });
+
+  it("does not announce it when it is brought back on the page of the autopilot: the band of the page says it, and only one place of the screen speaks", () => {
+    seedRun({ ...RUNNING, dockOpen: false });
+    show("/app/books/book-1/autopilot", "book", true);
+    fireEvent.click(screen.getByRole("button", { name: t("autopilot.openDock") }));
+    expect(within(open()).getByText(LIVE.title).closest('[role="status"], [aria-live]')).toBeNull();
+  });
+
+  it("shows the question of the director with a way to it, and the notices of the run, as it did", () => {
+    seedRun({ status: "waiting-author", dockOpen: true, question: { id: "q-1", kind: "director", question: "Keep the ending open?", context: "", options: [], askedAt: "2026-11-21T10:00:00.000Z" } });
+    show("/app/books/book-1", "book");
+    expect(within(open()).getByRole("link", { name: new RegExp("Keep the ending open\\?") })).toHaveAttribute("href", "/app/books/book-1/autopilot");
+  });
+});
+
+describe("the live panel, tab “Live”: the feed of every book, in short", () => {
+  it("shows the last events only, one line each, without the long texts", () => {
+    seedRun({ ...RUNNING, ...finished(40) });
+    show("/app/books/book-1", "live");
+    const items = within(open()).getAllByRole("listitem");
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.length).toBeLessThanOrEqual(12);
+    for (const item of items) expect(item.querySelector(".truncate"), item.textContent ?? "").not.toBeNull();
+    expect(within(open()).queryByText(/What happened in scene/)).not.toBeInTheDocument();
+    // The newest first, as the feed has always been.
+    expect(items[0]).toHaveTextContent("Writing scene 40 of chapter 4");
+  });
+
+  it("leads to the whole of it on the page of the autopilot, which shows every book", () => {
+    seedRun({ ...RUNNING, ...finished(40) });
+    show("/app/books", "live");
+    expect(within(open()).getAllByRole("link", { name: t("autopilot.openPage") }).map((link) => link.getAttribute("href"))).toContain("/app/autopilot");
+  });
+
+  it("has no box of “now” of its own for the book of the page: it is in the other tab, with the commands", () => {
+    seedRun(RUNNING);
+    show("/app/books/book-1", "live");
+    expect(screen.queryAllByText(new RegExp(`^${t("autopilot.feed.now")}$`))).toHaveLength(0);
+  });
+});
+

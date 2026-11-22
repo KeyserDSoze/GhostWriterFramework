@@ -49,8 +49,10 @@ test("the shared components and the autopilot dock carry the edge (card, dialog,
   }
 });
 
-test("the dock keeps its position and content: only colour, border and shadow classes changed", async () => {
+test("the dock keeps its corner and its shape; it is now a mini-player that sits above the buttons and keeps room for itself", async () => {
+  // Changed on purpose (Lotto 3, the control band): the panel is a mini-player (narrower, 24rem), and it takes its place above what a page reserves at the bottom and above
+  // the book actions button on a phone (8.5rem), instead of at 5rem where it covered that button. The reasons are in autopilotFloatingSpace.test.mjs.
   const dock = await read("src/components/autopilot/AutopilotDock.tsx");
-  assert.match(dock, /fixed bottom-20 right-4 z-40 flex max-h-\[min\(70dvh,38rem\)\] w-\[min\(26rem,calc\(100vw-2rem\)\)\] flex-col overflow-hidden rounded-2xl/);
-  assert.match(dock, /lg:bottom-24 lg:right-6/);
+  assert.match(dock, /fixed bottom-\[calc\(8\.5rem\+var\(--bottom-reserve,0px\)\)\] right-4 z-40 flex max-h-\[min\(70dvh,38rem\)\] w-\[min\(24rem,calc\(100vw-2rem\)\)\] flex-col overflow-hidden rounded-2xl/);
+  assert.match(dock, /lg:bottom-\[calc\(6rem\+var\(--bottom-reserve,0px\)\)\] lg:right-6/);
 });

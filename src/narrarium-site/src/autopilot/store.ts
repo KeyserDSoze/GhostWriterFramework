@@ -104,11 +104,14 @@ interface AutopilotStoreState {
   summaries: Record<string, AutopilotStateSummary>;
   server: ServerConnectionState;
   dockOpen: boolean;
+  /** The live panel brought back on a page of the autopilot, which hides it by itself (the page shows everything the panel would). Not saved: every visit to those pages starts without it. */
+  pageDockOpen: boolean;
   dockTab: "live" | "book";
   /** The book the author chose to command from the live tab of the dock, among the ones that could be (null: the default). */
   dockFocusBook: string | null;
   whereIntent: WhereIntent | null;
   setDockOpen: (open: boolean) => void;
+  setPageDockOpen: (open: boolean) => void;
   setDockTab: (tab: "live" | "book") => void;
   setDockFocusBook: (bookId: string | null) => void;
   setWhereIntent: (intent: WhereIntent | null) => void;
@@ -178,7 +181,8 @@ export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
   summaries: {},
   server: { status: "disabled", info: null, message: null, books: [], updates: null, connection: null },
   dockOpen: initialDockOpen(),
-  dockTab: "live",
+  pageDockOpen: false,
+  dockTab: "book",
   dockFocusBook: null,
   whereIntent: null,
   setDockFocusBook: (bookId) => set({ dockFocusBook: bookId }),
@@ -191,6 +195,7 @@ export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
     }
     set({ dockOpen: open });
   },
+  setPageDockOpen: (open) => set({ pageDockOpen: open }),
   setDockTab: (tab) => set({ dockTab: tab }),
   patchView: (bookId, patch) => set((state) => ({ views: { ...state.views, [bookId]: { ...(state.views[bookId] ?? emptyView(bookId)), ...patch } } })),
   ingest: (event, bookTitle) => set((state) => {

@@ -60,7 +60,7 @@ export interface QuickModel {
   save: () => Promise<unknown>;
   /** Open the flow of “Where it runs” on the page of the book, with the side the author wants to pass to. */
   openWhere: (side: HandoverSide) => void;
-  ids: { remote: string; stopHint: string; noAi: string; where: string; publish: string; busy: string };
+  ids: { remote: string; stopHint: string; noAi: string; where: string; publish: string; busy: string; more: string };
 }
 
 /** The model of the bar of a book, or `null` while the autopilot of the book has no state to command. */
@@ -86,7 +86,7 @@ export function useQuickModel(bookId: string, variant: QuickVariant): QuickModel
   // A server that has not said what it can do yet (the connection is being made) is not taken for an old one: a command it would misread is
   // checked again against the identity it proves when it is sent, and refused there.
   const controls = server.info ? serverHasQuickControls(server.info) : true;
-  const ids = { remote: `${baseId}-remote`, stopHint: `${baseId}-stop`, noAi: `${baseId}-no-ai`, where: `${baseId}-where`, publish: `${baseId}-publish`, busy: `${baseId}-busy` };
+  const ids = { remote: `${baseId}-remote`, stopHint: `${baseId}-stop`, noAi: `${baseId}-no-ai`, where: `${baseId}-where`, publish: `${baseId}-publish`, busy: `${baseId}-busy`, more: `${baseId}-more` };
 
   return {
     bookId,

@@ -1,15 +1,15 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
   AlertTriangle,
   Ban,
+  BookOpen,
   BookOpenCheck,
   CheckCircle2,
   Clapperboard,
   Cloud,
-  Gauge,
   Laptop,
   ListChecks,
   Loader2,
@@ -25,7 +25,6 @@ import {
   XCircle,
 } from "lucide-react";
 import {
-  AUTOPILOT_PHASES,
   DEFAULT_BRIEF,
   DEFAULT_OPTIONS,
   type AutopilotActivity,
@@ -33,26 +32,28 @@ import {
   type AutopilotOptions,
   type AutopilotPlan,
   type AutopilotState,
-  type AutopilotStateSummary,
   type DirectorQuestion,
   type InterventionScope,
 } from "narrarium-engine";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
-import { AutopilotFeed, AutopilotLiveCard, AutopilotStatusBadge } from "@/components/autopilot/AutopilotFeed";
+import { AutopilotFeed } from "@/components/autopilot/AutopilotFeed";
+import { AutopilotBandDetails, AutopilotControlBand } from "@/components/autopilot/AutopilotControlBand";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import { PlanChapters } from "@/components/autopilot/PlanChapters";
 import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
 import { SyncConflicts } from "@/components/autopilot/SyncConflicts";
 import { SyncSkipped } from "@/components/autopilot/SyncSkipped";
+import { closedChapterToRead, pageLayout } from "@/autopilot/bandModel";
 import { useAutopilotRefresh, useBookAutopilotView, useElapsed } from "@/autopilot/hooks";
 import { setAutopilotHost } from "@/autopilot/host";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
@@ -62,6 +63,8 @@ import { useServerConnection } from "@/autopilot/serverConnection";
 import { activityTitle, formatCost, formatCount, formatDateTime, formatDuration, syncStatusText } from "@/autopilot/format";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { useContainerWidth } from "@/hooks/useContainerWidth";
+import { useReserveSpace } from "@/hooks/useReserveSpace";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -79,12 +82,17 @@ const MAX_CHAPTERS = 100_000;
 // The same kind of guard for the token budget: a trillion tokens is more than any book will ever use, and a typo stays a typo.
 const MAX_BUDGET_TOKENS = 1_000_000_000_000;
 
-/** A card with an `id` is one that a link can bring into view and give the focus to: it is named after its title, so that what takes the focus says where it is. */
-function Card({ title, icon, actions, children, className, id }: { title: string; icon?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; id?: string }) {
+const NO_ACTIVITIES: AutopilotActivity[] = [];
+
+/**
+ * A card with an `id` is one that a link can bring into view and give the focus to: it is named after its title, so that what takes the focus says where it is.
+ * A `quiet` card is a secondary one: a smaller title, a soft edge and no shadow, so that the band and its main action are what the eye finds first.
+ */
+function Card({ title, icon, actions, children, className, id, quiet = false }: { title: string; icon?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; id?: string; quiet?: boolean }) {
   return (
-    <section id={id} tabIndex={id ? -1 : undefined} aria-labelledby={id ? `${id}-title` : undefined} className={cn("space-y-3 rounded-2xl border border-layer bg-card p-4 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-5", className)}>
+    <section id={id} tabIndex={id ? -1 : undefined} aria-labelledby={id ? `${id}-title` : undefined} className={cn("space-y-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring", quiet ? "rounded-xl border bg-card/60 p-3" : "rounded-2xl border border-layer bg-card p-4 shadow-sm sm:p-5", className)}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id={id ? `${id}-title` : undefined} className="flex items-center gap-2 text-base font-semibold">{icon}{title}</h2>
+        <h2 id={id ? `${id}-title` : undefined} className={cn("flex items-center gap-2 font-semibold", quiet ? "text-sm" : "text-base")}>{icon}{title}</h2>
         {actions}
       </div>
       {children}
@@ -92,25 +100,49 @@ function Card({ title, icon, actions, children, className, id }: { title: string
   );
 }
 
+type PageTab = "overview" | "timeline" | "plan" | "rules";
+
+/** The tab that holds what a link to `#its-id` points at, for the page that has tabs. */
+const TAB_OF_ID: Record<string, PageTab> = { "autopilot-where": "rules", "autopilot-setup": "rules" };
+
+/** What takes the focus by itself, because it opens and focuses something inside it (the settings open, and the number of chapters takes the focus). */
+const FOCUS_BY_ITSELF = new Set(["autopilot-setup"]);
+
 /**
  * The commands that point at a card of the page (the question, “Where it runs”) do it with a link to `#its-id`. The router does not scroll to
  * it by itself, so the page does: the card comes into view and takes the focus, which is where a keyboard or a screen reader starts reading.
+ * A card in a tab that is not open is found once the tab is (`dependsOn`), and a link is followed once.
  */
-function useScrollToHash(ready: boolean): void {
+function useScrollToHash(ready: boolean, dependsOn: string): void {
   const location = useLocation();
+  const followed = useRef<string | null>(null);
   useEffect(() => {
     const id = decodeURIComponent(location.hash.replace(/^#/, ""));
-    if (!id || !ready) return;
-    const element = document.getElementById(id);
-    if (!element) return;
-    element.scrollIntoView?.({ block: "start" });
-    element.focus({ preventScroll: true });
-  }, [location.hash, location.key, ready]);
+    const visit = `${location.key}:${id}`;
+    if (!id || !ready || followed.current === visit || FOCUS_BY_ITSELF.has(id)) return undefined;
+    let frame = 0;
+    // The panel of a tab that has just been opened is drawn a moment after the tab: look for the card for a few frames.
+    const look = (frames: number) => {
+      const element = document.getElementById(id);
+      if (element) {
+        followed.current = visit;
+        element.scrollIntoView?.({ block: "start" });
+        element.focus({ preventScroll: true });
+      } else if (frames > 0 && typeof requestAnimationFrame === "function") {
+        frame = requestAnimationFrame(() => look(frames - 1));
+      }
+    };
+    look(10);
+    return () => { if (frame) cancelAnimationFrame(frame); };
+  }, [location.hash, location.key, ready, dependsOn]);
 }
+
+type RunAction = ReturnType<typeof useAutopilotActions>["run"];
 
 export function AutopilotPage() {
   const { bookId } = useParams<{ bookId: string }>();
   const { t } = useTranslation();
+  const location = useLocation();
   const { settings } = useSettingsStore();
   const { branch, ready } = useWorkingBranch(bookId);
   const { book, structure, error, reload } = useBookStructure(bookId);
@@ -124,6 +156,7 @@ export function AutopilotPage() {
   const snapshot = view.snapshot;
   const loaded = Boolean(snapshot || view.error);
   const state = snapshot?.state ?? null;
+  const activities = snapshot?.activities ?? NO_ACTIVITIES;
   // Status and statistics follow the summaries of the `state` events (the page does not download the whole state again for
   // them), and who can command the run is read the same way here, in the dock and in the bar of quick commands.
   const control = useAutopilotControl(bookId);
@@ -131,40 +164,64 @@ export function AutopilotPage() {
   const noAi = host === "browser" && settings.aiIntegrations.length === 0;
   const existingChapters = structure?.chapters.filter((chapter) => chapter.paragraphs.length > 0).length ?? 0;
   const linkedChapters = useMemo(() => new Set(structure?.chapters.map((chapter) => chapter.slug) ?? []), [structure?.chapters]);
-  useScrollToHash(loaded);
+  const closedChapter = useMemo(() => closedChapterToRead(state, activities, status), [state, activities, status]);
+
+  // How wide the page has: two columns when it is wide, tabs when it is not, and on a phone a short band with the actions in a bar at the bottom.
+  const [root, setRoot] = useState<HTMLDivElement | null>(null);
+  const { width, measured } = useContainerWidth(root);
+  const layout = pageLayout(width);
+  const tabs: PageTab[] = ["overview", "timeline", "plan", "rules"];
+  // A plan that waits for the author is what the person came to see: until they pick a tab themselves, the Plan is the one that is open.
+  const awaitingPlan = Boolean(state?.plan?.awaitingAuthor);
+  const [chosen, setChosen] = useState<PageTab | null>(null);
+  const active = chosen && tabs.includes(chosen) ? chosen : awaitingPlan ? "plan" : tabs[0];
+  const hashTab = TAB_OF_ID[decodeURIComponent(location.hash.replace(/^#/, ""))];
+  useEffect(() => {
+    if (hashTab) setChosen(hashTab);
+  }, [hashTab, location.key]);
+  // Nothing is followed before the width is known: the layout of the first draw is thrown away at once, and what was focused in it with it.
+  useScrollToHash(loaded && measured, `${layout}:${active}`);
+  // “Add chapters” leads to the settings: they open and the number of chapters takes the focus, once they are on the screen.
+  const [settingsWanted, setSettingsWanted] = useState(false);
+  useEffect(() => {
+    if (decodeURIComponent(location.hash.replace(/^#/, "")) === "autopilot-setup") setSettingsWanted(true);
+  }, [location.hash, location.key]);
+  const settingsHandled = useCallback(() => setSettingsWanted(false), []);
 
   if (error && !structure && host === "browser") return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book || !bookId) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 
-  const awaitingPlan = Boolean(state?.plan?.awaitingAuthor);
   // The engine waits for the author without a question when a profile file has problems; a run that ended with an error is told apart too.
   const profileStop = isProfileProblemStop(summary);
   const failure = status === "error" ? summary?.lastError ?? null : null;
+  const compact = layout === "compact";
+  const chapterHref = closedChapter?.slug && linkedChapters.has(closedChapter.slug) ? `/app/books/${encodeURIComponent(bookId)}/chapters/${encodeURIComponent(closedChapter.slug)}` : null;
 
-  return (
-    <div className="mx-auto max-w-6xl space-y-5">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <h1 className="flex items-center gap-2 font-serif text-3xl font-semibold tracking-tight"><Plane className="h-6 w-6 text-primary" />{t("autopilot.title")}</h1>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{t("autopilot.description")}</p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {loaded && <AutopilotStatusBadge status={status} />}
-            {summary && summary.phase !== "completed" && <Badge variant="outline">{t(`autopilot.phase.${summary.phase}`)}</Badge>}
-            <Badge variant="outline" className="gap-1">{host === "server" ? <Server className="h-3 w-3" /> : <Laptop className="h-3 w-3" />}{t(`autopilot.host.${host}`)}</Badge>
-            {(view.loading || !loaded) && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-          </div>
-          <OperationNotice bookId={bookId} className="mt-2" />
-        </div>
-        <div className="flex flex-wrap gap-2 lg:max-w-sm lg:shrink-0 lg:justify-end">
-          <Button asChild variant="outline"><Link to={`/app/books/${encodeURIComponent(bookId)}/director`}><Clapperboard className="h-4 w-4" />{t("autopilot.actions.director")}</Link></Button>
-          <Button variant="ghost" size="icon" title={t("autopilot.actions.refresh")} aria-label={t("autopilot.actions.refresh")} disabled={!canRefresh} onClick={() => void run("refresh", (runtime, id) => runtime.refresh(id))}>
-            <RefreshCcw className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
+  const commands = (
+    <QuickCommands
+      bookId={bookId}
+      variant="page"
+      framed={false}
+      profileHintId={PROFILE_HINT_ID}
+      condensed={layout !== "wide"}
+      runExtra={chapterHref && closedChapter ? (
+        <Button asChild size="sm" variant="outline">
+          <Link to={chapterHref}><BookOpen className="h-4 w-4" aria-hidden="true" />{t("autopilot.actions.readChapter", { number: closedChapter.number })}</Link>
+        </Button>
+      ) : undefined}
+    />
+  );
 
-      <QuickCommands bookId={bookId} variant="page" profileHintId={PROFILE_HINT_ID} />
+  const reset = () => { if (window.confirm(t("autopilot.actions.resetConfirm"))) void run("reset", (runtime, id) => runtime.reset(id)); };
+  const intervene = state ? <InterventionLauncher state={state} asking={Boolean(summary?.question)} running={running} controllable={controllable} busy={busy !== null} run={run} /> : null;
 
+  // What comes under the band, always at the top of the content: the question, what went wrong, the plan that waits, and the state of the connections.
+  const alerts = (
+    <div data-autopilot-alerts className="space-y-3 empty:hidden">
+      {summary?.question && <QuestionCard bookId={bookId} question={summary.question} disabled={busy !== null || running} run={run} />}
+      {failure && <RunErrorNotice bookId={bookId} message={failure.message} />}
+      {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} hintId={PROFILE_HINT_ID} />}
+      {awaitingPlan && <Alert><AlertDescription>{t("autopilot.plan.awaiting")}</AlertDescription></Alert>}
       {noAi && <Alert><AlertTriangle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><span>{t("autopilot.errors.aiMissing")}</span><Button asChild size="sm" variant="outline"><Link to="/app/settings/ai-integrations">{t("settingsSection.aiIntegrationsTitle")}</Link></Button></AlertDescription></Alert>}
       {view.error && <Alert variant="destructive"><AlertDescription>{view.error}</AlertDescription></Alert>}
       {snapshot?.stateError && (
@@ -172,12 +229,7 @@ export function AutopilotPage() {
           <XCircle className="h-4 w-4" />
           <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
             <span>{t("autopilot.errors.stateCorrupt")}</span>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy !== null || running}
-              onClick={() => { if (window.confirm(t("autopilot.actions.resetConfirm"))) void run("reset", (runtime, id) => runtime.reset(id)); }}
-            >
+            <Button size="sm" variant="outline" disabled={busy !== null || running} onClick={reset}>
               <RotateCcw className="h-4 w-4" />{t("autopilot.actions.reset")}
             </Button>
           </AlertDescription>
@@ -186,60 +238,123 @@ export function AutopilotPage() {
       {host === "server" && (serverStatus === "offline" || serverStatus === "error") && <Alert><Cloud className="h-4 w-4" /><AlertDescription>{t("autopilot.serverOffline")}</AlertDescription></Alert>}
       {host === "server" && serverStatus === "reconnecting" && <Alert><Cloud className="h-4 w-4" /><AlertDescription>{t("autopilot.serverReconnecting")}</AlertDescription></Alert>}
       {view.busyInAnotherTab && <Alert><AlertDescription>{t("autopilot.anotherTab")}</AlertDescription></Alert>}
-      {summary?.message && !running && !profileStop && summary.message !== failure?.message && <Alert><AlertDescription>{summary.message}</AlertDescription></Alert>}
-      {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} hintId={PROFILE_HINT_ID} />}
-      {failure && <RunErrorNotice bookId={bookId} message={failure.message} />}
+      <OperationNotice bookId={bookId} />
+    </div>
+  );
 
-      {summary?.question && <QuestionCard bookId={bookId} question={summary.question} disabled={busy !== null || running} run={run} />}
+  const timeline = (
+    <>
+      <Card title={t("autopilot.activity.title")} icon={<ListChecks className="h-4 w-4 text-primary" />}>
+        <ActivityList loading={!loaded} activities={activities} currency={summary?.stats.currency ?? settings.costCurrency} />
+      </Card>
+      <Card title={t("autopilot.dockLive")} icon={<Rocket className="h-4 w-4 text-primary" />}>
+        <AutopilotFeed bookId={bookId} limit={120} showLive={false} />
+      </Card>
+    </>
+  );
+  const plan = state ? <PlanCard bookId={bookId} plan={state.plan} reviewNumber={state.review?.chapterNumber} linkedSlugs={linkedChapters} /> : null;
+  const rules = state ? <RulesCard state={state} /> : null;
+  const where = <WhereCard book={book} running={running} quiet />;
+  const settingsCard = <SetupCard book={book} state={state} existingChapters={existingChapters} running={running} busy={busy !== null} disabled={state ? false : noAi || !canRefresh} run={run} openRequest={settingsWanted && measured} onOpenHandled={settingsHandled} />;
+  const danger = state && !running ? <DangerZone onReset={reset} disabled={busy !== null} /> : null;
 
-      {running && <LiveSection bookId={bookId} />}
+  const loading = !loaded ? (
+    <div className="flex items-center gap-2 rounded-2xl border border-layer bg-card p-5 text-sm text-muted-foreground shadow-sm"><Loader2 className="h-4 w-4 animate-spin" />{t("autopilot.current.loading")}</div>
+  ) : null;
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-        <div className="min-w-0 space-y-5">
-          {!loaded ? (
-            <div className="flex items-center gap-2 rounded-2xl border border-layer bg-card p-5 text-sm text-muted-foreground shadow-sm"><Loader2 className="h-4 w-4 animate-spin" />{t("autopilot.current.loading")}</div>
-          ) : !state ? (
-            <SetupCard book={book} state={null} existingChapters={existingChapters} running={false} busy={busy !== null} disabled={noAi || !canRefresh} run={run} />
-          ) : (
-            <PlanCard bookId={bookId} plan={state.plan} reviewNumber={state.review?.chapterNumber} linkedSlugs={linkedChapters} awaitingPlan={awaitingPlan} />
-          )}
-          <Card title={t("autopilot.activity.title")} icon={<ListChecks className="h-4 w-4 text-primary" />}>
-            <ActivityList loading={!loaded} activities={snapshot?.activities ?? []} currency={summary?.stats.currency ?? settings.costCurrency} />
-          </Card>
-          <Card title={t("autopilot.dockLive")} icon={<Rocket className="h-4 w-4 text-primary" />}>
-            <AutopilotFeed bookId={bookId} limit={120} />
-          </Card>
-        </div>
-        <div className="min-w-0 space-y-5">
-          {summary && <ProgressCard summary={summary} />}
-          {state && <InterventionCard state={state} asking={Boolean(summary?.question)} running={running} controllable={controllable} busy={busy !== null} run={run} />}
-          {state && <RulesCard state={state} />}
-          <WhereCard book={book} running={running} />
-          {state && <SetupCard book={book} state={state} existingChapters={existingChapters} running={running} busy={busy !== null} disabled={false} run={run} />}
-          {state && !running && (
-            <Button
-              variant="ghost"
-              className="w-full text-destructive hover:text-destructive"
-              disabled={busy !== null}
-              onClick={() => { if (window.confirm(t("autopilot.actions.resetConfirm"))) void run("reset", (runtime, id) => runtime.reset(id)); }}
-            >
-              <RotateCcw className="h-4 w-4" />{t("autopilot.actions.reset")}
-            </Button>
-          )}
-        </div>
+  const header = (
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+      <div className="min-w-0">
+        <h1 className="flex items-center gap-2 font-serif text-3xl font-semibold tracking-tight"><Plane className="h-6 w-6 text-primary" aria-hidden="true" />{t("autopilot.title")}{(view.loading || !loaded) && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />}</h1>
+        {!state && <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{t("autopilot.description")}</p>}
       </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button asChild variant="outline"><Link to={`/app/books/${encodeURIComponent(bookId)}/director`}><Clapperboard className="h-4 w-4" />{t("autopilot.actions.director")}</Link></Button>
+        <Button variant="ghost" size="icon" title={t("autopilot.actions.refresh")} aria-label={t("autopilot.actions.refresh")} disabled={!canRefresh} onClick={() => void run("refresh", (runtime, id) => runtime.refresh(id))}>
+          <RefreshCcw className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+
+  // The page of a book that never started, or whose state is not there to read: the form to start, and where it runs.
+  if (!state || !summary) {
+    return (
+      <div ref={setRoot} className="mx-auto max-w-6xl space-y-4">
+        {header}
+        {alerts}
+        {!loaded ? loading : (
+          <div className={cn("grid gap-5", layout === "wide" && "grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]")}>
+            <div className="min-w-0 space-y-5">{!state ? settingsCard : null}</div>
+            <div className="min-w-0 space-y-5">{where}</div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const band = <AutopilotControlBand bookId={bookId} variant={layout === "wide" ? "full" : compact ? "compact" : "slim"} commands={compact ? null : commands} />;
+
+  return (
+    <div ref={setRoot} className="mx-auto max-w-6xl space-y-4">
+      {header}
+      {band}
+      {alerts}
+      {layout === "wide" ? (
+        <div className="grid grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-5">
+          <div data-autopilot-main className="min-w-0 space-y-5">{timeline}</div>
+          <div data-autopilot-side className="min-w-0 space-y-4">
+            {plan}
+            {intervene}
+            {rules}
+            {where}
+            {settingsCard}
+            {danger}
+          </div>
+        </div>
+      ) : (
+        <Tabs value={active} onValueChange={(value) => setChosen(value as PageTab)}>
+          <TabsList aria-label={t("autopilot.tabs.label")} className="grid h-auto w-full grid-cols-4">
+            {tabs.map((tab) => <TabsTrigger key={tab} value={tab} className="px-1.5 text-xs sm:text-sm">{t(`autopilot.tabs.${tab}`)}</TabsTrigger>)}
+          </TabsList>
+          <TabsContent value="overview" className="space-y-4">
+            <AutopilotBandDetails bookId={bookId} variant={compact ? "compact" : "slim"} />
+            {intervene}
+          </TabsContent>
+          <TabsContent value="timeline" className="space-y-5">{timeline}</TabsContent>
+          <TabsContent value="plan" className="space-y-4">{plan}</TabsContent>
+          <TabsContent value="rules" className="space-y-4">
+            {rules}
+            {where}
+            {settingsCard}
+            {danger}
+          </TabsContent>
+        </Tabs>
+      )}
+      {compact && <BottomBar>{commands}</BottomBar>}
     </div>
   );
 }
 
-type RunAction = ReturnType<typeof useAutopilotActions>["run"];
+/** On a phone the actions are in a bar at the bottom of the screen, where the thumb is. The page and the floating buttons keep clear of it. */
+function BottomBar({ children }: { children: ReactNode }) {
+  const bar = useRef<HTMLDivElement>(null);
+  useReserveSpace(bar, "--bottom-reserve", true);
+  return <div ref={bar} data-autopilot-bottom-bar className="fixed inset-x-0 bottom-0 z-30 border-t border-layer bg-card px-3 py-2 shadow-lg">{children}</div>;
+}
 
-/** The step running now with the text it streams. It follows the live preview itself, so the page does not redraw with every update of it. */
-function LiveSection({ bookId }: { bookId: string }) {
+/** What cannot be undone, apart from everything else at the end of the page, and asked about before it is done. */
+function DangerZone({ onReset, disabled }: { onReset: () => void; disabled: boolean }) {
   const { t } = useTranslation();
-  const live = useAutopilotStore((state) => state.live[bookId] ?? null);
-  if (live) return <AutopilotLiveCard preview={live} />;
-  return <div className="flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/5 p-3 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin text-primary" />{t("autopilot.current.preparing")}</div>;
+  return (
+    <section aria-labelledby="autopilot-danger-title" className="space-y-2 rounded-xl border border-destructive/40 p-3">
+      <h2 id="autopilot-danger-title" className="text-sm font-semibold text-destructive">{t("autopilot.danger.title")}</h2>
+      <p className="text-xs text-muted-foreground">{t("autopilot.danger.description")}</p>
+      <Button variant="outline" size="sm" className="border-destructive/50 text-destructive hover:text-destructive" disabled={disabled} onClick={onReset}>
+        <RotateCcw className="h-4 w-4" />{t("autopilot.actions.reset")}
+      </Button>
+    </section>
+  );
 }
 
 function QuestionCard({ bookId, question, disabled, run }: { bookId: string; question: DirectorQuestion; disabled: boolean; run: RunAction }) {
@@ -271,53 +386,11 @@ function QuestionCard({ bookId, question, disabled, run }: { bookId: string; que
   );
 }
 
-const ProgressCard = memo(function ProgressCard({ summary }: { summary: AutopilotStateSummary }) {
-  const { t } = useTranslation();
-  const { progress, stats: spent } = summary;
-  const phaseIndex = AUTOPILOT_PHASES.indexOf(summary.phase);
-  // Calls the totals cannot be sure of: the provider reported no tokens (the engine estimated them), or the model has no price.
-  const usageUnknown = spent.usageUnknownCalls ?? 0;
-  const costUnknown = spent.costUnknownCalls ?? 0;
-  const stats: Array<[string, string]> = [
-    [t("autopilot.progress.chapters"), `${progress.chaptersDone}/${progress.chapters}`],
-    [t("autopilot.progress.scenes"), `${progress.scenesWritten}/${progress.scenes}`],
-    [t("autopilot.progress.words"), formatCount(progress.words)],
-    [t("autopilot.progress.calls"), formatCount(spent.aiCalls)],
-    [t("autopilot.progress.tokens"), formatCount(spent.inputTokens + spent.outputTokens)],
-    [t("autopilot.progress.cost"), formatCost(spent.cost, spent.currency)],
-  ];
-  return (
-    <Card title={t(`autopilot.phase.${summary.phase}`)} icon={<Gauge className="h-4 w-4 text-primary" />}>
-      <ol className="flex flex-wrap gap-1">
-        {AUTOPILOT_PHASES.map((phase, index) => (
-          <li key={phase} className={cn("rounded-full px-2 py-0.5 text-xs font-medium", index < phaseIndex ? "bg-primary/15 text-accent-foreground" : index === phaseIndex ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}>
-            {t(`autopilot.phase.${phase}`)}
-          </li>
-        ))}
-      </ol>
-      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {stats.map(([label, value]) => (
-          <div key={label} className="rounded-lg bg-muted/40 p-2">
-            <dt className="text-xs text-muted-foreground">{label}</dt>
-            <dd className="text-sm font-semibold tabular-nums">{value}</dd>
-          </div>
-        ))}
-      </dl>
-      {(usageUnknown > 0 || costUnknown > 0) && (
-        <ul className="space-y-1.5 text-xs">
-          {usageUnknown > 0 && <li><span className="font-medium">{t("autopilot.progress.usageUnknown", { count: usageUnknown })}</span> <span className="text-muted-foreground">{t("autopilot.progress.usageUnknownHint")}</span></li>}
-          {costUnknown > 0 && <li><span className="font-medium">{t("autopilot.progress.costUnknown", { count: costUnknown })}</span> <span className="text-muted-foreground">{t("autopilot.progress.costUnknownHint")}</span></li>}
-        </ul>
-      )}
-    </Card>
-  );
-});
-
-export const PlanCard = memo(function PlanCard({ bookId, plan, reviewNumber, linkedSlugs, awaitingPlan }: { bookId: string; plan: AutopilotPlan | null; reviewNumber: number | undefined; linkedSlugs: ReadonlySet<string>; awaitingPlan: boolean }) {
+/** The chapters of the plan. That the plan waits for the author is said once, under the band, and not here. */
+export const PlanCard = memo(function PlanCard({ bookId, plan, reviewNumber, linkedSlugs }: { bookId: string; plan: AutopilotPlan | null; reviewNumber: number | undefined; linkedSlugs: ReadonlySet<string> }) {
   const { t } = useTranslation();
   return (
     <Card title={t("autopilot.plan.title")} icon={<BookOpenCheck className="h-4 w-4 text-primary" />}>
-      {awaitingPlan && <Alert><AlertDescription>{t("autopilot.plan.awaiting")}</AlertDescription></Alert>}
       {!plan?.chapters.length ? (
         <p className="text-sm text-muted-foreground">{t("autopilot.plan.empty")}</p>
       ) : (
@@ -393,7 +466,36 @@ function ActivityRow({ activity, currency }: { activity: AutopilotActivity; curr
   );
 }
 
-function InterventionCard({ state, asking, running, controllable, busy, run }: { state: AutopilotState; asking: boolean; running: boolean; controllable: boolean; busy: boolean; run: RunAction }) {
+type InterventionProps = { state: AutopilotState; asking: boolean; running: boolean; controllable: boolean; busy: boolean; run: RunAction };
+
+/**
+ * Intervening is a button that opens its own form, not a card with a form on the page: the author writes an instruction, says how far it goes, and
+ * records it (or records it and goes on, or interrupts the step that runs).
+ */
+function InterventionLauncher(props: InterventionProps) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const waiting = props.state.interventions.filter((entry) => entry.status === "pending").length;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button variant="outline" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+        <MessageSquarePlus className="h-4 w-4" aria-hidden="true" />{t("autopilot.actions.intervene")}
+      </Button>
+      {waiting > 0 && <span className="text-xs text-muted-foreground">{t("autopilot.intervention.history", { count: waiting })}</span>}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t("autopilot.intervention.title")}</DialogTitle>
+            <DialogDescription>{t("autopilot.intervention.description")}</DialogDescription>
+          </DialogHeader>
+          <InterventionForm {...props} onDone={() => setOpen(false)} />
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function InterventionForm({ state, asking, running, controllable, busy, run, onDone }: InterventionProps & { onDone: () => void }) {
   const { t } = useTranslation();
   const [text, setText] = useState("");
   const [scope, setScope] = useState<InterventionScope>("next_step");
@@ -403,13 +505,15 @@ function InterventionCard({ state, asking, running, controllable, busy, run }: {
       await runtime.intervene(id, { scope, text: text.trim(), interrupt: mode === "interrupt" });
       if (mode === "continue") await runtime.start(id);
     }, t("autopilot.intervention.recorded"));
-    if (ok) setText("");
+    if (ok) {
+      setText("");
+      onDone();
+    }
   };
   const blocked = busy || !text.trim() || (running && !controllable);
   return (
-    <Card title={t("autopilot.intervention.title")} icon={<MessageSquarePlus className="h-4 w-4 text-primary" />}>
-      <p className="text-xs text-muted-foreground">{t("autopilot.intervention.description")}</p>
-      <AutoTextarea value={text} onChange={(event) => setText(event.target.value)} minRows={3} placeholder={t("autopilot.intervention.placeholder")} className="text-sm" />
+    <div className="space-y-3">
+      <AutoTextarea value={text} onChange={(event) => setText(event.target.value)} minRows={3} placeholder={t("autopilot.intervention.placeholder")} aria-label={t("autopilot.intervention.title")} className="text-sm" />
       <div className="space-y-1.5" role="radiogroup" aria-label={t("autopilot.intervention.title")}>
         {SCOPES.map((option) => (
           <label key={option} className={cn("flex cursor-pointer gap-2 rounded-lg border p-2 text-sm transition", scope === option ? "border-primary/60 bg-primary/5" : "hover:bg-muted/40")}>
@@ -444,7 +548,7 @@ function InterventionCard({ state, asking, running, controllable, busy, run }: {
           </ul>
         </details>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -452,7 +556,7 @@ function RulesCard({ state }: { state: AutopilotState }) {
   const { t } = useTranslation();
   const list = (items: string[]) => items.length ? <ul className="list-disc space-y-1 pl-5 text-sm">{items.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p className="text-sm text-muted-foreground">{t("autopilot.rules.none")}</p>;
   return (
-    <Card title={t("autopilot.rules.title")} icon={<Scale className="h-4 w-4 text-primary" />}>
+    <Card title={t("autopilot.rules.title")} icon={<Scale className="h-4 w-4 text-primary" />} quiet>
       <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground">{t("autopilot.rules.constraints")}</p>{list(state.constraints)}</div>
       <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground">{t("autopilot.rules.directorNotes")}</p>{list(state.directorNotes)}</div>
     </Card>
@@ -478,7 +582,7 @@ function SyncIcon({ kind }: { kind: SyncOutcome["kind"] }) {
   return <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />;
 }
 
-export function WhereCard({ book, running }: { book: BookEntry; running: boolean }) {
+export function WhereCard({ book, running, quiet = false }: { book: BookEntry; running: boolean; quiet?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { save } = useSettings();
@@ -533,7 +637,7 @@ export function WhereCard({ book, running }: { book: BookEntry; running: boolean
   const syncText = syncStatusText(t, sync);
 
   return (
-    <Card id="autopilot-where" title={t("autopilot.where.title")} icon={<Server className="h-4 w-4 text-primary" />}>
+    <Card id="autopilot-where" title={t("autopilot.where.title")} icon={<Server className="h-4 w-4 text-primary" />} quiet={quiet}>
       <p className="text-xs text-muted-foreground">{t("autopilot.where.description")}</p>
       <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={t("autopilot.where.title")}>
         {(["browser", "server"] as const).map((option) => (
@@ -659,8 +763,14 @@ function NumberField({ id, label, value, min, max, step = 1, disabled, described
   );
 }
 
-export function SetupCard({ book, state, existingChapters, running, busy, disabled, run }: { book: BookEntry; state: AutopilotState | null; existingChapters: number; running: boolean; busy: boolean; disabled: boolean; run: RunAction }) {
+/**
+ * The brief and the settings of the autopilot: the form to start for a book that never started, and, once it has, a section that is closed until the author opens it.
+ * `openRequest` (“Add chapters” leads here) opens it and gives the focus to the number of chapters; `onOpenHandled` tells the page it was done.
+ */
+export function SetupCard({ book, state, existingChapters, running, busy, disabled, run, openRequest = false, onOpenHandled }: { book: BookEntry; state: AutopilotState | null; existingChapters: number; running: boolean; busy: boolean; disabled: boolean; run: RunAction; openRequest?: boolean; onOpenHandled?: () => void }) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const focusChapters = useRef(false);
   const initial = useMemo<SetupForm>(() => state
     ? { brief: state.brief, options: state.options }
     : { brief: { ...DEFAULT_BRIEF, targetChapters: Math.max(DEFAULT_BRIEF.targetChapters, existingChapters + 1) }, options: { ...DEFAULT_OPTIONS, syncAfterChapter: bookStorageMode(book) === "github" } }, [state, existingChapters, book]);
@@ -674,6 +784,19 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
   const options = (patch: Partial<AutopilotOptions>) => { setForm((current) => ({ ...current, options: { ...current.options, ...patch } })); setDirty(true); };
   const locked = running || busy;
   const fresh = !state;
+
+  // Opened by a link: the section opens, and once the number of chapters is on the screen it takes the focus (it is the thing the author came to change).
+  useEffect(() => {
+    if (!openRequest) return;
+    focusChapters.current = true;
+    setOpen(true);
+    onOpenHandled?.();
+  }, [openRequest, onOpenHandled]);
+  useEffect(() => {
+    if (!focusChapters.current || !(fresh || open)) return;
+    focusChapters.current = false;
+    document.getElementById("autopilot-chapters")?.focus();
+  }, [open, fresh, openRequest]);
 
   const toggles: Array<[keyof AutopilotOptions, string]> = [
     ["readers", t("autopilot.setup.readers")],
@@ -739,11 +862,11 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
     </div>
   );
 
-  if (fresh) return <Card title={t("autopilot.setup.title")} icon={<Rocket className="h-4 w-4 text-primary" />}>{body}</Card>;
+  if (fresh) return <Card id="autopilot-setup" title={t("autopilot.setup.title")} icon={<Rocket className="h-4 w-4 text-primary" />}>{body}</Card>;
   return (
-    <details className="rounded-2xl border border-layer bg-card shadow-sm">
-      <summary className="cursor-pointer list-none p-4 text-base font-semibold sm:p-5 [&::-webkit-details-marker]:hidden">{t("autopilot.setup.settingsTitle")}</summary>
-      <div className="px-4 pb-4 sm:px-5 sm:pb-5">{body}</div>
+    <details id="autopilot-setup" tabIndex={-1} open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="rounded-xl border bg-card/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <summary className="cursor-pointer list-none p-3 text-sm font-semibold [&::-webkit-details-marker]:hidden">{t("autopilot.setup.settingsTitle")}</summary>
+      <div className="px-3 pb-3">{body}</div>
     </details>
   );
 }

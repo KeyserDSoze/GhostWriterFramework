@@ -335,10 +335,10 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         >
           <Menu className="h-5 w-5" />
         </Button>
-        <span className="font-semibold">Narrarium</span>
+        <span className="hidden font-semibold min-[360px]:inline">Narrarium</span>
       </div>
 
-      <div className="ml-auto flex items-center gap-1 sm:gap-2">
+      <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2">
         {previousDocument && (
           <Button
             variant="outline"
@@ -395,14 +395,15 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           </DropdownMenu>
         )}
         <SyncStatusIndicator />
-        <Button variant="ghost" size="icon" aria-label={floatingHidden ? t("shell.showFloating") : t("shell.hideFloating")} onClick={toggleFloating}>
+        {/* Below sm the room is short: these three live in the menu of the account, and the bar does not spill over the edge of the screen. */}
+        <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label={floatingHidden ? t("shell.showFloating") : t("shell.hideFloating")} onClick={toggleFloating}>
           {floatingHidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </Button>
-        <Button variant="ghost" size="icon" aria-label={t("shell.readPage")} onClick={() => void handleReadPage()}>
+        <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label={t("shell.readPage")} onClick={() => void handleReadPage()}>
           <Volume2 className="h-4 w-4" />
         </Button>
         {currentBook && (
-          <Button variant="ghost" size="icon" aria-label={t("notes.title")} title={`${t("notes.title")} (Ctrl+M)`} onClick={() => setNotesOpen(true)}>
+          <Button variant="ghost" size="icon" className="hidden sm:inline-flex" aria-label={t("notes.title")} title={`${t("notes.title")} (Ctrl+M)`} onClick={() => setNotesOpen(true)}>
             <NotebookPen className="h-4 w-4" />
           </Button>
         )}
@@ -445,6 +446,21 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
                 <DropdownMenuSeparator />
               </>
             )}
+            <DropdownMenuItem className="sm:hidden" onSelect={toggleFloating}>
+              {floatingHidden ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
+              {floatingHidden ? t("shell.showFloating") : t("shell.hideFloating")}
+            </DropdownMenuItem>
+            <DropdownMenuItem className="sm:hidden" onSelect={() => void handleReadPage()}>
+              <Volume2 className="mr-2 h-4 w-4" />
+              {t("shell.readPage")}
+            </DropdownMenuItem>
+            {currentBook && (
+              <DropdownMenuItem className="sm:hidden" onSelect={() => setNotesOpen(true)}>
+                <NotebookPen className="mr-2 h-4 w-4" />
+                {t("notes.title")}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator className="sm:hidden" />
             <DropdownMenuItem onSelect={(event) => { event.preventDefault(); toggleTheme(); }}>
               {theme === "dark" ? <Sun className="mr-2 h-4 w-4" /> : <Moon className="mr-2 h-4 w-4" />}
               {theme === "dark" ? t("common.switchToLight") : t("common.switchToDark")}

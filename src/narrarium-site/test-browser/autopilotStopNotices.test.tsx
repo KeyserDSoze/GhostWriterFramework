@@ -61,7 +61,8 @@ function Page() {
   );
 }
 
-const dock = () => <MemoryRouter initialEntries={["/app/books/book-1/autopilot"]}><AutopilotDock /></MemoryRouter>;
+// The live panel hides itself on the pages of the autopilot: it is looked at on the page of the book.
+const dock = () => <MemoryRouter initialEntries={["/app/books/book-1"]}><AutopilotDock /></MemoryRouter>;
 const alertsWith = (text: string) => screen.queryAllByRole("alert").filter((element) => element.textContent?.includes(text));
 const resume = (variant: "page" | "dock" = "page") => screen.getByRole("button", { name: quickName(t("autopilot.actions.resume"), variant) }) as HTMLButtonElement;
 const link = (name: string) => screen.getByRole("link", { name }) as HTMLAnchorElement;
@@ -103,7 +104,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   cleanup();
-  useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [], dockOpen: false });
+  useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [], dockOpen: false, pageDockOpen: false });
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
   await i18n.changeLanguage("en");
 });
@@ -188,21 +189,24 @@ describe("the page of a run that waits because a profile file has problems", () 
     expect(screen.queryByText(t("autopilot.profileProblems.title"))).not.toBeInTheDocument();
   });
 
-  it("leaves a question of the director as it is: the question to answer, the words of the run, no notice about profiles", () => {
+  it("leaves a question of the director as it is: the question to answer, no notice about profiles, and the words of the run said once, by the question", () => {
     seed({ question: QUESTION, message: "The director has a question for you." });
     render(<Page />);
     expect(screen.getByText(QUESTION.question)).toBeInTheDocument();
     expect(screen.getByText(t("autopilot.question.title"))).toBeInTheDocument();
-    expect(alertsWith("The director has a question for you.")).toHaveLength(1);
+    // The question says it; the message of the run is not written again as an alert of its own.
+    expect(alertsWith("The director has a question for you.")).toHaveLength(0);
+    expect(screen.queryByText("The director has a question for you.")).not.toBeInTheDocument();
     expect(screen.queryByText(t("autopilot.profileProblems.title"))).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: t("autopilot.profileProblems.openDirector") })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: quickName(t("autopilot.actions.resume"), "page") })).not.toBeInTheDocument();
   });
 
-  it("leaves the words of any other stop as they are", () => {
+  it("leaves the words of any other stop as they are, once, in the status of the band", () => {
     seed({ status: "paused", message: "Budget reached: raise the limit to continue." });
     render(<Page />);
-    expect(alertsWith("Budget reached: raise the limit to continue.")).toHaveLength(1);
+    expect(screen.getAllByText("Budget reached: raise the limit to continue.")).toHaveLength(1);
+    expect(screen.getByText("Budget reached: raise the limit to continue.").closest("[data-autopilot-band]")).not.toBeNull();
     expect(screen.queryByText(t("autopilot.profileProblems.title"))).not.toBeInTheDocument();
   });
 });
@@ -254,7 +258,8 @@ describe("the list of books of the hub, for a run that waits because a profile f
 });
 
 describe("the launcher while a book waits because a profile file has problems", () => {
-  const launcher = () => <MemoryRouter initialEntries={["/app/books/book-1/autopilot"]}><AutopilotLauncher /></MemoryRouter>;
+  // On the pages of the autopilot the launcher is a small button without words (the page says it all); the words are on the other pages.
+  const launcher = () => <MemoryRouter initialEntries={["/app/books/book-1"]}><AutopilotLauncher /></MemoryRouter>;
   const button = () => screen.getByRole("button", { name: new RegExp(t("autopilot.openDock")) });
 
   it("names the state in words, not only with a coloured dot", () => {
@@ -282,6 +287,13 @@ describe("the launcher while a book waits because a profile file has problems", 
     useAutopilotStore.setState({ summaries: { "book-1": summaryOf() }, live: {} });
     render(launcher());
     expect(within(button()).getByText("Problemi nei profili")).toBeInTheDocument();
+  });
+
+  it("keeps naming the state in words for a screen reader on the pages of the autopilot, where it is a small button without a label", () => {
+    useAutopilotStore.setState({ summaries: { "book-1": summaryOf() }, live: {} });
+    render(<MemoryRouter initialEntries={["/app/books/book-1/autopilot"]}><AutopilotLauncher /></MemoryRouter>);
+    expect(button().getAttribute("aria-label")).toBe(`${t("autopilot.openDock")}: ${t("autopilot.launcherProfileProblems")}`);
+    expect(button().textContent?.trim()).toBe("");
   });
 });
 

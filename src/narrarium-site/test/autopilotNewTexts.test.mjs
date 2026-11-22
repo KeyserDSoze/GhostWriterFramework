@@ -170,3 +170,44 @@ test("the texts that name a version of the server say which one, so they can be 
     assert.ok(placeholders(get(locale, "autopilot.quick.serverTooOld")).includes("version"));
   }
 });
+
+test("the texts of the control band, the tabs, the danger zone and the mini-player are in the bundle loaded with the autopilot, in both languages, written in Italian and with the same values to fill in", () => {
+  const trees = ["autopilot.band", "autopilot.tabs", "autopilot.danger", "autopilot.dock"];
+  const alone = ["autopilot.actions.retry", "autopilot.actions.addChapters", "autopilot.actions.writeNewChapters", "autopilot.actions.readChapter", "autopilot.actions.intervene"];
+  const keys = [...trees.flatMap((tree) => leaves(get(autopilotEn, tree), tree)), ...alone];
+  assert.ok(keys.length > 45, `the band and the mini-player have their texts (saw ${keys.length})`);
+  for (const key of keys) {
+    for (const [language, locale] of [["en", autopilotEn], ["it", autopilotIt]]) {
+      assert.equal(typeof get(locale, key), "string", `${language}: ${key}`);
+      assert.ok(get(locale, key).trim(), `${language}: ${key} is not empty`);
+    }
+    assert.equal(get(en, key), undefined, `${key} is not repeated in the always-loaded bundle`);
+    assert.deepEqual(placeholders(get(autopilotIt, key)), placeholders(get(autopilotEn, key)), key);
+  }
+  for (const tree of trees) assert.deepEqual(leaves(get(autopilotIt, tree), tree).sort(), leaves(get(autopilotEn, tree), tree).sort(), `${tree}: the same texts in both languages`);
+  // A name and its context (“Chapters approved — Autopilot live”) is only a form to fill in, and reads the same in both languages.
+  const forms = new Set(["autopilot.band.named"]);
+  const same = keys.filter((key) => !forms.has(key) && get(autopilotIt, key) === get(autopilotEn, key) && get(autopilotEn, key).length > 12);
+  assert.deepEqual(same, [], "texts copied from English");
+});
+
+test("the band speaks of steps, chapters and the author in the words of the site, in each language", () => {
+  const it_ = autopilotIt.autopilot;
+  assert.equal(it_.band.now, "Ora");
+  assert.equal(it_.actions.retry, "Riprova");
+  assert.equal(it_.actions.addChapters, "Aggiungi capitoli");
+  assert.deepEqual([it_.tabs.overview, it_.tabs.timeline, it_.tabs.plan, it_.tabs.rules], ["Panoramica", "Cronologia", "Piano", "Regole"]);
+  assert.match(it_.band.cycle.label, /Passi del capitolo/);
+  assert.equal(it_.band.where.chapterScene, "Capitolo {{chapter}} · scena {{scene}}");
+  assert.equal(autopilotEn.autopilot.actions.addChapters, "Add chapters");
+  assert.equal(autopilotEn.autopilot.actions.retry, "Retry");
+});
+
+test("the counts of the band have a form for one and for many, in both languages", () => {
+  for (const base of ["autopilot.band.usage.calls"]) {
+    for (const locale of [autopilotEn, autopilotIt]) {
+      assert.equal(typeof get(locale, `${base}_one`), "string", `${base}_one`);
+      assert.ok(placeholders(get(locale, `${base}_other`)).includes("count"), `${base}_other says how many`);
+    }
+  }
+});

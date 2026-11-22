@@ -1,53 +1,69 @@
+import { useRef, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, ChevronDown, ExternalLink, Loader2, Plane, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { parseAppRoute } from "@/assistant/context";
-import { useAutopilotRefresh, useBookAutopilotView } from "@/autopilot/hooks";
-import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
+import { useBookAutopilotView, useAutopilotRefresh } from "@/autopilot/hooks";
+import { isAutopilotPage } from "@/autopilot/pageRoute";
 import { useAutopilotStore } from "@/autopilot/store";
-import { autopilotSummaryLine } from "@/autopilot/format";
 import { useFocusBook } from "@/autopilot/useFocusBook";
+import { useReserveSpace } from "@/hooks/useReserveSpace";
 import { useUiStore } from "@/store/uiStore";
 import { useSettingsStore } from "@/store/settingsStore";
-import { AutopilotFeed, AutopilotStatusBadge } from "@/components/autopilot/AutopilotFeed";
+import { AutopilotFeed } from "@/components/autopilot/AutopilotFeed";
+import { useBandModel } from "@/components/autopilot/AutopilotControlBand";
+import { ProgressBars, StatusMessage, StatusPill, StepNow } from "@/components/autopilot/band/parts";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { cn } from "@/lib/utils";
 
+/** The events the “Live” tab lists: the last ones, one line each. The page of the autopilot has all of them. */
+const LATEST_EVENTS = 12;
+
 /**
- * Non-modal panel above the bottom-right launchers. It stays open while the author navigates,
- * showing everything the autopilot does (all books) or the state of the current book.
+ * The mini-player of the autopilot, next to the Copilot: what the autopilot of a book is, what it does now, how far it is, and its commands, with
+ * the way to its page; and, in the “Live” tab, the last events of every book in one line each. It does not repeat the list of the steps of the
+ * book: that is on its page. On the pages of the autopilot it keeps out of the way (the page shows all this), and a small button brings it back.
+ * It stays open while the author navigates on the other pages.
  */
 export function AutopilotDock() {
   const { t } = useTranslation();
   const location = useLocation();
   const hidden = useUiStore((state) => state.floatingHidden);
+  const onPage = isAutopilotPage(location.pathname);
   const dockOpen = useAutopilotStore((state) => state.dockOpen);
+  const pageDockOpen = useAutopilotStore((state) => state.pageDockOpen);
   const setDockOpen = useAutopilotStore((state) => state.setDockOpen);
+  const setPageDockOpen = useAutopilotStore((state) => state.setPageDockOpen);
   const dockTab = useAutopilotStore((state) => state.dockTab);
   const setDockTab = useAutopilotStore((state) => state.setDockTab);
   const clearFeed = useAutopilotStore((state) => state.clearFeed);
   const route = parseAppRoute(location.pathname);
   const bookId = "bookId" in route ? route.bookId : undefined;
   const tab = bookId ? dockTab : "live";
-  if (hidden || !dockOpen) return null;
+  const open = onPage ? pageDockOpen : dockOpen;
+  const shown = open && !hidden;
+  const panel = useRef<HTMLElement>(null);
+  // While the panel is open the page keeps room for it at the bottom, so that what it covers can be scrolled out from under it.
+  useReserveSpace(panel, "--dock-reserve", shown);
+  if (!shown) return null;
 
   const tabClass = (active: boolean) => cn("rounded-md px-2.5 py-1 text-xs font-medium transition", active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground");
 
   return (
-    <section aria-label={t("autopilot.dockTitle")} className="fixed bottom-20 right-4 z-40 flex max-h-[min(70dvh,38rem)] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-layer bg-card text-card-foreground shadow-2xl lg:bottom-24 lg:right-6">
+    <section ref={panel} aria-label={t("autopilot.dockTitle")} className="fixed bottom-[calc(8.5rem+var(--bottom-reserve,0px))] right-4 z-40 flex max-h-[min(70dvh,38rem)] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-layer bg-card text-card-foreground shadow-2xl lg:bottom-[calc(6rem+var(--bottom-reserve,0px))] lg:right-6">
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b px-3 py-2">
-        <Plane className="h-4 w-4 shrink-0 text-primary" />
+        <Plane className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{t("autopilot.dockTitle")}</h2>
         <div className="order-last flex w-full rounded-lg bg-muted p-0.5 empty:hidden" role="tablist">
           {bookId && (
             <>
-              <button type="button" role="tab" aria-selected={tab === "live"} className={cn(tabClass(tab === "live"), "flex-1")} onClick={() => setDockTab("live")}>{t("autopilot.dockLive")}</button>
               <button type="button" role="tab" aria-selected={tab === "book"} className={cn(tabClass(tab === "book"), "flex-1")} onClick={() => setDockTab("book")}>{t("autopilot.dockBook")}</button>
+              <button type="button" role="tab" aria-selected={tab === "live"} className={cn(tabClass(tab === "live"), "flex-1")} onClick={() => setDockTab("live")}>{t("autopilot.dockLive")}</button>
             </>
           )}
         </div>
@@ -58,35 +74,42 @@ export function AutopilotDock() {
           <Button asChild variant="ghost" size="icon" className="h-7 w-7" title={t("autopilot.openPage")}>
             <Link to={bookId ? `/app/books/${encodeURIComponent(bookId)}/autopilot` : "/app/autopilot"} aria-label={t("autopilot.openPage")}><ExternalLink className="h-3.5 w-3.5" /></Link>
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" title={t("autopilot.close")} aria-label={t("autopilot.close")} onClick={() => setDockOpen(false)}><X className="h-4 w-4" /></Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" title={t("autopilot.close")} aria-label={t("autopilot.close")} onClick={() => (onPage ? setPageDockOpen(false) : setDockOpen(false))}><X className="h-4 w-4" /></Button>
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {tab === "book" && bookId ? <DockBookPanel bookId={bookId} /> : <DockLivePanel />}
+        {tab === "book" && bookId ? <DockBookPanel bookId={bookId} announce={!onPage} /> : <DockLivePanel announce={!onPage} showBook={Boolean(bookId)} />}
       </div>
     </section>
   );
 }
 
 /**
- * The "Live" tab: the commands of the book in focus (the one of the page, else the only one that runs, else the one that was active last)
- * above everything the autopilot does. With several books to choose from, the author picks which one the bar commands, and its name is
- * always written on it. Without a book in focus there is no bar, and the feed is alone.
+ * The “Live” tab: the last events of every book, in one line each. Without a book in the page (and so without the other tab) it also has the mini-player of the book in
+ * focus (the one that runs, else the one that was active last), with the name of the book always on it; with several books to choose from the author picks which one.
  */
-function DockLivePanel() {
+function DockLivePanel({ announce, showBook }: { announce: boolean; showBook: boolean }) {
+  const { t } = useTranslation();
   const { focus, candidates, choose } = useFocusBook();
   useAutopilotRefresh(focus?.id);
   return (
     <div className="space-y-3">
-      {focus && (
-        <QuickCommands
+      {!showBook && focus && (
+        <MiniPlayer
           bookId={focus.id}
-          variant="dock"
-          framed
+          announce={announce}
           heading={candidates.length > 1 ? <FocusSelector focusId={focus.id} candidates={candidates} onChoose={choose} /> : undefined}
         />
       )}
-      <AutopilotFeed showBook limit={150} />
+      <div className="space-y-1.5">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("autopilot.dock.latest")}</h3>
+        <AutopilotFeed showBook limit={LATEST_EVENTS} compact showLive={false} />
+      </div>
+      {showBook && (
+        <Button asChild variant="ghost" size="sm" className="w-full">
+          <Link to="/app/autopilot">{t("autopilot.dock.all")}</Link>
+        </Button>
+      )}
     </div>
   );
 }
@@ -116,53 +139,55 @@ function FocusSelector({ focusId, candidates, onChoose }: { focusId: string; can
   );
 }
 
-function DockBookPanel({ bookId }: { bookId: string }) {
+/** The “This book” tab: the mini-player of the book of the page. */
+function DockBookPanel({ bookId, announce }: { bookId: string; announce: boolean }) {
+  useAutopilotRefresh(bookId);
+  return <MiniPlayer bookId={bookId} announce={announce} />;
+}
+
+/**
+ * One book in the small: its name and its state, the step it does now with its time, how far it is, what is wrong when something is (the question,
+ * the problems of a profile, the error), and its commands. A book that never started has the way to its page, where it starts. `announce` says
+ * whether the step is read out as it changes: not when the page of the autopilot is on the screen and does it already.
+ */
+function MiniPlayer({ bookId, announce, heading }: { bookId: string; announce: boolean; heading?: ReactNode }) {
   const { t } = useTranslation();
   const view = useBookAutopilotView(bookId);
   const bookName = useSettingsStore((state) => state.settings.books.find((book) => book.id === bookId)?.name);
-  const control = useAutopilotControl(bookId);
-  useAutopilotRefresh(bookId);
-
-  const { summary } = control;
+  const model = useBandModel(bookId);
   const pageHref = `/app/books/${encodeURIComponent(bookId)}/autopilot`;
+  const summary = model?.summary ?? null;
   // A run that waits for the author without a question has a profile file with problems; one that ended with an error says why.
   const profileStop = isProfileProblemStop(summary);
   const failure = summary?.status === "error" ? summary.lastError ?? null : null;
   const profileHintId = `dock-profile-problems-${bookId}`;
 
   return (
-    <div className="space-y-3">
-      <div className="space-y-2 rounded-xl border p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="min-w-0 flex-1 truncate text-sm font-semibold">{bookName ?? bookId}</p>
-          {view.loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-          <AutopilotStatusBadge status={summary?.status} />
-        </div>
-        {summary && (
-          <p className="text-xs text-muted-foreground">
-            {autopilotSummaryLine(t, summary)}
-          </p>
-        )}
-        {summary?.message && !profileStop && summary.message !== failure?.message && <p className="text-xs">{summary.message}</p>}
-        {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} compact hintId={profileHintId} />}
-        {failure && <RunErrorNotice bookId={bookId} message={failure.message} compact />}
-        <OperationNotice bookId={bookId} />
-        {view.busyInAnotherTab && <p className="text-xs text-muted-foreground">{t("autopilot.anotherTab")}</p>}
-        {view.error && <p className="flex items-start gap-1.5 text-xs text-destructive"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{view.error}</p>}
-        {summary?.question && (
-          <Link to={pageHref} className="flex items-start gap-1.5 rounded-md bg-amber-500/10 p-2 text-xs text-amber-800 hover:bg-amber-500/20 dark:text-amber-200">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span><span className="font-medium">{t("autopilot.question.title")}:</span> {summary.question.question}</span>
-          </Link>
-        )}
-        <QuickCommands bookId={bookId} variant="dock" heading={null} profileHintId={profileHintId} />
-        <div className="flex flex-wrap gap-2 pt-1">
-          <Button asChild size="sm" variant={summary ? "ghost" : "default"}>
-            <Link to={pageHref}>{summary ? t("autopilot.openPage") : t("autopilot.actions.start")}</Link>
-          </Button>
-        </div>
+    <div className="space-y-2 rounded-xl border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {heading ?? <p className="min-w-0 flex-1 truncate text-sm font-semibold">{bookName ?? bookId}</p>}
+        {view.loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden="true" />}
+        {model ? <StatusPill status={model.status} /> : <span className="text-xs text-muted-foreground">{t("autopilot.notStarted")}</span>}
       </div>
-      <AutopilotFeed bookId={bookId} limit={80} />
+      {model && (model.running ? <StepNow bookId={bookId} compact announce={announce} /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null)}
+      {model && <ProgressBars summary={model.summary} scenes={false} context={t("autopilot.dockTitle")} />}
+      {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} compact hintId={profileHintId} />}
+      {failure && <RunErrorNotice bookId={bookId} message={failure.message} compact />}
+      <OperationNotice bookId={bookId} />
+      {view.busyInAnotherTab && <p className="text-xs text-muted-foreground">{t("autopilot.anotherTab")}</p>}
+      {view.error && <p className="flex items-start gap-1.5 text-xs text-destructive"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{view.error}</p>}
+      {summary?.question && (
+        <Link to={pageHref} className="flex items-start gap-1.5 rounded-md bg-amber-500/10 p-2 text-xs text-amber-800 hover:bg-amber-500/20 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span><span className="font-medium">{t("autopilot.question.title")}:</span> {summary.question.question}</span>
+        </Link>
+      )}
+      <QuickCommands bookId={bookId} variant="dock" heading={null} profileHintId={profileHintId} />
+      {!model && (
+        <Button asChild size="sm">
+          <Link to={pageHref}>{t("autopilot.actions.start")}</Link>
+        </Button>
+      )}
     </div>
   );
 }

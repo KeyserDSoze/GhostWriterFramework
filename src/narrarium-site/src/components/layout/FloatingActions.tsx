@@ -137,7 +137,7 @@ export function FloatingActions() {
   if (floatingHidden || rows.length === 0) return null;
 
   return (
-    <div className="fixed bottom-20 right-4 z-40 flex flex-col items-end gap-2 lg:bottom-24 lg:right-6">
+    <div className="fixed bottom-[calc(5rem+var(--bottom-reserve,0px))] right-4 z-40 flex flex-col items-end gap-2 lg:bottom-[calc(6rem+var(--bottom-reserve,0px))] lg:right-6">
       {open && (
         <div className="w-60 max-w-[80vw] overflow-hidden rounded-2xl border border-layer bg-card p-1.5 shadow-2xl">
           <div className="flex items-center justify-between px-2 py-1">

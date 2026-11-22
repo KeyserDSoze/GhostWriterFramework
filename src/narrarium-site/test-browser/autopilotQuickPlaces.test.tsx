@@ -14,6 +14,7 @@ vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast: mocks.to
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { AutopilotDock } from "@/components/autopilot/AutopilotDock";
+import { AutopilotLauncher } from "@/components/autopilot/AutopilotLauncher";
 import { AutopilotPage, SetupCard, WhereCard } from "@/pages/AutopilotPage";
 import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -22,16 +23,20 @@ import { CONNECTION, GITHUB_BOOK, LOCAL_BOOK, makeRuntime, namedControls, openMe
 
 const OTHER: BookEntry = { ...LOCAL_BOOK, id: "book-2", repo: "book-2", name: "The Second Book" };
 
+// With the panel: it hides itself on the page of the autopilot, so the author brings it back with its small button, and then both are on the screen.
 function Page({ path = "/app/books/book-1/autopilot", withDock = false }: { path?: string; withDock?: boolean }) {
   return (
     <MemoryRouter initialEntries={[path]}>
       <Routes><Route path="/app/books/:bookId/autopilot" element={<AutopilotPage />} /></Routes>
-      {withDock && <AutopilotDock />}
+      {withDock && <><AutopilotLauncher /><AutopilotDock /></>}
     </MemoryRouter>
   );
 }
 
-function Dock({ path = "/app/books/book-1/autopilot" }: { path?: string }) {
+const bringBackTheDock = () => fireEvent.click(screen.getByRole("button", { name: t("autopilot.openDock") }));
+
+// The live panel is looked at on the page of the book: on the pages of the autopilot it keeps out of the way.
+function Dock({ path = "/app/books/book-1" }: { path?: string }) {
   return <MemoryRouter initialEntries={[path]}><AutopilotDock /></MemoryRouter>;
 }
 
@@ -54,7 +59,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   cleanup();
-  useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [], dockOpen: false, dockTab: "live", dockFocusBook: null, whereIntent: null, server: { status: "disabled", info: null, message: null, books: [], updates: null, connection: null } });
+  useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [], dockOpen: false, pageDockOpen: false, dockTab: "live", dockFocusBook: null, whereIntent: null, server: { status: "disabled", info: null, message: null, books: [], updates: null, connection: null } });
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
   await i18n.changeLanguage("en");
 });
@@ -135,7 +140,8 @@ describe("the live panel, tab “This book”", () => {
     const bar = screen.getByRole("group", { name: quickGroupName("dock") });
     expect(within(bar).getByRole("button", { name: quickName(t("autopilot.actions.pause"), "dock") })).toBeEnabled();
     expect(screen.getAllByText(LOCAL_BOOK.name)).toHaveLength(1);
-    expect(screen.getAllByRole("link", { name: t("autopilot.openPage") }).map((link) => link.getAttribute("href"))).toEqual(["/app/books/book-1/autopilot", "/app/books/book-1/autopilot"]);
+    // One way to the page, in the header of the panel: the mini-player does not repeat it.
+    expect(screen.getAllByRole("link", { name: t("autopilot.openPage") }).map((link) => link.getAttribute("href"))).toEqual(["/app/books/book-1/autopilot"]);
     expect(screen.queryByRole("button", { name: t("autopilot.actions.pause") })).not.toBeInTheDocument();
   });
 
@@ -153,14 +159,22 @@ describe("the live panel, tab “Live”", () => {
     useAutopilotStore.setState({ dockTab: "live" });
   });
 
-  it("shows the commands of the book of the page above the feed, with the name of the book on them", () => {
-    render(<Dock />);
+  it("shows the commands of the book in focus above the feed when the author is not in a book, with the name of the book on them", () => {
+    render(<Dock path="/app/books" />);
+    const panel = screen.getByRole("region", { name: t("autopilot.dockTitle") });
     const bar = screen.getByRole("group", { name: quickGroupName("dock") });
-    expect(within(bar).getByText(LOCAL_BOOK.name)).toBeVisible();
+    // The name is written on top of the mini-player, and in the name of every control of the bar.
+    expect(within(panel).getByText(LOCAL_BOOK.name)).toBeVisible();
     expect(within(bar).getByRole("button", { name: quickName(t("autopilot.actions.stop"), "dock") })).toBeEnabled();
     expect(bar.compareDocumentPosition(screen.getByText(t("autopilot.feedEmpty")))).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     // One book to command: nothing to choose.
     expect(screen.queryByRole("button", { name: /^Book:|^Libro:/ })).not.toBeInTheDocument();
+  });
+
+  it("has no bar in the feed of a book's page: the bar is in the other tab, and the feed is only the feed", () => {
+    render(<Dock />);
+    expect(document.querySelectorAll("[data-quick-commands]")).toHaveLength(0);
+    expect(screen.getByText(t("autopilot.feedEmpty"))).toBeInTheDocument();
   });
 
   it("shows no bar, and the feed as it always was, when no book is in focus", () => {
@@ -175,8 +189,8 @@ describe("the live panel, tab “Live”", () => {
     const summary = useAutopilotStore.getState().summaries["book-1"];
     useAutopilotStore.setState({ views: { "book-1": { ...view, snapshot: { ...view.snapshot!, running: false } } }, summaries: { "book-1": { ...summary, status: "running", runner: { host: "server", label: "Home server", hostId: "s", runId: "r", startedAt: summary.updatedAt, heartbeatAt: new Date().toISOString() } } } });
     render(<Dock path="/app/books" />);
-    const bar = screen.getByRole("group", { name: quickGroupName("dock") });
-    expect(within(bar).getByText(LOCAL_BOOK.name)).toBeVisible();
+    expect(screen.getByRole("group", { name: quickGroupName("dock") })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: t("autopilot.dockTitle") })).getByText(LOCAL_BOOK.name)).toBeVisible();
   });
 
   it("lets the author choose which book to command when several run, and always says which one it is", async () => {
@@ -214,6 +228,7 @@ describe("the page and the live panel on the same screen", () => {
     seedBar({ book: GITHUB_BOOK, status: "running", running: true, server: "online", publish: "chapter", pausePending: "after-chapter", limits: { steps: 2, stepsDone: 0, chaptersDone: 0 }, handover: { to: "server", when: "after-step", phase: "armed" }, dockOpen: true });
     mocks.book = GITHUB_BOOK;
     render(<Page withDock />);
+    bringBackTheDock();
     const [page, dock] = groups();
     expect(groups().map((group) => group.getAttribute("data-quick-commands"))).toEqual(["page", "dock"]);
     const names = [...controlNames(page), ...controlNames(dock)];
@@ -227,6 +242,7 @@ describe("the page and the live panel on the same screen", () => {
   it("also tell apart the button that takes control of a run that belongs to another device", () => {
     seedBar({ status: "running", running: false, runner: { host: "browser", label: "Browser · Android", hostId: "other", runId: "run-1", startedAt: "2026-11-21T10:00:00.000Z", heartbeatAt: new Date().toISOString() }, dockOpen: true });
     render(<Page withDock />);
+    bringBackTheDock();
     const [page, dock] = groups();
     const names = [...controlNames(page), ...controlNames(dock)];
     expect(names.filter((name) => name.startsWith(t("autopilot.control.takeOver")))).toEqual([quickName(t("autopilot.control.takeOver"), "page"), quickName(t("autopilot.control.takeOver"), "dock")]);
@@ -237,6 +253,7 @@ describe("the page and the live panel on the same screen", () => {
     seedBar({ book: GITHUB_BOOK, status: "paused", server: "online", publish: "step", dockOpen: true });
     mocks.book = GITHUB_BOOK;
     render(<Page withDock />);
+    bringBackTheDock();
     const [page, dock] = groups();
     const names = [...controlNames(page), ...controlNames(dock)];
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([]);

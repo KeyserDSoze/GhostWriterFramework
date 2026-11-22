@@ -49,8 +49,9 @@ function seed(options: { book?: BookEntry; status?: AutopilotState["status"]; ru
   });
 }
 
+// The live panel hides itself on the pages of the autopilot (they show everything it would): its commands are checked on the page of the book.
 function Dock() {
-  return <MemoryRouter initialEntries={["/app/books/book-1/autopilot"]}><AutopilotDock /></MemoryRouter>;
+  return <MemoryRouter initialEntries={["/app/books/book-1"]}><AutopilotDock /></MemoryRouter>;
 }
 
 function Page() {
@@ -85,7 +86,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [], dockOpen: false });
+  useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [], dockOpen: false, pageDockOpen: false });
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
 });
 

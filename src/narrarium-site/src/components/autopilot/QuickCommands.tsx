@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { ChevronDown, Loader2, MoreHorizontal } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { RemoteRunNotice } from "@/components/autopilot/RemoteRunNotice";
 import { useQuickModel, type QuickVariant } from "@/components/autopilot/quick/model";
 import { PublishGroup } from "@/components/autopilot/quick/PublishGroup";
@@ -19,6 +20,10 @@ export interface QuickCommandsProps {
   heading?: ReactNode | null;
   /** Draw a frame around the bar. The page has one; the live panel draws it for the bar of a book that has no card of its own. */
   framed?: boolean;
+  /** What the page puts next to the main action of a run that is stopped (a button to read the chapter that was just closed). */
+  runExtra?: ReactNode;
+  /** The bar for a place that is short of room (the band of a narrow page, the bar at the bottom of a phone): where the book is published and where it runs are behind a “More” button. */
+  condensed?: boolean;
 }
 
 /** The actions of the bar that are on their way, said in words while they are (the others are operations of the book, which the page and the panel already say). */
@@ -33,9 +38,10 @@ const OWN_ACTIONS = new Set(["pause", "stop", "cancel-pause", "start", "options"
  * why in words next to it, and the control points at the words; every control has a name that says which book it commands and from which bar
  * (the page or the panel), so two bars on the same screen never repeat a name.
  */
-export function QuickCommands({ bookId, variant, profileHintId, heading, framed }: QuickCommandsProps) {
+export function QuickCommands({ bookId, variant, profileHintId, heading, framed, runExtra, condensed = false }: QuickCommandsProps) {
   const { t } = useTranslation();
   const model = useQuickModel(bookId, variant);
+  const [more, setMore] = useState(false);
   if (!model) return null;
 
   const framedBar = framed ?? variant === "page";
@@ -50,12 +56,23 @@ export function QuickCommands({ bookId, variant, profileHintId, heading, framed 
       className={cn("min-w-0 space-y-2", framedBar && (variant === "page" ? "rounded-2xl border border-layer bg-card p-3 shadow-sm sm:p-4" : "rounded-xl border p-3"))}
     >
       {title}
-      <RunGroup model={model} profileHintId={profileHintId} />
+      <RunGroup
+        model={model}
+        profileHintId={profileHintId}
+        runExtra={runExtra}
+        trailing={condensed ? (
+          <Button size="sm" variant="ghost" aria-expanded={more} aria-controls={more ? model.ids.more : undefined} aria-label={model.named(t("autopilot.quick.more"))} onClick={() => setMore((open) => !open)}>
+            <MoreHorizontal className="h-4 w-4" aria-hidden />{t("autopilot.quick.more")}<ChevronDown className={cn("h-4 w-4 transition-transform", more && "rotate-180")} aria-hidden />
+          </Button>
+        ) : undefined}
+      />
       <StatusChips model={model} />
-      <div className="flex flex-wrap items-start gap-2">
-        <PublishGroup model={model} />
-        <WhereGroup model={model} />
-      </div>
+      {(!condensed || more) && (
+        <div id={model.ids.more} className="flex flex-wrap items-start gap-2">
+          <PublishGroup model={model} />
+          <WhereGroup model={model} />
+        </div>
+      )}
       {own && (
         <p id={model.ids.busy} className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />

@@ -654,14 +654,17 @@ describe("the commands that start the autopilot", () => {
     expect(screen.queryByText(t("autopilot.quick.needsAi"))).not.toBeInTheDocument();
   });
 
-  it("are for a book that is completed too, on the page, where the author may have asked for more chapters; the live panel leaves it alone", () => {
+  it("are for a book that is completed too, on the page, where the author adds chapters instead of resuming; the live panel leaves it alone", () => {
     seedBar({ status: "completed" });
     const view = renderBar();
-    expect(button("autopilot.actions.resume")).toBeEnabled();
+    // A book that is complete is not resumed: the main action is to add chapters, in the settings (the plan is extended when the run starts again).
+    expect(maybeButton("autopilot.actions.resume")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: name("autopilot.actions.addChapters") })).toHaveAttribute("href", "/app/books/book-1/autopilot#autopilot-setup");
     expect(maybeButton("autopilot.quick.run.menu")).not.toBeInTheDocument();
     view.unmount();
     renderBar("dock");
     expect(screen.queryByRole("button", { name: name("autopilot.actions.resume", "dock") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: name("autopilot.actions.addChapters", "dock") })).not.toBeInTheDocument();
   });
 });
 
@@ -684,5 +687,73 @@ describe("the bar in the live panel", () => {
     render(<MemoryRouter><QuickCommands bookId="book-1" variant="dock" heading={<span>Chosen heading</span>} /></MemoryRouter>);
     expect(screen.getByText("Chosen heading")).toBeVisible();
     expect(screen.queryByText(LOCAL_BOOK.name)).not.toBeInTheDocument();
+  });
+});
+
+describe("the bar for a place that is short of room (condensed)", () => {
+  function renderCondensed(variant: "page" | "dock" = "page") {
+    return render(
+      <MemoryRouter initialEntries={["/app/books/book-1/autopilot"]}>
+        <Routes><Route path="*" element={<QuickCommands bookId="book-1" variant={variant} condensed />} /></Routes>
+      </MemoryRouter>,
+    );
+  }
+  const where = () => screen.queryByRole("button", { name: name("autopilot.quick.where.label") }) ?? screen.queryByRole("button", { name: new RegExp(`^${t("autopilot.quick.where.label", { host: "" }).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").trim()}`) });
+
+  it("keeps the main action, and puts where the book is published and where it runs behind “More”", () => {
+    seedBar({ book: GITHUB_BOOK, status: "paused", server: "online", publish: "step" });
+    renderCondensed();
+    expect(button("autopilot.actions.resume")).toBeEnabled();
+    const more = button("autopilot.quick.more");
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    expect(within(group()).queryByRole("button", { name: new RegExp(`^${quickName(t("autopilot.quick.publish.label", { mode: "" }).trim(), "page", GITHUB_BOOK).split(" — ")[0]}`) })).not.toBeInTheDocument();
+    expect(where()).not.toBeInTheDocument();
+
+    fireEvent.click(more);
+    expect(more).toHaveAttribute("aria-expanded", "true");
+    expect(more.getAttribute("aria-controls")).toBeTruthy();
+    expect(document.getElementById(more.getAttribute("aria-controls")!)).toContainElement(where());
+    expect(within(group()).getAllByRole("button", { name: /GitHub:/ })).toHaveLength(1);
+
+    fireEvent.click(more);
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    expect(where()).not.toBeInTheDocument();
+  });
+
+  it("keeps the pending things in sight: a pause that waits, a switch that is planned", () => {
+    seedBar({ status: "running", running: true, pausePending: "after-chapter", handover: { to: "server", when: "after-step", phase: "armed" }, server: "online" });
+    renderCondensed();
+    expect(within(status()).getByText(t("autopilot.quick.status.pauseChapter"))).toBeInTheDocument();
+    expect(within(status()).getByText(t("autopilot.quick.handover.armed.server"))).toBeInTheDocument();
+  });
+
+  it("is the full bar when nothing asks for less: no “More”", () => {
+    seedBar({ status: "paused", server: "online" });
+    renderBar();
+    expect(maybeButton("autopilot.quick.more")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: new RegExp(`^${t("autopilot.quick.where.label", { host: "" }).trim()}`) })).toBeInTheDocument();
+  });
+
+  it("names the button after the bar it belongs to, like every other control", () => {
+    seedBar({ status: "paused" });
+    renderCondensed("dock");
+    expect(screen.getByRole("button", { name: quickName(t("autopilot.quick.more"), "dock") })).toBeInTheDocument();
+  });
+});
+
+describe("the main action of a run that stopped with an error", () => {
+  it("is Retry, which resumes: the autopilot repeats the step that stopped", async () => {
+    seedBar({ status: "error", statePatch: { lastError: { message: "The provider failed.", at: T0, task: "write" } } });
+    renderBar();
+    expect(maybeButton("autopilot.actions.resume")).not.toBeInTheDocument();
+    fireEvent.click(button("autopilot.actions.retry"));
+    await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledWith("book-1"));
+  });
+
+  it("says it in Italian", async () => {
+    await i18n.changeLanguage("it");
+    seedBar({ status: "error", statePatch: { lastError: { message: "Il provider non ha risposto.", at: T0, task: "write" } } });
+    renderBar();
+    expect(screen.getByRole("button", { name: "Riprova — The Glass Harbor" })).toBeInTheDocument();
   });
 });

@@ -60,6 +60,7 @@ export function Shell() {
   const setNotesOpen = useUiStore((s) => s.setNotesOpen);
   const assistantOpen = useAssistantStore((s) => s.open);
   const autopilotDockOpen = useAutopilotStore((s) => s.dockOpen);
+  const autopilotPageDockOpen = useAutopilotStore((s) => s.pageDockOpen);
   const askDirectorOpen = useAskDirectorStore((s) => Boolean(s.request));
   const personalServerUrl = settings.personalServer?.url ?? "";
   const personalServerToken = settings.personalServer?.token ?? "";
@@ -181,7 +182,7 @@ export function Shell() {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Topbar onOpenMobileNav={() => setMobileNavOpen(true)} />
         {offlineConflict && <div className="border-b border-destructive/40 bg-destructive/10 px-4 py-3 text-sm"><div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2"><span className="mr-auto">{t("settings.offlineConflict", { fields: offlineConflict.changedKeys.join(", ") })}</span><Button size="sm" variant="destructive" onClick={() => void resolveOfflineConflict("local")}>{t("settings.keepOfflineChanges")}</Button><Button size="sm" variant="outline" onClick={() => void resolveOfflineConflict("cloud")}>{t("settings.useCloudSettings")}</Button></div></div>}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6">
+        <main className="flex-1 scroll-pb-[var(--bottom-reserve,0px)] scroll-pt-[var(--top-reserve,0px)] overflow-y-auto px-4 pb-[calc(9rem+var(--bottom-reserve,0px)+var(--dock-reserve,0px))] pt-4 sm:px-6 sm:pt-6 lg:pb-[calc(6rem+var(--bottom-reserve,0px))]">
           <Outlet />
         </main>
       </div>
@@ -194,7 +195,7 @@ export function Shell() {
       <FeedbackRewriteWorkflowDialog />
       <OnboardingDialog />
       <AssistantLauncher />
-      {autopilotDockOpen && <Suspense fallback={null}><AutopilotDock /></Suspense>}
+      {(autopilotDockOpen || autopilotPageDockOpen) && <Suspense fallback={null}><AutopilotDock /></Suspense>}
       {askDirectorOpen && <Suspense fallback={null}><AskDirectorDialog /></Suspense>}
       {assistantOpen && <Suspense fallback={<span className="sr-only" role="status">{t("common.loading")}</span>}><AssistantPanel /></Suspense>}
 

@@ -81,7 +81,8 @@ function summary(patch: Partial<AutopilotStateSummary> = {}, seconds = 60): Auto
 const stateEvent = (next: AutopilotStateSummary, seq: number) => event({ type: "state", state: next }, seq);
 
 const total = (reads: Map<number, number>) => [...reads.values()].reduce((sum, count) => sum + count, 0);
-const statistic = (label: string) => within(screen.getByText(label).parentElement as HTMLElement);
+// The figures of a run are in the control band: the progress bars of the chapters and the scenes, and the line of the cost and the use.
+const bandOf = () => within(document.querySelector("[data-autopilot-band]") as HTMLElement);
 
 beforeAll(async () => {
   await loadAutopilotTranslations();
@@ -121,7 +122,7 @@ describe("a long plan while the autopilot streams its text", () => {
     const drawn = total(reads);
 
     for (let step = 1; step <= 40; step += 1) await ingest(stateEvent(summary({ stats: { ...STATS, aiCalls: 5 + step } }, 10 + step), step));
-    expect(statistic("AI calls").getByText("45")).toBeInTheDocument();
+    expect(bandOf().getByText("45 calls")).toBeInTheDocument();
     expect(total(reads)).toBe(drawn);
   });
 
@@ -145,16 +146,17 @@ describe("the status and the statistics of a run", () => {
     render(<Page />);
     await vi.waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(1));
     expect(screen.getByText("Paused")).toBeInTheDocument();
-    expect(statistic("Chapters approved").getByText("999/2000")).toBeInTheDocument();
-    expect(statistic("AI calls").getByText("5")).toBeInTheDocument();
+    expect(bandOf().getByText("999/2000")).toBeInTheDocument();
+    expect(bandOf().getByText("5 calls")).toBeInTheDocument();
 
     await ingest(stateEvent(summary({ status: "running", phase: "review", progress: { chapters: 2000, chaptersDone: 1000, scenes: 4000, scenesWritten: 2000, words: 1_500_000 }, stats: { ...STATS, aiCalls: 42, inputTokens: 9000, outputTokens: 1000 } }), 5));
     expect(screen.getByText("Running")).toBeInTheDocument();
     expect(screen.queryByText("Paused")).not.toBeInTheDocument();
-    expect(statistic("Chapters approved").getByText("1000/2000")).toBeInTheDocument();
-    expect(statistic("AI calls").getByText("42")).toBeInTheDocument();
-    expect(statistic("Tokens").getByText(/^10.?000$/)).toBeInTheDocument();
-    expect(screen.getAllByText("Review").length).toBeGreaterThan(0);
+    expect(bandOf().getByText("1000/2000")).toBeInTheDocument();
+    expect(bandOf().getByText("42 calls")).toBeInTheDocument();
+    expect(bandOf().getByText(/^10.?000 tokens$/)).toBeInTheDocument();
+    // The phase is in the list of phases of the band: the chapters, which is where writing and reviewing happen.
+    expect(within(bandOf().getByRole("list", { name: "Phases" })).getByRole("listitem", { current: "step" })).toHaveTextContent("Chapters 1000/2000");
     expect(screen.getByText("The autopilot of this book is running on My server.")).toBeInTheDocument();
     expect(mocks.refresh).toHaveBeenCalledTimes(1);
   });
@@ -174,8 +176,8 @@ describe("the status and the statistics of a run", () => {
     seed(stateOf(longPlan(2000, 999), { updatedAt: at(100), stats: { ...STATS, aiCalls: 77 } }));
     render(<Page />);
     await ingest(stateEvent(summary({ stats: { ...STATS, aiCalls: 5 } }, 50), 7));
-    expect(statistic("AI calls").getByText("77")).toBeInTheDocument();
-    expect(statistic("AI calls").queryByText("5")).not.toBeInTheDocument();
+    expect(bandOf().getByText("77 calls")).toBeInTheDocument();
+    expect(bandOf().queryByText("5 calls")).not.toBeInTheDocument();
   });
 
   it("have nothing to show for an autopilot that was reset, whatever summary is left", async () => {
@@ -184,6 +186,6 @@ describe("the status and the statistics of a run", () => {
     render(<Page />);
     expect(screen.getByText(i18n.t("autopilot.setup.title"))).toBeInTheDocument();
     expect(screen.queryByText("Running")).not.toBeInTheDocument();
-    expect(screen.queryByText("AI calls")).not.toBeInTheDocument();
+    expect(screen.queryByText(/ calls$/)).not.toBeInTheDocument();
   });
 });

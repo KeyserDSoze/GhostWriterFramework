@@ -64,9 +64,10 @@ function EventIcon({ event, className }: { event: AutopilotEvent; className?: st
 
 /**
  * Everything the autopilot did, newest first: finished steps with their result, the director's and
- * readers' insights, sync notices, and the step running now with its live text.
+ * readers' insights, sync notices, and the step running now with its live text (unless `showLive` is off: a page that has a box of its
+ * own for it does not draw a second one). `compact` is for the live panel: one line for each event, without the long texts.
  */
-export function AutopilotFeed({ bookId, showBook = false, limit = 200, className, emptyText }: { bookId?: string; showBook?: boolean; limit?: number; className?: string; emptyText?: string }) {
+export function AutopilotFeed({ bookId, showBook = false, limit = 200, className, emptyText, showLive = true, compact = false }: { bookId?: string; showBook?: boolean; limit?: number; className?: string; emptyText?: string; showLive?: boolean; compact?: boolean }) {
   const { t } = useTranslation();
   const feed = useAutopilotStore((state) => state.feed);
   const live = useAutopilotStore((state) => state.live);
@@ -77,8 +78,8 @@ export function AutopilotFeed({ bookId, showBook = false, limit = 200, className
     .filter((entry) => (bookId ? entry.event.bookId === bookId : titles.has(entry.event.bookId)) && entry.event.type !== "task-started")
     .slice(-limit)
     .reverse(), [feed, bookId, limit, titles]);
-  const running = useMemo(() => Object.entries(live)
-    .filter((entry): entry is [string, LivePreview] => Boolean(entry[1]) && (bookId ? entry[0] === bookId : titles.has(entry[0]))), [live, bookId, titles]);
+  const running = useMemo(() => (showLive ? Object.entries(live)
+    .filter((entry): entry is [string, LivePreview] => Boolean(entry[1]) && (bookId ? entry[0] === bookId : titles.has(entry[0]))) : []), [live, bookId, titles, showLive]);
 
   return (
     <div className={cn("space-y-3", className)}>
@@ -86,10 +87,22 @@ export function AutopilotFeed({ bookId, showBook = false, limit = 200, className
       {entries.length === 0 && running.length === 0 ? (
         <p className="rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground">{emptyText ?? t("autopilot.feedEmpty")}</p>
       ) : (
-        <ol className="space-y-1.5">
+        <ol className={compact ? "space-y-1" : "space-y-1.5"}>
           {entries.map((entry) => {
             const view = presentFeedEvent(t, entry.event, currency);
             if (!view) return null;
+            if (compact) {
+              return (
+                <li key={`${entry.event.bookId}:${entry.event.seq}:${entry.event.at}`} className={cn("flex items-center gap-2 rounded-r-md border-l-2 bg-muted/20 py-1 pl-2.5 pr-2", TONE_BORDER[view.tone])}>
+                  <EventIcon event={entry.event} className={cn("h-3.5 w-3.5 shrink-0", TONE_TEXT[view.tone])} />
+                  <p className="min-w-0 flex-1 truncate text-xs leading-snug">
+                    {view.text}
+                    {showBook && <span className="text-muted-foreground"> · {titles.get(entry.event.bookId) ?? entry.bookTitle}</span>}
+                  </p>
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatClock(entry.event.at)}</span>
+                </li>
+              );
+            }
             return (
               <li key={`${entry.event.bookId}:${entry.event.seq}:${entry.event.at}`} className={cn("flex gap-2 rounded-r-md border-l-2 bg-muted/20 py-1.5 pl-2.5 pr-2", TONE_BORDER[view.tone])}>
                 <EventIcon event={entry.event} className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", TONE_TEXT[view.tone])} />

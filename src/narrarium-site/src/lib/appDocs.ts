@@ -436,13 +436,21 @@ The director is your stand-in. It approves the plan, decides on every finding of
 
 On any book, chapter or scene, **Ask the director** gives its opinion, answers your question and can keep the opinion in **evaluations/director/**.
 
+## The Autopilot page
+
+A band at the top of the page stays in sight while you scroll and says everything at a glance: whether the autopilot is running, paused, waiting for you, stopped by an error or finished (always with an icon and in words), where it runs (this browser or your personal server, and how long ago the server last made itself heard), what it is doing now and for how long, how far the book has got, the phases, the steps of the chapter in progress (write, readers, specialists, director, fix) and, on one line, the cost and the tokens used against the budget. The quick commands are in the band too. When it has to wait for you, what it needs is right under the band: the director's question, the error, the profile problems or the plan to approve.
+
+Below that comes the history of what the autopilot did. On a wide screen the plan, **Intervene**, the rules, **Where it runs**, the settings and a **Danger zone** (it holds **Reset**, which asks before it forgets anything) sit in a second column. On a narrower screen the page has four tabs, **Overview**, **Timeline**, **Plan** and **Rules**, and the **Plan** tab opens by itself while the plan waits for you. On a phone the band takes two rows and the commands move to a bar at the bottom of the screen.
+
+When the autopilot is paused after closing a chapter, **Read chapter N** sits next to **Resume**. After an error the main button is **Retry**. A finished book offers **Add chapters** (the settings open with the number of chapters ready to change), or **Write the new chapters** when the settings already ask for more chapters than the plan has, and a short summary says how it went: the director's verdict on the whole book, the working time (*at least*, for a long book, because only the latest steps are kept), the cost and the words.
+
 ## Follow and intervene
 
-The **Autopilot** button next to Copilot shows what is happening now and opens a live panel that stays open while you work; Copilot has an **Autopilot** tab too. You can pause after the current step or stop now, answer the director's questions, and intervene for the next step only, from now on, or to revise what is already written (the director picks the scenes to rewrite). Your instructions always win.
+The **Autopilot** button next to Copilot opens a mini-player that stays open while you work on other pages: the state of the book, what it is doing now, how far it has got and its commands. Its **Live** tab lists the latest events of every book, one line each; the whole history is on the Autopilot page. On the Autopilot pages the page already shows all this, so the mini-player stays closed there and a small button brings it back. On a phone it never covers the buttons or the fields of the assistant. Copilot has an **Autopilot** tab too. You can pause after the current step or stop now, answer the director's questions, and, with **Intervene**, give instructions for the next step only, from now on, or to revise what is already written (the director picks the scenes to rewrite). Your instructions always win.
 
 ## Quick commands
 
-A bar with the commands you reach for most is on the Autopilot page, in the **This book** tab of the live panel, and above the live feed for the book in focus (the book you are in, else the only one that runs, else the one that worked last; when several run, choose the one to command with **Book**). Every control says in words what it does and which book it commands, and one that is not available says why.
+A bar with the commands you reach for most is in the band of the Autopilot page (on a phone, in the bar at the bottom), in the **This book** tab of the mini-player, and above the latest events in its **Live** tab for the book in focus (the book you are in, else the only one that runs, else the one that worked last; when several run, choose the one to command with **Book**). Where the page is narrow, **GitHub** and **Runs on** are behind **More**. Every control says in words what it does and which book it commands, and one that is not available says why.
 
 - **Pause after this step** is the main button. Its menu adds **Pause at the end of the chapter** (the autopilot goes on to the end of the chapter in progress, closes it and publishes it, then pauses) and **Cancel the pause** while one waits. A chip with a cross says what is waiting, and the cross takes it back. **Stop now** abandons the request in flight, and the provider may still bill it.
 - **Run** does one step only, one chapter only, or goes on until you stop it. The limit is for that run: the next one has none unless you ask again.
@@ -457,7 +465,7 @@ Besides a question of the director, the autopilot can stop with **Waiting for yo
 
 ## Budgets and costs
 
-Each book can have a money budget (it needs the prices of your models in AI Integrations) and a **token budget** (it works with every model, even without prices); 0 means no limit. The autopilot stops before the next call once a budget is reached. The progress card says how many calls had no token count or no price, so you know how much of the totals is an estimate.
+Each book can have a money budget (it needs the prices of your models in AI Integrations) and a **token budget** (it works with every model, even without prices); 0 means no limit. The autopilot stops before the next call once a budget is reached. The cost line of the band says how many calls had no token count or no price, so you know how much of the totals is an estimate.
 
 ## Personal server
 
@@ -493,13 +501,21 @@ Il direttore ti sostituisce. Approva il piano, decide su ogni rilievo di lettori
 
 Su qualsiasi libro, capitolo o scena, **Chiedi al direttore** restituisce il suo parere, risponde alla tua domanda e può conservare il parere in **evaluations/director/**.
 
+## La pagina Autopilot
+
+In cima alla pagina una fascia resta in vista mentre scorri e dice tutto a colpo d'occhio: se l'autopilot sta lavorando, è in pausa, aspetta te, si è fermato per un errore o ha finito (sempre con un'icona e a parole), dove gira (questo browser o il tuo server personale e, per il server, da quanto tempo non si fa sentire), cosa sta facendo adesso e da quanto, a che punto è il libro, le fasi, i passi del capitolo in corso (scrittura, lettori, specialisti, direttore, correzioni) e, in una riga, il costo e i token usati rispetto al budget. Nella fascia ci sono anche i comandi rapidi. Se deve aspettare te, ciò che serve sta subito sotto la fascia: la domanda del direttore, l'errore, i problemi di un profilo o il piano da approvare.
+
+Più sotto c'è la cronologia di ciò che l'autopilot ha fatto. Su uno schermo largo il piano, **Intervieni**, le regole, **Dove gira**, le impostazioni e una **Zona pericolosa** (contiene **Azzera**, che chiede conferma prima di dimenticare qualcosa) stanno in una seconda colonna. Su uno schermo più stretto la pagina ha quattro schede, **Panoramica**, **Cronologia**, **Piano** e **Regole**, e la scheda **Piano** si apre da sola mentre il piano aspetta te. Sul telefono la fascia occupa due righe e i comandi passano in una barra in fondo allo schermo.
+
+Quando l'autopilot è in pausa dopo aver chiuso un capitolo, **Leggi il capitolo N** sta accanto a **Riprendi**. Dopo un errore il pulsante principale è **Riprova**. Un libro finito propone **Aggiungi capitoli** (le impostazioni si aprono con il numero di capitoli pronto da cambiare), oppure **Scrivi i nuovi capitoli** quando le impostazioni ne chiedono già più di quanti ne ha il piano, e un breve riepilogo dice com'è andata: il giudizio del direttore sull'intero libro, il tempo di lavoro (*almeno*, per un libro lungo, perché si conservano solo gli ultimi passi), il costo e le parole.
+
 ## Seguire e intervenire
 
-Il pulsante **Autopilot** accanto a Copilot mostra cosa sta succedendo e apre un pannello in diretta che resta aperto mentre lavori; anche Copilot ha una scheda **Autopilot**. Puoi mettere in pausa dopo il passo corrente o fermare subito, rispondere alle domande del direttore e intervenire solo per il prossimo passo, d'ora in poi, oppure per rivedere quanto già scritto (il direttore sceglie le scene da riscrivere). Le tue istruzioni vincono sempre.
+Il pulsante **Autopilot** accanto a Copilot apre un mini-player che resta aperto mentre lavori nelle altre pagine: lo stato del libro, cosa sta facendo adesso, a che punto è e i suoi comandi. La scheda **In diretta** elenca gli ultimi eventi di tutti i libri, uno per riga; la cronologia completa è nella pagina Autopilot. Nelle pagine dell'autopilot la pagina mostra già tutto questo, quindi lì il mini-player resta chiuso e un piccolo pulsante lo riporta. Sul telefono non copre mai i pulsanti né i campi dell'assistente. Anche Copilot ha una scheda **Autopilot**. Puoi mettere in pausa dopo il passo corrente o fermare subito, rispondere alle domande del direttore e, con **Intervieni**, dare istruzioni solo per il prossimo passo, d'ora in poi, oppure per rivedere quanto già scritto (il direttore sceglie le scene da riscrivere). Le tue istruzioni vincono sempre.
 
 ## Comandi rapidi
 
-Una barra con i comandi che usi di più sta nella pagina Autopilot, nella scheda **Questo libro** del pannello in diretta e sopra il feed in diretta, per il libro a fuoco (il libro in cui sei, altrimenti l'unico che gira, altrimenti quello che ha lavorato per ultimo; se girano più libri, scegli quale comandare con **Libro**). Ogni controllo dice a parole cosa fa e quale libro comanda, e uno che non è disponibile dice perché.
+Una barra con i comandi che usi di più sta nella fascia della pagina Autopilot (sul telefono, nella barra in fondo allo schermo), nella scheda **Questo libro** del mini-player e sopra gli ultimi eventi della sua scheda **In diretta**, per il libro a fuoco (il libro in cui sei, altrimenti l'unico che gira, altrimenti quello che ha lavorato per ultimo; se girano più libri, scegli quale comandare con **Libro**). Dove la pagina è stretta, **GitHub** e **Gira su** stanno dietro **Altro**. Ogni controllo dice a parole cosa fa e quale libro comanda, e uno che non è disponibile dice perché.
 
 - **Pausa dopo questo passo** è il pulsante principale. Nel suo menu trovi **Pausa a fine capitolo** (l'autopilot prosegue fino alla fine del capitolo in corso, lo chiude e lo pubblica, poi si ferma) e **Annulla la pausa** finché una è in attesa. Un'etichetta con una croce dice cosa è in attesa, e la croce lo annulla. **Ferma subito** abbandona la richiesta in corso: il provider potrebbe comunque addebitarla.
 - **Esegui** fa un solo passo, un solo capitolo, oppure va avanti finché non lo fermi. Il limite vale per quella sessione: la prossima non ne ha, a meno che tu lo chieda di nuovo.
@@ -514,7 +530,7 @@ Oltre a una domanda del direttore, l'autopilot può fermarsi con **Aspetta te** 
 
 ## Budget e costi
 
-Ogni libro può avere un budget in denaro (richiede i prezzi dei tuoi modelli in Integrazioni AI) e un **budget in token** (vale con qualsiasi modello, anche senza prezzi); 0 significa nessun limite. L'autopilot si ferma prima della chiamata successiva quando un budget è raggiunto. La scheda di avanzamento dice quante chiamate non avevano il conteggio dei token o il prezzo, così sai quanta parte dei totali è una stima.
+Ogni libro può avere un budget in denaro (richiede i prezzi dei tuoi modelli in Integrazioni AI) e un **budget in token** (vale con qualsiasi modello, anche senza prezzi); 0 significa nessun limite. L'autopilot si ferma prima della chiamata successiva quando un budget è raggiunto. La riga del costo nella fascia dice quante chiamate non avevano il conteggio dei token o il prezzo, così sai quanta parte dei totali è una stima.
 
 ## Server personale
 

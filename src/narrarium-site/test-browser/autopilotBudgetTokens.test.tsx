@@ -218,7 +218,7 @@ function summaryOf(stats: Partial<AutopilotStateSummary["stats"]>): AutopilotSta
   };
 }
 
-describe("the card of the progress, when some calls cannot be counted", () => {
+describe("the line of the cost and the use, when some calls cannot be counted", () => {
   function Page() {
     return (
       <MemoryRouter initialEntries={["/app/books/book-1/autopilot"]}>
@@ -302,7 +302,7 @@ describe("the card of the progress, when some calls cannot be counted", () => {
     expect(screen.queryByText(/without a price/)).not.toBeInTheDocument();
     const live = { ...summaryOf({ costUnknownCalls: 2 }), updatedAt: "2026-11-21T10:05:00.000Z" };
     await act(async () => { useAutopilotStore.getState().ingest({ bookId: BOOK.id, at: live.updatedAt, seq: 1, type: "state", state: live } as AutopilotEvent, BOOK.name); });
-    const card = screen.getByText(t("autopilot.progress.tokens")).closest("section") as HTMLElement;
-    expect(within(card).getByText("2 calls without a price")).toBeInTheDocument();
+    const band = document.querySelector("[data-autopilot-band]") as HTMLElement;
+    expect(within(band).getByText("2 calls without a price")).toBeInTheDocument();
   });
 });
