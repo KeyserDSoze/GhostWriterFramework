@@ -38,6 +38,6 @@ test("the autopilot and director router tasks are labelled in both languages", (
 });
 
 test("every runner message code has a translation", () => {
-  const codes = ["conflictRetry", "failureRetry", "takenOver", "interventionQueued", "interventionInterrupt", "reset", "unexpectedStop", "syncFailed", "publishFailed", "finalStateFailed", "budgetNotApplicable", "profileProblems"];
+  const codes = ["conflictRetry", "failureRetry", "takenOver", "interventionQueued", "interventionInterrupt", "reset", "unexpectedStop", "syncFailed", "publishFailed", "finalStateFailed", "budgetNotApplicable", "profileProblems", "chapterPause", "stepLimit", "chapterLimit"];
   for (const locale of [autopilotEn, autopilotIt]) for (const code of codes) assert.ok(locale.autopilot.insight[code], code);
 });

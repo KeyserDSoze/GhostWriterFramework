@@ -8,6 +8,7 @@ import {
   syncBookStores,
   type AskDirectorResult,
   type AutopilotEvent,
+  type AutopilotLiveOptions,
   type AutopilotSnapshot,
   type EvaluationTarget,
   type InterventionInput,
@@ -22,14 +23,20 @@ import i18n from "@/i18n";
 import { localDeviceId } from "@/account/deviceIdentity";
 import { createBrowserAi } from "@/autopilot/browserAi";
 import { LocalWorkingCopyMissingError, createBrowserBookStore } from "@/autopilot/browserStore";
+import { selectAutopilotControl } from "@/autopilot/control";
+import { HandoverCoordinator, HandoverConsentError, type HandoverOptions, type HandoverPorts, type HandoverRequest, type HandoverSide, type RunInspection, type RunOutcome } from "@/autopilot/handover";
+import { setAutopilotHost } from "@/autopilot/host";
 import { AutopilotOperationBusyError, BookOperations, type AutopilotOperationKind } from "@/autopilot/operations";
 import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
+import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
 import { RefreshCoordinator } from "@/autopilot/refreshCoordinator";
 import { ServerAddressError, validateServerAddress } from "@/autopilot/serverAddress";
 import { ServerIdentityError, verifiedServer, type VerifiedServer, type VerifiedServerOptions } from "@/autopilot/serverIdentity";
 import {
   autopilotChannel,
   emptyView,
+  lastRunEnd,
+  lastSignalAt,
   shareAutopilotEvent,
   useAutopilotStore,
   type AutopilotChannel,
@@ -41,6 +48,7 @@ import {
   type SyncOutcomeKind,
 } from "@/autopilot/store";
 import { StreamWatchdog } from "@/autopilot/streamWatchdog";
+import { latestSummary } from "@/autopilot/summary";
 import { describeConflicts, recordedManifest } from "@/autopilot/syncConflicts";
 import { SyncBaseError, readSyncBase, writeSyncBase } from "@/autopilot/syncBase";
 import { ScreenWakeLock } from "@/autopilot/wakeLock";
@@ -94,6 +102,13 @@ const RELAY_TIMEOUT_MS = 4000;
 const REFRESH_INTERVAL_WHILE_RUNNING_MS = 4000;
 /** The server sends a `heartbeat` every 15 seconds: a connection that delivered nothing for three times as long is dead. */
 const STREAM_IDLE_LIMIT_MS = 45_000;
+/** A handover that waits for a run to end looks at it again this often, besides when the live events say it ended: a connection that lost an event must not hold the plan for ever. */
+const HANDOVER_POLL_MS = 5000;
+/** A run that cannot be seen this many times in a row is not waited for any longer: the plan fails and says why. */
+const HANDOVER_UNSEEN_LIMIT = 3;
+/** The lock of a book that another tab still holds when the plan wants to move it: how many times it is tried again, and how long the first wait is (it grows with each). */
+const HANDOVER_LOCK_RETRIES = 4;
+const HANDOVER_LOCK_WAIT_MS = 150;
 
 function settings() {
   return useSettingsStore.getState().settings;
@@ -247,6 +262,8 @@ export interface RuntimeEnvironment {
   channel?: () => AutopilotChannel | null;
   /** Check the identity of the personal server and build its client. */
   connect?: (options: VerifiedServerOptions) => Promise<VerifiedServer>;
+  /** How the plans to move the autopilot to the other side keep time (a test shortens them). */
+  handover?: HandoverOptions & { pollMs?: number };
 }
 
 interface LocalSessionEntry {
@@ -280,9 +297,14 @@ export class BrowserAutopilotRuntime {
   private readonly screen = new ScreenWakeLock();
   private stream: FollowedStream | null = null;
   private unloadGuard = false;
+  /** The plans to move the autopilot of a book to the other side of the browser/server pair, one for each book. */
+  private readonly handovers: HandoverCoordinator;
+  /** How each plan keeps the author's settings (the host of the book is one of them): the component that made the plan gives it. */
+  private readonly handoverSavers = new Map<string, () => Promise<unknown>>();
 
   constructor(private readonly env: RuntimeEnvironment = {}) {
     this.channel()?.addEventListener("message", (message: MessageEvent<AutopilotChannelMessage>) => this.onChannelMessage(message.data));
+    this.handovers = new HandoverCoordinator(this.handoverPorts(), env.handover);
   }
 
   private locks(): LockManager | undefined {
@@ -372,13 +394,10 @@ export class BrowserAutopilotRuntime {
       hostLabel: browserLabel(),
       hostId: localDeviceId(),
       ownRunnerAlive: () => this.lockHeldElsewhere(book.id),
+      // The engine decides which of the two is called, and when, from where the book is published (after every step, every chapter or never).
       hooks: bookStorageMode(book) === "github" ? {
-        afterChapter: async () => {
-          const token = resolveGitHubRemoteToken(book, settings());
-          if (!token) return;
-          await syncFullRepository({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentRepositoryScopeIdentity(), token });
-          this.recordSync(book.id, syncOutcome("published"));
-        },
+        afterCommit: () => this.publishFromBrowser(book, branch),
+        afterChapter: () => this.publishFromBrowser(book, branch),
       } : undefined,
     });
     const unsubscribe = session.subscribe((event) => {
@@ -389,6 +408,14 @@ export class BrowserAutopilotRuntime {
     });
     this.sessions.set(book.id, { key, session, unsubscribe });
     return session;
+  }
+
+  /** Publish the book's commits of this browser to GitHub: what the engine asks for after a step or a chapter, as the author chose. A book without a usable token publishes nothing. */
+  private async publishFromBrowser(book: BookEntry, branch: string): Promise<void> {
+    const token = resolveGitHubRemoteToken(book, settings());
+    if (!token) return;
+    await syncFullRepository({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentRepositoryScopeIdentity(), token });
+    this.recordSync(book.id, syncOutcome("published"));
   }
 
   /**
@@ -518,19 +545,36 @@ export class BrowserAutopilotRuntime {
     }
   }
 
+  /**
+   * What a command of the server answered: its snapshot, with the summary of its own session (the pause that waits, the limits of
+   * the run, where the book is published). It is the newest thing known of the book, so it is also the summary the page follows.
+   */
+  private applySnapshot(bookId: string, snapshot: AutopilotSnapshot): void {
+    useAutopilotStore.getState().patchView(bookId, { snapshot, error: null });
+    const summary = snapshot.summary;
+    if (summary) useAutopilotStore.setState((state) => ({ summaries: { ...state.summaries, [bookId]: summary } }));
+  }
+
   start(bookId: string, options: StartOptions & { force?: boolean } = {}): Promise<void> {
     return this.operations.run(bookId, "start", () => this.startNow(bookId, options));
+  }
+
+  /** Run one step, or one chapter, and pause: a start with that limit. The limit is for this run only; the next one has none unless it asks. */
+  runOne(bookId: string, kind: RunOneKind): Promise<void> {
+    return this.start(bookId, { limits: kind === "step" ? { steps: 1 } : { chapters: 1 } });
   }
 
   private async startNow(bookId: string, options: StartOptions & { force?: boolean }): Promise<void> {
     const book = findBook(bookId);
     if (autopilotHostOf(book) === "server") {
-      // Check the server before the book's changes are handed to it.
-      await this.requireServer();
+      // Check the server before the book's changes are handed to it, and before a limit is asked of one that would not stop at it.
+      const { info } = await this.requireServer();
+      const { limits, ...unlimited } = options;
+      const limited = hasRunLimit(limits);
+      if (limited && !serverHasQuickControls(info)) throw new AutopilotControlsUnsupportedError();
       await this.syncNow(book.id, { push: true, throwOnError: true });
       const { client } = await this.requireServer();
-      const snapshot = await client.startAutopilot(book.id, options);
-      useAutopilotStore.getState().patchView(bookId, { snapshot, error: null });
+      this.applySnapshot(bookId, await client.startAutopilot(book.id, limited ? options : unlimited));
       return;
     }
     const session = this.localSession(book, resolveBookBranch(book));
@@ -556,19 +600,77 @@ export class BrowserAutopilotRuntime {
     await this.refresh(bookId);
   }
 
-  /** Never held back by an operation in progress: pausing is how the author stops an expensive run. */
-  async pause(bookId: string, mode: "now" | "after-step"): Promise<void> {
+  /**
+   * Pause the run: `now` abandons the request in flight, `after-step` lets the step finish, `after-chapter` goes on to the end of the
+   * chapter in progress, and `cancel` takes back a pause that waits. Never held back by an operation in progress: pausing is how the author
+   * stops an expensive run. A run of another tab is commanded through that tab; on the server, a server that predates the quick controls
+   * would take `after-chapter` for `after-step` and `cancel` for a pause, so those are not sent to it.
+   */
+  async pause(bookId: string, mode: PauseCommand): Promise<void> {
     const book = findBook(bookId);
+    // The author who stops the run, or takes back the pause, while a switch waits for the step to end has changed their mind about it: the
+    // switch is taken back first, so that it does not start the autopilot on the other side after the author stopped it.
+    if ((mode === "now" || mode === "cancel") && this.handovers.plan(bookId)?.phase === "armed") await this.handovers.cancel(bookId);
     if (autopilotHostOf(book) === "server") {
-      useAutopilotStore.getState().patchView(bookId, { snapshot: await (await this.requireServer()).client.pauseAutopilot(book.id, mode) });
+      const { client, info } = await this.requireServer();
+      if ((mode === "after-chapter" || mode === "cancel") && !serverHasQuickControls(info)) throw new AutopilotControlsUnsupportedError();
+      this.applySnapshot(bookId, await client.pauseAutopilot(book.id, mode));
       return;
     }
     const session = this.sessions.get(book.id)?.session;
     if (session?.running) {
-      session.pause(mode);
+      if (mode === "cancel") session.cancelPause();
+      else session.pause(mode);
       return;
     }
-    if (await this.lockHeldElsewhere(book.id)) await this.relay(book.id, { type: "pause", mode });
+    if (await this.lockHeldElsewhere(book.id)) await this.relay(book.id, mode === "cancel" ? { type: "cancel-pause" } : { type: "pause", mode });
+  }
+
+  /**
+   * Change where the book is published, and whether the run pauses after every chapter, also while the run goes on: it takes hold from the
+   * next step, or the next chapter. A book run by the server needs a server that has the quick controls; one run by another tab of this
+   * browser is changed through that tab, which says it to the others.
+   */
+  updateOptions(bookId: string, options: AutopilotLiveOptions): Promise<void> {
+    return this.operations.run(bookId, "configure", async () => {
+      const book = findBook(bookId);
+      if (autopilotHostOf(book) === "server") {
+        const { client, info } = await this.requireServer();
+        if (!serverHasQuickControls(info)) throw new AutopilotControlsUnsupportedError();
+        this.applySnapshot(bookId, await client.updateOptions(book.id, options));
+        return;
+      }
+      const session = this.localSession(book, resolveBookBranch(book));
+      if (!session.running && await this.lockHeldElsewhere(book.id)) {
+        await this.relay(book.id, { type: "update-options", options });
+        return;
+      }
+      await session.updateOptions(options);
+      await this.refresh(bookId);
+    });
+  }
+
+  /**
+   * Publish the book to GitHub now. A book this browser runs: its commits are published. A book the server runs: the server publishes
+   * what it wrote first (it publishes by itself after the steps or the chapters the author chose, and this is the one that does not wait),
+   * and then this browser pulls it. One operation of the book, like a sync.
+   */
+  publishNow(bookId: string): Promise<SyncOutcome> {
+    return this.operations.run(bookId, "sync", async () => {
+      const book = findBook(bookId);
+      if (bookStorageMode(book) !== "github") throw new Error(i18n.t("autopilot.errors.notGitHub"));
+      if (autopilotHostOf(book) === "server") {
+        const { client } = await this.requireServer();
+        await client.syncGitHub(book.id);
+        return this.syncNow(bookId, { push: true, throwOnError: true });
+      }
+      const token = resolveGitHubRemoteToken(book, settings());
+      if (!token) throw new AutopilotSetupError("github-token");
+      await syncFullRepository({ bookId: book.id, owner: book.owner, repo: book.repo, branch: resolveBookBranch(book), accountIdentity: currentRepositoryScopeIdentity(), token });
+      const outcome = syncOutcome("published");
+      this.recordSync(bookId, outcome);
+      return outcome;
+    });
   }
 
   intervene(bookId: string, input: InterventionInput): Promise<void> {
@@ -684,6 +786,8 @@ export class BrowserAutopilotRuntime {
     if (!session?.running) return;
     try {
       if (command.type === "pause") session.pause(command.mode);
+      else if (command.type === "cancel-pause") session.cancelPause();
+      else if (command.type === "update-options") await session.updateOptions(command.options);
       else await session.intervene(command.input);
       this.post({ kind: "command-result", id, ok: true });
     } catch (error) {
@@ -1063,6 +1167,168 @@ export class BrowserAutopilotRuntime {
       if (this.stream?.leader) this.stream.known = { ...this.stream.known, books };
       if (settings().books.some((book) => book.id === summary.bookId)) useAutopilotStore.getState().patchView(summary.bookId, { server: summary });
     }
+  }
+
+  // ─── Moving the autopilot to the other side ──────────────────────────────────────────────────────────────
+
+  /**
+   * Plan to move the autopilot of the book to the other side (this browser ↔ the personal server): after the step that runs, or now, and
+   * with `returnAfterSteps`, for that many steps there and then back. The plan is an intention of this tab: it holds nothing of the book
+   * while it waits, and it is lost when the tab closes (a run on the server goes on). It resolves once the plan is armed; a plan that cannot
+   * be made (the book is already there, another operation holds it, a consent is missing, the server cannot take it) throws before anything is paused.
+   * `saveSettings` keeps the author's settings when the book changes hands.
+   */
+  async armHandover(bookId: string, request: HandoverRequest, persistence: { saveSettings?: () => Promise<unknown> } = {}): Promise<void> {
+    if (persistence.saveSettings) this.handoverSavers.set(bookId, persistence.saveSettings);
+    await this.handovers.arm(bookId, request);
+  }
+
+  /** Take back a plan that still waits for the step to end, and the pause it asked for. `false` when it cannot be taken back. */
+  cancelHandover(bookId: string): Promise<boolean> {
+    return this.handovers.cancel(bookId);
+  }
+
+  /** Close the plan that ended (the author read how). */
+  dismissHandover(bookId: string): void {
+    this.handovers.dismiss(bookId);
+  }
+
+  /** What the plans need of the runtime: the same commands the author has, so they obey the same rules (one operation at a time, no secret sent by itself). */
+  private handoverPorts(): HandoverPorts {
+    return {
+      hostOf: (bookId) => autopilotHostOf(findBook(bookId)),
+      assertFree: (bookId) => {
+        const active = this.operations.current(bookId);
+        if (active) throw new AutopilotOperationBusyError("moveToServer", active.kind);
+      },
+      inspect: (bookId) => this.inspectRun(bookId),
+      prepareMove: (bookId, to, options) => this.prepareHandoverMove(bookId, to, options.limits),
+      pause: (bookId, mode) => this.pause(bookId, mode),
+      waitUntilStopped: (bookId, signal, since) => this.waitUntilStopped(bookId, signal, since),
+      move: (bookId, to) => this.moveForHandover(bookId, to),
+      start: (bookId, options) => (options?.limits ? this.start(bookId, { limits: options.limits }) : this.start(bookId)),
+      publish: (bookId, plan) => useAutopilotStore.getState().patchView(bookId, { handover: plan }),
+      describeError: (error) => describeAutopilotError(error),
+    };
+  }
+
+  /** A fresh look at the run of the book. A run that cannot be seen is never taken for stopped: the error says why. */
+  private async inspectRun(bookId: string): Promise<RunInspection> {
+    const snapshot = await this.refresh(bookId);
+    const store = useAutopilotStore.getState();
+    const view = store.views[bookId] ?? emptyView(bookId);
+    if (!snapshot) throw new Error(view.error ?? i18n.t("autopilot.errors.action"));
+    const summary = latestSummary(snapshot.state, store.summaries[bookId], snapshot.summary);
+    const control = selectAutopilotControl({ snapshot, busyInAnotherTab: view.busyInAnotherTab, summary, lastSignal: lastSignalAt(bookId) }, Date.now());
+    return { running: control.running, controllable: control.controllable, pausePending: summary?.pausePending ?? null };
+  }
+
+  /**
+   * Check, before a run is paused for it, that the book can go to the other side. The server proves its identity, keeps the limit of a run when
+   * one is asked, and holds what a run on it needs: the AI configuration and, for a GitHub book, the token. A handover never sends a secret by
+   * itself, so what is missing is for the author to give, in the flow of "Where it runs".
+   */
+  private async prepareHandoverMove(bookId: string, to: HandoverSide, limits: boolean): Promise<void> {
+    const book = findBook(bookId);
+    const { client, info } = await this.requireServer();
+    if (to !== "server") return;
+    if (limits && !serverHasQuickControls(info)) throw new AutopilotControlsUnsupportedError();
+    if ((await client.aiStatus()).configured !== true) throw new HandoverConsentError("ai");
+    if (bookStorageMode(book) === "github") {
+      const store = useAutopilotStore.getState();
+      const known = store.server.books.find((entry) => entry.bookId === bookId) ?? store.views[bookId]?.server;
+      if (!known?.hasGithubToken) throw new HandoverConsentError("github");
+    }
+  }
+
+  /**
+   * The files of the book, and its host: what "Move to my server" and "Bring back to this browser" do, with the consents the server already
+   * holds. The run that has just ended in this tab lets go of the book's lock a moment after it is over, so a book that looks held by another
+   * tab is looked at again for a little while before the plan gives up.
+   */
+  private async moveForHandover(bookId: string, to: HandoverSide): Promise<void> {
+    const move = () => (to === "server" ? this.moveToServer(bookId, { sendAiConfiguration: false, sendGitHubToken: false }) : this.moveToBrowser(bookId));
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await move();
+        break;
+      } catch (error) {
+        const lockStillHeld = error instanceof AutopilotOperationBusyError && error.active === "otherTab";
+        if (!lockStillHeld || attempt >= HANDOVER_LOCK_RETRIES) throw error;
+        await new Promise<void>((resolve) => setTimeout(resolve, HANDOVER_LOCK_WAIT_MS * (attempt + 1)));
+      }
+    }
+    await setAutopilotHost(bookId, to, this.handoverSavers.get(bookId));
+  }
+
+  /**
+   * Resolves when the run of the book is no longer running, wherever it ran: when the live events say it ended, when the local session goes
+   * idle, and, in case an event was lost, when a download of the book (every few seconds) says so. Rejects when `signal` aborts, or when the
+   * book cannot be seen for several downloads in a row (a server that went away). `since` is when the plan began asking for the end of the run.
+   */
+  private waitUntilStopped(bookId: string, signal: AbortSignal, since: number): Promise<RunOutcome> {
+    const pollMs = this.env.handover?.pollMs ?? HANDOVER_POLL_MS;
+    return new Promise<RunOutcome>((resolve, reject) => {
+      let over = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let checking = false;
+      let again = false;
+      let unseen = 0;
+      const finish = (settle: () => void) => {
+        if (over) return;
+        over = true;
+        clearTimeout(timer);
+        unsubscribe();
+        signal.removeEventListener("abort", onAbort);
+        settle();
+      };
+      const onAbort = () => finish(() => reject(new DOMException("The wait for the end of the run was abandoned.", "AbortError")));
+      const check = async (): Promise<void> => {
+        if (over) return;
+        if (checking) {
+          again = true;
+          return;
+        }
+        checking = true;
+        try {
+          do {
+            again = false;
+            const snapshot = await this.refresh(bookId);
+            if (over) return;
+            const view = useAutopilotStore.getState().views[bookId] ?? emptyView(bookId);
+            if (!snapshot) {
+              unseen += 1;
+              if (unseen >= HANDOVER_UNSEEN_LIMIT) return finish(() => reject(new Error(view.error ?? i18n.t("autopilot.serverOffline"))));
+              continue;
+            }
+            unseen = 0;
+            if (!snapshot.running && !view.busyInAnotherTab) {
+              const end = lastRunEnd(bookId);
+              const heard = end && end.at >= since ? end : undefined;
+              return finish(() => resolve({ status: snapshot.state?.status ?? heard?.status ?? null, message: snapshot.state?.message ?? null, ...(heard?.code ? { code: heard.code } : {}) }));
+            }
+          } while (again);
+        } finally {
+          checking = false;
+        }
+        schedule();
+      };
+      const schedule = () => {
+        clearTimeout(timer);
+        if (!over) timer = setTimeout(() => void check(), pollMs);
+      };
+      // The end of a run is told by the live events: the end itself, or a summary that no longer says it runs.
+      const unsubscribe = useAutopilotStore.subscribe((state, previous) => {
+        const last = state.feed[state.feed.length - 1];
+        const ended = last && last !== previous.feed[previous.feed.length - 1] && last.event.bookId === bookId && last.event.type === "run-ended";
+        const summary = state.summaries[bookId];
+        if (ended || (summary !== previous.summaries[bookId] && summary?.status !== "running")) void check();
+      });
+      if (signal.aborted) return onAbort();
+      signal.addEventListener("abort", onAbort, { once: true });
+      void this.sessions.get(bookId)?.session.waitForIdle().then(() => check());
+      void check();
+    });
   }
 
   /** Runner described by a stored state that is not this tab (another device or the server). */

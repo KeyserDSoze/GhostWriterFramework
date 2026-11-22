@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
@@ -14,7 +14,6 @@ import {
   ListChecks,
   Loader2,
   MessageSquarePlus,
-  Pause,
   Play,
   Plane,
   RefreshCcw,
@@ -23,7 +22,6 @@ import {
   Save,
   Scale,
   Server,
-  Square,
   XCircle,
 } from "lucide-react";
 import {
@@ -51,11 +49,12 @@ import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAle
 import { AutopilotFeed, AutopilotLiveCard, AutopilotStatusBadge } from "@/components/autopilot/AutopilotFeed";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import { PlanChapters } from "@/components/autopilot/PlanChapters";
-import { RemoteRunNotice } from "@/components/autopilot/RemoteRunNotice";
+import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
 import { SyncConflicts } from "@/components/autopilot/SyncConflicts";
 import { SyncSkipped } from "@/components/autopilot/SyncSkipped";
 import { useAutopilotRefresh, useBookAutopilotView, useElapsed } from "@/autopilot/hooks";
+import { setAutopilotHost } from "@/autopilot/host";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useAutopilotStore, type SyncOutcome } from "@/autopilot/store";
@@ -80,16 +79,33 @@ const MAX_CHAPTERS = 100_000;
 // The same kind of guard for the token budget: a trillion tokens is more than any book will ever use, and a typo stays a typo.
 const MAX_BUDGET_TOKENS = 1_000_000_000_000;
 
-function Card({ title, icon, actions, children, className }: { title: string; icon?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
+/** A card with an `id` is one that a link can bring into view and give the focus to: it is named after its title, so that what takes the focus says where it is. */
+function Card({ title, icon, actions, children, className, id }: { title: string; icon?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; id?: string }) {
   return (
-    <section className={cn("space-y-3 rounded-2xl border border-layer bg-card p-4 shadow-sm sm:p-5", className)}>
+    <section id={id} tabIndex={id ? -1 : undefined} aria-labelledby={id ? `${id}-title` : undefined} className={cn("space-y-3 rounded-2xl border border-layer bg-card p-4 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-5", className)}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-base font-semibold">{icon}{title}</h2>
+        <h2 id={id ? `${id}-title` : undefined} className="flex items-center gap-2 text-base font-semibold">{icon}{title}</h2>
         {actions}
       </div>
       {children}
     </section>
   );
+}
+
+/**
+ * The commands that point at a card of the page (the question, “Where it runs”) do it with a link to `#its-id`. The router does not scroll to
+ * it by itself, so the page does: the card comes into view and takes the focus, which is where a keyboard or a screen reader starts reading.
+ */
+function useScrollToHash(ready: boolean): void {
+  const location = useLocation();
+  useEffect(() => {
+    const id = decodeURIComponent(location.hash.replace(/^#/, ""));
+    if (!id || !ready) return;
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.scrollIntoView?.({ block: "start" });
+    element.focus({ preventScroll: true });
+  }, [location.hash, location.key, ready]);
 }
 
 export function AutopilotPage() {
@@ -109,20 +125,17 @@ export function AutopilotPage() {
   const loaded = Boolean(snapshot || view.error);
   const state = snapshot?.state ?? null;
   // Status and statistics follow the summaries of the `state` events (the page does not download the whole state again for
-  // them), and who can command the run is read the same way here and in the dock.
+  // them), and who can command the run is read the same way here, in the dock and in the bar of quick commands.
   const control = useAutopilotControl(bookId);
   const { summary, status, controllable, running } = control;
-  // Pause and Stop wait only for themselves: whatever else holds the book (a sync, a move) never keeps a run from being stopped.
-  const pausing = busy === "pause" || busy === "stop";
-  const remoteNoteId = "autopilot-remote-run";
   const noAi = host === "browser" && settings.aiIntegrations.length === 0;
   const existingChapters = structure?.chapters.filter((chapter) => chapter.paragraphs.length > 0).length ?? 0;
   const linkedChapters = useMemo(() => new Set(structure?.chapters.map((chapter) => chapter.slug) ?? []), [structure?.chapters]);
+  useScrollToHash(loaded);
 
   if (error && !structure && host === "browser") return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book || !bookId) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 
-  const resume = () => void run("start", (runtime, id) => runtime.start(id));
   const awaitingPlan = Boolean(state?.plan?.awaitingAuthor);
   // The engine waits for the author without a question when a profile file has problems; a run that ended with an error is told apart too.
   const profileStop = isProfileProblemStop(summary);
@@ -143,27 +156,14 @@ export function AutopilotPage() {
           <OperationNotice bookId={bookId} className="mt-2" />
         </div>
         <div className="flex flex-wrap gap-2 lg:max-w-sm lg:shrink-0 lg:justify-end">
-          {running ? (
-            <>
-              <Button variant="outline" disabled={pausing || !controllable} aria-describedby={controllable ? undefined : remoteNoteId} onClick={() => void run("pause", (runtime, id) => runtime.pause(id, "after-step"))}>
-                {busy === "pause" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pause className="h-4 w-4" />}{t("autopilot.actions.pause")}
-              </Button>
-              <Button variant="ghost" title={t("autopilot.stopHint")} disabled={pausing || !controllable} aria-describedby={controllable ? undefined : remoteNoteId} onClick={() => void run("stop", (runtime, id) => runtime.pause(id, "now"))}>
-                <Square className="h-4 w-4" />{t("autopilot.actions.stop")}
-              </Button>
-            </>
-          ) : summary && !summary.question ? (
-            <Button variant={status === "completed" ? "outline" : "default"} disabled={busy !== null || noAi} aria-describedby={profileStop ? PROFILE_HINT_ID : undefined} onClick={resume}>
-              {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              {awaitingPlan ? t("autopilot.actions.approvePlan") : t("autopilot.actions.resume")}
-            </Button>
-          ) : null}
           <Button asChild variant="outline"><Link to={`/app/books/${encodeURIComponent(bookId)}/director`}><Clapperboard className="h-4 w-4" />{t("autopilot.actions.director")}</Link></Button>
           <Button variant="ghost" size="icon" title={t("autopilot.actions.refresh")} aria-label={t("autopilot.actions.refresh")} disabled={!canRefresh} onClick={() => void run("refresh", (runtime, id) => runtime.refresh(id))}>
             <RefreshCcw className="h-4 w-4" />
           </Button>
         </div>
       </div>
+
+      <QuickCommands bookId={bookId} variant="page" profileHintId={PROFILE_HINT_ID} />
 
       {noAi && <Alert><AlertTriangle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><span>{t("autopilot.errors.aiMissing")}</span><Button asChild size="sm" variant="outline"><Link to="/app/settings/ai-integrations">{t("settingsSection.aiIntegrationsTitle")}</Link></Button></AlertDescription></Alert>}
       {view.error && <Alert variant="destructive"><AlertDescription>{view.error}</AlertDescription></Alert>}
@@ -186,7 +186,6 @@ export function AutopilotPage() {
       {host === "server" && (serverStatus === "offline" || serverStatus === "error") && <Alert><Cloud className="h-4 w-4" /><AlertDescription>{t("autopilot.serverOffline")}</AlertDescription></Alert>}
       {host === "server" && serverStatus === "reconnecting" && <Alert><Cloud className="h-4 w-4" /><AlertDescription>{t("autopilot.serverReconnecting")}</AlertDescription></Alert>}
       {view.busyInAnotherTab && <Alert><AlertDescription>{t("autopilot.anotherTab")}</AlertDescription></Alert>}
-      <RemoteRunNotice bookId={bookId} control={control} id={remoteNoteId} />
       {summary?.message && !running && !profileStop && summary.message !== failure?.message && <Alert><AlertDescription>{summary.message}</AlertDescription></Alert>}
       {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} hintId={PROFILE_HINT_ID} />}
       {failure && <RunErrorNotice bookId={bookId} message={failure.message} />}
@@ -251,8 +250,8 @@ function QuestionCard({ bookId, question, disabled, run }: { bookId: string; que
     await runtime.start(id);
   });
   return (
-    <section className="space-y-3 rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4 sm:p-5" aria-live="polite">
-      <h2 className="flex items-center gap-2 text-base font-semibold"><Clapperboard className="h-4 w-4 text-amber-700 dark:text-amber-600" />{t("autopilot.question.title")}</h2>
+    <section id="autopilot-question" tabIndex={-1} aria-labelledby="autopilot-question-title" className="space-y-3 rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-5" aria-live="polite">
+      <h2 id="autopilot-question-title" className="flex items-center gap-2 text-base font-semibold"><Clapperboard className="h-4 w-4 text-amber-700 dark:text-amber-600" />{t("autopilot.question.title")}</h2>
       <p className="whitespace-pre-wrap text-sm font-medium">{question.question}</p>
       {question.context && <p className="whitespace-pre-wrap text-xs text-muted-foreground">{question.context}</p>}
       {question.options.length > 0 && (
@@ -496,11 +495,14 @@ export function WhereCard({ book, running }: { book: BookEntry; running: boolean
   const serverBook = view.server;
   useEffect(() => setChoice(host), [host]);
 
-  const setHost = async (next: "browser" | "server") => {
-    const store = useSettingsStore.getState();
-    store.patchSettings({ books: store.settings.books.map((entry) => entry.id === book.id ? { ...entry, autopilotHost: next === "server" ? "server" : undefined } : entry) });
-    await save();
-  };
+  const setHost = (next: "browser" | "server") => setAutopilotHost(book.id, next, save);
+  // The quick commands send the author here when a consent is missing: the side they wanted to pass to is already chosen.
+  const whereIntent = useAutopilotStore((state) => state.whereIntent);
+  useEffect(() => {
+    if (whereIntent?.bookId !== book.id) return;
+    setChoice(whereIntent.side);
+    useAutopilotStore.getState().setWhereIntent(null);
+  }, [whereIntent, book.id]);
   const move = () => void run("move", async (runtime, id) => {
     await runtime.moveToServer(id, { sendAiConfiguration: consentAi, sendGitHubToken: github && consentGithub });
     await setHost("server");
@@ -531,7 +533,7 @@ export function WhereCard({ book, running }: { book: BookEntry; running: boolean
   const syncText = syncStatusText(t, sync);
 
   return (
-    <Card title={t("autopilot.where.title")} icon={<Server className="h-4 w-4 text-primary" />}>
+    <Card id="autopilot-where" title={t("autopilot.where.title")} icon={<Server className="h-4 w-4 text-primary" />}>
       <p className="text-xs text-muted-foreground">{t("autopilot.where.description")}</p>
       <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={t("autopilot.where.title")}>
         {(["browser", "server"] as const).map((option) => (
@@ -602,6 +604,20 @@ export function WhereCard({ book, running }: { book: BookEntry; running: boolean
       {sync && <SyncSkipped skipped={sync.skipped} />}
     </Card>
   );
+}
+
+/**
+ * Whether a switch of the setup is on. The one for publishing to GitHub follows how the author chose to publish (every step, every chapter or
+ * never, from the quick commands) when they chose, and the older option when they did not: the two never disagree on the screen.
+ */
+function optionShown(current: AutopilotOptions, key: keyof AutopilotOptions): boolean {
+  if (key === "syncAfterChapter" && current.publishEvery !== undefined) return current.publishEvery !== "off";
+  return Boolean(current[key]);
+}
+
+function optionChange(current: AutopilotOptions, key: keyof AutopilotOptions, checked: boolean): Partial<AutopilotOptions> {
+  if (key !== "syncAfterChapter" || current.publishEvery === undefined) return { [key]: checked } as Partial<AutopilotOptions>;
+  return { syncAfterChapter: checked, publishEvery: checked ? (current.publishEvery === "off" ? "chapter" : current.publishEvery) : "off" };
 }
 
 interface SetupForm {
@@ -694,7 +710,7 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
         {toggles.map(([key, label]) => (
           <label key={key} className="flex items-center justify-between gap-3 text-sm">
             <span>{label}</span>
-            <Switch checked={Boolean(form.options[key])} disabled={locked} onCheckedChange={(checked) => options({ [key]: checked } as Partial<AutopilotOptions>)} />
+            <Switch checked={optionShown(form.options, key)} disabled={locked} onCheckedChange={(checked) => options(optionChange(form.options, key, checked))} />
           </label>
         ))}
         <div className="grid grid-cols-2 gap-3 pt-1">

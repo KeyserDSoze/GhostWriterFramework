@@ -47,8 +47,18 @@ Chapters, paragraphs, canon entries, resumes and `plot.md` use the normal Narrar
 
 ## Where it runs
 
-- **In the browser**: each step is a local commit in the book's working copy; GitHub books are published after every approved chapter. Only one tab runs a book at a time; other tabs follow it live and can pause it or send interventions.
-- **On the personal server** (`npx narrarium-server`): the autopilot keeps working with the browser closed. GitHub books travel through GitHub (the server pushes every step); local books are exchanged with a three-way file sync. The browser follows the server live.
+- **In the browser**: each step is a local commit in the book's working copy; GitHub books are published as the author chose (every chapter unless chosen otherwise). Only one tab runs a book at a time; other tabs follow it live and can pause it, take a pause back, change the options that may change during a run, or send interventions.
+- **On the personal server** (`npx narrarium-server`): the autopilot keeps working with the browser closed. GitHub books travel through GitHub (the server pushes after every step unless the author chose otherwise); local books are exchanged with a three-way file sync. The browser follows the server live.
+
+### Quick commands
+
+The web app puts the commands the author reaches for most in one bar (the Autopilot page, the "This book" tab of the live panel and the "Live" tab for the book in focus). They all go through the engine, once, so the browser and the server behave the same:
+
+- **Pause** `now`, `after-step` or `after-chapter`, and **cancel** a pause that waits (`session.pause`, `session.cancelPause`; `summary.pausePending` says what waits).
+- **Run one step or one chapter**: a start with `limits: { steps: 1 }` or `{ chapters: 1 }`, for that run only (`summary.limits`).
+- **Publish** never, every chapter or every step: `options.publishEvery`, which `session.updateOptions` changes during a run (`summary.publish` says what is in force). A browser publishes from both hooks, `afterCommit` (every step) and `afterChapter`.
+- **Where it runs**: a handover plan per book, an intention of the tab that made it. It asks the run to pause (after the step, or now), waits until it has ended, moves the book (`moveToServer` or `moveToBrowser`: the same consents and conflict handling as "Where it runs"), and starts the autopilot on the other side only if it was running; with a number of steps it runs that many there (`limits.steps`) and comes back. A move that cannot be made leaves the book stopped where it was, with the reason; a failure after the move (the start on the other side, the way back) does not move the book back, and the message says where it is. A handover never sends a secret: a server that lacks the AI configuration or the book's GitHub token sends the author to "Where it runs".
+- **Older servers** that do not announce `autopilot-controls` ignore `limits` and take `after-chapter` and `cancel` for `after-step`, so the web app does not send those commands to them and says which version of the server has them.
 
 ### The personal server
 

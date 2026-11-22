@@ -27,4 +27,15 @@ i18n
     },
   });
 
+/** The page says in which language it is written: a screen reader reads it with that language's voice and rules (WCAG 3.1.1). */
+function announceLanguage(): void {
+  if (typeof document === "undefined") return;
+  const language = i18n.resolvedLanguage ?? i18n.language;
+  if (language) document.documentElement.lang = language;
+}
+
+i18n.on("initialized", announceLanguage);
+i18n.on("languageChanged", announceLanguage);
+announceLanguage();
+
 export default i18n;

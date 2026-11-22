@@ -25,6 +25,7 @@ import { AutopilotPage } from "@/pages/AutopilotPage";
 import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
+import { quickName } from "./helpers/quickCommands";
 
 const T0 = "2026-11-21T10:00:00.000Z";
 const BOOK: BookEntry = { id: "book-1", owner: "local", repo: "book-1", name: "The Glass Harbor", tokenIndex: null, storageMode: "local-only", addedAt: T0, autopilotHost: "server" };
@@ -62,7 +63,7 @@ function Page() {
 
 const dock = () => <MemoryRouter initialEntries={["/app/books/book-1/autopilot"]}><AutopilotDock /></MemoryRouter>;
 const alertsWith = (text: string) => screen.queryAllByRole("alert").filter((element) => element.textContent?.includes(text));
-const resume = () => screen.getByRole("button", { name: t("autopilot.actions.resume") }) as HTMLButtonElement;
+const resume = (variant: "page" | "dock" = "page") => screen.getByRole("button", { name: quickName(t("autopilot.actions.resume"), variant) }) as HTMLButtonElement;
 const link = (name: string) => screen.getByRole("link", { name }) as HTMLAnchorElement;
 
 function summaryOf(patch: Partial<AutopilotStateSummary> = {}, seconds = 30): AutopilotStateSummary {
@@ -144,7 +145,7 @@ describe("the page of a run that waits because a profile file has problems", () 
     expect(within(notice).getByText("Aspetta te: ci sono problemi nei file dei profili")).toBeInTheDocument();
     expect(within(notice).getAllByRole("listitem").map((item) => item.textContent)).toEqual([DIRECTOR_PROBLEM]);
     expect(link("Apri il direttore").getAttribute("href")).toBe("/app/books/book-1/director");
-    expect(screen.getByRole("button", { name: "Riprendi" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Riprendi — The Glass Harbor" })).toBeEnabled();
   });
 
   it("offers every page when the message names no file it recognises, and when there is no message at all", () => {
@@ -195,7 +196,7 @@ describe("the page of a run that waits because a profile file has problems", () 
     expect(alertsWith("The director has a question for you.")).toHaveLength(1);
     expect(screen.queryByText(t("autopilot.profileProblems.title"))).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: t("autopilot.profileProblems.openDirector") })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: t("autopilot.actions.resume") })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: quickName(t("autopilot.actions.resume"), "page") })).not.toBeInTheDocument();
   });
 
   it("leaves the words of any other stop as they are", () => {
@@ -218,9 +219,9 @@ describe("the dock of a run that waits because a profile file has problems", () 
     expect(link(t("autopilot.profileProblems.openReaders")).getAttribute("href")).toBe("/app/books/book-1/simulated-readers");
     expect(screen.queryByText(message(DIRECTOR_PROBLEM, READER_PROBLEM)), "the message is not written a second time as plain text").not.toBeInTheDocument();
 
-    expect(resume()).toBeEnabled();
-    expect(resume()).toHaveAccessibleDescription(t("autopilot.profileProblems.resumeHint", { action: t("autopilot.actions.resume") }));
-    fireEvent.click(resume());
+    expect(resume("dock")).toBeEnabled();
+    expect(resume("dock")).toHaveAccessibleDescription(t("autopilot.profileProblems.resumeHint", { action: t("autopilot.actions.resume") }));
+    fireEvent.click(resume("dock"));
     await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledWith("book-1"));
   });
 

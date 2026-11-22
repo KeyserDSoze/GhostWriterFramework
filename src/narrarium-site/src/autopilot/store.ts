@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import type { AutopilotActivity, AutopilotEvent, AutopilotSnapshot, AutopilotStateSummary, InterventionInput, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
+import type { AutopilotActivity, AutopilotEvent, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, InterventionInput, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
+import type { HandoverPlan, HandoverSide } from "@/autopilot/handover";
 import type { BookOperation } from "@/autopilot/operations";
 import type { PersonalServerSettings } from "@/types/settings";
 
@@ -57,6 +58,8 @@ export interface BookAutopilotView {
   sync: BookSyncStatus | null;
   /** What holds the book right now (a move, a sync, a start…): the same for every component showing the book. */
   operation: BookOperation | null;
+  /** The plan to move the autopilot of the book to the other side (browser or server): an intention of this tab, not saved anywhere. */
+  handover: HandoverPlan | null;
 }
 
 export interface FeedEntry {
@@ -85,6 +88,14 @@ export interface ServerConnectionState {
   connection: PersonalServerSettings | null;
 }
 
+/** A request to open the flow of "Where it runs" for a book on its page (the quick commands ask for it when a consent is missing). */
+export interface WhereIntent {
+  bookId: string;
+  side: HandoverSide;
+  /** When it was asked: a second request for the same book is a new one. */
+  at: number;
+}
+
 interface AutopilotStoreState {
   views: Record<string, BookAutopilotView>;
   /** Everything that happened, across books, oldest first (streaming previews excluded). */
@@ -94,8 +105,13 @@ interface AutopilotStoreState {
   server: ServerConnectionState;
   dockOpen: boolean;
   dockTab: "live" | "book";
+  /** The book the author chose to command from the live tab of the dock, among the ones that could be (null: the default). */
+  dockFocusBook: string | null;
+  whereIntent: WhereIntent | null;
   setDockOpen: (open: boolean) => void;
   setDockTab: (tab: "live" | "book") => void;
+  setDockFocusBook: (bookId: string | null) => void;
+  setWhereIntent: (intent: WhereIntent | null) => void;
   patchView: (bookId: string, patch: Partial<BookAutopilotView>) => void;
   ingest: (event: AutopilotEvent, bookTitle: string) => void;
   setServer: (patch: Partial<ServerConnectionState>) => void;
@@ -129,7 +145,7 @@ function initialDockOpen(): boolean {
 }
 
 export function emptyView(bookId: string): BookAutopilotView {
-  return { bookId, snapshot: null, loading: false, error: null, busyInAnotherTab: false, server: null, sync: null, operation: null };
+  return { bookId, snapshot: null, loading: false, error: null, busyInAnotherTab: false, server: null, sync: null, operation: null, handover: null };
 }
 
 /** When something was last heard of each book (any event, even a streamed word), by this tab. Not state: it changes with every event. */
@@ -140,6 +156,21 @@ export function lastSignalAt(bookId: string): number | undefined {
   return signals.get(bookId);
 }
 
+/** How the last run of a book ended, as its `run-ended` event said, and when this tab heard it. */
+export interface RunEnd {
+  status: AutopilotStatus;
+  message: string | null;
+  code?: AutopilotMessageCode;
+  at: number;
+}
+
+/** The last `run-ended` heard for each book (a handover tells a pause it asked for from a stop for another reason). Not state: nothing shows it. */
+const runEnds = new Map<string, RunEnd>();
+
+export function lastRunEnd(bookId: string): RunEnd | undefined {
+  return runEnds.get(bookId);
+}
+
 export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
   views: {},
   feed: initialFeed(),
@@ -148,6 +179,10 @@ export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
   server: { status: "disabled", info: null, message: null, books: [], updates: null, connection: null },
   dockOpen: initialDockOpen(),
   dockTab: "live",
+  dockFocusBook: null,
+  whereIntent: null,
+  setDockFocusBook: (bookId) => set({ dockFocusBook: bookId }),
+  setWhereIntent: (intent) => set({ whereIntent: intent }),
   setDockOpen: (open) => {
     try {
       localStorage.setItem(DOCK_KEY, open ? "open" : "closed");
@@ -160,6 +195,7 @@ export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
   patchView: (bookId, patch) => set((state) => ({ views: { ...state.views, [bookId]: { ...(state.views[bookId] ?? emptyView(bookId)), ...patch } } })),
   ingest: (event, bookTitle) => set((state) => {
     signals.set(event.bookId, Date.now());
+    if (event.type === "run-ended") runEnds.set(event.bookId, { status: event.status, message: event.message ?? null, ...(event.code ? { code: event.code } : {}), at: Date.now() });
     if (event.type === "task-progress") {
       const current = state.live[event.bookId];
       if (!current || current.activity.id !== event.activityId) return {};
@@ -213,7 +249,9 @@ export function latestFeedEntry(feed: FeedEntry[], bookId?: string): FeedEntry |
 // follow it through this channel and relay pause/intervention commands to it.
 
 export type RelayedCommand =
-  | { type: "pause"; mode: "now" | "after-step" }
+  | { type: "pause"; mode: "now" | "after-step" | "after-chapter" }
+  | { type: "cancel-pause" }
+  | { type: "update-options"; options: AutopilotLiveOptions }
   | { type: "intervene"; input: InterventionInput };
 
 /** What the tab that holds the live connection tells the others about it. */

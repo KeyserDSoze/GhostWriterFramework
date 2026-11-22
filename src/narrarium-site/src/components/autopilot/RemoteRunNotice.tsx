@@ -12,8 +12,9 @@ import { cn } from "@/lib/utils";
  * Why Pause and Stop are disabled: the autopilot of the book runs on another device or on the server, which this page
  * cannot command. Says who runs it and when it was last heard of, and offers to take control: that starts the run here, and the
  * other run stops at its next step. The lease is only a hint (the other device may simply be off): the author decides, after a confirmation.
+ * With a `context` (which bar and which book) the button is named after it, so that two bars on the same screen do not repeat its name.
  */
-export function RemoteRunNotice({ bookId, control, id, className }: { bookId: string; control: AutopilotControl; id?: string; className?: string }) {
+export function RemoteRunNotice({ bookId, control, id, className, context }: { bookId: string; control: AutopilotControl; id?: string; className?: string; context?: string }) {
   const { t } = useTranslation();
   const { busy, run } = useAutopilotActions(bookId);
   const [open, setOpen] = useState(false);
@@ -35,7 +36,7 @@ export function RemoteRunNotice({ bookId, control, id, className }: { bookId: st
       <p className="text-xs text-muted-foreground">{t("autopilot.control.pauseElsewhere")}{age ? ` ${age}` : ""}</p>
       {control.canTakeOver && (
         <>
-          <Button size="sm" variant="outline" aria-haspopup="dialog" disabled={busy !== null} onClick={() => setOpen(true)}>
+          <Button size="sm" variant="outline" aria-haspopup="dialog" aria-label={context ? t("autopilot.quick.named", { label: t("autopilot.control.takeOver"), context }) : undefined} disabled={busy !== null} onClick={() => setOpen(true)}>
             <Hand className="h-3.5 w-3.5" />{t("autopilot.control.takeOver")}
           </Button>
           <Dialog open={open} onOpenChange={setOpen}>

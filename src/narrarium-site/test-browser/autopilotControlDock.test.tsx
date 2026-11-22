@@ -22,6 +22,7 @@ import { AutopilotPage } from "@/pages/AutopilotPage";
 import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
+import { quickName } from "./helpers/quickCommands";
 
 const BOOK: BookEntry = { id: "book-1", owner: "local", repo: "book-1", name: "The Glass Harbor", tokenIndex: null, storageMode: "local-only", addedAt: "2026-11-21T00:00:00.000Z" };
 const SERVER_BOOK: BookEntry = { ...BOOK, autopilotHost: "server" };
@@ -60,9 +61,12 @@ function Page() {
   );
 }
 
-const pause = () => screen.getByRole("button", { name: t("autopilot.actions.pause") }) as HTMLButtonElement;
-const stop = () => screen.getByRole("button", { name: t("autopilot.actions.stop") }) as HTMLButtonElement;
-const takeControl = () => screen.queryByRole("button", { name: t("autopilot.control.takeOver") });
+// The commands of the bar say which book they command and from which bar: the panel and the page do not repeat a name.
+const named = (key: string, variant: "page" | "dock") => quickName(t(key), variant);
+const pause = (variant: "page" | "dock" = "dock") => screen.getByRole("button", { name: named("autopilot.actions.pause", variant) }) as HTMLButtonElement;
+const stop = (variant: "page" | "dock" = "dock") => screen.getByRole("button", { name: named("autopilot.actions.stop", variant) }) as HTMLButtonElement;
+const takeControl = (variant: "page" | "dock" = "dock") => screen.queryByRole("button", { name: named("autopilot.control.takeOver", variant) });
+const operationNotice = (text: string) => screen.getByText(text).closest('[role="status"]');
 
 beforeAll(async () => {
   await loadAutopilotTranslations();
@@ -174,14 +178,14 @@ describe("the dock while the autopilot runs", () => {
     seed({ running: true, runner: runnerOf("browser", "This browser"), operation: { kind: "sync", since: new Date().toISOString() } });
     render(<Dock />);
     expect(pause()).toBeEnabled();
-    expect(screen.getByRole("status")).toHaveTextContent(t("autopilot.operation.sync"));
+    expect(operationNotice(t("autopilot.operation.sync"))).toHaveTextContent(t("autopilot.operation.sync"));
   });
 
   it("disables Resume and says what is going on while the book is being moved", () => {
     seed({ status: "paused", runner: null, operation: { kind: "moveToServer", since: new Date().toISOString() } });
     render(<Dock />);
-    expect(screen.getByRole("button", { name: t("autopilot.actions.resume") })).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent(t("autopilot.operation.moveToServer"));
+    expect(screen.getByRole("button", { name: named("autopilot.actions.resume", "dock") })).toBeDisabled();
+    expect(operationNotice(t("autopilot.operation.moveToServer"))).toHaveTextContent(t("autopilot.operation.moveToServer"));
   });
 });
 
@@ -189,17 +193,17 @@ describe("the autopilot page while another device runs the book", () => {
   it("disables Pause and Stop with the reason, and offers to take control", () => {
     seed({ runner: runnerOf("browser", "Browser · Android") });
     render(<Page />);
-    expect(pause()).toBeDisabled();
-    expect(stop()).toBeDisabled();
+    expect(pause("page")).toBeDisabled();
+    expect(stop("page")).toBeDisabled();
     expect(screen.getAllByText(t("autopilot.remoteRunner", { label: "Browser · Android" }), { exact: false }).length).toBeGreaterThan(0);
-    expect(takeControl()).toBeInTheDocument();
-    expect(pause().getAttribute("aria-describedby")).toBeTruthy();
+    expect(takeControl("page")).toBeInTheDocument();
+    expect(pause("page").getAttribute("aria-describedby")).toBeTruthy();
   });
 
   it("starts the run here, forcing it, once the author confirms", async () => {
     seed({ runner: runnerOf("server", "Home server") });
     render(<Page />);
-    fireEvent.click(takeControl()!);
+    fireEvent.click(takeControl("page")!);
     const dialog = await screen.findByRole("dialog", { name: t("autopilot.control.takeOverTitle") });
     expect(within(dialog).getByText(t("autopilot.control.takeOverBody", { label: "Home server" }), { exact: false })).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: t("autopilot.control.takeOverConfirm") }));
@@ -209,12 +213,12 @@ describe("the autopilot page while another device runs the book", () => {
   it("has no take-over button for a run of its own, or when nothing runs", () => {
     seed({ running: true, runner: runnerOf("browser", "This browser") });
     const view = render(<Page />);
-    expect(takeControl()).not.toBeInTheDocument();
+    expect(takeControl("page")).not.toBeInTheDocument();
     view.unmount();
 
     seed({ status: "paused", runner: null });
     render(<Page />);
-    expect(takeControl()).not.toBeInTheDocument();
+    expect(takeControl("page")).not.toBeInTheDocument();
   });
 
   it("is told about the age of the signal in the user's language", async () => {

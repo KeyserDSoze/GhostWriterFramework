@@ -1,18 +1,19 @@
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, ExternalLink, Loader2, Pause, Plane, Play, Square, Trash2, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ExternalLink, Loader2, Plane, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { parseAppRoute } from "@/assistant/context";
 import { useAutopilotRefresh, useBookAutopilotView } from "@/autopilot/hooks";
-import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useAutopilotStore } from "@/autopilot/store";
 import { autopilotSummaryLine } from "@/autopilot/format";
+import { useFocusBook } from "@/autopilot/useFocusBook";
 import { useUiStore } from "@/store/uiStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { AutopilotFeed, AutopilotStatusBadge } from "@/components/autopilot/AutopilotFeed";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
-import { RemoteRunNotice } from "@/components/autopilot/RemoteRunNotice";
+import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { cn } from "@/lib/utils";
@@ -61,9 +62,57 @@ export function AutopilotDock() {
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {tab === "book" && bookId ? <DockBookPanel bookId={bookId} /> : <AutopilotFeed showBook limit={150} />}
+        {tab === "book" && bookId ? <DockBookPanel bookId={bookId} /> : <DockLivePanel />}
       </div>
     </section>
+  );
+}
+
+/**
+ * The "Live" tab: the commands of the book in focus (the one of the page, else the only one that runs, else the one that was active last)
+ * above everything the autopilot does. With several books to choose from, the author picks which one the bar commands, and its name is
+ * always written on it. Without a book in focus there is no bar, and the feed is alone.
+ */
+function DockLivePanel() {
+  const { focus, candidates, choose } = useFocusBook();
+  useAutopilotRefresh(focus?.id);
+  return (
+    <div className="space-y-3">
+      {focus && (
+        <QuickCommands
+          bookId={focus.id}
+          variant="dock"
+          framed
+          heading={candidates.length > 1 ? <FocusSelector focusId={focus.id} candidates={candidates} onChoose={choose} /> : undefined}
+        />
+      )}
+      <AutopilotFeed showBook limit={150} />
+    </div>
+  );
+}
+
+function FocusSelector({ focusId, candidates, onChoose }: { focusId: string; candidates: Array<{ id: string; name: string; running: boolean }>; onChoose: (bookId: string) => void }) {
+  const { t } = useTranslation();
+  const focus = candidates.find((candidate) => candidate.id === focusId);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" variant="outline" className="h-auto min-h-9 max-w-full justify-start whitespace-normal text-left">
+          <span className="min-w-0 break-words">{t("autopilot.quick.bookLabel", { name: focus?.name ?? focusId })}</span>
+          <ChevronDown className="h-4 w-4" aria-hidden />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="max-w-[min(22rem,calc(100vw-2rem))]">
+        <DropdownMenuLabel>{t("autopilot.quick.bookChoose")}</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={focusId} onValueChange={onChoose}>
+          {candidates.map((candidate) => (
+            <DropdownMenuRadioItem key={candidate.id} value={candidate.id} className="items-start whitespace-normal">
+              <span>{candidate.name}<span className="block text-xs text-muted-foreground">{t(candidate.running ? "autopilot.quick.bookRunning" : "autopilot.quick.bookIdle")}</span></span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -72,16 +121,10 @@ function DockBookPanel({ bookId }: { bookId: string }) {
   const view = useBookAutopilotView(bookId);
   const bookName = useSettingsStore((state) => state.settings.books.find((book) => book.id === bookId)?.name);
   const control = useAutopilotControl(bookId);
-  const { busy, run } = useAutopilotActions(bookId);
   useAutopilotRefresh(bookId);
 
-  // The same reading of who can command the run as the page: Pause and Stop never go to a run this client cannot reach.
-  const { summary, running, controllable } = control;
-  const pausing = busy === "pause" || busy === "stop";
-  const awaitingPlan = Boolean(view.snapshot?.state?.plan?.awaitingAuthor);
+  const { summary } = control;
   const pageHref = `/app/books/${encodeURIComponent(bookId)}/autopilot`;
-  const noteId = `dock-remote-run-${bookId}`;
-  const explained = controllable ? undefined : noteId;
   // A run that waits for the author without a question has a profile file with problems; one that ended with an error says why.
   const profileStop = isProfileProblemStop(summary);
   const failure = summary?.status === "error" ? summary.lastError ?? null : null;
@@ -105,7 +148,6 @@ function DockBookPanel({ bookId }: { bookId: string }) {
         {failure && <RunErrorNotice bookId={bookId} message={failure.message} compact />}
         <OperationNotice bookId={bookId} />
         {view.busyInAnotherTab && <p className="text-xs text-muted-foreground">{t("autopilot.anotherTab")}</p>}
-        <RemoteRunNotice bookId={bookId} control={control} id={noteId} />
         {view.error && <p className="flex items-start gap-1.5 text-xs text-destructive"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{view.error}</p>}
         {summary?.question && (
           <Link to={pageHref} className="flex items-start gap-1.5 rounded-md bg-amber-500/10 p-2 text-xs text-amber-800 hover:bg-amber-500/20 dark:text-amber-200">
@@ -113,22 +155,8 @@ function DockBookPanel({ bookId }: { bookId: string }) {
             <span><span className="font-medium">{t("autopilot.question.title")}:</span> {summary.question.question}</span>
           </Link>
         )}
+        <QuickCommands bookId={bookId} variant="dock" heading={null} profileHintId={profileHintId} />
         <div className="flex flex-wrap gap-2 pt-1">
-          {running ? (
-            <>
-              <Button size="sm" variant="outline" disabled={pausing || !controllable} aria-describedby={explained} onClick={() => void run("pause", (runtime, id) => runtime.pause(id, "after-step"))}>
-                {busy === "pause" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Pause className="h-3.5 w-3.5" />}{t("autopilot.actions.pause")}
-              </Button>
-              <Button size="sm" variant="ghost" disabled={pausing || !controllable} aria-describedby={explained} title={t("autopilot.stopHint")} onClick={() => void run("stop", (runtime, id) => runtime.pause(id, "now"))}>
-                <Square className="h-3.5 w-3.5" />{t("autopilot.actions.stop")}
-              </Button>
-            </>
-          ) : summary && summary.status !== "completed" && !summary.question ? (
-            <Button size="sm" disabled={busy !== null || view.busyInAnotherTab} aria-describedby={profileStop ? profileHintId : undefined} onClick={() => void run("start", (runtime, id) => runtime.start(id))}>
-              {busy === "start" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-              {awaitingPlan ? t("autopilot.actions.approvePlan") : t("autopilot.actions.resume")}
-            </Button>
-          ) : null}
           <Button asChild size="sm" variant={summary ? "ghost" : "default"}>
             <Link to={pageHref}>{summary ? t("autopilot.openPage") : t("autopilot.actions.start")}</Link>
           </Button>

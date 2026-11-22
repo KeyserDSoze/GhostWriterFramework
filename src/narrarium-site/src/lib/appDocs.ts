@@ -440,6 +440,17 @@ On any book, chapter or scene, **Ask the director** gives its opinion, answers y
 
 The **Autopilot** button next to Copilot shows what is happening now and opens a live panel that stays open while you work; Copilot has an **Autopilot** tab too. You can pause after the current step or stop now, answer the director's questions, and intervene for the next step only, from now on, or to revise what is already written (the director picks the scenes to rewrite). Your instructions always win.
 
+## Quick commands
+
+A bar with the commands you reach for most is on the Autopilot page, in the **This book** tab of the live panel, and above the live feed for the book in focus (the book you are in, else the only one that runs, else the one that worked last; when several run, choose the one to command with **Book**). Every control says in words what it does and which book it commands, and one that is not available says why.
+
+- **Pause after this step** is the main button. Its menu adds **Pause at the end of the chapter** (the autopilot goes on to the end of the chapter in progress, closes it and publishes it, then pauses) and **Cancel the pause** while one waits. A chip with a cross says what is waiting, and the cross takes it back. **Stop now** abandons the request in flight, and the provider may still bill it.
+- **Run** does one step only, one chapter only, or goes on until you stop it. The limit is for that run: the next one has none unless you ask again.
+- **GitHub**, for books kept on GitHub, chooses where the book is published: never, every chapter or every step. It changes from the next step, also while the autopilot runs, in the browser and on the server (the browser publishes every chapter unless you chose, the server every step). **Publish now** does it at once. It needs a GitHub token to use.
+- **Runs on** passes the autopilot to the other side, the browser or your personal server: after this step, which is what you will want most of the time; now, when the step in progress is done again on the other side; or one step there, and then back. It starts on the other side only if it was running, and the way back goes on here only if it was. If anything goes wrong while the book is being moved (files changed on both sides, a server that cannot be reached, another operation holding the book) the book stays where it was, stopped, with the reason, and nothing is lost. If it goes wrong after the book has moved (the autopilot could not start there), the book is not moved back: the message says it is already on the other side. A quick switch never sends your keys or tokens by itself: when the server does not have your AI configuration or the book's GitHub token, it takes you to **Where it runs**, where you choose what to send. The plan lives in this tab, so closing it before the switch happens forgets the plan; a run that is already on the server goes on.
+
+A server older than 0.1.5 does not know the pause at the end of the chapter, the limit of a run or the change of publishing during a run: those commands say so and stay off until you update the server.
+
 ## When the autopilot waits for you
 
 Besides a question of the director, the autopilot can stop with **Waiting for you** because a profile file has a problem: the director, a ghostwriter or a simulated reader with YAML that cannot be read, or with a value nobody knows. It stops before spending anything, lists the problems, and replaces nothing with the defaults. Correct the files in **Director**, **Ghostwriters** or **Simulated readers** (each page shows what it could not read, and asks before you save over the file), then choose **Resume**: the files are checked again. If a step stops because a chapter, scene or canon file has front matter that cannot be read, the error names the file and the line: correct it and resume.
@@ -485,6 +496,17 @@ Su qualsiasi libro, capitolo o scena, **Chiedi al direttore** restituisce il suo
 ## Seguire e intervenire
 
 Il pulsante **Autopilot** accanto a Copilot mostra cosa sta succedendo e apre un pannello in diretta che resta aperto mentre lavori; anche Copilot ha una scheda **Autopilot**. Puoi mettere in pausa dopo il passo corrente o fermare subito, rispondere alle domande del direttore e intervenire solo per il prossimo passo, d'ora in poi, oppure per rivedere quanto già scritto (il direttore sceglie le scene da riscrivere). Le tue istruzioni vincono sempre.
+
+## Comandi rapidi
+
+Una barra con i comandi che usi di più sta nella pagina Autopilot, nella scheda **Questo libro** del pannello in diretta e sopra il feed in diretta, per il libro a fuoco (il libro in cui sei, altrimenti l'unico che gira, altrimenti quello che ha lavorato per ultimo; se girano più libri, scegli quale comandare con **Libro**). Ogni controllo dice a parole cosa fa e quale libro comanda, e uno che non è disponibile dice perché.
+
+- **Pausa dopo questo passo** è il pulsante principale. Nel suo menu trovi **Pausa a fine capitolo** (l'autopilot prosegue fino alla fine del capitolo in corso, lo chiude e lo pubblica, poi si ferma) e **Annulla la pausa** finché una è in attesa. Un'etichetta con una croce dice cosa è in attesa, e la croce lo annulla. **Ferma subito** abbandona la richiesta in corso: il provider potrebbe comunque addebitarla.
+- **Esegui** fa un solo passo, un solo capitolo, oppure va avanti finché non lo fermi. Il limite vale per quella sessione: la prossima non ne ha, a meno che tu lo chieda di nuovo.
+- **GitHub**, per i libri su GitHub, sceglie dove si pubblica il libro: mai, a ogni capitolo o a ogni passo. Cambia dal prossimo passo, anche mentre l'autopilot lavora, nel browser e sul server (il browser pubblica a ogni capitolo, salvo tua scelta, il server a ogni passo). **Pubblica ora** lo fa subito. Serve un token GitHub utilizzabile.
+- **Gira su** passa l'autopilot all'altra parte, il browser o il tuo server personale: dopo questo passo, che è ciò che vorrai quasi sempre; subito, e il passo in corso viene rifatto dall'altra parte; oppure un passo là e poi di nuovo qui. Ripartire dall'altra parte succede solo se girava, e il ritorno prosegue qui solo se girava. Se qualcosa va storto mentre il libro si sposta (file cambiati da entrambe le parti, un server irraggiungibile, un'altra operazione che tiene il libro) il libro resta dov'era, fermo, con il motivo, e non si perde nulla. Se va storto dopo che il libro si è spostato (l'autopilot non è riuscito a partire là), il libro non viene riportato indietro: il messaggio dice che è già dall'altra parte. Un passaggio rapido non invia mai da solo le tue chiavi o i tuoi token: se il server non ha la tua configurazione AI o il token GitHub del libro, ti porta in **Dove gira**, dove scegli cosa inviare. Il piano vive in questa scheda: chiuderla prima che il passaggio avvenga fa dimenticare il piano; una corsa già sul server continua.
+
+Un server più vecchio della 0.1.5 non conosce la pausa a fine capitolo, il limite di una sessione né il cambio di pubblicazione durante una sessione: quei comandi lo dicono e restano spenti finché non aggiorni il server.
 
 ## Quando l'autopilot aspetta te
 
