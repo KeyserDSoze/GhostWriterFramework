@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.89.0",
+    "date": "2026-11-22",
+    "en": {
+      "title": "A finished book shows how it turned out, and errors say what happened and what to do",
+      "summary": "The Autopilot page now has a result card for a finished book and one clear panel for errors, with the kind of problem, where it happened, a countdown to the next attempt and the right buttons.",
+      "changes": [
+        "A finished book now has a \"How the book turned out\" card: the director's verdict with its score, the working time, cost and words, the scores of every chapter (rounds and readers included, as a chart and as a table), the three chapters to read first, and shortcuts to read, export, ask the director or add chapters.",
+        "Errors now show one clear panel instead of a red line: what kind of problem it is and what it means (connection, access, too many requests, a reply that is too slow or cut short, a conflict, a limit), which step failed with which model and address, a quiet countdown to the next attempt, and buttons to retry, open AI Integrations or the file, and copy safe diagnostics.",
+        "The history shows the kind of failure on each failed step, and the rounds of a chapter keep their right numbers and scores.",
+        "The band and the history use the figures that engine 0.1.6 records (the director's final verdict, the total working time and the scores of each review round). Books started before show only what they have, never made-up values.",
+        "Small fixes: keyboard focus no longer gets lost when the error panel goes away, \"Show all\" and \"Show fewer\" are one button, and the phone page of a 64-chapter book is no longer wider than the screen."
+      ]
+    },
+    "it": {
+      "title": "Un libro finito mostra com'è andato e gli errori dicono cosa è successo e cosa fare",
+      "summary": "La pagina Autopilot ora ha una scheda di risultato per il libro finito e un solo pannello chiaro per gli errori, con il tipo di problema, dove è successo, un conto alla rovescia verso il prossimo tentativo e i pulsanti giusti.",
+      "changes": [
+        "Un libro finito ora ha la scheda «Com'è andato il libro»: il verdetto del direttore con il suo voto, il tempo di lavoro, il costo e le parole, i voti di ogni capitolo (giri di revisione e lettori compresi, come grafico e come tabella), i tre capitoli da leggere per primi e le scorciatoie per leggere, esportare, chiedere al direttore o aggiungere capitoli.",
+        "Gli errori ora mostrano un solo pannello chiaro invece di una riga rossa: che tipo di problema è e cosa significa (connessione, accesso, troppe richieste, una risposta troppo lenta o tagliata, un conflitto, un limite), quale passo è fallito con quale modello e indirizzo, un conto alla rovescia discreto verso il prossimo tentativo e i pulsanti per riprovare, aprire Integrazioni AI o il file e copiare una diagnostica sicura.",
+        "La cronologia mostra il tipo di errore su ogni passo fallito e i giri di revisione di un capitolo mantengono i loro numeri e i loro voti giusti.",
+        "La banda e la cronologia usano i dati che il motore 0.1.6 registra (il verdetto finale del direttore, il tempo di lavoro totale e i voti di ogni giro di revisione). I libri iniziati prima mostrano solo ciò che hanno, mai valori inventati.",
+        "Piccole correzioni: il focus da tastiera non si perde più quando il pannello d'errore scompare, «Mostra tutto» e «Mostra meno» sono un solo pulsante e la pagina su telefono di un libro di 64 capitoli non è più più larga dello schermo."
+      ]
+    }
+  },
+  {
     "version": "0.88.0",
     "date": "2026-11-22",
     "en": {
