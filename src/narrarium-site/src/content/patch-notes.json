@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.90.0",
+    "date": "2026-11-22",
+    "en": {
+      "title": "The autopilot no longer gives up on slow models",
+      "summary": "Every request to the AI provider now streams, the structured replies of the autopilot included, and the wait has three separate limits instead of one: a slow model is no longer cut off, and a timeout says which limit ran out and where to change it.",
+      "changes": [
+        "Replies now arrive in pieces for every request, including the structured ones the autopilot asks for (concept, plan, scenes, reviews, summaries). A slow model no longer has to finish the whole answer before anything reaches the app, and connections that a proxy or a tunnel cuts after a minute or two of silence stay alive.",
+        "The wait has three limits instead of one: how long the provider may take to start answering (the integration's \"Provider timeout\", 10 minutes by default), the longest silence between two pieces of a reply (the new \"Idle timeout\", 10 minutes by default) and 4 hours in total. A \"Provider timeout\" under 30 seconds, like the 6 seconds that made the book concept fail every time, is raised to 30 seconds.",
+        "A timeout message now says which limit ran out, how long it was and where to change it.",
+        "New in every AI integration, next to \"Provider timeout (ms)\": \"Idle timeout (ms)\" and \"Streaming\" (Automatic or Off), and each field now explains itself. Choose Off only if a provider refuses streamed replies together with function calls.",
+        "Personal server 0.1.7 runs the same engine, so a run on your server streams and waits the same way as one in the browser."
+      ]
+    },
+    "it": {
+      "title": "L'autopilot non si arrende più davanti ai modelli lenti",
+      "summary": "Ogni richiesta al provider AI ora arriva a pezzi, comprese le risposte strutturate dell'autopilot, e l'attesa ha tre limiti separati invece di uno: un modello lento non viene più tagliato e un timeout dice quale limite è scaduto e dove cambiarlo.",
+      "changes": [
+        "Le risposte ora arrivano a pezzi per ogni richiesta, comprese quelle strutturate che chiede l'autopilot (concept, piano, scene, revisioni, riassunti). Un modello lento non deve più finire l'intera risposta prima che qualcosa arrivi all'app, e le connessioni che un proxy o un tunnel taglia dopo uno o due minuti di silenzio restano vive.",
+        "L'attesa ha tre limiti invece di uno: quanto può metterci il provider a cominciare a rispondere («Timeout provider» dell'integrazione, 10 minuti di default), il silenzio massimo tra due pezzi di risposta (il nuovo «Inattività massima», 10 minuti di default) e 4 ore in totale. Un «Timeout provider» sotto i 30 secondi, come i 6 secondi che facevano fallire sempre il concept del libro, viene alzato a 30 secondi.",
+        "Un messaggio di timeout ora dice quale limite è scaduto, quanto era e dove si cambia.",
+        "Novità in ogni integrazione AI, accanto a «Timeout provider (ms)»: «Inattività massima (ms)» e «Streaming» (Automatico o Spento), e ogni campo ora spiega cosa fa. Scegli Spento solo se un provider rifiuta le risposte a pezzi insieme alle chiamate di funzione.",
+        "Il server personale 0.1.7 esegue lo stesso motore, quindi una corsa sul tuo server riceve e attende le risposte nello stesso modo di una nel browser."
+      ]
+    }
+  },
+  {
     "version": "0.89.0",
     "date": "2026-11-22",
     "en": {
