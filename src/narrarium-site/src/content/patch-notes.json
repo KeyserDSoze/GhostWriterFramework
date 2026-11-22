@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.87.0",
+    "date": "2026-11-22",
+    "en": {
+      "title": "Autopilot page: a control band that always shows what is happening",
+      "summary": "The Autopilot page now keeps a control band in view with what is happening now, how far it is, what it costs and the commands. Nothing is shown twice, the page has tabs on narrow screens and phones, and the floating panel became a small player.",
+      "changes": [
+        "A control band stays in view at the top of the Autopilot page: the state, where it runs, the current step with its timer, progress bars for chapters and scenes, the phases of the book and of the chapter in progress, the cost against the budget and the main commands.",
+        "Nothing is shown twice any more: one \"now\" box, one status message, one plan-ready notice. The main button follows the state: Pause, Approve the plan, Resume, Answer or Retry.",
+        "At the end of a chapter \"Read chapter N\" sits next to Resume. A finished book offers \"Add chapters\" and a short summary instead of \"Resume\".",
+        "On narrow screens and phones the page has tabs (Overview, Timeline, Plan, Rules) and the commands move to a bar at the bottom. \"Intervene\" opens as a dialog, and Reset sits in a separate area at the end of the page.",
+        "The floating Autopilot panel is now a small player. It hides on the Autopilot pages and no longer covers the assistant buttons or the form fields on phones.",
+        "On phones the top bar is no longer cut off: Hide floating buttons, Read page and Notes moved into the account menu."
+      ]
+    },
+    "it": {
+      "title": "Pagina Autopilot: una banda di controllo che mostra sempre cosa sta succedendo",
+      "summary": "La pagina Autopilot ora tiene sempre in vista una banda di controllo con ciò che sta succedendo, a che punto è, quanto costa e i comandi. Niente è mostrato due volte, la pagina ha le schede sugli schermi stretti e sui telefoni e il pannello fluttuante è diventato un piccolo player.",
+      "changes": [
+        "In cima alla pagina Autopilot resta sempre in vista una banda di controllo: lo stato, dove gira, il passo attuale con il suo timer, le barre di avanzamento di capitoli e scene, le fasi del libro e del capitolo in corso, il costo rispetto al budget e i comandi principali.",
+        "Niente è più mostrato due volte: un solo riquadro «ora», un solo messaggio di stato, un solo avviso di piano pronto. Il pulsante principale segue lo stato: Pausa, Approva il piano, Riprendi, Rispondi o Riprova.",
+        "A fine capitolo «Leggi il capitolo N» sta accanto a Riprendi. Un libro finito propone «Aggiungi capitoli» e un breve riepilogo invece di «Riprendi».",
+        "Sugli schermi stretti e sui telefoni la pagina ha le schede (Panoramica, Cronologia, Piano, Regole) e i comandi passano in una barra in basso. «Intervieni» si apre come finestra e il Reset sta in un'area separata in fondo alla pagina.",
+        "Il pannello fluttuante dell'Autopilot ora è un piccolo player. Si nasconde sulle pagine Autopilot e non copre più i pulsanti dell'assistente né i campi dei moduli sui telefoni.",
+        "Sui telefoni la barra superiore non è più tagliata: Nascondi i pulsanti fluttuanti, Leggi la pagina e Note sono passati nel menu dell'account."
+      ]
+    }
+  },
+  {
     "version": "0.86.0",
     "date": "2026-11-22",
     "en": {
