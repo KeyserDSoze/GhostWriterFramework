@@ -527,6 +527,9 @@ test("R10: processIdentity tells a running process, its program and its start ap
   assert.ok(mine, "this process");
   assert.match(mine.name, /node/i);
   assert.deepEqual(await processIdentity(process.pid), mine, "stable for one process");
+  // Outside Linux the start is the one `ps` prints, to the second: a process that starts in the same second as this one has the same start
+  // (it is the number together with the start that tells a process from the one that had its number before, not two numbers at once).
+  if (process.platform !== "linux") await new Promise((resolve) => setTimeout(resolve, 1_100));
   const child = nodeSpawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
   try {
     await until(() => processIdentity(child.pid), 5_000);
