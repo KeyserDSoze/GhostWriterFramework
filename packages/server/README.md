@@ -39,7 +39,7 @@ You can also create a token without pairing: in the admin panel (**Clients**) or
 |---|---|
 | `read` | Listing books, reading files, the live stream, the update check |
 | `write` | Registering books, writing files, sending the AI configuration |
-| `run` | Starting, pausing and steering the autopilot (the limits of a run, a pause at the end of the chapter, the settings that can change during a run), asking the director |
+| `run` | Starting, pausing and steering the autopilot (the limits of a run, a pause at the end of the chapter, the settings that can change during a run), editing and removing its permanent rules, asking the director |
 | `update` | Replacing the server with a newer verified version (granted only when you tick it) |
 
 Revoking or rotating a token in the admin panel closes its live connection at once. A device that disconnects itself (`DELETE /api/v1/session`, with a token of any permission) revokes the token it presented and no other client's; a token that was replaced a moment ago cannot revoke its replacement.
@@ -300,13 +300,51 @@ All three calls need the `run` permission, answer the snapshot of the autopilot 
   - To go on, settle it on GitHub (undo or redo the change that conflicts, so that the server's commits rebase cleanly) and resume; or merge on the server, where the working copy is an ordinary git repository (`books/<id>/repo` in the data folder: `git pull --no-rebase`, settle the file, commit, `git push`); or give up the server's unpublished work by removing the book from the server (its working copy stays in `books/.trash` for 14 days) and registering it again from GitHub.
   - To avoid it, keep `step` for a book that is also edited on GitHub or by another device, or publish with `POST /books/:id/sync` before anybody else edits it. With `step` the same conflict is possible too, but only in the moment between one push and the next.
 
+## Permanent rules
+
+The rules the author gives with `from_now` (and the answers to the director that are kept as rules) are `state.constraints` in the autopilot's state, in the order the author sees them. Two calls edit and remove them, also while the autopilot runs. A server that has them announces `"autopilot-rules"` in the `features` of `GET /api/v1/info` (`serverSupportsAutopilotRules(info)` in the engine reads it): an older server answers `404 not_found` to the routes, so a client asks before it offers to edit or remove a rule.
+
+Both calls need the `run` permission, answer the snapshot of the autopilot (as `…/options` does) and check a request in the same order: `503 maintenance`, `404 book_not_found`, the address, the body. `:index` is the position of the rule in `state.constraints`, from 0, written as an address writes a whole number (`0`, `7`): `-1`, `1.5`, `01`, `1e2` or `abc` are `400 invalid_request`, and a number that names no rule is `404 rule_not_found`. `expectedText` is the rule as the author saw it: when the rule at that index is no longer that (compared without the spaces around it), nothing is written and the answer is `409 rule_changed`, so a rule that changed in the meantime (on another device, or by the author's answer to the director) is never overwritten or removed by mistake. A client always sends it. After a removal the rules after it move up by one: a client reads the answer, not its own list.
+
+| Call | Request | Answer |
+|---|---|---|
+| `PUT /books/:id/autopilot/rules/:index` | `{ "text": string, "expectedText"?: string }`, and nothing else (a field that is misspelt is refused, not ignored: a guard that goes unread is no guard). The text goes to the engine as it is, never trimmed or cut first. | `200` the snapshot, of the state that was saved. The step in flight is not repeated, and the next step has the rule as it is now. A text equal to the rule it replaces changes nothing. |
+| `DELETE /books/:id/autopilot/rules/:index?expectedText=…` | No body. `expectedText` is URL-encoded (it is decoded as every parameter is), given once, at most 10 000 characters (the longest rule an older engine kept was 8000). It is the one parameter: any other is refused. | `200` the snapshot. |
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `rule_empty` | The text is empty or only spaces. |
+| 400 | `rule_too_long` | The text is over 800 characters. It is refused, never cut: the message gives the length that was sent. |
+| 400 | `rule_duplicate` | Another rule already says it. |
+| 400 | `invalid_request` | The number is not a whole number from 0; the body is not a JSON object of `{ text, expectedText? }` (`text` missing or not a string, `expectedText` not a string or over 10 000 characters, another field); the address has a parameter other than `expectedText`, or has it twice. A body that is not JSON is `400 invalid_json`, one that is not `application/json` is `415`, and one over the limit is `413`, as for the other calls. |
+| 404 | `rule_not_found` | There is no rule at that number (*There is no rule number 4.*), or the book has never run. |
+| 409 | `rule_changed` | The rule at that number is not `expectedText`. |
+| 409 | `conflict`, `state_corrupt` | The state file kept changing under the write (try again); it cannot be read. |
+| 503 | `maintenance` | The server is about to restart for an update. |
+
+Every call also answers 401, 403 `scope` (no `run` permission) and 404 `book_not_found`. The text of a rule is the author's, and a DELETE carries it in its address: the server's log writes `?***` in place of the query of these two calls (the only addresses it changes). A request address is limited to 16 KB by Node, so a rule of thousands of accented characters cannot be named in a DELETE: shorten it with a PUT first, or send no `expectedText`.
+
+### What the server passes on
+
+The server does not add to what the engine says about a run, take anything out of it, or write it again: the snapshot (`GET /books/:id/autopilot`), the summaries of `GET /books` and of the `book` events, and the `state` events of the live stream carry the engine's own state and summary. These fields came with engine 0.1.6. Each is absent until the engine has something to say, and from a file that an older engine wrote (the server never makes one up: not zero, not `NaN`, not an empty list):
+
+| Field | Where | What it is |
+|---|---|---|
+| `finalReview` | `state`, and `summary` with the text cut shorter | The director's judgement of the whole book once the final step is done: `{ verdict: "approve" \| "revise", score, text, at }`. |
+| `stats.workedMs` | `state`, `summary.stats` | The milliseconds the autopilot worked, over every run: the sum of the steps that were saved (not the wait for the author, the pauses, the attempts that failed or the waits between them). |
+| `errorKind`, `errorDetail` | every failed activity (and its `task-finished` event), `state.lastError`, and `summary.lastError`, which also has them as `kind` and `detail` | What went wrong, in a closed list (`network`, `auth`, `rate_limit`, `timeout`, `truncated`, `refused`, `conflict`, `budget`, `limit`, `profile`, `provider`, `unknown`), and where: `{ status?, endpoint?, model?, provider?, integration?, attempt?, retries? }`. `endpoint` is the origin of the provider's address and nothing more, and no field holds a secret. |
+| `summary.retry` | the snapshot, `GET /books`, the `book` events and the `state` events | `{ at, attempt, retries }` while the run waits to try a failed step again (never sooner than the provider's `Retry-After`): when the next attempt is, and which retry. Never saved. A `state` event says it when the wait begins and another says it is over, so a client replaces its summary by the newest event it has seen. `at` is the server's clock: count down from the `at` of the event, not from the browser's own time. |
+| `plan.chapters[].rounds` | `state.plan` | The rounds of review of a chapter that closed, oldest first: `{ director?, readers?, accepted?, rejected? }`. Not in the summary. |
+
+**No secret goes through.** An AI key is never in an answer, an event, the log or a file: the engine takes it out of what a provider says (a 401 that repeats the key, a message that names it) before anything is kept, and the server only passes on what the engine kept. The server's tests prove it with a provider that names the key in what it says, and then look for it in every answer, event, log line, file and change of the book.
+
 ## API
 
 All endpoints live under `/api/v1` and return JSON; errors are `{ "code", "message" }`.
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
-| `GET` | `/info?nonce=HEX64` | none | Identity, version and `features` (among them `autopilot-controls`: see [Quick controls and publishing](#quick-controls-and-publishing)), signed over the nonce. |
+| `GET` | `/info?nonce=HEX64` | none | Identity, version and `features` (among them `autopilot-controls` and `autopilot-rules`: see [Quick controls and publishing](#quick-controls-and-publishing) and [Permanent rules](#permanent-rules)), signed over the nonce. |
 | `POST` | `/pairings`, `/pairings/:id/result` | none | Pair with a code (answers `{ id, verification }`); collect the token once approved (answers `{ token, verification }`). `verification` is optional: four digits that the owner sees in the panel too (below). |
 | `GET`/`DELETE` | `/session` | any | The calling client and its permissions / revoke the token it presented, and no other (disconnect; answers `{ revoked }`). |
 | `GET`/`PUT` | `/ai` | read / write | Redacted AI status (with the endpoints awaiting approval and the spending status) / replace the configuration. |
@@ -318,6 +356,7 @@ All endpoints live under `/api/v1` and return JSON; errors are `{ "code", "messa
 | `GET` | `/books/:id/autopilot`, `/books/:id/autopilot/events?since=N` | read | Snapshot / recent live events. |
 | `POST` | `/books/:id/autopilot/{start,pause,intervene,answer}` | run | Control the autopilot (`answer` takes `{ questionId, answer, accept?, asRule? }`: with `asRule` the answer becomes a permanent rule; `start` takes `limits`, `pause` takes `after-chapter` and `cancel`: see [Quick controls and publishing](#quick-controls-and-publishing)). |
 | `PUT` | `/books/:id/autopilot/options` | run | Change `publishEvery` (where a GitHub book is pushed) and `pauseAfterEachChapter`, also while the autopilot runs. |
+| `PUT`/`DELETE` | `/books/:id/autopilot/rules/:index` | run | Edit / remove one permanent rule of the autopilot, also while it runs (see [Permanent rules](#permanent-rules)). |
 | `POST` | `/books/:id/autopilot/{configure,reset}` | write | Change or reset its settings. |
 | `POST` | `/books/:id/director/ask` | run | Ask the director about the book, a chapter or a scene. |
 | `GET` | `/events` | read | Server-sent events: autopilot events and book summaries. |
@@ -330,7 +369,7 @@ The typed client is `NarrariumServerClient` in `narrarium-engine` (with `pairWit
 | Status | `code` | When |
 |---|---|---|
 | 400 | `rule_empty`, `rule_too_long`, `rule_duplicate` | A permanent rule (`from_now` or `rewrite` intervention, or an answer with `asRule`) that is empty, over the engine's 800 characters (never cut: the message gives the length that was sent), or already there. A note (`next_step`) may be longer; an empty one is `400 invalid_request`. |
-| 404, 409 | `rule_not_found`, `rule_changed` | A rule that is not there, or changed since the author saw it (the engine's `updateRule`/`removeRule`; this server's API has no call for them yet). |
+| 404, 409 | `rule_not_found`, `rule_changed` | A rule that is not there, or changed since the author saw it (`PUT`/`DELETE …/autopilot/rules/:index`: see [Permanent rules](#permanent-rules)). |
 | 409 | `question_closed` | The director's question was answered already. |
 | 412 | `ai_not_approved` | The call would send an API key to an endpoint the owner has not approved. |
 | 422 | `frontmatter_invalid` | The engine refused to rewrite a file whose frontmatter cannot be read; the message names the file and the line. |

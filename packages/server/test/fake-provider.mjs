@@ -12,8 +12,8 @@ export const ONE_CHAPTER = { brief: { idea: "A harbor of glass", targetChapters:
  * A stand-in for an OpenAI-compatible provider on 127.0.0.1. It answers what the autopilot asks (through the engine's own fake AI) and
  * reports `usage` the way a real provider does, so that what the server counts is known exactly: every call is `usage` tokens (100 in,
  * 50 out) unless the test says otherwise. `requests` keeps what arrived (path, headers, body); `respond(number, body)` (it may be async,
- * to hold a request) may answer a request itself (`{ status, body }`) or ask for a reply that is cut by the output limit (`"truncate"`,
- * billed as the tokens it used).
+ * to hold a request) may answer a request itself (`{ status, body, headers? }`: `headers` are
+ * added to the answer, a `retry-after` for instance) or ask for a reply that is cut by the output limit (`"truncate"`, billed as the tokens it used).
  */
 export async function fakeProvider({ usage = { prompt_tokens: 100, completion_tokens: 50 }, respond, words } = {}) {
   const fake = createFakeAutopilotAi({ words });
@@ -31,7 +31,7 @@ export async function fakeProvider({ usage = { prompt_tokens: 100, completion_to
     requests.push({ url: request.url, method: request.method, headers: { ...request.headers }, body });
     const decided = await respond?.(requests.length, body);
     if (decided && typeof decided === "object") {
-      response.writeHead(decided.status, { "content-type": "application/json" });
+      response.writeHead(decided.status, { "content-type": "application/json", ...(decided.headers ?? {}) });
       response.end(JSON.stringify(decided.body ?? {}));
       return;
     }

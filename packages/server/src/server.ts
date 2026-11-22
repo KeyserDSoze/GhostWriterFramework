@@ -15,6 +15,7 @@ import {
   PAUSE_AUTOPILOT_MODES,
   SERVER_API_VERSION,
   SERVER_FEATURE_AUTOPILOT_CONTROLS,
+  SERVER_FEATURE_AUTOPILOT_RULES,
   SERVER_PACKAGE_NAME,
   encodeServerSentEvent,
   isBookConflictError,
@@ -321,6 +322,72 @@ function asLiveOptions(body: Record<string, unknown>): AutopilotLiveOptions {
   return options;
 }
 
+/**
+ * The most characters of the text the author saw in a rule (`expectedText`) that a request may carry. A rule is at most 800 characters now, but an
+ * older engine kept rules of up to 8000, so the limit leaves room for those and for spaces around the text. (The address of a request is also
+ * limited, to 16 KB, by Node: a longer one never gets here.)
+ */
+const MAX_EXPECTED_TEXT_CHARACTERS = 10_000;
+
+/** The number of a rule in the address (`…/rules/:index`): a whole number from 0, written as an address writes one (no sign, no fraction, no leading zero). */
+function asRuleIndex(value: string): number {
+  const index = /^(?:0|[1-9][0-9]*)$/.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isSafeInteger(index)) throw new HttpError(400, "invalid_request", "The rule number in the address must be a whole number from 0 (the first rule is 0).");
+  return index;
+}
+
+/** A name that a client sent, as a message may say it: short, and on one line. */
+function named(key: string): string {
+  return JSON.stringify(key.slice(0, 40));
+}
+
+/**
+ * The body of a change of a rule, `{ text, expectedText? }`: the new text, which the engine judges (empty, too long, a copy of another rule: never cut here,
+ * so that it tells how long the text was), and the text the author saw in the rule's place, which keeps a rule that changed since from being overwritten.
+ * Nothing else is read, and a field that is misspelt is refused, not ignored: a guard that goes unread is no guard.
+ */
+function asRuleChange(body: Record<string, unknown>): { text: string; expectedText?: string } {
+  const refuse = (problem: string): never => {
+    throw new HttpError(400, "invalid_request", `${problem} A rule is changed with { "text": string, "expectedText"?: string }.`);
+  };
+  const unknown = Object.keys(body).filter((key) => key !== "text" && key !== "expectedText");
+  if (unknown.length) refuse(`${unknown.slice(0, 3).map(named).join(", ")} cannot be sent here.`);
+  if (typeof body.text !== "string") refuse("`text`, the new text of the rule, must be a string.");
+  const expectedText = body.expectedText;
+  if (expectedText !== undefined && typeof expectedText !== "string") refuse("`expectedText`, the rule as the author saw it, must be a string.");
+  if (typeof expectedText === "string" && expectedText.length > MAX_EXPECTED_TEXT_CHARACTERS) refuse(`\`expectedText\` is longer than a rule can be (at most ${MAX_EXPECTED_TEXT_CHARACTERS} characters).`);
+  return { text: body.text as string, ...(expectedText === undefined ? {} : { expectedText: expectedText as string }) };
+}
+
+/** The text the author saw in the rule, in the address of a DELETE (`?expectedText=…`, decoded as every parameter is): the one parameter it takes, once. `undefined` when there is none. */
+function asExpectedText(url: URL): string | undefined {
+  const refuse = (problem: string): never => {
+    throw new HttpError(400, "invalid_request", `${problem} Send the rule as the author saw it as \`expectedText\`, or nothing.`);
+  };
+  const other = [...new Set(url.searchParams.keys())].filter((key) => key !== "expectedText");
+  if (other.length) refuse(`${other.slice(0, 3).map(named).join(", ")} cannot be sent here.`);
+  const given = url.searchParams.getAll("expectedText");
+  if (given.length > 1) refuse("`expectedText` is given more than once.");
+  if (given.length === 1 && given[0].length > MAX_EXPECTED_TEXT_CHARACTERS) refuse(`\`expectedText\` is longer than a rule can be (at most ${MAX_EXPECTED_TEXT_CHARACTERS} characters).`);
+  return given[0];
+}
+
+/** The routes of the permanent rules: `…/autopilot/rules/:index`, whose DELETE carries the text of a rule in its address. */
+const RULES_ADDRESS = /^\/api\/v1\/books\/[^/]+\/autopilot\/rules\/[^/]+$/;
+
+/**
+ * A request address as the log says it. The text of a rule is the author's: a DELETE carries it in the query of its address (`?expectedText=…`), so for
+ * the routes of the rules the log says that there was a query, not what it said (whatever the name of a parameter, spelt as it may be).
+ */
+function loggable(address: string | undefined): string {
+  const text = address ?? "/";
+  try {
+    return RULES_ADDRESS.test(new URL(text, "http://127.0.0.1").pathname) && text.includes("?") ? `${text.slice(0, text.indexOf("?"))}?***` : text;
+  } catch {
+    return text;
+  }
+}
+
 function asTarget(value: unknown): EvaluationTarget {
   const target = asObject(value);
   if (target.kind === "book") return { kind: "book" };
@@ -478,7 +545,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, ...(gitAvailable ? ["github"] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, ...(gitAvailable ? ["github"] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -743,6 +810,26 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         },
       },
       {
+        method: "PUT", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/rules\/([^/]+)$/, scope: "run", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          const index = asRuleIndex(params[1]);
+          const { text, expectedText } = asRuleChange(asObject(await readBody(request, SMALL_BODY)));
+          // The text goes to the engine as it is: it decides what a rule is, and also while a run goes on (the step in flight is not repeated, and the next one has the rule as it is now).
+          await runtime.session.updateRule(index, text, expectedText);
+          return runtime.session.snapshot();
+        },
+      },
+      {
+        method: "DELETE", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/rules\/([^/]+)$/, scope: "run", handler: async ({ params, url }) => {
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          const index = asRuleIndex(params[1]);
+          await runtime.session.removeRule(index, asExpectedText(url));
+          return runtime.session.snapshot();
+        },
+      },
+      {
         method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/intervene$/, scope: "run", handler: async ({ request, params }) => {
           books.assertNotInMaintenance();
           const runtime = books.get(params[0]);
@@ -948,13 +1035,13 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         throw new HttpError(404, "not_found", "Unknown endpoint.");
       })().catch((error) => {
         const mapped = errorStatus(error);
-        if (isFailure(mapped)) log(`Error${mapped.requestId ? ` ${mapped.requestId}` : ""} on ${request.method} ${request.url}: ${mapped.detail ?? mapped.message}`);
+        if (isFailure(mapped)) log(`Error${mapped.requestId ? ` ${mapped.requestId}` : ""} on ${request.method} ${loggable(request.url)}: ${mapped.detail ?? mapped.message}`);
         if (!response.headersSent) {
           response.setHeader("connection", "close");
           sendError(response, mapped);
         } else response.end();
       }).finally(() => {
-        if (request.url !== "/api/v1/events") log(`${request.method} ${request.url} ${response.statusCode} ${Date.now() - started}ms`);
+        if (request.url !== "/api/v1/events") log(`${request.method} ${loggable(request.url)} ${response.statusCode} ${Date.now() - started}ms`);
       });
     });
 
