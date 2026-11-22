@@ -2,6 +2,7 @@ import http, { Agent, type IncomingMessage, type ServerResponse } from "node:htt
 import type { AddressInfo } from "node:net";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
+  AUTOPILOT_PUBLISH_MODES,
   AiProviderError,
   AiUnavailableError,
   AutopilotBusyError,
@@ -10,7 +11,10 @@ import {
   DEFAULT_ADMIN_PORT,
   ENGINE_VERSION,
   FrontmatterError,
+  LIVE_AUTOPILOT_OPTIONS,
+  PAUSE_AUTOPILOT_MODES,
   SERVER_API_VERSION,
+  SERVER_FEATURE_AUTOPILOT_CONTROLS,
   SERVER_PACKAGE_NAME,
   encodeServerSentEvent,
   isBookConflictError,
@@ -19,8 +23,11 @@ import {
   redactAiRuntimeConfig,
   type AiPort,
   type AutopilotEvent,
+  type AutopilotLiveOptions,
+  type AutopilotRunLimits,
   type BookFileContent,
   type EvaluationTarget,
+  type PauseAutopilotMode,
   type ServerAiStatus,
   type ServerInfo,
   type ServerScope,
@@ -275,6 +282,45 @@ function asObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+/** What a start may carry to bound its run: an object (`{ steps?, chapters? }`) or nothing. The engine reads the numbers: only a whole number above zero is a limit. */
+function asLimits(value: unknown): AutopilotRunLimits | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "invalid_request", "`limits` must be an object such as { \"steps\": 3, \"chapters\": 1 }.");
+  return value as AutopilotRunLimits;
+}
+
+/** How a pause is asked for: one of the engine's `PAUSE_AUTOPILOT_MODES`; no `mode` at all is `after-step`, as it always was. */
+function asPauseMode(value: unknown): PauseAutopilotMode {
+  if (value === undefined) return "after-step";
+  if (typeof value === "string" && (PAUSE_AUTOPILOT_MODES as readonly string[]).includes(value)) return value as PauseAutopilotMode;
+  throw new HttpError(400, "invalid_request", `The pause \`mode\` must be one of: ${PAUSE_AUTOPILOT_MODES.join(", ")}.`);
+}
+
+/**
+ * The settings that can change while a run goes on (the engine's `LIVE_AUTOPILOT_OPTIONS`) and what each may be. At least one, and nothing else:
+ * a request that asks for more than that is refused whole, so that nothing of it is applied by surprise.
+ */
+function asLiveOptions(body: Record<string, unknown>): AutopilotLiveOptions {
+  const refuse = (problem: string): never => {
+    throw new HttpError(400, "invalid_request", `${problem} Only these can change here: publishEvery (${[...AUTOPILOT_PUBLISH_MODES, "null"].join(", ")}) and pauseAfterEachChapter (true or false).`);
+  };
+  const keys = Object.keys(body);
+  if (!keys.length) refuse("There is nothing to change.");
+  const unknown = keys.filter((key) => !(LIVE_AUTOPILOT_OPTIONS as readonly string[]).includes(key));
+  if (unknown.length) refuse(`${unknown.slice(0, 3).map((key) => key.slice(0, 40)).join(", ")} cannot be changed here.`);
+  const options: AutopilotLiveOptions = {};
+  if (Object.hasOwn(body, "publishEvery")) {
+    const value = body.publishEvery;
+    if (value !== null && !(typeof value === "string" && (AUTOPILOT_PUBLISH_MODES as readonly string[]).includes(value))) refuse("publishEvery is not one of the ways to publish.");
+    options.publishEvery = value as AutopilotLiveOptions["publishEvery"];
+  }
+  if (Object.hasOwn(body, "pauseAfterEachChapter")) {
+    if (typeof body.pauseAfterEachChapter !== "boolean") refuse("pauseAfterEachChapter must be true or false.");
+    options.pauseAfterEachChapter = body.pauseAfterEachChapter as boolean;
+  }
+  return options;
+}
+
 function asTarget(value: unknown): EvaluationTarget {
   const target = asObject(value);
   if (target.kind === "book") return { kind: "book" };
@@ -432,7 +478,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", ...(gitAvailable ? ["github"] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, ...(gitAvailable ? ["github"] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -665,11 +711,13 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/start$/, scope: "run", handler: async ({ request, params }) => {
           const runtime = books.get(params[0]);
           const body = asObject(await readBody(request, SMALL_BODY));
+          // A request that is wrong in itself is refused before anything else is asked of the server, and starts nothing.
+          const limits = asLimits(body.limits);
           if (!(await books.aiConfigured())) throw new HttpError(412, "ai_not_configured", "Send your AI router configuration to the server before starting the autopilot.");
           books.assertCanStart();
           // The owner's switch or a cap of the day would stop the run at its first call: it is not started (and leaves nothing in the book).
           books.assertSpendAllowed();
-          await runtime.session.start({ brief: body.brief as never, options: body.options as never, force: body.force === true });
+          await runtime.session.start({ brief: body.brief as never, options: body.options as never, limits, force: body.force === true });
           return runtime.session.snapshot();
         },
       },
@@ -677,7 +725,20 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/pause$/, scope: "run", handler: async ({ request, params }) => {
           const runtime = books.get(params[0]);
           const body = asObject(await readBody(request, SMALL_BODY));
-          runtime.session.pause(body.mode === "now" ? "now" : "after-step");
+          const mode = asPauseMode(body.mode);
+          // `cancel` takes back a pause that waits and stops nothing; with nothing to pause or to take back the answer is the snapshot all the same.
+          if (mode === "cancel") runtime.session.cancelPause();
+          else runtime.session.pause(mode);
+          return runtime.session.snapshot();
+        },
+      },
+      {
+        method: "PUT", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/options$/, scope: "run", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          const options = asLiveOptions(asObject(await readBody(request, SMALL_BODY)));
+          // Saved at once, also while a run goes on: the step in flight is not repeated, and the run reads the new value at the end of the step or of the chapter.
+          await runtime.session.updateOptions(options);
           return runtime.session.snapshot();
         },
       },

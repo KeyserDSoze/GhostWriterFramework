@@ -7,11 +7,12 @@ import {
   AutopilotSession,
   createFetchAi,
   hasAiCandidates,
-  summarizeAutopilotState,
+  redactSecrets,
   type AiPort,
   type AiRequest,
   type AiResponse,
   type AutopilotEvent,
+  type AutopilotPublishMode,
   type AutopilotSessionConfig,
   type RegisterBookRequest,
   type ServerBookSummary,
@@ -39,6 +40,16 @@ export interface BookRuntime {
 
 /** Books one server hosts at most: each has a runtime, a working copy and a stored token, and the files that list them are read whole. */
 export const MAX_BOOKS = 200;
+
+/**
+ * Where a book is published to GitHub when its author has not chosen (`publishEvery`): after every step, as the server always did. The author
+ * can choose `chapter` or `off` for a book, also while it runs. It is what the summaries of the autopilot say for every book of this server;
+ * a book that is not on GitHub has nowhere to publish, whatever it says.
+ */
+export const DEFAULT_PUBLISH: AutopilotPublishMode = "step";
+
+/** What a failed publish tells in `lastSync` and in the warning of the run: what git said, without a token, cut short. */
+const PUBLISH_MESSAGE_CHARACTERS = 500;
 
 /** How the autopilot sessions wait and beat (tests shorten it; a session keeps the engine's own defaults for what is not given). */
 export type AutopilotTuning = Partial<Pick<AutopilotSessionConfig, "retryDelayMs" | "random" | "heartbeatMs" | "persistHeartbeatMs">>;
@@ -218,19 +229,19 @@ export class BookRegistry {
         host: "server",
         hostLabel: publicLabel(this.data.config.label),
         hostId: this.data.config.serverId,
+        defaultPublish: DEFAULT_PUBLISH,
         ...this.options.autopilot,
-        // Git's own work on the working copy (a pull may rewrite files) takes its turn among the commits and the syncs of the book.
+        // Git's own work on the working copy (a pull may rewrite files) takes its turn among the commits and the syncs of the book. The engine decides
+        // when to publish (`publishEvery`, read at the end of every step and chapter): `afterCommit` is called after a step when the book is published
+        // after every step, `afterChapter` when a chapter is closed and the book is published by chapter or by step, and neither when it is not published.
         hooks: book.storage.kind === "github" && git ? {
           beforeStep: async () => {
             await this.refreshToken(book.bookId);
             const result = await store.exclusive(() => git.pull());
             if (result.changed) this.options.onBookChanged(book.bookId);
           },
-          afterCommit: async () => {
-            await this.refreshToken(book.bookId);
-            await store.exclusive(() => git.push());
-            runtime.lastSync = { at: new Date().toISOString(), ok: true, message: "Pushed to GitHub.", head: await git.head() };
-          },
+          afterCommit: () => this.publish(runtime, git),
+          afterChapter: () => this.publish(runtime, git),
         } : undefined,
       }),
       lastSync: null,
@@ -251,6 +262,25 @@ export class BookRegistry {
 
   private async refreshToken(bookId: string): Promise<void> {
     this.tokenCache.set(bookId, await this.data.bookToken(bookId));
+  }
+
+  /**
+   * Push a GitHub book, one at a time with its commits and syncs, and record how it went: `lastSync` says it whether it worked or not. A failure is
+   * thrown again, with what a token could be in it removed, so that the run reports it as a warning and goes on (a publish never stops a run).
+   */
+  private async publish(runtime: BookRuntime, git: GitRepository): Promise<void> {
+    const { bookId } = runtime.book;
+    try {
+      await this.refreshToken(bookId);
+      await runtime.store.exclusive(() => git.push());
+      runtime.lastSync = { at: new Date().toISOString(), ok: true, message: "Pushed to GitHub.", head: await git.head() };
+    } catch (error) {
+      const message = redactSecrets(error instanceof Error ? error.message : String(error), [this.tokenCache.get(bookId) ?? ""]).slice(0, PUBLISH_MESSAGE_CHARACTERS);
+      runtime.lastSync = { at: new Date().toISOString(), ok: false, message };
+      throw new Error(message);
+    } finally {
+      this.options.onBookChanged(bookId);
+    }
   }
 
   get(bookId: string): BookRuntime {
@@ -560,7 +590,8 @@ export class BookRegistry {
       hasGithubToken: Boolean(await this.data.bookToken(runtime.book.bookId)),
       ready: existsSync(runtime.store.root),
       revision,
-      autopilot: snapshot.state ? summarizeAutopilotState(snapshot.state) : null,
+      // What the live session says: the pause that waits, the limits of the run and where the book is published (the state file alone says none of them, and nothing of the server's default).
+      autopilot: snapshot.summary ?? null,
       running: runtime.session.running,
       lastSync: runtime.lastSync,
       ...(error ? { error } : {}),

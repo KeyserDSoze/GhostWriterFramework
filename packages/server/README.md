@@ -39,7 +39,7 @@ You can also create a token without pairing: in the admin panel (**Clients**) or
 |---|---|
 | `read` | Listing books, reading files, the live stream, the update check |
 | `write` | Registering books, writing files, sending the AI configuration |
-| `run` | Starting, pausing and steering the autopilot, asking the director |
+| `run` | Starting, pausing and steering the autopilot (the limits of a run, a pause at the end of the chapter, the settings that can change during a run), asking the director |
 | `update` | Replacing the server with a newer verified version (granted only when you tick it) |
 
 Revoking or rotating a token in the admin panel closes its live connection at once. A device that disconnects itself (`DELETE /api/v1/session`, with a token of any permission) revokes the token it presented and no other client's; a token that was replaced a moment ago cannot revoke its replacement.
@@ -262,8 +262,43 @@ One server per data folder: a kernel lock on Linux (`flock`), a named mutex on W
 
 ## How books travel
 
-- **GitHub books**: the server clones the same branch, commits every autopilot step and pushes it; before each step it pulls the author's work. Narrarium pulls the server's commits through its usual repository sync. The book's GitHub token is sent to the server only with the author's explicit consent.
+- **GitHub books**: the server clones the same branch, commits every autopilot step and pushes it (by default: the author can choose to publish only when a chapter is closed, or never: see [Quick controls and publishing](#quick-controls-and-publishing)); before each step it pulls the author's work. Narrarium pulls the server's commits through its usual repository sync. The book's GitHub token is sent to the server only with the author's explicit consent.
 - **Local books**: files are exchanged with a three-way sync (`syncBookStores` in the engine): changes on one side are copied to the other, and files changed on both sides are reported instead of overwritten.
+
+## Quick controls and publishing
+
+The controls behind the web app's quick-command bar: pausing at the end of the chapter (and taking a pause back), the limits of one run, and the settings that can change while a run goes on, one of which is where a GitHub book is published. The engine does the work (see *Quick controls* in the [engine's README](../engine/README.md)); the server adds the routes and the push.
+
+A server that has them announces `"autopilot-controls"` in the `features` of `GET /api/v1/info`. An older server does not, and would ignore `limits` and read every pause mode but `now` as `after-step` (a `cancel` would pause), so a client checks the feature before it sends them (`serverSupportsAutopilotControls(info)` in the engine).
+
+All three calls need the `run` permission, answer the snapshot of the autopilot (what `GET /books/:id/autopilot` answers: its `summary` has `pausePending`, `limits` and `publish`) and, when they refuse, answer `{ "code", "message" }`. Every one also answers 401, 403 `scope` (no `run` permission) and 404 `book_not_found`.
+
+| Call | Body | Answer |
+|---|---|---|
+| `POST /books/:id/autopilot/pause` | `{ "mode": "now" \| "after-step" \| "after-chapter" \| "cancel" }`. No `mode` is `after-step`, as it always was. | `200`. `after-chapter` finishes the chapter in progress (its closing and its publishing included) and pauses; the stricter of two requests counts. `cancel` takes back a pause that waits and stops nothing; with nothing waiting, and any mode with nothing running, the answer is `200` too and nothing changes. A pause is not refused while an update is about to start. `400 invalid_request`: a `mode` that is none of the four, or a body that is not a JSON object. |
+| `POST /books/:id/autopilot/start` | The body it always had (`brief`, `options`, `force`) and `limits?: { "steps"?: n, "chapters"?: n }`: the run pauses after that many steps saved, or chapters completed. | `200`. `400 invalid_request` when `limits` is present and is not an object: it is checked before anything else, and nothing starts. The numbers go to the engine as they are (a value that is not a whole number above zero is no limit). Limits are for that run only: they are not saved, and the next start has none. The other answers are as before: `409 busy`, `412 ai_not_configured`, `429 too_many_runs`, `429 spend_limit`, `503 maintenance`. |
+| `PUT /books/:id/autopilot/options` | `{ "publishEvery"?: "off" \| "chapter" \| "step" \| null, "pauseAfterEachChapter"?: boolean }`: at least one, and nothing else. `null` takes the choice back, so that the server's default (`step`) decides again. | `200`, also while the autopilot runs: the choice is saved in the book, the step in flight is not repeated, and the run reads the new value at the end of the step or of the chapter. A book with no autopilot state gets one (as `configure` does). `400 invalid_request` for any other key (nothing of the request is applied, not even the part that was right), a value of the wrong type, or a body that is not an object; `409 conflict` when the state file kept changing under the write (try again); `409 state_corrupt` when it cannot be read; `503 maintenance`. |
+
+`summary.pausePending` (`"after-step"`, `"after-chapter"` or `null`) and `summary.limits` (`{ steps?, chapters?, stepsDone, chaptersDone }` for the run in progress, `null` when it has none or is over) are never saved. They are in the snapshot, in the `state` events of the live stream, and in the `autopilot` summary that `GET /books` and the `book` events carry for every book; `summary.publish` is where the book is published now.
+
+### Publishing to GitHub
+
+`publishEvery` says when the server pushes a GitHub book. The author chooses it (and can change it while the run goes on); a book with no choice takes the server's default, `step`, which is what every server did before. The old option `syncAfterChapter` is the browser's and does not decide here.
+
+| `publishEvery` | The server pushes |
+|---|---|
+| `step` (default) | After every step, and once more when a chapter is closed (that second push has nothing new when the step that closed the chapter was just pushed). |
+| `chapter` | When a chapter is closed, and only then. |
+| `off` | Never: every commit stays in the book's working copy. |
+
+- The engine decides and the server only pushes. The choice is read at the end of every step and of every chapter, from the state that step saved, so a change takes hold at the end of the step that is running. A book that is not on GitHub has nowhere to push, whatever it says (its `summary.publish` is then only what it would be).
+- **`lastSync`** says how the last push went, whether it worked or not: `{ "ok": true, "message": "Pushed to GitHub." }`, or `{ "ok": false, "message" }` with what git said (cut to 500 characters, with the token taken out). A push that fails is a warning (a `sync` event with `syncFailed`, or `publishFailed` for a chapter) and never stops the run: its commits wait for the next push that works, or for `POST /books/:id/sync`. With `off` no push is tried, and `lastSync` stays as it was.
+- **What waits on the server.** With `step`, only the commit that records how the run ended; with `chapter`, everything after the last chapter that was closed (the director's judgement of the whole book, how the run ended); with `off`, everything. `POST /books/:id/sync` publishes it all by hand. With `off`, GitHub does not move at all, so the web app's usual repository sync does not see what the autopilot wrote until a publish.
+- **The risk of `chapter` and `off`.** Before every step the server still pulls what the author published (a fetch, then a fast-forward, otherwise a rebase of its own commits under the author's), and with these two ways it has more unpublished commits for longer.
+  - A change made on GitHub to a file that the server also changed cannot be rebased under them (every step rewrites `autopilot/state.json` and `autopilot/activity.json`; chapters, `plot.md` and the resumes change as the book grows). The next step then fails and the run stops with status `error` and the message *The book changed on GitHub in a way that conflicts with the server's work. Resolve it from the web app, then resume.* `POST /books/:id/sync` answers `409 sync_failed` with the same words. A change to a file the server did not touch is rebased under its commits, and the run goes on.
+  - Nothing is lost: the rebase is always undone, the server's commits are all still in the working copy, and the working copy is clean.
+  - To go on, settle it on GitHub (undo or redo the change that conflicts, so that the server's commits rebase cleanly) and resume; or merge on the server, where the working copy is an ordinary git repository (`books/<id>/repo` in the data folder: `git pull --no-rebase`, settle the file, commit, `git push`); or give up the server's unpublished work by removing the book from the server (its working copy stays in `books/.trash` for 14 days) and registering it again from GitHub.
+  - To avoid it, keep `step` for a book that is also edited on GitHub or by another device, or publish with `POST /books/:id/sync` before anybody else edits it. With `step` the same conflict is possible too, but only in the moment between one push and the next.
 
 ## API
 
@@ -271,7 +306,7 @@ All endpoints live under `/api/v1` and return JSON; errors are `{ "code", "messa
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
-| `GET` | `/info?nonce=HEX64` | none | Identity and version, signed over the nonce. |
+| `GET` | `/info?nonce=HEX64` | none | Identity, version and `features` (among them `autopilot-controls`: see [Quick controls and publishing](#quick-controls-and-publishing)), signed over the nonce. |
 | `POST` | `/pairings`, `/pairings/:id/result` | none | Pair with a code (answers `{ id, verification }`); collect the token once approved (answers `{ token, verification }`). `verification` is optional: four digits that the owner sees in the panel too (below). |
 | `GET`/`DELETE` | `/session` | any | The calling client and its permissions / revoke the token it presented, and no other (disconnect; answers `{ revoked }`). |
 | `GET`/`PUT` | `/ai` | read / write | Redacted AI status (with the endpoints awaiting approval and the spending status) / replace the configuration. |
@@ -281,7 +316,8 @@ All endpoints live under `/api/v1` and return JSON; errors are `{ "code", "messa
 | `POST` | `/books/:id/files/read`, `/books/:id/files/commit` | read / write | Read up to 100 files (16 MiB in all) / commit up to 5000 changes with compare-and-swap. |
 | `POST` | `/books/:id/sync` | write | Pull and push the GitHub branch. |
 | `GET` | `/books/:id/autopilot`, `/books/:id/autopilot/events?since=N` | read | Snapshot / recent live events. |
-| `POST` | `/books/:id/autopilot/{start,pause,intervene,answer}` | run | Control the autopilot (`answer` takes `{ questionId, answer, accept?, asRule? }`: with `asRule` the answer becomes a permanent rule). |
+| `POST` | `/books/:id/autopilot/{start,pause,intervene,answer}` | run | Control the autopilot (`answer` takes `{ questionId, answer, accept?, asRule? }`: with `asRule` the answer becomes a permanent rule; `start` takes `limits`, `pause` takes `after-chapter` and `cancel`: see [Quick controls and publishing](#quick-controls-and-publishing)). |
+| `PUT` | `/books/:id/autopilot/options` | run | Change `publishEvery` (where a GitHub book is pushed) and `pauseAfterEachChapter`, also while the autopilot runs. |
 | `POST` | `/books/:id/autopilot/{configure,reset}` | write | Change or reset its settings. |
 | `POST` | `/books/:id/director/ask` | run | Ask the director about the book, a chapter or a scene. |
 | `GET` | `/events` | read | Server-sent events: autopilot events and book summaries. |
