@@ -190,7 +190,7 @@ test("P12 panel: the page, its script and its style stay inside the strict conte
     assert.doesNotMatch(html, /\sstyle=/i, "no style attribute");
     assert.doesNotMatch(html, /\son[a-z]+\s*=/i, "no inline handler");
     assert.doesNotMatch(html, /(?:src|href|action|data)="(?:https?:)?\/\//i, "nothing the page loads from outside");
-    assert.doesNotMatch(html, /<(?:img|iframe|object|embed|link)\b[^>]*(?:src|href)="(?!\/admin\.css)/i, "no resource but the style and the script");
+    assert.doesNotMatch(html, /<(?:img|iframe|object|embed|link)\b[^>]*(?:src|href)="(?!\/admin\.css"|\/favicon\.(?:svg|ico)")/i, "no resource but the style, the icon and the script");
     assert.doesNotMatch(css, /@import|url\(|https?:\/\/|expression\(/i, "the style loads nothing");
     for (const forbidden of ["innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", "javascript:", "srcdoc"]) {
       assert.equal(script.includes(forbidden), false, `the script never uses ${forbidden}: text is put in as text`);

@@ -21,6 +21,8 @@ export const ADMIN_HTML = `<!doctype html>
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="light dark">
 <title>Narrarium server</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="stylesheet" href="/admin.css">
 <script src="/admin.js" defer></script>
 </head>

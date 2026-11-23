@@ -73,6 +73,7 @@ import { UPDATE_HISTORY_MAX, UpdateHistory } from "./update-history.js";
 import { SpendLedger, SpendLimitError, applySpendChanges, pausedError, spendSettingsOf, type ServerSpendStatus } from "./spend.js";
 import { CloudflareTunnelManager, type CloudflareTunnelManagerOptions } from "./tunnel.js";
 import { ADMIN_CSS, ADMIN_HTML, ADMIN_JS } from "./ui.js";
+import { FAVICON_ICO_BASE64, FAVICON_SVG } from "./favicon.js";
 import { SERVER_VERSION } from "./version.js";
 import { OutlineTextLimitError } from "narrarium-engine";
 import { FROZEN_ACTIONS, FROZEN_EDITS_MODES, FrozenChapterError, SERVER_FEATURE_AUTOPILOT_FROZEN, type FrozenAction, type FrozenChangeKind, type FrozenEditsMode } from "narrarium-engine";
@@ -1512,6 +1513,12 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         // server, /oauth/* and /.well-known/*) are bridged to the loopback API, which still checks Host, Origin and the client token.
         if (bridge) {
           bridgeToApi(request, response, { port: apiPort, host: hostOf(data.config.publicUrl) ?? `127.0.0.1:${apiPort}` }, gatewayAgent);
+          return;
+        }
+        if (request.method === "GET" && (path === "/favicon.svg" || path === "/favicon.ico")) {
+          const icon = path === "/favicon.svg" ? "image/svg+xml; charset=utf-8" : "image/x-icon";
+          response.writeHead(200, { "content-type": icon, "cache-control": "public, max-age=86400" });
+          response.end(path === "/favicon.svg" ? FAVICON_SVG : Buffer.from(FAVICON_ICO_BASE64, "base64"));
           return;
         }
         if (request.method === "GET" && (path === "/" || path === "/admin.js" || path === "/admin.css")) {
