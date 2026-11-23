@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { useBackGestureClose } from "@/components/layout/historyStep";
 import { GithubConflictsDialog } from "@/components/autopilot/GithubConflictsDialog";
 import { useConflictsWindow } from "@/autopilot/githubConflictsWindow";
 
@@ -11,6 +12,8 @@ export function GithubConflictsWindow({ bookId }: { bookId: string }) {
   const opener = useConflictsWindow((state) => state.opener);
   const close = useConflictsWindow((state) => state.close);
   const returnFocusTo = useMemo(() => ({ current: opener }), [opener]);
+  // On a phone the window covers the screen: the back gesture closes it instead of leaving the page.
+  useBackGestureClose(open, close, "github-conflicts");
   useEffect(() => () => {
     if (useConflictsWindow.getState().bookId === bookId) useConflictsWindow.getState().close();
   }, [bookId]);

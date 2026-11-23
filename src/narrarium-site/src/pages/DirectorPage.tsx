@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FocusEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Clapperboard, Loader2, Plane, RefreshCcw } from "lucide-react";
@@ -109,6 +109,10 @@ export function DirectorPage() {
   const [lists, setLists] = useState<Record<ListField, string>>({ priorities: "", taste: "", redLines: "" });
   const [savedContent, setSavedContent] = useState("");
   const [exists, setExists] = useState(true);
+  // The vision can be long: it grows up to under half of the screen and then scrolls inside, so that given the focus it fits above the save bar.
+  const [visionHeight] = useState(() => (typeof window === "undefined" ? 480 : Math.max(200, Math.round(window.innerHeight * 0.45))));
+  // The browser does not scroll a field that is partly on the screen when it takes the focus: this one comes whole into view, above the bar.
+  const revealAboveBar = (event: FocusEvent<HTMLTextAreaElement>) => event.currentTarget.scrollIntoView?.({ block: "nearest" });
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [readers, setReaders] = useState<ReaderPersonaProfile[]>([]);
@@ -224,7 +228,8 @@ export function DirectorPage() {
     setSaveError(null);
   }
 
-  useRegisterPageSave({ dirty, enabled: Boolean(current && book), onSave: () => save() });
+  // Leaving asks only about the author's changes: the defaults of a director never saved are not one (the bar says they are not in the book yet).
+  useRegisterPageSave({ dirty: edited, enabled: Boolean(current && book), onSave: () => save() });
 
   const patch = (next: Partial<DirectorProfile>) => {
     setSaveError(null);
@@ -352,7 +357,7 @@ export function DirectorPage() {
                 </div>
                 <div className={`grid gap-2 ${roomy ? "grid-cols-2" : ""}`}>
                   {readers.map((reader) => (
-                    <div key={reader.slug} className="flex items-center justify-between gap-2 rounded-lg border px-3 py-1.5">
+                    <div key={reader.slug} className="flex min-w-0 items-center justify-between gap-2 rounded-lg border px-3 py-1.5">
                       <span className="min-w-0 truncate text-sm">{reader.name}</span>
                       <Select value={String(profile.readerWeights[reader.slug] ?? 1)} onValueChange={(value) => setWeight(reader.slug, Number(value))}>
                         <SelectTrigger className="h-9 w-36 shrink-0" aria-label={`${t("director.readerWeights")}: ${reader.name}`}><SelectValue /></SelectTrigger>
@@ -365,7 +370,7 @@ export function DirectorPage() {
             )}
             <div className="space-y-1.5">
               <Label htmlFor="director-vision">{t("director.vision")}</Label>
-              <AutoTextarea id="director-vision" value={profile.body} onChange={(event) => patch({ body: event.target.value })} minRows={6} className="text-sm leading-7" />
+              <AutoTextarea id="director-vision" value={profile.body} onChange={(event) => patch({ body: event.target.value })} minRows={6} maxHeight={visionHeight} onFocus={revealAboveBar} className="text-sm leading-7" />
             </div>
           </SheetSection>
         </>

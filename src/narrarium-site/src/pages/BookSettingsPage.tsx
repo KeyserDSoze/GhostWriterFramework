@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { GitBranch, Github, KeyRound, Loader2, Plus, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import "@/i18n/bookGithub";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Button } from "@/components/ui/button";
@@ -130,7 +131,7 @@ export function BookSettingsPage() {
 
   async function handleAttachToGitHub() {
     const token = resolveGitHubRemoteToken(currentBook, settings);
-    if (!token) { setAttachError(settings.ui.language === "it" ? "Collega GitHub o configura un PAT." : "Connect GitHub or configure a PAT."); return; }
+    if (!token) { setAttachError(t("bookSettings.connectGithub.noToken")); return; }
     if (!attachOwner.trim() || !attachRepo.trim()) return;
     setAttaching(true);
     setAttachError(null);
@@ -140,7 +141,7 @@ export function BookSettingsPage() {
       patchSettings({ books: settings.books.map((entry) => entry.id === currentBook.id ? updated : entry) });
       await save();
       clearBook(currentBook.id);
-      toast({ title: settings.ui.language === "it" ? "Libro collegato a GitHub" : "Book connected to GitHub" });
+      toast({ title: t("bookSettings.connectGithub.done") });
       navigate(`/app/books/${currentBook.id}`);
     } catch (error) { setAttachError(String(error)); }
     finally { setAttaching(false); }
@@ -212,7 +213,7 @@ export function BookSettingsPage() {
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
         <h1 className="font-serif text-3xl font-semibold tracking-tight">{t("bookSettings.title")}</h1>
-        <p className="text-muted-foreground">{bookStorageMode(currentBook) === "local-only" ? (settings.ui.language === "it" ? "Solo su questo dispositivo" : "This device only") : `${currentBook.owner}/${currentBook.repo}`}</p>
+        <p className="text-muted-foreground">{bookStorageMode(currentBook) === "local-only" ? t("bookSettings.deviceOnly") : `${currentBook.owner}/${currentBook.repo}`}</p>
       </div>
 
       {bookStorageMode(currentBook) === "github" && <Card>
@@ -226,7 +227,7 @@ export function BookSettingsPage() {
         </CardContent>
       </Card>}
 
-      {bookStorageMode(currentBook) === "local-only" && <Card><CardHeader><CardTitle className="flex items-center gap-2"><Github className="h-4 w-4" />{settings.ui.language === "it" ? "Collega il libro a GitHub" : "Connect this book to GitHub"}</CardTitle><CardDescription>{settings.ui.language === "it" ? "La working copy locale esistente verrà mantenuta e pubblicata in una repository privata." : "The existing local working copy will be retained and published to a private repository."}</CardDescription></CardHeader><CardContent className="space-y-3"><div className="grid gap-3 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="attach-owner">Owner</Label><Input id="attach-owner" value={attachOwner} onChange={(event) => setAttachOwner(event.target.value)} placeholder={githubConnection?.identity?.username ?? "username"} /></div><div className="grid gap-2"><Label htmlFor="attach-repo">Repository</Label><Input id="attach-repo" value={attachRepo} onChange={(event) => setAttachRepo(event.target.value)} /></div></div><div className="flex items-start gap-3 rounded-md border p-3"><Switch id="attach-overwrite" checked={overwriteExisting} onCheckedChange={setOverwriteExisting} /><div><Label htmlFor="attach-overwrite">{settings.ui.language === "it" ? "Sovrascrivi repository esistente" : "Overwrite existing repository"}</Label><p className="text-xs text-muted-foreground">{settings.ui.language === "it" ? "Se la repository non è vuota, il suo branch verrà sostituito con questo libro locale." : "If the repository is not empty, its branch will be replaced by this local book."}</p></div></div>{attachError && <Alert variant="destructive"><AlertDescription>{attachError}</AlertDescription></Alert>}<Button className="h-auto min-h-10 whitespace-normal text-left" onClick={() => void handleAttachToGitHub()} disabled={attaching || !attachOwner.trim() || !attachRepo.trim()}>{attaching ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Github className="mr-1 h-4 w-4" />}{settings.ui.language === "it" ? "Crea o collega repository privata" : "Create or connect private repository"}</Button></CardContent></Card>}
+      {bookStorageMode(currentBook) === "local-only" && <Card><CardHeader><CardTitle className="flex items-center gap-2"><Github className="h-4 w-4" />{t("bookSettings.connectGithub.title")}</CardTitle><CardDescription>{t("bookSettings.connectGithub.description")}</CardDescription></CardHeader><CardContent className="space-y-3"><div className="grid gap-3 sm:grid-cols-2"><div className="grid gap-2"><Label htmlFor="attach-owner">{t("bookSettings.connectGithub.owner")}</Label><Input id="attach-owner" value={attachOwner} onChange={(event) => setAttachOwner(event.target.value)} placeholder={githubConnection?.identity?.username ?? "username"} /></div><div className="grid gap-2"><Label htmlFor="attach-repo">{t("bookSettings.connectGithub.repository")}</Label><Input id="attach-repo" value={attachRepo} onChange={(event) => setAttachRepo(event.target.value)} /></div></div><div className="flex items-start gap-3 rounded-md border p-3"><Switch id="attach-overwrite" checked={overwriteExisting} onCheckedChange={setOverwriteExisting} /><div><Label htmlFor="attach-overwrite">{t("bookSettings.connectGithub.overwrite")}</Label><p className="text-xs text-muted-foreground">{t("bookSettings.connectGithub.overwriteHint")}</p></div></div>{attachError && <Alert variant="destructive"><AlertDescription>{attachError}</AlertDescription></Alert>}<Button className="h-auto min-h-10 whitespace-normal text-left" onClick={() => void handleAttachToGitHub()} disabled={attaching || !attachOwner.trim() || !attachRepo.trim()}>{attaching ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Github className="mr-1 h-4 w-4" />}{t("bookSettings.connectGithub.submit")}</Button></CardContent></Card>}
 
       {bookStorageMode(currentBook) === "github" && <Card>
         <CardHeader>
@@ -362,7 +363,7 @@ export function BookSettingsPage() {
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">{t("bookSettings.defaultBranch")} {baseBranch}</p>
-            <Button type="button" variant="outline" className="w-fit" onClick={() => void loadRemoteBranches()} disabled={loadingBranches || offline}>{loadingBranches ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <GitBranch className="mr-1 h-4 w-4" />}{settings.ui.language === "it" ? "Carica branch remoti" : "Load remote branches"}</Button>
+            <Button type="button" variant="outline" className="w-fit" onClick={() => void loadRemoteBranches()} disabled={loadingBranches || offline}>{loadingBranches ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <GitBranch className="mr-1 h-4 w-4" />}{t("bookSettings.loadRemoteBranches")}</Button>
           </div>
 
           <div className="grid gap-2 rounded-lg border border-dashed p-3">

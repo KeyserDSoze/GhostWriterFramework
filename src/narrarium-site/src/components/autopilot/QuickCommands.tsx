@@ -24,6 +24,8 @@ export interface QuickCommandsProps {
   runExtra?: ReactNode;
   /** The bar for a place that is short of room (the band of a narrow page, the bar at the bottom of a phone): where the book is published and where it runs are behind a “More” button. */
   condensed?: boolean;
+  /** What ends the row of the main action after everything else: the floating buttons of the app, in the bar at the bottom of a phone. */
+  tools?: ReactNode;
 }
 
 /** The actions of the bar that are on their way, said in words while they are (the others are operations of the book, which the page and the panel already say). */
@@ -38,7 +40,7 @@ const OWN_ACTIONS = new Set(["pause", "stop", "cancel-pause", "start", "options"
  * why in words next to it, and the control points at the words; every control has a name that says which book it commands and from which bar
  * (the page or the panel), so two bars on the same screen never repeat a name.
  */
-export function QuickCommands({ bookId, variant, profileHintId, heading, framed, runExtra, condensed = false }: QuickCommandsProps) {
+export function QuickCommands({ bookId, variant, profileHintId, heading, framed, runExtra, condensed = false, tools }: QuickCommandsProps) {
   const { t } = useTranslation();
   const model = useQuickModel(bookId, variant);
   const [more, setMore] = useState(false);
@@ -63,10 +65,13 @@ export function QuickCommands({ bookId, variant, profileHintId, heading, framed,
         profileHintId={profileHintId}
         runExtra={runExtra}
         trailing={condensed && placed ? (
-          <Button size="sm" variant="ghost" aria-expanded={more} aria-controls={more ? model.ids.more : undefined} aria-label={model.named(t("autopilot.quick.more"))} onClick={() => setMore((open) => !open)}>
-            <MoreHorizontal className="h-4 w-4" aria-hidden />{t("autopilot.quick.more")}<ChevronDown className={cn("h-4 w-4 transition-transform", more && "rotate-180")} aria-hidden />
-          </Button>
-        ) : undefined}
+          <>
+            <Button size="sm" variant="ghost" aria-expanded={more} aria-controls={more ? model.ids.more : undefined} aria-label={model.named(t("autopilot.quick.more"))} onClick={() => setMore((open) => !open)}>
+              <MoreHorizontal className="h-4 w-4" aria-hidden />{t("autopilot.quick.more")}<ChevronDown className={cn("h-4 w-4 transition-transform", more && "rotate-180")} aria-hidden />
+            </Button>
+            {tools}
+          </>
+        ) : tools}
       />
       <StatusChips model={model} />
       {placed && (!condensed || more) && (

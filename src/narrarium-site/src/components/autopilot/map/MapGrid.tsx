@@ -113,7 +113,7 @@ const MapRow = memo(function MapRow({ row, activeCol, onCell, onHint }: RowProps
             data-col={position + 1}
             data-state={state}
             {...events(position + 1, `${t("autopilot.map.chapterCell", { number: chapter.number })} · ${text}`)}
-            className={cn("flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background", SCENE_STYLE[state], state === "writing" && "motion-safe:animate-pulse")}
+            className={cn("flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11", SCENE_STYLE[state], state === "writing" && "motion-safe:animate-pulse")}
           >
             <Icon className="h-4 w-4" aria-hidden="true" />
             <span className="sr-only">{text}</span>
@@ -212,7 +212,7 @@ export function MapGrid({ rows, total, label, keysId, startChapter, focusChapter
         aria-rowcount={total}
         aria-describedby={keysId}
         onKeyDown={onKeyDown}
-        className="relative max-h-[28rem] space-y-0.5 overflow-y-auto overscroll-contain rounded-lg border border-layer bg-background/40 p-1"
+        className="relative max-h-[min(28rem,60dvh)] space-y-0.5 overflow-y-auto rounded-lg border border-layer bg-background/40 p-1 [@media(pointer:fine)]:overscroll-contain"
       >
         {rows.map((row) => <MapRow key={`${row.chapter.number}:${row.chapter.slug}`} row={row} activeCol={row.chapter.number === anchor.chapter ? anchor.col : -1} onCell={onCell} onHint={onHint} />)}
       </div>

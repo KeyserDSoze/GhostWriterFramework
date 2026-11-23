@@ -247,4 +247,22 @@ describe("leaving the director page with changes that are not saved", () => {
     expect(approval()).toHaveValue("9");
     confirm.mockRestore();
   });
+
+  it("asks nothing when the author only read a director that is still the defaults (focused its fields, changed nothing)", async () => {
+    mocks.structure = structureIn("en");
+    mocks.load.mockResolvedValue(file(director(), null));
+    const router = createMemoryRouter([
+      { path: "/", element: <Guarded />, children: [{ path: "app/books/:bookId/director", element: <DirectorPage /> }, { path: "app/books", element: <p>The library</p> }] },
+    ], { initialEntries: ["/app/books/book-1/director"] });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<RouterProvider router={router} />);
+    await screen.findByDisplayValue(director().name);
+    expect(within(bar()).getByRole("status")).toHaveTextContent(t("director.bar.defaults"));
+    act(() => approval().focus());
+    act(() => approval().blur());
+    fireEvent.click(screen.getByRole("link", { name: "Library" }));
+    await screen.findByText("The library");
+    expect(confirm).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
 });

@@ -15,6 +15,7 @@ import { outlineOrigins, type OutlineOrigin } from "@/autopilot/planApprovalMode
 import { useAutopilotStore } from "@/autopilot/store";
 import { useBookFiles } from "@/autopilot/useBookFiles";
 import { frozenChapterSlugs } from "@/outline/outlineModel";
+import { useBackGestureClose } from "@/components/layout/historyStep";
 import { cn } from "@/lib/utils";
 
 type MapView = "map" | "table";
@@ -124,6 +125,8 @@ export const ChapterMap = memo(function ChapterMap({ bookId, state, linkedSlugs 
     }, 0);
   }, []);
   const openedRow = opened === null ? null : rows.find((row) => row.index === opened) ?? (chapters[opened] ? rowModel(chapters[opened], opened, context, marks.origins.get(chapters[opened].number), chapters[opened].number === currentNumber) : null);
+  // On a phone the panel covers the screen: the back gesture closes it instead of leaving the page.
+  const followPanelLink = useBackGestureClose(openedRow !== null, close, "chapter-panel");
 
   const [focusChapter, setFocusChapter] = useState<number | null>(null);
   const range = { from: formatCount(view.visible.length ? view.first + 1 : 0), to: formatCount(view.first + view.visible.length), total: formatCount(view.total) };
@@ -175,7 +178,7 @@ export const ChapterMap = memo(function ChapterMap({ bookId, state, linkedSlugs 
         <MapTable rows={rows} caption={t("autopilot.map.table.caption", range)} ghostwriterName={ghostwriterName} onOpen={open} />
       )}
       {marks.failed && <p className="text-xs text-muted-foreground">{t("autopilot.map.unread")}</p>}
-      {openedRow && <ChapterPanel bookId={bookId} row={openedRow} state={state} linked={linkedSlugs.has(openedRow.chapter.slug)} ghostwriter={openedRow.chapter.ghostwriter ? ghostwriterName(openedRow.chapter.ghostwriter) : undefined} onClose={close} />}
+      {openedRow && <ChapterPanel bookId={bookId} row={openedRow} state={state} linked={linkedSlugs.has(openedRow.chapter.slug)} ghostwriter={openedRow.chapter.ghostwriter ? ghostwriterName(openedRow.chapter.ghostwriter) : undefined} onClose={close} onLinkClick={followPanelLink} />}
     </Card>
   );
 });

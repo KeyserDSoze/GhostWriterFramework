@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { AlertOctagon, AlertTriangle, BookOpen, CheckCircle2, Clapperboard, Info, Loader2, PlusCircle, Users, X, XCircle } from "lucide-react";
@@ -79,7 +79,7 @@ function Rounds({ rounds }: { rounds: readonly ChapterRound[] }) {
         <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded-sm bg-primary" />{t("autopilot.chapterPanel.rounds.director")}</span>
         <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded-sm border border-primary bg-primary/20" />{t("autopilot.chapterPanel.rounds.readers")}</span>
       </div>
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table aria-labelledby={id} className="w-full border-collapse text-sm">
           <caption id={id} className="sr-only">{t("autopilot.chapterPanel.rounds.title")}</caption>
           <thead>
@@ -260,6 +260,8 @@ export interface ChapterPanelProps {
   linked: boolean;
   ghostwriter: string | undefined;
   onClose: () => void;
+  /** The clicks on the links of the panel, which take the place of its step in the history (see `useBackGestureClose`). */
+  onLinkClick?: (event: MouseEvent<HTMLElement>) => void;
 }
 
 /**
@@ -267,7 +269,7 @@ export interface ChapterPanelProps {
  * the round in progress when it is in review (the readers' cards, the findings with their gravity and scene, the director's decisions), its scenes
  * with their state in words, and what the plan says of it. A dialog: Escape closes it, and the focus goes back to the cell that opened it.
  */
-export function ChapterPanel({ bookId, row, state, linked, ghostwriter, onClose }: ChapterPanelProps) {
+export function ChapterPanel({ bookId, row, state, linked, ghostwriter, onClose, onLinkClick }: ChapterPanelProps) {
   const { t } = useTranslation();
   const { chapter } = row;
   const chapterHref = `/app/books/${encodeURIComponent(bookId)}/chapters/${encodeURIComponent(chapter.slug)}`;
@@ -283,14 +285,17 @@ export function ChapterPanel({ bookId, row, state, linked, ghostwriter, onClose 
   ].filter(Boolean).join(" · ");
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent bare hideCloseButton className="inset-y-0 right-0 flex h-dvh w-full max-w-xl flex-col overflow-y-auto rounded-none border-y-0 border-r-0 sm:rounded-l-2xl">
-        <div className="sticky top-0 z-10 space-y-2 border-b border-layer bg-background px-4 pb-3 pt-4 pr-16">
+      <DialogContent bare hideCloseButton onClickCapture={onLinkClick} className="inset-y-0 right-0 flex h-dvh w-full max-w-xl flex-col overflow-y-auto overscroll-contain rounded-none border-y-0 border-r-0 sm:rounded-l-2xl">
+        {/* Only the title and the close stay at the top while the panel scrolls: on a phone the rest took half of the screen. */}
+        <div className="sticky top-0 z-10 flex items-start gap-2 border-b border-layer bg-background px-4 py-3">
+          <DialogTitle className="min-w-0 flex-1 pt-1.5 font-serif text-xl font-semibold leading-snug">{chapter.title.trim() ? t("autopilot.chapterPanel.title", { number: chapter.number, title: chapter.title }) : t("autopilot.chapterPanel.untitled", { number: chapter.number })}</DialogTitle>
           <DialogClose asChild>
-            <Button type="button" variant="ghost" size="icon" className="absolute right-3 top-3 h-11 w-11 sm:h-10 sm:w-10" aria-label={t("common.close")}>
+            <Button type="button" variant="ghost" size="icon" className="h-11 w-11 shrink-0 sm:h-10 sm:w-10" aria-label={t("common.close")}>
               <X className="h-5 w-5" aria-hidden="true" />
             </Button>
           </DialogClose>
-          <DialogTitle className="font-serif text-xl font-semibold leading-snug">{chapter.title.trim() ? t("autopilot.chapterPanel.title", { number: chapter.number, title: chapter.title }) : t("autopilot.chapterPanel.untitled", { number: chapter.number })}</DialogTitle>
+        </div>
+        <div className="space-y-2 border-b border-layer px-4 py-3">
           <DialogDescription className="text-sm text-muted-foreground">{marks}</DialogDescription>
           <div className="flex flex-wrap gap-2">
             {linked && <Button asChild size="sm" variant="outline" className="min-h-11 sm:min-h-9"><Link to={chapterHref}><BookOpen className="h-4 w-4" aria-hidden="true" />{t("autopilot.chapterPanel.open")}</Link></Button>}

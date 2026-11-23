@@ -237,7 +237,7 @@ export const PlanApproval = memo(function PlanApproval({ bookId, mode, state, ac
               {members.map((member) => (
                 <li key={member.path} className="min-w-0 rounded-lg border border-layer bg-background/60 px-3 py-2 text-sm">
                   <p className="flex flex-wrap items-baseline gap-x-2">
-                    <Link to={`/app/books/${encodeURIComponent(bookId)}/canon/characters/${encodeURIComponent(member.slug)}`} className="font-semibold underline decoration-foreground/30 underline-offset-4 hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{member.name}</Link>
+                    <Link to={`/app/books/${encodeURIComponent(bookId)}/canon/characters/${encodeURIComponent(member.slug)}`} className="inline-flex min-h-6 items-center font-semibold underline decoration-foreground/30 underline-offset-4 hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-h-11">{member.name}</Link>
                     {member.role && <span className="text-xs text-muted-foreground">{t(`autopilot.approval.cast.role.${member.role}`)}</span>}
                   </p>
                   {member.line && <p className="break-words text-muted-foreground">{member.line}</p>}

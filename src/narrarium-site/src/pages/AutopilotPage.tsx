@@ -67,6 +67,7 @@ import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useContainerWidth } from "@/hooks/useContainerWidth";
 import { useReserveSpace } from "@/hooks/useReserveSpace";
+import { FloatingInBar } from "@/components/layout/FloatingInBar";
 import { useScrollToHash } from "@/hooks/useScrollToHash";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettings } from "@/drive/useSettings";
@@ -148,13 +149,15 @@ export function AutopilotPage() {
   // A plan that waits for the author (to be approved, or to be made again with the changes asked) is what the person came to see: its own screen
   // takes the place of the history, and until they pick a tab themselves the Plan is the one that is open.
   const planReview = planReviewMode(state, running);
-  const [chosen, setChosen] = useState<PageTab | null>(null);
-  const active = chosen && tabs.includes(chosen) ? chosen : planReview ? "plan" : tabs[0];
+  // The tab the author chose is the one of that book: the page of another book (whose plan may wait) opens as its own.
+  const [chosen, setChosen] = useState<{ bookId: string | undefined; tab: PageTab } | null>(null);
+  const chosenTab = chosen && chosen.bookId === bookId ? chosen.tab : null;
+  const active = chosenTab && tabs.includes(chosenTab) ? chosenTab : planReview ? "plan" : tabs[0];
   const hash = decodeURIComponent(location.hash.replace(/^#/, ""));
   const hashTab = TAB_OF_ID[hash];
   useEffect(() => {
-    if (hashTab) setChosen(hashTab);
-  }, [hashTab, location.key]);
+    if (hashTab) setChosen({ bookId, tab: hashTab });
+  }, [hashTab, location.key, bookId]);
   // Nothing is followed before the width is known: the layout of the first draw is thrown away at once, and what was focused in it with it.
   useScrollToHash(loaded && measured, `${layout}:${active}`);
 
@@ -176,6 +179,7 @@ export function AutopilotPage() {
       framed={false}
       profileHintId={PROFILE_HINT_ID}
       condensed={layout !== "wide"}
+      tools={layout === "compact" ? <FloatingInBar /> : undefined}
       runExtra={chapterHref && closedChapter ? (
         <Button asChild size="sm" variant="outline">
           <Link to={chapterHref}><BookOpen className="h-4 w-4" aria-hidden="true" />{t("autopilot.actions.readChapter", { number: closedChapter.number })}</Link>
@@ -280,7 +284,7 @@ export function AutopilotPage() {
           </div>
         </div>
       ) : (
-        <Tabs value={active} onValueChange={(value) => setChosen(value as PageTab)}>
+        <Tabs value={active} onValueChange={(value) => setChosen({ bookId, tab: value as PageTab })}>
           <TabsList aria-label={t("autopilot.tabs.label")} className="grid h-auto w-full grid-cols-4">
             {tabs.map((tab) => <TabsTrigger key={tab} value={tab} className="px-1.5 text-xs sm:text-sm">{t(`autopilot.tabs.${tab}`)}</TabsTrigger>)}
           </TabsList>

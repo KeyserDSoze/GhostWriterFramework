@@ -1,8 +1,11 @@
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, ChevronDown, ExternalLink, Loader2, Plane, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useBackGestureClose } from "@/components/layout/historyStep";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { parseAppRoute } from "@/assistant/context";
 import { useBookAutopilotView, useAutopilotRefresh } from "@/autopilot/hooks";
@@ -25,6 +28,8 @@ import { cn } from "@/lib/utils";
 
 /** The events the “Live” tab lists: the last ones, one line each. The page of the autopilot has all of them. */
 const LATEST_EVENTS = 12;
+/** The screens where the mini-player is a sheet at the bottom: a phone held upright (narrow), or sideways (short). */
+const SHEET_SCREENS = "(max-width: 639px), (max-height: 600px)";
 
 /**
  * The mini-player of the autopilot, next to the Copilot: what the autopilot of a book is, what it does now, how far it is, and its commands, with
@@ -36,6 +41,8 @@ export function AutopilotDock() {
   const { t } = useTranslation();
   const location = useLocation();
   const hidden = useUiStore((state) => state.floatingHidden);
+  // On a phone (narrow, or held sideways and short) the panel is a sheet at the bottom of the screen: it had no room to float there.
+  const sheet = useMediaQuery(SHEET_SCREENS);
   const onPage = isAutopilotPage(location.pathname);
   // The configuration is a page of the autopilot, but it does not show the run: brought back there, the panel says the step and lists the events.
   const pageShowsRun = isAutopilotLivePage(location.pathname);
@@ -52,40 +59,106 @@ export function AutopilotDock() {
   const open = onPage ? pageDockOpen : dockOpen;
   const shown = open && !hidden;
   const panel = useRef<HTMLElement>(null);
-  // While the panel is open the page keeps room for it at the bottom, so that what it covers can be scrolled out from under it.
-  useReserveSpace(panel, "--dock-reserve", shown);
+  const close = () => (onPage ? setPageDockOpen(false) : setDockOpen(false));
+  // While the panel floats the page keeps room for it at the bottom, so that what it covers can be scrolled out from under it. A sheet takes the screen instead.
+  useReserveSpace(panel, "--dock-reserve", shown && !sheet);
+  const followLink = useBackGestureClose(shown && sheet, close, "autopilot-dock");
   if (!shown) return null;
 
-  const tabClass = (active: boolean) => cn("rounded-md px-2.5 py-1 text-xs font-medium transition", active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground");
+  const tabClass = (active: boolean) => cn("rounded-md px-2.5 py-1 text-xs font-medium transition", active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground", sheet && "min-h-11 text-sm");
+  const icon = sheet ? "h-11 w-11" : "h-7 w-7";
+  const tabs = (
+    <div className="order-last flex w-full rounded-lg bg-muted p-0.5 empty:hidden" role="tablist">
+      {bookId && (
+        <>
+          <button type="button" role="tab" aria-selected={tab === "book"} className={cn(tabClass(tab === "book"), "flex-1")} onClick={() => setDockTab("book")}>{t("autopilot.dockBook")}</button>
+          <button type="button" role="tab" aria-selected={tab === "live"} className={cn(tabClass(tab === "live"), "flex-1")} onClick={() => setDockTab("live")}>{t("autopilot.dockLive")}</button>
+        </>
+      )}
+    </div>
+  );
+  const actions = (
+    <div className="flex items-center gap-0.5">
+      {tab === "live" && (
+        <Button variant="ghost" size="icon" className={icon} title={t("autopilot.clearFeed")} aria-label={t("autopilot.clearFeed")} onClick={clearFeed}><Trash2 className="h-3.5 w-3.5" /></Button>
+      )}
+      <Button asChild variant="ghost" size="icon" className={icon} title={t("autopilot.openPage")}>
+        <Link to={bookId ? `/app/books/${encodeURIComponent(bookId)}/autopilot` : "/app/autopilot"} aria-label={t("autopilot.openPage")}><ExternalLink className="h-3.5 w-3.5" /></Link>
+      </Button>
+      <Button variant="ghost" size="icon" className={icon} title={t("autopilot.close")} aria-label={t("autopilot.close")} onClick={close}><X className="h-4 w-4" /></Button>
+    </div>
+  );
+  const body = (
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+      {tab === "book" && bookId ? <DockBookPanel bookId={bookId} announce={!pageShowsRun} /> : <DockLivePanel announce={!pageShowsRun} showBook={Boolean(bookId)} onPage={pageShowsRun ? (bookId ? "book" : "all") : null} pageBook={bookId} />}
+    </div>
+  );
+
+  if (sheet) return <DockSheet title={t("autopilot.dockTitle")} onClose={close} onLinkClick={followLink} tabs={tabs} actions={actions}>{body}</DockSheet>;
 
   return (
     <section ref={panel} aria-label={t("autopilot.dockTitle")} className="fixed bottom-[calc(8.5rem+var(--bottom-reserve,0px))] right-4 z-40 flex max-h-[min(70dvh,38rem)] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-layer bg-card text-card-foreground shadow-2xl lg:bottom-[calc(6rem+var(--bottom-reserve,0px))] lg:right-6">
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b px-3 py-2">
         <Plane className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{t("autopilot.dockTitle")}</h2>
-        <div className="order-last flex w-full rounded-lg bg-muted p-0.5 empty:hidden" role="tablist">
-          {bookId && (
-            <>
-              <button type="button" role="tab" aria-selected={tab === "book"} className={cn(tabClass(tab === "book"), "flex-1")} onClick={() => setDockTab("book")}>{t("autopilot.dockBook")}</button>
-              <button type="button" role="tab" aria-selected={tab === "live"} className={cn(tabClass(tab === "live"), "flex-1")} onClick={() => setDockTab("live")}>{t("autopilot.dockLive")}</button>
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-0.5">
-          {tab === "live" && (
-            <Button variant="ghost" size="icon" className="h-7 w-7" title={t("autopilot.clearFeed")} aria-label={t("autopilot.clearFeed")} onClick={clearFeed}><Trash2 className="h-3.5 w-3.5" /></Button>
-          )}
-          <Button asChild variant="ghost" size="icon" className="h-7 w-7" title={t("autopilot.openPage")}>
-            <Link to={bookId ? `/app/books/${encodeURIComponent(bookId)}/autopilot` : "/app/autopilot"} aria-label={t("autopilot.openPage")}><ExternalLink className="h-3.5 w-3.5" /></Link>
-          </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" title={t("autopilot.close")} aria-label={t("autopilot.close")} onClick={() => (onPage ? setPageDockOpen(false) : setDockOpen(false))}><X className="h-4 w-4" /></Button>
-        </div>
+        {tabs}
+        {actions}
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {tab === "book" && bookId ? <DockBookPanel bookId={bookId} announce={!pageShowsRun} /> : <DockLivePanel announce={!pageShowsRun} showBook={Boolean(bookId)} onPage={pageShowsRun ? (bookId ? "book" : "all") : null} pageBook={bookId} />}
-      </div>
+      {body}
     </section>
   );
+}
+
+/**
+ * The mini-player as a sheet at the bottom of a phone: a dialog (the focus stays in it, Escape and the back gesture close it, and the focus goes
+ * back to the button that opened it), as wide as the screen and never taller than most of it, above the keyboard when one of its fields is
+ * written in. The page under it cannot take the focus while it is open, so it never covers the field that has the focus.
+ */
+function DockSheet({ title, onClose, onLinkClick, tabs, actions, children }: { title: string; onClose: () => void; onLinkClick: (event: MouseEvent<HTMLElement>) => void; tabs: ReactNode; actions: ReactNode; children: ReactNode }) {
+  const [opener] = useState(() => (typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? document.activeElement : null));
+  const keyboard = useKeyboardInset();
+  return (
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogContent
+        bare
+        hideCloseButton
+        aria-describedby={undefined}
+        onClickCapture={onLinkClick}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (opener?.isConnected) opener.focus();
+        }}
+        style={keyboard ? { bottom: keyboard, maxHeight: `calc(100dvh - ${keyboard}px - 1rem)` } : undefined}
+        className="inset-x-0 bottom-0 flex max-h-[85dvh] w-full flex-col overflow-hidden rounded-t-2xl border-x-0 border-b-0 bg-card text-card-foreground sm:rounded-b-none sm:rounded-t-2xl"
+      >
+        <header className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b px-3 py-2">
+          <Plane className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+          <DialogTitle className="min-w-0 flex-1 truncate text-base font-semibold">{title}</DialogTitle>
+          {tabs}
+          {actions}
+        </header>
+        {children}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** How much of the bottom of the screen the keyboard of a phone covers now (0 without one): the sheet stands above it. */
+function useKeyboardInset(): number {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    const viewport = typeof window !== "undefined" ? window.visualViewport : null;
+    if (!viewport) return undefined;
+    const update = () => setInset(Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop)));
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+    };
+  }, []);
+  return inset;
 }
 
 /**

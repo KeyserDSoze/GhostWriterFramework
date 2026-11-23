@@ -23,7 +23,7 @@ export const MapTable = memo(function MapTable({ rows, caption, ghostwriterName,
   const id = useId();
   const none = t("autopilot.map.table.none");
   return (
-    <div role="region" aria-labelledby={`${id}-caption`} tabIndex={0} className="max-h-[28rem] overflow-auto rounded-lg border border-layer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+    <div role="region" aria-labelledby={`${id}-caption`} tabIndex={0} className="relative max-h-[min(28rem,60dvh)] overflow-auto rounded-lg border border-layer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <table className="w-full border-collapse text-sm">
         <caption id={`${id}-caption`} className="px-2 py-1.5 text-left text-xs text-muted-foreground">{caption}</caption>
         <thead className="sticky top-0 bg-card">

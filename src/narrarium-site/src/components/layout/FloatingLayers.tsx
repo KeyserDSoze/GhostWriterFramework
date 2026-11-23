@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useFloatingBar } from "./FloatingInBar";
 
 /** The screens where the floating buttons step aside: the layout of a phone (narrow) and every touch screen, whose keyboard covers half of it. */
 const STEP_ASIDE_SCREENS = "(max-width: 1023px), (pointer: coarse)";
@@ -66,10 +67,13 @@ function useStepAside(): boolean {
 /**
  * The floating buttons of the app (the book actions, the Copilot, the autopilot and its mini-player), which step aside while the author writes
  * in a field of the page on a phone, and come back when the field is left. Aside they are transparent and let a tap through to the page, but they
- * stay in the order of the Tab key: reached with it, they come back.
+ * stay in the order of the Tab key: reached with it, they come back. On a page whose bar of actions holds them, they are not drawn here.
  */
 export function FloatingLayers({ children }: { children: ReactNode }) {
   const aside = useStepAside();
+  // A page that has its own bar of actions at the bottom of a phone holds them in it (`FloatingInBar`): here they are not drawn at all.
+  const inBar = useFloatingBar((state) => state.hosts > 0);
+  if (inBar) return <div data-floating-layers="" data-in-bar="" hidden>{children}</div>;
   return aside
     ? <div data-floating-layers="" data-stepped-aside="" style={ASIDE}>{children}</div>
     : <div data-floating-layers="" className="contents">{children}</div>;
