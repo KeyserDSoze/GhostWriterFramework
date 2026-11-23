@@ -378,9 +378,10 @@ test("J2: a push that fails for another reason leaves the resolution on the serv
   assert.ok(!lines.join("\n").includes(TOKEN));
 });
 
-// Every file is a git operation: on Windows each costs about a fifth of a second more, and a thousand of them took this one test more than two minutes and the whole
-// file past its five. Three hundred still make three pages of a hundred, and the paging, the default and the exceptions are what is under test.
-const MANY = process.platform === "win32" ? 300 : 1000;
+// Every file is a git operation: on Windows each costs about a fifth of a second more (a thousand of them took this one test more than two minutes and the whole file
+// past its five), and on a macOS runner `git merge-tree` has failed to create a temporary file under that many. Three hundred still make three pages of a hundred, and
+// the paging, the default and the exceptions are what is under test; Linux runs the thousand.
+const MANY = process.platform === "linux" ? 1000 : 300;
 
 test("J2: many conflicts are listed a page at a time, and resolved with a default and a few exceptions; no answer grows with them", async () => {
   const name = (index) => `notes/n${String(index).padStart(4, "0")}.md`;
