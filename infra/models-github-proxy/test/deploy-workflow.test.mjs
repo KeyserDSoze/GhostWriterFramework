@@ -26,6 +26,22 @@ describe("deploy-worker.yml", () => {
     assert.match(workflow, /^\s+- \.github\/workflows\/deploy-worker\.yml\s*$/m);
   });
 
+  it("runs with least privilege, on demand with no inputs, never twice at once, with a timeout", () => {
+    const workflow = readWorkflow();
+    assert.match(workflow, /^permissions:\r?\n {2}contents: read\r?\n/m);
+    assert.doesNotMatch(workflow, /^ +(?:contents|actions|packages|deployments|id-token|pull-requests|issues|checks|statuses):\s*write/m);
+    assert.match(workflow, /^ {2}workflow_dispatch:\s*$/m);
+    assert.doesNotMatch(workflow, /workflow_dispatch:\s*\r?\n\s+inputs:/);
+    assert.match(workflow, /^concurrency:\r?\n {2}group: deploy-worker\r?\n {2}cancel-in-progress: true/m);
+    assert.match(workflow, /^ {4}timeout-minutes: \d+\s*$/m);
+  });
+
+  it("pins every action to a major version", () => {
+    for (const [, action, ref] of readWorkflow().matchAll(/^\s+uses:\s*([^@\s]+)@(\S+)\s*$/gm)) {
+      assert.match(ref, /^v\d+$/, `${action}@${ref}`);
+    }
+  });
+
   it("runs the Worker tests, with no install, before the deploy step", () => {
     const steps = stepsOf(readWorkflow());
     const testIndex = steps.findIndex((step) => /run:\s*npm test\b/.test(step));
@@ -45,6 +61,7 @@ describe("deploy-worker.yml", () => {
     assert.match(steps[selectIndex], /run:\s*node infra\/models-github-proxy\/scripts\/list-oauth-secrets\.mjs/);
     assert.match(steps[selectIndex], /GOOGLE_CLIENT_SECRET:\s*\$\{\{\s*secrets\.GOOGLE_OAUTH_CLIENT_SECRET\s*\}\}/);
     assert.match(steps[selectIndex], /MICROSOFT_CLIENT_SECRET:\s*\$\{\{\s*secrets\.MICROSOFT_OAUTH_CLIENT_SECRET\s*\}\}/);
+    assert.match(steps[selectIndex], /GITHUB_APP_CLIENT_SECRET:\s*\$\{\{\s*secrets\.GH_APP_CLIENT_SECRET\s*\}\}/);
   });
 
   it("hands the secrets to wrangler-action under the Worker's names, listing only those that exist", () => {
@@ -53,8 +70,15 @@ describe("deploy-worker.yml", () => {
     assert.match(deploy, /^\s+secrets:\s*\$\{\{\s*steps\.oauth_secrets\.outputs\.names\s*\}\}\s*$/m);
     assert.match(deploy, /^\s+GOOGLE_CLIENT_SECRET:\s*\$\{\{\s*secrets\.GOOGLE_OAUTH_CLIENT_SECRET\s*\}\}\s*$/m);
     assert.match(deploy, /^\s+MICROSOFT_CLIENT_SECRET:\s*\$\{\{\s*secrets\.MICROSOFT_OAUTH_CLIENT_SECRET\s*\}\}\s*$/m);
+    assert.match(deploy, /^\s+GITHUB_APP_CLIENT_SECRET:\s*\$\{\{\s*secrets\.GH_APP_CLIENT_SECRET\s*\}\}\s*$/m);
     assert.match(deploy, /workingDirectory:\s*infra\/models-github-proxy/);
     assert.match(deploy, /command:\s*deploy/);
+  });
+
+  it("never names a repository secret with the reserved GITHUB_ prefix", () => {
+    for (const [, name] of readWorkflow().matchAll(/secrets\.([A-Z0-9_]+)/g)) {
+      assert.doesNotMatch(name, /^GITHUB_/, name);
+    }
   });
 
   it("only ever reads secrets through the secrets context, never as literals", () => {
@@ -63,6 +87,18 @@ describe("deploy-worker.yml", () => {
         assert.match(line, /\$\{\{\s*secrets\.[A-Z_]+\s*\}\}/, line);
       }
     }
+  });
+
+  it("checks the live Worker after the deploy, fails soft, and hands the script only names", () => {
+    const steps = stepsOf(readWorkflow());
+    const deployIndex = steps.findIndex((step) => step.includes("cloudflare/wrangler-action"));
+    const checkIndex = steps.findIndex((step) => step.includes("summarize-oauth-status.mjs"));
+    assert.ok(checkIndex > deployIndex, "the check runs after the deploy");
+    const check = steps[checkIndex];
+    assert.match(check, /continue-on-error:\s*true/);
+    assert.match(check, /WORKER_BASE_URL:\s*\$\{\{\s*vars\.VITE_GITHUB_MODELS_BASE\s*\}\}/);
+    assert.match(check, /UPLOADED_SECRETS:\s*\$\{\{\s*steps\.oauth_secrets\.outputs\.names\s*\}\}/);
+    assert.doesNotMatch(check, /\$\{\{\s*secrets\./, "the check step receives no secret");
   });
 });
 
@@ -93,12 +129,25 @@ describe("scripts/list-oauth-secrets.mjs (the deploy step must not fail for a mi
 
   const GOOGLE = "FAKE-google-secret-for-the-workflow-test";
   const MICROSOFT = "FAKE-microsoft-secret-for-the-workflow-test";
+  const GITHUB = "FAKE-github-secret-for-the-workflow-test";
 
-  it("lists both Worker secret names when both repository secrets exist", () => {
-    const result = run({ GOOGLE_CLIENT_SECRET: GOOGLE, MICROSOFT_CLIENT_SECRET: MICROSOFT });
+  it("lists every Worker secret name when every repository secret exists", () => {
+    const result = run({ GOOGLE_CLIENT_SECRET: GOOGLE, MICROSOFT_CLIENT_SECRET: MICROSOFT, GITHUB_APP_CLIENT_SECRET: GITHUB });
     assert.equal(result.status, 0);
-    assert.deepEqual(namesOf(result.output), ["GOOGLE_CLIENT_SECRET", "MICROSOFT_CLIENT_SECRET"]);
+    assert.deepEqual(namesOf(result.output), ["GOOGLE_CLIENT_SECRET", "MICROSOFT_CLIENT_SECRET", "GITHUB_APP_CLIENT_SECRET"]);
     assert.doesNotMatch(result.stdout, /::notice|::warning|::error/);
+  });
+
+  it("uploads the GitHub App secret under the Worker's name, and names GH_APP_CLIENT_SECRET when it is missing", () => {
+    const present = run({ GITHUB_APP_CLIENT_SECRET: GITHUB });
+    assert.deepEqual(namesOf(present.output), ["GITHUB_APP_CLIENT_SECRET"]);
+    assert.doesNotMatch(present.stdout, /GH_APP_CLIENT_SECRET/);
+
+    const missing = run({ GOOGLE_CLIENT_SECRET: GOOGLE, MICROSOFT_CLIENT_SECRET: MICROSOFT });
+    assert.equal(missing.status, 0);
+    assert.deepEqual(namesOf(missing.output), ["GOOGLE_CLIENT_SECRET", "MICROSOFT_CLIENT_SECRET"]);
+    assert.match(missing.stdout, /::notice title=GitHub sign-in not uploaded::The repository secret GH_APP_CLIENT_SECRET is not set/);
+    assert.equal((missing.stdout.match(/::notice/g) ?? []).length, 1, "one notice per missing secret");
   });
 
   it("lists only the secret that exists, and says which repository secret is missing", () => {
@@ -106,6 +155,7 @@ describe("scripts/list-oauth-secrets.mjs (the deploy step must not fail for a mi
     assert.equal(onlyGoogle.status, 0);
     assert.deepEqual(namesOf(onlyGoogle.output), ["GOOGLE_CLIENT_SECRET"]);
     assert.match(onlyGoogle.stdout, /MICROSOFT_OAUTH_CLIENT_SECRET/);
+    assert.match(onlyGoogle.stdout, /GH_APP_CLIENT_SECRET/);
     assert.doesNotMatch(onlyGoogle.stdout, /GOOGLE_OAUTH_CLIENT_SECRET/);
 
     const onlyMicrosoft = run({ MICROSOFT_CLIENT_SECRET: MICROSOFT });
@@ -121,14 +171,15 @@ describe("scripts/list-oauth-secrets.mjs (the deploy step must not fail for a mi
       assert.deepEqual(namesOf(result.output), []);
       assert.match(result.stdout, /GOOGLE_OAUTH_CLIENT_SECRET/);
       assert.match(result.stdout, /MICROSOFT_OAUTH_CLIENT_SECRET/);
+      assert.match(result.stdout, /GH_APP_CLIENT_SECRET/);
     }
   });
 
   it("never prints a secret value", () => {
-    const result = run({ GOOGLE_CLIENT_SECRET: GOOGLE, MICROSOFT_CLIENT_SECRET: MICROSOFT });
+    const result = run({ GOOGLE_CLIENT_SECRET: GOOGLE, MICROSOFT_CLIENT_SECRET: MICROSOFT, GITHUB_APP_CLIENT_SECRET: GITHUB });
     assert.equal(result.status, 0, "the script ran");
     for (const text of [result.stdout, result.stderr, result.output]) {
-      assert.ok(!text.includes(GOOGLE) && !text.includes(MICROSOFT));
+      assert.ok(!text.includes(GOOGLE) && !text.includes(MICROSOFT) && !text.includes(GITHUB));
     }
   });
 

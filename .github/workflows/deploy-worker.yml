@@ -11,6 +11,11 @@ on:
       - infra/models-github-proxy/**
       - .github/workflows/deploy-worker.yml
 
+# Least privilege: the job only reads the repository. The Cloudflare token and the OAuth client
+# secrets are repository secrets passed to single steps, not workflow permissions.
+permissions:
+  contents: read
+
 concurrency:
   group: deploy-worker
   cancel-in-progress: true
@@ -39,6 +44,8 @@ jobs:
         env:
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           MICROSOFT_CLIENT_SECRET: ${{ secrets.MICROSOFT_OAUTH_CLIENT_SECRET }}
+          # GitHub forbids repository secret names that start with GITHUB_, hence GH_APP_CLIENT_SECRET.
+          GITHUB_APP_CLIENT_SECRET: ${{ secrets.GH_APP_CLIENT_SECRET }}
         run: node infra/models-github-proxy/scripts/list-oauth-secrets.mjs
 
       - name: Deploy to Cloudflare
@@ -46,9 +53,22 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # The Workers Rate Limiting binding of wrangler.toml needs Wrangler 4.36.0 or later.
+          wranglerVersion: "4"
           workingDirectory: infra/models-github-proxy
           command: deploy
           secrets: ${{ steps.oauth_secrets.outputs.names }}
         env:
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           MICROSOFT_CLIENT_SECRET: ${{ secrets.MICROSOFT_OAUTH_CLIENT_SECRET }}
+          GITHUB_APP_CLIENT_SECRET: ${{ secrets.GH_APP_CLIENT_SECRET }}
+
+      # Fails soft: the deploy already succeeded, this only reports which sign-in providers the live
+      # Worker has (GET /oauth/status, booleans only) in the job summary.
+      - name: Check which sign-in providers are configured
+        if: success()
+        continue-on-error: true
+        env:
+          WORKER_BASE_URL: ${{ vars.VITE_GITHUB_MODELS_BASE }}
+          UPLOADED_SECRETS: ${{ steps.oauth_secrets.outputs.names }}
+        run: node infra/models-github-proxy/scripts/summarize-oauth-status.mjs

@@ -1,5 +1,7 @@
 # GitHub Models CORS proxy and OAuth token broker (Cloudflare Worker)
 
+> Owner's step-by-step guide (Cloudflare, Google, Microsoft, GitHub App; what to enforce): [`docs/guida-cloudflare-e-accessi.it.md`](../../docs/guida-cloudflare-e-accessi.it.md) (Italian), short English version [`docs/cloudflare-and-sign-in-setup.en.md`](../../docs/cloudflare-and-sign-in-setup.en.md).
+
 The Narrarium web app runs entirely in the browser (GitHub Pages). This Cloudflare
 Worker does two jobs for it:
 
@@ -8,9 +10,9 @@ Worker does two jobs for it:
    blocked. The Worker transparently forwards every request to `models.github.ai` and
    adds CORS headers scoped to the Narrarium origins.
 2. **Stateless OAuth token broker** (everything under `/oauth/`, see
-   [Broker OAuth](#broker-oauth)). It keeps the Google and Microsoft client secrets
-   so that the site can stay connected to Google Drive and OneDrive without asking the
-   user to sign in again every hour.
+   [Broker OAuth](#broker-oauth)). It keeps the Google, Microsoft and GitHub App client
+   secrets so that the site can stay connected to Google Drive, OneDrive and GitHub
+   without asking the user to sign in again every hour.
 
 ## What it proxies
 
@@ -53,6 +55,9 @@ A request with a browser `Origin` that is not allowed gets `403`. A caller with 
 - **Microsoft.** With the "Single-page application" platform the refresh token lives
   at most 24 hours. With the "Web" platform and a client secret it lives 90 days,
   renewed at every use.
+- **GitHub.** A browser cannot call GitHub's token endpoint (no CORS) and the web flow
+  needs the client secret. A **GitHub App** user token lives 8 hours and comes with a
+  refresh token (6 months) that **rotates** at every use.
 
 The secrets stay in the Worker. The browser keeps only the refresh token. The broker
 is **stateless**: it stores nothing (no KV, no Durable Object, no cache) and writes
@@ -70,13 +75,16 @@ accepted, plus `GET /oauth/status`.
 
 | Route | Request body | `200` answer |
 | --- | --- | --- |
-| `GET /oauth/status` | none | `{"google": boolean, "microsoft": boolean}` |
+| `GET /oauth/status` | none | `{"google": boolean, "microsoft": boolean, "github": boolean}` |
 | `POST /oauth/google/token` | `{"code"}` | `{"accessToken", "expiresIn", "refreshToken"?, "scope"?, "idToken"?}` |
 | `POST /oauth/google/refresh` | `{"refreshToken"}` | `{"accessToken", "expiresIn", "scope"?}` |
 | `POST /oauth/google/revoke` | `{"token"}` | `204`, no body |
 | `POST /oauth/microsoft/token` | `{"code", "codeVerifier", "redirectUri"}` | `{"accessToken", "expiresIn", "refreshToken", "scope"?, "idToken"?, "clientInfo"?}` |
 | `POST /oauth/microsoft/refresh` | `{"refreshToken"}` | `{"accessToken", "expiresIn", "refreshToken"?, "clientInfo"?}` |
 | `POST /oauth/microsoft/revoke` | `{"token"}` | `204`, no body, nothing is called |
+| `POST /oauth/github/token` | `{"code", "codeVerifier", "redirectUri"}` | `{"accessToken", "expiresIn", "refreshToken", "refreshTokenExpiresIn"?, "scope"?}` |
+| `POST /oauth/github/refresh` | `{"refreshToken"}` | `{"accessToken", "expiresIn", "refreshToken", "refreshTokenExpiresIn"?, "scope"?}` |
+| `POST /oauth/github/revoke` | `{"token"}` | `204`, no body |
 
 Notes:
 
@@ -99,6 +107,33 @@ Notes:
   these clients, so the route only answers `204` and calls nothing. The site deletes
   its local token; a real revocation is done by the user from the app-permissions page
   of their Microsoft account.
+- **GitHub `/token`**: the site runs the web flow of a **GitHub App** with PKCE (S256) and
+  sends the `code`, the `codeVerifier` and the same `redirectUri` it used to authorize
+  (one of the allowed redirect URIs). There are no scopes: the token is limited by the
+  app's permissions, the user's rights and the repositories the app is installed on. The
+  answer always has `expiresIn` (28800 s) and a `refreshToken`; `refreshTokenExpiresIn`
+  (15897600 s) is passed through when present; the empty `scope` GitHub reports is left
+  out. A token **without expiry or refresh token** (the app has "Expire user authorization
+  tokens" off) is refused with `502 upstream_error`: the broker never hands out a token
+  that does not expire.
+- **GitHub `/refresh`**: GitHub **rotates** the refresh token at every use, and the old one
+  stops working at once. The answer always carries the new `refreshToken`: the site must
+  store it in place of the old one (under a lock across tabs, as for Microsoft), and treat
+  `400 invalid_grant` as "connect again", never as a retry loop.
+- **GitHub `/revoke`**: deletes the app's authorization of that user
+  (`DELETE https://api.github.com/applications/{client_id}/grant`, Basic authentication with
+  the client id and secret, the token in the body), which revokes every token the app holds
+  for the user, on every device. A `404` (no such grant) is answered `204` too. Send a
+  **fresh** access token (refresh first): with an expired one GitHub cannot find the grant,
+  and the user must then revoke the app at *Settings → Applications*.
+- **GitHub reports OAuth errors inside an HTTP `200` JSON body**
+  (`{"error":"bad_verification_code"}`), so the broker reads the body for an `error` before
+  trusting the status: `bad_verification_code`, `bad_refresh_token` and `invalid_grant` →
+  `400 invalid_grant`; `unverified_user_email` → `400 invalid_grant` with a message that
+  says to verify the primary email; `incorrect_client_credentials` (and a `401` on revoke) →
+  `501 not_configured` (the Worker's client id or secret is wrong); `redirect_uri_mismatch`
+  and the other known codes → `502 upstream_error` quoting only the code. An error is never
+  answered `200`.
 - Body fields are strings of printable ASCII: at most 4096 characters for `code`,
   `refreshToken` and `token`, 2048 for `redirectUri`, 128 for `codeVerifier`. Unknown
   fields are ignored and never forwarded; the client id, grant type, scope, endpoint
@@ -138,7 +173,7 @@ Errors are JSON, `{"error": "<code>", "message": "<short text for a human>"}`:
 | 413 | `payload_too_large` | body larger than 8 KiB |
 | 429 | `rate_limited` | too many requests; `Retry-After` gives the seconds to wait |
 | 500 | `internal_error` | unexpected failure inside the Worker |
-| 501 | `not_configured` | client id or secret missing for that provider |
+| 501 | `not_configured` | client id or secret missing for that provider, or (GitHub) GitHub says the configured ones are wrong |
 | 502 | `upstream_error` | the provider is unreachable, answers unexpectedly, or rejects the broker's own configuration (the message then names the provider's error code, e.g. `invalid_client`) |
 | 504 | `upstream_timeout` | the provider did not answer within 10 seconds |
 
@@ -147,8 +182,8 @@ token, a code or a secret.
 
 ### Security model
 
-- **Secrets stay in the Worker environment.** `GOOGLE_CLIENT_SECRET` and
-  `MICROSOFT_CLIENT_SECRET` are Worker secrets. They are not in the repository
+- **Secrets stay in the Worker environment.** `GOOGLE_CLIENT_SECRET`,
+  `MICROSOFT_CLIENT_SECRET` and `GITHUB_APP_CLIENT_SECRET` are Worker secrets. They are not in the repository
   (`wrangler.toml` holds only the public client ids), and they never appear in logs,
   error messages, response headers or answers. The Worker has no `console.*` call at all.
 - **CORS is not authentication.** The `Origin` check stops other websites from driving a
@@ -158,10 +193,13 @@ token, a code or a secret.
   exactly as dangerous as it was before the broker existed, and that is why the site
   treats it as a secret.
 - **Fixed upstreams, fixed clients.** The only endpoints ever called are
-  `https://oauth2.googleapis.com/token`, `https://oauth2.googleapis.com/revoke` and
-  `https://login.microsoftonline.com/common/oauth2/v2.0/token`. Client ids come only
-  from the configuration. Microsoft's `redirectUri` must match, exactly, an entry of
-  `ALLOWED_REDIRECT_URIS`.
+  `https://oauth2.googleapis.com/token`, `https://oauth2.googleapis.com/revoke`,
+  `https://login.microsoftonline.com/common/oauth2/v2.0/token`,
+  `https://github.com/login/oauth/access_token` and
+  `https://api.github.com/applications/{client_id}/grant`. Client ids come only from the
+  configuration. The `redirectUri` of Microsoft and GitHub must match, exactly, an entry of
+  `ALLOWED_REDIRECT_URIS` (one list for both: each provider also checks it against the
+  callback URLs registered in its own console).
 - **Strict input.** Content type, size, JSON shape, types and lengths are checked before
   anything leaves the Worker.
 - **Minimal outbound request.** Only `Content-Type` and `Accept` are sent to a provider:
@@ -175,9 +213,17 @@ token, a code or a secret.
   they reset when it is recycled, are not shared between isolates or data centres, and
   an attacker with many addresses sidesteps them. `GET /oauth/status`, preflights and
   requests from refused origins are not counted; requests without `cf-connecting-ip`
-  (Cloudflare always sets it) are not limited. A hard guarantee would need a
-  Cloudflare-side control, for instance a rate limiting rule on a custom domain or the
-  Workers Rate Limiting binding.
+  (Cloudflare always sets it) are not limited.
+- **Second limit: the Workers Rate Limiting binding (optional).** `wrangler.toml` declares
+  the binding `OAUTH_RATE_LIMITER` (30 calls per 60 s per address). It is shared by the
+  isolates of one Cloudflare location, so it is stronger than the in-memory limit, but
+  Cloudflare documents it as **approximate and local to each location** (and not visible in
+  the dashboard); it needs Wrangler 4.36.0 or later (the deploy workflow installs Wrangler 4).
+  It is asked after the in-memory check, only for provider `POST`s with an address. A missing
+  binding, or one that throws, never blocks a request (the in-memory limit still applies);
+  a refusal answers `429` with `Retry-After: 60`. `namespace_id` (`7301`) must be unique in
+  the Cloudflare account. A strict global limit would need a Durable Object, and WAF
+  rate-limiting rules **cannot be applied on `workers.dev`**: they need a custom domain.
 
 ### Configuration
 
@@ -185,9 +231,12 @@ token, a code or a secret.
 | --- | --- | --- | --- |
 | `GOOGLE_CLIENT_ID` | variable | `wrangler.toml` | public Google client id (the one in `src/narrarium-site/src/config/publicClients.ts`) |
 | `MICROSOFT_CLIENT_ID` | variable | `wrangler.toml` | public Microsoft application id (same file) |
+| `GITHUB_APP_CLIENT_ID` | variable | `wrangler.toml` | public Client ID of the GitHub App (not the App ID); empty until the app is registered, and `github` stays `false` in `/oauth/status` while it is empty |
 | `GOOGLE_CLIENT_SECRET` | **secret** | Worker secret | never in the repository; uploaded by the deploy workflow |
 | `MICROSOFT_CLIENT_SECRET` | **secret** | Worker secret | never in the repository; uploaded by the deploy workflow |
-| `ALLOWED_REDIRECT_URIS` | variable | `wrangler.toml` | Microsoft redirect URIs the broker accepts, comma separated, exact match |
+| `GITHUB_APP_CLIENT_SECRET` | **secret** | Worker secret | never in the repository; uploaded by the deploy workflow from the repository secret `GH_APP_CLIENT_SECRET` (GitHub forbids repository secret names that start with `GITHUB_`) |
+| `OAUTH_RATE_LIMITER` | binding | `wrangler.toml` `[[ratelimits]]` | optional Workers Rate Limiting binding (see the security model) |
+| `ALLOWED_REDIRECT_URIS` | variable | `wrangler.toml` | Microsoft and GitHub redirect URIs the broker accepts, comma separated, exact match |
 | `ALLOWED_ORIGINS_EXTRA` | variable | `wrangler.toml` | optional extra allowed origins (see above) |
 
 `ALLOWED_REDIRECT_URIS` defaults to, and `wrangler.toml` lists:
@@ -197,6 +246,10 @@ https://narrarium.net/auth/microsoft-callback.html
 https://www.narrarium.net/auth/microsoft-callback.html
 http://localhost:5173/auth/microsoft-callback.html
 http://localhost:4173/auth/microsoft-callback.html
+https://narrarium.net/auth/github/callback
+https://www.narrarium.net/auth/github/callback
+http://localhost:5173/auth/github/callback
+http://localhost:4173/auth/github/callback
 ```
 
 When the variable has any text it **replaces** the defaults, so keep every entry you
@@ -204,11 +257,11 @@ still need. Entries that are not absolute `https` URLs (`http` only for loopback
 hosts) without wildcards, fragments or credentials are dropped; a list with nothing
 usable refuses every redirect URI. A site published under a sub-path (`SITE_BASE`, for
 instance GitHub Pages) adds its own callback URL, e.g.
-`https://<user>.github.io/<repo>/auth/microsoft-callback.html`.
+`https://<user>.github.io/<repo>/auth/microsoft-callback.html` (and `.../auth/github/callback`).
 
 The client ids in `wrangler.toml` must be the ones the site starts the sign-in with. If
 the site is built with `VITE_GOOGLE_CLIENT_ID` or `VITE_MICROSOFT_CLIENT_ID`, change the
-two variables to match.
+two variables to match; `GITHUB_APP_CLIENT_ID` is the Client ID of the GitHub App.
 
 ### Limits (constants in `src/oauth.js`)
 
@@ -217,13 +270,19 @@ two variables to match.
 | Request body | 8 KiB | `413` |
 | Provider answer read | 64 KiB | `502` |
 | Provider call | 10 s | `504` |
-| Rate limit | 30 POST requests per 60 s per address | `429` |
+| Rate limit | 30 POST requests per 60 s per address (in memory, plus the optional binding) | `429` |
 
 ## Passi per il proprietario
 
 Si fanno una volta sola e non richiedono altro aiuto. Prima di cominciare unisci
 (merge) in `main` la modifica che introduce il broker: il workflow che parte è quello
 di `main`. Finché il sito non usa il broker, per gli utenti non cambia nulla.
+
+La guida completa, con ogni campo da compilare, una riga «Verifica» per passo, il token
+Cloudflare a privilegi minimi, la registrazione della GitHub App e la tabella di «cosa
+imporre», è in [`docs/guida-cloudflare-e-accessi.it.md`](../../docs/guida-cloudflare-e-accessi.it.md)
+(versione inglese breve: [`docs/cloudflare-and-sign-in-setup.en.md`](../../docs/cloudflare-and-sign-in-setup.en.md)).
+Qui sotto c'è il riassunto per Google, Microsoft e i segreti.
 
 I nomi dei menu sono quelli delle console in italiano, con l'inglese tra parentesi.
 
@@ -239,9 +298,15 @@ I nomi dei menu sono quelli delle console in italiano, con l'inglese tra parente
    volta sola. Il segreto vecchio resta valido finché non lo disattivi.
 4. In **Origini JavaScript autorizzate** (*Authorized JavaScript origins*) devono
    esserci `https://narrarium.net` e `https://www.narrarium.net`, più
-   `http://localhost:5173` per lo sviluppo (e `https://<utente>.github.io` se il sito è
-   anche su GitHub Pages). Salva: la modifica può richiedere qualche minuto. Gli "URI di
-   reindirizzamento autorizzati" non servono: il flusso a popup usa `postmessage`.
+   `http://localhost:5173` e `http://localhost:4173` per lo sviluppo (e
+   `https://<utente>.github.io` se il sito è anche su GitHub Pages). Salva: la modifica
+   può richiedere qualche minuto. Gli "URI di reindirizzamento autorizzati" non servono: il
+   flusso a popup non fa nessun reindirizzamento e il Worker scambia il codice con il
+   valore speciale `postmessage`. Attenzione: la documentazione di Google (aggiornata il
+   29 ottobre 2026) dice che nello scambio del codice del popup il `redirect_uri` è
+   l'origine della pagina; `postmessage` è il valore non documentato che gli sviluppatori
+   riportano funzionante. Non è mai stato provato dal vivo con questo Worker: se il primo
+   collegamento di Google dà `redirect_uri_mismatch`, la correzione è nel Worker.
 5. Apri la **Schermata consenso OAuth** (*OAuth consent screen*; nella console più
    recente: **Google Auth Platform** → **Pubblico**) e premi **Pubblica l'app**
    (*Publish app*) finché lo stato è **In produzione**. In stato "Testing" i refresh
@@ -286,13 +351,28 @@ I nomi dei menu sono quelli delle console in italiano, con l'inglese tra parente
 
 Dalla cartella del repository:
 
+Il modo più comodo è lo script, che chiede i tre segreti uno alla volta con **input
+nascosto**, li passa a `gh secret set` da stdin (non compaiono né nella riga di comando né
+nella cronologia) e può anche lanciare il deploy e mostrare lo stato (`--dry-run` stampa
+cosa farebbe, senza chiedere nulla):
+
+```bash
+infra/models-github-proxy/scripts/set-secrets.sh --dry-run
+infra/models-github-proxy/scripts/set-secrets.sh
+```
+
+A mano è equivalente a:
+
 ```bash
 gh secret set GOOGLE_OAUTH_CLIENT_SECRET
 gh secret set MICROSOFT_OAUTH_CLIENT_SECRET
+gh secret set GH_APP_CLIENT_SECRET            # client secret della GitHub App (vedi la guida)
 ```
 
 `gh` chiede il valore: incollalo al prompt, **mai nella riga di comando** (finirebbe nella
-cronologia della shell). `gh secret list` mostra i nomi, mai i valori. Poi rilancia il
+cronologia della shell). Il segreto della GitHub App si chiama `GH_APP_CLIENT_SECRET`
+perché GitHub vieta i nomi che iniziano con `GITHUB_`; il deploy lo carica nel Worker come
+`GITHUB_APP_CLIENT_SECRET`. `gh secret list` mostra i nomi, mai i valori. Poi rilancia il
 workflow "Deploy Cloudflare Worker":
 
 ```bash
@@ -302,10 +382,12 @@ gh run watch            # scegli l'esecuzione appena avviata
 
 Il workflow esegue prima i test del Worker, poi carica nel Worker i segreti che esistono
 (il passo "Select the OAuth client secrets to upload" segnala, solo per nome, quali
-segreti GitHub mancano, con un'annotazione nella pagina dell'esecuzione) e infine
-pubblica. Se manca un segreto non fallisce: quel provider risponde
-`501 not_configured`. Servono anche i segreti `CLOUDFLARE_API_TOKEN` (con il permesso di
-modificare i Worker: è lui a caricare i segreti) e `CLOUDFLARE_ACCOUNT_ID`, già usati dal
+segreti GitHub mancano, con un'annotazione nella pagina dell'esecuzione), pubblica e
+infine, nel riepilogo dell'esecuzione, scrive la tabella dei provider
+configurati/non configurati con la prossima azione per ciascuno. Se manca un segreto non
+fallisce: quel provider risponde `501 not_configured`. Servono anche i segreti
+`CLOUDFLARE_API_TOKEN` (con il permesso di modificare il Worker: è lui a caricare i
+segreti; per il minimo dei privilegi vedi la guida) e `CLOUDFLARE_ACCOUNT_ID`, già usati dal
 deploy.
 
 ### 4. Verifica
@@ -316,7 +398,8 @@ VITE_GITHUB_MODELS_BASE`).
 
 ```bash
 curl https://<worker>.workers.dev/oauth/status
-# {"google":true,"microsoft":true}
+# {"google":true,"microsoft":true,"github":true}
+node infra/models-github-proxy/scripts/check-status.mjs     # lo stesso, a parole
 ```
 
 Per controllare anche id e segreto di Google senza usare token veri:
@@ -376,7 +459,9 @@ revoca dalla propria pagina account.
 
 | Sintomo | Causa probabile | Rimedio |
 | --- | --- | --- |
-| `/oauth/status` dà `false`, o `501 not_configured` | il Worker non ha il segreto del provider | `gh secret list`, controlla il log del workflow e rilancialo |
+| `/oauth/status` dà `false`, o `501 not_configured` | il Worker non ha il segreto del provider (per GitHub: anche `GITHUB_APP_CLIENT_ID` vuoto in `wrangler.toml`, o GitHub dice che id/segreto sono sbagliati) | `gh secret list`, controlla il riepilogo del workflow e rilancialo |
+| `/oauth/status` senza la chiave `github` | il Worker in linea è ancora la versione precedente | attendi la propagazione e rilancia il workflow |
+| `400 invalid_grant` da GitHub | codice o refresh token respinti (GitHub li ruota a ogni uso) | il sito deve chiedere di ricollegare l'account |
 | `502 upstream_error` con `invalid_client` | segreto sbagliato o scaduto, id diverso da quello del sito; per Microsoft di solito si è copiato l'"ID segreto" invece del "Valore" | rifai il passo 1.3 o 2.3 e il passo 3 |
 | `502 upstream_error` per Microsoft dopo un collegamento | URI di reindirizzamento ancora sotto "Applicazione a pagina singola" (`AADSTS9002327`) | registralo sotto **Web** (passo 2.2) |
 | `400 invalid_request`, "redirectUri is not on the list" | l'URL di callback non è in `ALLOWED_REDIRECT_URIS` | aggiungilo in `wrangler.toml` e fai il deploy |
@@ -394,17 +479,33 @@ deploy-worker.yml`). It:
 1. runs the Worker tests (`npm test`; no dependency to install);
 2. lists which of the OAuth client secrets exist in the repository
    (`scripts/list-oauth-secrets.mjs`) and hands those, under the Worker's names, to
-   `cloudflare/wrangler-action` through its `secrets:` input. A missing repository secret
-   never fails the deploy: that provider answers `501 not_configured` and
-   `GET /oauth/status` says so;
-3. runs `wrangler deploy`.
+   `cloudflare/wrangler-action` through its `secrets:` input, with one notice per missing
+   one. A missing repository secret never fails the deploy: that provider answers
+   `501 not_configured` and `GET /oauth/status` says so;
+3. runs `wrangler deploy` (Wrangler 4);
+4. calls `GET /oauth/status` on the live Worker (the origin of the repository variable
+   `VITE_GITHUB_MODELS_BASE`, a few retries because a new deploy takes seconds to
+   propagate) and writes a table to the job summary: for each of Google, Microsoft and
+   GitHub "configured" or "not configured" and, when not, the one next action
+   (`scripts/summarize-oauth-status.mjs`). It never fails the run and never prints a value.
+
+The workflow has `permissions: contents: read`, never runs twice at once and times out
+after 10 minutes. It also starts on demand (`gh workflow run deploy-worker.yml`, no inputs).
 
 It needs these GitHub repository secrets:
 
 - `CLOUDFLARE_API_TOKEN` — a scoped token that can edit Workers (it also uploads the secrets)
 - `CLOUDFLARE_ACCOUNT_ID`
-- `GOOGLE_OAUTH_CLIENT_SECRET` and `MICROSOFT_OAUTH_CLIENT_SECRET` — optional, one per
-  provider; stored in the Worker as `GOOGLE_CLIENT_SECRET` and `MICROSOFT_CLIENT_SECRET`
+- `GOOGLE_OAUTH_CLIENT_SECRET`, `MICROSOFT_OAUTH_CLIENT_SECRET` and `GH_APP_CLIENT_SECRET`
+  — optional, one per provider; stored in the Worker as `GOOGLE_CLIENT_SECRET`,
+  `MICROSOFT_CLIENT_SECRET` and `GITHUB_APP_CLIENT_SECRET`. (GitHub forbids repository
+  secret names that start with `GITHUB_`, hence `GH_APP_CLIENT_SECRET`.)
+
+Helper scripts in `scripts/`: `set-secrets.sh` (asks for the three secrets with hidden
+input and sets them with `gh secret set`, value through stdin; `--dry-run`; optionally runs
+the deploy and the check), `check-status.mjs` (prints the `/oauth/status` answer in words,
+Italian by default, `--lang en`, `--strict` exits 2 while a provider is missing) and
+`list-oauth-secrets.mjs` / `summarize-oauth-status.mjs` (used by the workflow).
 
 A deploy never deletes a secret already stored in the Worker; see
 [Passi per il proprietario](#passi-per-il-proprietario) for how to remove one.
@@ -418,6 +519,7 @@ npx wrangler login      # interactive, local only
 npx wrangler deploy
 npx wrangler secret put GOOGLE_CLIENT_SECRET      # optional, prompts for the value
 npx wrangler secret put MICROSOFT_CLIENT_SECRET   # optional, prompts for the value
+npx wrangler secret put GITHUB_APP_CLIENT_SECRET  # optional, prompts for the value
 ```
 
 The Worker publishes to its `*.workers.dev` subdomain because `narrarium.net`
@@ -433,12 +535,12 @@ environment variable at build time (see `src/narrarium-site/src/config/githubMod
 
 ### Custom domain (optional, future)
 
-If `narrarium.net` is moved to Cloudflare, replace `workers_dev = true` in
-`wrangler.toml` with:
+If `narrarium.net` is moved to Cloudflare (steps in the guide), add to `wrangler.toml`
+(keep `workers_dev = true` until the migration is over: without it, `routes` turn it off):
 
 ```toml
 [[routes]]
-pattern = "models-proxy.narrarium.net"
+pattern = "auth.narrarium.net"
 custom_domain = true
 ```
 
@@ -454,8 +556,11 @@ calls the Worker's `fetch(request, env)` handler directly with a `Request` and s
 `globalThis.fetch` for the providers. It covers the proxy regression, CORS and origins,
 body and content-type limits, every route (happy path, `invalid_grant`, provider errors,
 timeouts, oversized answers), the redirect allow-list, `client_info`, the rate limit,
-the absence of secrets and tokens from logs, answers and headers, the deploy workflow and
-the committed configuration.
+the absence of secrets and tokens from logs, answers and headers, the GitHub provider
+(including errors reported inside an HTTP 200), the optional rate limiting binding (with
+and without a fake binding), the deploy workflow, the secret-listing and status scripts
+(including a missing secret and a fake status answer), the `set-secrets.sh` dry run and
+its flow with a fake `gh`, and the committed configuration.
 
 ## Local test
 
@@ -471,6 +576,7 @@ To try the broker locally put the secrets in a `.dev.vars` file next to `wrangle
 ```
 GOOGLE_CLIENT_SECRET=...
 MICROSOFT_CLIENT_SECRET=...
+GITHUB_APP_CLIENT_SECRET=...
 ```
 
 ## Security note

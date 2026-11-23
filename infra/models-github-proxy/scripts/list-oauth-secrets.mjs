@@ -8,11 +8,11 @@
 // as it is when its repository secret is missing.
 
 import { appendFileSync } from "node:fs";
+import { OAUTH_PROVIDERS } from "./oauth-status.mjs";
 
-const SECRETS = [
-  { workerName: "GOOGLE_CLIENT_SECRET", repositorySecret: "GOOGLE_OAUTH_CLIENT_SECRET", provider: "Google" },
-  { workerName: "MICROSOFT_CLIENT_SECRET", repositorySecret: "MICROSOFT_OAUTH_CLIENT_SECRET", provider: "Microsoft" },
-];
+// GitHub forbids repository secret names that start with GITHUB_, so the GitHub App's secret is
+// the repository secret GH_APP_CLIENT_SECRET and reaches the Worker as GITHUB_APP_CLIENT_SECRET.
+const SECRETS = OAUTH_PROVIDERS.map(({ workerSecret, repositorySecret, label }) => ({ workerName: workerSecret, repositorySecret, provider: label }));
 
 const present = [];
 for (const { workerName, repositorySecret, provider } of SECRETS) {
