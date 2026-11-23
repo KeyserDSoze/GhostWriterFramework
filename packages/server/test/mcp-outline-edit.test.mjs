@@ -7,7 +7,8 @@ import { until, withServer } from "./helpers.mjs";
 import { finished, seededBook } from "./fake-provider.mjs";
 import { fakeAi, holdingAi, startOf } from "./hold.mjs";
 import { commitCount, enableMcp, issueToken, lastCommit, mcpBook, mcpClient, mcpFixture, mcpRoute } from "./mcp-helpers.mjs";
-import { bookFile, bulkOutline, countReads, done, entryFile, invalid, onDisk, outlineFixture, refused, sha } from "./mcp-outline-helpers.mjs";
+import { autopilotEntry, bookFile, bulkOutline, countReads, done, entryFile, invalid, onDisk, outlineFixture, refused, sha } from "./mcp-outline-helpers.mjs";
+import { outlineEntryFiles } from "narrarium-engine/testing";
 import { connectApp } from "./oauth-helpers.mjs";
 
 // The tool that changes the outline (the Scaletta) through a book's MCP endpoint (S9): edit_outline, a series of the engine's own edits made in order as one commit,
@@ -389,7 +390,9 @@ test("S9: the outline can be read and edited while the autopilot runs, and what 
   const ai = holdingAi();
   try {
     await withServer(async (server, client) => {
-      await seededBook(client, "b");
+      await seededBook(client, "b", { chapters: 0 });
+      // Entries the autopilot wrote earlier and nobody touched: they bind nothing, and the plan writes them again.
+      await client.commitFiles("b", [await autopilotEntry(1, { title: "Chapter Title 1", body: "Event 1 happens and the story turns." }), await autopilotEntry(2, { title: "Chapter Title 2", body: "Event 2 happens and the story turns." })], "entries the autopilot wrote");
       const { slug } = await enableMcp(server, "b");
       const rpc = mcpClient(server, slug, await issueToken(server));
       await client.startAutopilot("b", startOf(2));
@@ -625,7 +628,7 @@ test("S9: an edit that changes the entry of a chapter that is written says what 
   });
 
   await withServer(async (server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 1 });
     await client.startAutopilot("b", startOf(1));
     assert.equal((await finished(client, "b")).state.status, "completed");
     const status = await enableMcp(server, "b");
@@ -642,6 +645,7 @@ test("S9: an edit that changes the entry of a chapter that is written says what 
 test("S9: the notes of an edit say one sentence for each thing the autopilot does about the chapters that are written: it rewrites the one it wrote and only reports the ones the author wrote before it took the book over", async () => {
   await withServer(async (server, client) => {
     const { rpc } = await mcpFixture(server, client);
+    await client.commitFiles("glass", Object.entries(outlineEntryFiles(3)).map(([path, content]) => ({ path, content })), "the chapter entries of the three");
     await client.startAutopilot("glass", startOf(3));
     assert.equal((await finished(client, "glass")).state.status, "completed");
     await client.updateAutopilotOptions("glass", { frozenEdits: "auto" });
@@ -654,7 +658,7 @@ test("S9: the notes of an edit say one sentence for each thing the autopilot doe
 
 test("S9: an entry that an edit deletes for a chapter that is written is not a change to decide about: the chapter stays in the book and the autopilot only says it; the entries that move are changes, each as the setting says", async () => {
   await withServer(async (server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 3 });
     await client.startAutopilot("b", startOf(3));
     assert.equal((await finished(client, "b")).state.status, "completed");
     const status = await enableMcp(server, "b");
@@ -687,7 +691,9 @@ test("S9: the entry of a chapter that is being written says that the autopilot d
   const ai = holdingAi("autopilot:director-review:1");
   try {
     await withServer(async (server, client) => {
-      await seededBook(client, "b");
+      await seededBook(client, "b", { chapters: 0 });
+      // Entries the autopilot wrote earlier and nobody touched: they bind nothing, and the plan writes them again.
+      await client.commitFiles("b", [await autopilotEntry(1, { title: "Chapter Title 1", body: "Event 1 happens and the story turns." }), await autopilotEntry(2, { title: "Chapter Title 2", body: "Event 2 happens and the story turns." })], "entries the autopilot wrote");
       const { slug } = await enableMcp(server, "b");
       const rpc = mcpClient(server, slug, await issueToken(server));
       await client.startAutopilot("b", startOf(2));

@@ -1,4 +1,5 @@
-import { CANON_DIRECTORIES, clipText, parseMarkdown, type AutopilotSnapshot, type BookSnapshot, type CanonInfo, type CanonKind } from "narrarium-engine";
+import { CANON_DIRECTORIES, OUTLINE_BRIEF_FILE, clipText, parseMarkdown, readOutlineBrief, type AutopilotSnapshot, type BookSnapshot, type CanonInfo, type CanonKind } from "narrarium-engine";
+import { briefView } from "./mcp-brief.js";
 import { judgeFolder, judgePath, readable } from "./mcp-policy.js";
 import { boolean, choice, integer, shape, string } from "./mcp-schema.js";
 import { asInteger, asString, DEFAULT_PAGE_CHARACTERS, findCanon, findChapter, findScene, json, offsetProperty, pageList, pageProperty, pageText, plain, shorten, ToolError, withText, type McpTool, type ToolContext } from "./mcp-kit.js";
@@ -399,7 +400,8 @@ const autopilotStatus: McpTool = {
   annotations: READ_ONLY,
   inputSchema: shape({}),
   async run(context) {
-    return json(describeAutopilot(await context.runtime.session.snapshot(), true));
+    const snapshot = await context.snapshot();
+    return json({ ...describeAutopilot(await context.runtime.session.snapshot(), true), brief: briefView(await readOutlineBrief(context.runtime.store, { brief: snapshot.files.has(OUTLINE_BRIEF_FILE) }), snapshot.outline?.chapters.length ?? 0) });
   },
 };
 

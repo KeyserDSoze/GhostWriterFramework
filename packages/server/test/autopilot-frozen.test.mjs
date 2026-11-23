@@ -113,7 +113,7 @@ test("E4b: configure and start hand the options to the engine as they are: froze
     assert.equal(done.state.status, "completed", done.state.lastError?.message);
     assert.deepEqual([done.state.options.frozenEdits, done.state.options.fillOutline], ["auto", false]);
     const { files } = await client.manifest("c");
-    assert.ok(!files.some((file) => file.path.startsWith("outline/")), "fillOutline: false reached the run (it wrote no outline)");
+    assert.deepEqual(files.map((file) => file.path).filter((path) => path.startsWith("outline/")).sort(), ["outline/_brief.md", "outline/book.md", "outline/chapters/001.md"], "fillOutline: false reached the run (it wrote no outline: the idea and the brief it was given, and the one entry the author wrote)");
   }, { ai: fakeAi(1) });
 });
 

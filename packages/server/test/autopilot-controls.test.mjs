@@ -17,7 +17,7 @@ const held = (ai) => until(() => ai.isHeld(), 30_000);
 
 /** Register a book, start it and wait until the AI is held in `HELD`: a step is in flight. */
 async function startHeld(client, ai, bookId = "b", extra = {}, chapters = 2) {
-  await seededBook(client, bookId);
+  await seededBook(client, bookId, { chapters: 2 });
   await client.startAutopilot(bookId, startOf(chapters, extra));
   await held(ai);
 }
@@ -220,7 +220,7 @@ test("S4-1: a mode that is none of the four is a 400 invalid_request that names 
 
 test("S4-1: with no run every mode is a quiet 200 that creates no state, a bad mode is still a 400, and stopping is not refused while the server waits for an update", async () => {
   await withServer(async (server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 2 });
     for (const mode of ["now", "after-step", "after-chapter", "cancel"]) {
       const answer = await client.pauseAutopilot("b", mode);
       assert.equal(answer.running, false, mode);
@@ -242,7 +242,7 @@ test("S4-1: with no run every mode is a quiet 200 that creates no state, a bad m
 
 test("S4-1: `limits.steps` pauses the run after that many steps; each start counts its own steps and nothing of it is saved", async () => {
   await withServer(async (server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 2 });
     for (const done of [1, 2, 3]) {
       await client.startAutopilot("b", done === 1 ? startOf(2, { limits: { steps: 1 } }) : { limits: { steps: 1 } });
       const snapshot = await finished(client, "b");
@@ -264,7 +264,7 @@ test("S4-1: `limits.steps` pauses the run after that many steps; each start coun
 
 test("S4-1: `limits.chapters` pauses the run after that many chapters; the next start is not limited", async () => {
   await withServer(async (_server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 2 });
     await client.startAutopilot("b", startOf(2, { limits: { chapters: 1 } }));
     const first = await finished(client, "b");
     assert.equal(first.state.status, "paused");
@@ -282,7 +282,7 @@ test("S4-1: the limits of the run in progress, and how far it got, are in the su
   const ai = holdingAi();
   try {
     await withServer(async (_server, client) => {
-      await seededBook(client, "b");
+      await seededBook(client, "b", { chapters: 2 });
       const started = await client.startAutopilot("b", startOf(2, { limits: { steps: 50, chapters: 3 } }));
       assert.ok(started.summary, "the answer of a start carries the summary");
       await held(ai);
@@ -303,7 +303,7 @@ test("S4-1: the limits of the run in progress, and how far it got, are in the su
 test("S4-1: `limits` that is not an object is a 400 invalid_request before anything starts: no run, no state, no AI call", async () => {
   const ai = fakeAi();
   await withServer(async (server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 2 });
     const api = await rawApi(server);
     for (const limits of [null, [], [1], [{ steps: 1 }], 5, 0, "steps", "{}", true, false]) {
       const answer = await api("POST", startRoute(), { brief: brief(2), options: FAST, limits });
@@ -325,7 +325,7 @@ test("S4-1: a number that is not a whole number above zero is no limit, and is n
   await withServer(async (_server, client) => {
     for (const [index, limits] of variants.entries()) {
       const bookId = `u${index}`;
-      await seededBook(client, bookId);
+      await seededBook(client, bookId, { chapters: 1 });
       // The run stops by itself when the plan is ready (three steps): a limit of one step would have stopped it after the first.
       await client.startAutopilot(bookId, { brief: brief(1), options: { ...FAST, pauseAfterPlan: true }, limits });
       const snapshot = await finished(client, bookId);
@@ -338,7 +338,7 @@ test("S4-1: a number that is not a whole number above zero is no limit, and is n
 
 test("S4-1: a limit that is large but real is kept, shown, never reached, and the run completes", async () => {
   await withServer(async (_server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 1 });
     await client.startAutopilot("b", startOf(1, { limits: { steps: Number.MAX_SAFE_INTEGER, chapters: 9_007_199_254_740 } }));
     const done = await finished(client, "b");
     assert.equal(done.state.status, "completed");
@@ -385,7 +385,7 @@ test("S4-1: PUT …/autopilot/options changes where the book is published while 
 
 test("S4-1: on a book with no autopilot state the options route creates it, as `configure` does", async () => {
   await withServer(async (server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 2 });
     await seededBook(client, "c");
     assert.equal(await readState(server, "b"), null);
     const answer = await client.updateAutopilotOptions("b", { publishEvery: "off" });
@@ -438,7 +438,7 @@ const BAD_OPTIONS = [
 
 test("S4-1: the options route knows two settings; anything else is a 400 invalid_request that lists them, and nothing of the request is applied", async () => {
   await withServer(async (server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 2 });
     await client.updateAutopilotOptions("b", { publishEvery: "chapter" });
     const api = await rawApi(server);
     const before = await readState(server);
@@ -479,7 +479,7 @@ test("S4-1: while a run goes on any other option is a 400 as well (not a 409), a
 
 test("S4-1: the options route is for clients that may run the autopilot, from an origin that is allowed; an unknown book is a 404", async () => {
   await withServer(async (server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 2 });
     const body = { publishEvery: "off" };
     const anonymous = await fetch(`${server.url}${optionsRoute()}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     assert.equal(anonymous.status, 401);
@@ -514,7 +514,7 @@ test("S4-1: the options route is for clients that may run the autopilot, from an
 
 test("S4-1: the options route reads its body as its neighbours do: JSON only, one object, small", async () => {
   await withServer(async (server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 2 });
     const api = await rawApi(server);
     const plain = await api("PUT", optionsRoute(), JSON.stringify({ publishEvery: "off" }), { "content-type": "text/plain" });
     assert.deepEqual([plain.status, plain.json.code], [415, "unsupported_media_type"]);
@@ -533,7 +533,7 @@ test("S4-1: the options route reads its body as its neighbours do: JSON only, on
 
 test("S4-1: a state file that cannot be read is a 409 state_corrupt, a commit that lost a race 409 conflict, an update about to start 503; none writes anything", async () => {
   await withServer(async (server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 2 });
     await seededBook(client, "c");
     const api = await rawApi(server);
     await client.commitFiles("b", [{ path: "autopilot/state.json", content: "{ this is not a state" }], "damaged");
@@ -582,7 +582,7 @@ test("S4-3: `info.features` announces `autopilot-controls`: after-chapter, cance
 
 test("S4-3: the list of books says where a book is published, like the summary of its autopilot: after every step, for a server, unless the author chose", async () => {
   await withServer(async (_server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 2 });
     assert.equal((await client.listBooks())[0].autopilot, null, "a book that never ran has no summary");
     await client.configureAutopilot("b", { options: { pauseAfterPlan: false } });
     const idle = (await client.listBooks())[0].autopilot;
@@ -601,7 +601,7 @@ test("S4-3: the list of books shows the pause that waits and the limits of the r
   const ai = holdingAi();
   try {
     await withServer(async (_server, client) => {
-      await seededBook(client, "b");
+      await seededBook(client, "b", { chapters: 2 });
       await client.startAutopilot("b", startOf(2, { limits: { steps: 40, chapters: 1 } }));
       await held(ai);
       await client.pauseAutopilot("b", "after-chapter");
@@ -627,7 +627,7 @@ test("S4-3: the live stream says it when a pause is asked or taken back, when th
   const ai = holdingAi();
   try {
     await withServer(async (_server, client) => {
-      await seededBook(client, "b");
+      await seededBook(client, "b", { chapters: 2 });
       const stream = await followStream(client);
       try {
         await client.startAutopilot("b", startOf(2, { limits: { steps: 30 } }));
@@ -689,7 +689,7 @@ function assertCivil(answer, label) {
 test("S4-3: bodies that nobody meant to send never make the new routes fail inside: every answer is a 2xx or a clear 4xx, and nothing changes", async () => {
   const lines = [];
   await withServer(async (server, client) => {
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 2 });
     await seededBook(client, "c");
     await client.updateAutopilotOptions("c", { publishEvery: "chapter" });
     const api = await rawApi(server);

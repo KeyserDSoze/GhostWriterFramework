@@ -1,4 +1,5 @@
 import test from "node:test";
+import { seedBookFilesWithChapters } from "./fake-provider.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
@@ -59,7 +60,7 @@ test("C5: re-registering a running book keeps its run, its count and its pause b
   try {
     await withServer(async (server, client) => {
       await client.registerBook("busy", { title: "Busy", storage: { kind: "local" } });
-      await syncBookStores({ local: new MemoryBookStore(seedBookFiles()), remote: remoteBookStore(client, "busy"), base: new Map() });
+      await syncBookStores({ local: new MemoryBookStore(seedBookFilesWithChapters()), remote: remoteBookStore(client, "busy"), base: new Map() });
       await client.startAutopilot("busy", { brief: { idea: "A busy harbor", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false } });
       await slow.started;
       assert.equal(server.books.runningCount(), 1);
@@ -94,7 +95,7 @@ test("C5: moving a running book to another storage is still refused", async () =
   try {
     await withServer(async (server, client) => {
       await client.registerBook("busy", { title: "Busy", storage: { kind: "local" } });
-      await syncBookStores({ local: new MemoryBookStore(seedBookFiles()), remote: remoteBookStore(client, "busy"), base: new Map() });
+      await syncBookStores({ local: new MemoryBookStore(seedBookFilesWithChapters()), remote: remoteBookStore(client, "busy"), base: new Map() });
       await client.startAutopilot("busy", { brief: { idea: "A busy harbor", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false } });
       await slow.started;
       await assert.rejects(() => client.registerBook("busy", { title: "Busy", storage: GITHUB, githubToken: "ghp_x" }), (error) => error.status === 409 && error.code === "busy");
@@ -111,7 +112,7 @@ test("C5: moving a running book to another storage is still refused", async () =
 
 test("C5: a running GitHub book is not cloned or synced again when it is re-registered", async () => {
   const slow = gatedAi();
-  const seeded = await seedOrigin(seedBookFiles());
+  const seeded = await seedOrigin(seedBookFilesWithChapters());
   try {
     await withServer(async (server, client) => {
       await client.registerBook("gh", { title: "Remote", storage: GITHUB, githubToken: "ghp_first" });

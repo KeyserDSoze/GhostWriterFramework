@@ -173,32 +173,32 @@ test("P12 runs: every book is in the list with its own state: held mid-step, ask
   await withServer(async (server, client) => {
     const owner = await adminLogin(server);
     // A book whose plan the director answers with a question: the run waits for the author.
-    await seededBook(client, "asks");
+    await seededBook(client, "asks", { chapters: 3 });
     ai.asking = true;
     await client.startAutopilot("asks", ONE_CHAPTER);
     await finishedRun(client, "asks");
     ai.asking = false;
     // A book that stops after its plan.
-    await seededBook(client, "stops");
+    await seededBook(client, "stops", { chapters: 3 });
     await client.startAutopilot("stops", { ...startOf(3), limits: { steps: 3 } });
     await finishedRun(client, "stops");
     // The same state, as other hosts left it.
     const [planned] = await client.readFiles("stops", ["autopilot/state.json"]);
     const now = Date.now();
     for (const [bookId, heartbeat] of [["away", 20_000], ["silent", 12 * MINUTE]]) {
-      await seededBook(client, bookId);
+      await seededBook(client, bookId, { chapters: 3 });
       await client.commitFiles(bookId, [{ path: "autopilot/state.json", content: planned.content }], "state");
       await editState(client, bookId, (state) => {
         state.status = "running";
         state.runner = { host: "browser", label: "Alessandro's MacBook", hostId: "device-1", runId: "run-elsewhere", startedAt: new Date(now - 5 * MINUTE).toISOString(), heartbeatAt: new Date(now - heartbeat).toISOString() };
       });
     }
-    await seededBook(client, "never");
+    await seededBook(client, "never", { chapters: 3 });
     await client.registerBook("empty", { title: "Empty", storage: { kind: "local" } });
-    await seededBook(client, "broken");
+    await seededBook(client, "broken", { chapters: 3 });
     await client.commitFiles("broken", [{ path: "autopilot/state.json", content: "{ not json" }], "damage");
     // And one that this server is writing right now, held in the middle of a step.
-    await seededBook(client, "live");
+    await seededBook(client, "live", { chapters: 3 });
     ai.arm();
     await client.startAutopilot("live", startOf(3));
     await until(() => ai.isHeld());
@@ -267,7 +267,7 @@ test("P12 runs: a run of this server whose own beat has stopped looks stalled, a
   const ai = armedAi(2);
   await withServer(async (server, client) => {
     const owner = await adminLogin(server);
-    await seededBook(client, "slow");
+    await seededBook(client, "slow", { chapters: 2 });
     ai.arm();
     await client.startAutopilot("slow", startOf(2));
     await until(() => ai.isHeld());
@@ -295,7 +295,7 @@ test("P12 runs: a run that waits to try a failed step again says so, with which 
   const flaky = { async complete() { throw Object.assign(new Error("The provider is busy: SECRET-PROVIDER-TEXT"), { retryable: true }); } };
   await withServer(async (server, client) => {
     const owner = await adminLogin(server);
-    await seededBook(client, "b");
+    await seededBook(client, "b", { chapters: 1 });
     await client.startAutopilot("b", startOf(1));
     const view = await until(async () => {
       const found = viewOf(await runs(owner), "b");
@@ -318,7 +318,7 @@ test("P12 runs: with many books the list is a page: what is going on first, a nu
   await withServer(async (server, client) => {
     const owner = await adminLogin(server);
     for (let index = 0; index < 29; index += 1) await client.registerBook(`book-${String(index).padStart(2, "0")}`, { title: `Book ${index}`, storage: { kind: "local" } });
-    await seededBook(client, "going");
+    await seededBook(client, "going", { chapters: 2 });
     ai.arm();
     await client.startAutopilot("going", startOf(2));
     await until(() => ai.isHeld());
@@ -364,7 +364,7 @@ test("P12 runs: a server with no books says so, and the route needs the admin se
 test("P12 runs: the engine's own fake AI, run to the end, leaves a book that is finished, with all its chapters done", async () => {
   await withServer(async (server, client) => {
     const owner = await adminLogin(server);
-    await seededBook(client, "done");
+    await seededBook(client, "done", { chapters: 2 });
     await client.startAutopilot("done", { ...startOf(2), options: { readers: false, readersOnPlan: false, specialists: false, pauseAfterPlan: false } });
     await finishedRun(client, "done");
     const view = viewOf(await runs(owner), "done");

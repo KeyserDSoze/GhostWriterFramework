@@ -1,4 +1,5 @@
 import test from "node:test";
+import { seedBookFilesWithChapters } from "./fake-provider.mjs";
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -155,7 +156,7 @@ test("an update waits for running autopilots, and a stale request of another ver
   let latest = "0.2.0";
   await withServer(async (server, client) => {
     await client.registerBook("busy", { title: "Busy", storage: { kind: "local" } });
-    await syncBookStores({ local: new MemoryBookStore(seedBookFiles()), remote: remoteBookStore(client, "busy"), base: new Map() });
+    await syncBookStores({ local: new MemoryBookStore(seedBookFilesWithChapters()), remote: remoteBookStore(client, "busy"), base: new Map() });
     await client.startAutopilot("busy", { brief: { idea: "A busy harbor", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false } });
     await slow.started;
     await assert.rejects(() => client.requestUpdate("0.2.0", SERVER_VERSION), (error) => error.status === 409 && error.code === "running");

@@ -7,7 +7,7 @@ import path from "node:path";
 import { seedBookFiles } from "narrarium-engine/testing";
 import * as testing from "../dist/testing.mjs";
 import { until, withServer } from "./helpers.mjs";
-import { finished, seededBook } from "./fake-provider.mjs";
+import { finished, seedBookFilesWithChapters, seededBook } from "./fake-provider.mjs";
 import { HELD, STEPS, fakeAi, holdingAi, startOf } from "./hold.mjs";
 
 // Where a server publishes a GitHub book (S4-2): after every step and again when a chapter is closed, after every chapter, or never; the
@@ -25,7 +25,7 @@ const settled = (client, bookId = "gh") => finished(client, bookId, 90_000);
 const held = (ai) => until(() => ai.isHeld(), 60_000);
 
 /** A bare repository with one commit on `main`, standing in for GitHub, and a clone of it where "the author" works. */
-async function seedOrigin(files = seedBookFiles()) {
+async function seedOrigin(files = seedBookFilesWithChapters()) {
   const origin = await temporary("narrarium-origin-");
   const seed = await temporary("narrarium-seed-");
   execFileSync("git", ["init", "--quiet", "--bare", origin]);
@@ -57,8 +57,8 @@ function watchPushes() {
 const closings = (pushes) => pushes.map((subject) => /Closing chapter (\d+)/.exec(subject)?.[1]).filter(Boolean);
 
 /** One scenario: a remote, a server that clones it as the book `gh`, the pushes counted; everything is cleaned up whatever happens. */
-async function scenario(run, { ai = fakeAi(1), extra = {} } = {}) {
-  const seeded = await seedOrigin();
+async function scenario(run, { ai = fakeAi(1), extra = {}, chapters = 1 } = {}) {
+  const seeded = await seedOrigin(seedBookFilesWithChapters(chapters));
   const watch = watchPushes();
   try {
     await withServer(async (server, client, dataDir) => {
@@ -130,7 +130,7 @@ test("S4-2: `chapter` publishes once for every chapter that is closed, and what 
     assert.ok(files.includes(FIRST_SCENE) && files.includes(SECOND_SCENE), "both chapters are on GitHub");
     assert.match(git(seeded.origin, "log", "-1", "--format=%s", "main"), /Closing chapter 2/, "GitHub is at the end of the last chapter");
     assert.ok(commitsOf(folder, "HEAD") > commitsOf(seeded.origin, "main"), "the judgement of the whole book is saved on the server, and waits for the next publish");
-  }, { ai: fakeAi(2) });
+  }, { ai: fakeAi(2), chapters: 2 });
 });
 
 test("S4-2: `off` publishes nothing: every commit stays in the server's copy, and GitHub is as the author left it", async () => {

@@ -1,4 +1,5 @@
 import test from "node:test";
+import { seedBookFilesWithChapters } from "./fake-provider.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile, mkdir, stat } from "node:fs/promises";
 import os from "node:os";
@@ -62,7 +63,7 @@ test("a second server cannot use the same data folder", async () => {
 
 test("a local book is uploaded, written by the autopilot on the server and synced back", async () => {
   await withServer(async (server, client) => {
-    const local = new MemoryBookStore(seedBookFiles());
+    const local = new MemoryBookStore(seedBookFilesWithChapters());
     const summary = await client.registerBook("book-1", { title: "The Glass Harbor", storage: { kind: "local" } });
     assert.equal(summary.ready, true);
     const remote = remoteBookStore(client, "book-1");
@@ -127,7 +128,7 @@ test("a GitHub book is cloned, written step by step and pushed; its token stays 
   try {
     execFileSync("git", ["init", "--quiet", "--bare", origin]);
     execFileSync("git", ["init", "--quiet", "-b", "dev-author", seed]);
-    for (const [file, content] of Object.entries(seedBookFiles())) {
+    for (const [file, content] of Object.entries(seedBookFilesWithChapters())) {
       await mkdir(path.dirname(path.join(seed, file)), { recursive: true });
       await writeFile(path.join(seed, file), content);
     }

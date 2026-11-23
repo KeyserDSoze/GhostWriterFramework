@@ -1,7 +1,9 @@
 import {
   OUTLINE_BOOK_FILE,
+  OUTLINE_BRIEF_FILE,
   OUTLINE_ENTRY_MAX_CHARS,
   OutlineReader,
+  readOutlineBrief,
   chapterHasProse,
   changeOfWritten,
   groupOutlineChanges,
@@ -19,6 +21,7 @@ import {
 } from "narrarium-engine";
 import { asInteger, asString, json, pageList, pageText, plain, ToolError, withText, DEFAULT_PAGE_CHARACTERS, offsetProperty, pageProperty, type McpTool, type ToolContext } from "./mcp-kit.js";
 import { OUTLINE_EDIT_KINDS, OUTLINE_EDIT_MAX_EDITS, checkOutlineEdits, composeToolEdits, type ComposedToolEdits, type OutlineToolEdit } from "./mcp-outline-edit.js";
+import { briefView } from "./mcp-brief.js";
 import { parseQuery } from "./mcp-read.js";
 import { boolean, choice, integer, list, nullable, shape, string } from "./mcp-schema.js";
 import { MAX_TEXT_CHARACTERS } from "./mcp-write.js";
@@ -109,7 +112,7 @@ function afterEdit(outcome: OutlineChangeOutcome, numbers: readonly number[]): s
  * entry. They come from the engine itself (`parseOutline`, given the files with no text: the names say all of it), and only when the names show something.
  */
 async function structuralWarnings(snapshot: BookSnapshot): Promise<OutlineWarning[]> {
-  const paths = [...snapshot.files.keys()].filter((path) => path === OUTLINE_BOOK_FILE || path.startsWith("outline/"));
+  const paths = [...snapshot.files.keys()].filter((path) => path === OUTLINE_BOOK_FILE || (path.startsWith("outline/") && path !== OUTLINE_BRIEF_FILE));
   const entries = snapshot.outline?.chapters ?? [];
   const gap = entries.length > 0 && entries[entries.length - 1].number !== entries.length;
   const odd = paths.some((path) => path !== OUTLINE_BOOK_FILE && parseOutlineChapterPath(path)?.canonical !== true);
@@ -223,6 +226,7 @@ const readOutline: McpTool = {
 
     const first = offset === 0;
     const book = first ? await reader.book() : null;
+    const brief = first ? briefView(await readOutlineBrief(context.runtime.store, { book, brief: snapshot.files.has(OUTLINE_BRIEF_FILE) }), reader.index.chapters.length) : null;
     const bookText = book ? pageText(book.body, 0, OUTLINE_ENTRY_MAX_CHARS) : undefined;
     const shownPaths = new Set([...entries.map((entry) => entry.path), ...(book ? [book.path] : [])]);
     const all = [
@@ -242,6 +246,7 @@ const readOutline: McpTool = {
       entries: entries.map((entry) => entryView(entry, states)),
       ...(first
         ? {
+            brief,
             book: book && bookText
               ? { path: book.path, hash: book.hash, title: book.title, origin: book.origin, intact: book.intact, textLength: book.body.length, ...(bookText.page.nextOffset !== null ? { truncated: true } : {}), ...(book.unreadable ? { unreadable: true } : {}) }
               : null,

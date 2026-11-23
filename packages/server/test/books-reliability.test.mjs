@@ -1,4 +1,5 @@
 import test from "node:test";
+import { seedBookFilesWithChapters } from "./fake-provider.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -17,7 +18,7 @@ const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=test", "-c",
 const GITHUB = { kind: "github", owner: "me", repo: "remote", branch: "main" };
 
 /** A bare repository with one commit on `main`, standing in for GitHub. */
-async function seedOrigin(files = seedBookFiles()) {
+async function seedOrigin(files = seedBookFilesWithChapters()) {
   const origin = await temporary("narrarium-origin-");
   const seed = await temporary("narrarium-seed-");
   execFileSync("git", ["init", "--quiet", "--bare", origin]);

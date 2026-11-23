@@ -1,4 +1,5 @@
 import test from "node:test";
+import { seedBookFilesWithChapters } from "./fake-provider.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -100,7 +101,7 @@ test("C23: the label written into a book's autopilot state (which is committed, 
       const call = (method, route, body) => fetch(`${server.url}${route}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
       try {
         assert.equal((await call("PUT", "/api/v1/books/b", { title: "B", storage: { kind: "local" } })).status, 200);
-        const seeded = await call("POST", "/api/v1/books/b/files/commit", { changes: Object.entries(seedBookFiles()).map(([file, content]) => ({ path: file, content })), message: "seed" });
+        const seeded = await call("POST", "/api/v1/books/b/files/commit", { changes: Object.entries(seedBookFilesWithChapters()).map(([file, content]) => ({ path: file, content })), message: "seed" });
         assert.equal(seeded.status, 200, await seeded.text());
         const started = await call("POST", "/api/v1/books/b/autopilot/start", { brief: { idea: "A harbor", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false } });
         assert.equal(started.status, 200, await started.text());

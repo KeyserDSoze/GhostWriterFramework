@@ -1091,7 +1091,7 @@ test("P12 panel (real server): a book that runs is drawn with its chapter and st
   const ai = holdingAi();
   try {
     await withServer(async (server, client) => {
-      await seededBook(client, "going");
+      await seededBook(client, "going", { chapters: 2 });
       await seededBook(client, "idle");
       await client.startAutopilot("going", startOf(2));
       await until(() => ai.isHeld());

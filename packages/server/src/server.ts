@@ -16,6 +16,7 @@ import {
   SERVER_API_VERSION,
   SERVER_FEATURE_AUTOPILOT_AUTO_RESUME,
   SERVER_FEATURE_AUTOPILOT_CONTROLS,
+  SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF,
   SERVER_FEATURE_AUTOPILOT_RETRY,
   SERVER_FEATURE_AUTOPILOT_RULES,
   SERVER_FEATURE_GITHUB_CONFLICTS,
@@ -73,6 +74,7 @@ import { SpendLedger, SpendLimitError, applySpendChanges, pausedError, spendSett
 import { CloudflareTunnelManager, type CloudflareTunnelManagerOptions } from "./tunnel.js";
 import { ADMIN_CSS, ADMIN_HTML, ADMIN_JS } from "./ui.js";
 import { SERVER_VERSION } from "./version.js";
+import { OutlineTextLimitError } from "narrarium-engine";
 import { FROZEN_ACTIONS, FROZEN_EDITS_MODES, FrozenChapterError, SERVER_FEATURE_AUTOPILOT_FROZEN, type FrozenAction, type FrozenChangeKind, type FrozenEditsMode } from "narrarium-engine";
 
 /** Tuning of the server's own limits (the defaults are the ones to run with; tests shorten them). */
@@ -300,6 +302,8 @@ export function errorStatus(error: unknown): MappedError {
   if (error instanceof AutopilotRuleError) return { status: RULE_ERROR_STATUS[error.code] ?? 400, code: error.code, message: error.message };
   if (error instanceof FrozenChapterError) return { status: FROZEN_ERROR_STATUS[error.code] ?? 400, code: error.code, message: error.message };
   if (error instanceof FrontmatterError) return { status: 422, code: "frontmatter_invalid", message: error.message };
+  // A text longer than the outline takes is refused whole, with nothing written: the idea of the book is never cut.
+  if (error instanceof OutlineTextLimitError) return { status: 413, code: "text_too_long", message: error.message };
   if (error instanceof AutopilotBusyError) return { status: 409, code: "busy", message: error.message };
   if (isBookConflictError(error)) return { status: 409, code: "conflict", message: (error as Error).message };
   if (error instanceof AutopilotStateCorruptError) return { status: 409, code: "state_corrupt", message: error.message };
@@ -774,7 +778,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,

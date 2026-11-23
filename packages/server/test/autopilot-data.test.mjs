@@ -5,7 +5,7 @@ import path from "node:path";
 import { AUTOPILOT_ERROR_KINDS, AutopilotSession, FINAL_REVIEW_SUMMARY_CHARACTERS, FINAL_REVIEW_TEXT_CHARACTERS, MAX_CHAPTER_ROUNDS, summarizeAutopilotState } from "narrarium-engine";
 import { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } from "narrarium-engine/testing";
 import { adminLogin, until, withServer } from "./helpers.mjs";
-import { ONE_CHAPTER, aiConfigFor, approve, fakeProvider, finished, seededBook } from "./fake-provider.mjs";
+import { ONE_CHAPTER, aiConfigFor, approve, fakeProvider, finished, seedBookFilesWithChapters, seededBook } from "./fake-provider.mjs";
 import { autopilotEvents, bookEvents, filesHolding, followStream, historyOf, stateEvents } from "./api-helpers.mjs";
 
 // What the engine's autopilot now says besides what it said (the final verdict, the working time, the kind and the detail of an error, the retry that
@@ -88,7 +88,7 @@ async function runWithSlowProvider() {
 
 /** The same book written by the engine alone (no server, no provider, no git), for the parts of the state that do not depend on the time or on the files. */
 async function runByTheEngine() {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFilesWithChapters());
   const session = new AutopilotSession({ bookId: BOOK, store, ai: createFakeAutopilotAi(), host: "server", hostLabel: "the engine alone", retryDelayMs: 0 });
   await session.start(ONE_CHAPTER);
   await session.waitForIdle();

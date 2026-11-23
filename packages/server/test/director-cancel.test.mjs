@@ -1,4 +1,5 @@
 import test from "node:test";
+import { seedBookFilesWithChapters } from "./fake-provider.mjs";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { seedBookFiles } from "narrarium-engine/testing";
@@ -30,7 +31,7 @@ test("asking the director stops its AI request when the caller goes away: a ques
     const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
     const call = (method, route, body) => fetch(`${server.url}${route}`, { method, headers, body: JSON.stringify(body) });
     assert.equal((await call("PUT", "/api/v1/books/b", { title: "B", storage: { kind: "local" } })).status, 200);
-    const changes = Object.entries(seedBookFiles()).map(([file, content]) => ({ path: file, content }));
+    const changes = Object.entries(seedBookFilesWithChapters()).map(([file, content]) => ({ path: file, content }));
     assert.equal((await call("POST", "/api/v1/books/b/files/commit", { changes, message: "seed" })).status, 200);
 
     const target = new URL(`${server.url}/api/v1/books/b/director/ask`);

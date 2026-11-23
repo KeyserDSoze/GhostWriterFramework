@@ -1,4 +1,5 @@
 import test from "node:test";
+import { seedBookFilesWithChapters } from "./fake-provider.mjs";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { EventEmitter } from "node:events";
@@ -709,7 +710,7 @@ test("C20: an unknown error answers 500 with a generic message and a request id;
     const { token } = await server.auth.issue("runner", ["read", "write", "run"]);
     const headers = { ...bearer(token), ...JSON_HEADERS };
     assert.equal((await send(`${server.url}/api/v1/books/b`, { method: "PUT", headers, body: { title: "B", storage: { kind: "local" } } })).status, 200);
-    const changes = Object.entries(seedBookFiles()).map(([file, content]) => ({ path: file, content }));
+    const changes = Object.entries(seedBookFilesWithChapters()).map(([file, content]) => ({ path: file, content }));
     assert.equal((await send(`${server.url}/api/v1/books/b/files/commit`, { method: "POST", headers, body: { changes, message: "seed" } })).status, 200);
     const response = await send(`${server.url}/api/v1/books/b/director/ask`, { method: "POST", headers, body: { target: { kind: "book" }, question: "Does it work?" } });
     assert.equal(response.status, 500, "not the 401 that the provider's error carried: that would read as 'your server token is invalid'");
@@ -749,7 +750,7 @@ test("C20: an AI provider's 401 is a 502 ai_provider, never a 401 that the web a
   try {
     await withServer(async (server, client) => {
       await client.registerBook("p", { title: "P", storage: { kind: "local" } });
-      await client.commitFiles("p", Object.entries(seedBookFiles()).map(([file, content]) => ({ path: file, content })), "seed");
+      await client.commitFiles("p", Object.entries(seedBookFilesWithChapters()).map(([file, content]) => ({ path: file, content })), "seed");
       await client.putAiConfig({ aiIntegrations: [{ id: "p", name: "Local provider", provider: "openai", endpoint: provider.url, apiKey: "sk-test", chatModels: [{ id: "m", name: "gpt-test", capabilities: ["default"] }] }] });
       // The server calls only what its owner approved: this is the owner approving the provider's origin.
       await server.data.updateConfig((config) => {
@@ -769,7 +770,7 @@ test("C20: an AI provider's 401 is a 502 ai_provider, never a 401 that the web a
 test("C20: a corrupt autopilot state is a 409 state_corrupt and the book list says why", async () => {
   await withServer(async (server, client) => {
     await client.registerBook("c", { title: "C", storage: { kind: "local" } });
-    await client.commitFiles("c", Object.entries(seedBookFiles()).map(([file, content]) => ({ path: file, content })), "seed");
+    await client.commitFiles("c", Object.entries(seedBookFilesWithChapters()).map(([file, content]) => ({ path: file, content })), "seed");
     const [healthy] = await client.listBooks();
     assert.equal(healthy.error, undefined);
     const folder = path.join(server.data.bookDirectory("c"), "autopilot");

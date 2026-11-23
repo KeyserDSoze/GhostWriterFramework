@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { outlineEntryFiles } from "narrarium-engine/testing";
+import { autopilotEntry } from "./mcp-outline-helpers.mjs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import * as testing from "../dist/testing.mjs";
@@ -193,8 +195,11 @@ test("S9: read_outline_entry gives an entry whole with the hash of its file, who
 
 test("S9: what the autopilot does when the entry of a chapter it closed changes is what its settings say: it asks, rewrites the chapter or only reports it; and a chapter the author wrote is never rewritten for its decision", async () => {
   await withServer(async (server, client) => {
-    await seededBook(client, "b");
-    await client.startAutopilot("b", startOf(1));
+    await seededBook(client, "b", { chapters: 0 });
+    // The entry of chapter 1 is one the autopilot wrote earlier and nobody touched: it binds nothing, and the run writes it again.
+    await client.commitFiles("b", [await autopilotEntry(1, { title: "Chapter Title 1", body: "Event 1 happens and the story turns." })], "an entry the autopilot wrote");
+    // No idea is sent: the description of the book is then the one the autopilot writes from its concept.
+    await client.startAutopilot("b", { ...startOf(1), brief: { targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 } });
     assert.equal((await finished(client, "b")).state.status, "completed");
     const status = await enableMcp(server, "b");
     const rpc = mcpClient(server, status.slug, await issueToken(server));
@@ -220,6 +225,7 @@ test("S9: a chapter the author wrote before the autopilot took over is never rew
   await withServer(async (server, client) => {
     const { rpc } = await mcpFixture(server, client);
     // The book has two chapters of the author; the autopilot takes it over to make a third, and writes the entries of the three.
+    await client.commitFiles("glass", Object.entries(outlineEntryFiles(3)).map(([path, content]) => ({ path, content })), "the chapter entries of the three");
     await client.startAutopilot("glass", startOf(3));
     assert.equal((await finished(client, "glass")).state.status, "completed");
     const ask = /ask the author whether to rewrite the chapter/;

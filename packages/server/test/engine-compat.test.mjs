@@ -9,7 +9,7 @@ import { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } from "narrarium
 // New exports are read through the namespace, so a missing one fails the test that needs it and nothing else.
 import * as testing from "../dist/testing.mjs";
 import { adminLogin, gatedAi, until, withServer } from "./helpers.mjs";
-import { ONE_CHAPTER, aiConfigFor, approve, fakeProvider, finished, seededBook } from "./fake-provider.mjs";
+import { ONE_CHAPTER, aiConfigFor, approve, fakeProvider, finished, seedBookFilesWithChapters, seededBook } from "./fake-provider.mjs";
 
 const shape = ({ status, code, message }) => ({ status, code, message });
 const remove = (...directories) => Promise.all(directories.map((directory) => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })));
@@ -220,7 +220,7 @@ async function seedOrigin() {
   const seed = await mkdtemp(path.join(os.tmpdir(), "narrarium-seed-"));
   execFileSync("git", ["init", "--quiet", "--bare", origin]);
   execFileSync("git", ["init", "--quiet", "-b", "main", seed]);
-  for (const [file, content] of Object.entries(seedBookFiles())) {
+  for (const [file, content] of Object.entries(seedBookFilesWithChapters())) {
     await mkdir(path.dirname(path.join(seed, file)), { recursive: true });
     await writeFile(path.join(seed, file), content);
   }
@@ -250,7 +250,7 @@ test("S1: heartbeat commits made during a long step are ordinary commits: git pu
         const heartbeats = () => subjects().filter((subject) => subject === "Autopilot: heartbeat").length;
 
         // The browser's first sync, before the run.
-        const local = new MemoryBookStore(seedBookFiles());
+        const local = new MemoryBookStore(seedBookFilesWithChapters());
         const remote = remoteBookStore(client, "gh");
         const first = await syncBookStores({ local, remote, base: new Map() });
         assert.deepEqual(first.conflicts, []);

@@ -1,9 +1,13 @@
 import http from "node:http";
-import { createFakeAutopilotAi, seedBookFiles } from "narrarium-engine/testing";
+import { createFakeAutopilotAi, outlineEntryFiles, seedBookFiles } from "narrarium-engine/testing";
 import { until } from "./helpers.mjs";
 
 /** The seed book of every test that runs the autopilot through a provider. */
-export const seedChanges = () => Object.entries(seedBookFiles()).map(([file, content]) => ({ path: file, content }));
+/** The seed book's files, as a plain record (what the tests that seed a folder or a store take): `chapters` entries in its Scaletta. */
+export const seedBookFilesWithChapters = (chapters = 1) => ({ ...seedBookFiles(), ...outlineEntryFiles(chapters) });
+
+/** The seed book's files: the chapter entries of its Scaletta are the chapters a run plans (`chapters`, one by default). */
+export const seedChanges = (chapters = 1) => Object.entries({ ...seedBookFiles(), ...outlineEntryFiles(chapters) }).map(([file, content]) => ({ path: file, content }));
 
 /** A short book that the autopilot writes in one run, and a brief that does not stop after the plan. */
 export const ONE_CHAPTER = { brief: { idea: "A harbor of glass", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } };
@@ -95,9 +99,9 @@ export function aiConfigFor(provider, { apiKey = "sk-test-key-0123456789", prici
 }
 
 /** Register a local book that holds the seed files, ready for the autopilot. */
-export async function seededBook(client, bookId = "b") {
+export async function seededBook(client, bookId = "b", { chapters = 1 } = {}) {
   await client.registerBook(bookId, { title: "Glass", storage: { kind: "local" } });
-  await client.commitFiles(bookId, seedChanges(), "seed");
+  await client.commitFiles(bookId, seedChanges(chapters), "seed");
   return bookId;
 }
 

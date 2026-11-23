@@ -9,7 +9,7 @@ import { createFakeAutopilotAi, seedBookFiles } from "narrarium-engine/testing";
 import * as testing from "../dist/testing.mjs";
 import { noRelease, until, withServer } from "./helpers.mjs";
 import { attempt, rawApi } from "./api-helpers.mjs";
-import { finished, seededBook } from "./fake-provider.mjs";
+import { finished, seedBookFilesWithChapters, seededBook } from "./fake-provider.mjs";
 import { HELD, STEPS, holdingAi, startOf } from "./hold.mjs";
 
 // The conflicts of a GitHub book with GitHub (J): the server's commits and GitHub's changed the same files. The book is a working copy of a bare
@@ -83,7 +83,7 @@ const onOrigin = (seeded, file) => gitRaw(seeded.origin, ["show", `main:${file}`
 const merging = (folder) => exists(path.join(folder, ".git", "MERGE_HEAD"));
 
 /** One book `gh` cloned from a fresh remote, with `files` on it (the seed of a book and four small scenes, unless said otherwise). */
-async function scenario(run, { files = { ...seedBookFiles(), ...BASE_FILES }, options = {} } = {}) {
+async function scenario(run, { files = { ...seedBookFilesWithChapters(), ...BASE_FILES }, options = {} } = {}) {
   const seeded = await seedOrigin(files);
   try {
     await withServer(async (server, client, dataDir) => {
@@ -301,7 +301,7 @@ test("J2: nothing to resolve, a book that is not on GitHub, a book that is not t
     await client.pauseAutopilot("gh", "now");
     ai.release();
     await finished(client, "gh", 60_000);
-  }, { files: seedBookFiles(), options: { ai, autopilot: { retryDelayMs: 0 } } });
+  }, { files: seedBookFilesWithChapters(), options: { ai, autopilot: { retryDelayMs: 0 } } });
 });
 
 test("J2: a push that GitHub refuses because it moved meanwhile is tried once more on the new GitHub; a move onto the files in conflict is refused, and nothing is written", async () => {
@@ -409,7 +409,7 @@ test("J2: many conflicts are listed a page at a time, and resolved with a defaul
     assert.equal(await readFile(path.join(folder, name(middle)), "utf8"), `server ${middle}\n`);
     assert.equal(await readFile(path.join(folder, name(middle + 1)), "utf8"), `github ${middle + 1}\n`);
     assert.equal(git(seeded.origin, "rev-parse", "main"), answer.head);
-  }, { files: { ...seedBookFiles(), ...many } });
+  }, { files: { ...seedBookFilesWithChapters(), ...many } });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -439,7 +439,7 @@ test("J3: the autopilot's files are never asked about: with no run on the server
       } else {
         assert.deepEqual([state, activity, plan], [githubState, AUTOPILOT["autopilot/activity.json"], "# Plan of GitHub\n"], "GitHub's three files");
       }
-    }, { files: { ...seedBookFiles(), ...BASE_FILES, ...AUTOPILOT } });
+    }, { files: { ...seedBookFilesWithChapters(), ...BASE_FILES, ...AUTOPILOT } });
   }
 });
 
@@ -457,7 +457,7 @@ test("J3: a book whose only conflict is in the autopilot's files has nothing to 
     assert.equal(parents(folder).length, 2, "merged, not rebased: the state is taken whole");
     assert.doesNotThrow(() => git(folder, "merge-base", "--is-ancestor", githubHead, "HEAD"));
     assert.equal(git(seeded.origin, "rev-parse", "main"), git(folder, "rev-parse", "HEAD"));
-  }, { files: { ...seedBookFiles(), ...BASE_FILES, ...AUTOPILOT } });
+  }, { files: { ...seedBookFilesWithChapters(), ...BASE_FILES, ...AUTOPILOT } });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -501,7 +501,7 @@ test("J1+J4: a run whose step conflicts with GitHub stops with a conflict that s
     assert.equal(resumed.state.stats.tasks, STEPS(1), "no step was done twice");
     assert.doesNotThrow(() => git(folder, "merge-base", "--is-ancestor", githubHead, "HEAD"));
     assert.equal(git(folder, "status", "--porcelain"), "");
-  }, { files: seedBookFiles(), options: { ai, autopilot: { retryDelayMs: 0 } } });
+  }, { files: seedBookFilesWithChapters(), options: { ai, autopilot: { retryDelayMs: 0 } } });
 });
 
 test("J3: during a run the server's autopilot files win without asking: a state another device pushed does not stop the run", async () => {
@@ -518,7 +518,7 @@ test("J3: during a run the server's autopilot files win without asking: a state 
     assert.doesNotMatch(await readFile(path.join(folder, "autopilot/plan.md"), "utf8"), /Another device/, "the server's plan, not the other device's");
     assert.notEqual(JSON.parse(await readFile(path.join(folder, "autopilot/state.json"), "utf8")).brief.idea, "another device");
     assert.equal(git(folder, "status", "--porcelain"), "");
-  }, { files: seedBookFiles(), options: { ai, autopilot: { retryDelayMs: 0 } } });
+  }, { files: seedBookFilesWithChapters(), options: { ai, autopilot: { retryDelayMs: 0 } } });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -546,7 +546,7 @@ test("J6: a file whose name the server does not read or write is listed as not r
     assert.equal(await readFile(path.join(folder, "a?b.md"), "utf8"), "server ab\n");
     assert.equal(await readFile(path.join(folder, "bad\nname.md"), "utf8"), "server bad\n");
     assert.equal(git(seeded.origin, "rev-parse", "main"), answer.head);
-  }, { files: { ...seedBookFiles(), ...BASE_FILES, ...odd } });
+  }, { files: { ...seedBookFilesWithChapters(), ...BASE_FILES, ...odd } });
 });
 
 test("J6: a hostile repository runs nothing: attributes that name filters and merge drivers, a .gitmodules with commands, hooks in the copy and a configuration outside the server's", async (t) => {
@@ -599,7 +599,7 @@ test("J6: a hostile repository runs nothing: attributes that name filters and me
       assert.equal(await readFile(path.join(folder, ONE), "utf8"), "github one\n");
       assert.deepEqual(await readdir(markers), [], "nothing ran");
       assert.equal(await exists(path.join(folder, "evil", ".git")), false, "no submodule was fetched");
-    }, { files: { ...seedBookFiles(), ...BASE_FILES, ...hostile } });
+    }, { files: { ...seedBookFilesWithChapters(), ...BASE_FILES, ...hostile } });
   } finally {
     await remove(markers, evil);
   }
@@ -626,7 +626,7 @@ test("J6: a GitHub tree that holds a name git cannot write ('..', '.git') is ref
 });
 
 test("J6: a server that stopped in the middle of a trial merge finds its copy as it left it: no merge in progress, no lock left behind, and every command works", async () => {
-  const seeded = await seedOrigin({ ...seedBookFiles(), ...BASE_FILES });
+  const seeded = await seedOrigin({ ...seedBookFilesWithChapters(), ...BASE_FILES });
   const dataDir = await temporary("narrarium-crash-");
   const start = () => testing.startNarrariumServer({ dataDir, port: 0, adminPort: 0, ai: createFakeAutopilotAi(), supervised: false, checkRelease: noRelease, tunnel: { findBinary: () => undefined, detectOtherConnectors: async () => [] }, githubRemoteUrl: () => seeded.origin });
   const connect = async (server) => new NarrariumServerClient({ baseUrl: server.url, token: (await server.auth.issue("test client", ["read", "write", "run"])).token });

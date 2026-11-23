@@ -1,4 +1,5 @@
 import test from "node:test";
+import { seedBookFilesWithChapters } from "./fake-provider.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, readdir, readlink, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
@@ -317,7 +318,7 @@ test("R3: a server that loses its lock stops serving, pauses its autopilots and 
     const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
     const call = (method, route, body) => fetch(`${server.url}${route}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     assert.equal((await call("PUT", "/api/v1/books/b", { title: "B", storage: { kind: "local" } })).status, 200);
-    assert.equal((await call("POST", "/api/v1/books/b/files/commit", { changes: Object.entries(seedBookFiles()).map(([file, content]) => ({ path: file, content })), message: "seed" })).status, 200);
+    assert.equal((await call("POST", "/api/v1/books/b/files/commit", { changes: Object.entries(seedBookFilesWithChapters()).map(([file, content]) => ({ path: file, content })), message: "seed" })).status, 200);
     assert.equal((await call("POST", "/api/v1/books/b/autopilot/start", { brief: { idea: "A harbor", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false } })).status, 200);
     await slow.started;
     assert.equal(server.books.runningCount(), 1);
