@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Search, Loader2, Github, Lock, Globe, Plus, HardDrive } from "lucide-react";
@@ -18,7 +18,11 @@ import {
 import { useSettingsStore } from "@/store/settingsStore";
 import { useSettings } from "@/drive/useSettings";
 import { useRepositories } from "@/github/useRepositories";
-import { createNarrariumBookRepository, type RepoSummary } from "@/github/githubClient";
+import type { RepoSummary } from "@/github/githubClient";
+import { BookRepositoryError, createCompleteBookRepository, deleteEmptyBookRepository, isBookRepositoryError, repositoryNameProblem, type BookRepositoryProgress, type CreateCompleteBookRepositoryResult } from "@/github/bookRepository";
+import { GitHubRepositoryPanel, defaultGitHubRepositoryChoices, ownerOf, useGitHubPreflight, type GitHubRepositoryChoices } from "@/components/book/GitHubRepositoryPanel";
+import { GitHubCreateFailure, GitHubCreateProgress, GitHubCreateResult } from "@/components/book/GitHubRepositoryOutcome";
+import "@/i18n/githubCreateBook";
 import { type BookEntry } from "@/types/settings";
 import { createLocalOnlyBookRepository } from "@/repository/repositoryService";
 import { defaultRepositoryName } from "@/narrarium/bookScaffold";
@@ -41,7 +45,11 @@ export function AddBookPage() {
   const [newBookTitle, setNewBookTitle] = useState("");
   const [newRepoName, setNewRepoName] = useState("");
   const [repoNameEdited, setRepoNameEdited] = useState(false);
-  const [newRepoVisibility, setNewRepoVisibility] = useState<"private" | "public">("private");
+  const [repoChoices, setRepoChoices] = useState<GitHubRepositoryChoices>(defaultGitHubRepositoryChoices);
+  const [progress, setProgress] = useState<BookRepositoryProgress | null>(null);
+  const [failure, setFailure] = useState<BookRepositoryError | null>(null);
+  const [created, setCreated] = useState<{ result: CreateCompleteBookRepositoryResult; bookId: string } | null>(null);
+  const failureOwner = useRef("");
   const [storageMode, setStorageMode] = useState<"local-only" | "github">("local-only");
   const [creatingRepo, setCreatingRepo] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -54,6 +62,9 @@ export function AddBookPage() {
       : selectedToken === "custom"
         ? customToken.trim()
         : settings.extraGitHubTokens[Number(selectedToken)]?.token ?? "";
+
+  const preflight = useGitHubPreflight(storageMode === "github" ? activeToken || undefined : undefined);
+  const nameProblem = storageMode === "github" && newRepoName.trim() ? repositoryNameProblem(newRepoName) : null;
 
   const { repos, loading, error } = useRepositories(
     storageMode === "github" ? activeToken || undefined : undefined,
@@ -103,11 +114,12 @@ export function AddBookPage() {
     }
   }
 
-  async function handleCreateNewBook() {
+  async function handleCreateNewBook(retry = false) {
     const title = newBookTitle.trim();
     const repoName = newRepoName.trim();
-    if (!title || (storageMode === "github" && (!repoName || !activeToken))) return;
+    if (!title || (storageMode === "github" && (!repoName || !activeToken || repositoryNameProblem(repoName)))) return;
     setCreateError(null);
+    setFailure(null);
     setCreatingRepo(true);
     try {
       if (storageMode === "local-only") {
@@ -131,34 +143,51 @@ export function AddBookPage() {
         navigate(`/app/books/${entry.id}`);
         return;
       }
-      const repo = await createNarrariumBookRepository(activeToken, {
+      failureOwner.current = ownerOf(repoChoices) ?? "";
+      setProgress({ step: "repository" });
+      // The template is a chunk of its own (about 400 KB): it is fetched here, when a repository is made, and by no other page.
+      const { loadBookTemplate, composeCompleteBookFiles } = await import("@/narrarium/bookTemplate");
+      const files = composeCompleteBookFiles(await loadBookTemplate(), { title, language: settings.ui.language, files: startSize ? presetOutlineFiles(startSize) : undefined });
+      const result = await createCompleteBookRepository({
+        token: activeToken,
+        owner: ownerOf(repoChoices),
         name: repoName,
-        title,
-        private: newRepoVisibility === "private",
-        language: settings.ui.language,
-        files: startSize ? presetOutlineFiles(startSize) : undefined,
+        description: `Narrarium book: ${title}`,
+        visibility: repoChoices.visibility,
+        files,
+        existing: retry ? "empty" : "error",
+        pages: repoChoices.pages ? "enable" : "skip",
+        onProgress: setProgress,
       });
       const usingCustom = selectedToken === "custom";
       const entry: BookEntry = {
         id: crypto.randomUUID(),
-        owner: repo.owner,
-        repo: repo.name,
+        owner: result.owner,
+        repo: result.repo,
         name: title,
         tokenIndex: selectedToken === "default" || usingCustom ? null : Number(selectedToken),
         bookToken: usingCustom ? customToken.trim() : undefined,
-        bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${repo.name} PAT` : undefined,
-        activeBranch: repo.default_branch,
+        bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${result.repo} PAT` : undefined,
+        activeBranch: result.defaultBranch,
         startPreset: startSize ?? undefined,
         addedAt: new Date().toISOString(),
       };
       patchSettings({ books: [...settings.books, entry] });
+      setCreated({ result, bookId: entry.id });
       await save();
-      navigate(`/app/books/${entry.id}`);
     } catch (err) {
-      setCreateError(String(err));
+      if (storageMode === "github") setFailure(isBookRepositoryError(err) ? err : new BookRepositoryError(err instanceof TypeError ? "network" : "unknown", { cause: err }));
+      else setCreateError(String(err));
     } finally {
       setCreatingRepo(false);
+      setProgress(null);
     }
+  }
+
+  async function handleDeleteEmptyRepository() {
+    const empty = failure?.repository;
+    if (!empty) return;
+    await deleteEmptyBookRepository({ token: activeToken, owner: empty.owner, repo: empty.repo, defaultBranch: empty.defaultBranch });
   }
 
   const noDefaultToken = !settings.defaultGitHubToken && selectedToken === "default";
@@ -255,7 +284,7 @@ export function AddBookPage() {
         )}
       </div>}
 
-      <Card>
+      {created ? <GitHubCreateResult result={created.result} onOpenBook={() => navigate(`/app/books/${created.bookId}`)} /> : <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><Plus className="h-5 w-5" />{t("addBook.createNew")}</CardTitle>
           <CardDescription>{t("addBook.createNewDescription")}</CardDescription>
@@ -268,30 +297,23 @@ export function AddBookPage() {
             </div>
             {storageMode === "github" && <div className="grid gap-2">
               <Label>{t("addBook.repositoryName")}</Label>
-              <Input value={newRepoName} onChange={(e) => { setRepoNameEdited(true); setNewRepoName(e.target.value); }} placeholder="book-my-story" />
-              <p className="text-xs text-muted-foreground">{newRepoName.trim() ? t("addBook.repoNameHint") : t("addBook.repoNameHintEmpty")}</p>
+              <Input value={newRepoName} aria-invalid={nameProblem ? true : undefined} aria-describedby="add-book-repo-name-hint" onChange={(e) => { setRepoNameEdited(true); setNewRepoName(e.target.value); }} placeholder="book-my-story" />
+              <p id="add-book-repo-name-hint" className={nameProblem ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>{nameProblem ? t(`github.createBook.panel.nameProblem.${nameProblem}`) : newRepoName.trim() ? t("addBook.repoNameHint") : t("addBook.repoNameHintEmpty")}</p>
             </div>}
           </div>
           <StartSizePicker value={startSize} onChange={setStartSize} />
-          {storageMode === "github" && <div className="grid gap-2 sm:max-w-xs">
-            <Label>{t("addBook.visibility")}</Label>
-            <Select value={newRepoVisibility} onValueChange={(value) => setNewRepoVisibility(value as "private" | "public")}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="private">{t("addBook.privateRepo")}</SelectItem>
-                <SelectItem value="public">{t("addBook.publicRepo")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>}
+          {storageMode === "github" && <GitHubRepositoryPanel choices={repoChoices} onChange={setRepoChoices} preflight={preflight} disabled={creatingRepo} hasToken={Boolean(activeToken)} />}
           {createError && <Alert variant="destructive"><AlertDescription>{createError}</AlertDescription></Alert>}
-          <Button className="w-full sm:w-fit" onClick={() => void handleCreateNewBook()} disabled={creatingRepo || !newBookTitle.trim() || (storageMode === "github" && (!activeToken || !newRepoName.trim()))}>
+          {storageMode === "github" && <GitHubCreateProgress progress={progress} busy={creatingRepo} />}
+          {failure && <GitHubCreateFailure error={failure} owner={failureOwner.current} repo={newRepoName.trim()} busy={creatingRepo} onRetry={() => void handleCreateNewBook(true)} onDelete={handleDeleteEmptyRepository} />}
+          <Button className="w-full sm:w-fit [@media(pointer:coarse)]:h-11" onClick={() => void handleCreateNewBook()} disabled={creatingRepo || !newBookTitle.trim() || (storageMode === "github" && (!activeToken || !newRepoName.trim() || Boolean(nameProblem)))}>
             {creatingRepo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : storageMode === "local-only" ? <HardDrive className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
             {creatingRepo ? t("addBook.creatingRepo") : storageMode === "local-only" ? (settings.ui.language === "it" ? "Crea libro locale" : "Create local book") : t("addBook.createRepo")}
           </Button>
         </CardContent>
-      </Card>
+      </Card>}
 
-      {storageMode === "github" && <Card>
+      {storageMode === "github" && !created && <Card>
         <CardHeader>
           <CardTitle>{t("addBook.existingReposTitle")}</CardTitle>
           <CardDescription>{t("addBook.existingReposDescription")}</CardDescription>

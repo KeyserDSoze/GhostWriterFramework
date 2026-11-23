@@ -20,3 +20,9 @@ interface Window {
     inspectRepository(repoId: string, accountIdentity: string): Promise<{ repository: unknown; files: unknown[] }>;
   };
 }
+
+/** The bundle of the template of a book repository: a chunk of its own, imported only through `loadBookTemplate` (see `@/narrarium/bookTemplate`). */
+declare module "@/narrarium/bookTemplate.generated.json" {
+  const template: unknown;
+  export default template;
+}

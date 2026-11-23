@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AUTOPILOT_PRESETS, parseMarkdown, parseOutlineChapterPath, type AutopilotPresetId } from "narrarium-engine";
-import { createNarrariumBookRepository } from "@/github/githubClient";
+import { createCompleteBookRepository, type BookRepositoryFile } from "@/github/bookRepository";
 import { parseOutlineBrief } from "@/autopilot/outlineBrief";
 import { chooseOption, polyfillRadix } from "./helpers/radix";
 import i18n from "@/i18n";
@@ -24,11 +24,14 @@ vi.mock("@/repository/repositoryService", () => ({
     return {};
   }),
 }));
-vi.mock("@/github/githubClient", () => ({
-  createNarrariumBookRepository: vi.fn(async (_token: string, input: { name: string; files?: Array<{ path: string; content: string }> }) => {
-    mocks.created.push({ kind: "github", files: input.files });
-    return { owner: "acme", name: input.name, default_branch: "main" };
+// The repository is made by the creation service (see bookRepository.test.ts for the service itself): this page gives it the files and shows its result.
+vi.mock("@/github/bookRepository", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/github/bookRepository")>()),
+  createCompleteBookRepository: vi.fn(async (input: { name: string; files: BookRepositoryFile[] }) => {
+    mocks.created.push({ kind: "github", files: input.files.filter((file): file is { path: string; content: string } => "content" in file) });
+    return { id: 1, owner: "acme", repo: input.name, defaultBranch: "main", htmlUrl: `https://github.com/acme/${input.name}`, private: true, committed: { files: input.files.length, bytes: 1000 }, workflow: "done", pages: "skipped", warnings: [], headSha: "a".repeat(40), shas: {}, firstCommitPath: "direct", createdRepository: true, pendingWorkflow: [] };
   }),
+  preflightBookRepository: vi.fn(async () => ({ login: "acme", tokenKind: "classic", scopes: ["repo", "workflow"], organizations: [], canCreate: "yes", canWriteWorkflows: "yes", issues: [] })),
 }));
 vi.mock("@/github/useRepositories", () => ({ useRepositories: () => ({ repos: [], loading: false, error: null }) }));
 vi.mock("@/drive/useSettings", () => ({ useSettings: () => ({ save: vi.fn(async () => true) }) }));
@@ -123,7 +126,7 @@ describe("the sizes of a new book", () => {
     expect(created().book?.startPreset).toBeUndefined();
   });
 
-  it("created on GitHub, the same size goes into the first commit of the new repository", async () => {
+  it("created on GitHub, the same size goes into the first commit of the new repository, with the files of the framework book around it", async () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, defaultGitHubToken: "github_pat_test" } });
     render(<Page />);
     chooseOption(screen.getAllByRole("combobox")[0], "GitHub");
@@ -133,8 +136,15 @@ describe("the sizes of a new book", () => {
     await waitFor(() => expect(mocks.created).toHaveLength(1));
     expect(created().kind).toBe("github");
     expect((created().files ?? []).filter((file) => parseOutlineChapterPath(file.path))).toHaveLength(AUTOPILOT_PRESETS[0].chapters);
-    expect(vi.mocked(createNarrariumBookRepository)).toHaveBeenCalledWith("github_pat_test", expect.objectContaining({ files: expect.arrayContaining([expect.objectContaining({ path: "outline/_brief.md" })]) }));
+    const paths = (created().files ?? []).map((file) => file.path);
+    for (const path of ["book.md", "outline/_brief.md", "reader/package.json", ".github/workflows/deploy-reader-pages.yml", ".github/copilot-instructions.md", "opencode.jsonc"]) expect(paths, path).toContain(path);
+    expect(vi.mocked(createCompleteBookRepository)).toHaveBeenCalledWith(expect.objectContaining({ token: "github_pat_test", name: "book-the-glass-harbor", visibility: "private", existing: "error", pages: "skip" }));
     expect(useSettingsStore.getState().settings.books[useSettingsStore.getState().settings.books.length - 1]?.startPreset).toBe("story");
+    // The result stays on the screen until the user opens the book: what could not be done is on it.
+    expect(await screen.findByRole("heading", { name: t("github.createBook.result.title") })).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("/app/books/new");
+    fireEvent.click(screen.getByRole("button", { name: t("github.createBook.result.openBook") }));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toMatch(/^\/app\/books\/[0-9a-f-]{36}$/));
   });
 
   it("are one choice at a time: choosing a size leaves the others unchosen", () => {

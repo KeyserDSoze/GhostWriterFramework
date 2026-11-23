@@ -15,7 +15,9 @@ test("the page has no text of its own written in the code for one language or th
   const page = await read("src/pages/BookSettingsPage.tsx");
   assert.doesNotMatch(page, /language === "it" \?/, "no inline Italian/English pair");
   assert.doesNotMatch(page, /<Label htmlFor="attach-(owner|repo)">(Owner|Repository)<\/Label>/, "the labels of the fields are translated");
-  for (const key of ["title", "description", "owner", "repository", "overwrite", "overwriteHint", "submit", "noToken", "done"]) {
+  // The owner is chosen in the panel that the page shares with the page that adds a book (its texts are `github.createBook.*`), no longer typed in a field of the card.
+  assert.match(page, /<GitHubRepositoryPanel /, "the owner, the visibility and Pages are chosen in the shared panel");
+  for (const key of ["title", "description", "repository", "overwrite", "overwriteHint", "submit", "noToken"]) {
     assert.ok(page.includes(`t("bookSettings.connectGithub.${key}")`), `${key} comes from the catalogue`);
   }
   assert.ok(page.includes('t("bookSettings.deviceOnly")'), "and the line that says the book is on this device only");
@@ -32,6 +34,5 @@ test("the catalogue has the same texts in English and in Italian, none empty and
     assert.ok(String(it.get(key)).trim(), `${key} (it) is not empty`);
   }
   assert.equal(it.get("bookSettings.connectGithub.title"), "Collega il libro a GitHub");
-  assert.equal(it.get("bookSettings.connectGithub.owner"), "Proprietario");
   assert.notEqual(it.get("bookSettings.connectGithub.submit"), en.get("bookSettings.connectGithub.submit"));
 });

@@ -113,7 +113,7 @@ test("rows of actions wrap at 320 px and a long word in a hint breaks instead of
   const chats = await read("src/pages/AssistantChatsPage.tsx");
   assert.match(chats, /<div className="flex flex-wrap gap-2">\s*<input ref=\{importInputRef\}/, "Import and New go to the next line on a phone");
   const book = await read("src/pages/BookSettingsPage.tsx");
-  assert.match(book, /<Button className="h-auto min-h-10 whitespace-normal text-left" onClick=\{\(\) => void handleAttachToGitHub\(\)\}/, "Create or connect private repository wraps inside its button");
+  assert.match(book, /<Button className="h-auto min-h-10 whitespace-normal text-left \[@media\(pointer:coarse\)\]:min-h-11" onClick=\{\(\) => void handleAttachToGitHub\(\)\}/, "Create or connect the repository wraps inside its button, and is 44 px tall under a finger");
   const settings = await read("src/pages/SettingsPage.tsx");
   assert.match(settings, /<div className="min-w-\[12rem\] flex-1 break-words">\s*<p className="text-sm font-medium">\{t\("settings\.chatModels"\)\}/, "chat_template_kwargs.reasoning_strength breaks at 320 px");
 });

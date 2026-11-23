@@ -483,6 +483,21 @@ export async function createLocalOnlyBookRepository(input: {
   return { meta, structure: await buildLocalBookStructure(meta), cloned: true };
 }
 
+export interface AttachLocalBookResult {
+  owner: string;
+  repo: string;
+  branch: string;
+  remoteHeadSha: string;
+  repoId: string;
+  /** What the creation did and could not do: the workflow, Pages, the warnings (see `@/github/bookRepository`). */
+  creation: import("@/github/bookRepository").CreateCompleteBookRepositoryResult;
+}
+
+/**
+ * Publishes a book that lives on this device as a complete book repository: the files of the book, plus what the framework template has and the book
+ * lacks (the reader, the Pages workflow, the instructions of the writing agents, the scripts), through the same service that creates a new book on GitHub.
+ * The service sends text inline in a few trees, never one request for each file. Nothing the book already has is replaced by the template.
+ */
 export async function attachLocalBookToGitHub(input: {
   book: BookEntry;
   token: string;
@@ -490,60 +505,57 @@ export async function attachLocalBookToGitHub(input: {
   repo: string;
   createRepository?: boolean;
   overwriteExisting?: boolean;
-}): Promise<{ owner: string; repo: string; branch: string; remoteHeadSha: string; repoId: string }> {
+  visibility?: "private" | "public";
+  pages?: "enable" | "skip";
+  signal?: AbortSignal;
+  onProgress?: (progress: import("@/github/bookRepository").BookRepositoryProgress) => void;
+  /** Tests give a fake client. */
+  octokit?: Octokit;
+}): Promise<AttachLocalBookResult> {
   if (input.book.storageMode !== "local-only") throw new Error("Only a local-only book can be attached with this operation.");
   const scope = operationScope({ bookId: input.book.id, owner: "", repo: "", branch: input.book.activeBranch ?? `local:${input.book.localRepositoryId ?? input.book.id}`, accountIdentity: localWorkspaceScope() });
   const local = await getLocalRepositoryByBook(input.book.id, scope.accountIdentity);
   if (!local || local.remoteKind !== "none") throw new Error("The local-only working copy is unavailable or already connected.");
-  const files = (await listAllLocalFiles(local.id)).filter((file) => file.status !== "deleted");
-  if (!files.length) throw new Error("The local book has no files to publish.");
-  const octokit = createTrackedGitHubClient(input.token);
-  let repository;
-  try {
-    repository = (await octokit.rest.repos.get({ owner: input.owner, repo: input.repo })).data;
-    if (!input.overwriteExisting) {
-      try {
-        await octokit.rest.git.getRef({ owner: input.owner, repo: input.repo, ref: `heads/${repository.default_branch || "main"}` });
-        throw new Error("The selected GitHub repository is not empty. Explicit overwrite confirmation is required.");
-      } catch (error) {
-        if (!(error && typeof error === "object" && "status" in error && (error as { status?: number }).status === 404)) throw error;
-      }
-    }
-  } catch (error) {
-    const status = error && typeof error === "object" && "status" in error ? (error as { status?: number }).status : undefined;
-    if (status !== 404 || input.createRepository === false) throw error;
-    const authenticated = await octokit.rest.users.getAuthenticated();
-    if (authenticated.data.login.toLocaleLowerCase() !== input.owner.toLocaleLowerCase()) throw new Error("A new repository can only be created for the authenticated GitHub user.");
-    repository = (await octokit.rest.repos.createForAuthenticatedUser({ name: input.repo, private: true, auto_init: false, description: `Narrarium book: ${input.book.name}` })).data;
+  const localFiles = (await listAllLocalFiles(local.id)).filter((file) => file.status !== "deleted");
+  if (!localFiles.length) throw new Error("The local book has no files to publish.");
+  const [{ createCompleteBookRepository }, { loadBookTemplate, templateFilesMissingFrom }] = await Promise.all([import("@/github/bookRepository"), import("@/narrarium/bookTemplate")]);
+  const files: import("@/github/bookRepository").BookRepositoryFile[] = [];
+  for (const file of localFiles) {
+    if (file.kind === "text") files.push({ path: file.path, content: file.text ?? "" });
+    else files.push({ path: file.path, bytes: file.blob ? new Uint8Array(await file.blob.arrayBuffer()) : new Uint8Array() });
   }
-  const branch = repository.default_branch || "main";
-  let parent: string | null = null;
-  let baseTree: string | undefined;
-  try {
-    const ref = await octokit.rest.git.getRef({ owner: input.owner, repo: input.repo, ref: `heads/${branch}` });
-    parent = ref.data.object.sha;
-    const commit = await octokit.rest.git.getCommit({ owner: input.owner, repo: input.repo, commit_sha: parent });
-    baseTree = input.overwriteExisting ? undefined : commit.data.tree.sha;
-  } catch (error) {
-    if (!(error && typeof error === "object" && "status" in error && [404, 409].includes((error as { status?: number }).status ?? 0))) throw error;
-  }
-  const meter = new RepositoryByteMeter("mutation");
+  const title = localFiles.find((file) => file.path === "book.md")?.text?.match(/^title:\s*(.+)$/m)?.[1]?.trim().replace(/^["']|["']$/g, "") || input.book.name;
+  const template = await loadBookTemplate();
+  const added = templateFilesMissingFrom(template, files.map((file) => file.path), title);
+  const creation = await createCompleteBookRepository({
+    token: input.token,
+    octokit: input.octokit,
+    owner: input.owner.trim(),
+    name: input.repo.trim(),
+    description: `Narrarium book: ${input.book.name}`,
+    visibility: input.visibility ?? "private",
+    files: [...files, ...added],
+    existing: input.overwriteExisting ? "overwrite" : "empty",
+    createIfMissing: input.createRepository !== false,
+    pages: input.pages,
+    commitMessage: "Initialize Narrarium book from local workspace",
+    signal: input.signal,
+    onProgress: input.onProgress,
+  });
+  const branch = creation.defaultBranch;
   const pushedShas: Record<string, string> = {};
-  for (const file of files) meter.add(file.kind, file.kind === "text" ? utf8Bytes(file.text ?? "") : file.blob?.size ?? 0);
-  const entries = [] as Array<{ path: string; mode: "100644"; type: "blob"; sha: string }>;
-  for (const file of files) {
-    const sha = await createBlobForFile(octokit, { ...local, owner: input.owner, repo: input.repo }, file);
-    pushedShas[file.path] = sha;
-    entries.push({ path: file.path, mode: "100644", type: "blob", sha });
+  for (const file of localFiles) if (creation.shas[file.path]) pushedShas[file.path] = creation.shas[file.path];
+  // The files the template added are in the repository now: they are in the working copy too, clean, so that the copy is the repository and a later
+  // pull does not read their absence as a deletion.
+  for (const file of added) {
+    const sha = creation.shas[file.path];
+    if (!sha || !("content" in file)) continue;
+    await putCleanLocalFile({ repoId: local.id, path: file.path, kind: "text", text: file.content, baseSha: sha, size: utf8Bytes(file.content) }, scope).catch(() => undefined);
   }
-  const tree = await octokit.rest.git.createTree({ owner: input.owner, repo: input.repo, ...(baseTree ? { base_tree: baseTree } : {}), tree: entries });
-  const commit = await octokit.rest.git.createCommit({ owner: input.owner, repo: input.repo, message: "Initialize Narrarium book from local workspace", tree: tree.data.sha, parents: parent ? [parent] : [] });
-  if (parent) await octokit.rest.git.updateRef({ owner: input.owner, repo: input.repo, ref: `heads/${branch}`, sha: commit.data.sha, force: Boolean(input.overwriteExisting) });
-  else await octokit.rest.git.createRef({ owner: input.owner, repo: input.repo, ref: `refs/heads/${branch}`, sha: commit.data.sha });
   const commits = await listUnpushedLocalCommits(local.id);
-  await settleLocalRepositoryAttachment({ repoId: local.id, scope, remoteHeadSha: commit.data.sha, expectedFiles: files, commitIds: commits.map((entry) => entry.id), pushedShas, remote: { owner: input.owner, repo: input.repo, branch, defaultBranch: branch } });
-  await addLocalRepoLog(local.id, scope, "push", `Attached local book to ${input.owner}/${input.repo} at ${commit.data.sha.slice(0, 7)}`);
-  return { owner: input.owner, repo: input.repo, branch, remoteHeadSha: commit.data.sha, repoId: local.id };
+  await settleLocalRepositoryAttachment({ repoId: local.id, scope, remoteHeadSha: creation.headSha, expectedFiles: localFiles, commitIds: commits.map((entry) => entry.id), pushedShas, remote: { owner: creation.owner, repo: creation.repo, branch, defaultBranch: branch } });
+  await addLocalRepoLog(local.id, scope, "push", `Attached local book to ${creation.owner}/${creation.repo} at ${creation.headSha.slice(0, 7)}`);
+  return { owner: creation.owner, repo: creation.repo, branch, remoteHeadSha: creation.headSha, repoId: local.id, creation };
 }
 
 export async function migrateLegacyLocalRepository(input: { meta: LocalRepositoryMeta; token: string; accountIdentity: string; scope?: RepositoryOperationScope }): Promise<LocalRepositoryMeta> {

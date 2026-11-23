@@ -12,6 +12,9 @@ on:
       - docs/**
       - packages/*/README.md
       - packages/engine/**
+      - packages/core/**
+      - packages/astro-reader/**
+      - packages/create-narrarium-book/**
       - src/narrarium-site/**
       - .github/workflows/book-management-system.yml
       - packages/mcp-server/src/index.ts
@@ -57,8 +60,9 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v6
 
-      - name: Build Narrarium core and shared engine
-        run: npm run build -w narrarium && npm run build -w narrarium-engine
+      # The scaffolder is built too: the site keeps a snapshot of what it writes for a new book, and its tests and its build fail when the snapshot is stale.
+      - name: Build Narrarium core, shared engine and book scaffolder
+        run: npm run build -w narrarium && npm run build -w narrarium-engine && npm run build:cli -w narrarium-astro-reader && npm run build -w create-narrarium-book
 
       - name: Test Narrarium site
         run: npm run test -w narrarium-site
