@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Ban, CheckCircle2, Loader2, RotateCw, XCircle } from "lucide-react";
 import type { ActivityStatus, AutopilotActivity } from "narrarium-engine";
@@ -7,6 +7,7 @@ import { KindIcon } from "@/components/autopilot/KindIcon";
 import { isErrorKind } from "@/autopilot/errorModel";
 import { TONE_BORDER, TONE_TEXT, activityTitle, formatClock, formatCost, formatCount, formatDateTime, formatDuration, presentFeedEvent } from "@/autopilot/format";
 import type { TimelineMarker, TimelineNote, TimelineRow, TimelineStep } from "@/autopilot/timelineModel";
+import { taskElementId } from "@/autopilot/liveText";
 import { cn } from "@/lib/utils";
 
 /** The icon of how a step went: a shape for each outcome, so that colour is never the only thing that tells. */
@@ -89,7 +90,7 @@ function StepBody({ step, currency }: { step: TimelineStep; currency?: string })
               const retry = attempt.retry ? presentFeedEvent(t, attempt.retry.event, currency) : null;
               const { attempt: retried, retries } = activity.errorDetail ?? {};
               return (
-                <li key={activity.id} className="space-y-0.5">
+                <li key={activity.id} id={index > 0 ? taskElementId(activity.id) : undefined} tabIndex={index > 0 ? -1 : undefined} className="scroll-mt-8 space-y-0.5 rounded-md focus:outline-none focus:ring-2 focus:ring-ring">
                   <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <StatusIcon status={activity.status} />
                     <span className="font-medium">{t("autopilot.timeline.row.attempt", { number: index + 1 })}</span>
@@ -115,15 +116,23 @@ function StepBody({ step, currency }: { step: TimelineStep; currency?: string })
   );
 }
 
-function StepRow({ step, currency }: { step: TimelineStep; currency?: string }) {
+/**
+ * A step: its line, which opens what it holds. Its line carries the anchor of the step (`#task-<id>` of its first attempt; each later attempt has its
+ * own in what it holds), so that a link to it from the mini-player, the band or the page of every book lands on it. `revealed` is the step such a link
+ * points at: it opens, and its line shows where the focus is even after a click.
+ */
+function StepRow({ step, currency, revealed = false }: { step: TimelineStep; currency?: string; revealed?: boolean }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(revealed);
+  useEffect(() => {
+    if (revealed) setOpen(true);
+  }, [revealed]);
   const warnings = step.notes.filter((note) => note.tone === "warning" || note.tone === "critical").length;
   const failed = step.status === "failed";
   return (
     <li data-timeline-row="step">
-      <details className="rounded-lg border" onToggle={(event) => setOpen(event.currentTarget.open)}>
-        <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 [&::-webkit-details-marker]:hidden">
+      <details className="rounded-lg border" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+        <summary id={taskElementId(step.key)} data-revealed={revealed ? "" : undefined} className={cn("flex scroll-mt-8 cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 rounded-lg px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden", revealed && "focus:outline-none focus:ring-2 focus:ring-ring")}>
           <StatusIcon status={step.status} />
           <span className="min-w-0 flex-1 basis-40 text-sm">{activityTitle(t, step.last)}</span>
           {step.attempts.length > 1 && <span className={cn(badge, "bg-muted text-muted-foreground")}>{t("autopilot.timeline.row.attempts", { count: step.attempts.length })}</span>}
@@ -175,6 +184,6 @@ function MarkerRow({ marker, currency }: { marker: TimelineMarker; currency?: st
 }
 
 /** A row is drawn again only when what it shows changed: a step by its version, a note of the run by its identity. */
-export const TimelineRowView = memo(function TimelineRowView({ row, currency }: { row: TimelineRow; currency?: string }) {
-  return row.kind === "step" ? <StepRow step={row} currency={currency} /> : <MarkerRow marker={row} currency={currency} />;
-}, (before, after) => before.currency === after.currency && before.row.kind === after.row.kind && (before.row.kind === "step" ? before.row.version === (after.row as TimelineStep).version : before.row.key === after.row.key));
+export const TimelineRowView = memo(function TimelineRowView({ row, currency, revealed = false }: { row: TimelineRow; currency?: string; revealed?: boolean }) {
+  return row.kind === "step" ? <StepRow step={row} currency={currency} revealed={revealed} /> : <MarkerRow marker={row} currency={currency} />;
+}, (before, after) => before.currency === after.currency && before.revealed === after.revealed && before.row.kind === after.row.kind && (before.row.kind === "step" ? before.row.version === (after.row as TimelineStep).version : before.row.key === after.row.key));

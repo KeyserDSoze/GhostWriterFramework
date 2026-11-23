@@ -5,6 +5,7 @@ import { Plane, Search, Server } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { BookCard } from "@/components/autopilot/hub/BookCard";
+import { LiveAnnouncer } from "@/components/autopilot/live/LiveControls";
 import { HubFeed } from "@/components/autopilot/hub/HubFeed";
 import { HUB_FILTER_FROM, filterBooks, hubRank, hubStateOf, orderBooks, type HubRank } from "@/autopilot/hubModel";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
@@ -68,6 +69,9 @@ export function AutopilotHubPage() {
     return orderBooks(books, (id) => rankOf.get(id) ?? 2);
   }, [books, ranks]);
   const filtering = books.length >= HUB_FILTER_FROM;
+  // One polite voice for the page, which names the book of what it says: a step answering, a step done or failed.
+  const allIds = useMemo(() => books.map((book) => book.id), [books]);
+  const nameOf = useCallback((id: string) => books.find((book) => book.id === id)?.name, [books]);
   const shown = filtering && query.trim() ? filterBooks(ordered, query) : ordered;
 
   return (
@@ -121,6 +125,7 @@ export function AutopilotHubPage() {
         </section>
         <HubFeed className="self-start" />
       </div>
+      <LiveAnnouncer bookIds={allIds} nameOf={nameOf} />
     </div>
   );
 }

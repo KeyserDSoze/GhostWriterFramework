@@ -103,12 +103,23 @@ afterEach(async () => {
 });
 
 describe("what used to be on the page twice", () => {
+  // Changed on purpose (the owner asked for the last lines of the text in the band): the band shows the end of the text that streams in its lines, and the
+  // timeline adds the text whole only when there is more of it than the lines hold. Never the same text twice.
   it("has one box for what happens now, wherever the history is listed", () => {
     seedRun({ status: "running", running: true, live: { activity: LIVE, characters: PREVIEW.length, preview: PREVIEW }, ...history() });
-    render(<Page />);
+    const short = render(<Page />);
     expect(screen.getAllByText(/^Now$/i)).toHaveLength(1);
-    // The text that streams is short in the band (one line) and whole in the timeline: two places, and never the same text twice.
-    const places = screen.getAllByText(PREVIEW.slice(-60), { exact: false });
+    // A short text is said once, in the lines of the band.
+    const once = screen.getAllByText(PREVIEW.slice(-60), { exact: false });
+    expect(once).toHaveLength(1);
+    expect(bandOf()).toContainElement(once[0]);
+    short.unmount();
+
+    const long = Array.from({ length: 4 }, () => PREVIEW).join(" ");
+    seedRun({ status: "running", running: true, live: { activity: LIVE, characters: long.length, preview: long }, ...history() });
+    render(<Page />);
+    // A longer one: its end in the band, the whole in the timeline. Two places, and never the same text twice.
+    const places = screen.getAllByText(long.slice(-60), { exact: false });
     expect(places).toHaveLength(2);
     expect(new Set(places.map((place) => place.textContent)).size).toBe(2);
     expect(bandOf().contains(places[0]) || bandOf().contains(places[1])).toBe(true);

@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAutopilotState, type AutopilotActivity, type AutopilotEvent, type AutopilotState, type AutopilotStateSummary, type PlannedChapter } from "narrarium-engine";
@@ -112,7 +112,8 @@ describe("a long plan while the autopilot streams its text", () => {
     const drawn = total(reads);
 
     for (let step = 1; step <= 60; step += 1) await ingest(progress(step));
-    expect(screen.getAllByText("Words streamed so far, step 60").length).toBeGreaterThan(0);
+    // Changed on purpose: the lines of the band follow the text at most four times a second, and show the end of a longer text after an ellipsis.
+    await waitFor(() => expect(screen.getAllByText(/streamed so far, step 60$/).length).toBeGreaterThan(0));
     expect(total(reads)).toBe(drawn);
   });
 
@@ -137,7 +138,8 @@ describe("a long plan while the autopilot streams its text", () => {
 
     for (let step = 1; step <= 60; step += 1) await ingest(progress(step));
     for (let step = 1; step <= 40; step += 1) await ingest(stateEvent(summary({ stats: { ...STATS, aiCalls: 5 + step } }, 10 + step), 100 + step));
-    expect(screen.getAllByText("Words streamed so far, step 60").length).toBeGreaterThan(0);
+    // Changed on purpose: the lines of the band follow the text at most four times a second, and show the end of a longer text after an ellipsis.
+    await waitFor(() => expect(screen.getAllByText(/streamed so far, step 60$/).length).toBeGreaterThan(0));
     expect([...reads.values()].reduce((sum, count) => sum + count, 0)).toBe(drawn);
   });
 

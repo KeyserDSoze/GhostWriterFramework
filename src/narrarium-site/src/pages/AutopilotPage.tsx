@@ -58,6 +58,9 @@ import { planReviewMode } from "@/autopilot/planApprovalModel";
 import { useAutopilotRefresh, useBookAutopilotView } from "@/autopilot/hooks";
 import { setAutopilotHost } from "@/autopilot/host";
 import { autopilotSettingsHref } from "@/autopilot/pageRoute";
+import { STREAM_CHARACTERS, taskIdOfHash } from "@/autopilot/liveText";
+import { useTextDetail } from "@/autopilot/useLiveText";
+import { PREVIEW_CHARACTERS } from "@/components/autopilot/band/parts";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useAutopilotStore, type SyncOutcome } from "@/autopilot/store";
@@ -86,6 +89,11 @@ type PageTab = "overview" | "timeline" | "plan" | "rules";
 
 /** The tab that holds what a link to `#its-id` points at, for the page that has tabs. */
 const TAB_OF_ID: Record<string, PageTab> = { "autopilot-where": "rules" };
+
+/** The tab of an anchor: the ones above, and every step of the history (`#task-<id>`, see `taskHref`), which is in the Timeline. */
+function tabOfId(id: string): PageTab | undefined {
+  return TAB_OF_ID[id] ?? (taskIdOfHash(id) ? "timeline" : undefined);
+}
 
 /** The links that opened the settings on this page before they had a page of their own: they lead there now. */
 const MOVED_TO_SETTINGS = "autopilot-setup";
@@ -153,13 +161,17 @@ export function AutopilotPage() {
   const [chosen, setChosen] = useState<{ bookId: string | undefined; tab: PageTab } | null>(null);
   const chosenTab = chosen && chosen.bookId === bookId ? chosen.tab : null;
   const active = chosenTab && tabs.includes(chosenTab) ? chosenTab : planReview ? "plan" : tabs[0];
-  const hash = decodeURIComponent(location.hash.replace(/^#/, ""));
-  const hashTab = TAB_OF_ID[hash];
+  const hash = safeDecode(location.hash.replace(/^#/, ""));
+  const hashTab = tabOfId(hash);
+  const taskLink = Boolean(taskIdOfHash(hash));
   useEffect(() => {
     if (hashTab) setChosen({ bookId, tab: hashTab });
   }, [hashTab, location.key, bookId]);
-  // Nothing is followed before the width is known: the layout of the first draw is thrown away at once, and what was focused in it with it.
-  useScrollToHash(loaded && measured, `${layout}:${active}`);
+  // Nothing is followed before the width is known: the layout of the first draw is thrown away at once, and what was focused in it with it. A step of the
+  // history is looked for again when the log or the step that runs changes: the step a link points at may arrive after the page.
+  const liveId = useAutopilotStore((store) => (bookId ? store.live[bookId]?.activity.id ?? "" : ""));
+  const [textDetail] = useTextDetail();
+  useScrollToHash(loaded && measured, `${layout}:${active}${taskLink ? `:${activities.length}:${activities[activities.length - 1]?.id ?? ""}:${liveId}` : ""}`);
 
   if (error && !structure && host === "browser") return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book || !bookId) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
@@ -220,7 +232,9 @@ export function AutopilotPage() {
   );
 
   const result = <AutopilotResult bookId={bookId} linkedSlugs={linkedChapters} wide={layout === "wide"} />;
-  const timeline = <AutopilotTimeline bookId={bookId} loading={!loaded} activities={activities} chapterTitle={chapterTitle} chapterGhostwriter={chapterGhostwriter} chapterRounds={chapterRounds} finalReview={finalReview} currency={summary?.stats.currency ?? settings.costCurrency} />;
+  // The band of the wide page shows the end of the text that streams (its lines, or one line with «Show the text» off): the history adds it only when there is more.
+  const shownAbove = layout === "wide" ? (textDetail === "full" ? STREAM_CHARACTERS : PREVIEW_CHARACTERS) : 0;
+  const timeline = <AutopilotTimeline bookId={bookId} loading={!loaded} activities={activities} chapterTitle={chapterTitle} chapterGhostwriter={chapterGhostwriter} chapterRounds={chapterRounds} finalReview={finalReview} currency={summary?.stats.currency ?? settings.costCurrency} shownAbove={shownAbove} />;
   const plan = state ? <PlanCard bookId={bookId} plan={state.plan} reviewNumber={state.review?.chapterNumber} linkedSlugs={linkedChapters} /> : null;
   const approval = state && planReview ? <PlanApproval bookId={bookId} mode={planReview} state={state} activities={activities} /> : null;
   // The map of the chapters goes with the plan, and both give way to the approval while the plan waits for the author.
@@ -275,7 +289,8 @@ export function AutopilotPage() {
       {layout === "wide" && result}
       {layout === "wide" ? (
         <div className="grid grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-5">
-          <div data-autopilot-main className="min-w-0 space-y-5">{approval ?? timeline}</div>
+          {/* A plan that waits takes the place of the history, which a link to one of its steps brings back under it. */}
+          <div data-autopilot-main className="min-w-0 space-y-5">{approval ? <>{approval}{taskLink && timeline}</> : timeline}</div>
           <div data-autopilot-side className="min-w-0 space-y-4">
             {approval ? null : <>{map}{plan}</>}
             {intervene}
@@ -318,6 +333,15 @@ function ConfigureInvite({ settingsHref }: { settingsHref: string }) {
       </Button>
     </section>
   );
+}
+
+/** A hash as the page reads it: decoded, or as it is when it is not a valid escape. */
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 /** On a phone the actions are in a bar at the bottom of the screen, where the thumb is. The page and the floating buttons keep clear of it. */

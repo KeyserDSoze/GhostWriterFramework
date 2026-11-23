@@ -8,7 +8,11 @@ import { retryWaitOf, type RetryWait } from "@/autopilot/retry";
 import { useAutopilotStore } from "@/autopilot/store";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useAutopilotControl, type AutopilotControl } from "@/autopilot/useAutopilotControl";
+import { useTextDetail } from "@/autopilot/useLiveText";
 import { CycleList, FrozenChangesChip, HostChip, PhaseList, PreviewLine, ProgressBars, SignalAge, StatusMessage, StatusPill, StepElapsed, StepNow, UsageLine } from "@/components/autopilot/band/parts";
+import { LastDone } from "@/components/autopilot/live/LastDone";
+import { LiveAnnouncer, TextDetailToggle } from "@/components/autopilot/live/LiveControls";
+import { StreamLines } from "@/components/autopilot/live/StreamLines";
 import { useReserveSpace } from "@/hooks/useReserveSpace";
 import { useSettingsStore } from "@/store/settingsStore";
 import { cn } from "@/lib/utils";
@@ -109,18 +113,22 @@ function HostLine({ model }: { model: BandModel }) {
 export function AutopilotControlBand({ bookId, variant = "full", commands }: AutopilotControlBandProps) {
   const { t } = useTranslation();
   const model = useBandModel(bookId);
+  const [detail] = useTextDetail();
   const wrapper = useRef<HTMLDivElement>(null);
   useReserveSpace(wrapper, "--top-reserve", Boolean(model));
   if (!model) return null;
   const { summary, status, running, completed } = model;
   const compact = variant === "compact";
   const full = variant === "full";
+  // «Last done» is in the band where the band has room for it (beside the step, under the commands); elsewhere it is in the details of the Overview.
+  const lastDone = full && detail === "full" ? <LastDone bookId={bookId} className={commands ? "border-t pt-3" : undefined} /> : null;
 
   const statusRow = (
     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
       <StatusPill status={status} />
       <HostLine model={model} />
       <FrozenChangesChip count={summary.frozenChanges} />
+      <TextDetailToggle labelled className="ml-auto" />
     </div>
   );
 
@@ -147,28 +155,36 @@ export function AutopilotControlBand({ bookId, variant = "full", commands }: Aut
               {full && summary.progress.chapters > 0 && <PhaseList summary={summary} />}
               {full && model.cycle && <CycleList cycle={model.cycle} />}
               {full && !completed && <UsageLine summary={summary} options={model.state?.options ?? null} currency={model.currency} />}
+              {!commands && lastDone}
             </div>
-            {commands && <div className={cn("min-w-0", full ? "max-w-[22rem]" : "border-t pt-3")}>{commands}</div>}
+            {commands && <div className={cn("min-w-0", full ? "max-w-[22rem] space-y-3" : "border-t pt-3")}>{commands}{lastDone}</div>}
           </div>
         )}
       </section>
+      {/* Its own voice, beside the one status of the band (the step): what the step answers, and what is done. */}
+      <LiveAnnouncer bookIds={[bookId]} />
     </div>
   );
 }
 
 /**
- * What the band of a page that has little room does not have, for the Overview tab: the text that streams, the phases, the cycle of the chapter, what it
- * costs, and, on a phone, where it runs, the scenes and how a book that is complete went. The same parts as the band, with the same figures; the band does not repeat them.
+ * What the band of a page that has little room does not have, for the Overview tab: the text that streams, the last steps done, the phases, the cycle of
+ * the chapter, what it costs, and, on a phone, where it runs, «Show the text», the scenes and how a book that is complete went. The same parts as the band,
+ * with the same figures; the band does not repeat them.
  */
 export function AutopilotBandDetails({ bookId, variant }: { bookId: string; variant: Exclude<BandVariant, "full"> }) {
   const model = useBandModel(bookId);
+  const [detail] = useTextDetail();
   if (!model) return null;
   const { summary, running, completed } = model;
   const compact = variant === "compact";
+  const text = detail === "full";
   return (
     <div data-band-details className="space-y-3 rounded-2xl border border-layer bg-card p-3 shadow-sm">
-      {compact && <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><HostLine model={model} /></div>}
-      {running && <PreviewLine bookId={bookId} />}
+      {/* The compact band of a phone has no room for «Show the text»: it is here, over the lines and the list it shows, as big as a finger. */}
+      {compact && <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><HostLine model={model} /><TextDetailToggle labelled className="ml-auto min-h-11" /></div>}
+      {running && (text ? <StreamLines bookId={bookId} preview /> : <PreviewLine bookId={bookId} />)}
+      {text && <LastDone bookId={bookId} />}
       {compact && <ProgressBars summary={summary} chapters={false} />}
       {summary.progress.chapters > 0 && <PhaseList summary={summary} />}
       {model.cycle && <CycleList cycle={model.cycle} />}

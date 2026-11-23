@@ -453,10 +453,16 @@ describe("the step that runs now", () => {
     expect(screen.getByRole("button", { name: new RegExp(t("autopilot.timeline.group.chapter", { chapter: 4, round: 1 })) })).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("shows nothing at all when the step has no text, no reason and no next step to tell", () => {
+  // Changed on purpose (the owner asked that the lines of the text lead to the step that runs): the block is there for as long as the step runs, with its
+  // anchor, even before it has anything to show; and it never shows an empty box of text.
+  it("is there while the step runs, with the anchor of the step, even when it has no text, no reason and no next step to tell", () => {
     const quiet = stepOf("write", { from: 5000, chapterNumber: 5, sceneNumber: 1, status: "running", title: "Writing", reason: "", next: "" });
     const { container } = show({ activities: [], live: { activity: quiet, preview: "" } });
-    expect(container.querySelector("[data-timeline-live]")).toBeNull();
+    const live = container.querySelector("[data-timeline-live]") as HTMLElement;
+    expect(live).not.toBeNull();
+    expect(live).toHaveAttribute("id", `task-${quiet.id}`);
+    expect(live).toHaveAttribute("tabindex", "-1");
+    expect(live.querySelector("p.font-serif")).toBeNull();
   });
 
   it("follows the text as it comes without drawing a row again", () => {

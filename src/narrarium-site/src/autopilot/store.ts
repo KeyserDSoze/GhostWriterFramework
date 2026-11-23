@@ -78,6 +78,8 @@ export interface LivePreview {
    * reply. Absent for a step that writes prose, and as soon as prose follows.
    */
   bytes?: number;
+  /** The characters of that reply so far, as the engine counts them (its text or the arguments of its function): a number, never a word of it. With `bytes`. */
+  answerCharacters?: number;
 }
 
 export interface ServerConnectionState {
@@ -212,9 +214,12 @@ export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
       const current = state.live[event.bookId];
       if (!current || current.activity.id !== event.activityId) return {};
       // A step that answers with a value says numbers only, and an empty preview: the text of the scene that came before it stays where it was, and so do its characters.
-      if (typeof event.bytes === "number" && Number.isFinite(event.bytes) && event.bytes >= 0) return { live: { ...state.live, [event.bookId]: { ...current, bytes: event.bytes } } };
+      if (typeof event.bytes === "number" && Number.isFinite(event.bytes) && event.bytes >= 0) {
+        const answered = typeof event.characters === "number" && Number.isFinite(event.characters) && event.characters >= 0 ? { answerCharacters: event.characters } : {};
+        return { live: { ...state.live, [event.bookId]: { ...current, bytes: event.bytes, ...answered } } };
+      }
       // Prose: the function, if there was one, is over.
-      const { bytes: _answered, ...text } = current;
+      const { bytes: _answered, answerCharacters: _characters, ...text } = current;
       return { live: { ...state.live, [event.bookId]: { ...text, characters: event.characters, preview: typeof event.preview === "string" ? event.preview : current.preview } } };
     }
     if (event.type === "state") return { summaries: { ...state.summaries, [event.bookId]: event.state } };

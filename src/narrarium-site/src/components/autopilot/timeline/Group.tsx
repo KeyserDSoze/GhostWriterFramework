@@ -35,15 +35,18 @@ function useGroupLabel(group: TimelineGroup, chapterTitle: ((number: number) => 
  * A chapter and its round, or what is not about a chapter: a header that opens and closes it, and its rows when it is open. A closed group has no
  * rows in the page at all; an open one draws a window of them, and gives more when the author asks.
  */
-export const TimelineGroupView = memo(function TimelineGroupView({ group, open, onToggle, chapterTitle, chapterGhostwriter, currency }: { group: TimelineGroup; open: boolean; onToggle: (key: string) => void; chapterTitle?: (number: number) => string | undefined; chapterGhostwriter?: (number: number) => string | undefined; currency?: string }) {
+export const TimelineGroupView = memo(function TimelineGroupView({ group, open, onToggle, chapterTitle, chapterGhostwriter, currency, revealRow }: { group: TimelineGroup; open: boolean; onToggle: (key: string) => void; chapterTitle?: (number: number) => string | undefined; chapterGhostwriter?: (number: number) => string | undefined; currency?: string; revealRow?: string }) {
   const { t } = useTranslation();
   const [limit, setLimit] = useState(GROUP_ROWS);
   const label = useGroupLabel(group, chapterTitle, chapterGhostwriter);
   const regionId = `autopilot-timeline-${group.key.replace(/:/g, "-")}`;
   // A group whose first step is still running has nothing to open yet.
   const expandable = group.rows.length > 0;
-  const total = Math.min(group.rows.length, MAX_ROWS);
-  const left = total - Math.min(limit, total);
+  // The step a link points at is drawn even when it is further down than the window of rows goes.
+  const revealIndex = revealRow ? group.rows.findIndex((row) => row.key === revealRow) : -1;
+  const total = Math.max(Math.min(group.rows.length, MAX_ROWS), revealIndex + 1);
+  const shown = Math.max(Math.min(limit, total), revealIndex + 1);
+  const left = total - shown;
   // What the plan recorded of the round besides its vote: the readers' average (the first round only) and what the director decided. Only what is there, and no zero.
   const details = group.result
     ? [
@@ -76,10 +79,10 @@ export const TimelineGroupView = memo(function TimelineGroupView({ group, open, 
         <div id={regionId} className="space-y-1.5 border-t p-2">
           {details && <p data-timeline-round className="px-1 text-xs text-muted-foreground">{details}</p>}
           <ol className="space-y-1.5">
-            {group.rows.slice(0, Math.min(limit, total)).map((row) => <TimelineRowView key={row.key} row={row} currency={currency} />)}
+            {group.rows.slice(0, shown).map((row) => <TimelineRowView key={row.key} row={row} currency={currency} revealed={row.key === revealRow} />)}
           </ol>
           {left > 0 && (
-            <Button variant="ghost" size="sm" className="w-full" onClick={() => setLimit(nextLimit(limit, group.rows.length))}>
+            <Button variant="ghost" size="sm" className="w-full" onClick={() => setLimit(nextLimit(shown, group.rows.length))}>
               {t("autopilot.timeline.more", { count: Math.min(ROW_STEP, left) })}
             </Button>
           )}

@@ -1,4 +1,5 @@
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { EyeOff, ListChecks, Loader2 } from "lucide-react";
 import type { AutopilotActivity, AutopilotFinalReview, ChapterRound } from "narrarium-engine";
@@ -8,7 +9,8 @@ import { TimelineGroupView } from "@/components/autopilot/timeline/Group";
 import { TimelineLive } from "@/components/autopilot/timeline/Live";
 import { formatClock } from "@/autopilot/format";
 import { useAutopilotStore } from "@/autopilot/store";
-import { buildTimeline, filterCounts, filterTimeline, type TimelineFilter } from "@/autopilot/timelineModel";
+import { buildTimeline, filterCounts, filterTimeline, locateTask, type TimelineFilter } from "@/autopilot/timelineModel";
+import { taskElementId, taskIdOfHash } from "@/autopilot/liveText";
 import { useTimelinePrefs } from "@/autopilot/timelinePrefs";
 
 export interface AutopilotTimelineProps {
@@ -26,6 +28,8 @@ export interface AutopilotTimelineProps {
   /** What the engine says of the whole book, for the header of its review. */
   finalReview?: Pick<AutopilotFinalReview, "verdict" | "score"> | null;
   currency?: string;
+  /** How much of the text that streams the band above the history shows (its characters; 0 where the band shows none): the block of the step that runs shows the text only when there is more of it. */
+  shownAbove?: number;
 }
 
 /**
@@ -34,7 +38,7 @@ export interface AutopilotTimelineProps {
  * It replaces the list of the steps and the live feed that said the same things twice. The page that holds it does not draw it again for what it
  * does not show: it is kept as it is until the log, the events of the book or what the author chose change.
  */
-export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loading = false, activities, chapterTitle, chapterGhostwriter, chapterRounds, finalReview, currency }: AutopilotTimelineProps) {
+export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loading = false, activities, chapterTitle, chapterGhostwriter, chapterRounds, finalReview, currency, shownAbove = 0 }: AutopilotTimelineProps) {
   const { t } = useTranslation();
   const feed = useAutopilotStore((state) => state.feed);
   const running = useAutopilotStore((state) => state.live[bookId]?.activity ?? null);
@@ -46,6 +50,47 @@ export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loadi
   // Which groups the author opened or closed; the others are open or closed as the timeline says (the one in hand is open).
   const [chosen, setChosen] = useState<Record<string, boolean>>({});
   const toggle = useCallback((key: string) => setChosen((current) => ({ ...current, [key]: !(current[key] ?? key === shown.open) })), [shown.open]);
+
+  // A link to a step (`#task-<id>`, from the mini-player, the band or the page of every book) shows it, whatever hides it: «Hide until now» and the filter
+  // are taken back when they hide it, its group opens, and its row opens (the page then scrolls to it and gives it the focus). Once for each visit of the
+  // link; a step the log does not have yet is looked for again when the log changes. The step that runs is the block at the top, always there.
+  const location = useLocation();
+  const target = taskIdOfHash(location.hash);
+  const [reveal, setReveal] = useState<{ group: string; row: string; activityId: string } | null>(null);
+  const followed = useRef<string | null>(null);
+  const showTask = useCallback((activityId: string, visit: string): boolean => {
+    const everything = prefs.since ? buildTimeline({ activities, events, running, since: null, rounds: chapterRounds, finalReview }) : timeline;
+    const at = locateTask(everything, activityId);
+    if (!at) return false;
+    followed.current = visit;
+    const hiddenUntilNow = Boolean(prefs.since) && !locateTask(timeline, activityId);
+    const filtered = !locateTask(filterTimeline(everything, prefs.filter), activityId);
+    if (hiddenUntilNow || filtered) change({ ...(hiddenUntilNow ? { since: null } : {}), ...(filtered ? { filter: "all" } : {}) });
+    setChosen((current) => (current[at.group] ? current : { ...current, [at.group]: true }));
+    setReveal({ group: at.group, row: at.row, activityId });
+    return true;
+  }, [activities, events, running, chapterRounds, finalReview, prefs.since, prefs.filter, timeline, change]);
+  useEffect(() => {
+    if (!target || loading) return;
+    const visit = `${location.key}:${target}`;
+    if (followed.current === visit) return;
+    if (running?.id === target) {
+      followed.current = visit;
+      return;
+    }
+    showTask(target, visit);
+  }, [target, location.key, loading, running?.id, showTask]);
+  // The block of the step that runs had the focus and the step is over: the focus goes to its row, which takes its place.
+  const [refocus, setRefocus] = useState<string | null>(null);
+  const focusLost = useCallback((activityId: string) => {
+    if (showTask(activityId, `refocus:${activityId}`)) setRefocus(activityId);
+  }, [showTask]);
+  useEffect(() => {
+    if (!refocus) return;
+    setRefocus(null);
+    const element = document.getElementById(taskElementId(refocus)) ?? document.getElementById(taskElementId(reveal?.row ?? ""));
+    element?.focus({ preventScroll: true });
+  }, [refocus, reveal]);
   // What a screen reader is told when the author changes what is shown, and only then: the list changes under the author's hand with every step.
   const [announcement, setAnnouncement] = useState("");
   const choose = (filter: TimelineFilter) => {
@@ -77,7 +122,7 @@ export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loadi
             </p>
           )}
           {everything > 0 && <TimelineFilters bookId={bookId} value={prefs.filter} counts={counts} onChange={choose} />}
-          <TimelineLive bookId={bookId} />
+          <TimelineLive bookId={bookId} shownAbove={shownAbove} onFocusLost={focusLost} />
           {shown.groups.length === 0 && everything > 0 ? (
             <div className="space-y-2 rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground">
               <p>{t("autopilot.timeline.empty")}</p>
@@ -85,7 +130,7 @@ export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loadi
             </div>
           ) : (
             <ol className="space-y-2">
-              {shown.groups.map((group) => <TimelineGroupView key={group.key} group={group} open={chosen[group.key] ?? group.key === shown.open} onToggle={toggle} chapterTitle={chapterTitle} chapterGhostwriter={chapterGhostwriter} currency={currency} />)}
+              {shown.groups.map((group) => <TimelineGroupView key={group.key} group={group} open={chosen[group.key] ?? group.key === shown.open} onToggle={toggle} chapterTitle={chapterTitle} chapterGhostwriter={chapterGhostwriter} currency={currency} revealRow={reveal?.group === group.key ? reveal.row : undefined} />)}
             </ol>
           )}
         </>

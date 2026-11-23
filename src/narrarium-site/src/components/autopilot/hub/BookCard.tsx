@@ -6,7 +6,9 @@ import type { AutopilotActivity } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
-import { FrozenChangesChip, HostChip, ProgressBar } from "@/components/autopilot/band/parts";
+import { FrozenChangesChip, HostChip, ModelAnswering, ProgressBar } from "@/components/autopilot/band/parts";
+import { LastDone } from "@/components/autopilot/live/LastDone";
+import { StreamLines } from "@/components/autopilot/live/StreamLines";
 import { ProgressRing } from "@/components/autopilot/hub/ProgressRing";
 import { budgetUse } from "@/autopilot/bandModel";
 import { isErrorKind } from "@/autopilot/errorModel";
@@ -17,6 +19,7 @@ import { loadAutopilotRuntime } from "@/autopilot/loader";
 import { autopilotLiveHref, autopilotSettingsHref } from "@/autopilot/pageRoute";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
+import { useTextDetail } from "@/autopilot/useLiveText";
 import { useSettingsStore } from "@/store/settingsStore";
 import type { BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
@@ -72,7 +75,8 @@ const NO_ACTIVITIES: AutopilotActivity[] = [];
 
 /**
  * The card of one book on the page of every book: its title; how far it is, as a ring beside the words; the state of its autopilot in words with
- * an icon; the last step and when; the director's last vote (and the readers'); what it cost against its budget; and the actions that are right
+ * an icon; the step that runs, with the last lines of what it is writing, and the last steps that are over, each a way to it on the book's page
+ * (with «Show the text» off, the last step and when); the director's last vote (and the readers'); what it cost against its budget; and the actions that are right
  * for the state, which are the quick commands of the book's own page (the same rules, the same checks, through the same runtime). It reads only
  * what the app already read of the book (the saved state, the summary of the last event, the log of the steps), each part from the store by
  * itself, so that the text a run streams draws again only its own card.
@@ -98,6 +102,10 @@ export const BookCard = memo(function BookCard({ book }: { book: BookEntry }) {
   const currency = summary?.stats.currency ?? costCurrency;
   const use = summary ? budgetUse(summary.stats, state?.options) : null;
   const error = summary?.status === "error" ? summary.lastError : null;
+  // With «Show the text» the card says what the step is writing and the last steps that are over, which take the place of the last step and when.
+  const [detail] = useTextDetail();
+  const text = detail === "full" && Boolean(summary);
+  const stepRow = step && (step.now || !text);
 
   return (
     <article aria-labelledby={titleId} aria-busy={pending || undefined} data-hub-book={book.id} className="flex h-full flex-col gap-3 rounded-2xl border border-layer bg-card p-4 shadow-sm">
@@ -134,9 +142,9 @@ export const BookCard = memo(function BookCard({ book }: { book: BookEntry }) {
 
       {view.snapshot && !state && <p className="text-sm text-muted-foreground">{t("autopilot.hub.neverStarted")}</p>}
 
-      {summary && (step || vote || use) && (
+      {summary && (stepRow || vote || use) && (
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
-          {step && (
+          {stepRow && (
             <>
               <dt className="text-muted-foreground">{t("autopilot.hub.lastStep")}</dt>
               <dd className="min-w-0 break-words"><StepLine step={step} /></dd>
@@ -180,6 +188,14 @@ export const BookCard = memo(function BookCard({ book }: { book: BookEntry }) {
           )}
         </dl>
       )}
+
+      {text && runningStep && (
+        <div className="space-y-1">
+          <StreamLines bookId={book.id} />
+          <ModelAnswering bookId={book.id} short />
+        </div>
+      )}
+      {text && <LastDone bookId={book.id} />}
 
       {hub === "profiles" && <ProfileProblemsNotice bookId={book.id} message={summary?.message} compact />}
       {error && <RunErrorNotice bookId={book.id} message={error.message} kind={isErrorKind(error.kind ?? error.errorKind) ? error.kind ?? error.errorKind : undefined} />}

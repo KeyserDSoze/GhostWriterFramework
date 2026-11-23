@@ -8,6 +8,8 @@ import { formatCountdown, secondsLeft } from "@/autopilot/errorModel";
 import { STATUS_BADGE, activityTitle, formatAgo, formatBytes, formatCost, formatCount, formatDuration } from "@/autopilot/format";
 import { waitLineText, type RetryWait } from "@/autopilot/retry";
 import { lastSignalAt, useAutopilotStore } from "@/autopilot/store";
+import { useTextDetail } from "@/autopilot/useLiveText";
+import { StreamLines } from "@/components/autopilot/live/StreamLines";
 import { cn } from "@/lib/utils";
 
 const STATUS_ICON: Record<AutopilotStatus, typeof Circle> = {
@@ -123,6 +125,15 @@ export function whereOf(t: (key: string, options?: Record<string, unknown>) => s
     : t("autopilot.band.where.chapterScene", { chapter: activity.chapterNumber, scene: activity.sceneNumber });
 }
 
+/**
+ * The text that streams, in the row of the step: its last lines (see `StreamLines`), or, with «Show the text» off, the one line of the band as
+ * it always was. Neither is read out.
+ */
+function NowText({ bookId }: { bookId: string }) {
+  const [detail] = useTextDetail();
+  return detail === "full" ? <StreamLines bookId={bookId} preview /> : <PreviewLine bookId={bookId} />;
+}
+
 /** The time left before a quick retry, beside the line of the wait: a timer that is not read out as it ticks (the line says when the wait begins and ends). */
 function WaitLeft({ at }: { at: string }) {
   const { t, i18n } = useTranslation();
@@ -161,7 +172,7 @@ export const StepNow = memo(function StepNow({ bookId, compact = false, showPrev
         {step && !hideElapsed && <ElapsedTime since={step.startedAt} />}
         {wait && countdown && !wait.long && <WaitLeft at={wait.at} />}
       </div>
-      {!compact && showPreview && !wait && <PreviewLine bookId={bookId} />}
+      {!compact && showPreview && !wait && <NowText bookId={bookId} />}
       {!wait && <ModelAnswering bookId={bookId} short={compact} />}
     </div>
   );

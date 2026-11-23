@@ -10,6 +10,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadio
 import { parseAppRoute } from "@/assistant/context";
 import { useBookAutopilotView, useAutopilotRefresh } from "@/autopilot/hooks";
 import { isAutopilotLivePage, isAutopilotPage, autopilotSettingsHref } from "@/autopilot/pageRoute";
+import { useTextDetail } from "@/autopilot/useLiveText";
+import { LastDone } from "@/components/autopilot/live/LastDone";
+import { LiveAnnouncer, TextDetailToggle } from "@/components/autopilot/live/LiveControls";
+import { StreamLines } from "@/components/autopilot/live/StreamLines";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useFocusBook } from "@/autopilot/useFocusBook";
 import { useReserveSpace } from "@/hooks/useReserveSpace";
@@ -31,11 +35,20 @@ const LATEST_EVENTS = 12;
 /** The screens where the mini-player is a sheet at the bottom: a phone held upright (narrow), or sideways (short). */
 const SHEET_SCREENS = "(max-width: 639px), (max-height: 600px)";
 
+/** Whether a click leads to a page of the autopilot (a step of its history, the text that streams): the panel makes way for it. */
+function leadsToAutopilot(event: MouseEvent<HTMLElement>): boolean {
+  const link = (event.target as Element | null)?.closest?.("a[href]");
+  if (!(link instanceof HTMLAnchorElement) || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || link.target === "_blank") return false;
+  const url = new URL(link.href, window.location.href);
+  return url.origin === window.location.origin && isAutopilotPage(url.pathname.replace(/^.*?(\/app\/)/, "/app/"));
+}
+
 /**
  * The mini-player of the autopilot, next to the Copilot: what the autopilot of a book is, what it does now, how far it is, and its commands, with
- * the way to its page; and, in the “Live” tab, the last events of every book in one line each. It does not repeat the list of the steps of the
- * book: that is on its page. On the pages of the autopilot it keeps out of the way (the page shows all this), and a small button brings it back.
- * It stays open while the author navigates on the other pages.
+ * the way to its page; and, in the “Live” tab, the last events of every book in one line each. With «Show the text» (the toggle of its header,
+ * kept on this device) it also shows the last lines of what the step is writing and the last three steps it finished, each a way to the step on
+ * the Autopilot page; the whole list of the steps is on that page. On the pages of the autopilot it keeps out of the way (the page shows all
+ * this), and a small button brings it back. It stays open while the author navigates on the other pages.
  */
 export function AutopilotDock() {
   const { t } = useTranslation();
@@ -60,6 +73,11 @@ export function AutopilotDock() {
   const shown = open && !hidden;
   const panel = useRef<HTMLElement>(null);
   const close = () => (onPage ? setPageDockOpen(false) : setDockOpen(false));
+  // A link to a step (or to the text that streams) leads to the Autopilot page, where the panel keeps out of the way: brought back there, it closes, so that the
+  // step it leads to is not under it. Elsewhere it closes by itself on that page and stays open for the others.
+  const makeWay = (event: MouseEvent<HTMLElement>) => {
+    if (leadsToAutopilot(event)) setPageDockOpen(false);
+  };
   // While the panel floats the page keeps room for it at the bottom, so that what it covers can be scrolled out from under it. A sheet takes the screen instead.
   useReserveSpace(panel, "--dock-reserve", shown && !sheet);
   const followLink = useBackGestureClose(shown && sheet, close, "autopilot-dock");
@@ -79,6 +97,7 @@ export function AutopilotDock() {
   );
   const actions = (
     <div className="flex items-center gap-0.5">
+      <TextDetailToggle context={t("autopilot.dockTitle")} className={cn(icon, !sheet && "[&_svg]:size-3.5")} />
       {tab === "live" && (
         <Button variant="ghost" size="icon" className={icon} title={t("autopilot.clearFeed")} aria-label={t("autopilot.clearFeed")} onClick={clearFeed}><Trash2 className="h-3.5 w-3.5" /></Button>
       )}
@@ -94,10 +113,10 @@ export function AutopilotDock() {
     </div>
   );
 
-  if (sheet) return <DockSheet title={t("autopilot.dockTitle")} onClose={close} onLinkClick={followLink} tabs={tabs} actions={actions}>{body}</DockSheet>;
+  if (sheet) return <DockSheet title={t("autopilot.dockTitle")} onClose={close} onLinkClick={(event) => { makeWay(event); followLink(event); }} tabs={tabs} actions={actions}>{body}</DockSheet>;
 
   return (
-    <section ref={panel} aria-label={t("autopilot.dockTitle")} className="fixed bottom-[calc(8.5rem+var(--bottom-reserve,0px))] right-4 z-40 flex max-h-[min(70dvh,38rem)] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-layer bg-card text-card-foreground shadow-2xl lg:bottom-[calc(6rem+var(--bottom-reserve,0px))] lg:right-6">
+    <section ref={panel} aria-label={t("autopilot.dockTitle")} onClickCapture={makeWay} className="fixed bottom-[calc(8.5rem+var(--bottom-reserve,0px))] right-4 z-40 flex max-h-[min(70dvh,38rem)] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-layer bg-card text-card-foreground shadow-2xl lg:bottom-[calc(6rem+var(--bottom-reserve,0px))] lg:right-6">
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-b px-3 py-2">
         <Plane className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{t("autopilot.dockTitle")}</h2>
@@ -116,6 +135,8 @@ export function AutopilotDock() {
  */
 function DockSheet({ title, onClose, onLinkClick, tabs, actions, children }: { title: string; onClose: () => void; onLinkClick: (event: MouseEvent<HTMLElement>) => void; tabs: ReactNode; actions: ReactNode; children: ReactNode }) {
   const [opener] = useState(() => (typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? document.activeElement : null));
+  // Closed by one of its links: the focus goes where the link leads (the page it opens moves it there), not back to the button that opened the sheet.
+  const followed = useRef(false);
   const keyboard = useKeyboardInset();
   return (
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
@@ -123,10 +144,13 @@ function DockSheet({ title, onClose, onLinkClick, tabs, actions, children }: { t
         bare
         hideCloseButton
         aria-describedby={undefined}
-        onClickCapture={onLinkClick}
+        onClickCapture={(event) => {
+          onLinkClick(event);
+          if (event.defaultPrevented && (event.target as Element | null)?.closest?.("a[href]")) followed.current = true;
+        }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          if (opener?.isConnected) opener.focus();
+          if (!followed.current && opener?.isConnected) opener.focus();
         }}
         style={keyboard ? { bottom: keyboard, maxHeight: `calc(100dvh - ${keyboard}px - 1rem)` } : undefined}
         className="inset-x-0 bottom-0 flex max-h-[85dvh] w-full flex-col overflow-hidden rounded-t-2xl border-x-0 border-b-0 bg-card text-card-foreground sm:rounded-b-none sm:rounded-t-2xl"
@@ -231,6 +255,9 @@ function DockBookPanel({ bookId, announce }: { bookId: string; announce: boolean
  */
 function MiniPlayer({ bookId, announce, heading }: { bookId: string; announce: boolean; heading?: ReactNode }) {
   const { t } = useTranslation();
+  const [detail] = useTextDetail();
+  // The text and the last steps are the page's business where the page shows the run (the panel brought back there does not say them twice).
+  const text = detail === "full" && announce;
   const view = useBookAutopilotView(bookId);
   const bookName = useSettingsStore((state) => state.settings.books.find((book) => book.id === bookId)?.name);
   const model = useBandModel(bookId);
@@ -250,7 +277,10 @@ function MiniPlayer({ bookId, announce, heading }: { bookId: string; announce: b
         <FrozenChangesChip count={summary?.frozenChanges} />
       </div>
       {model && (model.running ? <StepNow bookId={bookId} compact announce={announce} wait={model.wait} countdown /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null)}
+      {text && model?.running && !model.wait && <StreamLines bookId={bookId} />}
       {model && <ProgressBars summary={model.summary} scenes={false} context={t("autopilot.dockTitle")} />}
+      {text && <LastDone bookId={bookId} />}
+      {announce && <LiveAnnouncer bookIds={[bookId]} />}
       {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} compact hintId={profileHintId} />}
       {failure && <RunErrorNotice bookId={bookId} message={failure.message} kind={isErrorKind(failure.kind ?? failure.errorKind) ? failure.kind ?? failure.errorKind : undefined} pageHref={pageHref} />}
       <OperationNotice bookId={bookId} />

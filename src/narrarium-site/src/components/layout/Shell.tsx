@@ -180,7 +180,9 @@ export function Shell() {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Topbar onOpenMobileNav={navDrawer.show} />
         {offlineConflict && <div className="border-b border-destructive/40 bg-destructive/10 px-4 py-3 text-sm"><div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2"><span className="mr-auto">{t("settings.offlineConflict", { fields: offlineConflict.changedKeys.join(", ") })}</span><Button size="sm" variant="destructive" onClick={() => void resolveOfflineConflict("local")}>{t("settings.keepOfflineChanges")}</Button><Button size="sm" variant="outline" onClick={() => void resolveOfflineConflict("cloud")}>{t("settings.useCloudSettings")}</Button></div></div>}
-        <main className="flex-1 scroll-pb-[calc(9rem+var(--bottom-reserve,0px)+var(--dock-reserve,0px))] scroll-pt-[var(--top-reserve,0px)] overflow-y-auto px-4 pb-[calc(9rem+var(--bottom-reserve,0px)+var(--dock-reserve,0px))] pt-4 sm:px-6 sm:pt-6 lg:scroll-pb-[calc(4.5rem+var(--bottom-reserve,0px))] lg:pb-[calc(6rem+var(--bottom-reserve,0px))]">
+        {/* relative: what a page positions in it without a box of its own (its hidden texts for screen readers) is placed and clipped here, not by the
+            document, which would otherwise grow taller than the window and lift the whole app when <main> is scrolled to its end or to an anchor. */}
+        <main className="relative flex-1 scroll-pb-[calc(9rem+var(--bottom-reserve,0px)+var(--dock-reserve,0px))] scroll-pt-[var(--top-reserve,0px)] overflow-y-auto px-4 pb-[calc(9rem+var(--bottom-reserve,0px)+var(--dock-reserve,0px))] pt-4 sm:px-6 sm:pt-6 lg:scroll-pb-[calc(4.5rem+var(--bottom-reserve,0px))] lg:pb-[calc(6rem+var(--bottom-reserve,0px))]">
           <Outlet />
         </main>
       </div>

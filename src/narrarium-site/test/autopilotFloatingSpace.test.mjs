@@ -37,6 +37,16 @@ test("the page scrolls its anchors and its focused controls clear of a band that
   assert.ok(rem(wide) >= 4.25, `on a wide screen a focused control stops above the launchers (1.5rem + 2.75rem): saw ${wide}rem`);
 });
 
+test("the page of the app never scrolls as a whole: what its pages position without a box of their own is placed in <main>, not in the document", async () => {
+  // A hidden text for screen readers (position: absolute) in a <main> that is not positioned is placed by the document: deep in a long page it made
+  // the document taller than the window, so that the wheel at the end of the page, or a link to a step of the history, lifted the whole app and
+  // left an empty band under it (seen in a real browser: 319 px on the Autopilot page, 1,684 px on its configuration on a phone).
+  const shell = await read("src/components/layout/Shell.tsx");
+  const main = /<main className="([^"]*)"/.exec(shell)?.[1] ?? "";
+  assert.match(main, /(^|\s)relative(\s|$)/);
+  assert.doesNotMatch(main, /(^|\s)(transform|contain-|will-change-|filter)/, "nor a containing block for what is fixed: the bar of actions at the bottom of a phone is fixed to the window");
+});
+
 test("the floating layers sit above the bar of actions a page reserves at the bottom", async () => {
   const launcher = await read("src/components/assistant/AssistantLauncher.tsx");
   assert.match(launcher, /bottom-\[calc\(1rem\+var\(--bottom-reserve,0px\)\)\]/);

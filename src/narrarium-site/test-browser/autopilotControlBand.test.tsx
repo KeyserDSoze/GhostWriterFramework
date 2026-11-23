@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AutopilotStatus } from "narrarium-engine";
@@ -16,6 +16,7 @@ import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { AutopilotPage } from "@/pages/AutopilotPage";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useUiStore } from "@/store/uiStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { longPlan } from "./helpers/autopilotFixtures";
 import { eventOf, finishedEvent, freezeClock, ingest, runningStep, seedRun, stubWidth } from "./helpers/autopilotBand";
@@ -53,6 +54,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [], dockOpen: false, dockTab: "live", whereIntent: null, server: { status: "disabled", info: null, message: null, books: [], updates: null, connection: null } });
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+  useUiStore.setState({ autopilotText: "full" });
   await i18n.changeLanguage("en");
 });
 
@@ -137,7 +139,24 @@ describe("the step that runs now", () => {
     expect(within(now).getByText("1m 26s")).toBeInTheDocument();
   });
 
-  it("shows a single line of what is being written: the long text belongs to the history, not to the band", () => {
+  // Changed on purpose (the owner asked for the last lines of the text in the band): with «Show the text», the default, the band has the last three lines of
+  // what is being written, a way to the step in the history; the single line of before is what it shows with the text off.
+  it("shows the last three lines of what is being written, as a way to the step in the history, and never as a live region", () => {
+    seedRun(RUNNING);
+    render(<Page />);
+    const lines = nowOf().querySelector<HTMLElement>("[data-band-preview]") as HTMLElement;
+    expect(lines, "the lines of the text that streams").not.toBeNull();
+    expect(lines).toHaveAttribute("data-stream-lines", "3");
+    expect(lines.tagName).toBe("A");
+    expect(lines).toHaveAttribute("href", `/app/books/book-1/autopilot#task-${LIVE.id}`);
+    expect(lines).toHaveAccessibleName(t("autopilot.liveText.open", { step: LIVE.title }));
+    // The end of the text, the words that are being written now, at the bottom of the lines.
+    expect(lines.querySelector("[data-stream-text]")!.textContent!.trimEnd().endsWith("a thin line of light lay across the boards.")).toBe(true);
+    expect(lines.closest('[aria-live], [role="status"], [role="log"], [role="alert"]')).toBeNull();
+  });
+
+  it("shows a single line of what is being written with «Show the text» off: the long text belongs to the history, not to the band", () => {
+    act(() => { useUiStore.getState().setAutopilotText("compact"); });
     seedRun(RUNNING);
     render(<Page />);
     const line = nowOf().querySelector<HTMLElement>("[data-band-preview]") as HTMLElement;
@@ -168,10 +187,11 @@ describe("the step that runs now", () => {
       expect(part!.closest("[aria-live]")).toBeNull();
       expect(part!.closest('[role="status"]')).toBeNull();
     }
-    // The text that streams changes the line, not the announcement.
+    // The text that streams changes the line, not the announcement. (Changed on purpose: the lines follow the text at most four times a second, so the last
+    // chunk is drawn within a quarter of a second.)
     const announced = statuses[0].textContent;
     for (let step = 1; step <= 5; step += 1) await ingest(eventOf({ type: "task-progress", activityId: LIVE.id, characters: PREVIEW.length + step * 10, preview: `${PREVIEW} And then step ${step}.` }, 20 + step));
-    expect(now.querySelector("[data-band-preview]")).toHaveTextContent("And then step 5.");
+    await waitFor(() => expect(now.querySelector("[data-band-preview]")).toHaveTextContent("And then step 5."));
     expect(now.querySelector('[role="status"]')!.textContent).toBe(announced);
     // A new step changes it.
     await ingest(finishedEvent(LIVE, 30));
@@ -433,7 +453,8 @@ describe("the page does not draw the band again for every piece of text that str
     const drawn = reads;
     expect(drawn).toBeGreaterThan(0);
     for (let step = 1; step <= 40; step += 1) await ingest(eventOf({ type: "task-progress", activityId: LIVE.id, characters: step * 10, preview: `${PREVIEW} ${step}` }, 40 + step));
-    expect(nowOf().querySelector("[data-band-preview]")).toHaveTextContent("40");
+    // Changed on purpose: the lines follow the text at most four times a second.
+    await waitFor(() => expect(nowOf().querySelector("[data-band-preview]")).toHaveTextContent("40"));
     expect(reads).toBe(drawn);
   });
 });

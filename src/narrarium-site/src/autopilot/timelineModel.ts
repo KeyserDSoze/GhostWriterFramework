@@ -539,3 +539,12 @@ export function filterCounts(timeline: Timeline): Record<TimelineFilter, number>
 export function nextLimit(current: number, total: number): number {
   return Math.min(current + ROW_STEP, MAX_ROWS, total);
 }
+
+/** Where a step of the log is in a timeline: its group, its row (the step it is an attempt of) and the place of the row in the group. `null` when it is not there. */
+export function locateTask(timeline: Timeline, activityId: string): { group: string; row: string; index: number } | null {
+  for (const group of timeline.groups) {
+    const index = group.rows.findIndex((row) => row.kind === "step" && row.attempts.some((attempt) => attempt.activity.id === activityId));
+    if (index >= 0) return { group: group.key, row: group.rows[index].key, index };
+  }
+  return null;
+}

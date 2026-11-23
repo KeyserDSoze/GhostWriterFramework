@@ -214,6 +214,22 @@ const autopilotIt = {
       pageLists: "Questa pagina elenca gli eventi di questo libro. Qui compaiono quelli degli altri libri.",
       pageListsAll: "Questa pagina elenca gli eventi di tutti i libri.",
     },
+    liveText: {
+      writing: "Cosa sta scrivendo",
+      open: "Cosa sta scrivendo: apri «{{step}}» in diretta",
+      lastDone: "Ultime cose fatte",
+      toggle: "Mostra il testo",
+      toggleHint: "Mostra le ultime righe che l'autopilot sta scrivendo e le ultime cose che ha fatto",
+      say: {
+        answering: "Sta rispondendo",
+        complete_one: "Risposta completa: {{value}} carattere.",
+        complete_other: "Risposta completa: {{value}} caratteri.",
+        done: "Fatto: {{step}}.",
+        failed: "Non riuscito: {{step}}.",
+        cancelled: "Annullato: {{step}}.",
+        book: "{{book}}: {{message}}",
+      },
+    },
     timeline: {
       filter: { label: "Mostra", all: "Tutto", problems: "Errori e avvisi", director: "Direttore", readers: "Lettori", writing: "Scrittura" },
       announce: "{{filter}}: {{count}} mostrati",

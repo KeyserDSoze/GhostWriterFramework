@@ -15,6 +15,7 @@ import { AutopilotDock } from "@/components/autopilot/AutopilotDock";
 import { AutopilotLauncher } from "@/components/autopilot/AutopilotLauncher";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useUiStore } from "@/store/uiStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { activityOf, finishedEvent, freezeClock, runningStep, seedRun } from "./helpers/autopilotBand";
 import { LOCAL_BOOK, makeRuntime, quickGroupName, t } from "./helpers/quickCommands";
@@ -58,6 +59,7 @@ afterEach(async () => {
   vi.useRealTimers();
   useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [], dockOpen: false, pageDockOpen: false, dockTab: "live", dockFocusBook: null, whereIntent: null, server: { status: "disabled", info: null, message: null, books: [], updates: null, connection: null } });
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+  useUiStore.setState({ autopilotText: "full" });
   await i18n.changeLanguage("en");
 });
 
@@ -114,7 +116,21 @@ describe("the live panel as a mini-player", () => {
     expect(within(panel).getAllByRole("link", { name: t("autopilot.openPage") }).map((link) => link.getAttribute("href"))).toContain("/app/books/book-1/autopilot");
   });
 
-  it("does not list the steps of the book: they are on its page, and in the feed of everything", () => {
+  // Changed on purpose (the owner asked for «the last 2 or 3 things that were done» in the mini-player): it lists the last three steps that are over, each a
+  // way to it on the page of the book, and still not the steps of the book, which are on its page, nor what they did, in long texts.
+  it("lists the last three steps that are over, each a way to it on the page of the book, and not the steps of the book or their long texts", () => {
+    seedRun({ ...RUNNING, ...finished(5) });
+    show("/app/books/book-1", "book");
+    const list = within(open()).getByRole("list", { name: t("autopilot.liveText.lastDone") });
+    const links = within(list).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual([expect.stringContaining("Writing scene 5 of chapter 4"), expect.stringContaining("Writing scene 4 of chapter 4"), expect.stringContaining("Writing scene 3 of chapter 4")]);
+    expect(links.map((link) => link.getAttribute("href"))).toEqual(["done-4", "done-3", "done-2"].map((id) => `/app/books/book-1/autopilot#task-${id}`));
+    expect(screen.queryByText(/Writing scene 1 of chapter 4/)).not.toBeInTheDocument();
+    expect(within(open()).queryByText(/What happened in scene/)).not.toBeInTheDocument();
+  });
+
+  it("does not list the steps of the book with «Show the text» off: they are on its page, and in the feed of everything", () => {
+    act(() => { useUiStore.getState().setAutopilotText("compact"); });
     seedRun({ ...RUNNING, ...finished(5) });
     show("/app/books/book-1", "book");
     expect(screen.queryByText(/Writing scene 1 of chapter 4/)).not.toBeInTheDocument();

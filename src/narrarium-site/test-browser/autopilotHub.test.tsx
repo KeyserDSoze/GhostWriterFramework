@@ -30,6 +30,7 @@ import { AutopilotHubPage } from "@/pages/AutopilotHubPage";
 import { emptyView, useAutopilotStore, type BookAutopilotView, type LivePreview } from "@/autopilot/store";
 import { formatAgo, formatCost, formatCount } from "@/autopilot/format";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useUiStore } from "@/store/uiStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
 import { makeRuntime } from "./helpers/quickCommands";
 
@@ -119,6 +120,7 @@ afterEach(async () => {
   cleanup();
   useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [] });
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+  useUiStore.setState({ autopilotText: "full" });
   await act(async () => { await i18n.changeLanguage("en"); });
 });
 
@@ -207,14 +209,34 @@ describe.each<Language>(["en", "it"])("the card of a book on the Autopilot page 
     expect(within(ours).queryByRole("group", { name: t("autopilot.quick.groupLabel", { context: harbor.name }) })).not.toBeInTheDocument();
   });
 
-  it("of a paused run: the last step and when, and a resume", () => {
+  // Changed on purpose (the owner asked for «the last 2 or 3 things that were done» on the cards): with «Show the text», the default, the last step and when
+  // are the first of the steps that are over, each a way to it on the book's page; with the text off the card says the last step and when, as before.
+  it("of a paused run: the last steps that are over, the newest first and when, each a way to it, and a resume", () => {
+    const harbor = book(1, "The Glass Harbor");
+    const ended = new Date(Date.now() - 5 * 60_000).toISOString();
+    const last = activity({ title: "Director's review of chapter 2", endedAt: ended });
+    seedHub([{ book: harbor, state: { status: "paused" }, activities: [activity({ title: "Readers of chapter 2", endedAt: T0 }), last] }]);
+    render(<Hub />);
+    const ours = card(harbor);
+    expect(within(ours).getByText(t("autopilot.hub.state.paused"))).toBeInTheDocument();
+    const steps = within(within(ours).getByRole("list", { name: t("autopilot.liveText.lastDone") })).getAllByRole("link");
+    expect(steps).toHaveLength(2);
+    expect(steps[0]).toHaveTextContent("Director's review of chapter 2");
+    expect(steps[0]).toHaveTextContent(formatAgo(5 * 60_000));
+    expect(steps[0]).toHaveAttribute("href", `/app/books/book-1/autopilot#task-${last.id}`);
+    expect(steps[1]).toHaveTextContent("Readers of chapter 2");
+    expect(within(ours).getByRole("button", { name: named(t("autopilot.actions.resume"), harbor) })).toBeEnabled();
+  });
+
+  it("of a paused run, with «Show the text» off: the last step and when, and a resume, as before", () => {
+    act(() => { useUiStore.getState().setAutopilotText("compact"); });
     const harbor = book(1, "The Glass Harbor");
     const ended = new Date(Date.now() - 5 * 60_000).toISOString();
     seedHub([{ book: harbor, state: { status: "paused" }, activities: [activity({ title: "Readers of chapter 2", endedAt: T0 }), activity({ title: "Director's review of chapter 2", endedAt: ended })] }]);
     render(<Hub />);
     const ours = card(harbor);
-    expect(within(ours).getByText(t("autopilot.hub.state.paused"))).toBeInTheDocument();
     expect(within(ours).getByText(t("autopilot.hub.ago", { step: "Director's review of chapter 2", ago: formatAgo(5 * 60_000) }))).toBeInTheDocument();
+    expect(within(ours).queryByRole("list", { name: t("autopilot.liveText.lastDone") })).not.toBeInTheDocument();
     expect(within(ours).getByRole("button", { name: named(t("autopilot.actions.resume"), harbor) })).toBeEnabled();
   });
 });
