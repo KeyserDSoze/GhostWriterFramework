@@ -74,7 +74,7 @@ import { getExistingLocalBookStructure, pullRemoteChanges, syncFullRepository } 
 import { useAuthStore } from "@/store/authStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
-import { bookStorageMode, resolveGitHubRemoteToken, type BookEntry, type PersonalServerSettings } from "@/types/settings";
+import { bookStorageMode, resolveGitHubCredential, resolveGitHubRemoteToken, type BookEntry, type PersonalServerSettings } from "@/types/settings";
 
 export type AutopilotSetupErrorCode = "no-server" | "book-missing" | "web-locks" | "other-tab" | "github-token";
 
@@ -1015,6 +1015,25 @@ export class BrowserAutopilotRuntime {
     }
     useAutopilotStore.getState().patchView(bookId, { server: summary, error: null });
     this.ensureServerStream();
+  }
+
+  /**
+   * Sends the GitHub app's renewed access token to the server for every GitHub book it runs on that token. The token lasts 8 hours and the server cannot renew
+   * it (it has no client secret and never receives the refresh token), so while a browser is open the server's copy is kept fresh. It only touches books the
+   * server already holds a token for (the consent given when the book was moved there) and whose token is the app's; it never fails a caller.
+   */
+  async refreshServerGitHubToken(token: string): Promise<void> {
+    if (!token || !hasServer(this.currentConnection())) return;
+    for (const book of settings().books) {
+      if (autopilotHostOf(book) !== "server" || bookStorageMode(book) !== "github" || resolveGitHubCredential(book, settings())?.source !== "app") continue;
+      if (!useAutopilotStore.getState().views[book.id]?.server?.hasGithubToken) continue;
+      try {
+        const { client } = await this.requireServer();
+        await client.registerBook(book.id, { title: book.name, storage: { kind: "github", owner: book.owner, repo: book.repo, branch: resolveBookBranch(book) }, githubToken: token });
+      } catch {
+        // The server may be away or busy: the next renewal sends it again.
+      }
+    }
   }
 
   /**

@@ -74,6 +74,8 @@ jobs:
           MCP_PUBLIC_URL: https://narrarium.space/mcp
           MCP_HEALTH_URL: https://narrarium.space/health
           VITE_GITHUB_MODELS_BASE: ${{ vars.VITE_GITHUB_MODELS_BASE }}
+          VITE_GITHUB_APP_CLIENT_ID: ${{ vars.VITE_GITHUB_APP_CLIENT_ID }}
+          VITE_GITHUB_APP_SLUG: ${{ vars.VITE_GITHUB_APP_SLUG }}
         run: npm run docs:build
 
       - name: Run Narrarium site E2E tests

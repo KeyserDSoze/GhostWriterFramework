@@ -6,6 +6,9 @@
  * through the broker, quietly: never a window, never a prompt. If its replica was waiting for the login or had failed,
  * a sync is then retried right away, in this session.
  *
+ * The GitHub App's 8-hour token is renewed the same way, whether or not account sync is on (the books use that token), and again shortly before it
+ * ends for as long as the tab stays open.
+ *
  * It never loops: one renewal at a time per service, and after a failure the next attempt waits twice as long as the
  * last time (30 s, 1 min, 2 min... at most 15 min), or as long as the broker asked.
  */
@@ -21,16 +24,19 @@ const BACKOFF_MAX_MS = 15 * 60_000;
 
 interface Attempts { running: boolean; failures: number; notBefore: number }
 
-const attempts: Record<DriveBackend, Attempts> = {
+type RenewBackend = DriveBackend | "github";
+
+const attempts: Record<RenewBackend, Attempts> = {
   "google-drive": { running: false, failures: 0, notBefore: 0 },
   onedrive: { running: false, failures: 0, notBefore: 0 },
+  github: { running: false, failures: 0, notBefore: 0 },
 };
 
-function needsRenewal(connection: { refreshToken?: string; accessToken?: string; accessTokenExpiry?: number; replica: { enabled: boolean; errorKind?: string } }, now: number): boolean {
-  if (!connection.refreshToken || !connection.replica.enabled) return false;
-  return !connection.accessToken
+function needsRenewal(connection: { refreshToken?: string; accessToken?: string; token?: string; accessTokenExpiry?: number; replica: { enabled: boolean; errorKind?: string } }, now: number, requireSync = true): boolean {
+  if (!connection.refreshToken || (requireSync && !connection.replica.enabled)) return false;
+  return !(connection.accessToken ?? connection.token)
     || connection.accessTokenExpiry === undefined
-    || connection.accessTokenExpiry - now < NEAR_EXPIRY_MS
+    || connection.accessTokenExpiry - now <= NEAR_EXPIRY_MS
     || connection.replica.errorKind === "credential-expired";
 }
 
@@ -38,15 +44,17 @@ function backoffMs(failures: number, askedFor: number | undefined): number {
   return Math.max(Math.min(BACKOFF_BASE_MS * 2 ** (failures - 1), BACKOFF_MAX_MS), askedFor ?? 0);
 }
 
-async function renewOne(backend: DriveBackend): Promise<boolean> {
+async function renewOne(backend: RenewBackend): Promise<boolean> {
   const state = attempts[backend];
-  const connection = backend === "google-drive" ? useConnectionStore.getState().configuration.google : useConnectionStore.getState().configuration.microsoft;
-  if (!connection || state.running || Date.now() < state.notBefore || !needsRenewal(connection, Date.now())) return false;
+  const configuration = useConnectionStore.getState().configuration;
+  const connection = backend === "google-drive" ? configuration.google : backend === "onedrive" ? configuration.microsoft : configuration.github?.credentialKind === "app" ? configuration.github : undefined;
+  if (!connection || state.running || Date.now() < state.notBefore || !needsRenewal(connection, Date.now(), backend !== "github")) return false;
 
   state.running = true;
   try {
     // Forced: a token that is merely close to its end is still "usable" for a sync, but is what this renews ahead of time.
-    await acquireBrokerAccessToken(backend, { force: true });
+    if (backend === "github") await import("@/account/githubAppToken").then((module) => module.acquireGitHubAppToken({ force: true }));
+    else await acquireBrokerAccessToken(backend, { force: true });
     state.failures = 0;
     state.notBefore = 0;
     return true;
@@ -61,15 +69,27 @@ async function renewOne(backend: DriveBackend): Promise<boolean> {
   }
 }
 
+let githubTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** The app's token is renewed again just before it ends, so an open tab never meets an expired one. */
+function armGitHubRenewal(): void {
+  clearTimeout(githubTimer);
+  const github = useConnectionStore.getState().configuration.github;
+  if (github?.credentialKind !== "app" || !github.refreshToken || !github.accessTokenExpiry) return;
+  const wait = Math.min(Math.max(github.accessTokenExpiry - NEAR_EXPIRY_MS - Date.now(), 30_000), 2 ** 31 - 1);
+  githubTimer = setTimeout(() => { void renewLongLivedCredentials("visible"); }, wait);
+}
+
 /** Renews what needs it. Never rejects. `trigger` says why it ran: at start, or because the tab became visible. */
 export async function renewLongLivedCredentials(_trigger: "start" | "visible"): Promise<void> {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return;
   try {
-    const renewed = (await Promise.all((["google-drive", "onedrive"] as const).map(async (backend) => (await renewOne(backend)) ? backend : null)))
-      .filter((backend): backend is DriveBackend => backend !== null);
+    const renewed = (await Promise.all((["google-drive", "onedrive", "github"] as const).map(async (backend) => (await renewOne(backend)) ? backend : null)))
+      .filter((backend): backend is RenewBackend => backend !== null);
+    armGitHubRenewal();
     const configuration = useConnectionStore.getState().configuration;
     const waiting = renewed.some((backend) => {
-      const status = (backend === "google-drive" ? configuration.google : configuration.microsoft)?.replica.status;
+      const status = (backend === "google-drive" ? configuration.google : backend === "onedrive" ? configuration.microsoft : configuration.github)?.replica.status;
       return status === "needs-auth" || status === "error" || status === "offline";
     });
     if (waiting) scheduleAccountSync(250);
@@ -102,6 +122,7 @@ export function installProactiveCredentialRefresh(): void {
 }
 
 export function resetProactiveCredentialRefreshForTests(): void {
+  clearTimeout(githubTimer);
   uninstall?.();
   uninstall = null;
   for (const state of Object.values(attempts)) Object.assign(state, { running: false, failures: 0, notBefore: 0 });

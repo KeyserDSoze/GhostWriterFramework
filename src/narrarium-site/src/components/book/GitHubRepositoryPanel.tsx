@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "@/i18n/githubCreateBook";
+import "@/i18n/githubApp";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -55,6 +56,7 @@ const ISSUE_KEYS: Record<BookRepositoryPreflightIssue, string> = {
   "no-workflow-scope": "noWorkflowScope",
   "fine-grained": "fineGrained",
   "unknown-token": "unknownToken",
+  "app-token": "appToken",
 };
 
 export interface GitHubRepositoryPanelProps {
@@ -133,7 +135,7 @@ export function GitHubRepositoryPanel({ choices, onChange, preflight, disabled, 
             {preflight.status === "loading" && <p>{t("github.createBook.panel.token.checking")}</p>}
             {preflight.status === "failed" && <p>{t("github.createBook.panel.token.failed")}</p>}
             {ready?.tokenKind === "classic" && <p>{t("github.createBook.panel.token.classic", { scopes: ready.scopes.length ? ready.scopes.join(", ") : t("github.createBook.panel.token.noScopes") })}</p>}
-            {issues.map((issue) => <p key={issue}>{t(`github.createBook.panel.token.${ISSUE_KEYS[issue]}`)}</p>)}
+            {issues.map((issue) => <p key={issue}>{issue === "app-token" ? t("github.createBook.app.token") : t(`github.createBook.panel.token.${ISSUE_KEYS[issue]}`)}</p>)}
           </div>
         </section>
       )}

@@ -6,9 +6,10 @@ import type { AppSettings } from "@/types/settings";
 export const ACCOUNT_SYNC_SCHEMA_VERSION = 1 as const;
 export const ACCOUNT_SYNC_APPLICATION = "Narrarium" as const;
 
-export type AccountConnectionMethod = "github-oauth" | "github-pat" | "google" | "microsoft";
+export type AccountConnectionMethod = "github-app" | "github-pat" | "google" | "microsoft";
 export type AccountSyncBackendKind = "github" | "google-drive" | "onedrive";
-export type GitHubCredentialKind = "oauth" | "pat";
+/** `app`: the user token of Narrarium's GitHub App (8 hours, renewed with a rotating refresh token); `pat`: a personal access token. */
+export type GitHubCredentialKind = "app" | "pat";
 export type ReplicaComparison = "same" | "ahead" | "behind" | "diverged";
 
 export interface AccountSyncManifest {
@@ -113,10 +114,14 @@ export interface LocalMicrosoftConnection {
 
 export interface LocalGitHubConnection {
   backend: "github";
-  method: "github-oauth" | "github-pat";
+  method: "github-app" | "github-pat";
   credentialKind: GitHubCredentialKind;
   identity?: ProviderIdentity;
   token?: string;
+  /** App connections only: when `token` stops working (the same minute-early expiry as the other providers). Device-local, never synced. */
+  accessTokenExpiry?: number;
+  /** App connections only: the rotating refresh token. Kept in memory and sealed in the credential vault, never in the device database, never synced. */
+  refreshToken?: string;
   rememberMe: boolean;
   accountSyncEnabled: boolean;
   repositoryOwner?: string;

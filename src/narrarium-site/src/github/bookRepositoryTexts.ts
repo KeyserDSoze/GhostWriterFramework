@@ -6,12 +6,15 @@ export function bookRepositoryErrorText(t: (key: string, options?: Record<string
   const params = { owner: context.owner, repo: context.repo, reset, status: error.status };
   switch (error.code) {
     case "cannot-create":
+      if (error.tokenKind === "app" && error.reason !== "sso-required") return t("github.createBook.app.cannotCreate", params);
       return t(error.reason === "sso-required" ? "github.createBook.error.cannot-create-sso" : "github.createBook.error.cannot-create", params);
     case "rate-limit":
       return t(reset ? "github.createBook.error.rate-limit" : "github.createBook.error.rate-limit-unknown", params);
     case "first-commit-failed": {
       const base = t("github.createBook.error.first-commit-failed", params);
       const kind = error.reason;
+      // A repository the app just made but cannot write to: the app is not installed on it yet.
+      if (error.tokenKind === "app" && (kind === "permission" || kind === "permission-unverified")) return `${base} ${t("github.createBook.app.notReachable", params)}`;
       const reasonKey = kind === "rate-limit" ? (reset ? "rate-limit" : "rate-limit-unknown")
         : kind === "abuse-limit" || kind === "credential-invalid" || kind === "permission" || kind === "permission-unverified" || kind === "network" || kind === "service-unavailable" ? kind
           : "other";

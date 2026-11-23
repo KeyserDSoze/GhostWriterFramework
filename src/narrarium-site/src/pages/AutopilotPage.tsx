@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { GitHubServerTokenNotice } from "@/components/book/GitHubServerTokenNotice";
 import { Link, Navigate, useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -577,6 +578,7 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
             <>
               <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={consentAi} onChange={(event) => setConsentAi(event.target.checked)} />{t("autopilot.where.consentAi")}</label>
               {github && <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={consentGithub} onChange={(event) => setConsentGithub(event.target.checked)} />{t("autopilot.where.consentGithub")}</label>}
+              {github && <GitHubServerTokenNotice book={book} />}
             </>
           ) : (
             <p id={`where-move-blocked-${book.id}`} className="text-xs text-muted-foreground" role="note">

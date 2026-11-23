@@ -410,6 +410,7 @@ export function migrateSettingsWithDiagnostics(raw: unknown): { settings: AppSet
   };
   // «Tools only» is a flag, and anything else is no value (the engine ignores it too): it is never turned off by accident, and it is not made up.
   if (typeof settings.aiToolsOnly !== "boolean") delete settings.aiToolsOnly;
+  if (typeof settings.githubPreferConnection !== "boolean") delete settings.githubPreferConnection;
   return { settings, diagnostics };
 }
 

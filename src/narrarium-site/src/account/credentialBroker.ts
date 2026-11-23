@@ -10,7 +10,7 @@
  */
 import { authBrokerBase } from "@/config/authBroker";
 
-export type BrokerProvider = "google" | "microsoft";
+export type BrokerProvider = "google" | "microsoft" | "github";
 /** invalid_grant: the refresh token or code no longer works (reconnect). Everything else is about the broker itself. */
 export type BrokerErrorCode = "invalid_grant" | "not_configured" | "rate_limited" | "upstream" | "network";
 
@@ -33,8 +33,10 @@ export interface BrokerTokens {
   accessToken: string;
   /** Whole seconds the access token stays valid. */
   expiresIn: number;
-  /** Google sends one only on (re)consent; Microsoft rotates it on every refresh. */
+  /** Google sends one only on (re)consent; Microsoft and GitHub rotate it on every refresh. */
   refreshToken?: string;
+  /** GitHub: whole seconds the refresh token stays valid (about six months), when the broker says. */
+  refreshTokenExpiresIn?: number;
   scope?: string;
   /** Microsoft's client_info (base64url JSON with uid and utid), passed through untouched. */
   clientInfo?: string;
@@ -47,7 +49,8 @@ export interface BrokerCallOptions {
 
 export type ExchangeCodeRequest =
   | { provider: "google"; code: string }
-  | { provider: "microsoft"; code: string; codeVerifier: string; redirectUri: string };
+  | { provider: "microsoft"; code: string; codeVerifier: string; redirectUri: string }
+  | { provider: "github"; code: string; codeVerifier: string; redirectUri: string };
 
 const STATUS_TIMEOUT_MS = 4_000;
 const TOKEN_TIMEOUT_MS = 15_000;
@@ -59,9 +62,9 @@ const MAX_EXPIRES_IN_SECONDS = 7 * 24 * 60 * 60;
 const MAX_RETRY_AFTER_MS = 60 * 60_000;
 const MAX_MESSAGE_CHARS = 200;
 
-const PROVIDER_NAMES: Record<BrokerProvider, string> = { google: "Google", microsoft: "Microsoft" };
+const PROVIDER_NAMES: Record<BrokerProvider, string> = { google: "Google", microsoft: "Microsoft", github: "GitHub" };
 
-const NOT_AVAILABLE: Record<BrokerProvider, boolean> = { google: false, microsoft: false };
+const NOT_AVAILABLE: Record<BrokerProvider, boolean> = { google: false, microsoft: false, github: false };
 
 interface Availability {
   base: string;
@@ -132,7 +135,9 @@ async function requestStatus(base: string): Promise<Record<BrokerProvider, boole
     if (response.status !== 200) throw new Error("unexpected status");
     const body = parseJson(await readLimited(response));
     if (!isRecord(body) || typeof body.google !== "boolean" || typeof body.microsoft !== "boolean") throw new Error("unexpected answer");
-    return { google: body.google, microsoft: body.microsoft };
+    // A Worker that predates GitHub sign-in answers two booleans: that is `github: false`. A `github` that is not a boolean is not an answer.
+    if (body.github !== undefined && typeof body.github !== "boolean") throw new Error("unexpected answer");
+    return { google: body.google, microsoft: body.microsoft, github: body.github === true };
   } finally {
     clearTimeout(timer);
   }
@@ -231,12 +236,14 @@ function parseTokens(data: unknown): BrokerTokens | null {
   if (typeof accessToken !== "string" || accessToken.length === 0 || accessToken.length > 16_384) return null;
   if (typeof expiresIn !== "number" || !Number.isInteger(expiresIn) || expiresIn < 1 || expiresIn > MAX_EXPIRES_IN_SECONDS) return null;
   const refreshToken = optionalText(data, "refreshToken", 4_096);
+  const refreshTokenExpiresIn = data.refreshTokenExpiresIn;
+  if (refreshTokenExpiresIn !== undefined && (typeof refreshTokenExpiresIn !== "number" || !Number.isInteger(refreshTokenExpiresIn) || refreshTokenExpiresIn < 1 || refreshTokenExpiresIn > 5 * 365 * 24 * 60 * 60)) return null;
   const scope = optionalText(data, "scope", 2_048);
   const idToken = optionalText(data, "idToken", 16_384);
   const clientInfo = optionalText(data, "clientInfo", 2_048);
   if (refreshToken === null || scope === null || idToken === null || clientInfo === null) return null;
   // The ID token is checked like the rest but not handed on: the site reads the profile from the provider's own API.
-  return { accessToken, expiresIn, ...(refreshToken ? { refreshToken } : {}), ...(scope ? { scope } : {}), ...(clientInfo ? { clientInfo } : {}) };
+  return { accessToken, expiresIn, ...(refreshToken ? { refreshToken } : {}), ...(typeof refreshTokenExpiresIn === "number" ? { refreshTokenExpiresIn } : {}), ...(scope ? { scope } : {}), ...(clientInfo ? { clientInfo } : {}) };
 }
 
 async function tokensFrom(provider: BrokerProvider, what: string, answer: Answer, secrets: readonly string[]): Promise<BrokerTokens> {
@@ -246,7 +253,7 @@ async function tokensFrom(provider: BrokerProvider, what: string, answer: Answer
   return tokens;
 }
 
-/** Swaps an authorization code for tokens: Google's code from the popup flow, or Microsoft's with its PKCE verifier. */
+/** Swaps an authorization code for tokens: Google's code from the popup flow, or Microsoft's and GitHub's with their PKCE verifier. */
 export async function exchangeCode(request: ExchangeCodeRequest, options?: BrokerCallOptions): Promise<BrokerTokens> {
   const body: Record<string, string> = request.provider === "google"
     ? { code: request.code }
@@ -256,13 +263,13 @@ export async function exchangeCode(request: ExchangeCodeRequest, options?: Broke
   return tokensFrom(request.provider, "code exchange", answer, secrets);
 }
 
-/** Renews an access token. Microsoft rotates the refresh token: the answer then carries the new one to keep. */
+/** Renews an access token. Microsoft and GitHub rotate the refresh token: the answer then carries the new one to keep, and the old one is dead. */
 export async function refresh(provider: BrokerProvider, refreshToken: string, options?: BrokerCallOptions): Promise<BrokerTokens> {
   const answer = await post(provider, "refresh", "token refresh", { refreshToken }, options);
   return tokensFrom(provider, "token refresh", answer, [refreshToken]);
 }
 
-/** Revokes a token at the provider (Google). Microsoft's route only acknowledges: there is nothing to revoke there. */
+/** Revokes a token at the provider (Google; GitHub deletes the app's whole authorization of the user, so it wants a fresh access token). Microsoft's route only acknowledges. */
 export async function revoke(provider: BrokerProvider, token: string, options?: BrokerCallOptions): Promise<void> {
   const answer = await post(provider, "revoke", "revocation", { token }, options, REVOKE_TIMEOUT_MS);
   if (answer.response.status < 200 || answer.response.status > 299) throw failure(provider, "revocation", answer.response, answer.text, [token]);

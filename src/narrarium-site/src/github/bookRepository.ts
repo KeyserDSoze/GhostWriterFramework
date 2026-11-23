@@ -27,6 +27,17 @@ import { RepositoryByteMeter, RepositoryLimitExceededError, bytesToBase64, utf8B
 
 export type BookRepositoryFile = { path: string; content: string } | { path: string; bytes: Uint8Array };
 
+/** Which kind of credential made the request: a classic personal token (`ghp_`), a fine-grained one (`github_pat_`), or the user token of Narrarium's GitHub app (`ghu_`). */
+export type GitHubTokenKind = "classic" | "fine-grained" | "app" | "unknown";
+
+/** What a token is, from the prefix GitHub gives each kind. It decides only which words explain a refusal, never what is allowed: the creation is simply tried. */
+export function classifyTokenKind(token: string): GitHubTokenKind {
+  if (token.startsWith("github_pat_")) return "fine-grained";
+  if (token.startsWith("ghu_")) return "app";
+  if (token.startsWith("ghp_") || token.startsWith("gho_")) return "classic";
+  return "unknown";
+}
+
 /** The message of the one commit the fallback makes to give an empty repository its branch: it is how a retry knows that commit is ours and not someone's history. */
 export const BOOTSTRAP_MESSAGE = "Initialize repository";
 
@@ -78,6 +89,8 @@ export interface CreateCompleteBookRepositoryResult {
   createdRepository: boolean;
   /** The workflow files that did not land, for the user to add by hand. */
   pendingWorkflow: Array<{ path: string; content: string }>;
+  /** The kind of token that made the repository: it says which permission to give when a step was refused. */
+  tokenKind?: GitHubTokenKind;
 }
 
 export type BookRepositoryErrorCode =
@@ -110,7 +123,7 @@ export interface BookRepositoryReference {
 export class BookRepositoryError extends Error {
   constructor(
     readonly code: BookRepositoryErrorCode,
-    options: { status?: number; resetAt?: string; reason?: RepositoryErrorKind; repository?: BookRepositoryReference; detail?: string; cause?: unknown } = {},
+    options: { status?: number; resetAt?: string; reason?: RepositoryErrorKind; repository?: BookRepositoryReference; detail?: string; cause?: unknown; tokenKind?: GitHubTokenKind } = {},
   ) {
     super(`BOOK_REPOSITORY_${code.replace(/-/g, "_").toUpperCase()}`);
     this.name = "BookRepositoryError";
@@ -120,7 +133,10 @@ export class BookRepositoryError extends Error {
     this.repository = options.repository;
     this.detail = options.detail;
     this.cause = options.cause;
+    this.tokenKind = options.tokenKind;
   }
+  /** Set when the refusal depends on what kind of token it was (the words for an app token name the permission to give). */
+  readonly tokenKind?: GitHubTokenKind;
   readonly status?: number;
   readonly resetAt?: string;
   /** What GitHub's answer was classified as when the first commit failed: a rate limit, a credential that stopped working, the network... */
@@ -341,6 +357,7 @@ export async function createCompleteBookRepository(input: CreateCompleteBookRepo
   if (!mainFiles.length) throw new BookRepositoryError("no-files");
 
   const octokit = input.octokit ?? createTrackedGitHubClient(input.token);
+  const tokenKind = classifyTokenKind(input.token);
   const progress = (value: BookRepositoryProgress) => input.onProgress?.(value);
   const existingPolicy = input.existing ?? "error";
   const warnings: BookRepositoryWarning[] = [];
@@ -394,7 +411,7 @@ export async function createCompleteBookRepository(input: CreateCompleteBookRepo
       const failure = failureOf(error);
       if (failure.status === 422 && /already exists|name.*taken/.test(failure.message)) throw new BookRepositoryError("name-taken", { status: 422, cause: error });
       if (failure.status === 422) throw new BookRepositoryError("create-rejected", { status: 422, cause: error });
-      if (!isRateLimited(failure) && (failure.status === 403 || failure.status === 404)) throw new BookRepositoryError(forUser ? "cannot-create" : failure.status === 404 ? "owner-unavailable" : "cannot-create", { status: failure.status, reason: failure.kind, cause: error });
+      if (!isRateLimited(failure) && (failure.status === 403 || failure.status === 404)) throw new BookRepositoryError(forUser ? "cannot-create" : failure.status === 404 ? "owner-unavailable" : "cannot-create", { status: failure.status, reason: failure.kind, cause: error, tokenKind });
       throw earlyFailure(error, "unknown");
     }
   }
@@ -435,7 +452,8 @@ export async function createCompleteBookRepository(input: CreateCompleteBookRepo
       ({ commitSha: headSha, treeSha, shas } = built);
     }
   } catch (error) {
-    throw firstCommitFailure(error, here);
+    const failure = firstCommitFailure(error, here);
+    throw new BookRepositoryError(failure.code, { status: failure.status, resetAt: failure.resetAt, reason: failure.reason, repository: failure.repository, detail: failure.detail, cause: failure.cause, tokenKind });
   }
   const landed: Record<string, string> = { ...shas };
   let committedFiles = mainFiles.length;
@@ -511,14 +529,15 @@ export async function createCompleteBookRepository(input: CreateCompleteBookRepo
     firstCommitPath,
     createdRepository: created,
     pendingWorkflow,
+    tokenKind,
   };
 }
 
-export type BookRepositoryPreflightIssue = "no-repo-scope" | "public-only" | "no-workflow-scope" | "fine-grained" | "unknown-token";
+export type BookRepositoryPreflightIssue = "no-repo-scope" | "public-only" | "no-workflow-scope" | "fine-grained" | "app-token" | "unknown-token";
 
 export interface BookRepositoryPreflight {
   login: string;
-  tokenKind: "classic" | "fine-grained" | "unknown";
+  tokenKind: GitHubTokenKind;
   /** The scopes a classic token carries (`X-OAuth-Scopes`); empty for any other kind. */
   scopes: string[];
   organizations: string[];
@@ -535,7 +554,9 @@ export async function preflightBookRepository(input: { token: string; octokit?: 
   const octokit = input.octokit ?? createTrackedGitHubClient(input.token);
   const user = await octokit.rest.users.getAuthenticated({ request: { signal: input.signal } }).catch((error) => { throw earlyFailure(error, "unknown"); });
   const header = (user.headers as Record<string, unknown>)["x-oauth-scopes"];
-  const classic = typeof header === "string";
+  const kind = classifyTokenKind(input.token);
+  // The user token of a GitHub app carries no scopes: what it can do is the permissions of the app, which GitHub does not tell in advance either.
+  const classic = typeof header === "string" && kind !== "app" && kind !== "fine-grained";
   const scopes = classic ? header.split(",").map((scope) => scope.trim()).filter(Boolean) : [];
   const issues: BookRepositoryPreflightIssue[] = [];
   let canCreate: BookRepositoryPreflight["canCreate"] = "unknown";
@@ -548,10 +569,10 @@ export async function preflightBookRepository(input: { token: string; octokit?: 
     else if (!hasRepo) issues.push("no-repo-scope");
     if (canWriteWorkflows === "no") issues.push("no-workflow-scope");
   } else {
-    issues.push(input.token.startsWith("github_pat_") ? "fine-grained" : "unknown-token");
+    issues.push(kind === "fine-grained" ? "fine-grained" : kind === "app" ? "app-token" : "unknown-token");
   }
   const organizations = await octokit.rest.orgs.listForAuthenticatedUser({ per_page: 100, request: { signal: input.signal } }).then((result) => result.data.map((org) => org.login).sort((left, right) => left.localeCompare(right)), () => []);
-  return { login: user.data.login, tokenKind: classic ? "classic" : input.token.startsWith("github_pat_") ? "fine-grained" : "unknown", scopes, organizations, canCreate, canWriteWorkflows, issues };
+  return { login: user.data.login, tokenKind: classic ? "classic" : kind, scopes, organizations, canCreate, canWriteWorkflows, issues };
 }
 
 /** Deletes a repository this flow made and could not fill: refused when it has a branch (it is not empty any more), and only ever on the user's own action. */

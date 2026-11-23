@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { adoptRemoteAccountSnapshot, loadLocalAccountSnapshot, LocalAccountSnapshotChangedError, markLocalAccountReplicaConfirmed, replaceLocalAccountSnapshot, updateLocalAccountManifest } from "@/account/accountLocalStore";
-import { accountBackendToken, AccountCredentialError, useConnectionStore } from "@/account/connectionStore";
+import { AccountCredentialError, useConnectionStore } from "@/account/connectionStore";
 import { compareAccountManifests } from "@/account/vectorClock";
 import { accountSyncEnvelope } from "@/account/serialization";
 import type { AccountRemoteSnapshot, AccountSyncBackend, AccountSyncBackendKind, LocalAccountSnapshot, ReplicaComparison } from "@/account/types";
@@ -14,6 +14,7 @@ import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { mergeLocalDeviceSettings } from "@/account/dataProjection";
 import { acquireMicrosoftConnectionToken } from "@/account/microsoftConnectionToken";
 import { acquireGoogleConnectionToken } from "@/account/googleConnectionToken";
+import { acquireGitHubConnectionToken } from "@/account/githubConnectionToken";
 import { BrokerError } from "@/account/credentialBroker";
 import { requiresSignInRenewal, signInRenewalCode, withoutHelpLinks } from "@/account/signInRenewal";
 import { AccountSyncFailure } from "@/account/syncFailure";
@@ -74,7 +75,7 @@ function activeBackendKinds(): AccountSyncBackendKind[] {
 
 async function createBackend(kind: AccountSyncBackendKind): Promise<AccountSyncBackend> {
   const configuration = useConnectionStore.getState().configuration;
-  const token = kind === "onedrive" ? await acquireMicrosoftConnectionToken() : kind === "google-drive" ? await acquireGoogleConnectionToken() : accountBackendToken(kind);
+  const token = kind === "onedrive" ? await acquireMicrosoftConnectionToken() : kind === "google-drive" ? await acquireGoogleConnectionToken() : await acquireGitHubConnectionToken();
   if (kind === "google-drive") {
     const connection = configuration.google;
     if (!connection) throw new AccountCredentialError(kind, "missing");

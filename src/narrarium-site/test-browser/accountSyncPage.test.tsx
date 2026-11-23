@@ -27,14 +27,14 @@ const LAST_SYNC = "2026-11-21T21:28:18.893Z";
 const TEXTS = {
   it: {
     notConnected: "Non connesso", dataSync: "Sincronizzazione dei dati dell'account", sync: "Sincronizza", disconnect: "Disconnetti", deleteRemote: "Elimina dati remoti",
-    lastSync: "Ultima sincronizzazione", reconnect: "Riconnetti", connectOAuth: "Connetti con OAuth", lastError: "Ultimo errore",
+    lastSync: "Ultima sincronizzazione", reconnect: "Riconnetti", githubNotEnabled: "L'accesso con GitHub non è ancora attivo su questo sito.", githubPat: "Usa un token di accesso personale (avanzato)", lastError: "Ultimo errore",
     failed: "Sincronizzazione non riuscita", unknownKind: "Qualcosa è andato storto durante la sincronizzazione.", needsLogin: "Riconnetti OneDrive", expiredKind: "L'accesso a OneDrive va rinnovato. Riconnetti OneDrive per continuare a sincronizzare; non si perde nulla, i dati restano su questo dispositivo.",
     status: (state: string) => `Stato: ${state}`, upToDate: "Aggiornato",
     sync1: "21 nov 2026, 22:28", workspaceDate: "21 nov 2026, 22:15", counts: "1 libro · 2 chat",
   },
   en: {
     notConnected: "Not connected", dataSync: "Account data sync", sync: "Sync", disconnect: "Disconnect", deleteRemote: "Delete remote",
-    lastSync: "Last sync", reconnect: "Reconnect", connectOAuth: "Connect OAuth", lastError: "Last error",
+    lastSync: "Last sync", reconnect: "Reconnect", githubNotEnabled: "Sign-in with GitHub is not enabled on this site yet.", githubPat: "Use a personal access token (advanced)", lastError: "Last error",
     failed: "Sync failed", unknownKind: "Something unexpected went wrong while syncing.", needsLogin: "Reconnect OneDrive", expiredKind: "The OneDrive sign-in needs to be renewed. Reconnect OneDrive to keep syncing; nothing is lost, your data stays on this device.",
     status: (state: string) => `Status: ${state}`, upToDate: "Up to date",
     sync1: /^Nov 21, 2026, 10:28\sPM$/, workspaceDate: /^Nov 21, 2026, 10:15\sPM$/, counts: "1 book · 2 chats",
@@ -121,10 +121,14 @@ describe.each(["it", "en"] as const)("Account & Sync page in %s", (language) => 
 
     const github = within(card("GitHub"));
     expect(github.getByText(text.notConnected)).toBeInTheDocument();
-    expect(github.getByRole("button", { name: text.connectOAuth })).toBeInTheDocument();
+    // The GitHub app sign-in is offered only where the broker says so and the build has the app's client id: here it has neither, so the card says so
+    // in one honest line and offers the personal access token (this replaces the «Connect OAuth» button of the disabled browser-only flow).
+    expect(await github.findByText(text.githubNotEnabled, { exact: false })).toBeInTheDocument();
+    expect(github.getByText(text.githubPat)).toBeInTheDocument();
+    expect(github.queryByRole("button", { name: /OAuth/ })).not.toBeInTheDocument();
 
     if (language === "it") {
-      for (const english of ["Account data sync", "Sync", "Disconnect", "Delete remote", "Not connected", "Reconnect", "Connect", "Connect OAuth"]) {
+      for (const english of ["Account data sync", "Sync", "Disconnect", "Delete remote", "Not connected", "Reconnect", "Connect"]) {
         expect(screen.queryByText(english)).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: english })).not.toBeInTheDocument();
       }

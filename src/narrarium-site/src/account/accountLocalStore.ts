@@ -345,6 +345,7 @@ export function withoutRefreshTokens(value: LocalSyncConfiguration): LocalSyncCo
   const stripped = { ...value };
   if (value.google) stripped.google = strip(value.google);
   if (value.microsoft) stripped.microsoft = strip(value.microsoft);
+  if (value.github) stripped.github = strip(value.github);
   return stripped;
 }
 

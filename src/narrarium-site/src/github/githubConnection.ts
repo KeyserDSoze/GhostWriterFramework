@@ -10,7 +10,7 @@ export async function connectGitHubCredential(input: { token: string; kind: GitH
   const user = response.data;
   if (!Number.isSafeInteger(user.id) || user.id <= 0) throw new Error("GitHub did not return a stable numeric user ID.");
   await useConnectionStore.getState().connectGitHub({
-    method: input.kind === "oauth" ? "github-oauth" : "github-pat",
+    method: input.kind === "app" ? "github-app" : "github-pat",
     credentialKind: input.kind,
     identity: {
       provider: "github",

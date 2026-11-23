@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { GitBranch, Github, KeyRound, Loader2, Plus, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -28,6 +28,9 @@ import { attachLocalBookToGitHub, checkRepositoryTokenHealth } from "@/repositor
 import { BookRepositoryError, deleteEmptyBookRepository, isBookRepositoryError, repositoryNameProblem, type BookRepositoryProgress, type CreateCompleteBookRepositoryResult } from "@/github/bookRepository";
 import { GitHubRepositoryPanel, defaultGitHubRepositoryChoices, ownerOf, useGitHubPreflight, type GitHubRepositoryChoices } from "@/components/book/GitHubRepositoryPanel";
 import { GitHubCreateFailure, GitHubCreateProgress, GitHubCreateResult } from "@/components/book/GitHubRepositoryOutcome";
+
+// Which token the book uses, and whether the GitHub app reaches it, is a chunk of its own.
+const BookGitHubAccess = lazy(() => import("@/components/book/BookGitHubAccess").then((module) => ({ default: module.BookGitHubAccess })));
 import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { readTokenHealth, tokenExpirationWarning, type TokenHealth } from "@/repository/tokenHealth";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
@@ -247,6 +250,8 @@ export function BookSettingsPage() {
           <Button type="button" variant="outline" disabled={!currentToken || !currentAccountIdentity || offline || checkingToken} onClick={() => void handleTokenHealth()}>{checkingToken ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <KeyRound className="mr-1 h-4 w-4" />}{t("repoStatus.checkToken")}</Button>
         </CardContent>
       </Card>}
+
+      {bookStorageMode(currentBook) === "github" && <Suspense fallback={null}><BookGitHubAccess book={currentBook} /></Suspense>}
 
       {attachedResult && <GitHubCreateResult result={attachedResult} onOpenBook={() => navigate(`/app/books/${currentBook.id}`)} />}
       {!attachedResult && bookStorageMode(currentBook) === "local-only" && (

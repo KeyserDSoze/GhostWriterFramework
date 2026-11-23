@@ -14,7 +14,7 @@
  * Each record is bound to its provider and account (as GCM additional data) and uses a fresh IV every time.
  * Nothing here logs, and failures never carry the value: every function reports failure as "false" or "null".
  */
-export type VaultProvider = "google" | "microsoft";
+export type VaultProvider = "google" | "microsoft" | "github";
 
 const DB_NAME = "narrarium-credential-vault";
 const DB_VERSION = 1;

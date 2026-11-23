@@ -11,6 +11,7 @@ import { exchangeCode } from "@/account/credentialBroker";
 import { microsoftIdentityFromClientInfo, type MicrosoftAuthorization } from "@/account/microsoftSignIn";
 import type { LocalReplicaState } from "@/account/types";
 import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
+import { consumeGitHubAuthorization } from "@/github/githubOAuth";
 import { useAuthStore } from "@/store/authStore";
 
 /** An upgrade of a connection keeps its sync switch and history; a failure it had been waiting on is cleared. */
@@ -89,4 +90,57 @@ export async function completeMicrosoftBrokerConnection(options: MicrosoftBroker
   });
   useAuthStore.getState().setInteractiveAuth(tokens.accessToken, { provider: "microsoft", providerAccountId: homeAccountId, name: displayName, email: profile.mail ?? profile.userPrincipalName ?? "", picture: "", homeAccountId, localAccountId }, Math.max(120, tokens.expiresIn), options.rememberMe);
   return { longLived: true };
+}
+
+export interface GitHubBrokerConnection {
+  /** The `code` and `state` GitHub sent back to the callback page. */
+  code: string;
+  state: string;
+  now?: number;
+}
+
+/**
+ * Finishing «Connect with GitHub»: the state is checked against the attempt this tab started, the code is swapped at the broker (which holds the app's
+ * client secret), the user is read with the new token, and the connection is saved with its refresh token (sealed in the vault when the device remembers
+ * it). Nothing is saved unless every step worked, so a failure leaves the existing connection exactly as it was. The tokens are never logged.
+ */
+export async function completeGitHubBrokerConnection(options: GitHubBrokerConnection): Promise<{ returnTo: string; rememberMe: boolean }> {
+  let authorization;
+  try { authorization = consumeGitHubAuthorization(options.state, options.now); } catch { throw new ConnectFlowError("state_mismatch"); }
+  if (!options.code.trim()) throw new ConnectFlowError("invalid_response", "GitHub did not send an authorization code.");
+  const tokens = await exchangeCode({ provider: "github", code: options.code, codeVerifier: authorization.codeVerifier, redirectUri: authorization.redirectUri });
+  // A token that cannot be renewed would end after 8 hours without a way back: it is not accepted.
+  if (!tokens.refreshToken) throw new ConnectFlowError("invalid_response", "GitHub did not return renewable credentials.");
+
+  let response: Response;
+  try { response = await fetch("https://api.github.com/user", { headers: { Authorization: `Bearer ${tokens.accessToken}`, Accept: "application/vnd.github+json" }, cache: "no-store" }); }
+  catch { throw new ConnectFlowError("invalid_response", "GitHub could not be reached to read the account."); }
+  if (!response.ok) throw new ConnectFlowError("invalid_response", `GitHub did not accept the new sign-in (${response.status}).`);
+  const user = await response.json().catch(() => null) as { id?: unknown; login?: unknown; name?: unknown; email?: unknown; avatar_url?: unknown } | null;
+  if (!user || typeof user.id !== "number" || !Number.isSafeInteger(user.id) || user.id <= 0 || typeof user.login !== "string" || !user.login) throw new ConnectFlowError("invalid_response", "GitHub did not return a stable account.");
+
+  const accountId = String(user.id);
+  const existing = useConnectionStore.getState().configuration.github;
+  const sameAccount = existing?.identity?.providerAccountId === accountId;
+  await useConnectionStore.getState().connectGitHub({
+    method: "github-app",
+    credentialKind: "app",
+    identity: {
+      provider: "github",
+      providerAccountId: accountId,
+      displayName: typeof user.name === "string" && user.name.trim() ? user.name.trim() : user.login,
+      username: user.login,
+      ...(typeof user.email === "string" ? { email: user.email } : {}),
+      ...(typeof user.avatar_url === "string" ? { avatarUrl: user.avatar_url } : {}),
+    },
+    token: tokens.accessToken,
+    accessTokenExpiry: bufferedAccessTokenExpiry(tokens.expiresIn),
+    refreshToken: tokens.refreshToken,
+    rememberMe: authorization.rememberMe,
+    // A connection that already syncs the account keeps doing so; a new one starts with that off: the app may not reach narrarium.settings yet.
+    accountSyncEnabled: sameAccount ? existing.accountSyncEnabled : false,
+    repositoryOwner: user.login,
+    ...(sameAccount && existing ? { replica: upgradedReplica(existing.replica) } : {}),
+  });
+  return { returnTo: authorization.returnTo, rememberMe: authorization.rememberMe };
 }

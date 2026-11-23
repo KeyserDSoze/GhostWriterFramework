@@ -4,9 +4,13 @@
 
 Crea un account su [github.com](https://github.com). Narrarium salva ogni libro come repository GitHub.
 
-## 2. Crea un token (PAT)
+## 2. Accedi a GitHub
 
-Narrarium raggiunge GitHub con un personal access token. Apri **GitHub → Settings → Developer settings → Personal access tokens** e scegli uno dei due tipi. Ciò che il token può fare decide ciò che Narrarium può fare per te: leggi la tabella prima di crearlo.
+Ci sono due modi, e puoi usare l'uno, l'altro o tutti e due.
+
+**Connetti con GitHub (nessun token da incollare).** Apri **Account e sincronizzazione**, nella scheda GitHub scegli **Connetti con GitHub** e accedi su GitHub. Poi **installa** l'app: **Scegli i repository su GitHub** apre la pagina dove scegli tutti i tuoi repository o solo alcuni; la scheda dice dove l'app è installata, e **Controlla di nuovo** lo rilegge quando torni. Con l'app, Narrarium può leggere e scrivere il libro, aprire pull request, creare il repository (all'app serve il permesso **Repository creation**) e aggiungere il workflow di Pages (all'app serve **Workflows**); non può attivare GitHub Pages né eliminare un repository: falli su github.com. Se la scheda dice che l'accesso con GitHub non è ancora attivo su questo sito, usa un token (qui sotto). L'accesso con l'app dura 8 ore e si rinnova da solo; se scade la scheda dice **Riconnetti GitHub**.
+
+**Un token di accesso personale (PAT), avanzato.** Non scade da solo, funziona in qualsiasi account o organizzazione, ed è quello da usare quando il tuo server personale gestisce i tuoi libri o usi più account GitHub. Apri **GitHub → Settings → Developer settings → Personal access tokens** e scegli uno dei due tipi. Ciò che il token può fare decide ciò che Narrarium può fare per te: leggi la tabella prima di crearlo.
 
 | Cosa fa Narrarium | Token classico | Token a grana fine (fine-grained) |
 | --- | --- | --- |
@@ -27,7 +31,7 @@ Copia subito il token: GitHub non lo mostrerà una seconda volta.
 
 ## 3. Configura il token
 
-In Narrarium apri **Impostazioni → GitHub** e salva il token come PAT predefinito, oppure aggiungi un PAT dedicato mentre colleghi il libro.
+Solo per un token: in Narrarium apri **Impostazioni → GitHub** e salva il token come PAT predefinito, oppure aggiungi un PAT dedicato mentre colleghi il libro. Un token salvato per un libro, uno con nome o quello predefinito vincono sempre sulla connessione GitHub; **Account e sincronizzazione** mostra quale usa ogni libro.
 
 ## 4. Crea o collega un libro
 

@@ -434,7 +434,7 @@ export function resolveGitHubRemoteToken(book: BookEntry, settings: AppSettings)
 }
 
 export function resolveGitHubCredential(book: BookEntry, settings: AppSettings): ResolvedGitHubCredential | null {
-  return resolveGitHubCredentialValue({ bookToken: book.bookToken, tokenIndex: book.tokenIndex, extraTokens: settings.extraGitHubTokens, defaultToken: settings.defaultGitHubToken });
+  return resolveGitHubCredentialValue({ bookToken: book.bookToken, tokenIndex: book.tokenIndex, extraTokens: settings.extraGitHubTokens, defaultToken: settings.defaultGitHubToken, preferConnection: settings.githubPreferConnection });
 }
 
 export function bookStorageMode(book: BookEntry): BookStorageMode {
@@ -561,6 +561,11 @@ export interface AppSettings {
   version: 2;
   defaultGitHubToken: string;
   extraGitHubTokens: GitHubToken[];
+  /**
+   * Use the GitHub connection (the app sign-in) ahead of the default token for the books that have no token of their own. Absent: the default
+   * token goes first, as it always did. It is only a preference: the token of the app itself is never in the settings.
+   */
+  githubPreferConnection?: boolean;
   azureOpenAI: AzureOpenAIConfig;
   aiIntegrations: AIIntegration[];
   defaultWritingIntegrationId?: string;

@@ -35,7 +35,7 @@ I vector clock classificano le repliche come uguali, avanti, indietro o divergen
 
 Il sync account GitHub usa esattamente `narrarium.settings`. Se manca, viene creata privata. Una repository pubblica viene rifiutata prima del caricamento. Le scritture usano un unico commit Git aggregato come `Sync Narrarium account data`, non un commit per carattere.
 
-Il PAT è supportato direttamente. OAuth GitHub con PKCE è predisposto ma disabilitato perché una verifica reale in Chromium ha confermato che il token endpoint GitHub non espone una risposta CORS leggibile dal browser. Non sono stati introdotti workaround `no-cors` opachi né backend. Vedi `github-oauth-static-client.md`.
+Il PAT è supportato direttamente, e anche l'accesso con la GitHub App di Narrarium tramite il servizio di accesso (vedi `github-oauth-static-client.md`). I token dell'app durano 8 ore e sono rinnovati dal servizio di accesso; restano su questo dispositivo e non fanno mai parte del dataset dell'account, a differenza di un PAT, che resta sincronizzabile come sempre.
 
 ## Drive
 

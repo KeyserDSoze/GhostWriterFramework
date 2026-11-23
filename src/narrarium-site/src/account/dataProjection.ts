@@ -1,12 +1,19 @@
 import type { AppSettings } from "@/types/settings";
 import type { SensitiveAccountData } from "@/account/types";
+import { isDeviceLocalSecret } from "@/account/deviceSecrets";
+
+/** A token field that holds a secret of this device (the GitHub App's access token) is empty in everything that is synced. */
+const syncable = (token: string): string => (isDeviceLocalSecret(token) ? "" : token);
 
 /** Removes fields that identify this browser or one of its local connectors. */
 export function projectSyncableSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
+    defaultGitHubToken: syncable(settings.defaultGitHubToken),
+    extraGitHubTokens: settings.extraGitHubTokens.map((entry) => ({ ...entry, token: syncable(entry.token) })),
     books: settings.books.map((book) => {
       const { localRepositoryId: _localRepositoryId, activeBranch: _activeBranch, exportSettings: _exportSettings, ...portableBook } = book;
+      if (portableBook.bookToken && isDeviceLocalSecret(portableBook.bookToken)) delete portableBook.bookToken;
       const rawExportSettings = book.exportSettings && {
         ...book.exportSettings,
         googleDriveFolderId: undefined,
@@ -51,9 +58,9 @@ function nonEmptyObject<T extends object>(value: T | undefined): T | undefined {
 
 export function sensitiveAccountData(settings: AppSettings): SensitiveAccountData {
   return {
-    defaultGitHubToken: settings.defaultGitHubToken,
-    extraGitHubTokens: settings.extraGitHubTokens,
-    bookTokens: Object.fromEntries(settings.books.filter((book) => book.bookToken).map((book) => [book.id, { token: book.bookToken!, ...(book.bookTokenLabel ? { label: book.bookTokenLabel } : {}) }])),
+    defaultGitHubToken: syncable(settings.defaultGitHubToken),
+    extraGitHubTokens: settings.extraGitHubTokens.map((entry) => ({ ...entry, token: syncable(entry.token) })),
+    bookTokens: Object.fromEntries(settings.books.filter((book) => book.bookToken && !isDeviceLocalSecret(book.bookToken)).map((book) => [book.id, { token: book.bookToken!, ...(book.bookTokenLabel ? { label: book.bookTokenLabel } : {}) }])),
     aiApiKeys: Object.fromEntries(settings.aiIntegrations.filter((integration) => integration.apiKey).map((integration) => [integration.id, integration.apiKey])),
     searchApiKeys: { braveApiKey: settings.deepSearch.braveApiKey, tavilyApiKey: settings.deepSearch.tavilyApiKey },
   };

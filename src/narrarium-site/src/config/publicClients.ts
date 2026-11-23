@@ -6,9 +6,13 @@ export const MICROSOFT_CLIENT_ID =
   (import.meta.env.VITE_MICROSOFT_CLIENT_ID as string | undefined)?.trim() ||
   "a80b2024-b9e3-4cb1-8480-aac7f164a6eb";
 
-export const GITHUB_OAUTH_CLIENT_ID =
-  (import.meta.env.VITE_GITHUB_OAUTH_CLIENT_ID as string | undefined)?.trim() || "";
+/**
+ * The public Client ID of Narrarium's GitHub App (not its App ID), and its URL name (`https://github.com/apps/<slug>`). Both are empty until the app is
+ * registered; «Connect with GitHub» is offered only when this is set and the token broker says GitHub sign-in is on. The app's client SECRET
+ * lives in the Cloudflare Worker and never in this site.
+ */
+export const GITHUB_APP_CLIENT_ID =
+  (import.meta.env.VITE_GITHUB_APP_CLIENT_ID as string | undefined)?.trim() || "";
 
-/** Triple-Base64 is deliberate product-requested obfuscation, not encryption. */
-export const GITHUB_OAUTH_CLIENT_SECRET_B64X3 =
-  (import.meta.env.VITE_GITHUB_OAUTH_CLIENT_SECRET_B64X3 as string | undefined)?.trim() || "";
+export const GITHUB_APP_SLUG =
+  (import.meta.env.VITE_GITHUB_APP_SLUG as string | undefined)?.trim() || "";

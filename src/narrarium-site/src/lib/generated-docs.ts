@@ -243,22 +243,22 @@ export const docEntries: DocEntry[] = [
     }
   },
   {
-    "title": "GitHub OAuth in the static Narrarium client",
+    "title": "Signing in with GitHub from the static Narrarium client",
     "href": "/docs/github-oauth-static-client",
     "slug": "github-oauth-static-client",
     "group": "reference",
     "groupLabel": "Reference",
     "sourcePath": "docs/github-oauth-static-client.md",
-    "summary": "Narrarium includes the requested GitHub OAuth Web Flow preparation with PKCE:",
+    "summary": "Narrarium offers two ways to reach GitHub, and both can create a complete book repository wherever their permissions allow it:",
     "translations": {
       "en": {
-        "title": "GitHub OAuth in the static Narrarium client",
-        "summary": "Narrarium includes the requested GitHub OAuth Web Flow preparation with PKCE:",
+        "title": "Signing in with GitHub from the static Narrarium client",
+        "summary": "Narrarium offers two ways to reach GitHub, and both can create a complete book repository wherever their permissions allow it:",
         "sourcePath": "docs/github-oauth-static-client.md"
       },
       "it": {
-        "title": "GitHub OAuth in the static Narrarium client",
-        "summary": "Narrarium includes the requested GitHub OAuth Web Flow preparation with PKCE:",
+        "title": "Signing in with GitHub from the static Narrarium client",
+        "summary": "Narrarium offers two ways to reach GitHub, and both can create a complete book repository wherever their permissions allow it:",
         "sourcePath": "docs/github-oauth-static-client.md"
       }
     }

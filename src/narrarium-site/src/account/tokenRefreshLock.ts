@@ -1,12 +1,12 @@
 /**
  * One token renewal at a time per provider, across tabs and across functions.
  *
- * Microsoft rotates the refresh token on every renewal, and a second renewal that starts from a token the first one
+ * Microsoft and GitHub rotate the refresh token on every renewal, and a second renewal that starts from a token the first one
  * just replaced is wasted at best. The Web Lock "narrarium-token-refresh:<provider>" makes every tab wait its turn
  * (the holder re-reads the connection once it has the lock, because another tab may have renewed meanwhile). Without
  * Web Locks, the renewals of this tab are at least queued one after the other.
  */
-export type RefreshLockProvider = "google" | "microsoft";
+export type RefreshLockProvider = "google" | "microsoft" | "github";
 
 const queues = new Map<string, Promise<void>>();
 

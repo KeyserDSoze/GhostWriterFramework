@@ -1,50 +1,50 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/config/publicClients", () => ({
-  GITHUB_OAUTH_CLIENT_ID: "client-id",
-  GITHUB_OAUTH_CLIENT_SECRET_B64X3: btoa(btoa(btoa("client-secret"))),
-}));
+vi.mock("@/config/publicClients", () => ({ GITHUB_APP_CLIENT_ID: "Iv1.client-id", GITHUB_APP_SLUG: "narrarium" }));
 
-import { createGitHubOAuthAuthorizationUrl, decodeGitHubClientSecret, exchangeGitHubOAuthCode, GITHUB_OAUTH_BROWSER_EXCHANGE_SUPPORTED } from "@/github/githubOAuth";
+import { consumeGitHubAuthorization, createGitHubAppAuthorizationUrl } from "@/github/githubOAuth";
 
-describe("GitHub OAuth PKCE", () => {
-  beforeEach(() => {
-    sessionStorage.clear();
-    vi.restoreAllMocks();
-  });
+// Updated on purpose: the browser-only OAuth flow (a client secret decoded from the bundle, sent to github.com, scopes `repo ...`) is gone. What is kept is
+// the PKCE attempt; the exchange is the broker's, tested in githubBrokerConnect.test.ts.
+describe("the authorization request of the GitHub App", () => {
+  beforeEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 
-  it("performs exactly the configured triple Base64 decode", () => {
-    expect(decodeGitHubClientSecret(btoa(btoa(btoa("secret"))))).toBe("secret");
-  });
-
-  it("keeps the browser-only OAuth entry disabled after real CORS verification", () => {
-    expect(GITHUB_OAUTH_BROWSER_EXCHANGE_SUPPORTED).toBe(false);
-  });
-
-  it("creates a scoped, expiring PKCE authorization attempt", async () => {
-    const url = new URL(await createGitHubOAuthAuthorizationUrl({ rememberMe: true, returnTo: "/app/books", now: 1_000 }));
+  it("is an expiring PKCE request for the app, with no scope and no secret", async () => {
+    const url = new URL(await createGitHubAppAuthorizationUrl({ rememberMe: true, returnTo: "/app/books", now: 1_000 }));
     expect(url.origin + url.pathname).toBe("https://github.com/login/oauth/authorize");
-    expect(url.searchParams.get("client_id")).toBe("client-id");
+    expect(url.searchParams.get("client_id")).toBe("Iv1.client-id");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(url.searchParams.get("code_challenge")).toBeTruthy();
-    expect(url.searchParams.get("state")).toBeTruthy();
+    expect(url.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(url.searchParams.get("state")).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+    expect(url.searchParams.get("redirect_uri")).toMatch(/\/auth\/github\/callback$/);
+    expect([...url.searchParams.keys()].sort()).toEqual(["client_id", "code_challenge", "code_challenge_method", "redirect_uri", "state"]);
+    expect(url.href).not.toMatch(/secret/i);
   });
 
-  it("consumes state once and sends the verifier to the token exchange", async () => {
-    const url = new URL(await createGitHubOAuthAuthorizationUrl({ rememberMe: false, now: 1_000 }));
+  it("keeps the verifier and the redirect address only in this tab, and gives them back once for the right state", async () => {
+    const url = new URL(await createGitHubAppAuthorizationUrl({ rememberMe: false, returnTo: "/app/books", now: 1_000 }));
     const state = url.searchParams.get("state")!;
-    const fetchMock = vi.spyOn(window, "fetch").mockResolvedValue(new Response(JSON.stringify({ access_token: "oauth-token", scope: "repo", token_type: "bearer" }), { status: 200, headers: { "Content-Type": "application/json" } }));
-    await expect(exchangeGitHubOAuthCode("code", state, 2_000)).resolves.toMatchObject({ accessToken: "oauth-token", rememberMe: false });
-    const body = String(fetchMock.mock.calls[0]?.[1]?.body);
-    expect(body).toContain("code_verifier=");
-    expect(body).toContain("client_secret=client-secret");
-    await expect(exchangeGitHubOAuthCode("code", state, 2_000)).rejects.toThrow(/already used|invalid/);
+    expect(localStorage.length).toBe(0);
+    const authorization = consumeGitHubAuthorization(state, 2_000);
+    expect(authorization).toMatchObject({ rememberMe: false, returnTo: "/app/books", redirectUri: url.searchParams.get("redirect_uri") });
+    expect(authorization.codeVerifier).toMatch(/^[A-Za-z0-9_-]{80,}$/);
+    expect(() => consumeGitHubAuthorization(state, 2_000)).toThrow(/invalid|already used/);
   });
 
-  it("rejects expired and mismatched state before making a request", async () => {
-    const url = new URL(await createGitHubOAuthAuthorizationUrl({ rememberMe: false, now: 1_000 }));
+  it("refuses an expired, a wrong or an empty state, and a return address outside the app", async () => {
+    const make = async () => new URL(await createGitHubAppAuthorizationUrl({ rememberMe: false, returnTo: "//evil.example", now: 1_000 })).searchParams.get("state")!;
+    expect(() => consumeGitHubAuthorization("", 2_000)).toThrow();
+    const state = await make();
+    expect(() => consumeGitHubAuthorization(`${state}x`, 2_000)).toThrow(/state/);
+    const again = await make();
+    expect(() => consumeGitHubAuthorization(again, 1_000 + 10 * 60_000)).toThrow(/expired|invalid/);
+    const last = await make();
+    expect(consumeGitHubAuthorization(last, 2_000).returnTo).toBe("/app/account-sync");
+  });
+
+  it("makes no request at all: the page leaves for GitHub, and the code is swapped by the broker", async () => {
     const fetchMock = vi.spyOn(window, "fetch");
-    await expect(exchangeGitHubOAuthCode("code", `${url.searchParams.get("state")}x`, 2_000)).rejects.toThrow(/state/);
+    await createGitHubAppAuthorizationUrl({ rememberMe: true, now: 1_000 });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ExternalLink, Loader2 } from "lucide-react";
 import "@/i18n/githubCreateBook";
+import "@/i18n/githubApp";
+import { GITHUB_APP_SLUG } from "@/config/publicClients";
+import { installAppUrl } from "@/github/githubAppInstall";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { PAGES_WORKFLOW_PATH, type BookRepositoryError, type BookRepositoryProgress, type CreateCompleteBookRepositoryResult } from "@/github/bookRepository";
@@ -54,6 +57,11 @@ export function GitHubCreateFailure({ error, owner, repo, busy, onRetry, onDelet
       <AlertDescription className="space-y-3">
         <p className="font-medium">{t("github.createBook.error.title")}</p>
         <p>{text}</p>
+        {error.tokenKind === "app" && GITHUB_APP_SLUG && (error.code === "cannot-create" || (error.code === "first-commit-failed" && (error.reason === "permission" || error.reason === "permission-unverified"))) && (
+          <Button asChild variant="outline" className={TARGET}>
+            <a href={installAppUrl()} target="_blank" rel="noopener noreferrer">{t("github.createBook.app.install")}<span className="sr-only"> {t("github.createBook.result.newTab")}</span><ExternalLink className="h-4 w-4" aria-hidden="true" /></a>
+          </Button>
+        )}
         {empty && (
           <div className="space-y-3 rounded-md border border-destructive/30 p-3">
             <p className="font-medium">{t("github.createBook.recover.title")}</p>
@@ -117,7 +125,7 @@ export function GitHubCreateResult({ result, onOpenBook }: GitHubCreateResultPro
       <p className="text-sm">{t("github.createBook.result.intro", { owner: result.owner, repo: result.repo, visibility: t(result.private ? "github.createBook.result.private" : "github.createBook.result.public") })}</p>
       <ul aria-label={t("github.createBook.result.listLabel")} className="list-disc space-y-1 pl-5 text-sm">
         <li>{t("github.createBook.result.files", { files: result.committed.files, size: formatRepositoryBytes(result.committed.bytes) })}</li>
-        <li>{t(`github.createBook.result.workflow.${workflowKey}`, { reset })}</li>
+        <li>{workflowKey === "notAllowed" && result.tokenKind === "app" ? t("github.createBook.app.workflowNotAllowed") : t(`github.createBook.result.workflow.${workflowKey}`, { reset })}</li>
         <li>{t(`github.createBook.result.pages.${result.pages}`, { url })}</li>
         {branch && <li>{t("github.createBook.result.branch", { branch: result.defaultBranch })}</li>}
       </ul>

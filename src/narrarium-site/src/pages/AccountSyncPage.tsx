@@ -1,10 +1,9 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useGoogleLogin } from "@react-oauth/google";
 import { Clock, Cloud, Github, HardDrive, Loader2, RefreshCw, ShieldCheck, Trash2, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LocalTime } from "@/components/ui/local-time";
 import { Switch } from "@/components/ui/switch";
@@ -18,7 +17,7 @@ import { credentialMode } from "@/account/credentialMode";
 import { beginMicrosoftSignIn, type MicrosoftSignInSession } from "@/account/microsoftSignIn";
 import { useBrokerAvailability } from "@/hooks/useBrokerAvailability";
 import { deleteRemoteAccountData, resolveAccountReconciliation, syncAllAccountReplicas, syncOneAccountReplica, useAccountSyncStore } from "@/account/accountSync";
-import { createGitHubOAuthAuthorizationUrl, GITHUB_OAUTH_BROWSER_EXCHANGE_SUPPORTED } from "@/github/githubOAuth";
+import "@/i18n/githubApp";
 import { connectGitHubCredential } from "@/github/githubConnection";
 import { loadLocalAccountSnapshot } from "@/account/accountLocalStore";
 import type { AccountSyncBackendKind, LocalGoogleConnection, LocalMicrosoftConnection } from "@/account/types";
@@ -31,6 +30,9 @@ import { useAuthStore } from "@/store/authStore";
 import { migrateConnectedProviderRepositories } from "@/auth/accountScope";
 import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
 import { applyLegacyGoogleChatImport, prepareLegacyGoogleChatImport } from "@/account/legacyGoogleChatImport";
+
+// The GitHub card's inside (sign-in, installation, the token each book uses) is a chunk of its own: it is read only on this page.
+const GitHubAccessSection = lazy(() => import("@/components/account/GitHubAccessSection").then((module) => ({ default: module.GitHubAccessSection })));
 
 export function AccountSyncPage() {
   const { t } = useTranslation();
@@ -49,6 +51,9 @@ export function AccountSyncPage() {
   const brokerMicrosoft = useBrokerAvailability("microsoft");
   const googleIntent = useRef<{ upgrade?: boolean; expectedAccountId?: string; rememberMe?: boolean }>({});
   const microsoftSession = useRef<MicrosoftSignInSession | null>(null);
+  const [githubStarting, setGithubStarting] = useState(false);
+  const [githubRemember, setGithubRemember] = useState(true);
+  const [githubStartError, setGithubStartError] = useState<string | null>(null);
   const [microsoftPending, setMicrosoftPending] = useState(false);
   const rememberId = useId();
 
@@ -214,10 +219,17 @@ export function AccountSyncPage() {
     finally { setBusy(null); }
   }
 
-  async function connectOAuth() {
-    setError(null);
-    try { window.location.assign(await createGitHubOAuthAuthorizationUrl({ rememberMe, returnTo: "/app/account-sync" })); }
-    catch (cause) { setError(String(cause)); }
+  /** «Connect with GitHub»: the whole page goes to GitHub and comes back to /auth/github/callback, which finishes the connection through the broker. */
+  async function connectGitHubApp() {
+    setGithubStartError(null);
+    setGithubStarting(true);
+    try {
+      const { createGitHubAppAuthorizationUrl } = await import("@/github/githubOAuth");
+      window.location.assign(await createGitHubAppAuthorizationUrl({ rememberMe: githubRemember, returnTo: "/app/account-sync" }));
+    } catch (cause) {
+      setGithubStartError(t("accountSync.github.startFailed", { error: cause instanceof Error ? cause.message : String(cause) }));
+      setGithubStarting(false);
+    }
   }
 
   async function runSync(kind?: AccountSyncBackendKind) {
@@ -331,12 +343,14 @@ export function AccountSyncPage() {
           <div role="status" className={microsoftPending ? "space-y-1 border-t pt-3 text-xs" : undefined}>{microsoftPending && <><p className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" /><span>{t("accountSync.microsoftSignIn.waiting")}</span></p><p className="text-muted-foreground">{t("accountSync.microsoftSignIn.hint")}</p></>}</div>
           {microsoftPending && <Button size="sm" variant="outline" onClick={cancelMicrosoftSignIn}>{t("common.cancel")}</Button>}
         </ConnectionCard>
-        <ConnectionCard title="GitHub" icon={<Github className="h-5 w-5" />} connected={Boolean(configuration.github)} enabled={configuration.github?.replica.enabled} status={configuration.github?.replica.status} errorKind={configuration.github?.replica.errorKind} errorMessage={configuration.github?.replica.lastErrorMessage} lastSync={configuration.github?.replica.lastSuccessfulSyncAtUtc} detail={configuration.github ? `${configuration.github.identity?.username ?? "GitHub"} · ${configuration.github.credentialKind.toUpperCase()}` : undefined} busy={syncing || busy === "github"} connectDisabled={!GITHUB_OAUTH_BROWSER_EXCHANGE_SUPPORTED} onToggle={(enabled) => useConnectionStore.getState().setEnabled("github", enabled)} onConnect={connectOAuth} onSync={() => runSync("github")} onDisconnect={() => disconnect("github")} onDelete={() => removeRemote("github")}>
-          {(!configuration.github || configuration.github.replica.status === "needs-auth") && <div className="space-y-2 border-t pt-3">{!GITHUB_OAUTH_BROWSER_EXCHANGE_SUPPORTED && <p className="text-xs text-amber-800 dark:text-amber-300">{italian ? "OAuth GitHub è predisposto con PKCE ma il token endpoint GitHub non consente al browser di leggere la risposta CORS. Usa un PAT finché GitHub non abilita questo flusso per client statici." : "GitHub OAuth is implemented with PKCE, but GitHub's token endpoint does not let a browser read the CORS response. Use a PAT until GitHub supports this static-client flow."}</p>}<Label htmlFor="github-pat">Personal Access Token</Label><div className="flex gap-2"><Input id="github-pat" type="password" value={pat} onChange={(event) => setPat(event.target.value)} placeholder="github_pat_..." /><Button variant="outline" onClick={() => void connectPat()} disabled={!pat.trim()}>PAT</Button></div></div>}
+        <ConnectionCard title="GitHub" icon={<Github className="h-5 w-5" />} connected={Boolean(configuration.github)} enabled={configuration.github?.replica.enabled} status={configuration.github?.replica.status} errorKind={configuration.github?.replica.errorKind} errorMessage={configuration.github?.replica.lastErrorMessage} lastSync={configuration.github?.replica.lastSuccessfulSyncAtUtc} detail={configuration.github ? `${configuration.github.identity?.username ?? "GitHub"} · ${configuration.github.credentialKind === "app" ? "GitHub App" : "PAT"}` : undefined} busy={syncing || busy === "github"} hideConnect onToggle={(enabled) => useConnectionStore.getState().setEnabled("github", enabled)} onConnect={() => void connectGitHubApp()} onReconnect={() => (configuration.github?.credentialKind === "app" ? void connectGitHubApp() : document.getElementById("github-pat")?.focus())} onSync={() => runSync("github")} onDisconnect={() => disconnect("github")} onDelete={() => removeRemote("github")}>
+          <Suspense fallback={<p className="flex items-center gap-2 border-t pt-3 text-xs text-muted-foreground"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />{t("accountSync.loading")}</p>}>
+            <GitHubAccessSection connection={configuration.github} rememberMe={githubRemember} onRememberChange={setGithubRemember} onConnect={() => void connectGitHubApp()} starting={githubStarting} startError={githubStartError} pat={pat} onPatChange={setPat} onConnectPat={() => void connectPat()} busy={busy !== null} />
+          </Suspense>
         </ConnectionCard>
       </div>
 
-      {(configuration.google || configuration.microsoft || configuration.github) && <Button variant="outline" onClick={() => void disconnectAll()}>{italian ? "Disconnetti tutti gli account e continua in locale" : "Disconnect all accounts and continue locally"}</Button>}
+      {(configuration.google || configuration.microsoft || configuration.github) && <Button variant="outline" className="h-auto min-h-9 whitespace-normal text-left" onClick={() => void disconnectAll()}>{italian ? "Disconnetti tutti gli account e continua in locale" : "Disconnect all accounts and continue locally"}</Button>}
 
       <Card className="border-destructive/40"><CardHeader><CardTitle>{italian ? "Zona pericolosa" : "Danger zone"}</CardTitle><CardDescription>{italian ? "Logout e disconnessione non eliminano i dati. Questa è l'unica azione che rimuove l'intero workspace locale." : "Logout and disconnect keep local data. This is the explicit action that removes the entire local workspace."}</CardDescription></CardHeader><CardContent><Button variant="destructive" onClick={() => void deleteLocalData()}>{italian ? "Elimina tutti i dati locali" : "Delete all local data"}</Button></CardContent></Card>
 
@@ -376,12 +390,12 @@ function CredentialStatus(props: { provider: "google" | "microsoft"; connection:
   );
 }
 
-function ConnectionCard(props: { title: string; icon: React.ReactNode; connected: boolean; credentials?: React.ReactNode; enabled?: boolean; status?: string; errorKind?: string; errorMessage?: string; lastSync?: string; detail?: string; busy: boolean; connectDisabled?: boolean; onToggle?: (enabled: boolean) => void | Promise<void>; onConnect: () => void | Promise<void>; onReconnect?: () => void | Promise<void>; onSync: () => void | Promise<void>; onDisconnect: () => void | Promise<void>; onDelete: () => void | Promise<void>; children?: React.ReactNode }) {
+function ConnectionCard(props: { title: string; icon: React.ReactNode; connected: boolean; credentials?: React.ReactNode; enabled?: boolean; status?: string; errorKind?: string; errorMessage?: string; lastSync?: string; detail?: string; busy: boolean; connectDisabled?: boolean; hideConnect?: boolean; onToggle?: (enabled: boolean) => void | Promise<void>; onConnect: () => void | Promise<void>; onReconnect?: () => void | Promise<void>; onSync: () => void | Promise<void>; onDisconnect: () => void | Promise<void>; onDelete: () => void | Promise<void>; children?: React.ReactNode }) {
   const { t } = useTranslation();
   const toggleId = useId();
   const state = t(`accountSync.state.${props.status ?? "idle"}`, { defaultValue: props.status ?? "idle", service: props.title });
   const failed = Boolean(props.errorKind && isFailureStatus(props.status));
-  return <Card><CardHeader><CardTitle className="flex items-center gap-2">{props.icon}{props.title}</CardTitle><CardDescription>{props.detail ?? (props.connected ? t("accountSync.card.status", { state }) : t("accountSync.card.notConnected"))}</CardDescription></CardHeader><CardContent className="space-y-3">{props.lastSync && <p className="text-xs text-muted-foreground">{t("accountSync.card.lastSync")}: <LocalTime value={props.lastSync} /></p>}{failed && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs"><p className="font-medium">{t("accountSync.card.lastError")}</p><p>{t(`accountSync.error.${props.errorKind}`, { defaultValue: props.errorKind, service: props.title })}</p>{props.errorMessage && <p className="mt-1 break-words font-mono text-xs text-muted-foreground">{props.errorMessage}</p>}</div>}{props.connected && props.credentials}{props.connected ? <><div className="flex items-center justify-between rounded-md border p-2"><Label htmlFor={toggleId}>{t("accountSync.card.dataSync")}</Label><Switch id={toggleId} checked={Boolean(props.enabled)} onCheckedChange={(enabled) => void props.onToggle?.(enabled)} /></div><div className="flex flex-wrap gap-2"><Button size="sm" onClick={() => void props.onSync()} disabled={props.busy || !props.enabled}><RefreshCw className="mr-1 h-4 w-4" />{t("accountSync.card.sync")}</Button>{props.status === "needs-auth" && <Button size="sm" variant="outline" onClick={() => void (props.onReconnect ?? props.onConnect)()} disabled={props.connectDisabled || props.busy}>{t("accountSync.card.reconnectService", { service: props.title })}</Button>}<Button size="sm" variant="outline" onClick={() => void props.onDisconnect()}><Unplug className="mr-1 h-4 w-4" />{t("accountSync.card.disconnect")}</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => void props.onDelete()}><Trash2 className="mr-1 h-4 w-4" />{t("accountSync.card.deleteRemote")}</Button></div></> : <Button onClick={() => void props.onConnect()} disabled={props.busy || props.connectDisabled}>{props.busy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}{props.title === "GitHub" ? t("accountSync.card.connectOAuth") : t("accountSync.card.connect")}</Button>}{props.children}</CardContent></Card>;
+  return <Card><CardHeader><CardTitle className="flex items-center gap-2">{props.icon}{props.title}</CardTitle><CardDescription>{props.detail ?? (props.connected ? t("accountSync.card.status", { state }) : t("accountSync.card.notConnected"))}</CardDescription></CardHeader><CardContent className="space-y-3">{props.lastSync && <p className="text-xs text-muted-foreground">{t("accountSync.card.lastSync")}: <LocalTime value={props.lastSync} /></p>}{failed && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs"><p className="font-medium">{t("accountSync.card.lastError")}</p><p>{t(`accountSync.error.${props.errorKind}`, { defaultValue: props.errorKind, service: props.title })}</p>{props.errorMessage && <p className="mt-1 break-words font-mono text-xs text-muted-foreground">{props.errorMessage}</p>}</div>}{props.connected && props.credentials}{props.connected ? <><div className="flex items-center justify-between rounded-md border p-2"><Label htmlFor={toggleId}>{t("accountSync.card.dataSync")}</Label><Switch id={toggleId} checked={Boolean(props.enabled)} onCheckedChange={(enabled) => void props.onToggle?.(enabled)} /></div><div className="flex flex-wrap gap-2"><Button size="sm" onClick={() => void props.onSync()} disabled={props.busy || !props.enabled}><RefreshCw className="mr-1 h-4 w-4" />{t("accountSync.card.sync")}</Button>{props.status === "needs-auth" && <Button size="sm" variant="outline" onClick={() => void (props.onReconnect ?? props.onConnect)()} disabled={props.connectDisabled || props.busy}>{t("accountSync.card.reconnectService", { service: props.title })}</Button>}<Button size="sm" variant="outline" onClick={() => void props.onDisconnect()}><Unplug className="mr-1 h-4 w-4" />{t("accountSync.card.disconnect")}</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => void props.onDelete()}><Trash2 className="mr-1 h-4 w-4" />{t("accountSync.card.deleteRemote")}</Button></div></> : props.hideConnect ? null : <Button onClick={() => void props.onConnect()} disabled={props.busy || props.connectDisabled}>{props.busy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}{t("accountSync.card.connect")}</Button>}{props.children}</CardContent></Card>;
 }
 
 function ReconciliationDialog({ italian }: { italian: boolean }) {

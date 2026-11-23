@@ -18,19 +18,30 @@ Full Sync reconciles remote changes, preserves or commits local work when possib
 
 Each book can select an active branch. Copilot and the Git dialogs can list branches, switch/create branches, inspect diffs and commits, and create pull requests.
 
+## Two ways to sign in to GitHub
+
+In **Account & Sync**, the GitHub card offers both, and you can use either or both:
+
+- **Connect with GitHub** (recommended, when this site has it). Narrarium's GitHub app signs you in: there is no token to paste. GitHub asks you once; the sign-in is kept by the credential broker, which renews it by itself, and it is never part of your synced settings. The app reaches only the repositories you give it, so after signing in you also **install** it: **Choose repositories on GitHub** opens the page where you pick all your repositories or only some. The card then says where the app is installed, **Check again** reads it again after you come back from GitHub, and a book whose repository is not among them is named, with the same button. For an organization, an owner of the organization has to install or approve the app; if it requires single sign-on (SAML), start your SAML session on GitHub first. The app's token lasts 8 hours and is renewed in the background; if the sign-in lapses, the card says **Reconnect GitHub** and nothing is lost. **Disconnect** also revokes the app's access at GitHub, on every device. If the card says sign-in with GitHub is not enabled on this site yet, use a token: nothing else changes.
+- **A personal access token (advanced)**. It does not expire by itself and works for every repository it was given, in any account or organization. Prefer it when a personal server runs your books, when you use several GitHub accounts, or when your organization does not allow the app. Create it as shown in *Create your first book*.
+
+Your books keep working as they are: a token you saved for a book, a named token or the default token always win over the connection. The card shows, for each book, which token it uses (its own token, a named one, the default one, or your GitHub connection), and one switch, **Prefer the GitHub connection over the default token**, puts the connection ahead of the default token for the books that have no token of their own. The same line is in each book's settings.
+
 ## Permissions per token type
 
 Each thing Narrarium does on GitHub needs a permission of the token. If a permission is missing, GitHub refuses that one action and Narrarium tells you which one; the rest keeps working.
 
-| Action | Classic token | Fine-grained token |
-| --- | --- | --- |
-| Clone, pull and read the book | `repo` (private) or `public_repo` | Contents: Read, Metadata: Read |
-| Commit and push, branches | `repo` | Contents: Read and write |
-| Pull requests | `repo` | Pull requests: Read and write |
-| Create the repository | `repo` | Administration or Repository creation: Read and write |
-| Write `.github/workflows/*` | `workflow` | Workflows: Read and write |
-| Turn on GitHub Pages | `repo` | Pages and Administration: Read and write |
-| Delete a repository | `delete_repo` | Administration: Read and write |
+| Action | Classic token | Fine-grained token | GitHub app (Connect with GitHub) |
+| --- | --- | --- | --- |
+| Clone, pull and read the book | `repo` (private) or `public_repo` | Contents: Read, Metadata: Read | Contents and Metadata: Read, on the repositories it is installed on |
+| Commit and push, branches | `repo` | Contents: Read and write | Contents: Read and write |
+| Pull requests | `repo` | Pull requests: Read and write | Pull requests: Read and write |
+| Create the repository | `repo` | Administration or Repository creation: Read and write | Repository creation (or Administration): write |
+| Write `.github/workflows/*` | `workflow` | Workflows: Read and write | Workflows: Read and write |
+| Turn on GitHub Pages | `repo` | Pages and Administration: Read and write | not with the app: turn it on at github.com, or use a token |
+| Delete a repository | `delete_repo` | Administration: Read and write | not with the app: delete it at github.com, or use a token |
+
+- With the GitHub app, what happens when a permission is missing is told in words: Narrarium names the permission to give the app (for example **Repository creation** to create a repository, **Workflows** to add the Pages workflow) and offers the way out that always works: create the empty repository on github.com yourself, then connect it. A repository the app creates is reachable at once only if the app has the creation permission; if it is not, the card shows the install step.
 
 - A classic token shows its scopes to Narrarium, which reads them before it creates a repository and warns you if one is missing. GitHub does not say in advance what a fine-grained token can do: Narrarium tries, and explains any refusal in words.
 - A fine-grained token that only selects some repositories cannot create a new one or use it at once: choose **All repositories** for that. A fine-grained token has one owner: to work in an organization, make the organization its **Resource owner**.
@@ -44,3 +55,5 @@ The same creator is used by **Add Book** (a new book on GitHub) and by **Book Se
 ## A book on your personal server
 
 When your personal server runs the autopilot of a GitHub book, it publishes its commits to GitHub and brings in yours before every step. If you and the server changed the same file, the autopilot stops and you choose which version to keep: see *Conflicts with GitHub* in the Autopilot guide.
+
+The server keeps a copy of the book's token (with your consent when you move the book) and cannot renew the GitHub app's 8-hour token: **App tokens last 8 hours; for a book your server runs, use a personal access token (or keep the browser open).** Narrarium warns you when you move such a book and in its settings. While a browser with Narrarium is open it sends the server the fresh token each time it renews it (never the refresh token); a personal access token does not have this limit.
