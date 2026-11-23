@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFakeAutopilotAi, seedBookFiles } from "narrarium-engine/testing";
-import { lockDataRoot, processAlive, startNarrariumServer } from "../dist/testing.mjs";
+import { lockDataRoot, lockStartMs, processAlive, startNarrariumServer } from "../dist/testing.mjs";
 import { gatedAi, noRelease, until } from "./helpers.mjs";
 
 const posix = process.platform !== "win32";
@@ -436,4 +436,10 @@ test("R3: a closed terminal (SIGHUP) ends the server as cleanly as Ctrl+C: it ex
     await proc.cleanup();
     await remove(dataDir);
   }
+});
+
+test("the helper that holds a kernel lock gets thirty seconds on Windows, where PowerShell has taken more than ten on a loaded runner, and ten elsewhere", () => {
+  assert.equal(lockStartMs("win32"), 30_000);
+  for (const platform of ["linux", "darwin", "freebsd"]) assert.equal(lockStartMs(platform), 10_000, platform);
+  assert.equal(lockStartMs(), process.platform === "win32" ? 30_000 : 10_000, "by the system it runs on");
 });

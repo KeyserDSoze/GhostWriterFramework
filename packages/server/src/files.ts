@@ -154,6 +154,13 @@ export interface LockOptions {
   checkMs?: number;
   /** How old an unreadable lock file must be before it is taken over (default ten seconds): a fresh one may be being written. */
   damagedAfterMs?: number;
+  /** How long to wait for the process that holds a kernel lock to say it has it (`lockStartMs`: ten seconds, thirty on Windows, where PowerShell can take its time on a busy machine). */
+  startMs?: number;
+}
+
+/** How long the helper that holds a kernel lock may take to start and confirm: PowerShell on a loaded Windows machine has taken more than ten seconds. */
+export function lockStartMs(platform: NodeJS.Platform = process.platform): number {
+  return platform === "win32" ? 30_000 : 10_000;
 }
 
 async function readLockRecord(file: string): Promise<LockRecord | undefined> {
@@ -344,7 +351,7 @@ export async function lockDataRoot(root: string, onLost: () => void = () => { pr
       const timer = setTimeout(() => {
         child.kill();
         reject(new Error("Could not lock the data folder in time."));
-      }, 10_000);
+      }, options.startMs ?? lockStartMs());
       child.once("error", () => {
         clearTimeout(timer);
         reject(new Error(process.platform === "win32" ? "Could not lock the data folder: PowerShell is not available." : "Could not lock the data folder: install `flock` (util-linux)."));

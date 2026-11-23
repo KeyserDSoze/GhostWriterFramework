@@ -9,7 +9,7 @@ export { GIT_OPERATION_MARKER, GithubConflictError } from "./github-conflicts.js
 export { BookRegistry } from "./books.js";
 export { HttpError } from "./errors.js";
 export { SERVER_VERSION } from "./version.js";
-export { lockDataRoot, atomicJson, readJson } from "./files.js";
+export { lockDataRoot, lockStartMs, atomicJson, readJson } from "./files.js";
 export * from "./limits.js";
 export { bridgeToApi, forwardedHeaders } from "./gateway.js";
 export * from "./npm-release.js";
