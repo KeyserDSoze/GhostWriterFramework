@@ -1,5 +1,37 @@
 [
   {
+    "version": "0.94.1",
+    "date": "2026-11-23",
+    "en": {
+      "title": "A calmer phone: the Live page, the mini-player, the chapter map and the Director",
+      "summary": "The autopilot's Live page, its mini-player, the chapter map and the Director page are easier to use on a phone, and the app downloads a little less on a first visit.",
+      "changes": [
+        "On a phone, the Copilot buttons of the autopilot's Live page sit in its action bar instead of floating over the tabs and the text.",
+        "On a phone the autopilot's mini-player opens as a sheet at the bottom of the screen: Esc, Close or the back gesture close it, and the focus stays inside while it is open.",
+        "The back gesture closes the chapter panel and the GitHub conflicts window instead of leaving the page.",
+        "Chapter map on a phone: 44 px scene cells, a map that takes at most 60% of the screen and lets the page scroll on, and a table view that no longer shifts the page sideways. The names of the cast in the plan to approve are larger targets.",
+        "The Director page fits a 320 px screen, keeps the vision field above its save bar, and no longer asks about unsaved changes when nothing changed.",
+        "Each book's Live page opens on its own tab: a plan waiting for approval shows first.",
+        "The «Connect this book to GitHub» card of a book's settings speaks the app's language, fields included.",
+        "The app loads less on a first visit: about 4 KB fewer for every page, because the list of what each page needs is no longer carried for pages nobody has opened yet."
+      ]
+    },
+    "it": {
+      "title": "Un telefono più comodo: la pagina In diretta, il mini-player, la mappa dei capitoli e il Direttore",
+      "summary": "La pagina In diretta dell'autopilot, il suo mini-player, la mappa dei capitoli e la pagina del Direttore sono più comodi da usare su telefono, e l'app scarica un po' meno alla prima visita.",
+      "changes": [
+        "Su telefono i pulsanti del Copilot della pagina In diretta dell'autopilot stanno nella sua barra delle azioni invece di galleggiare sopra le schede e il testo.",
+        "Su telefono il mini-player dell'autopilot si apre come pannello in fondo allo schermo: lo chiudono Esc, Chiudi o il gesto indietro, e il focus resta dentro finché è aperto.",
+        "Il gesto indietro chiude il pannello del capitolo e la finestra dei conflitti con GitHub invece di lasciare la pagina.",
+        "Mappa dei capitoli su telefono: celle delle scene da 44 px, una mappa che occupa al massimo il 60% dello schermo e lascia scorrere la pagina, e una vista a tabella che non sposta più la pagina di lato. I nomi del cast nel piano da approvare sono bersagli più grandi.",
+        "La pagina del Direttore sta in uno schermo da 320 px, tiene il campo della visione sopra la barra di salvataggio e non chiede più delle modifiche non salvate quando nulla è cambiato.",
+        "La pagina In diretta di ogni libro si apre sulla sua scheda: un piano in attesa di approvazione si vede per primo.",
+        "La scheda «Collega il libro a GitHub» delle impostazioni di un libro parla la lingua dell'app, campi compresi.",
+        "L'app scarica meno alla prima visita: circa 4 KB in meno per ogni pagina, perché l'elenco di ciò che serve a ogni pagina non si porta più dietro per le pagine che nessuno ha ancora aperto."
+      ]
+    }
+  },
+  {
     "version": "0.94.0",
     "date": "2026-11-23",
     "en": {
