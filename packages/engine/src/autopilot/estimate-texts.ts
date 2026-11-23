@@ -80,9 +80,6 @@ export function estimateTexts(italian: boolean) {
     reasoningModel: (id: EstimateCapability, model: string) => (italian
       ? `«${capability(id)}»: ${model} ragiona prima di rispondere e spende token di ragionamento che non sono contati qui.`
       : `«${capability(id)}»: ${model} reasons before it answers and spends reasoning tokens that are not counted here.`),
-    outlineLonger: (brief: number, outline: number) => (italian
-      ? `La scaletta chiede ${count(outline)} capitoli e il brief ${count(brief)}: il libro ne ha ${count(outline)}, e la stima li conta tutti.`
-      : `The outline asks for ${count(outline)} chapters and the brief for ${count(brief)}: the book has ${count(outline)}, and the estimate counts them all.`),
     /** The assumptions, one sentence each, in the order of the pipeline. */
     assumptions: (facts: AssumptionFacts): string[] => {
       const lines: string[] = [];

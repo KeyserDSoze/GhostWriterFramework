@@ -9,6 +9,8 @@ const BASE = "http://127.0.0.1:24242";
 
 /** A personal server that answers the routes it is given, and remembers every request. */
 function fakeServer(routes = {}) {
+  // A server of this version: the client asks its features before it starts or configures (`autopilot-outline-brief`).
+  routes = { "GET /api/v1/info": () => Response.json({ name: "narrarium-server", apiVersion: 1, serverVersion: "0.1.12", engineVersion: "0.1.12", serverId: "s", label: "x", git: true, features: ["autopilot", "autopilot-controls", "autopilot-outline-brief"], publicKey: "k", fingerprint: "f", supervised: false }), ...routes };
   const log = [];
   const fetch = async (input, init = {}) => {
     const url = new URL(input);
@@ -56,10 +58,10 @@ test("startAutopilot sends the limits of the run with the rest of the request, a
   const server = fakeServer({ [START]: () => Response.json(snapshot({ summary: undefined })) });
   const input = { brief: { idea: "x", targetChapters: 3 }, options: { pauseAfterPlan: false, publishEvery: "step" }, limits: { steps: 1, chapters: 2 }, force: true };
   const answer = await client(server).startAutopilot("my-book", input);
-  assert.deepEqual(server.log[0].body, input, "everything goes in the body, as it was given");
+  assert.deepEqual(server.log.find((request) => request.path === "/api/v1/books/my-book/autopilot/start").body, input, "everything goes in the body, as it was given");
   assert.equal(answer.summary, undefined, "an older server answers a snapshot without a summary: the client passes it on as it is");
   await client(server).startAutopilot("my-book");
-  assert.deepEqual(server.log[1].body, {}, "a plain start still sends nothing else");
+  assert.deepEqual(server.log.filter((request) => request.path === "/api/v1/books/my-book/autopilot/start").at(-1).body, {}, "a plain start still sends nothing else");
 });
 
 test("updateAutopilotOptions is a PUT of the two settings, and answers the snapshot like configure does; updateOptions is the same call", async () => {

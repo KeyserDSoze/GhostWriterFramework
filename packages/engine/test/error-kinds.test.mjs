@@ -60,7 +60,7 @@ async function waitFor(predicate, what, timeoutMs = 4000) {
   }
 }
 
-async function run(ai, start = ONE, files = seedBookFiles(), extra = {}) {
+async function run(ai, start = ONE, files = seedBookFiles({ chapters: 1 }), extra = {}) {
   const store = new MemoryBookStore(files);
   const events = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0, ...extra });
@@ -284,7 +284,7 @@ test("a step the author paused is cancelled, not failed: it has no kind of error
       return new Promise((_resolve, reject) => request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true }));
     },
   };
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   await session.start(ONE);
   await waiting;
@@ -299,7 +299,7 @@ test("a step the author paused is cancelled, not failed: it has no kind of error
 
 test("a book file the autopilot cannot read is a profile problem: the step is refused with the kind the author can act on", async () => {
   const design = "---\ntype: note\ntitle: Story: Design\nscope: story-design\n---\n\n# Story Design\n\n## Premise\n";
-  const { state, activities } = await run(createFakeAutopilotAi(), ONE, { ...seedBookFiles(), "story-design.md": design });
+  const { state, activities } = await run(createFakeAutopilotAi(), ONE, { ...seedBookFiles({ chapters: 1 }), "story-design.md": design });
   assert.equal(state.status, "error");
   assert.ok(state.lastError.message.includes("story-design.md"), state.lastError.message);
   assert.equal(state.lastError.errorKind, "profile");
@@ -315,12 +315,12 @@ test("a run that goes round and round until the engine's own ceiling of steps st
       return new Promise((_resolve, reject) => request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true }));
     },
   };
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const events = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   session.subscribe((event) => events.push(event));
   await session.start(ONE);
-  const ceiling = engine.runStepCeiling({ brief: { targetChapters: 1 }, plan: null });
+  const ceiling = engine.runStepCeiling({ plan: null }, 1);
   // Every time the step is under way the author interrupts it: it is repeated, and every repeat is a turn of the loop the ceiling counts.
   for (let turn = 0; session.running && turn < ceiling + 20; turn += 1) {
     while (session.running && arrivals <= turn) await new Promise((resolve) => setImmediate(resolve));
@@ -418,7 +418,7 @@ const unavailable = (message = "HTTP 503 — overloaded") => new AiProviderError
 
 test("while the run waits for a retry the summary says when the next attempt is, in the events and in the snapshot, and says it no more once the attempt starts", async () => {
   const NOW = Date.parse("2026-03-01T10:00:00.000Z");
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = scripted((request, seen) => (request.label === "autopilot:concept" && seen < 2 ? unavailable() : undefined));
   const events = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 200, random: () => 0.5, now: () => new Date(NOW) });
@@ -455,7 +455,7 @@ test("while the run waits for a retry the summary says when the next attempt is,
 });
 
 test("the retry is gone when the run ends before the wait does: a pause, or the last retry failing", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const events = [];
   const ai = scripted((request) => (request.label === "autopilot:concept" ? unavailable() : undefined));
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 60_000, random: () => 0.5 });
@@ -476,7 +476,7 @@ test("the retry is gone when the run ends before the wait does: a pause, or the 
     session.pause("now");
     await session.waitForIdle();
   }
-  const doomed = await run(concept(() => unavailable()), ONE, seedBookFiles(), { retryDelayMs: 5, random: () => 0.5 });
+  const doomed = await run(concept(() => unavailable()), ONE, seedBookFiles({ chapters: 1 }), { retryDelayMs: 5, random: () => 0.5 });
   assert.equal(doomed.state.status, "error");
   assert.equal("retry" in summaries(doomed.events).at(-1), false);
   assert.equal(summaries(doomed.events).filter((summary) => summary.retry).length, 3, "one for every retry that was waited for");

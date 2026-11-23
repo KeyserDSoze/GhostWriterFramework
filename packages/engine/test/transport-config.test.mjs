@@ -100,7 +100,7 @@ test("a run that ends on an idle timeout of the real client says so in its state
     return eventStream(body.body);
   };
   const ai = createFetchAi({ aiIntegrations: [integration({ idleTimeoutMs: 40, endpoint: "https://proxy.example.com:8443/secret-path-ABC123/v1?key=QUERYSECRET789" })] }, { fetch: async () => stream(), minimumTimeoutMs: 1 });
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const events = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   session.subscribe((event) => events.push(event));

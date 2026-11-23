@@ -60,7 +60,7 @@ async function waitFor(condition, what, timeoutMs = 8_000) {
 // ─── The state says why «Retry later» stopped the run ───────────────────────
 
 test("when the cycles of «Retry later» are used up, the state and the summary say so with the code longRetryExhausted, as the run-ended event does", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { session, events } = newSession(store, conceptFails(Number.POSITIVE_INFINITY, () => down("openai m: HTTP 503 — still down")));
   await session.start({ brief: BRIEF, options: { ...FAST, longRetry: { everyMinutes: 1, cycles: 2 } } });
   await session.waitForIdle();
@@ -77,7 +77,7 @@ test("when the cycles of «Retry later» are used up, the state and the summary 
 });
 
 test("when «Retry later» is turned off while the run waits, the state and the summary say so with the code longRetryOff", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { session, events } = newSession(store, conceptFails(Number.POSITIVE_INFINITY, () => crashed()), { retryDelayMs: 40 });
   await session.start({ brief: BRIEF, options: { ...FAST, longRetry: { everyMinutes: 60, cycles: 3 } } });
   await waitFor(() => insights(events, "longRetryWait").length === 1, "the long wait");
@@ -93,7 +93,7 @@ test("when «Retry later» is turned off while the run waits, the state and the 
 
 test("a failure that «Retry later» did not stop has no code, and a run that goes on clears the error with its code", async () => {
   // «Retry later» is off: the run ends with the failure as it always did.
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { session } = newSession(store, conceptFails(Number.POSITIVE_INFINITY, () => crashed()));
   await session.start({ brief: BRIEF, options: FAST });
   await session.waitForIdle();
@@ -104,7 +104,7 @@ test("a failure that «Retry later» did not stop has no code, and a run that go
   assert.equal("code" in (await session.snapshot()).summary.lastError, false);
 
   // The same book, the cycles used up, and then a run that works: the error (and its code) is gone.
-  const stopped = new MemoryBookStore(seedBookFiles());
+  const stopped = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const first = newSession(stopped, conceptFails(Number.POSITIVE_INFINITY, () => down()));
   await first.session.start({ brief: BRIEF, options: { ...FAST, longRetry: { everyMinutes: 1, cycles: 1 } } });
   await first.session.waitForIdle();
@@ -166,7 +166,7 @@ test("StartOptions.options.longRetry accepts null, which turns «Retry later» o
 });
 
 test("a run started with longRetry: null runs with «Retry later» off, and turns off the policy the book had", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const first = newSession(store, createFakeAutopilotAi());
   await first.session.configure({ brief: BRIEF, options: { ...FAST, longRetry: { everyMinutes: 5, cycles: 2 } } });
   assert.deepEqual(parseAutopilotState(store.files.get(STATE)).options.longRetry, { everyMinutes: 5, cycles: 2 });

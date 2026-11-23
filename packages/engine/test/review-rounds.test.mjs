@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as engine from "../dist/index.js";
-import { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } from "../dist/testing/index.js";
+import { MemoryBookStore, createFakeAutopilotAi, outlineEntryFiles, seedBookFiles } from "../dist/testing/index.js";
 
 // New exports are read from the namespace so that, before they exist, each test fails on its own.
 const { AutopilotSession, SYNC_MAX_FILE_BYTES, createAutopilotState, defaultDirector, parseAutopilotState, serializeAutopilotState, serializeDirector } = engine;
@@ -12,7 +12,7 @@ const brief = (targetChapters) => ({ idea: "x", targetChapters, scenesPerChapter
 const THREE = { brief: brief(3), options: READERS };
 const ONE = { brief: brief(1), options: READERS };
 /** A director who can judge a chapter three times, as the profile allows at most. */
-const filesWith = (maxReviewRounds = 3) => ({ ...seedBookFiles(), "director.md": serializeDirector({ ...defaultDirector("en"), maxReviewRounds }) });
+const filesWith = (maxReviewRounds = 3, chapters = 7) => ({ ...seedBookFiles({ chapters }), "director.md": serializeDirector({ ...defaultDirector("en"), maxReviewRounds }) });
 
 const stateOf = (store) => parseAutopilotState(store.files.get(STATE));
 const roundsOf = (state) => state.plan.chapters.map((chapter) => chapter.rounds);
@@ -64,7 +64,7 @@ function scriptedAi(script, readers = {}) {
   };
 }
 
-async function run(ai, start, files = filesWith()) {
+async function run(ai, start, files = filesWith(3, start.brief?.targetChapters ?? 7)) {
   const store = new MemoryBookStore(files);
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   await session.start(start);
@@ -122,7 +122,7 @@ test("a book of three chapters with one to three rounds each: every round that c
 
 test("the history agrees with the review cycle in the state while it runs, which is the one in progress and is left as it is", async () => {
   const ai = scriptedAi(SCRIPT, READER_SCORES);
-  const store = new MemoryBookStore(filesWith());
+  const store = new MemoryBookStore(filesWith(3, 3));
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   let paused = false;
   session.subscribe((event) => {
@@ -157,7 +157,7 @@ test("the history survives the closing of the chapters and every resume: a run c
   assert.deepEqual(roundsOf(uninterrupted), [1, 2, 3].map((chapter) => expectedFor(whole, chapter)), "the rounds of the run that was not interrupted are the ones the director gave");
 
   const ai = scriptedAi(SCRIPT, READER_SCORES);
-  const store = new MemoryBookStore(filesWith());
+  const store = new MemoryBookStore(filesWith(3, 3));
   let state = null;
   let runs = 0;
   for (; runs < 400; runs += 1) {
@@ -221,7 +221,8 @@ test("the rounds of a chapter go on being there when the author raises the numbe
   const before = roundsOf(state);
   assert.ok(before.every((rounds) => rounds.length === 1));
 
-  await session.start({ brief: { targetChapters: 7 } });
+  for (const [path, content] of Object.entries(outlineEntryFiles(7))) if (!store.files.has(path)) store.files.set(path, content);
+  await session.start({ brief: { idea: "x" } });
   await session.waitForIdle();
   const extended = stateOf(store);
   assert.equal(extended.status, "completed", extended.lastError?.message);
@@ -356,7 +357,7 @@ test("a long book whose chapters are all judged twice keeps its steps as quick a
   const chapters = 40;
   const script = Object.fromEntries(Array.from({ length: chapters }, (_, index) => [index + 1, [["revise", 6, true], ["approve", 8, false]]]));
   const ai = scriptedAi(script);
-  const store = new MemoryBookStore(filesWith(2));
+  const store = new MemoryBookStore(filesWith(2, chapters));
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   const finished = [];
   session.subscribe((event) => {

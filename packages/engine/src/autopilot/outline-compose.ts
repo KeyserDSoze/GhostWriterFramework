@@ -1,4 +1,5 @@
 import {
+  OUTLINE_BOOK_MAX_CHARS,
   outlineChanges,
   parseOutline,
   readOutlineBook,
@@ -391,6 +392,10 @@ function checkSeries(edits: readonly unknown[]): void {
     const { kind, expectedHash } = edit as { kind?: unknown; expectedHash?: unknown };
     if (kind !== "append" && kind !== "insert" && kind !== "move" && kind !== "remove" && kind !== "update" && kind !== "book") {
       throw new OutlineComposeError("invalid_edit", `edits[${index}]: ${typeof kind === "string" ? `«${kind.slice(0, 40)}»` : "that"} is not a kind of edit; the kinds are append, insert, move, remove, update and book.`, { index, edit });
+    }
+    const body = (edit as { body?: unknown }).body;
+    if (kind === "book" && typeof body === "string" && body.length > OUTLINE_BOOK_MAX_CHARS) {
+      throw new OutlineComposeError("invalid_edit", `edits[${index}] (book): the description of the book is ${body.length} characters long: the limit is ${OUTLINE_BOOK_MAX_CHARS}. Nothing was written: shorten it.`, { index, edit });
     }
     if (expectedHash !== undefined && (kind === "append" || kind === "insert" || kind === "move")) {
       throw new OutlineComposeError("invalid_edit", `edits[${index}] (${kind}): ${kind === "move" ? "a move changes no text" : `${kind === "append" ? "an appended" : "an inserted"} chapter is a new entry, which has no file yet`}, so there is no expectedHash to give.`, { index, edit });

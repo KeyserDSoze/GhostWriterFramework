@@ -3,7 +3,7 @@
 // which scenes the director has repaired in each, and whether the director asks for changes to the plan.
 
 import * as engine from "../dist/index.js";
-import { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } from "../dist/testing/index.js";
+import { MemoryBookStore, createFakeAutopilotAi, outlineEntryFiles, seedBookFiles } from "../dist/testing/index.js";
 
 export const CAPABILITIES = ["autopilot", "director", "reader-evaluation", "reader-evaluation-summary", "review", "simple-tasks"];
 
@@ -61,9 +61,9 @@ export function prose(count, seed = 0) {
 }
 
 /** The files of a book that is just begun, as the interface makes one: the director and the ghostwriter are the defaults, whose size the estimate takes as typical. */
-export function bookFiles({ language = "en", maxReviewRounds = 2 } = {}) {
+export function bookFiles({ language = "en", maxReviewRounds = 2, chapters = 0 } = {}) {
   return {
-    ...seedBookFiles({ language }),
+    ...seedBookFiles({ language, chapters }),
     "director.md": engine.serializeDirector({ ...engine.defaultDirector(language), maxReviewRounds }),
     "ghostwriters/default.md": engine.serializeGhostwriter(engine.defaultGhostwriter(language)),
   };
@@ -219,8 +219,13 @@ export function scriptedAi({ scenes = 2, words: sceneWords = 220, rounds = {}, p
 }
 
 /** A whole book, written by the autopilot with `ai` from a seeded repository; resolves with the store, the saved state and the calls. */
+/** The outline of a book of `count` chapters, written into a store that is already made (a chapter the author adds). */
+export function addOutlineChapters(store, count) {
+  for (const [path, content] of Object.entries(outlineEntryFiles(count))) if (!store.files.has(path)) store.files.set(path, content);
+}
+
 export async function runBook({ brief, options = {}, ai, maxReviewRounds = 2, language = "en", files, start }) {
-  const store = new MemoryBookStore(files ?? bookFiles({ language, maxReviewRounds }));
+  const store = new MemoryBookStore(files ?? bookFiles({ language, maxReviewRounds, chapters: brief.targetChapters }));
   const session = new engine.AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   await session.start(start ?? { brief: { idea: "A harbor town built on glass hides a lie.", ...brief }, options: { pauseAfterPlan: false, ...options } });
   await session.waitForIdle();

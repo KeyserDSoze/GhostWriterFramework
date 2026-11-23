@@ -12,7 +12,18 @@ const STORY = { brief: { targetChapters: 4, scenesPerChapter: 2, wordsPerScene: 
 const NOVELLA = { brief: { targetChapters: 12, scenesPerChapter: 3, wordsPerScene: 1400 }, options: { readers: true, maxReaders: 5, readersOnPlan: true, specialists: true }, maxReviewRounds: 2 };
 const DRAFT = { brief: { targetChapters: 24, scenesPerChapter: 3, wordsPerScene: 1500 }, options: { readers: true, maxReaders: 3, readersOnPlan: true, specialists: true }, maxReviewRounds: 1 };
 
-const estimate = (input, extra = {}) => estimateAutopilotRun({ models: uniform(), ...input, ...extra });
+// The chapters are the outline's, and the scenes a host expects are the estimate's own input: the brief keeps the words of a scene.
+const shaped = (input) => {
+  const { brief = {}, ...rest } = input;
+  const { targetChapters, scenesPerChapter, ...words } = brief;
+  return {
+    ...rest,
+    brief: words,
+    ...(scenesPerChapter === undefined ? {} : { scenesPerChapter }),
+    ...(targetChapters === undefined ? {} : { outline: { lastChapter: targetChapters, entries: targetChapters, ...rest.outline } }),
+  };
+};
+const estimate = (input, extra = {}) => estimateAutopilotRun({ models: uniform(), ...shaped(input), ...extra });
 const zero = Object.fromEntries(KINDS.map((kind) => [kind, [0, 0]]));
 const stepsOf = (result) => Object.fromEntries(KINDS.map((kind) => [kind, [result.steps[kind].calls.min, result.steps[kind].calls.max]]));
 const capabilitiesOf = (result) => Object.fromEntries(CAPABILITIES.map((capability) => [capability, [result.capabilities[capability].calls.min, result.capabilities[capability].calls.max]]));
@@ -173,8 +184,8 @@ test("the estimate says calls, tokens, cost, time, warnings and assumptions, in 
 });
 
 test("a book is estimated with what the engine would make of the values: the defaults of a new book, and the limits the autopilot keeps", () => {
-  assert.deepEqual(rangeOf(estimateAutopilotRun({ models: uniform() }).calls), rangeOf(estimate(NOVELLA).calls), "no brief, no options: twelve chapters of three scenes, as the autopilot starts");
-  const wild = estimate({ brief: { targetChapters: 0, scenesPerChapter: 500, wordsPerScene: 1 }, options: { maxReaders: 99 }, maxReviewRounds: 9 });
+  assert.deepEqual(rangeOf(estimateAutopilotRun({ models: uniform(), outline: { entries: 12, lastChapter: 12 } }).calls), rangeOf(estimate(NOVELLA).calls), "no brief, no options: twelve chapters of three scenes, as the autopilot starts");
+  const wild = estimate({ brief: { targetChapters: 1, scenesPerChapter: 500, wordsPerScene: 1 }, options: { maxReaders: 99 }, maxReviewRounds: 9 });
   assert.equal(wild.chapters, 1, "at least a chapter");
   const scenes = 20;
   assert.equal(wild.steps.scenes.calls.min, 1);
@@ -242,25 +253,21 @@ test("what the run keeps for later changes nothing of the calls: the pause after
   }
 });
 
-test("the outline: more chapters than the brief make a longer book and say so; fewer, or as many, say nothing; entries alone are the chapters 1 to n", () => {
-  const longer = estimate({ ...NOVELLA, outline: { entries: 20, lastChapter: 20 } });
-  assert.equal(longer.chapters, 20);
-  const [warning] = warningsOf(longer, "outlineLongerThanBrief");
-  assert.ok(warning, "the outline asks for more chapters than the brief");
-  assert.equal(warning.briefChapters, 12);
-  assert.equal(warning.outlineChapters, 20);
-  assert.equal(warning.severity, "info");
-  assert.match(warning.text, /20/);
-  assert.match(warning.text, /12/);
-  for (const outline of [{ entries: 8, lastChapter: 8 }, { entries: 12, lastChapter: 12 }, { entries: 3 }, { entries: 0 }, {}]) {
-    const result = estimate({ ...NOVELLA, outline });
-    assert.equal(result.chapters, 12, JSON.stringify(outline));
-    assert.deepEqual(warningsOf(result, "outlineLongerThanBrief"), []);
-  }
-  assert.equal(estimate({ ...NOVELLA, outline: { entries: 20 } }).chapters, 20, "twenty entries are chapters 1 to 20");
-  assert.equal(estimate({ ...NOVELLA, outline: { entries: 5, lastChapter: 30 } }).chapters, 30, "a gap in the outline does not shorten the book");
+test("the outline: its chapter entries are the chapters of the book, and the chapters already planned count when it has none", () => {
+  const words = { wordsPerScene: 1400 };
+  const chapters = (outline, progress) => estimate({ ...NOVELLA, brief: words, outline, progress }).chapters;
+  assert.equal(chapters({ entries: 20, lastChapter: 20 }), 20);
+  assert.equal(chapters({ entries: 8, lastChapter: 8 }), 8);
+  assert.equal(chapters({ entries: 3 }), 3);
+  assert.equal(chapters({ entries: 0 }), 0);
+  assert.equal(chapters({}), 0);
+  assert.equal(chapters({}, { planned: 7 }), 7, "a plan with no outline is the book's chapters");
+  assert.equal(chapters({ entries: 20, lastChapter: 20 }, { planned: 7 }), 20);
+  assert.equal(estimate({ ...NOVELLA, brief: words, outline: { entries: 20, lastChapter: 20 } }).chapters, 20);
+  assert.equal(estimate({ ...NOVELLA, brief: words, outline: { entries: 20 } }).chapters, 20, "twenty entries are chapters 1 to 20");
+  assert.equal(estimate({ ...NOVELLA, brief: words, outline: { entries: 5, lastChapter: 30 } }).chapters, 30, "a gap in the outline does not shorten the book");
   const withOutline = estimate({ ...NOVELLA, outline: { entries: 12, lastChapter: 12 } });
-  const without = estimate(NOVELLA);
+  const without = estimate({ ...NOVELLA, outline: { entries: 12, lastChapter: 12, words: 0 } });
   assert.ok(withOutline.steps.plan.inputTokens.min > without.steps.plan.inputTokens.min, "the outline goes into the plan's prompt");
   assert.ok(withOutline.steps.concept.inputTokens.min > without.steps.concept.inputTokens.min, "and into the concept's");
   assert.equal(withOutline.steps.write.inputTokens.min, without.steps.write.inputTokens.min, "but not into the prose's");
@@ -542,7 +549,7 @@ test("a capability with no model is an error: the run would stop at its first st
   assert.deepEqual(warningsOf(result, "noPrice"), [], "it is not also said that a model that is not there has no price");
   assert.deepEqual(warningsOf(result, "noSpeed"), []);
   assert.ok(result.calls.min > 0, "the calls are counted: the work is there to do");
-  const all = estimateAutopilotRun({ brief: NOVELLA.brief });
+  const all = estimateAutopilotRun({ brief: NOVELLA.brief, outline: { entries: 12, lastChapter: 12 } });
   assert.equal(warningsOf(all, "noModel").length, 6, "no model for anything");
   assert.equal(result.warnings[0].severity, "error", "the errors come first");
 });
@@ -672,7 +679,7 @@ test("the models come from the configuration as the router would choose them, wi
   assert.deepEqual(models["reader-evaluation-summary"], models["reader-evaluation"]);
   assert.equal(JSON.stringify(models).includes("sk-secret"), false, "no key");
   assert.equal(JSON.stringify(models).includes("http"), false, "no address");
-  const result = estimateAutopilotRun({ brief: NOVELLA.brief, models });
+  const result = estimateAutopilotRun({ brief: NOVELLA.brief, outline: { entries: 12, lastChapter: 12 }, models });
   assert.deepEqual([...result.unpriced].sort(), ["director", "reader-evaluation", "reader-evaluation-summary", "review"], "the models of the configuration that have no price");
   assert.equal(result.cost, null);
   assert.deepEqual(result.unmeasured, ["director"], "and the one that has no speed");
@@ -764,7 +771,7 @@ test("whatever it is given, the estimate answers: whole numbers that do not run 
     for (const money of [result.cost, ...CAPABILITIES.map((capability) => result.capabilities[capability].cost), result.minutes, ...CAPABILITIES.map((capability) => result.capabilities[capability].minutes)]) {
       if (money !== null) assert.ok(Number.isFinite(money.min) && Number.isFinite(money.max) && money.min >= 0 && money.min <= money.max + 1e-9, JSON.stringify(money));
     }
-    assert.ok(result.chapters >= 1 && result.chaptersToWrite >= 0 && result.chaptersToWrite <= result.chapters && Number.isInteger(result.words));
+    assert.ok(result.chapters >= 0 && result.chaptersToWrite >= 0 && result.chaptersToWrite <= result.chapters && Number.isInteger(result.words));
     for (const warning of result.warnings) assert.ok(typeof warning.text === "string" && warning.text.length > 20 && !/undefined|NaN|\[object|null/.test(warning.text), warning.text);
     assert.ok(result.assumptions.every((line) => typeof line === "string" && line.length > 20 && !/undefined|NaN|\[object/.test(line)), result.assumptions.join("\n"));
   }

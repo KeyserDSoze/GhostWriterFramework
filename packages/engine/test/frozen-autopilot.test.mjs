@@ -50,8 +50,8 @@ async function run(store, ai, start = {}) {
 }
 
 /** A book the autopilot wrote to the end: every chapter approved at once, so frozen by it. */
-async function finishedBook({ chapters = 2, scenes = 2, options = {}, files = seedBookFiles() } = {}) {
-  const store = new MemoryBookStore(files);
+async function finishedBook({ chapters = 2, scenes = 2, options = {}, files } = {}) {
+  const store = new MemoryBookStore(files ?? seedBookFiles({ chapters }));
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
   const { state } = await run(store, ai, { brief: { idea: "x", targetChapters: chapters, scenesPerChapter: scenes, wordsPerScene: 300 }, options: { ...FAST, ...options } });
   assert.equal(state.status, "completed", state.lastError?.message);
@@ -275,7 +275,7 @@ test("several chapters changed: one question at a time, in order, and the questi
 });
 
 test("a frozen chapter changed while a run goes on stops it at the next step, before anything else is written", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
   const { session } = newSession(store, ai);
   let mark = -1;
@@ -296,7 +296,7 @@ test("a frozen chapter changed while a run goes on stops it at the next step, be
 });
 
 test("a chapter the author wrote and froze by hand is reviewed when the author asks, and never rewritten", async () => {
-  const files = seedBookFiles();
+  const files = seedBookFiles({ chapters: 3 });
   files["chapters/001-the-arrival/chapter.md"] = "---\ntype: chapter\nid: chapter:001-the-arrival\nnumber: 1\ntitle: The Arrival\nsummary: Mira arrives.\n---\n\n# The Arrival\n";
   files["chapters/001-the-arrival/001-dawn.md"] = "---\ntype: paragraph\nid: paragraph:001-the-arrival:001-dawn\nchapter: chapter:001-the-arrival\nnumber: 1\ntitle: Dawn\n---\n\nThe author's own opening, written before the autopilot.";
   const { store } = await finishedBook({ chapters: 2, files });
@@ -399,7 +399,7 @@ test("the option frozenEdits: ask by default, saved, read tolerantly, and it can
   assert.equal(parseAutopilotState(JSON.stringify({ options: {} })).options.frozenEdits, "ask", "an older state asks");
   assert.ok(engine.LIVE_AUTOPILOT_OPTIONS.includes("frozenEdits"));
 
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ delayMs: 30 });
   const { session } = newSession(store, ai);
   await session.start({ brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: FAST });
@@ -410,7 +410,7 @@ test("the option frozenEdits: ask by default, saved, read tolerantly, and it can
 });
 
 test("a book whose state was saved before frozen chapters existed: what the autopilot approved is frozen once, without asking; the author's chapters are not", async () => {
-  const files = seedBookFiles();
+  const files = seedBookFiles({ chapters: 3 });
   files["chapters/001-the-arrival/chapter.md"] = "---\ntype: chapter\nid: chapter:001-the-arrival\nnumber: 1\ntitle: The Arrival\nsummary: Mira arrives.\n---\n\n# The Arrival\n";
   files["chapters/001-the-arrival/001-dawn.md"] = "---\ntype: paragraph\nid: paragraph:001-the-arrival:001-dawn\nchapter: chapter:001-the-arrival\nnumber: 1\ntitle: Dawn\n---\n\nThe author's own opening, written before the autopilot.";
   const { store } = await finishedBook({ chapters: 3, files });

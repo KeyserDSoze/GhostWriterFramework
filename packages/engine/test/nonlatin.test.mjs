@@ -126,9 +126,21 @@ async function latinRun({ files, ai, brief }) {
   };
 }
 
+/** Entries the autopilot wrote and nobody touched since: they bind nothing, so the book is asked what it always was. */
+async function intactEntries(count) {
+  const files = {};
+  const numbers = typeof count === "number" ? Array.from({ length: count }, (_, index) => index + 1) : count;
+  for (const number of numbers) {
+    const title = `Chapter Title ${number}`;
+    const body = `Event ${number} happens and the story turns.`;
+    files[engine.outlineChapterPath(number)] = `---\ntype: outline-chapter\nnumber: ${number}\ntitle: ${title}\norigin: autopilot\ndigest: ${await engine.outlineEntryDigest({ title, body })}\n---\n\n${body}\n`;
+  }
+  return files;
+}
+
 test("a whole run of an English and of an Italian book writes the same files and sends the same requests as it always did", async () => {
-  const english = await latinRun({ files: seedBookFiles(), ai: createFakeAutopilotAi(), brief: { idea: "A harbor built on glass hides a lie.", targetChapters: 2, scenesPerChapter: 2, wordsPerScene: 300 } });
-  const italian = await latinRun({ files: seedBookFiles({ title: "Il faro di sale", language: "it" }), ai: ITALIAN_BOOK, brief: { idea: "Un faro spento.", targetChapters: 5, scenesPerChapter: 2, wordsPerScene: 300 } });
+  const english = await latinRun({ files: { ...seedBookFiles(), ...(await intactEntries(2)) }, ai: createFakeAutopilotAi(), brief: { idea: "A harbor built on glass hides a lie.", targetChapters: 2, scenesPerChapter: 2, wordsPerScene: 300 } });
+  const italian = await latinRun({ files: { ...seedBookFiles({ title: "Il faro di sale", language: "it" }), ...(await intactEntries(5)) }, ai: ITALIAN_BOOK, brief: { idea: "Un faro spento.", targetChapters: 5, scenesPerChapter: 2, wordsPerScene: 300 } });
   assert.equal(english.status, "completed", english.error);
   assert.equal(italian.status, "completed", italian.error);
   const runs = { english, italian };
@@ -167,7 +179,7 @@ test("the slugs of Latin titles and names are what they always were, accents, ap
 test("the limit of a scene's reply for an English, an Italian or a French book is still the number of words times 2.4, plus 800, up to 16 000", async () => {
   for (const language of ["en", "it", "fr"]) {
     for (const words of [200, 1400, 4000, 8000]) {
-      const store = new MemoryBookStore(seedBookFiles({ language }));
+      const store = new MemoryBookStore(seedBookFiles({ chapters: 1, language }));
       const ai = createFakeAutopilotAi({ scenes: 1, words: 250 });
       const { state } = await runSession(store, ai, { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: words }, options: { ...FAST, specialists: true } });
       assert.equal(state.status, "completed", state.lastError?.message);
@@ -195,7 +207,7 @@ function conceptReply(extra = {}) {
 }
 
 /** Runs the concept step alone over `files`, applies its changes, and returns what it did. */
-async function concept(files, output, { language = "en", store = new MemoryBookStore({ ...seedBookFiles({ language }), ...files }) } = {}) {
+async function concept(files, output, { language = "en", store = new MemoryBookStore({ ...seedBookFiles({ chapters: 2, language }), ...files }) } = {}) {
   const ai = scripted((request) => (request.json?.name === "book_concept" ? reply(output) : undefined));
   const insights = [];
   const context = {
@@ -364,7 +376,7 @@ const sceneFile = (chapter, slug, number, title, body) => `---\ntype: paragraph\
 
 function authorBook() {
   return {
-    ...seedBookFiles({ language: "ru" }),
+    ...seedBookFiles({ chapters: 1, language: "ru" }),
     "chapters/001-глава-первая/chapter.md": chapterFile(1, "001-глава-первая", "Глава первая", "Анна возвращается домой."),
     "chapters/001-глава-первая/001-утро.md": sceneFile("001-глава-первая", "001-утро", 1, "Утро", "Анна проснулась рано."),
     "chapters/001-глава-первая/002-день.md": sceneFile("001-глава-первая", "002-день", 2, "День", "Днём на причале было тихо."),
@@ -398,7 +410,7 @@ test("the paths of folders and files named by the author in any script are read:
 });
 
 test("a book with chapters and canon named in Cyrillic and Japanese is continued, and what the author wrote is left alone", async () => {
-  const store = new MemoryBookStore(authorBook());
+  const store = new MemoryBookStore({ ...authorBook(), ...(await intactEntries([1, 2, 3])) });
   const before = Object.fromEntries([...store.files].filter(([name]) => /^(chapters|characters|locations)\//.test(name)));
   const ai = scripted((request) => (request.json ? undefined : reply({}, { text: "Утро над гаванью началось медленно, как дыхание старого рыбака. Анна вышла на причал и долго смотрела на тёмную воду, а ветер приносил запах соли, дыма и далёкого дождя. ".repeat(6) })));
   const { state, events } = await runSession(store, ai, { brief: { idea: "x", targetChapters: 3, scenesPerChapter: 1, wordsPerScene: 200 }, options: FAST });
@@ -425,7 +437,7 @@ test("a book started by an older engine, whose chapter folder is `001-` and whos
   };
   const prose = "波の音が聞こえた。".repeat(30);
   const store = new MemoryBookStore({
-    ...seedBookFiles({ language: "ja" }),
+    ...seedBookFiles({ chapters: 1, language: "ja" }),
     [STATE]: serializeAutopilotState(state),
     "chapters/001-/chapter.md": chapterFile(1, "001-", "海辺の朝", "海辺の朝。"),
     "chapters/001-/001-.md": sceneFile("001-", "001-", 1, "波", prose),
@@ -466,7 +478,7 @@ test("the slugs of ghostwriters: the ones the core makes are accepted, a path or
 
 test("a ghostwriter that is not valid is ignored with a warning and the default one writes: the run is not stopped", async () => {
   for (const bad of ["../x", "a/b", "x:y", "C:\\x"]) {
-    const files = seedBookFiles();
+    const files = seedBookFiles({ chapters: 1 });
     files["book.md"] = files["book.md"].replace("ghostwriter: default", `ghostwriter: "${bad.replace(/\\/g, "\\\\")}"`);
     const store = new SafeStore(files);
     const ai = createFakeAutopilotAi();
@@ -482,7 +494,7 @@ test("a ghostwriter that is not valid is ignored with a warning and the default 
 
 test("a ghostwriter set on a chapter or on a scene that is not valid is skipped for the next one, and valid ones are used", async () => {
   const profile = (name) => `---\ntype: ghostwriter\nid: ghostwriter:x\nname: ${name}\n---\n\nStyle of ${name}.\n`;
-  const files = { ...seedBookFiles(), "ghostwriters/lev-tolstoy.md": profile("Лев Толстой"), [`ghostwriters/ghostwriter-${slugCode("李明")}.md`]: profile("李明") };
+  const files = { ...seedBookFiles({ chapters: 1 }), "ghostwriters/lev-tolstoy.md": profile("Лев Толстой"), [`ghostwriters/ghostwriter-${slugCode("李明")}.md`]: profile("李明") };
   const store = new SafeStore(files);
   const snapshot = await loadBookSnapshot(store);
   const chapter = (ghostwriter) => ({ slug: "001-x", number: 1, title: "X", pov: [], path: "chapters/001-x/chapter.md", paragraphs: [], ghostwriter });
@@ -699,7 +711,7 @@ function scriptAi(script, { words = 300, latinProse = false } = {}) {
 }
 
 async function bookOf(script, { chapters = 3, scenes = 2, words = 300, files, ai = scriptAi(script, { words }), options = {} } = {}) {
-  const store = new MemoryBookStore(files ?? seedBookFiles({ title: script.title, language: script.language }));
+  const store = new MemoryBookStore(files ?? { ...seedBookFiles({ title: script.title, language: script.language }), ...(await intactEntries(chapters)) });
   const { events, state } = await runSession(store, ai, { brief: { idea: script.idea, targetChapters: chapters, scenesPerChapter: scenes, wordsPerScene: words }, options });
   return { store, ai, events, state };
 }
@@ -876,7 +888,7 @@ test("the story design an author wrote is a design in Chinese as it is in Italia
   assert.equal(latinLength(""), 0);
   assert.equal(latinLength("李明回到了海边的小屋。"), engine.countWords("李明回到了海边的小屋。") * 6, "six characters for every word of a script without spaces");
 
-  const store = new MemoryBookStore({ ...seedBookFiles({ language: "zh", title: ZH.title }), "story-design.md": `---\ntype: note\nid: note:story-design\ntitle: Story Design\n---\n\n${scaffold}\n${chinese}\n` });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 1, language: "zh", title: ZH.title }), "story-design.md": `---\ntype: note\nid: note:story-design\ntitle: Story Design\n---\n\n${scaffold}\n${chinese}\n` });
   const ai = scriptAi(ZH);
   const { state } = await runSession(store, ai, { brief: { idea: ZH.idea, targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }, options: FAST });
   assert.equal(state.status, "completed", state.lastError?.message);
@@ -892,7 +904,7 @@ test("a Chinese book at chapter 1200: the chapters are numbered, named and read 
     chapters: Array.from({ length: 6 }, (_, index) => ({ number: first + index, title: ZH.chapters[index % ZH.chapters.length], slug: "", summary: ZH.sentences[0], goal: "", pov: [ZH.characters[0]], keyEvents: [], reveals: [], status: "planned", scenes: [] })),
     approved: true, rounds: 0, revisionNotes: [], readerReactions: [], readersDone: true, awaitingAuthor: false,
   };
-  const store = new MemoryBookStore({ ...seedBookFiles({ language: "zh", title: ZH.title }), [STATE]: serializeAutopilotState(state) });
+  const store = new MemoryBookStore({ ...seedBookFiles({ language: "zh", title: ZH.title }), ...(await intactEntries(1203)), [STATE]: serializeAutopilotState(state) });
   const ai = scriptAi(ZH);
   const { session, state: paused } = await runSession(store, ai, { options: { ...FAST, chaptersPerRun: 4 } });
   assert.equal(paused.status, "paused", paused.lastError?.message);
@@ -923,7 +935,7 @@ test("a Chinese book at chapter 1200: the chapters are numbered, named and read 
 });
 
 test("a book written in Chinese up to chapter 1200 by its author is continued with chapter 1201", async () => {
-  const files = seedBookFiles({ language: "zh", title: ZH.title });
+  const files = { ...seedBookFiles({ language: "zh", title: ZH.title }), ...(await intactEntries([1198, 1199, 1200, 1201])) };
   for (const number of [1198, 1199, 1200]) {
     const slug = `${number}-chapter`;
     files[`chapters/${slug}/chapter.md`] = chapterFile(number, slug, `第${number}章`, ZH.sentences[0]);
@@ -957,7 +969,7 @@ test("the files of Russian and Chinese books written by the autopilot form a val
 
 test("a book whose language is written as a name, not a code, is written in that language with room for its words", async () => {
   for (const [language, script] of [["Russian", RU], ["Japanese", JA], ["日本語", JA], ["русский", RU]]) {
-    const store = new MemoryBookStore(seedBookFiles({ title: script.title, language }));
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 1, title: script.title, language }));
     const ai = scriptAi(script);
     const { state } = await runSession(store, ai, { brief: { idea: script.idea, targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }, options: FAST });
     assert.equal(state.status, "completed", `${language}: ${state.lastError?.message}`);
@@ -968,7 +980,7 @@ test("a book whose language is written as a name, not a code, is written in that
 });
 
 test("a language the engine does not know is sized prudently, not like Italian", async () => {
-  const store = new MemoryBookStore(seedBookFiles({ language: "Klingon" }));
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1, language: "Klingon" }));
   const ai = createFakeAutopilotAi({ scenes: 1 });
   const { state } = await runSession(store, ai, { brief: { ...ONE_CHAPTER, wordsPerScene: 1000 }, options: FAST });
   assert.equal(state.status, "completed", state.lastError?.message);
@@ -979,7 +991,7 @@ test("a language the engine does not know is sized prudently, not like Italian",
 
 test("the limits of every other step of a Russian or Hindi book grow with the language, up to 16 000, and a French book's do not", async () => {
   const limitsOf = async (language, script) => {
-    const store = new MemoryBookStore(seedBookFiles({ language, title: script.title }));
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 1, language, title: script.title }));
     const ai = scriptAi(script);
     const { state } = await runSession(store, ai, { brief: { ...ONE_CHAPTER, idea: script.idea }, options: { ...FAST, specialists: true } });
     assert.equal(state.status, "completed", `${language}: ${state.lastError?.message}`);
@@ -998,7 +1010,7 @@ test("the limits of every other step of a Russian or Hindi book grow with the la
 });
 
 test("a revision of a Chinese or Russian book looks around the chapter the author names, in the author's words", async () => {
-  const files = seedBookFiles({ language: "ru" });
+  const files = seedBookFiles({ chapters: 1, language: "ru" });
   const chapters = 1200;
   for (let number = 1; number <= chapters; number += 1) {
     const slug = engine.chapterSlug(number, `Written ${number}`);

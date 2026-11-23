@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as engine from "../dist/index.js";
 import { likelyMessageTokens, likelyTextTokens } from "../dist/ai/budget.js";
-import { CAPABILITIES, KINDS, bookFiles, kindOfLabel, prose, runBook, scriptedAi, uniform, words } from "./estimate-fakes.mjs";
+import { CAPABILITIES, KINDS, addOutlineChapters, bookFiles, kindOfLabel, prose, runBook, scriptedAi, uniform, words } from "./estimate-fakes.mjs";
 
 // New exports are read from the namespace so that, before they exist, each test fails on its own.
 const { estimateAutopilotRun, estimateContextFromState, estimateProgressFromState, tokensPerWord } = engine;
@@ -145,7 +145,9 @@ async function realRun(shape, { rounds = {}, planVerdicts = [], maxReviewRounds 
   return { ...run, ai, replies: ai.replies };
 }
 
-const forecast = (shape, extra = {}) => estimateAutopilotRun({ brief: shape.brief, options: shape.options, maxReviewRounds: 2, models: uniform(), ...extra });
+// The chapters of a shape are the outline's (the entries of the book), its scenes the host's expectation.
+// The entries of the fixtures are ten words each (`outlineEntryFiles`: a title and a line of text).
+const forecast = (shape, extra = {}) => estimateAutopilotRun({ brief: shape.brief, scenesPerChapter: shape.brief.scenesPerChapter, outline: { entries: shape.brief.targetChapters, lastChapter: shape.brief.targetChapters, words: 10 * shape.brief.targetChapters }, options: shape.options, maxReviewRounds: 2, models: uniform(), ...extra });
 
 const everyScene = (scenes) => Array.from({ length: scenes }, (_, index) => index + 1);
 
@@ -184,7 +186,7 @@ test("a panel the director ignores some readers of: the readers are the enabled 
   const standard = engine.builtinReaderPersonas("en").filter((persona) => persona.enabled).map((persona) => persona.slug);
   assert.equal(standard.length, 8, "the built-in panel has eight readers");
   const readerWeights = Object.fromEntries(standard.slice(0, 5).map((slug) => [slug, 0]));
-  const files = { ...bookFiles(), "director.md": engine.serializeDirector({ ...engine.defaultDirector("en"), readerWeights }) };
+  const files = { ...bookFiles({ chapters: STORY.brief.targetChapters }), "director.md": engine.serializeDirector({ ...engine.defaultDirector("en"), readerWeights }) };
   const shape = { brief: STORY.brief, options: { readers: true, maxReaders: 5, readersOnPlan: true, specialists: true } };
   const run = await realRun(shape, { files });
   const result = forecast(shape, { readerPanelSize: 3 });
@@ -249,7 +251,8 @@ test("chapters added to a book that is finished: the plan is extended for the ne
   const done = ai.calls.length;
   const progress = estimateProgressFromState(firstPart.state);
   assert.deepEqual(progress, { chaptersDone: 4, planned: 4, conceptDone: true, finalDone: true, withoutSummary: 0 });
-  await firstPart.session.start({ brief: { targetChapters: 7 } });
+  addOutlineChapters(firstPart.store, 7);
+  await firstPart.session.start({ brief: { idea: IDEA } });
   await firstPart.session.waitForIdle();
   const snapshot = await firstPart.session.snapshot();
   assert.equal(snapshot.state.status, "completed", snapshot.state.lastError?.message);
@@ -267,7 +270,8 @@ test("chapters added to a book in a number that is planned in two batches: the p
   assert.equal(firstPart.state.status, "completed", firstPart.state.lastError?.message);
   const done = ai.calls.length;
   const progress = estimateProgressFromState(firstPart.state);
-  await firstPart.session.start({ brief: { targetChapters: 29 } });
+  addOutlineChapters(firstPart.store, 29);
+  await firstPart.session.start({ brief: { idea: IDEA } });
   await firstPart.session.waitForIdle();
   const snapshot = await firstPart.session.snapshot();
   assert.equal(snapshot.state.status, "completed", snapshot.state.lastError?.message);
@@ -281,7 +285,7 @@ test("chapters the author wrote and did not summarize: one call each before the 
   const slugOf = (number) => `00${number}-part-${number}`;
   const chapterFile = (number) => `---\ntype: chapter\nid: chapter:${slugOf(number)}\nnumber: ${number}\ntitle: Part ${number}\n---\n\n# Part ${number}\n`;
   const sceneFile = (number) => `---\ntype: paragraph\nid: paragraph:${slugOf(number)}:001-scene\nchapter: chapter:${slugOf(number)}\nnumber: 1\ntitle: Scene\n---\n\n${prose(500, number)}`;
-  const files = bookFiles();
+  const files = bookFiles({ chapters: 6 });
   for (let number = 1; number <= 3; number += 1) {
     files[`chapters/${slugOf(number)}/chapter.md`] = chapterFile(number);
     files[`chapters/${slugOf(number)}/001-scene.md`] = sceneFile(number);
@@ -301,13 +305,12 @@ test("chapters the author wrote and did not summarize: one call each before the 
 
 test("an outline that asks for more chapters than the brief: the book has the chapters of the outline, and the estimate counts them, kind by kind", async () => {
   const entry = (number) => `---\ntype: outline-chapter\ntitle: ${JSON.stringify(`Chapter ${number}`)}\n---\n\n${prose(60, number)}\n`;
-  const files = bookFiles();
+  const files = bookFiles({ chapters: 0 });
   for (let number = 1; number <= 5; number += 1) files[`outline/chapters/00${number}.md`] = entry(number);
   const shape = { brief: { idea: IDEA, targetChapters: 3, scenesPerChapter: 2, wordsPerScene: 700 }, options: { readers: true, maxReaders: 3, readersOnPlan: true, specialists: true, fillOutline: false } };
   const run = await realRun(shape, { files });
   const result = forecast(shape, { outline: { entries: 5, lastChapter: 5, words: 5 * 60 } });
   assert.equal(result.chapters, 5);
-  assert.ok(result.warnings.some((warning) => warning.code === "outlineLongerThanBrief"));
   assert.equal(measured(run.calls, run.replies).scenes.calls, 5, "the run planned the five chapters of the outline");
   holds("an outline of five chapters for a brief of three", result, run, "min");
 });
@@ -341,7 +344,7 @@ test("a director whose profile is long: the estimate is told its size, and count
   const profile = { ...engine.defaultDirector("en"), body: `# Vision\n\n${prose(700, 3)}\n\n# How I decide\n\n- ${prose(100, 5)}`, taste: ["Concrete scenes", "Subtext in dialogue", "Earned payoffs", "No summary where a scene would do", "A voice that does not change"] };
   const directorWords = engine.countWords(engine.directorPrompt(profile));
   assert.ok(directorWords > 800, `${directorWords} words`);
-  const files = { ...bookFiles(), "director.md": engine.serializeDirector(profile) };
+  const files = { ...bookFiles({ chapters: STORY.brief.targetChapters }), "director.md": engine.serializeDirector(profile) };
   const run = await realRun(STORY, { files });
   const plain = forecast(STORY);
   const told = forecast(STORY, { context: { directorWords } });
@@ -356,7 +359,7 @@ test("a book with a synopsis, rules of the author and an evaluation style: the e
   const criteria = Object.fromEntries(["canon_coherence", "pacing", "voice", "tension", "emotional_payoff", "originality", "clarity", "stakes"].map((name, index) => [name, { description: words(22, index) }]));
   const styleFile = `---\ntype: evaluation-guidelines\ntitle: How I judge\ncriteria:\n${Object.entries(criteria).map(([name, { description }]) => `  ${name}:\n    description: ${description}`).join("\n")}\n---\n\n# Method\n\n${words(140)}\n`;
   const state = { ...engine.createAutopilotState(new Date("2026-01-01T00:00:00Z")), constraints: rules };
-  const files = { ...bookFiles(), "evaluation-guidelines.md": styleFile, "autopilot/state.json": engine.serializeAutopilotState(state) };
+  const files = { ...bookFiles({ chapters: STORY.brief.targetChapters }), "evaluation-guidelines.md": styleFile, "autopilot/state.json": engine.serializeAutopilotState(state) };
   const shape = { brief: { ...STORY.brief, synopsis }, options: STORY.options };
   const run = await realRun(shape, { files });
   const style = engine.parseEvaluationStyle(styleFile);

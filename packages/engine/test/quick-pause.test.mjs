@@ -111,7 +111,7 @@ async function pendingOf(autopilot) {
 /** The AI calls of the same book when nobody pauses it. */
 async function baselineLabels() {
   const ai = fakeAi();
-  const { session: autopilot } = session(new MemoryBookStore(seedBookFiles()), ai);
+  const { session: autopilot } = session(new MemoryBookStore(seedBookFiles({ chapters: 3 })), ai);
   await autopilot.start(THREE);
   await autopilot.waitForIdle();
   return labelsOf(ai);
@@ -120,7 +120,7 @@ async function baselineLabels() {
 // ─── Q1: the pause at the end of the chapter ────────────────────────────────
 
 test("a pause at the end of the chapter, asked in the middle of chapter 1, ends the run right after chapter 1 is closed: not before, not after", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = fakeAi();
   const { session: autopilot, events } = session(store, ai);
   let accepted;
@@ -147,7 +147,7 @@ test("a pause at the end of the chapter, asked in the middle of chapter 1, ends 
 });
 
 test("the message is in the language of the book, and a request made while the first step of a chapter runs waits for that chapter", async () => {
-  const store = new MemoryBookStore(seedBookFiles({ language: "it" }));
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3, language: "it" }));
   const ai = fakeAi();
   const { session: autopilot, events } = session(store, ai);
   when(autopilot, started("scenes", 2), () => autopilot.pause("after-chapter"));
@@ -162,7 +162,7 @@ test("the message is in the language of the book, and a request made while the f
 });
 
 test("asked between two chapters, the run stops at the boundary without starting the next chapter", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = fakeAi();
   const holder = {};
   let asked = false;
@@ -193,7 +193,7 @@ test("asked while the chapter is being closed, or while its publishing hook runs
     ["during the closing step", (autopilot) => when(autopilot, started("consolidate", 1), () => autopilot.pause("after-chapter"))],
     ["during the publishing hook", null],
   ]) {
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
     const ai = fakeAi();
     const log = [];
     const holder = {};
@@ -224,7 +224,7 @@ test("with no chapter in progress (concept, plan) the pause at the end of the ch
   for (const kind of ["concept", "plan"]) {
     const outcomes = [];
     for (const mode of ["after-step", "after-chapter"]) {
-      const store = new MemoryBookStore(seedBookFiles());
+      const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
       const ai = fakeAi();
       const { session: autopilot, events } = session(store, ai);
       when(autopilot, started(kind), () => autopilot.pause(mode));
@@ -239,7 +239,7 @@ test("with no chapter in progress (concept, plan) the pause at the end of the ch
   }
 
   // The last step of the book: after it there is nothing to pause before, and the run says what the planner says, that the book is complete.
-  const finished = new MemoryBookStore(seedBookFiles());
+  const finished = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const last = fakeAi();
   const { session: closing, events: closingEvents } = session(finished, last);
   when(closing, started("final"), () => closing.pause("after-chapter"));
@@ -250,7 +250,7 @@ test("with no chapter in progress (concept, plan) the pause at the end of the ch
   assert.equal(labelsOf(last).at(-1), "director:book", "the director's judgement of the whole book is the last call");
   assert.equal(runEnded(closingEvents)[0].code, undefined);
   assert.equal(await pendingOf(closing), null, "and nothing is left waiting");
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = fakeAi();
   const { session: autopilot } = session(store, ai);
   when(autopilot, started("plan"), () => autopilot.pause("after-chapter"));
@@ -265,7 +265,7 @@ test("with no chapter in progress (concept, plan) the pause at the end of the ch
 
 test("requests combine: the pause after the step wins over the pause at the end of the chapter, and stopping now wins over both", async () => {
   const { ai, gate, reached } = holdingAi((request) => request.label === "autopilot:write:1.1");
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const { session: autopilot } = session(store, ai);
   await autopilot.start(THREE);
   await reached;
@@ -286,7 +286,7 @@ test("requests combine: the pause after the step wins over the pause at the end 
   assert.ok(!labelsOf(ai).includes("autopilot:consolidate:1"));
 
   const now = holdingAi((request) => request.label === "autopilot:write:1.1");
-  const second = new MemoryBookStore(seedBookFiles());
+  const second = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const { session: other, events } = session(second, now.ai);
   await other.start(THREE);
   await now.reached;
@@ -302,7 +302,7 @@ test("requests combine: the pause after the step wins over the pause at the end 
 test("a pause that is waiting can be cancelled: the run goes on to the end, and a pause that already happened cannot", async () => {
   for (const mode of ["after-chapter", "after-step"]) {
     const { ai, gate, reached } = holdingAi((request) => request.label === "autopilot:write:1.1");
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
     const { session: autopilot } = session(store, ai);
     assert.equal(autopilot.cancelPause(), false, "nothing runs: nothing to cancel");
     await autopilot.start(THREE);
@@ -320,7 +320,7 @@ test("a pause that is waiting can be cancelled: the run goes on to the end, and 
   }
 
   const { ai, reached } = holdingAi((request) => request.label === "autopilot:write:1.1");
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const { session: autopilot } = session(store, ai);
   await autopilot.start(THREE);
   await reached;
@@ -332,7 +332,7 @@ test("a pause that is waiting can be cancelled: the run goes on to the end, and 
 
 test("asked before the run has started, the pause works like the others and can be cancelled too; and resuming repeats nothing", async () => {
   const baseline = await baselineLabels();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = fakeAi();
   const { session: autopilot, events } = session(store, ai);
   when(autopilot, started("write", 1, 1), () => autopilot.pause("after-step"));
@@ -362,7 +362,7 @@ test("asked before the run has started, the pause works like the others and can 
 
 test("resuming after the pause continues with chapter 2 and repeats nothing", async () => {
   const baseline = await baselineLabels();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = fakeAi();
   const { session: autopilot } = session(store, ai);
   when(autopilot, started("write", 1, 1), () => autopilot.pause("after-chapter"));
@@ -380,7 +380,7 @@ test("resuming after the pause continues with chapter 2 and repeats nothing", as
 
 test("the pause that is waiting is in the summary, in the snapshot and in a state event whenever it changes, and is never saved", async () => {
   const { ai, gate, reached } = holdingAi((request) => request.label === "autopilot:write:1.1");
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const { session: autopilot, events } = session(store, ai);
   const states = () => events.filter((event) => event.type === "state");
   assert.equal((await autopilot.snapshot()).summary ?? null, null, "no state, no summary");
@@ -420,7 +420,7 @@ test("the pause that is waiting is in the summary, in the snapshot and in a stat
 
 test("the heartbeat of a live run goes on saying the pause that waits and the limits of the run", async () => {
   const { ai, gate, reached } = holdingAi((request) => request.label === "autopilot:write:1.1");
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const { session: autopilot, events } = session(store, ai, { heartbeatMs: 5, persistHeartbeatMs: 0 });
   await autopilot.start({ ...THREE, limits: { steps: 50, chapters: 2 } });
   await reached;
@@ -437,7 +437,7 @@ test("the heartbeat of a live run goes on saying the pause that waits and the li
 });
 
 test("a run answers the same requests as the session, and `now` cannot be undone", async () => {
-  const run = new AutopilotRun({ bookId: "book-1", store: new MemoryBookStore(seedBookFiles()), ai: fakeAi(), host: "server", hostLabel: "test-host", retryDelayMs: 0, emit: () => undefined });
+  const run = new AutopilotRun({ bookId: "book-1", store: new MemoryBookStore(seedBookFiles({ chapters: 3 })), ai: fakeAi(), host: "server", hostLabel: "test-host", retryDelayMs: 0, emit: () => undefined });
   assert.equal(run.pausePending, null);
   assert.equal(run.cancelPause(), false);
   run.stopAfterChapter();
@@ -457,7 +457,7 @@ test("a run answers the same requests as the session, and `now` cannot be undone
 
 test("a pause at the end of the chapter does not cut the wait before a retry of a step of the chapter, but does cut the wait of a step with no chapter", async () => {
   // A step of chapter 1 fails and waits to be retried: the chapter still has to be finished, so the wait goes on.
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = failingOnce("autopilot:write:1.1", new AiProviderError("overloaded", 503, true));
   const { session: autopilot, events } = session(store, ai, { retryDelayMs: 60_000 });
   when(autopilot, (event) => event.type === "insight" && event.code === "failureRetry", () => autopilot.pause("after-chapter"));
@@ -472,7 +472,7 @@ test("a pause at the end of the chapter does not cut the wait before a retry of 
   assert.equal(stateOf(store).status, "paused");
 
   // A step with no chapter (the concept) fails: there is no chapter to wait for, so it is the pause after the step and the wait ends.
-  const second = new MemoryBookStore(seedBookFiles());
+  const second = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const failing = failingOnce("autopilot:concept", new AiProviderError("overloaded", 503, true));
   const { session: other, events: otherEvents } = session(second, failing, { retryDelayMs: 60_000 });
   when(other, (event) => event.type === "insight" && event.code === "failureRetry", () => other.pause("after-chapter"));
@@ -486,7 +486,7 @@ test("a pause at the end of the chapter does not cut the wait before a retry of 
 });
 
 test("the review of the chapter is part of it: readers, specialists, the director's round of fixes and the second review all happen before the pause", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   // The director asks for changes in the first round and approves in the second: the chapter goes through a repair and a second review.
   const ai = createFakeAutopilotAi({ chapters: 3, scenes: 1 });
   const { session: autopilot } = session(store, ai);
@@ -509,7 +509,7 @@ test("the review of the chapter is part of it: readers, specialists, the directo
 });
 
 test("a pause at the end of the chapter and the option to pause after every chapter say their own words, and the request is the one that is reported", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = fakeAi();
   const { session: autopilot, events } = session(store, ai);
   when(autopilot, started("write", 1, 1), () => autopilot.pause("after-chapter"));

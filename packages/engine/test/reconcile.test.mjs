@@ -47,7 +47,7 @@ function sceneCounts(base, counts) {
 }
 
 async function finishedBook({ chapters = 2, ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" }), start = {} } = {}) {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const { session: autopilot, events } = session(store, ai);
   await autopilot.start({ brief: { idea: "x", targetChapters: chapters, scenesPerChapter: 2, wordsPerScene: 300 }, options: FAST, ...start });
   await autopilot.waitForIdle();
@@ -139,7 +139,7 @@ test("a chapter the autopilot has not written yet, renamed by the author, is wri
 
 test("a chapter renamed while its scenes are being written: the rest of the scenes go to the renamed folder", async () => {
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const { session: autopilot } = session(store, ai);
   const off = autopilot.subscribe((event) => {
     if (event.type === "task-finished" && event.activity.task === "write" && event.activity.chapterNumber === 2 && event.activity.sceneNumber === 1) autopilot.pause("after-step");
@@ -305,7 +305,7 @@ function planState(chapters) {
 }
 
 async function reconciled(files, chapters, report) {
-  const store = new MemoryBookStore({ ...seedBookFiles(), ...files });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 2 }), ...files });
   const snapshot = await loadBookSnapshot(store);
   const context = { snapshot, director: engine.defaultDirector("en"), readers: [], language: "en", storyDesignThin: false, ...(report ? { report } : {}) };
   return advanceState(planState(chapters), context);
@@ -362,7 +362,7 @@ test("a folder without scenes is not taken for a chapter that has been written; 
 
   const unapproved = planState([{ ...doneChapter(1, "001-old", 0), status: "planned" }]);
   unapproved.plan.approved = false;
-  const store = new MemoryBookStore({ ...seedBookFiles(), ...chapterFolder("001-stub", { title: "Not Ours", scenes: 0 }) });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 2 }), ...chapterFolder("001-stub", { title: "Not Ours", scenes: 0 }) });
   const context = { snapshot: await loadBookSnapshot(store), director: engine.defaultDirector("en"), readers: [], language: "en", storyDesignThin: false };
   assert.equal(advanceState(unapproved, context).plan.chapters[0].slug, "001-old", "before the plan is approved the autopilot has made no folder: whatever is there is not its chapter");
 });
@@ -381,7 +381,7 @@ test("the planner reports what it found: the folder it follows and the folders i
 });
 
 test("the notes are in the book's language", async () => {
-  const store = new MemoryBookStore({ ...seedBookFiles(), ...chapterFolder("001-new-name", { title: "New Name" }), ...chapterFolder("001-copy", { title: "Copy" }) });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 2 }), ...chapterFolder("001-new-name", { title: "New Name" }), ...chapterFolder("001-copy", { title: "Copy" }) });
   const notes = [];
   const context = { snapshot: await loadBookSnapshot(store), director: engine.defaultDirector("it"), readers: [], language: "it", storyDesignThin: false, report: (note) => notes.push(note) };
   advanceState(planState([doneChapter(1, "001-old")]), context);
@@ -463,7 +463,7 @@ test("a target that is no longer in the plan is skipped by the planner, and repo
     ...planState([chapter]),
     revision: { id: "r1", instruction: "Make Orrin kinder.", createdAt: "2026-01-01T00:00:00.000Z", targets: [{ chapterNumber: 9, sceneNumber: 1, instruction: "x" }, { chapterNumber: 1, sceneNumber: 5, instruction: "y" }, { chapterNumber: 1, sceneNumber: 1, instruction: "z" }], cursor: 0 },
   };
-  const store = new MemoryBookStore({ ...seedBookFiles(), ...chapterFolder("001-a", { title: "Old 1" }) });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 2 }), ...chapterFolder("001-a", { title: "Old 1" }) });
   const notes = [];
   const context = { snapshot: await loadBookSnapshot(store), director: engine.defaultDirector("en"), readers: [], language: "en", storyDesignThin: false, report: (note) => notes.push(note) };
   const next = advanceState(state, context);
@@ -480,7 +480,7 @@ test("a scene that disappears between the listing and the step is skipped too: a
       return this.hidden.has(path) ? null : super.read(path);
     }
   }
-  const store = new Hiding(seedBookFiles());
+  const store = new Hiding(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi();
   const { session: autopilot, events } = session(store, ai);
   autopilot.subscribe((event) => {

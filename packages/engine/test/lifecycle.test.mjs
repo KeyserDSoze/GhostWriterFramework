@@ -52,7 +52,7 @@ function conflicted(raw) {
 // ─── A3: concurrent start() ─────────────────────────────────────────────────
 
 test("two concurrent start() calls: the second is refused at once and the first run stays under control", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ delayMs: 30 });
   const { session: autopilot } = session(store, ai);
   const [first, second] = await Promise.allSettled([autopilot.start(ONE_CHAPTER), autopilot.start(ONE_CHAPTER)]);
@@ -80,7 +80,7 @@ test("a start that fails before the run exists releases the claim, so the sessio
       return super.read(path);
     }
   }
-  const store = new FlakyRead(seedBookFiles());
+  const store = new FlakyRead(seedBookFiles({ chapters: 1 }));
   const { session: autopilot } = session(store, createFakeAutopilotAi());
   await assert.rejects(() => autopilot.start(ONE_CHAPTER), /working copy unavailable/);
   assert.equal(autopilot.running, false);
@@ -89,7 +89,7 @@ test("a start that fails before the run exists releases the claim, so the sessio
   await autopilot.waitForIdle();
   assert.equal(stateOf(store).status, "completed");
 
-  const busy = new MemoryBookStore(seedBookFiles());
+  const busy = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const other = session(busy, createFakeAutopilotAi({ delayMs: 30 }), { host: "browser", hostLabel: "Browser", hostId: "device-1" }).session;
   await other.start(ONE_CHAPTER);
   const { session: refused } = session(busy, createFakeAutopilotAi({ delayMs: 30 }));
@@ -101,10 +101,10 @@ test("a start that fails before the run exists releases the claim, so the sessio
   other.pause("now");
   await Promise.all([refused.waitForIdle(), other.waitForIdle()]);
 
-  const conflicting = new MemoryBookStore(seedBookFiles());
+  const conflicting = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   let conflicts = 1;
-  conflicting.beforeCommit = () => {
-    if (conflicts-- > 0) throw new BookConflictError("File changed since it was read: autopilot/state.json", STATE);
+  conflicting.beforeCommit = (changes) => {
+    if (changes.some((change) => change.path === STATE) && conflicts-- > 0) throw new BookConflictError("File changed since it was read: autopilot/state.json", STATE);
   };
   const { session: third } = session(conflicting, createFakeAutopilotAi());
   await assert.rejects(() => third.start(ONE_CHAPTER), BookConflictError);
@@ -125,7 +125,7 @@ test("while a start is in flight the session is running: the pause is kept, othe
       return super.read(path);
     }
   }
-  const store = new GatedStore(seedBookFiles());
+  const store = new GatedStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi();
   const { session: autopilot, events } = session(store, ai);
   const gate = deferred();
@@ -165,7 +165,7 @@ test("an intervention sent while a start is in flight reaches the run that start
       return super.read(path);
     }
   }
-  const store = new GatedStore(seedBookFiles());
+  const store = new GatedStore(seedBookFiles({ chapters: 1 }));
   const { session: autopilot } = session(store, createFakeAutopilotAi({ delayMs: 20 }));
   const gate = deferred();
   store.gate = gate;
@@ -183,7 +183,7 @@ test("an intervention sent while a start is in flight reaches the run that start
 // ─── A4: an unreadable state file is never replaced ─────────────────────────
 
 async function pausedBookWithRules() {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const ai = createFakeAutopilotAi();
   const { session: autopilot, events } = session(store, ai);
   await autopilot.start({ brief: { idea: "x", targetChapters: 2, scenesPerChapter: 1, wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false } });
@@ -264,7 +264,7 @@ test("a run never overwrites a state file that becomes unreadable while it runs"
       return result;
     }
   }
-  const store = new Corrupting(seedBookFiles());
+  const store = new Corrupting(seedBookFiles({ chapters: 1 }));
   const { session: autopilot, events } = session(store, createFakeAutopilotAi());
   await autopilot.start(ONE_CHAPTER);
   await autopilot.waitForIdle();
@@ -280,7 +280,7 @@ test("a run never overwrites a state file that becomes unreadable while it runs"
 });
 
 test("a failing step never replaces an unreadable state file (persistFailure and finish)", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   let corrupt = null;
   const ai = {
     calls: [],
@@ -292,7 +292,7 @@ test("a failing step never replaces an unreadable state file (persistFailure and
     },
   };
   const { session: autopilot, events } = session(store, ai);
-  await autopilot.start(ONE_CHAPTER);
+  await autopilot.start({ options: FAST });
   await autopilot.waitForIdle();
   assert.equal(store.files.get(STATE), corrupt, "the unreadable file was left alone");
   assert.deepEqual(store.commits.map((commit) => commit.message), ["Autopilot: started"], "the failed step recorded nothing");
@@ -303,7 +303,7 @@ test("a failing step never replaces an unreadable state file (persistFailure and
 
 test("a damaged activity log and a blank state file are tolerated: they hold nothing to protect", async () => {
   for (const [path, content] of [[ACTIVITY, "{ not json"], [STATE, "   \n"]]) {
-    const store = new MemoryBookStore({ ...seedBookFiles(), [path]: content });
+    const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 1 }), [path]: content });
     const { session: autopilot } = session(store, createFakeAutopilotAi());
     await autopilot.start(ONE_CHAPTER);
     await autopilot.waitForIdle();
@@ -316,7 +316,7 @@ test("a damaged activity log and a blank state file are tolerated: they hold not
 
 /** A is mid-step when B takes over; B then holds at its third AI call, so nothing else writes while A ends. */
 async function takenOverBook(aiA) {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const reached = deferred();
   const hold = deferred();
   const aiB = gatedAi((call) => {
@@ -394,7 +394,7 @@ test("a run whose finished step conflicts with the new owner's state stops witho
 });
 
 test("a run that finds another runner at the top of its loop stops without writing, and says it was taken over", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const hold = deferred();
   const holder = {};
   let afterTakeover = null;
@@ -422,7 +422,7 @@ test("a run that finds another runner at the top of its loop stops without writi
 });
 
 test("a stored runner of null (somebody paused or ended the run) may still be overwritten by the run's own end", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = {
     calls: [],
     async complete(request) {
@@ -469,7 +469,7 @@ class FlakyStore extends MemoryBookStore {
 }
 
 test("a transient store failure at the top of the loop is retried once and the run goes on", async () => {
-  const store = new FlakyStore(seedBookFiles());
+  const store = new FlakyStore(seedBookFiles({ chapters: 1 }));
   store.failStateReads = 1;
   const { session: autopilot, events } = session(store, createFakeAutopilotAi());
   await autopilot.start(ONE_CHAPTER);
@@ -485,7 +485,7 @@ test("a transient store failure at the top of the loop is retried once and the r
 });
 
 test("a store that keeps failing ends the run through the normal failure path: error recorded, run ended, lease released", async () => {
-  const store = new FlakyStore(seedBookFiles());
+  const store = new FlakyStore(seedBookFiles({ chapters: 1 }));
   store.failStateReads = 2;
   const { session: autopilot, events } = session(store, createFakeAutopilotAi());
   await autopilot.start(ONE_CHAPTER);
@@ -504,7 +504,7 @@ test("a store that keeps failing ends the run through the normal failure path: e
 });
 
 test("a store failure while a step commits is retried once like a network failure; other unclassified errors are still not", async () => {
-  const store = new FlakyStore(seedBookFiles());
+  const store = new FlakyStore(seedBookFiles({ chapters: 1 }));
   store.failStepCommits = 1;
   const ai = createFakeAutopilotAi();
   const { session: autopilot, events } = session(store, ai);
@@ -514,7 +514,7 @@ test("a store failure while a step commits is retried once like a network failur
   assert.equal(ai.calls.filter((call) => call.label === "autopilot:concept").length, 2, "the failed step was repeated once");
   assert.ok(events.some((event) => event.type === "insight" && event.code === "failureRetry" && /working copy is full/.test(event.detail)));
 
-  const persistent = new FlakyStore(seedBookFiles());
+  const persistent = new FlakyStore(seedBookFiles({ chapters: 1 }));
   persistent.failStepCommits = 2;
   const failed = session(persistent, createFakeAutopilotAi());
   await failed.session.start(ONE_CHAPTER);
@@ -540,14 +540,14 @@ test("a store error is passed on unchanged, and a host that says it is not retry
     }
   }
   failing = transient;
-  const retried = session(new Failing(seedBookFiles()), createFakeAutopilotAi());
+  const retried = session(new Failing(seedBookFiles({ chapters: 1 })), createFakeAutopilotAi());
   await retried.session.start(ONE_CHAPTER);
   await retried.session.waitForIdle();
   assert.equal(retried.events.filter((event) => event.type === "insight" && event.code === "failureRetry").length, 1);
   assert.equal("retryable" in transient, false, "the host's error object was not modified");
 
   failing = permanent;
-  const store = new Failing(seedBookFiles());
+  const store = new Failing(seedBookFiles({ chapters: 1 }));
   const refused = session(store, createFakeAutopilotAi());
   await refused.session.start(ONE_CHAPTER);
   await refused.session.waitForIdle();
@@ -569,7 +569,7 @@ test("when the store cannot even be read to save the end, the run still ends and
       return result;
     }
   }
-  const store = new Down(seedBookFiles());
+  const store = new Down(seedBookFiles({ chapters: 1 }));
   const { session: autopilot, events } = session(store, createFakeAutopilotAi());
   await autopilot.start(ONE_CHAPTER);
   await autopilot.waitForIdle();
@@ -585,7 +585,7 @@ test("when the store cannot even be read to save the end, the run still ends and
 });
 
 test("AutopilotRun used on its own also refuses an unreadable state file", async () => {
-  const store = new MemoryBookStore({ ...seedBookFiles(), [STATE]: "{ \"status\": \"running\"" });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 1 }), [STATE]: "{ \"status\": \"running\"" });
   const emitted = [];
   const run = new engine.AutopilotRun({ bookId: "book-1", store, ai: createFakeAutopilotAi(), host: "server", hostLabel: "test-host", retryDelayMs: 0, emit: (event) => emitted.push(event) });
   await assert.rejects(() => run.execute(ONE_CHAPTER), (error) => error instanceof engine.AutopilotStateCorruptError && error.path === STATE && error.code === "state_corrupt");
@@ -603,7 +603,7 @@ test("pause('now') between two steps stops the run before the next step is bille
     onFire = () => undefined;
     async commit(changes, message) {
       const result = await super.commit(changes, message);
-      if (this.commits.length === 2) this.armed = true;
+      if (this.commits.length === 3) this.armed = true;
       return result;
     }
     async read(path) {
@@ -615,7 +615,7 @@ test("pause('now') between two steps stops the run before the next step is bille
       return result;
     }
   }
-  const store = new HookedStore(seedBookFiles());
+  const store = new HookedStore(seedBookFiles({ chapters: 1 }));
   const base = createFakeAutopilotAi();
   let billed = 0;
   const ai = {
@@ -638,7 +638,7 @@ test("pause('now') between two steps stops the run before the next step is bille
 });
 
 test("an interrupt that arrives after its step is done does not turn a later abort into a repeat", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const base = createFakeAutopilotAi();
   let planCalls = 0;
   const ai = {

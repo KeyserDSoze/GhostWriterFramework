@@ -1,7 +1,7 @@
 import { parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
 import { sha256Hex } from "../util/hash.js";
 import { clipText } from "../util/text.js";
-import { OUTLINE_BOOK_FILE, OUTLINE_DIRECTORY, formatOrdinal, isValidGhostwriterSlug, outlineChapterPath, parseOutlineChapterPath } from "./paths.js";
+import { OUTLINE_BOOK_FILE, OUTLINE_BRIEF_FILE, OUTLINE_DIRECTORY, formatOrdinal, isValidGhostwriterSlug, outlineChapterPath, parseOutlineChapterPath } from "./paths.js";
 import type { BookFileChange, BookStore } from "./store.js";
 
 /**
@@ -16,6 +16,21 @@ export type OutlineOrigin = "author" | "autopilot";
 
 /** Characters of the text of one entry: an edit that writes more is cut, with a warning, and the autopilot reads no more. */
 export const OUTLINE_ENTRY_MAX_CHARS = 20_000;
+/**
+ * Characters of the description of the book (`outline/book.md`), which is also the idea of the book. It is never cut: an edit that writes more
+ * is refused (`OutlineTextLimitError`), with nothing written. A million characters is the longest text the server takes in a request of 2 MiB
+ * in a Latin script, so every idea a request could carry fits.
+ */
+export const OUTLINE_BOOK_MAX_CHARS = 1_000_000;
+
+/** A text over its limit, refused whole: nothing is written, and the message says the length and the limit. */
+export class OutlineTextLimitError extends Error {
+  readonly code = "text_too_long";
+  constructor(readonly limit: number, readonly length: number, message: string) {
+    super(message);
+    this.name = "OutlineTextLimitError";
+  }
+}
 /** Characters of a hypothetical title: it becomes the name of the chapter's folder. */
 export const OUTLINE_TITLE_MAX_CHARS = 200;
 
@@ -130,7 +145,7 @@ interface EntryReading {
 }
 
 /** What every file of the outline has in common: the frontmatter, the text, the title and who wrote it. */
-function readEntryFile(path: string, content: string, warnings: OutlineWarning[], number?: number): EntryReading {
+function readEntryFile(path: string, content: string, warnings: OutlineWarning[], number?: number, limit: { max: number; over: (length: number) => string } = { max: OUTLINE_ENTRY_MAX_CHARS, over: (length) => `the text is ${length} characters long: the autopilot reads the first ${OUTLINE_ENTRY_MAX_CHARS}` }): EntryReading {
   const document = parseMarkdown(content ?? "");
   const unreadable = Boolean(document.error);
   const where = number === undefined ? { path } : { path, number };
@@ -151,7 +166,7 @@ function readEntryFile(path: string, content: string, warnings: OutlineWarning[]
     else warn("origin-unknown", `origin ${quoted(declared)} is neither author nor autopilot: the entry is the author's`);
   }
   const digest = typeof frontmatter.digest === "string" && frontmatter.digest.trim() ? frontmatter.digest.trim() : undefined;
-  if (document.body.length > OUTLINE_ENTRY_MAX_CHARS) warn("text-too-long", `the text is ${document.body.length} characters long: the autopilot reads the first ${OUTLINE_ENTRY_MAX_CHARS}`);
+  if (document.body.length > limit.max) warn("text-too-long", limit.over(document.body.length));
   return { frontmatter, body: document.body, unreadable, title, origin, ...(digest ? { digest } : {}), warn };
 }
 
@@ -197,7 +212,10 @@ export async function readOutlineChapter(path: string, number: number, content: 
 /** The description of the book from `outline/book.md`. */
 export async function readOutlineBook(content: string, hash?: string): Promise<{ book: OutlineBookEntry; warnings: OutlineWarning[] }> {
   const warnings: OutlineWarning[] = [];
-  const reading = readEntryFile(OUTLINE_BOOK_FILE, content, warnings);
+  const reading = readEntryFile(OUTLINE_BOOK_FILE, content, warnings, undefined, {
+    max: OUTLINE_BOOK_MAX_CHARS,
+    over: (length) => `the description is ${length} characters long, over the limit of ${OUTLINE_BOOK_MAX_CHARS}: it is read whole, and a write of it is refused`,
+  });
   const contentDigest = await outlineBookDigest({ title: reading.title, body: reading.body });
   return {
     book: {
@@ -255,6 +273,7 @@ export async function parseOutline(files: ReadonlyArray<{ path: string; content:
       warnings.push(...read.warnings);
       continue;
     }
+    if (file.path === OUTLINE_BRIEF_FILE) continue;
     if (!file.path.startsWith(`${OUTLINE_DIRECTORY}/`)) continue;
     const parsed = parseOutlineChapterPath(file.path);
     if (!parsed) {
@@ -418,10 +437,9 @@ export function outlineChanges(input: OutlineChangesInput): OutlineChangesResult
 
   if (edit.kind === "book") {
     const base = outline.book ?? undefined;
-    let body = canonicalText(edit.body !== undefined ? edit.body : base?.body ?? "");
-    if (body.length > OUTLINE_ENTRY_MAX_CHARS) {
-      warnings.push({ code: "text-too-long", path: OUTLINE_BOOK_FILE, message: `${OUTLINE_BOOK_FILE}: the description was ${body.length} characters long and is cut at ${OUTLINE_ENTRY_MAX_CHARS}.` });
-      body = clipText(body, OUTLINE_ENTRY_MAX_CHARS);
+    const body = canonicalText(edit.body !== undefined ? edit.body : base?.body ?? "");
+    if (edit.body !== undefined && body.length > OUTLINE_BOOK_MAX_CHARS) {
+      throw new OutlineTextLimitError(OUTLINE_BOOK_MAX_CHARS, body.length, `The description of the book is ${body.length} characters long: the limit is ${OUTLINE_BOOK_MAX_CHARS}. Nothing was written: shorten it.`);
     }
     const title = edit.title === null ? undefined : (edit.title !== undefined ? edit.title : base?.title)?.trim();
     const content = serializeOutlineBook({ title, body, origin: "author", frontmatter: base && !base.unreadable ? base.frontmatter : undefined });
@@ -629,20 +647,6 @@ export class OutlineReader {
     if (!read) return null;
     this.seen.set(this.index.book.path, read.warnings);
     return read.book;
-  }
-
-  /**
-   * The last chapter the author's outline asks for: the highest number above `above` whose entry binds (the author's), else 0.
-   * Only the entries above `above` are read, from the last down, until one binds.
-   */
-  async lastAuthorChapter(above = 0): Promise<number> {
-    for (let index = this.index.chapters.length - 1; index >= 0; index -= 1) {
-      const file = this.index.chapters[index];
-      if (file.number <= above) break;
-      const entry = await this.chapter(file.number);
-      if (entry && !entry.intact) return entry.number;
-    }
-    return 0;
   }
 
   /** The warnings of the files read so far. */

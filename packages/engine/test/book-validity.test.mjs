@@ -18,7 +18,7 @@ async function writeBook(store) {
 }
 
 test("the files written by the autopilot and the director form a valid Narrarium book", async () => {
-  const store = new MemoryBookStore(seedBookFiles({ language: "it" }));
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2, language: "it" }));
   const ai = createFakeAutopilotAi();
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   await session.start({ brief: { idea: "Un porto di vetro", targetChapters: 2, scenesPerChapter: 2 }, options: { maxReaders: 2, pauseAfterPlan: false } });

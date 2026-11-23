@@ -221,7 +221,7 @@ test("when a model refuses its level the next candidate is tried, and it need no
 test("a run whose model refuses its level stops at once, once, saying what to change", async () => {
   const { fetch, calls } = recording(() => failing(400, { message: "Unrecognized request argument supplied: reasoning_effort" }));
   const ai = createFetchAi(WITH_LEVEL, { fetch });
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const events = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   session.subscribe((event) => events.push(event));

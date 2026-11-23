@@ -30,7 +30,7 @@ function scripted(script, options = {}) {
   };
 }
 
-async function run(ai, start = ONE_CHAPTER, files = seedBookFiles()) {
+async function run(ai, start = ONE_CHAPTER, files = seedBookFiles({ chapters: 1 })) {
   const store = new MemoryBookStore(files);
   const emitted = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
@@ -42,7 +42,7 @@ async function run(ai, start = ONE_CHAPTER, files = seedBookFiles()) {
 
 const insights = (emitted, pattern) => emitted.filter((event) => event.type === "insight" && pattern.test(`${event.title} ${event.detail ?? ""}`));
 const labelled = (ai, label) => ai.calls.filter((call) => call.label === label);
-const withDirector = (overrides) => ({ ...seedBookFiles(), "director.md": serializeDirector({ ...defaultDirector("en"), ...overrides }) });
+const withDirector = (overrides) => ({ ...seedBookFiles({ chapters: 1 }), "director.md": serializeDirector({ ...defaultDirector("en"), ...overrides }) });
 
 /** A chapter review whose decisions cover every finding the request lists: `accept` the first one or reject them all. */
 function review(request, fields, accept = false) {
@@ -223,7 +223,7 @@ test("a plan review without a score is rejected and retried; verdict variants an
 // ─── The director on demand and the final review ────────────────────────────
 
 const opinionAi = (json) => ({ calls: [], async complete() { return reply(json); } });
-const ask = (json, files = seedBookFiles(), target = { kind: "book" }) => askDirector({ store: new MemoryBookStore(files), ai: opinionAi(json), target });
+const ask = (json, files = seedBookFiles({ chapters: 1 }), target = { kind: "book" }) => askDirector({ store: new MemoryBookStore(files), ai: opinionAi(json), target });
 const BASE = { summary: "A view.", strengths: [], concerns: [], decisions: [], nextSteps: [] };
 
 test("the director's opinion approves only at the approval score, and reads verdicts and scores like the autopilot", async () => {
@@ -257,13 +257,13 @@ test("the director's opinion is never made of a missing score or an unknown verd
     assert.ok(error instanceof engine.AiReplyRejectedError, JSON.stringify(json));
     assert.match(error.message, pattern);
   }
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   await assert.rejects(askDirector({ store, ai: opinionAi({ ...BASE, verdict: "approve" }), target: { kind: "book" }, save: true }), /"score"/);
   assert.ok(!store.files.has("evaluations/director/book.md"), "nothing was saved");
 });
 
 test("the reason for a withheld approval is written in the book's language", async () => {
-  const italian = await ask({ ...BASE, verdict: "approve", score: 5 }, seedBookFiles({ language: "it" }));
+  const italian = await ask({ ...BASE, verdict: "approve", score: 5 }, seedBookFiles({ chapters: 1, language: "it" }));
   assert.equal(italian.opinion.verdict, "revise");
   assert.match(italian.opinion.decisions[0], /punteggio di approvazione/i);
 });
@@ -376,7 +376,7 @@ test("the skipped readers of a plan survive a revision of the plan and a reload 
 });
 
 test("the messages about skipped readers and withheld approvals are written in the book's language", async () => {
-  const files = seedBookFiles({ language: "it" });
+  const files = seedBookFiles({ chapters: 1, language: "it" });
   const ai = scripted((request, seen) => {
     if (isReader(request)) return reply({ generalImpression: "Bene." });
     if (request.label === "autopilot:director-review:1" && seen === 0) return review(request, { verdict: "approve", score: 5 });

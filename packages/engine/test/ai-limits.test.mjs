@@ -129,7 +129,7 @@ const isProse = (body) => !body.tools && /ghostwriter/.test(body.messages[0].con
 const limitOf = (body) => body.max_tokens ?? body.max_completion_tokens;
 
 async function runOver(host, cfg, start, extra = {}) {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const emitted = [];
   const session = new AutopilotSession({ bookId: "book", store, ai: createFetchAi(cfg, { fetch: host.fetch }), host: "server", hostLabel: "test", retryDelayMs: 0, ...extra });
   session.subscribe((event) => emitted.push(event));
@@ -292,7 +292,7 @@ function flagged(flags, options = {}) {
   };
 }
 
-async function runWith(ai, start, extra = {}, files = seedBookFiles()) {
+async function runWith(ai, start, extra = {}, files = seedBookFiles({ chapters: 1 })) {
   const store = new MemoryBookStore(files);
   const emitted = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0, ...extra });
@@ -325,7 +325,7 @@ test("a state saved before these fields existed loads and keeps running", async 
   assert.equal(state.stats.usageUnknownCalls, undefined);
   assert.equal(state.options.budgetTokens ?? 0, 0);
   const ai = flagged((request) => request.label === "autopilot:plan" ? { costKnown: false } : {});
-  const store = new MemoryBookStore({ ...seedBookFiles(), "autopilot/state.json": JSON.stringify({ ...old, status: "paused" }) });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 1 }), "autopilot/state.json": JSON.stringify({ ...old, status: "paused" }) });
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   await session.start(ONE_SCENE);
   await session.waitForIdle();
@@ -362,7 +362,7 @@ test("one warning per run says the money budget cannot apply to a model without 
 });
 
 test("the warning is in the book's language", async () => {
-  const files = seedBookFiles({ language: "it" });
+  const files = seedBookFiles({ chapters: 1, language: "it" });
   const ai = flagged(() => ({ costKnown: false, cost: undefined, model: "locale" }));
   const { events: emitted } = await runWith(ai, { ...ONE_SCENE, options: { ...FAST, budgetLimit: 5 } }, {}, files);
   const warning = emitted.find((event) => event.code === "budgetNotApplicable");
@@ -386,7 +386,7 @@ test("budgetTokens stops the run when the tokens used reach it, and 0 turns it o
   await limited.session.waitForIdle();
   assert.equal((await limited.session.snapshot()).state.status, "completed");
 
-  const italian = await runWith(createFakeAutopilotAi(), { ...ONE_SCENE, options: { ...FAST, budgetTokens: 450 } }, {}, seedBookFiles({ language: "it" }));
+  const italian = await runWith(createFakeAutopilotAi(), { ...ONE_SCENE, options: { ...FAST, budgetTokens: 450 } }, {}, seedBookFiles({ chapters: 1, language: "it" }));
   assert.match(italian.state.message, /Budget di token raggiunto/);
 });
 

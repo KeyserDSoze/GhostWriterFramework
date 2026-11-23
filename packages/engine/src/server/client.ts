@@ -9,6 +9,7 @@ import {
   normalizeServerUrl,
   randomNonce,
   serverCompatibility,
+  serverHasOutlineBrief,
   serverSupportsAutopilotAutoResume,
   serverSupportsAutopilotRetry,
   serverSupportsGithubConflicts,
@@ -216,17 +217,28 @@ export class NarrariumServerClient {
   }
 
   /**
+   * Starting and configuring the autopilot need a server that takes the length of the book from its Scaletta (`SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF`):
+   * an older one would plan the default number of chapters and write them, ignoring the outline. The client asks the server's features and refuses
+   * before anything is sent: a `ServerRequestError` with status 501 and code `feature_unavailable`, which says to update the server.
+   */
+  private async assertOutlineBriefSupported(info: ServerInfo): Promise<void> {
+    if (!serverHasOutlineBrief(info)) {
+      throw new ServerRequestError(`This personal server is too old to take the length of the book from its outline (it does not announce the feature autopilot-outline-brief): it would plan the default number of chapters and ignore the outline. Update the server, then start the autopilot again.`, 501, "feature_unavailable");
+    }
+  }
+
+  /**
    * The settings that only a newer server knows go only to a server that announces them: `options.longRetry` («Retry later») to one that announces
    * `SERVER_FEATURE_AUTOPILOT_RETRY`, `options.resumeAfterRestart` («Resume after a restart») to one that announces `SERVER_FEATURE_AUTOPILOT_AUTO_RESUME`.
    * An older one refuses them in the options route, and drops them from `configure` and `start` without a word. With such a setting in a request
    * (`null` and `false` included) the client asks the server's features first, and refuses for a server without it before anything is sent: a
    * `ServerRequestError` with status 501 and code `feature_unavailable`. A request without them asks nothing more.
    */
-  private async assertOptionsSupported(options: unknown): Promise<void> {
+  private async assertOptionsSupported(options: unknown, known?: ServerInfo): Promise<void> {
     if (!options || typeof options !== "object") return;
     const { longRetry, resumeAfterRestart } = options as { longRetry?: unknown; resumeAfterRestart?: unknown };
     if (longRetry === undefined && resumeAfterRestart === undefined) return;
-    const info = await this.info();
+    const info = known ?? await this.info();
     if (longRetry !== undefined && !serverSupportsAutopilotRetry(info)) {
       throw new ServerRequestError(`This personal server does not have "Retry later" (it does not announce the feature autopilot-retry): update the server, or leave longRetry out.`, 501, "feature_unavailable");
     }
@@ -241,7 +253,9 @@ export class NarrariumServerClient {
    * needs `SERVER_FEATURE_AUTOPILOT_RETRY` and `options.resumeAfterRestart` `SERVER_FEATURE_AUTOPILOT_AUTO_RESUME` (see `assertOptionsSupported`).
    */
   async startAutopilot(bookId: string, options: StartOptions & { force?: boolean } = {}): Promise<AutopilotSnapshot> {
-    await this.assertOptionsSupported(options?.options);
+    const info = await this.info();
+    await this.assertOutlineBriefSupported(info);
+    await this.assertOptionsSupported(options?.options, info);
     return this.request("POST", bookRoute(bookId, "/autopilot/start"), options, { timeoutMs: 300_000 });
   }
 
@@ -370,7 +384,9 @@ export class NarrariumServerClient {
    * `SERVER_FEATURE_AUTOPILOT_RETRY` and `options.resumeAfterRestart` `SERVER_FEATURE_AUTOPILOT_AUTO_RESUME` (see `assertOptionsSupported`).
    */
   async configureAutopilot(bookId: string, input: StartOptions): Promise<AutopilotSnapshot> {
-    await this.assertOptionsSupported(input?.options);
+    const info = await this.info();
+    await this.assertOutlineBriefSupported(info);
+    await this.assertOptionsSupported(input?.options, info);
     return this.request("POST", bookRoute(bookId, "/autopilot/configure"), input);
   }
 

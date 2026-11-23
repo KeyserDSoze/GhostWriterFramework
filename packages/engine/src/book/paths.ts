@@ -24,6 +24,11 @@ export const AUTOPILOT_PLAN_FILE = "autopilot/plan.md";
 export const OUTLINE_DIRECTORY = "outline";
 export const OUTLINE_BOOK_FILE = "outline/book.md";
 export const OUTLINE_CHAPTERS_DIRECTORY = "outline/chapters";
+/**
+ * The brief of the autopilot (idea, genre, audience, words per scene, synopsis), kept in the outline. Its name starts with an
+ * underscore and it is not `outline/chapters/<NNN>.md`: it is never an entry, and no outline tool counts or moves it.
+ */
+export const OUTLINE_BRIEF_FILE = "outline/_brief.md";
 
 /** The file of the outline entry of a chapter: `outline/chapters/007.md`, `outline/chapters/1500.md`. */
 export function outlineChapterPath(number: number): string {

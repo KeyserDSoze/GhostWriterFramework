@@ -102,8 +102,8 @@ test("YAML that cannot be read is a warning with its line, and the method in the
 });
 
 test("a book without the file has no evaluation style; a file is read through the store", async () => {
-  assert.equal(await engine.loadEvaluationStyle(new MemoryBookStore(seedBookFiles())), null);
-  const store = new MemoryBookStore({ ...seedBookFiles(), [STYLE]: siteStyle() });
+  assert.equal(await engine.loadEvaluationStyle(new MemoryBookStore(seedBookFiles({ chapters: 1 }))), null);
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 1 }), [STYLE]: siteStyle() });
   const style = await engine.loadEvaluationStyle(store);
   assert.equal(style.criteria.length, 2);
 });
@@ -138,7 +138,7 @@ test("the block of the style stays within 3000 characters, criteria first and th
 // ─── The autopilot judges with it ───────────────────────────────────────────
 
 test("the director's review, the specialists and the final judgement read the criteria; the review of the plan only the method and the severity", async () => {
-  const { ai, state } = await runBook({ ...seedBookFiles(), [STYLE]: siteStyle() });
+  const { ai, state } = await runBook({ ...seedBookFiles({ chapters: 1 }), [STYLE]: siteStyle() });
   assert.equal(state.status, "completed", state.lastError?.message);
   const call = (label) => ai.calls.find((entry) => entry.label === label);
   for (const label of ["autopilot:director-review:1", "autopilot:specialists:1", "director:book"]) {
@@ -154,8 +154,8 @@ test("the director's review, the specialists and the final judgement read the cr
 });
 
 test("the style guides the judgement without changing the scale or the tools", async () => {
-  const withStyle = await runBook({ ...seedBookFiles(), [STYLE]: siteStyle() });
-  const without = await runBook(seedBookFiles());
+  const withStyle = await runBook({ ...seedBookFiles({ chapters: 1 }), [STYLE]: siteStyle() });
+  const without = await runBook(seedBookFiles({ chapters: 1 }));
   for (const label of ["autopilot:director-review:1", "autopilot:specialists:1", "autopilot:plan-review", "director:book"]) {
     const a = withStyle.ai.calls.find((entry) => entry.label === label);
     const b = without.ai.calls.find((entry) => entry.label === label);
@@ -167,13 +167,13 @@ test("the style guides the judgement without changing the scale or the tools", a
 });
 
 test("a style with nothing in it changes no request", async () => {
-  const empty = await runBook({ ...seedBookFiles(), [STYLE]: "---\ntype: guideline\nid: guideline:evaluation-style\ntitle: Evaluation Style\n---\n" });
-  const without = await runBook(seedBookFiles());
+  const empty = await runBook({ ...seedBookFiles({ chapters: 1 }), [STYLE]: "---\ntype: guideline\nid: guideline:evaluation-style\ntitle: Evaluation Style\n---\n" });
+  const without = await runBook(seedBookFiles({ chapters: 1 }));
   assert.deepEqual(empty.ai.calls.map((entry) => [entry.label, entry.system, entry.user]), without.ai.calls.map((entry) => [entry.label, entry.system, entry.user]));
 });
 
 test("a style that cannot be read stops the run before anything is spent, with the file and the line", async () => {
-  const store = new MemoryBookStore({ ...seedBookFiles(), [STYLE]: "---\ntitle: Style\ncriteria:\n  clarity: [unclosed\n---\n\nBe severe.\n" });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 1 }), [STYLE]: "---\ntitle: Style\ncriteria:\n  clarity: [unclosed\n---\n\nBe severe.\n" });
   const ai = createFakeAutopilotAi();
   const { session: autopilot, events } = session(store, ai);
   await autopilot.start({ brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });

@@ -13,7 +13,7 @@ import { asInteger, asNumber, asRecord } from "../util/json.js";
 import { OUTPUT_TOKENS_CEILING, countWords, isItalian, languageCode, scaleOutputTokens, tokensPerWord } from "../util/text.js";
 import { sumCappedRamp, sumWindowedList, windowedList } from "./estimate-math.js";
 import { estimateTexts } from "./estimate-texts.js";
-import { PLAN_BATCH_CHAPTERS } from "./planner.js";
+import { PLAN_BATCH_CHAPTERS, SCENES_PER_CHAPTER, bookChapters } from "./planner.js";
 import {
   CHAPTER_REVIEW_TOOL, CHAPTER_SUMMARY_TOOL, CONCEPT_TOOL, CONSOLIDATION_TOOL, FINDINGS_TOOL, PLAN_REACTION_TOOL, PLAN_REVIEW_TOOL, PLAN_TOOL, SCENES_TOOL, SCENE_SUMMARY_TOOL,
   architectSystemPrompt, continuitySystemPrompt, specialistsSystemPrompt, writerSystemPrompt,
@@ -229,8 +229,10 @@ export interface EstimateOutline {
 }
 
 export interface EstimateInput {
-  /** The brief of the form: the chapters, the scenes of a chapter, the words of a scene, and the idea and the synopsis, which weigh in the prompts that carry them. */
+  /** The brief of the form: the words of a scene, and the idea and the synopsis, which weigh in the prompts that carry them. The chapters are `outline`'s. */
   brief?: Partial<AutopilotBrief>;
+  /** The scenes a chapter is expected to have (the planner's rule gives 2 to 4 for each chapter); the middle of the range when missing. */
+  scenesPerChapter?: number;
   /** `readers`, `maxReaders`, `readersOnPlan` and `specialists` change the calls; the others (`pauseAfterPlan`, `chaptersPerRun`, the budgets…) do not. */
   options?: Partial<AutopilotOptions>;
   /** `maxReviewRounds` of the director's profile (1 to 3, 2 when it says nothing). */
@@ -290,8 +292,7 @@ export type EstimateWarning =
   | (EstimateWarningBase & { code: "smallOutput"; capability: EstimateCapability; model: string; step: EstimateCallKind; maxOutputTokens: number; typicalReply: number })
   | (EstimateWarningBase & { code: "noPrice"; capability: EstimateCapability; model: string })
   | (EstimateWarningBase & { code: "noSpeed"; capability: EstimateCapability; model: string })
-  | (EstimateWarningBase & { code: "reasoningModel"; capability: EstimateCapability; model: string })
-  | (EstimateWarningBase & { code: "outlineLongerThanBrief"; briefChapters: number; outlineChapters: number });
+  | (EstimateWarningBase & { code: "reasoningModel"; capability: EstimateCapability; model: string });
 
 export type EstimateWarningCode = EstimateWarning["code"];
 
@@ -637,14 +638,15 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   /** Tokens of `count` words of the book in a prompt. */
   const w = (count: number): number => count * INPUT_TOKENS_PER_WORD * ratio;
 
-  const scenes = brief.scenesPerChapter;
+  // The scenes of each chapter are the planner's (`scenesForChapter`): the host says how many it expects, else the middle of the range.
+  const scenes = whole(source.scenesPerChapter, Math.round((SCENES_PER_CHAPTER.min + SCENES_PER_CHAPTER.max) / 2), 1, 20);
   const sceneWords = brief.wordsPerScene;
   const chapterWords = scenes * sceneWords;
   const maxRounds = whole(source.maxReviewRounds, 2, 1, MAX_ROUNDS);
 
-  // The book: the chapters the brief asks for, or the outline's if it asks for more.
+  // The book: the chapters of the outline (its chapter entries), or the chapters already planned when the outline has none.
   const outlineChapters = outlineChaptersOf(outline);
-  const chapters = Math.min(MAX_BOOK_CHAPTERS, Math.max(brief.targetChapters, outlineChapters));
+  const chapters = Math.min(MAX_BOOK_CHAPTERS, Math.max(outlineChapters, whole(progress.planned, 0, 0, MAX_BOOK_CHAPTERS)));
   const outlineEntries = whole(outline.entries, 0, 0, MAX_BOOK_CHAPTERS) || (outlineChapters > 0 ? outlineChapters : 0);
   const outlineWords = outlineEntries > 0 ? knob(outline.words, outlineEntries * T.outlineEntryWords) : 0;
 
@@ -1001,9 +1003,6 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
     if (!model.price) warnings.push({ code: "noPrice", severity: "warning", capability, model: model.name, text: text.noPrice(capability, model.name) });
     if (!model.speed) warnings.push({ code: "noSpeed", severity: "info", capability, model: model.name, text: text.noSpeed(capability, model.name) });
     if (model.reasoning) warnings.push({ code: "reasoningModel", severity: "info", capability, model: model.name, text: text.reasoningModel(capability, model.name) });
-  }
-  if (outlineChapters > brief.targetChapters) {
-    warnings.push({ code: "outlineLongerThanBrief", severity: "info", briefChapters: brief.targetChapters, outlineChapters, text: text.outlineLonger(brief.targetChapters, outlineChapters) });
   }
   const gravity = { error: 0, warning: 1, info: 2 } as const;
   warnings.sort((left, right) => gravity[left.severity] - gravity[right.severity]);

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as engine from "../dist/index.js";
-import { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } from "../dist/testing/index.js";
+import { MemoryBookStore, createFakeAutopilotAi, outlineEntryFiles, seedBookFiles } from "../dist/testing/index.js";
 
 // New exports are read from the namespace so that, before they exist, each test fails on its own.
 const { AutopilotSession, applyIntervention, clipText, createAutopilotState, parseAutopilotState, parseMarkdown, serializeAutopilotState, summarizeAutopilotState } = engine;
@@ -41,7 +41,7 @@ function fakeClock(start = Date.parse("2026-02-01T08:00:00.000Z")) {
 }
 
 async function run(ai, start = TWO, extra = {}) {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const events = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0, ...extra });
   session.subscribe((event) => events.push(event));
@@ -140,6 +140,7 @@ test("raising the number of chapters of a finished book takes the final review a
 
   const events = [];
   first.session.subscribe((event) => events.push(event));
+  for (const [path, content] of Object.entries(outlineEntryFiles(3))) if (!first.store.files.has(path)) first.store.files.set(path, content);
   await first.session.start({ brief: { targetChapters: 3 }, options: { pauseAfterPlan: true } });
   await first.session.waitForIdle();
   const reopened = stateOf(first.store);

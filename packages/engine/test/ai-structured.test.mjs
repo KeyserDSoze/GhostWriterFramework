@@ -128,7 +128,7 @@ const FAST = { readers: false, readersOnPlan: false, pauseAfterPlan: false };
 const ONE_SCENE = { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }, options: FAST };
 
 async function runOver(host, cfg, start = ONE_SCENE, extra = {}) {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const emitted = [];
   const session = new AutopilotSession({ bookId: "book", store, ai: createFetchAi(cfg, { fetch: host.fetch }), host: "server", hostLabel: "test", retryDelayMs: 0, ...extra });
   session.subscribe((event) => emitted.push(event));
@@ -207,7 +207,7 @@ function scripted(script, options = {}) {
 }
 
 async function runWith(ai, start = ONE_SCENE) {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const emitted = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   session.subscribe((event) => emitted.push(event));
@@ -238,7 +238,7 @@ test("the book never receives &amp; from the model: prose, summaries, design and
 });
 
 test("the director's opinion, on demand or at the end of the book, is un-escaped once", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = { calls: [], async complete() { return reply({ verdict: "approve", score: 9, summary: "Great &amp; bold &lt;prose&gt;.", strengths: ["Voice &amp; pace"], concerns: [{ severity: "minor", issue: "R&amp;D scenes", suggestion: "Cut &lt;one&gt;" }], decisions: ["Keep &amp;amp; as is"], nextSteps: [] }); } };
   const { opinion } = await askDirector({ store, ai, target: { kind: "book" }, save: true });
   assert.equal(opinion.summary, "Great & bold <prose>.");

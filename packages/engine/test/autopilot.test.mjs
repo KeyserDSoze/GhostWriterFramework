@@ -26,7 +26,7 @@ async function runToEnd(instance, options) {
 }
 
 test("the autopilot writes a whole book from an idea, with readers and the director", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const ai = createFakeAutopilotAi();
   const { session: autopilot, events } = session(store, ai);
 
@@ -78,7 +78,7 @@ test("the autopilot writes a whole book from an idea, with readers and the direc
 });
 
 test("author interventions reach the next writing step and permanent rules reach the director", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi();
   const { session: autopilot } = session(store, ai);
   await runToEnd(autopilot, { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false } });
@@ -98,7 +98,7 @@ test("author interventions reach the next writing step and permanent rules reach
 });
 
 test("readers never see secrets, specialists and the director do", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi();
   const { session: autopilot } = session(store, ai);
   await runToEnd(autopilot, { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: { maxReaders: 1, pauseAfterPlan: false } });
@@ -109,7 +109,7 @@ test("readers never see secrets, specialists and the director do", async () => {
 });
 
 test("a rewrite request makes the director pick scenes, rewrites them and reviews again", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
   const { session: autopilot } = session(store, ai);
   let state = await runToEnd(autopilot, { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });
@@ -127,7 +127,7 @@ test("a rewrite request makes the director pick scenes, rewrites them and review
 });
 
 test("pausing after the step and stopping now both leave a resumable state", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ delayMs: 20 });
   const { session: autopilot, events } = session(store, ai);
   await autopilot.start({ brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false } });
@@ -151,7 +151,7 @@ test("pausing after the step and stopping now both leave a resumable state", asy
 });
 
 test("an author edit during a step is never overwritten: the step is repeated on the latest text", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi();
   let edited = false;
   store.beforeCommit = (changes) => {
@@ -169,7 +169,7 @@ test("an author edit during a step is never overwritten: the step is repeated on
 });
 
 test("an existing book is continued from its last written chapter", async () => {
-  const files = seedBookFiles();
+  const files = seedBookFiles({ chapters: 2 });
   files["chapters/001-the-arrival/chapter.md"] = "---\ntype: chapter\nid: chapter:001-the-arrival\nnumber: 1\ntitle: The Arrival\nsummary: Mira arrives.\n---\n\n# The Arrival\n";
   files["chapters/001-the-arrival/001-dawn.md"] = "---\ntype: paragraph\nid: paragraph:001-the-arrival:001-dawn\nchapter: chapter:001-the-arrival\nnumber: 1\ntitle: Dawn\n---\n\nThe author's own opening scene.";
   const store = new MemoryBookStore(files);
@@ -185,7 +185,7 @@ test("an existing book is continued from its last written chapter", async () => 
 });
 
 test("the director answers questions on a chapter and keeps the opinion in the book", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi();
   const { session: autopilot } = session(store, ai);
   await runToEnd(autopilot, { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });
@@ -202,14 +202,14 @@ test("the director answers questions on a chapter and keeps the opinion in the b
 });
 
 test("a failing provider is retried once, then the autopilot stops with a readable error", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const failing = createFakeAutopilotAi({ failOn: { call: 1, error: new AiProviderError("temporary outage", 503, true) } });
   const { session: autopilot, events } = session(store, failing);
   const state = await runToEnd(autopilot, { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });
   assert.equal(state.status, "completed");
   assert.ok(events.some((event) => event.type === "insight" && /retry 1 of 3/.test(event.title)), "a transient provider error is retried up to three times: the first retry says so");
 
-  const broken = new MemoryBookStore(seedBookFiles());
+  const broken = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = { calls: [], async complete() { throw new AiProviderError("invalid api key", 401, false); } };
   const { session: second } = session(broken, ai);
   const failed = await runToEnd(second, { brief: { idea: "x" } });
@@ -230,7 +230,7 @@ test("only errors that declare themselves retryable repeat a step", async () => 
     [Object.assign(new Error("git pull timed out"), { retryable: true }), true],
     [new AiProviderError("cut by the output token limit", undefined, true, { truncated: true }), false],
   ]) {
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
     const ai = createFakeAutopilotAi({ failOn: { call: 1, error } });
     const { session: autopilot, events } = session(store, ai);
     const state = await runToEnd(autopilot, { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false } });
@@ -240,7 +240,7 @@ test("only errors that declare themselves retryable repeat a step", async () => 
 });
 
 test("interventions recorded while a step runs steer the next step, or restart the current one", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ delayMs: 40 });
   const { session: autopilot, events } = session(store, ai);
   await autopilot.start({ brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false } });
@@ -253,7 +253,7 @@ test("interventions recorded while a step runs steer the next step, or restart t
   assert.doesNotMatch(concept[0].user, /storm/);
   assert.match(plan.user, /Open the plan with a storm\./, "the queued note reaches the next step that accepts notes");
 
-  const second = new MemoryBookStore(seedBookFiles());
+  const second = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const slow = createFakeAutopilotAi({ delayMs: 40 });
   const { session: interrupted, events: interruptedEvents } = session(second, slow);
   await interrupted.start({ brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1 }, options: { readers: false, readersOnPlan: false } });
@@ -279,7 +279,7 @@ test("a second host cannot start while another runner is active", async () => {
 });
 
 test("runners are identified by host id, and a live run of the same host blocks a second start", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const tabA = new AutopilotSession({ bookId: "book-1", store, ai: createFakeAutopilotAi({ delayMs: 40 }), host: "browser", hostLabel: "Browser · Linux", hostId: "device-a", retryDelayMs: 0 });
   await tabA.start({ brief: { idea: "x" } });
   const running = parseAutopilotState(store.files.get("autopilot/state.json"));

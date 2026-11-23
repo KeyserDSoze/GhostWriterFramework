@@ -805,7 +805,7 @@ test("a whole book runs through the client with the site's defaults for the priv
     fallbackDisclosure: { sameBoundaryOnly: true, requireAcknowledgement: true },
     routingExecution: { maxCandidates: 4, maxTotalDurationMs: 180_000, maxTokenAttempts: 200_000, maxEstimatedCost: 5 },
   });
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const session = new AutopilotSession({ bookId: "book", store, ai: createFetchAi(cfg, { fetch }), host: "browser", hostLabel: "test", retryDelayMs: 0 });
   await session.start({ brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });
   await session.waitForIdle();

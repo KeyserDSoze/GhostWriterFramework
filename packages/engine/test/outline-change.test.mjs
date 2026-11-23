@@ -131,7 +131,7 @@ const FAST = { readers: false, readersOnPlan: false, specialists: false, pauseAf
 
 /** A book the autopilot wrote to the end: three chapters, each approved (so frozen) and with the entry the autopilot wrote for it. */
 async function finishedBook() {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = createFakeAutopilotAi({ chapters: 3, scenes: 1, reviewVerdict: () => "approve" });
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0, now: () => new Date(NOW) });
   await session.start({ brief: { idea: "x", targetChapters: 3, scenesPerChapter: 1, wordsPerScene: 300 }, options: FAST });

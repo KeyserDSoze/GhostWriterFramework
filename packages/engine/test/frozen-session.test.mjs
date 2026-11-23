@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as engine from "../dist/index.js";
-import { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } from "../dist/testing/index.js";
+import { MemoryBookStore, createFakeAutopilotAi, outlineEntryFiles, seedBookFiles } from "../dist/testing/index.js";
 
 // New exports are read from the namespace so that, before they exist, each test fails on its own.
 const { AutopilotSession, loadBookSnapshot, parseAutopilotState, parseMarkdown } = engine;
@@ -24,7 +24,7 @@ function newSession(store, ai = createFakeAutopilotAi({ reviewVerdict: () => "ap
 }
 
 async function finishedBook({ chapters = 2, options = {} } = {}) {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters }));
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
   const { session } = newSession(store, ai);
   await session.start({ brief: { idea: "x", targetChapters: chapters, scenesPerChapter: 2, wordsPerScene: 300 }, options: { ...FAST, ...options } });
@@ -94,6 +94,7 @@ test("a review asked while a run goes on is done at the next step", async () => 
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve", delayMs: 20 });
   const { session } = newSession(store, ai);
   // Two more chapters to write; the author decides about chapter 1 once the run is going.
+  for (const [path, content] of Object.entries(outlineEntryFiles(4))) if (!store.files.has(path)) store.files.set(path, content);
   await session.configure({ brief: { targetChapters: 4 }, options: { frozenEdits: "notify" } });
   let asked = false;
   session.subscribe((event) => {
@@ -125,7 +126,7 @@ test("resolveFrozenChange refuses what it cannot do, with a code", async () => {
 });
 
 test("the author freezes a chapter by hand, and unfreezes it", async () => {
-  const files = seedBookFiles();
+  const files = seedBookFiles({ chapters: 4 });
   files["chapters/001-the-arrival/001-dawn.md"] = "---\ntype: paragraph\nid: paragraph:001-the-arrival:001-dawn\nchapter: chapter:001-the-arrival\nnumber: 1\ntitle: Dawn\n---\n\nThe author's own opening, written before the autopilot.";
   const store = new MemoryBookStore(files);
   const { session } = newSession(store);

@@ -24,8 +24,8 @@ function fakeServer(features, answer = () => Response.json(snapshot())) {
 
 const client = (server) => new NarrariumServerClient({ baseUrl: BASE, token: "nrs_me", fetch: server.fetch });
 const snapshot = (extra = {}) => ({ bookId: "my-book", state: { status: "running" }, summary: { status: "running" }, activities: [], live: null, running: true, host: "server", ...extra });
-const WITH = ["autopilot", "autopilot-controls", "autopilot-retry"];
-const WITHOUT = ["autopilot", "autopilot-controls", "autopilot-rules", "autopilot-frozen"];
+const WITH = ["autopilot", "autopilot-controls", "autopilot-retry", "autopilot-outline-brief"];
+const WITHOUT = ["autopilot", "autopilot-controls", "autopilot-rules", "autopilot-frozen", "autopilot-outline-brief"];
 const POLICY = { everyMinutes: 15, cycles: 3 };
 
 test("a server says it has «Retry later» and «Retry now» with the feature autopilot-retry; reading it never throws", () => {
@@ -72,5 +72,5 @@ test("the client never sends longRetry to a server that does not announce autopi
   const plain = fakeServer(WITHOUT);
   await client(plain).updateAutopilotOptions("b", { publishEvery: "off" });
   await client(plain).startAutopilot("b", { options: { pauseAfterPlan: false } });
-  assert.deepEqual(plain.log.map((request) => request.path), ["/api/v1/books/b/autopilot/options", "/api/v1/books/b/autopilot/start"], "a request without the setting does not ask for the features");
+  assert.deepEqual(plain.log.map((request) => request.path), ["/api/v1/books/b/autopilot/options", "/api/v1/info", "/api/v1/books/b/autopilot/start"], "a request without the setting asks only for the features a start needs: the Scaletta's");
 });

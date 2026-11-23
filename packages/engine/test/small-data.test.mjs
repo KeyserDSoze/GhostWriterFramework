@@ -47,10 +47,10 @@ function scriptedAi(script) {
   };
 }
 
-const withDirector = () => ({ ...seedBookFiles(), "director.md": serializeDirector({ ...defaultDirector("en"), approvalScore: 7, maxReviewRounds: 3 }) });
+const withDirector = (chapters = 0) => ({ ...seedBookFiles({ chapters }), "director.md": serializeDirector({ ...defaultDirector("en"), approvalScore: 7, maxReviewRounds: 3 }) });
 
 async function run(ai, chapters, options = READERS) {
-  const store = new MemoryBookStore(withDirector());
+  const store = new MemoryBookStore(withDirector(chapters));
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   await session.start({ brief: brief(chapters), options });
   await session.waitForIdle();
@@ -164,7 +164,7 @@ const ONE = { brief: brief(1), options: FAST };
 
 async function failingRun(fetch) {
   const ai = createFetchAi({ aiIntegrations: [integration({ id: "main" })] }, { fetch });
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const events = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   session.subscribe((event) => events.push(event));
@@ -253,7 +253,7 @@ const steps = async (session, count, start = {}) => {
 
 test("the time the worked time started counting is written when it is born, with the first step it counts, and never changes", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const first = sessionFor(store, slowAi(clock, 1000), clock);
   await steps(first.session, 2, { brief: brief(2), options: FAST });
   const state = stateOf(store);
@@ -272,7 +272,7 @@ test("the time the worked time started counting is written when it is born, with
 
 test("a book whose worked time was already counting has no moment to say, and is not given one", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const first = sessionFor(store, slowAi(clock, 1000), clock);
   await steps(first.session, 1, { brief: brief(2), options: FAST });
   // The state as an engine that counted the time but did not say since when wrote it.
@@ -290,7 +290,7 @@ test("a book whose worked time was already counting has no moment to say, and is
 
 test("a state that never counted the time is born with both when its next step is saved, at that step's start", async () => {
   const clock = fakeClock(Date.parse("2026-03-05T12:30:00.000Z"));
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const first = sessionFor(store, slowAi(clock, 1000), clock);
   await steps(first.session, 1, { brief: brief(2), options: FAST });
   const written = stateOf(store);

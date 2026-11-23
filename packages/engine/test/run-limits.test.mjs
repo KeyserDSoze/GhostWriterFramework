@@ -50,7 +50,7 @@ async function run(autopilot, start) {
 // ─── Q2: the limits of one run ──────────────────────────────────────────────
 
 test("a run of one step, repeated three times, makes exactly three steps and three commits", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = fakeAi();
   const { session: autopilot, events } = session(store, ai);
   const limit = { limits: { steps: 1 } };
@@ -75,7 +75,7 @@ test("a run of one step, repeated three times, makes exactly three steps and thr
 });
 
 test("the message of the limit is in the language of the book, and says how many steps for more than one", async () => {
-  const store = new MemoryBookStore(seedBookFiles({ language: "it" }));
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3, language: "it" }));
   const { session: autopilot } = session(store, fakeAi());
   await run(autopilot, { ...THREE, limits: { steps: 1 } });
   assert.equal(stateOf(store).message, "Passo eseguito come richiesto: in pausa.");
@@ -83,14 +83,14 @@ test("the message of the limit is in the language of the book, and says how many
   assert.equal(stateOf(store).message, "2 passi eseguiti come richiesto: in pausa.");
   assert.equal(stateOf(store).stats.tasks, 3);
 
-  const english = new MemoryBookStore(seedBookFiles());
+  const english = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const { session: other } = session(english, fakeAi());
   await run(other, { ...THREE, limits: { steps: 3 } });
   assert.equal(stateOf(english).message, "3 steps done as requested: paused.");
 });
 
 test("a run of one chapter completes exactly one chapter, and the next one the following chapter", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = fakeAi();
   const { session: autopilot, events } = session(store, ai);
   await run(autopilot, { ...THREE, limits: { chapters: 1 } });
@@ -115,7 +115,7 @@ test("a run of one chapter completes exactly one chapter, and the next one the f
 
 test("the stricter of the limit of the run and the option chaptersPerRun is the one that counts", async () => {
   for (const [perRun, chapters, done] of [[3, 1, 1], [1, 3, 1], [2, 2, 2], [0, 2, 2], [2, undefined, 2]]) {
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
     const ai = fakeAi();
     const { session: autopilot, events } = session(store, ai);
     await run(autopilot, { brief: THREE.brief, options: { ...FAST, chaptersPerRun: perRun }, ...(chapters === undefined ? {} : { limits: { chapters } }) });
@@ -129,7 +129,7 @@ test("the stricter of the limit of the run and the option chaptersPerRun is the 
 
 test("a step that fails does not count, a step that is cancelled does not count, and nothing is counted for a step that is repeated", async () => {
   // The second step fails once with an error that is retried: the run still makes two saved steps.
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const base = fakeAi();
   let failed = false;
   const ai = {
@@ -152,7 +152,7 @@ test("a step that fails does not count, a step that is cancelled does not count,
   assert.equal(runEnded(events).at(-1).code, "stepLimit");
 
   // A step that is abandoned by a pause is not counted either.
-  const second = new MemoryBookStore(seedBookFiles());
+  const second = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const slow = fakeAi({ delayMs: 40 });
   const { session: other, events: otherEvents } = session(second, slow);
   await other.start({ ...THREE, limits: { steps: 1 } });
@@ -167,7 +167,7 @@ test("a step that fails does not count, a step that is cancelled does not count,
 });
 
 test("a limit never takes the place of the reason the run stops anyway", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const { session: autopilot, events } = session(store, fakeAi());
   const start = { brief: THREE.brief, options: { ...FAST, pauseAfterPlan: true }, limits: { steps: 1 } };
   await run(autopilot, start);
@@ -179,7 +179,7 @@ test("a limit never takes the place of the reason the run stops anyway", async (
   assert.equal(state.message, "The plan is ready: read it and resume when you want.", "the plan waits for the author: that is what the run says");
   assert.equal(runEnded(events).at(-1).code, undefined);
 
-  const finished = new MemoryBookStore(seedBookFiles());
+  const finished = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { session: last } = session(finished, fakeAi({ chapters: 1 }));
   await run(last, { ...ONE, limits: { chapters: 1 } });
   assert.equal(stateOf(finished).status, "paused", "the chapter is the limit: the judgement of the book is left for the next run");
@@ -190,7 +190,7 @@ test("a limit never takes the place of the reason the run stops anyway", async (
 
 test("a value that is not a whole number above zero is no limit", async () => {
   for (const limits of [{ steps: 0 }, { steps: -1 }, { steps: 1.5 }, { steps: Number.NaN }, { steps: Number.POSITIVE_INFINITY }, { steps: "1" }, { steps: null }, { chapters: 0 }, { chapters: -2 }, { chapters: 0.5 }, {}, null, [], "1", 3]) {
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
     const { session: autopilot } = session(store, fakeAi({ chapters: 1 }));
     await run(autopilot, { ...ONE, limits });
     assert.equal(stateOf(store).status, "completed", JSON.stringify(limits));
@@ -203,7 +203,7 @@ test("a value that is not a whole number above zero is no limit", async () => {
 });
 
 test("the limit is visible while the run goes on, and is gone when it ends", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const { session: autopilot, events } = session(store, fakeAi());
   const states = () => events.filter((event) => event.type === "state").map((event) => event.state);
   await run(autopilot, { ...THREE, limits: { steps: 4, chapters: 1 } });
@@ -221,13 +221,13 @@ test("the limit is visible while the run goes on, and is gone when it ends", asy
   assert.equal(snapshot.summary.limits, null);
   assert.equal(snapshot.state.status, "paused");
 
-  const none = new MemoryBookStore(seedBookFiles());
+  const none = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const { session: free, events: freeEvents } = session(none, fakeAi({ chapters: 1 }));
   await run(free, ONE);
   assert.ok(freeEvents.filter((event) => event.type === "state").every((event) => event.state.limits === null), "no limit, nothing to show");
 
   // The effective limit of chapters is the stricter one, also when it is the option that makes it.
-  const strict = new MemoryBookStore(seedBookFiles());
+  const strict = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const { session: option, events: optionEvents } = session(strict, fakeAi());
   await run(option, { brief: THREE.brief, options: { ...FAST, chaptersPerRun: 1 } });
   const shown = optionEvents.filter((event) => event.type === "state").map((event) => event.state.limits).filter(Boolean);
@@ -237,7 +237,7 @@ test("the limit is visible while the run goes on, and is gone when it ends", asy
 });
 
 test("the limit shows live to a client that connects during the run", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = fakeAi({ delayMs: 30 });
   const { session: autopilot } = session(store, ai);
   await autopilot.start({ ...THREE, limits: { steps: 2 } });
@@ -250,7 +250,7 @@ test("the limit shows live to a client that connects during the run", async () =
 });
 
 test("the limits are for this run only: they are not saved, not in the options and not in the next run", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = fakeAi({ chapters: 1 });
   const { session: autopilot } = session(store, ai);
   await run(autopilot, { ...ONE, limits: { steps: 1, chapters: 1 } });
@@ -265,7 +265,7 @@ test("the limits are for this run only: they are not saved, not in the options a
 });
 
 test("when the chapter limit and a pause at the end of the chapter coincide, the request that was made is the one reported", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const { session: autopilot, events } = session(store, fakeAi());
   when(autopilot, started("write", 1), () => autopilot.pause("after-chapter"));
   await run(autopilot, { ...THREE, limits: { chapters: 1 } });
@@ -274,7 +274,7 @@ test("when the chapter limit and a pause at the end of the chapter coincide, the
 });
 
 test("a pause the author asks for wins over the limit when both are due at the same step", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const { session: autopilot, events } = session(store, fakeAi());
   when(autopilot, started("concept"), () => autopilot.pause("after-step"));
   await run(autopilot, { ...THREE, limits: { steps: 1 } });

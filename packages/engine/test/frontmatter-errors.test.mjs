@@ -366,14 +366,14 @@ function opinionAi(json) {
 test("the director's verdict is read whatever its case, its score may have a decimal comma, and an opinion without a score is refused", async () => {
   const output = normalizeDirectorOpinionOutput({ verdict: "Approved", score: "7,5", summary: "Great", strengths: "a\nb", concerns: [{ severity: "High", issue: "x", suggestion: "y" }] });
   assert.deepEqual(output, { verdict: "approve", score: 7.5, summary: "Great", strengths: ["a", "b"], concerns: [{ severity: "minor", issue: "x", suggestion: "y" }], decisions: [], nextSteps: [], questionsForAuthor: [] });
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   await assert.rejects(() => askDirector({ store, ai: opinionAi({ verdict: "approved", summary: "Wonderful." }), target: { kind: "book" }, save: true }), /score/);
   assert.equal(store.files.has("evaluations/director/book.md"), false, "nothing is saved for a reply without a score");
 });
 
 test("askDirector reports the problems of director.md next to the opinion, and leaves the file alone", async () => {
   const typo = "---\nname: Ada: the strict\nstrictness: 9\n---\nVision";
-  const store = new MemoryBookStore({ ...seedBookFiles(), "director.md": typo });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 2 }), "director.md": typo });
   const ai = opinionAi({ verdict: "approve", score: 8, summary: "Fine.", strengths: [], concerns: [], decisions: [], nextSteps: [] });
   const result = await askDirector({ store, ai, target: { kind: "book" }, save: true });
   assert.equal(result.opinion.verdict, "approve");
@@ -382,7 +382,7 @@ test("askDirector reports the problems of director.md next to the opinion, and l
   assert.equal(result.warnings.length, 1);
   assert.match(result.warnings[0], /director\.md/);
   assert.equal(store.files.get("director.md"), typo, "the file is never replaced by the defaults");
-  const fine = await askDirector({ store: new MemoryBookStore(seedBookFiles()), ai, target: { kind: "book" } });
+  const fine = await askDirector({ store: new MemoryBookStore(seedBookFiles({ chapters: 2 })), ai, target: { kind: "book" } });
   assert.deepEqual(fine.warnings, []);
 });
 
@@ -413,7 +413,7 @@ const labels = (ai) => ai.calls.map((call) => call.label);
 test("a typo in director.md stops the autopilot before it asks the model anything, lists the problem, and leaves the file as it is", async () => {
   const typo = "---\nname: Ada: the strict\nstrictness: 9\nred_lines:\n  - No gore\n---\nVision";
   const ai = createFakeAutopilotAi();
-  const context = await run({ ...seedBookFiles(), "director.md": typo }, ai);
+  const context = await run({ ...seedBookFiles({ chapters: 2 }), "director.md": typo }, ai);
   assert.equal(ai.calls.length, 0, "nothing was spent");
   assert.equal(context.state.status, "waiting-author");
   assert.match(context.state.message, /director\.md/);
@@ -434,7 +434,7 @@ test("a typo in director.md stops the autopilot before it asks the model anythin
 
 test("the message lists the problems of a profile that has many, and says how many more there are", async () => {
   const weights = Array.from({ length: 12 }, (_, index) => `  standard-r${index}: heavy`).join("\n");
-  const context = await run({ ...seedBookFiles(), "director.md": `---\nname: Ada\nreader_weights:\n${weights}\n---\nVision` }, createFakeAutopilotAi());
+  const context = await run({ ...seedBookFiles({ chapters: 2 }), "director.md": `---\nname: Ada\nreader_weights:\n${weights}\n---\nVision` }, createFakeAutopilotAi());
   assert.equal(context.state.status, "waiting-author");
   assert.match(context.state.message, /standard-r0\b/);
   assert.match(context.state.message, /\(and 4 more\)/);
@@ -444,7 +444,7 @@ test("the message lists the problems of a profile that has many, and says how ma
 test("the message to an author who writes in Italian is in Italian", async () => {
   const typo = "---\nname: Ada: la severa\n---\nVisione";
   const ai = createFakeAutopilotAi();
-  const context = await run({ ...seedBookFiles({ language: "it" }), "director.md": typo }, ai);
+  const context = await run({ ...seedBookFiles({ chapters: 2, language: "it" }), "director.md": typo }, ai);
   assert.equal(context.state.status, "waiting-author");
   assert.match(context.state.message, /correggi/i);
   assert.match(context.state.message, /director\.md/);
@@ -452,7 +452,7 @@ test("the message to an author who writes in Italian is in Italian", async () =>
 
 test("autonomy: Full is the autonomy full, and a reader weighted 0.4 is not ignored", async () => {
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
-  const files = { ...seedBookFiles(), "director.md": "---\nautonomy: Full\nreader_weights:\n  standard-general: 0.4\n---\nVision" };
+  const files = { ...seedBookFiles({ chapters: 2 }), "director.md": "---\nautonomy: Full\nreader_weights:\n  standard-general: 0.4\n---\nVision" };
   const { state } = await run(files, ai, { brief: ONE.brief, options: { ...FAST, readers: true, maxReaders: 2 } });
   assert.equal(state.status, "completed", state.lastError?.message);
   const review = ai.calls.find((call) => call.label === "autopilot:plan-review");
@@ -463,7 +463,7 @@ test("autonomy: Full is the autonomy full, and a reader weighted 0.4 is not igno
 test("a ghostwriter the autopilot cannot read stops it before it writes, and names the file", async () => {
   const broken = "---\nname: Default: Ghost\ntone: Natural\n---\n\nWrite well.\n";
   const ai = createFakeAutopilotAi();
-  const context = await run({ ...seedBookFiles(), "ghostwriters/default.md": broken }, ai);
+  const context = await run({ ...seedBookFiles({ chapters: 2 }), "ghostwriters/default.md": broken }, ai);
   assert.equal(context.state.status, "waiting-author");
   assert.match(context.state.message, /ghostwriters\/default\.md/);
   assert.equal(labels(ai).some((label) => label.startsWith("autopilot:write")), false, "no scene was written with a profile that was not read");
@@ -474,7 +474,7 @@ test("a ghostwriter the autopilot cannot read stops it before it writes, and nam
 
 test("a reader file the autopilot cannot read stops it only when readers are used", async () => {
   const broken = "---\nid: reader:standard.general\nenabled: false\nname: General: reader\n---\nbody";
-  const files = { ...seedBookFiles(), "personas/standard-general.md": broken };
+  const files = { ...seedBookFiles({ chapters: 2 }), "personas/standard-general.md": broken };
   const ai = createFakeAutopilotAi();
   const withReaders = await run(files, ai, { brief: ONE.brief, options: { ...FAST, readers: true, maxReaders: 2 } });
   assert.equal(withReaders.state.status, "waiting-author");
@@ -485,7 +485,7 @@ test("a reader file the autopilot cannot read stops it only when readers are use
 });
 
 // The rewrite of a scene the author damaged by hand (t15 of the review): the summary has a colon in it.
-async function bookWithScene(files = seedBookFiles()) {
+async function bookWithScene(files = seedBookFiles({ chapters: 2 })) {
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
   const context = await run(files, ai);
   assert.equal(context.state.status, "completed", context.state.lastError?.message);
@@ -518,7 +518,7 @@ test("a step that would rewrite a file with frontmatter it cannot read refuses, 
 });
 
 test("the message to an author who writes in Italian names the file and the line in Italian", async () => {
-  const context = await bookWithScene(seedBookFiles({ language: "it" }));
+  const context = await bookWithScene(seedBookFiles({ chapters: 2, language: "it" }));
   const damaged = context.store.files.get(SCENE).replace(/summary: .*/, "summary: Mira litiga con Orrin: il muro cede");
   context.store.write(SCENE, damaged);
   await context.session.intervene({ scope: "rewrite", text: "Rendi Orrin più gentile." });
@@ -557,7 +557,7 @@ test("closing a chapter refuses a chapter.md it cannot read, before it asks the 
   const chapter = "chapters/001-chapter-title-1/chapter.md";
   const damaged = "---\ntype: chapter\nid: chapter:001-chapter-title-1\nnumber: 1\ntitle: Chapter Title 1\nsummary: One: two\n---\n\n# Chapter Title 1\n";
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
-  const { state, store } = await run({ ...seedBookFiles(), [chapter]: damaged }, ai);
+  const { state, store } = await run({ ...seedBookFiles({ chapters: 2 }), [chapter]: damaged }, ai);
   assert.equal(state.status, "error");
   assert.ok(state.lastError.message.includes(chapter), state.lastError.message);
   assert.match(state.lastError.message, /line 6\b/);
@@ -568,7 +568,7 @@ test("closing a chapter refuses a chapter.md it cannot read, before it asks the 
 test("the concept refuses a story design whose frontmatter it cannot read instead of replacing it", async () => {
   const design = "---\ntype: note\ntitle: Story: Design\nscope: story-design\n---\n\n# Story Design\n\n## Premise\n";
   const ai = createFakeAutopilotAi();
-  const { state, store } = await run({ ...seedBookFiles(), "story-design.md": design }, ai);
+  const { state, store } = await run({ ...seedBookFiles({ chapters: 2 }), "story-design.md": design }, ai);
   assert.equal(state.status, "error");
   assert.ok(state.lastError.message.includes("story-design.md"), state.lastError.message);
   assert.match(state.lastError.message, /line 3\b/);
@@ -580,7 +580,7 @@ test("approving the plan refuses a secret whose frontmatter it cannot read inste
   const secret = "secrets/the-wall-is-failing.md";
   const damaged = "---\ntype: secret\nid: secret:the-wall-is-failing\ntitle: The Wall Is Failing\nnotes: kept: for later\n---\n\n# The Wall Is Failing\n\nThe sea wall cracked years ago.\n";
   const ai = createFakeAutopilotAi();
-  const { state, store } = await run({ ...seedBookFiles(), [secret]: damaged }, ai, { brief: { ...ONE.brief, targetChapters: 2 }, options: FAST });
+  const { state, store } = await run({ ...seedBookFiles({ chapters: 2 }), [secret]: damaged }, ai, { brief: { ...ONE.brief, targetChapters: 2 }, options: FAST });
   assert.equal(state.status, "error");
   assert.ok(state.lastError.message.includes(secret), state.lastError.message);
   assert.equal(store.files.get(secret), damaged);
@@ -591,7 +591,7 @@ test("a file that has nothing to be rewritten is not refused for the YAML it hol
   const secret = "secrets/the-wall-is-failing.md";
   const untouched = "---\ntype: secret\nid: secret:the-wall-is-failing\ntitle: The Wall Is Failing\nreveal_in: chapter:002-chapter-title-2\nnotes: kept: for later\n---\n\n# The Wall Is Failing\n\nThe sea wall cracked years ago.\n";
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
-  const { state, store } = await run({ ...seedBookFiles(), [secret]: untouched }, ai, { brief: { ...ONE.brief, targetChapters: 2 }, options: FAST });
+  const { state, store } = await run({ ...seedBookFiles({ chapters: 2 }), [secret]: untouched }, ai, { brief: { ...ONE.brief, targetChapters: 2 }, options: FAST });
   assert.equal(state.status, "completed", state.lastError?.message);
   assert.equal(store.files.get(secret), untouched, "its reveal was already there: nothing was written, so nothing was refused");
 });

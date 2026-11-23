@@ -149,18 +149,19 @@ test("a chapter's text keeps the end of every scene that is cut, and leaves the 
 
 // ─── What the model reads ───────────────────────────────────────────────────────────────────────────────────────────────
 
-const BRIEF = { idea: "x", targetChapters: 1, scenesPerChapter: 6, wordsPerScene: 1400 };
+// The planner gives a chapter at most four scenes (`SCENES_PER_CHAPTER.max`): the scenes of this one are the most it can have.
+const BRIEF = { idea: "x", targetChapters: 1, wordsPerScene: 1400 };
 
 test("a scene a little longer than the book asked for reaches the specialists, the director and the consolidation whole", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
-  // 1700 words of six letters: about 11 900 characters, more than the 9000 that consolidation used to keep and than the 10 000 the director had for each of six scenes.
-  const ai = writing((number) => scene(1700, number), { scenes: 6, reviewVerdict: () => "approve" });
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
+  // 1700 words of six letters: about 11 900 characters, more than the 9000 that consolidation used to keep and than the 10 000 the director had for each of four scenes.
+  const ai = writing((number) => scene(1700, number), { scenes: 4, reviewVerdict: () => "approve" });
   const state = await run(store, ai, BRIEF, { specialists: true });
   assert.equal(state.status, "completed", state.lastError?.message);
   for (const label of ["autopilot:specialists:1", "autopilot:director-review:1", "autopilot:consolidate:1"]) {
     const call = ai.calls.find((entry) => entry.label === label);
     assert.ok(call, label);
-    for (let number = 1; number <= 6; number += 1) {
+    for (let number = 1; number <= 4; number += 1) {
       const block = sceneBlock(call.user, number);
       assert.ok(block.includes(`END OF SCENE ${number}.`), `${label}: the end of scene ${number} is missing`);
       assert.equal(block.includes(MARKER), false, `${label}: scene ${number} was cut`);
@@ -170,7 +171,7 @@ test("a scene a little longer than the book asked for reaches the specialists, t
 });
 
 test("a scene within the limit reaches the model exactly as it is written", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const ai = writing((number) => scene(400, number), { scenes: 3, reviewVerdict: () => "approve" });
   const state = await run(store, ai, { ...BRIEF, scenesPerChapter: 3, wordsPerScene: 400 }, { specialists: true });
   assert.equal(state.status, "completed", state.lastError?.message);
@@ -185,7 +186,7 @@ test("a scene within the limit reaches the model exactly as it is written", asyn
 });
 
 test("a scene far longer than the book asked for is cut in the middle: its start and its end both reach the model", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   // Three scenes of about 30 000 characters for a book that asks for 300 words (about 2000 characters).
   const ai = writing((number) => scene(4300, number), { scenes: 3, reviewVerdict: () => "approve" });
   const state = await run(store, ai, { ...BRIEF, scenesPerChapter: 3, wordsPerScene: 300 }, { specialists: true });
@@ -205,7 +206,7 @@ test("a scene far longer than the book asked for is cut in the middle: its start
 
 /** A book whose chapter 1 was written by the author, without a summary: `scenes` scenes of `words` words each. */
 function importedBook(scenes, words) {
-  const files = seedBookFiles();
+  const files = seedBookFiles({ chapters: 2 });
   files["chapters/001-part/chapter.md"] = "---\ntype: chapter\nid: chapter:001-part\nnumber: 1\ntitle: Part\n---\n\n# Part\n";
   for (let number = 1; number <= scenes; number += 1) {
     const slug = `${String(number).padStart(3, "0")}-scene`;
@@ -248,7 +249,7 @@ test("the scenes of a chapter the author wrote that are far longer than the book
 });
 
 test("the director's opinion on a scene or a chapter keeps the end of a long scene", async () => {
-  const files = seedBookFiles();
+  const files = seedBookFiles({ chapters: 2 });
   files["chapters/001-the-arrival/chapter.md"] = "---\ntype: chapter\nid: chapter:001-the-arrival\nnumber: 1\ntitle: The Arrival\nsummary: Mira arrives.\n---\n\n# The Arrival\n";
   for (const number of [1, 2, 3]) {
     files[`chapters/001-the-arrival/00${number}-scene.md`] = `---\ntype: paragraph\nid: paragraph:001-the-arrival:00${number}-scene\nchapter: chapter:001-the-arrival\nnumber: ${number}\ntitle: Scene ${number}\n---\n\n${scene(7000, number)}`;
@@ -266,7 +267,7 @@ test("the director's opinion on a scene or a chapter keeps the end of a long sce
 });
 
 test("the ending a scene is continued from is the real one, however long the previous scene is", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   // 17 000 words of six letters: 119 000 characters, more than the 100 000 that were read before the ending was taken.
   const ai = writing((number) => (number === 1 ? scene(17000, 1) : scene(250, 2)), { scenes: 2, reviewVerdict: () => "approve" });
   const state = await run(store, ai, { ...BRIEF, scenesPerChapter: 2, wordsPerScene: 300 }, { specialists: false });

@@ -59,7 +59,7 @@ async function run(store, ai, start) {
 const ONE_CHAPTER = { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }, options: FAST };
 
 test("a director review without decisions is rejected and retried with the reason, never approved by default", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = scripted((request, seen) => request.label === "autopilot:director-review:1" && seen === 0
     ? reply({ verdict: "approve", score: 9, summary: "Fine.", strengths: [], decisions: [], extraFixes: [], guidance: [] })
     : undefined);
@@ -78,7 +78,7 @@ test("a director review without decisions is rejected and retried with the reaso
 });
 
 test("a director review that keeps omitting decisions stops the autopilot instead of approving the chapter", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = scripted((request) => request.label.startsWith("autopilot:director-review")
     ? reply({ verdict: "approve", score: 9, summary: "Fine." })
     : undefined);
@@ -96,7 +96,7 @@ test("specialists without a findings list, a plan review without verdict and a f
     ["director_opinion", { score: 9, summary: "Great book." }, "final", /"verdict" is missing/],
   ];
   for (const [tool, json, task, pattern] of cases) {
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
     const ai = scripted((request) => request.json?.name === tool ? reply(json) : undefined);
     const { state } = await run(store, ai, ONE_CHAPTER);
     assert.equal(state.status, "error", tool);
@@ -109,7 +109,7 @@ test("specialists without a findings list, a plan review without verdict and a f
 });
 
 test("an impact analysis without targets never drops the author's rewrite", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const done = await run(store, createFakeAutopilotAi({ reviewVerdict: () => "approve" }), ONE_CHAPTER);
   assert.equal(done.state.status, "completed");
   await done.session.intervene({ scope: "rewrite", text: "Make Orrin kinder." });
@@ -125,7 +125,7 @@ test("an impact analysis without targets never drops the author's rewrite", asyn
 });
 
 test("a reply cut by the output limit never becomes a scene and is not retried", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = scripted((request) => request.label === "autopilot:write:1.1"
     ? { text: "The harbor light ".repeat(200), truncated: true, usage: { inputTokens: 900, outputTokens: 4000, cachedInputTokens: 0 }, model: "local-model", provider: "openai", cost: 0.25 }
     : undefined);
@@ -139,7 +139,7 @@ test("a reply cut by the output limit never becomes a scene and is not retried",
 });
 
 test("what failed steps cost is saved with the failure and counts toward the budget", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const failure = new AiProviderError("HTTP 400 — context too long", 400, false, { usage: { inputTokens: 1000, outputTokens: 500, cachedInputTokens: 0 }, cost: 0.5, model: "big-model", provider: "openai" });
   const { state } = await run(store, scripted((request) => request.label === "autopilot:concept" ? failure : undefined), { brief: { idea: "x" }, options: { ...FAST, budgetLimit: 0.4 } });
   assert.equal(state.status, "error");
@@ -159,7 +159,7 @@ test("what failed steps cost is saved with the failure and counts toward the bud
 });
 
 test("a plan with fewer chapters than requested is rejected with both numbers", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   const ai = createFakeAutopilotAi({ chapters: 2 });
   const { state } = await run(store, ai, { brief: { idea: "x", targetChapters: 3 }, options: FAST });
   assert.equal(state.status, "error");
@@ -170,7 +170,7 @@ test("a plan with fewer chapters than requested is rejected with both numbers", 
 });
 
 test("the story so far before a chapter never contains that chapter or later ones, even after a revision", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 3 }));
   let version = 0;
   const ai = scripted((request) => {
     const closing = /^autopilot:consolidate:(\d+)$/.exec(request.label);
@@ -213,7 +213,7 @@ test("the story so far before a chapter never contains that chapter or later one
 });
 
 test("a story so far over the hard limit is rejected with the excess, then rewritten", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = scripted((request, seen) => request.label === "autopilot:consolidate:1" && seen === 0
     ? reply({ summary: "S.", recap: "R.", stateChanges: {}, storySoFar: "word ".repeat(1300) })
     : undefined);
@@ -269,7 +269,7 @@ test("a new canon entity matching an existing name, alias or first name reuses i
   assert.equal(sameCanonEntity("location", "Harbor", ["Glass Harbor"]), false);
   assert.equal(sameCanonEntity("character", "The Keeper", ["Orrin Hale", "The Keeper"]), true);
 
-  const files = seedBookFiles();
+  const files = seedBookFiles({ chapters: 1 });
   files["characters/mara-venturi.md"] = "---\ntype: character\nid: character:mara-venturi\nname: Mara Venturi\n---\n\n# Mara Venturi\n";
   const store = new MemoryBookStore(files);
   const ai = scripted((request) => request.json?.name === "book_concept"
@@ -283,7 +283,7 @@ test("a new canon entity matching an existing name, alias or first name reuses i
 });
 
 test("a rewritten scene gets a new summary", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = scripted((request, seen) => request.label === "autopilot:scene-summary:1.1" ? reply({ summary: `Summary ${seen + 1}.` }) : undefined);
   const { state } = await run(store, ai, ONE_CHAPTER);
   assert.equal(state.status, "completed");
@@ -294,7 +294,7 @@ test("a rewritten scene gets a new summary", async () => {
 });
 
 test("accepted fixes that cannot be applied are reported, not dropped silently", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = scripted((request, seen) => request.label === "autopilot:director-review:1" && seen === 0
     ? reply({ verdict: "revise", score: 5, summary: "Fix it.", strengths: [], decisions: [{ findingId: "[s1-1]", action: "accept", rationale: "Yes.", remediation: "Do it.", sceneNumber: 99 }], extraFixes: [], guidance: [] })
     : undefined);
@@ -304,7 +304,7 @@ test("accepted fixes that cannot be applied are reported, not dropped silently",
 });
 
 test("director notes are de-duplicated and bounded; the newest author rules survive the cap", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = scripted((request) => request.label === "autopilot:director-review:1"
     ? reply({ verdict: "approve", score: 8, summary: "Good.", strengths: [], decisions: [...request.user.matchAll(/\[([A-Z]\d+-\d+)\]/g)].map((match) => ({ findingId: match[1], action: "reject", rationale: "No.", remediation: "", sceneNumber: 1 })), extraFixes: [], guidance: ["KEEP every chapter ending on a turn!", "y".repeat(1000)] })
     : undefined);
@@ -353,7 +353,7 @@ test("revisions: chapters already rewritten survive a new rewrite request, and o
 });
 
 test("an on-demand director opinion is never built from a truncated or verdict-less reply", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const truncated = { calls: [], async complete() { return { ...reply({ verdict: "approve", score: 9, summary: "Great." }), truncated: true }; } };
   await assert.rejects(askDirector({ store, ai: truncated, target: { kind: "book" }, save: true }), (error) => error instanceof AiProviderError && error.truncated === true && error.retryable === false);
   const verdictless = { calls: [], async complete() { return reply({ score: 9, summary: "Great." }); } };

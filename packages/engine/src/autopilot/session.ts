@@ -1,6 +1,7 @@
 import { redactSecrets } from "../ai/redact.js";
 import type { AiPort } from "../ai/types.js";
 import { FrozenChapterError, freezeChapterChanges, markReviewedChanges, parseChapterFreeze, unfreezeChapterChanges } from "../book/freeze.js";
+import { writeOutlineBrief } from "../book/outline-brief.js";
 import { OutlineCache, OutlineReader } from "../book/outline.js";
 import { AUTOPILOT_ACTIVITY_FILE, AUTOPILOT_PLAN_FILE, AUTOPILOT_STATE_FILE, type EvaluationTarget } from "../book/paths.js";
 import { SnapshotCache, loadBookSnapshot, type BookSnapshot } from "../book/snapshot.js";
@@ -25,6 +26,7 @@ import {
   type FrozenStatusEntry,
   type FrozenWorkItem,
 } from "./frozen.js";
+import { readBrief } from "./brief.js";
 import { outlinePlanStatus, type OutlineWrittenChange } from "./outline-check.js";
 import { advanceState } from "./planner.js";
 import {
@@ -39,7 +41,7 @@ import {
   type AutopilotHooks,
   type StoredAutopilot,
 } from "./runner.js";
-import { AutopilotRuleError, DEFAULT_OPTIONS, createAutopilotState, hostDefaultPublish, normalizeBrief, normalizeOptions, normalizeRuleText, summarizeAutopilotState, withoutStopCause } from "./state.js";
+import { AutopilotRuleError, DEFAULT_OPTIONS, createAutopilotState, hostDefaultPublish, normalizeOptions, normalizeRuleText, summarizeAutopilotState, withoutStopCause } from "./state.js";
 import {
   FROZEN_ACTIONS,
   FROZEN_CHANGE_ACTIONS,
@@ -55,6 +57,7 @@ import {
   type AutopilotRestartCause,
   type AutopilotRunnerInfo,
   type AutopilotSnapshot,
+  type AutopilotBrief,
   type AutopilotState,
   type AutopilotStateSummary,
   type FrozenAction,
@@ -384,6 +387,8 @@ export class AutopilotSession {
     if (!options.force && runner && runnerActivity(stored.state, this.now()) === "active" && (!this.isOwnRunner(runner) || await this.ownRunnerAliveElsewhere())) {
       throw new AutopilotBusyError(runner.label || runner.host);
     }
+    // A brief sent with the start is the book's brief from now on (the run reads the file, see `readBrief`).
+    if (options.brief) await writeOutlineBrief(this.config.store, options.brief);
     let resolveStarted: () => void = () => undefined;
     let rejectStarted: (error: unknown) => void = () => undefined;
     const started = new Promise<void>((resolve, reject) => {
@@ -790,14 +795,27 @@ export class AutopilotSession {
     throw new Error("Could not save the chapter.");
   }
 
-  /** Change the brief or the options while the autopilot is not running. */
+  /**
+   * Change the brief or the options while the autopilot is not running. The brief is the book's `outline/_brief.md`: a brief sent is saved
+   * there first, and the state takes the brief the file has; without one, the state takes the file's brief as well.
+   */
   async configure(input: StartOptions): Promise<AutopilotState> {
     if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
+    const brief = await this.briefOf(input.brief);
     return this.mutate("Autopilot: settings", (state) => ({
       ...state,
-      brief: normalizeBrief(input.brief ?? {}, state.brief),
+      brief,
       options: normalizeOptions(input.options ?? {}, state.options),
     }));
+  }
+
+  /** The brief as the file has it after the author's, when one is sent (see `configure`). */
+  private async briefOf(sent: Partial<AutopilotBrief> | undefined): Promise<AutopilotBrief> {
+    if (sent) return writeOutlineBrief(this.config.store, sent);
+    const stored = await readStoredAutopilot(this.config.store);
+    const { brief, changes } = await readBrief(this.config.store, stored.state);
+    if (changes.length) await this.config.store.commit(changes, "Autopilot: brief");
+    return brief;
   }
 
   /**

@@ -284,6 +284,19 @@ export function serverSupportsAutopilotAutoResume(info: { features?: unknown } |
 }
 
 /**
+ * The `ServerInfo.features` entry of a server that takes the length of a book from its Scaletta: the chapters are the chapter entries of
+ * `outline/` and the brief is `outline/_brief.md` (with the idea in `outline/book.md`). A server without it plans the default number of chapters and
+ * ignores the outline, so the engine's client never starts or configures the autopilot of such a server (`ServerRequestError`, `feature_unavailable`).
+ */
+export const SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF = "autopilot-outline-brief";
+
+/** Whether the server announces that the length of a book comes from its Scaletta. Takes its info or the list of its features. Never throws: an older server, or an odd answer, says no. */
+export function serverHasOutlineBrief(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  const features = Array.isArray(info) ? info : (info as { features?: unknown } | null | undefined)?.features;
+  return Array.isArray(features) && features.includes(SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF);
+}
+
+/**
  * The `ServerInfo.features` entry of a server that lists the conflicts of a GitHub book with GitHub and resolves them: `GET /api/v1/books/:id/github-conflicts`
  * and `POST /api/v1/books/:id/github-conflicts/resolve`. A server without it answers 404 to them: the engine's client refuses before sending
  * (`feature_unavailable`).

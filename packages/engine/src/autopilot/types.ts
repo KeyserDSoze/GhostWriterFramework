@@ -30,6 +30,10 @@ export type AutopilotTaskKind =
   /** Freezing, without the model: the chapters an older engine approved (once), and the changes the author marked as reviewed. */
   | "freeze";
 
+/**
+ * The brief of the book, read from `outline/_brief.md` (see `OutlineBrief`): the chapters are the chapter entries of the outline, and the
+ * planner decides the scenes of each chapter (`scenesForChapter`); `wordsPerScene` is the target of every scene.
+ */
 export interface AutopilotBrief {
   /** The idea, premise or pitch. One sentence is enough. */
   idea: string;
@@ -38,8 +42,6 @@ export interface AutopilotBrief {
    * the synopsis then still applies where the outline says nothing.
    */
   synopsis: string;
-  targetChapters: number;
-  scenesPerChapter: number;
   wordsPerScene: number;
   genre: string;
   audience: string;

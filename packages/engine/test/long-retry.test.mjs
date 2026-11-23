@@ -44,7 +44,7 @@ function newSession(store, ai, extra = {}) {
   return { session, events };
 }
 
-async function run(ai, { options = {}, extra = {}, files = seedBookFiles() } = {}) {
+async function run(ai, { options = {}, extra = {}, files = seedBookFiles({ chapters: 1 }) } = {}) {
   const store = new MemoryBookStore(files);
   const { session, events } = newSession(store, ai, extra);
   await session.start({ brief: BRIEF, options: { ...FAST, ...options } });
@@ -252,7 +252,7 @@ test("unlimited cycles go on until the step works, and the summary says it with 
 
 test("the attempts that end in a long wait do not count against the ceiling of a run that loops: unlimited is not cut short", async () => {
   // One chapter: a run is stopped as a runaway after 580 steps. 150 cycles of four attempts are 600.
-  assert.equal(engine.runStepCeiling({ brief: { targetChapters: 1 }, plan: null }), 580);
+  assert.equal(engine.runStepCeiling({ plan: null }, 1), 580);
   const ai = conceptFails(600);
   const { state, events } = await run(ai, { options: { longRetry: { everyMinutes: 1, cycles: "unlimited" } } });
   assert.equal(state.status, "completed", state.message);
@@ -292,7 +292,7 @@ test("a budget that is already used up is not waited for: the run pauses for the
 // ─── Waiting ────────────────────────────────────────────────────────────────
 
 /** A run whose concept fails like a crashed node, with the long level on, that is now in its first long wait (36 s at this scale). */
-async function waitingLong(times = Number.POSITIVE_INFINITY, longRetry = { everyMinutes: 60, cycles: 3 }, files = seedBookFiles()) {
+async function waitingLong(times = Number.POSITIVE_INFINITY, longRetry = { everyMinutes: 60, cycles: 3 }, files = seedBookFiles({ chapters: 1 })) {
   const store = new MemoryBookStore(files);
   const ai = conceptFails(times, () => crashed());
   const { session, events } = newSession(store, ai, { retryDelayMs: 40 });
@@ -333,7 +333,7 @@ test("a pause ends the long wait at once: nothing more is called, and the summar
 });
 
 test("a host that takes the book over ends a long wait at the next heartbeat: the run stops, and writes nothing more", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = conceptFails(Number.POSITIVE_INFINITY, () => crashed());
   const { session, events } = newSession(store, ai, { retryDelayMs: 40, persistHeartbeatMs: 20 });
   await session.start({ brief: BRIEF, options: { ...FAST, longRetry: { everyMinutes: 60, cycles: 3 } } });
@@ -380,7 +380,7 @@ test("a host that takes the book over ends a long wait at the next heartbeat: th
 });
 
 test("retryNow ends a short wait and the attempt starts at once; the counters stay, and a pause after it works as always", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = conceptFails(2);
   const { session, events } = newSession(store, ai, { retryDelayMs: 60_000 });
   await session.start({ brief: BRIEF, options: FAST });
@@ -416,7 +416,7 @@ test("retryNow ends a long wait: the new group starts, and the cycle stays count
 });
 
 test("retryNow with no wait does nothing and says false: no run, or a run that is not waiting", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   let release = () => undefined;
   let reached = false;
   const held = new Promise((resolve) => {
@@ -461,7 +461,7 @@ test("turning the long level off while the run waits ends the wait: the run stop
 });
 
 test("«Retry later» turned off on another device reaches a run that waits with its next heartbeat", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = conceptFails(Number.POSITIVE_INFINITY, () => crashed());
   const { session, events } = newSession(store, ai, { retryDelayMs: 40, persistHeartbeatMs: 20 });
   await session.start({ brief: BRIEF, options: { ...FAST, longRetry: { everyMinutes: 60, cycles: 3 } } });
@@ -501,7 +501,7 @@ test("an hours-long wait keeps the book: the heartbeat is saved, and another hos
     const realStart = Date.now();
     const fakeStart = Date.parse("2026-01-01T00:00:00.000Z");
     const clock = () => new Date(fakeStart + (Date.now() - realStart) * 5000);
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
     const ai = conceptFails(4);
     const { session, events } = newSession(store, ai, { retryDelayMs: 0.8, now: clock, persistHeartbeatMs });
     await session.start({ brief: BRIEF, options: { ...FAST, longRetry: { everyMinutes: 600, cycles: 1 } } });
@@ -529,16 +529,16 @@ test("an hours-long wait keeps the book: the heartbeat is saved, and another hos
 
 test("the long wait, the restarts and «Retry now» are said in the language of the book", async () => {
   // 1000 minutes scaled by 8 / 4000 is 2 minutes: the words say the real wait.
-  const italian = await waitingLongWords(seedBookFiles({ language: "it" }), { everyMinutes: 1000, cycles: 3 });
+  const italian = await waitingLongWords(seedBookFiles({ chapters: 1, language: "it" }), { everyMinutes: 1000, cycles: 3 });
   assert.equal(italian.wait.title, "Il passo è fallito dopo i tentativi ravvicinati: riprovo tra 2 minuti (ripartenza 1 di 3)");
   assert.match(italian.skipped.title, /^Attesa saltata: riprovo subito/);
-  const english = await waitingLongWords(seedBookFiles(), { everyMinutes: 1000, cycles: "unlimited" });
+  const english = await waitingLongWords(seedBookFiles({ chapters: 1 }), { everyMinutes: 1000, cycles: "unlimited" });
   assert.equal(english.wait.title, "The step failed after the quick retries: retrying in 2 minutes (restart 1, no limit)");
   assert.match(english.skipped.title, /^Wait skipped: retrying now/);
 
-  const ended = await run(conceptFails(Number.POSITIVE_INFINITY), { options: { longRetry: { everyMinutes: 1, cycles: 2 } }, files: seedBookFiles({ language: "it" }) });
+  const ended = await run(conceptFails(Number.POSITIVE_INFINITY), { options: { longRetry: { everyMinutes: 1, cycles: 2 } }, files: seedBookFiles({ chapters: 1, language: "it" }) });
   assert.match(ended.state.message, /^Il passo è fallito ancora dopo 2 ripartenze \(Riprova più tardi\): /);
-  const singular = await run(conceptFails(Number.POSITIVE_INFINITY), { options: { longRetry: { everyMinutes: 1, cycles: 1 } }, files: seedBookFiles({ language: "it" }) });
+  const singular = await run(conceptFails(Number.POSITIVE_INFINITY), { options: { longRetry: { everyMinutes: 1, cycles: 1 } }, files: seedBookFiles({ chapters: 1, language: "it" }) });
   assert.match(singular.state.message, /dopo 1 ripartenza \(/);
 });
 

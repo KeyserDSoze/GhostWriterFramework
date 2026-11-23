@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as engine from "../dist/index.js";
-import { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } from "../dist/testing/index.js";
+import { MemoryBookStore, createFakeAutopilotAi, outlineEntryFiles, seedBookFiles } from "../dist/testing/index.js";
 
 // New exports are read from the namespace so that, before they exist, each test fails on its own.
 const { AutopilotSession, chapterNumberFromSlug, createAutopilotState, loadBookSnapshot, normalizeBrief, normalizeOptions, parseAutopilotState, serializeAutopilotState, slugToTitle } = engine;
@@ -36,14 +36,11 @@ test("MAX_BOOK_CHAPTERS is a typo guard far above any real book", () => {
 });
 
 test("a brief with 5000 chapters is accepted and 2 000 000 is clamped to the guard", () => {
-  assert.equal(normalizeBrief({ targetChapters: 5000 }).targetChapters, 5000);
-  assert.equal(normalizeBrief({ targetChapters: 2_000_000 }).targetChapters, engine.MAX_BOOK_CHAPTERS);
-  assert.equal(normalizeBrief({ targetChapters: 0 }).targetChapters, 1, "the lower bound is unchanged");
-  assert.equal(normalizeBrief({ targetChapters: "300" }).targetChapters, 300);
+  assert.equal("targetChapters" in normalizeBrief({ targetChapters: 5000 }), false, "the chapters are the outline's, never the brief's");
   assert.equal(normalizeOptions({ chaptersPerRun: 5000 }).chaptersPerRun, 5000);
   assert.equal(normalizeOptions({ chaptersPerRun: 2_000_000 }).chaptersPerRun, engine.MAX_BOOK_CHAPTERS);
   assert.equal(normalizeOptions({ chaptersPerRun: -3 }).chaptersPerRun, 0, "0 still means no limit");
-  assert.equal(normalizeBrief({ scenesPerChapter: 99 }).scenesPerChapter, 20, "other limits are not touched");
+  assert.equal(normalizeBrief({ wordsPerScene: 99_999 }).wordsPerScene, 8000, "other limits are not touched");
 });
 
 test("chapters 998..1203 survive normalizeAutopilotState round trips, with their reveals, review, question and revision", () => {
@@ -108,7 +105,7 @@ test("a chapter folder numbered 1000 is chapter 1000 for the snapshot, even with
 });
 
 test("a run goes through chapters 998..1001 without folding them onto chapter 999", async () => {
-  const state = createAutopilotState(new Date(0), { idea: "x", targetChapters: 1003, scenesPerChapter: 1, wordsPerScene: 300 }, { ...FAST, chaptersPerRun: 4 });
+  const state = createAutopilotState(new Date(0), { idea: "x", wordsPerScene: 300 }, { ...FAST, chaptersPerRun: 4 });
   state.concept = { done: true, generated: false, secrets: [] };
   state.plan = { chapters: Array.from({ length: 6 }, (_, index) => plannedChapter(998 + index)), approved: true, rounds: 0, revisionNotes: [], readerReactions: [], readersDone: true, awaitingAuthor: false };
   const store = new MemoryBookStore({ ...seedBookFiles(), [STATE]: serializeAutopilotState(state) });
@@ -129,13 +126,12 @@ test("a run goes through chapters 998..1001 without folding them onto chapter 99
 
 test("the step ceiling of a run grows with the book instead of stopping every long book at 5000 steps", () => {
   assert.equal(typeof engine.runStepCeiling, "function");
-  const brief = (targetChapters) => ({ ...engine.DEFAULT_BRIEF, targetChapters });
   const plan = (length) => ({ chapters: Array.from({ length }, (_, index) => plannedChapter(index + 1)) });
-  assert.equal(engine.runStepCeiling({ brief: brief(12), plan: null }), 500 + 80 * 12);
-  assert.equal(engine.runStepCeiling({ brief: brief(1500), plan: null }), 500 + 80 * 1500);
-  assert.equal(engine.runStepCeiling({ brief: brief(10), plan: plan(2000) }), 500 + 80 * 2000, "the longer of the brief and the plan counts");
-  assert.equal(engine.runStepCeiling({ brief: brief(2000), plan: plan(10) }), 500 + 80 * 2000);
-  assert.ok(engine.runStepCeiling({ brief: brief(300), plan: null }) > 5000, "a 300-chapter book may legitimately need more than the old fixed ceiling");
+  assert.equal(engine.runStepCeiling({ plan: null }, 12), 500 + 80 * 12);
+  assert.equal(engine.runStepCeiling({ plan: null }, 1500), 500 + 80 * 1500);
+  assert.equal(engine.runStepCeiling({ plan: plan(2000) }, 10), 500 + 80 * 2000, "the longer of the outline and the plan counts");
+  assert.equal(engine.runStepCeiling({ plan: plan(10) }, 2000), 500 + 80 * 2000);
+  assert.ok(engine.runStepCeiling({ plan: null }, 300) > 5000, "a 300-chapter book may legitimately need more than the old fixed ceiling");
 });
 
 // ─── R3: windowed outlines ──────────────────────────────────────────────────
@@ -404,10 +400,10 @@ test("the specialists' prompt of a small book is exactly what it was", async () 
 
 test("the plan reader's and the director's views of the plan stay bounded for a plan of 600 or 6000 chapters", async () => {
   const unapproved = (total, readersOnPlan) => {
-    const state = createAutopilotState(new Date(0), { idea: "x", targetChapters: total, scenesPerChapter: 1 }, { ...FAST, readersOnPlan, maxReaders: 1 });
+    const state = createAutopilotState(new Date(0), { idea: "x" }, { ...FAST, readersOnPlan, maxReaders: 1 });
     state.concept = { done: true, generated: false, secrets: [] };
     state.plan = planOf(Array.from({ length: total }, (_, index) => richChapter(index + 1, { scenes: [] })));
-    return new MemoryBookStore({ ...seedBookFiles(), [STATE]: serializeAutopilotState(state) });
+    return new MemoryBookStore({ ...seedBookFiles({ chapters: total }), [STATE]: serializeAutopilotState(state) });
   };
   const sizes = {};
   for (const [name, readersOnPlan, label] of [["reader", true, /^autopilot:plan-reader:/], ["director", false, /^autopilot:plan-review$/]]) {
@@ -472,7 +468,7 @@ test("the director's view of the whole book lists a small book as before and a b
 });
 
 test("extending a long written book lists its chapters as before when small and a bounded window when long", async () => {
-  const request = (count) => firstRequest(new MemoryBookStore(writtenBook(count)), { brief: { idea: "x", targetChapters: count + 5, scenesPerChapter: 1 }, options: FAST });
+  const request = (count) => firstRequest(new MemoryBookStore({ ...writtenBook(count), ...outlineEntryFiles(count + 5) }), { brief: { idea: "x" }, options: FAST });
   const small = await request(12);
   assert.equal(small.label, "autopilot:plan");
   const expected = Array.from({ length: 12 }, (_, index) => `${index + 1}. Written ${index + 1} — What happened in written chapter ${index + 1}.`).join("\n");
@@ -523,10 +519,10 @@ function newSession(store, ai, extra = {}) {
 }
 
 /** Plans a book and stops once the plan is approved (the run pauses for the author). */
-async function planBook(chapters, { ai = createFakeAutopilotAi(), options = {}, files = seedBookFiles() } = {}) {
+async function planBook(chapters, { ai = createFakeAutopilotAi(), options = {}, files = seedBookFiles({ chapters }) } = {}) {
   const store = new MemoryBookStore(files);
   const { session, events } = newSession(store, ai);
-  await session.start({ brief: { idea: "x", targetChapters: chapters, scenesPerChapter: 1, wordsPerScene: 300 }, options: { ...FAST, pauseAfterPlan: true, ...options } });
+  await session.start({ brief: { idea: "x", wordsPerScene: 300 }, options: { ...FAST, pauseAfterPlan: true, ...options } });
   await session.waitForIdle();
   return { store, ai, session, events, state: stateOf(store) };
 }
@@ -609,7 +605,7 @@ test("a batch of a long book is a step of its own: its title, insight and summar
   assert.match(finished[0], /^Chapters 1-20: 1\. Chapter Title 1; 2\. Chapter Title 2;/);
   assert.match(finished[2], /^Chapters 41-45: 41\. Chapter Title 41; /);
 
-  const italian = await planBook(45, { files: seedBookFiles({ language: "it" }) });
+  const italian = await planBook(45, { files: seedBookFiles({ language: "it", chapters: 45 }) });
   assert.deepEqual(italian.events.filter((event) => event.type === "task-started" && event.activity.task === "plan").map((event) => event.activity.title), ["Pianificazione dei capitoli 1-20", "Pianificazione dei capitoli 21-40", "Pianificazione dei capitoli 41-45"]);
   assert.deepEqual(italian.events.filter((event) => event.type === "insight" && /pianificati/.test(event.title)).map((event) => event.title), ["Capitoli 1-20 pianificati", "Capitoli 21-40 pianificati", "Capitoli 41-45 pianificati"]);
 
@@ -619,20 +615,25 @@ test("a batch of a long book is a step of its own: its title, insight and summar
   assert.match(small.events.find((event) => event.type === "task-finished" && event.activity.task === "plan").activity.summary, /^1\. Chapter Title 1; 2\. Chapter Title 2;/, "a single batch is summarized as before");
 });
 
-function plannerContext(language = "en", chapters = []) {
+/** The planner's context of a book whose outline has `lastChapter` chapters (the book of these tests has sixty). */
+function plannerContext(language = "en", chapters = [], lastChapter = 60) {
   const snapshot = { files: new Map(), book: { title: "B", language, description: "" }, chapters, canon: [], personaPaths: [], ghostwriterSlugs: [], hasDirector: false };
-  return { snapshot, director: engine.defaultDirector(language), readers: [], language, storyDesignThin: false };
+  return { snapshot, director: engine.defaultDirector(language), readers: [], language, storyDesignThin: false, outline: { lastChapter } };
 }
 
+/** The chapters each planning state of these tests has in its outline: the planner reads them from the context. */
+const outlineTargets = new WeakMap();
+
 function planningState(target, planned = 0, extra = {}) {
-  const state = createAutopilotState(new Date(0), { idea: "x", targetChapters: target, scenesPerChapter: 1 }, FAST);
+  const state = createAutopilotState(new Date(0), { idea: "x" }, FAST);
+  outlineTargets.set(state, target);
   state.concept = { done: true, generated: false, secrets: [] };
   if (planned || extra.plan) state.plan = { ...planOf(sequence(1, planned).map((number) => plannedChapter(number, { title: `T${number}` }))), ...extra.plan };
   return state;
 }
 
 test("the planner plans the first chapter missing from the plan, and the batches of a revision in order", () => {
-  const next = (state, language = "en") => engine.nextStep(state, plannerContext(language));
+  const next = (state, language = "en") => engine.nextStep(state, plannerContext(language, [], outlineTargets.get(state)));
   const taskOf = (step) => (step.kind === "task" ? [step.task.kind, step.task.title, step.task.chapterNumber] : step);
   assert.deepEqual(taskOf(next(planningState(60))), ["plan", "Planning chapters 1-20", 1]);
   assert.deepEqual(taskOf(next(planningState(60, 20))), ["plan", "Planning chapters 21-40", 21]);
@@ -664,7 +665,7 @@ test("a director who asks for changes on chapters 5 and 45 of a 60-chapter plan 
   });
   const holder = {};
   const hooks = { afterCommit: async ({ task }) => { if (task.kind === "plan-review") seenStates.push(stateOf(holder.store).plan); } };
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 60 }));
   holder.store = store;
   const { session } = newSession(store, ai, { hooks });
   await session.start({ brief: { idea: "x", targetChapters: 60, scenesPerChapter: 1 }, options: { ...FAST, pauseAfterPlan: true } });
@@ -717,7 +718,7 @@ test("resuming after an interruption between two batches continues with the next
   const holder = {};
   let planned = 0;
   const hooks = { afterCommit: async ({ task }) => { if (task.kind === "plan" && (planned += 1) === 1) holder.session.pause("after-step"); } };
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 60 }));
   const ai = createFakeAutopilotAi();
   const { session } = newSession(store, ai, { hooks });
   holder.session = session;
@@ -739,7 +740,7 @@ test("resuming after an interruption between two batches continues with the next
 });
 
 test("a batch that fails is asked again on resume and nothing before it is", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 60 }));
   const ai = createFakeAutopilotAi({ failOn: { call: 3, error: new engine.AiProviderError("The provider refused the request.", 400, false) } });
   const { session } = newSession(store, ai);
   await session.start({ brief: { idea: "x", targetChapters: 60, scenesPerChapter: 1 }, options: { ...FAST, pauseAfterPlan: true } });
@@ -802,10 +803,10 @@ test("an author's rewrite of an unapproved plan applies to every batch again", (
 });
 
 test("raising the target of a finished 25-chapter book to 70 plans batches 20, 20 and 5 after its chapters, then reviews the plan", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 25 }));
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
   const { session, events } = newSession(store, ai);
-  await session.start({ brief: { idea: "x", targetChapters: 25, scenesPerChapter: 1, wordsPerScene: 300 }, options: FAST });
+  await session.start({ brief: { idea: "x", wordsPerScene: 300 }, options: FAST });
   await session.waitForIdle();
   assert.equal(stateOf(store).status, "completed");
   const before = { plan: planCalls(ai).length, concept: ai.calls.filter((call) => call.label === "autopilot:concept").length, review: ai.calls.filter((call) => call.label === "autopilot:plan-review").length };
@@ -814,7 +815,8 @@ test("raising the target of a finished 25-chapter book to 70 plans batches 20, 2
 
   const mark = ai.calls.length;
   events.length = 0;
-  await session.start({ brief: { targetChapters: 70 }, options: { ...FAST, pauseAfterPlan: true } });
+  for (const [path, content] of Object.entries(outlineEntryFiles(70))) if (!store.files.has(path)) store.files.set(path, content);
+  await session.start({ options: { ...FAST, pauseAfterPlan: true } });
   await session.waitForIdle();
   const state = stateOf(store);
   assert.equal(state.status, "paused", state.lastError?.message);
@@ -851,7 +853,7 @@ test("a plan revision of a book of up to 20 chapters is still one call", async (
 test("a state written by an older engine, with notes pending and no batch list, revises every batch and then clears the notes", async () => {
   const state = planningState(60, 60, { plan: { rounds: 1, revisionNotes: ["Chapter 45: darker."] } });
   state.plan.chapters = state.plan.chapters.map((chapter) => ({ ...chapter, slug: engine.chapterSlug(chapter.number, chapter.title) }));
-  const store = new MemoryBookStore({ ...seedBookFiles(), [STATE]: engine.serializeAutopilotState(state) });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 60 }), [STATE]: engine.serializeAutopilotState(state) });
   const holder = { store, plans: [] };
   const hooks = { afterCommit: async ({ task }) => { if (task.kind === "plan") holder.plans.push(stateOf(holder.store).plan); } };
   const ai = createFakeAutopilotAi();
@@ -868,7 +870,7 @@ test("a state written by an older engine, with notes pending and no batch list, 
 });
 
 test("a task says what comes next: another batch, or the review of the plan", () => {
-  const next = (state) => engine.nextStep(state, plannerContext("en")).task.next;
+  const next = (state) => engine.nextStep(state, plannerContext("en", [], outlineTargets.get(state))).task.next;
   assert.equal(next(planningState(60)), "Plan the next chapters.");
   assert.equal(next(planningState(60, 20)), "Plan the next chapters.");
   assert.equal(next(planningState(60, 40)), "Simulated readers and the director review the plan.");
@@ -882,7 +884,7 @@ test("a task says what comes next: another batch, or the review of the plan", ()
 // ─── R5: a real run of 150 chapters ─────────────────────────────────────────
 
 test("a book of 150 chapters is planned, written, closed and resumed by a real run: 8 plan calls, a lean state, quick steps", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 150 }));
   const ai = createFakeAutopilotAi({ words: 120, scenes: 1 });
   const { session, events } = newSession(store, ai);
   const brief = { idea: "A harbor town.", targetChapters: 150, scenesPerChapter: 1, wordsPerScene: 200 };

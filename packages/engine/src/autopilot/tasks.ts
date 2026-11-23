@@ -62,7 +62,7 @@ import { asArray, asInteger, asNumber, asOneOf, asRecord, asString, asStringList
 import { bulletList, clipText, countWords, isItalian, languageName, OUTPUT_TOKENS_CEILING, sceneCharacterLimit, scaleOutputTokens, tokensPerWord, truncate } from "../util/text.js";
 import { chapterLines, layoutChapters, listSection, outlineList, type ChapterFormat } from "./outline.js";
 import { legacyChapters, queuedMarkReviewed, startedReview } from "./frozen.js";
-import { batchesNamed, effectiveTargetChapters, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, sceneFile, type TaskDescriptor } from "./planner.js";
+import { SCENES_PER_CHAPTER, batchesNamed, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, sceneFile, scenesForChapter, type TaskDescriptor } from "./planner.js";
 import {
   CHAPTER_REVIEW_TOOL,
   CHAPTER_SUMMARY_TOOL,
@@ -139,7 +139,7 @@ function briefBlock(ctx: TaskContext): string {
   return [
     brief.idea ? `AUTHOR'S IDEA:\n${brief.idea}` : "",
     brief.synopsis ? `AUTHOR'S CHAPTER-BY-CHAPTER SYNOPSIS (binding):\n${brief.synopsis}` : "",
-    `TARGET: ${brief.targetChapters} chapters, ${brief.scenesPerChapter} scenes per chapter, about ${brief.wordsPerScene} words per scene.`,
+    `TARGET: about ${brief.wordsPerScene} words per scene.`,
   ].filter(Boolean).join("\n\n");
 }
 
@@ -247,7 +247,7 @@ interface AuthorOutline {
   entries: Map<number, OutlineChapterEntry>;
   /** Something binds: only then a prompt carries the outline, so a book without one is asked what it always was. */
   any: boolean;
-  /** The last chapter an entry of the author asks for (0 when none). */
+  /** The chapters of the book: the number of the last chapter entry of the outline, the autopilot's own entries included (0 without entries). */
   lastChapter: number;
 }
 
@@ -262,11 +262,13 @@ async function authorOutline(ctx: TaskContext): Promise<AuthorOutline> {
   if (outline.empty) return { entries: new Map(), any: false, lastChapter: 0 };
   const [book, chapters] = await Promise.all([outline.book(), outline.chapters()]);
   const entries = new Map(chapters.filter((entry) => !entry.intact).map((entry) => [entry.number, entry]));
-  const description = book && !book.intact && (book.body || book.title)
-    ? truncate([book.title ? `Working title: ${book.title}` : "", book.body].filter(Boolean).join("\n"), OUTLINE_BOOK_CHARS)
+  // The idea of the book is the description of the book: the brief's idea already travels in the book's header, so it is not said twice.
+  const idea = ctx.state.brief.idea.trim();
+  const body = book && book.body.trim() !== idea ? book.body : "";
+  const description = book && !book.intact && (body || book.title)
+    ? truncate([book.title ? `Working title: ${book.title}` : "", body].filter(Boolean).join("\n"), OUTLINE_BOOK_CHARS)
     : undefined;
-  const lastChapter = [...entries.keys()].reduce((highest, number) => Math.max(highest, number), 0);
-  return { ...(description ? { book: description } : {}), entries, any: Boolean(description) || entries.size > 0, lastChapter };
+  return { ...(description ? { book: description } : {}), entries, any: Boolean(description) || entries.size > 0, lastChapter: outline.last };
 }
 
 function entryHeading(entry: OutlineChapterEntry): string {
@@ -606,7 +608,7 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
     label: "autopilot:concept",
     system: architectSystemPrompt(ctx.language),
     user: `${request([
-      `Design the foundation of this novel from the author's brief, for about ${effectiveTargetChapters(ctx.state, view)} chapters.`,
+      `Design the foundation of this novel from the author's brief, for about ${view.lastChapter} chapters.`,
       "Create 3 to 8 characters with clear desires, fears and arcs, the key locations, factions only when useful, and 1 to 5 secrets that drive the plot, each with the chapter where the reader learns it.",
       ctx.state.brief.synopsis ? "The author's chapter-by-chapter synopsis is binding: the concept must make it possible exactly as written." : "",
       view.any ? "The author's outline (AUTHOR'S OUTLINE, in the data) is binding too, and wins over the synopsis: the concept must make it possible exactly as written." : "",
@@ -805,7 +807,7 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
   });
   // The author's outline binds the plan: its chapters, its order, its titles, its events, and as many chapters as it has.
   const view = await authorOutline(ctx);
-  const target = effectiveTargetChapters(ctx.state, view);
+  const target = view.lastChapter;
   const range = planRange(imported, target);
   const batch = nextPlanBatch(previous, range);
   if (!batch) throw new Error("There is no chapter left to plan.");
@@ -1076,7 +1078,7 @@ async function runPlanReview(ctx: TaskContext): Promise<TaskResult> {
     plan.rounds += 1;
     plan.revisionNotes = changesRequested;
     // Only the batches that hold the chapters the changes name are planned again; a change that names none concerns them all.
-    plan.revisionBatches = batchesNamed(planRange(importedChapters(ctx.snapshot), effectiveTargetChapters(ctx.state, view)), requested.map((change) => change.chapterNumber));
+    plan.revisionBatches = batchesNamed(planRange(importedChapters(ctx.snapshot), view.lastChapter), requested.map((change) => change.chapterNumber));
     ctx.insight("warning", isItalian(ctx.language) ? `Il direttore chiede ${changesRequested.length} modifiche al piano` : `The director asks for ${changesRequested.length} plan changes`, changesRequested.slice(0, 3).join(" · "));
   } else {
     plan.approved = true;
@@ -1232,7 +1234,9 @@ async function runScenes(ctx: TaskContext): Promise<TaskResult> {
   const plan = ctx.state.plan!;
   const previous = plan.chapters.find((entry) => entry.number === chapter.number - 1);
   const next = plan.chapters.find((entry) => entry.number === chapter.number + 1);
-  const target = ctx.state.brief.scenesPerChapter;
+  // The scenes of the chapter are the planner's: the rule reads the chapter's outline entry (or, without one, the plan of the chapter).
+  const entry = await outlineOf(ctx).chapter(chapter.number);
+  const target = scenesForChapter(entry?.body || [chapter.summary, chapter.goal, ...chapter.keyEvents].join("\n"));
   const [resume, design, secrets] = await Promise.all([
     storySoFar(ctx, chapter.number, 5000),
     readBody(ctx.store, STORY_DESIGN_FILE, 2500),
@@ -1262,7 +1266,7 @@ async function runScenes(ctx: TaskContext): Promise<TaskResult> {
     temperature: 0.7,
   });
   const output = requireStructuredFields(response.json, { scenes: "list" }, "The scene plan");
-  const scenes = asArray(output.scenes).map(asRecord).filter((scene) => asString(scene.title)).slice(0, target + 2);
+  const scenes = asArray(output.scenes).map(asRecord).filter((scene) => asString(scene.title)).slice(0, SCENES_PER_CHAPTER.max);
   if (!scenes.length) throw new AiReplyRejectedError("The scene plan has no scene with a title.");
   chapter.scenes = scenes.map((scene, index) => ({
     number: index + 1,

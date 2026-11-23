@@ -14,9 +14,10 @@ import { StructuredReplyError } from "../util/json.js";
 import { currentRequest, unescapePromptDataDeep } from "../prompt/trust.js";
 import { isItalian, languageCode, tail, truncate } from "../util/text.js";
 import { autopilotErrorFields } from "./errors.js";
+import { readBrief } from "./brief.js";
 import { applyFrozenDecision, frozenAnswerAction, isFrozenQuestion, settleFrozenChanges } from "./frozen.js";
 import { outlinePlanStatus } from "./outline-check.js";
-import { advanceState, effectiveTargetChapters, extensionNote, nextStep, phaseOf, type PlanNote, type PlannerContext, type TaskDescriptor } from "./planner.js";
+import { advanceState, bookChapters, extensionNote, nextStep, phaseOf, type PlanNote, type PlannerContext, type TaskDescriptor } from "./planner.js";
 import { profileProblems, profileProblemsMessage, profileProblemsTitle } from "./profile-check.js";
 import {
   MAX_INTERVENTIONS,
@@ -26,7 +27,6 @@ import {
   effectivePublish,
   hostDefaultPublish,
   inspectAutopilotState,
-  normalizeBrief,
   normalizeOptions,
   normalizeRuleText,
   normalizeRunLimits,
@@ -331,12 +331,15 @@ function mergePendingReviews(working: PendingFrozenReview[], base: PendingFrozen
 }
 
 /**
- * When the author raises the number of chapters of a finished plan, extend it instead of stopping. `targetChapters` is the number the
- * book is planned to (`effectiveTargetChapters`: the brief's, or the last chapter of the author's outline when it asks for more).
+ * When the outline has more chapters than a finished plan, extend the plan instead of stopping. `targetChapters` is the number of the book's
+ * last chapter (`bookChapters`: the chapter entries of the outline).
  */
-export function extendPlanIfNeeded(state: AutopilotState, targetChapters = effectiveTargetChapters(state)): AutopilotState {
+export function extendPlanIfNeeded(state: AutopilotState, targetChapters = 0): AutopilotState {
   const plan = state.plan;
-  if (!plan?.approved || plan.chapters.length >= targetChapters) return state;
+  if (!plan?.approved || targetChapters === 0) return state;
+  // The plan reaches the book's last chapter when its highest chapter is that one: the chapters are numbered, not counted (a book may go on from chapter 1200).
+  const highest = plan.chapters.reduce((most, chapter) => Math.max(most, chapter.number), 0);
+  if (highest >= targetChapters) return state;
   if (!plan.chapters.every((chapter) => chapter.status === "done")) return state;
   // The book is not complete any more: nobody has judged it as it is going to be.
   const { finalReview: _finalReview, ...reopened } = state;
@@ -619,8 +622,8 @@ function taskKey(task: TaskDescriptor): string {
  * Steps one run may take before it is stopped as a runaway. It grows with the book, because a long book legitimately
  * takes many more steps (a run that is not making progress is caught separately, whatever this number is).
  */
-export function runStepCeiling(state: Pick<AutopilotState, "brief" | "plan">): number {
-  return 500 + 80 * Math.max(state.brief.targetChapters, state.plan?.chapters.length ?? 0);
+export function runStepCeiling(state: Pick<AutopilotState, "plan">, chapters = 0): number {
+  return 500 + 80 * Math.max(chapters, state.plan?.chapters.length ?? 0);
 }
 
 /**
@@ -906,8 +909,8 @@ export class AutopilotRun {
       loadReaderPanel(this.store, snapshot),
       readBody(this.store, STORY_DESIGN_FILE, 20000),
       loadEvaluationStyle(this.store),
-      // Only the entries above the brief's number of chapters are read: an outline can only make the book longer.
-      outline.lastAuthorChapter(state.brief.targetChapters),
+      // The chapters of the book are the outline's: the last entry's number (read from the index, without reading an entry).
+      outline.last,
     ]);
     const readers = activeReaders(panel, director, state.options.maxReaders).map((reader) => ({ slug: reader.slug, name: reader.name }));
     return {
@@ -1023,26 +1026,33 @@ export class AutopilotRun {
     }
   }
 
+  /** The chapters of the book now: the last chapter entry of the outline (`bookChapters`). */
+  private async outlineChapters(): Promise<number> {
+    const snapshot = await loadBookSnapshot(this.store, this.cache);
+    return snapshot.outline?.chapters.at(-1)?.number ?? 0;
+  }
+
   async execute(start: StartOptions & { afterRestart?: boolean } = {}): Promise<AutopilotState> {
     const { store } = this;
     this.limits = normalizeRunLimits(start.limits) ?? {};
     const stored = await readStoredAutopilot(store);
     assertStoredStateReadable(stored);
-    let state = stored.state ?? createAutopilotState(this.now(), start.brief, start.options);
+    const { brief, changes: briefChanges } = await readBrief(store, stored.state);
+    let state = stored.state ?? createAutopilotState(this.now(), brief, start.options);
     const startedAt = this.now().toISOString();
     state = extendPlanIfNeeded({
       // A run that starts is nobody's pause any more: what the server said of its stop goes.
       ...withoutStopCause(state),
-      brief: normalizeBrief(start.brief ?? {}, state.brief),
+      brief,
       options: normalizeOptions(start.options ?? {}, state.options),
       plan: state.plan ? { ...state.plan, awaitingAuthor: false } : null,
       status: "running",
       message: null,
       lastError: null,
       runner: { host: this.config.host, label: this.config.hostLabel, ...(this.config.hostId ? { hostId: this.config.hostId } : {}), runId: this.runId, startedAt, heartbeatAt: startedAt },
-    });
+    }, await this.outlineChapters());
     state = stampState(this.drainQueue(state, "start"), this.now());
-    await store.commit([stateChange(state, stored.stateHash)], "Autopilot: started");
+    await store.commit([...briefChanges, stateChange(state, stored.stateHash)], "Autopilot: started");
     this.known = state;
     this.emit({ type: "run-started", runId: this.runId, host: this.config.host });
     this.emit({ type: "state", state: this.summarize(state) });
@@ -1081,6 +1091,8 @@ export class AutopilotRun {
      * counted against the ceiling of a run, which catches a run that loops, because their waits bound them (and the cycles are the author's).
      */
     let waitedSteps = 0;
+    /** The chapters of the book as the outline has them, from the last step that read it. */
+    let bookLength = 0;
     let groupStart = 0;
     let lastSuccessKey = "";
     let successRepeats = 0;
@@ -1093,7 +1105,7 @@ export class AutopilotRun {
         state = await this.finish(state, "paused", null);
         break;
       }
-      if (steps - waitedSteps > runStepCeiling(state)) {
+      if (steps - waitedSteps > runStepCeiling(state, bookLength)) {
         state = await this.finish({ ...state, lastError: { message: "Too many steps in one run.", at: this.now().toISOString(), errorKind: "limit" } }, "error", "Too many steps in one run.");
         break;
       }
@@ -1121,9 +1133,9 @@ export class AutopilotRun {
         await this.config.hooks?.beforeStep?.(stepController.signal);
         const snapshot = await loadBookSnapshot(store, this.cache);
         const context = await this.stepContext(snapshot, state);
-        // An outline the author made longer than the book extends it, as raising the number of chapters does at the start of a run.
-        const outlineTarget = effectiveTargetChapters(state, context.planner.outline);
-        if (outlineTarget > effectiveTargetChapters(state)) state = extendPlanIfNeeded(state, outlineTarget);
+        // An outline the author made longer than the plan extends it, as the author's chapters always did.
+        bookLength = bookChapters(context.planner.outline);
+        state = extendPlanIfNeeded(state, bookLength);
         state = advanceState(state, context.planner);
         // Before a chapter is started: an entry of the outline the author changed or deleted since the plan followed it.
         const outlineStatus = await outlinePlanStatus(context.outline, state, context.planner.language);

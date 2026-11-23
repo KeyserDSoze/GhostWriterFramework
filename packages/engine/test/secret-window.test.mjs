@@ -46,7 +46,7 @@ function secretFiles(count, chapterOf, truthOf = () => undefined) {
 }
 
 async function book(files) {
-  const store = new MemoryBookStore({ ...seedBookFiles(), ...files });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 2 }), ...files });
   return { store, snapshot: await loadBookSnapshot(store) };
 }
 
@@ -166,7 +166,7 @@ test("a secret with only known_from is windowed like the others, and a nearer re
 test("a long book keeps every prompt that carries the secrets under the limit, and the nearest secrets in it", async () => {
   // 1200 secrets for a book of two chapters: 20 a chapter over 60 chapters.
   const files = secretFiles(1200, (index) => (index % 60) + 1, () => "A truth for the writer alone. ".repeat(10));
-  const store = new MemoryBookStore({ ...seedBookFiles(), ...files });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 2 }), ...files });
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   await session.start({ brief: { idea: "x", targetChapters: 2, scenesPerChapter: 1, wordsPerScene: 300 }, options: { ...FAST, specialists: true } });

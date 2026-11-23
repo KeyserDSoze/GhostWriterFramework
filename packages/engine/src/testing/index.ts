@@ -74,10 +74,19 @@ export class MemoryBookStore implements BookStore {
 }
 
 /** Minimal Narrarium book, like the one the web app scaffolds. */
-export function seedBookFiles(input: { title?: string; language?: string } = {}): Record<string, string> {
+/** The outline entries of `count` chapters, as the author writes them: a title and what happens, no ghostwriter, origin `author`. */
+export function outlineEntryFiles(count: number): Record<string, string> {
+  return Object.fromEntries(Array.from({ length: count }, (_, index) => {
+    const number = index + 1;
+    return [`outline/chapters/${String(number).padStart(3, "0")}.md`, `---\ntype: outline-chapter\nid: outline-chapter:${String(number).padStart(3, "0")}\nnumber: ${number}\ntitle: Chapter Title ${number}\norigin: author\n---\n\nEvent ${number} happens and the story turns.\n`];
+  }));
+}
+
+export function seedBookFiles(input: { title?: string; language?: string; chapters?: number } = {}): Record<string, string> {
   const title = input.title ?? "The Glass Harbor";
   const language = input.language ?? "en";
   return {
+    ...(input.chapters ? outlineEntryFiles(input.chapters) : {}),
     "book.md": `---\ntype: book\nid: book\ntitle: ${title}\nlanguage: ${language}\ncanon: draft\nghostwriter: default\n---\n\n# Book\n\nDescribe the book here.\n`,
     "context.md": "---\ntype: context\nid: context:book\ntitle: Book Context\n---\n\n# Historical And Temporal Frame\n\n- Record the time period.\n",
     "story-design.md": "---\ntype: note\nid: note:story-design\ntitle: Story Design\nscope: story-design\nbucket: story-design\n---\n\n# Story Design\n\n## Premise\n\n## Main Conflict\n\n## Character Arcs\n\n## Structure\n",

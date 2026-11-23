@@ -264,7 +264,7 @@ const ONE = { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1, wordsP
 test("a run whose only model cannot call a function stops at once as a configuration problem, with nothing sent and nothing retried", async () => {
   const { fetch, calls } = recording(() => answer({ ok: true }));
   const ai = createFetchAi({ aiIntegrations: [integration({ chatModels: [{ id: "m", name: "plain", capabilities: ["default"], ...NO_TOOLS }] })] }, { fetch });
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const events = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   session.subscribe((event) => events.push(event));
@@ -286,7 +286,7 @@ test("a run whose only model cannot call a function stops at once as a configura
 test("the same book with Tools only off runs on the same model (the schema goes in the message)", async () => {
   const { fetch, calls } = recording(() => text("Nothing JSON about this."));
   const ai = createFetchAi({ aiIntegrations: [integration({ chatModels: [{ id: "m", name: "plain", capabilities: ["default"], ...NO_TOOLS }] })], toolsOnly: false }, { fetch });
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   await session.start(ONE);
   await session.waitForIdle();

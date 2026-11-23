@@ -39,7 +39,7 @@ test("the same words whatever the time zone and the language of the machine", ()
 
 /** A book of one chapter that the autopilot wrote and froze on 1 January 2026, whose scene the author then changed. */
 async function changedFrozenBook(language, options = {}) {
-  const store = new MemoryBookStore(seedBookFiles({ language }));
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1, language }));
   const events = [];
   const session = new AutopilotSession({ bookId: "book", store, ai: createFakeAutopilotAi({ reviewVerdict: () => "approve" }), host: "server", hostLabel: "test", retryDelayMs: 0, now: () => new Date("2026-01-01T00:00:00.000Z") });
   session.subscribe((event) => events.push(event));
@@ -87,7 +87,7 @@ test("AiToolsRequiredError lists the models it left out by name and as { integra
 test("stats.workedMsPartial says that the count of the working time began on a book that had already worked", async () => {
   // A book an older engine wrote: five steps saved, and no time counted.
   const older = engine.createAutopilotState(new Date("2025-12-01T00:00:00.000Z"), BRIEF, FAST);
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   store.write(STATE, engine.serializeAutopilotState({ ...older, stats: { ...older.stats, tasks: 5 } }));
   const resumed = new AutopilotSession({ bookId: "book", store, ai: createFakeAutopilotAi(), host: "server", hostLabel: "test", retryDelayMs: 0 });
   await resumed.start();
@@ -96,7 +96,7 @@ test("stats.workedMsPartial says that the count of the working time began on a b
   assert.ok(stats.workedMs >= 0 && stats.workedMsSince, "the count began");
   assert.equal(stats.workedMsPartial, true, "after five steps it did not see");
 
-  const fresh = new MemoryBookStore(seedBookFiles());
+  const fresh = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const session = new AutopilotSession({ bookId: "book", store: fresh, ai: createFakeAutopilotAi(), host: "server", hostLabel: "test", retryDelayMs: 0 });
   await session.start({ brief: BRIEF, options: FAST });
   await session.waitForIdle();

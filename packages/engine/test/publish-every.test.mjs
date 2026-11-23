@@ -158,7 +158,7 @@ test("publishEvery is a persisted option that is absent unless somebody chose it
 test("every step, every chapter, or never: the hooks are called as the way of publishing says", async () => {
   const outcomes = {};
   for (const mode of ["step", "chapter", "off"]) {
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
     const { hooks, log, steps, chapters } = recordingHost();
     const { session: autopilot, events } = session(store, fakeAi(), { hooks });
     await run(autopilot, { brief: BRIEF, options: { ...FAST, publishEvery: mode } });
@@ -178,7 +178,7 @@ test("every step, every chapter, or never: the hooks are called as the way of pu
 test("the way the host publishes is the default of a run that has no choice of the author, whatever the host", async () => {
   for (const host of ["browser", "server"]) {
     for (const [defaultPublish, steps, chapters] of [["step", ALL_STEPS, [1, 2]], ["chapter", [], [1, 2]], ["off", [], []]]) {
-      const store = new MemoryBookStore(seedBookFiles());
+      const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
       const recorder = recordingHost();
       const { session: autopilot } = session(store, fakeAi(), { host, hostLabel: host, hostId: `${host}-1`, hooks: recorder.hooks, defaultPublish });
       await run(autopilot, TWO);
@@ -187,12 +187,12 @@ test("the way the host publishes is the default of a run that has no choice of t
   }
 
   // The author's choice beats the host's default, in both directions.
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const recorder = recordingHost();
   const { session: autopilot } = session(store, fakeAi(), { hooks: recorder.hooks, defaultPublish: "step" });
   await run(autopilot, { brief: BRIEF, options: { ...FAST, publishEvery: "off" } });
   assert.deepEqual([recorder.steps, recorder.chapters], [[], []], "off, though the host would publish every step");
-  const second = new MemoryBookStore(seedBookFiles());
+  const second = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const other = recordingHost();
   const { session: asked } = session(second, fakeAi(), { hooks: other.hooks, defaultPublish: "off" });
   await run(asked, { brief: BRIEF, options: { ...FAST, publishEvery: "chapter" } });
@@ -202,7 +202,7 @@ test("the way the host publishes is the default of a run that has no choice of t
 test("a host that says nothing keeps what it always had: the server after every step, the browser after every chapter if the option is on", async () => {
   // The browser's hook is the one of the chapter; the option syncAfterChapter is all that says whether it is called.
   for (const [syncAfterChapter, chapters] of [[true, [1, 2]], [false, []]]) {
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
     const log = [];
     const hooks = { afterChapter: async ({ chapterNumber }) => void log.push(chapterNumber) };
     const { session: autopilot } = session(store, fakeAi(), { host: "browser", hostLabel: "browser", hostId: "device-1", hooks });
@@ -213,7 +213,7 @@ test("a host that says nothing keeps what it always had: the server after every 
 
   // The server's hook is the one of the step, called for every step whatever the old option says.
   for (const syncAfterChapter of [true, false]) {
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
     const log = [];
     const hooks = { afterCommit: async ({ task }) => void log.push(task.kind) };
     const { session: autopilot } = session(store, fakeAi(), { hooks });
@@ -224,7 +224,7 @@ test("a host that says nothing keeps what it always had: the server after every 
   // Files of an older engine: only syncAfterChapter, saved before the run.
   for (const syncAfterChapter of [true, false]) {
     const old = createAutopilotState(new Date(0), BRIEF, { ...FAST, syncAfterChapter });
-    const store = new MemoryBookStore({ ...seedBookFiles(), [STATE]: serializeAutopilotState(old) });
+    const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 2 }), [STATE]: serializeAutopilotState(old) });
     const log = [];
     const hooks = { afterChapter: async ({ chapterNumber }) => void log.push(chapterNumber) };
     const { session: autopilot } = session(store, fakeAi(), { host: "browser", hostLabel: "browser", hostId: "device-1", hooks });
@@ -234,7 +234,7 @@ test("a host that says nothing keeps what it always had: the server after every 
 });
 
 test("a publish that fails is reported as it always was, and never stops the run", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const hooks = {
     afterCommit: async () => {
       throw new Error("push refused");
@@ -251,7 +251,7 @@ test("a publish that fails is reported as it always was, and never stops the run
   assert.equal(sync.filter((event) => event.code === "publishFailed").length, 2, "one for every chapter");
   assert.ok(sync.every((event) => event.tone === "warning" && /refused/.test(event.detail)));
 
-  const quiet = new MemoryBookStore(seedBookFiles());
+  const quiet = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const { session: second, events: secondEvents } = session(quiet, fakeAi(), { hooks });
   await run(second, { brief: BRIEF, options: { ...FAST, publishEvery: "chapter" } });
   assert.deepEqual(secondEvents.filter((event) => event.type === "sync").map((event) => event.code), ["publishFailed", "publishFailed"], "with every chapter only the chapter's publish is asked for");
@@ -261,7 +261,7 @@ test("a publish that fails is reported as it always was, and never stops the run
 
 test("from every step to never, during the run: it holds from the end of the step that is running, which is neither repeated nor failed", async () => {
   const { ai, gate, reached } = holdLabel("autopilot:scenes:1");
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const recorder = recordingHost();
   const { session: autopilot, events } = session(store, ai, { hooks: recorder.hooks });
   await autopilot.start({ brief: BRIEF, options: { ...FAST, publishEvery: "step" } });
@@ -289,7 +289,7 @@ test("from every step to never, during the run: it holds from the end of the ste
 test("from never to every step, and from every step to every chapter: the new way holds from the next gate", async () => {
   const turned = async (from, to, label) => {
     const { ai, gate, reached } = holdLabel(label);
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
     const recorder = recordingHost();
     const { session: autopilot, events } = session(store, ai, { hooks: recorder.hooks });
     await autopilot.start({ brief: BRIEF, options: { ...FAST, publishEvery: from } });
@@ -318,7 +318,7 @@ test("from never to every step, and from every step to every chapter: the new wa
 
 test("to be paused after every chapter can be turned on and off while the run goes on, and holds at the end of the chapter", async () => {
   const on = holdLabel("autopilot:write:1.1");
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const { session: autopilot, events } = session(store, on.ai);
   await autopilot.start(TWO);
   await on.reached;
@@ -335,7 +335,7 @@ test("to be paused after every chapter can be turned on and off while the run go
   assert.ok(!events.some((event) => event.type === "insight" && event.code === "conflictRetry"));
 
   const off = holdLabel("autopilot:write:1.1");
-  const second = new MemoryBookStore(seedBookFiles());
+  const second = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const { session: other } = session(second, off.ai);
   await other.start({ brief: BRIEF, options: { ...FAST, pauseAfterEachChapter: true } });
   await off.reached;
@@ -348,7 +348,7 @@ test("to be paused after every chapter can be turned on and off while the run go
 });
 
 test("updateOptions changes the two settings, tells it in a state event and in the summary, writes nothing when nothing changes, and a value nobody knows changes nothing", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const { session: autopilot, events } = session(store, fakeAi(), { host: "browser", hostLabel: "browser", hostId: "device-1" });
   await run(autopilot, { brief: BRIEF, options: FAST, limits: { steps: 1 } });
   const summaries = () => events.filter((event) => event.type === "state").map((event) => event.state);
@@ -382,7 +382,7 @@ test("updateOptions changes the two settings, tells it in a state event and in t
 
 test("while the run goes on only the two settings can change: any other is refused as configure refuses it, and nothing of the request is applied", async () => {
   const { ai, gate, reached } = holdLabel("autopilot:scenes:1");
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const { session: autopilot } = session(store, ai);
   await autopilot.start({ brief: BRIEF, options: { ...FAST, publishEvery: "step" } });
   await reached;
@@ -394,7 +394,7 @@ test("while the run goes on only the two settings can change: any other is refus
   gate.resolve();
   await autopilot.waitForIdle();
 
-  const quiet = new MemoryBookStore(seedBookFiles());
+  const quiet = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const { session: idle } = session(quiet, fakeAi());
   await run(idle, { brief: BRIEF, options: FAST, limits: { steps: 1 } });
   const saved = await idle.updateOptions({ chaptersPerRun: 5, publishEvery: "chapter" });
@@ -439,7 +439,7 @@ test("the summary says how the book is published, whatever the host and whoever 
 
   const seen = {};
   for (const [name, extra, options] of [["server", { host: "server" }, FAST], ["browser", { host: "browser", hostLabel: "b", hostId: "d" }, FAST], ["host default", { defaultPublish: "off" }, FAST], ["the author", { defaultPublish: "off" }, { ...FAST, publishEvery: "chapter" }]]) {
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
     const { session: autopilot, events } = session(store, fakeAi({ chapters: 1 }), extra);
     await run(autopilot, { brief: { ...BRIEF, targetChapters: 1 }, options, limits: { steps: 1 } });
     seen[name] = [...new Set(events.filter((event) => event.type === "state").map((event) => event.state.publish))];

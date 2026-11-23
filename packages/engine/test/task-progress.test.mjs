@@ -50,7 +50,7 @@ const progressOf = (events) => events.filter((event) => event.type === "task-pro
 
 test("a structured step that streams for ten seconds says so once a second: ten events, with numbers and without a word of the reply", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { session, events } = sessionFor(store, streamingAi(clock), clock);
   await session.start({ ...BOOK, limits: { steps: 1 } });
   await session.waitForIdle();
@@ -72,7 +72,7 @@ test("a structured step that streams for ten seconds says so once a second: ten 
 
 test("the first report of a step is said at once, and every step has its own count: a step does not wait for the one before", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { session, events } = sessionFor(store, streamingAi(clock, { reports: 2, every: 100 }), clock);
   await session.start({ ...BOOK, limits: { steps: 3 } });
   await session.waitForIdle();
@@ -86,13 +86,13 @@ test("the first report of a step is said at once, and every step has its own cou
 
 test("nothing of it is saved: no commit, no number in the state or the log, and the replay buffer leaves it out", async () => {
   const quiet = fakeClock();
-  const silentStore = new MemoryBookStore(seedBookFiles());
+  const silentStore = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const silent = sessionFor(silentStore, streamingAi(quiet, { reports: 0 }), quiet);
   await silent.session.start({ ...BOOK, limits: { steps: 2 } });
   await silent.session.waitForIdle();
 
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { session, events } = sessionFor(store, streamingAi(clock), clock);
   await session.start({ ...BOOK, limits: { steps: 2 } });
   await session.waitForIdle();
@@ -111,7 +111,7 @@ test("nothing of it is saved: no commit, no number in the state or the log, and 
 
 test("snapshot().live carries the last value of the step in progress, and is empty when the step is over", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   let during = null;
   let autopilot = null;
   const ai = streamingAi(clock, { seen: async () => { during ??= (await autopilot.snapshot()).live; } });
@@ -129,7 +129,7 @@ test("snapshot().live carries the last value of the step in progress, and is emp
 
 test("a structured step and a prose step say their progress in the same event, the prose one with its text as it always did", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { session, events } = sessionFor(store, streamingAi(clock, { reports: 4, every: 500 }), clock);
   await session.start(BOOK);
   await session.waitForIdle();
@@ -163,7 +163,7 @@ test("through the engine's own client: a streamed function call reaches the run 
       return eventStream(stream.body);
     },
   });
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const events = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   session.subscribe((event) => events.push(event));
@@ -187,7 +187,7 @@ test("a provider that does not stream says nothing in between: streamMode off gi
       return Response.json({ choices: [{ message: { tool_calls: [{ function: { name: tool.name, arguments: JSON.stringify(out.json) } }] }, finish_reason: "tool_calls" }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
     },
   });
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const events = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0 });
   session.subscribe((event) => events.push(event));

@@ -70,7 +70,7 @@ function newSession(store, ai) {
 const stateOf = (store) => parseAutopilotState(store.files.get(STATE));
 
 test("a snapshot that was reading the state when the run ended shows how the run ended, not an interruption", async () => {
-  const store = new SlowStateStore(seedBookFiles());
+  const store = new SlowStateStore(seedBookFiles({ chapters: 1 }));
   const { ai, gate, reached } = holdingFirstRequest();
   const session = newSession(store, ai);
   await session.start(ONE_CHAPTER);
@@ -102,7 +102,7 @@ test("a snapshot that was reading the state when the run ended shows how the run
 });
 
 test("a snapshot taken while a run ends agrees with the one taken right after", async () => {
-  const store = new SlowStateStore(seedBookFiles());
+  const store = new SlowStateStore(seedBookFiles({ chapters: 1 }));
   const { ai, gate, reached } = holdingFirstRequest();
   const session = newSession(store, ai);
   await session.start(ONE_CHAPTER);
@@ -122,7 +122,7 @@ test("a snapshot taken while a run ends agrees with the one taken right after", 
 });
 
 test("a snapshot that was reading the state when a run began does not say the run goes on over the state of one that is not", async () => {
-  const store = new SlowStateStore(seedBookFiles());
+  const store = new SlowStateStore(seedBookFiles({ chapters: 1 }));
   const { ai, gate, reached } = holdingFirstRequest();
   const session = newSession(store, ai);
 
@@ -146,7 +146,7 @@ test("a snapshot that was reading the state when a run began does not say the ru
 });
 
 test("a snapshot taken while nothing changes is read once", async () => {
-  const store = new SlowStateStore(seedBookFiles());
+  const store = new SlowStateStore(seedBookFiles({ chapters: 1 }));
   const { ai, gate, reached } = holdingFirstRequest();
   const session = newSession(store, ai);
   await session.start(ONE_CHAPTER);

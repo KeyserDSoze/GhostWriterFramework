@@ -140,7 +140,7 @@ test("runnerHeartbeatAgeMs tells the interfaces how old the runner's heartbeat i
 
 test("a step that lasts longer than the stale limit stays 'active' for another host's snapshot, and the AI is called once", async () => {
   const clock = manualClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const reached = deferred();
   const release = deferred();
   const ai = gatedAi((call) => {
@@ -176,7 +176,7 @@ test("a step that lasts longer than the stale limit stays 'active' for another h
 
 test("without the persisted heartbeat the same long step looks interrupted to another host (the control of the test above)", async () => {
   const clock = manualClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const reached = deferred();
   const release = deferred();
   const ai = gatedAi((call) => {
@@ -198,7 +198,7 @@ test("without the persisted heartbeat the same long step looks interrupted to an
 });
 
 async function runWholeBook(extra, start = TWO_CHAPTERS, aiOptions = { delayMs: 8 }) {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi(aiOptions);
   const { session: autopilot, events } = session(store, ai, extra);
   await autopilot.start(start);
@@ -233,7 +233,7 @@ test("a heartbeat is written at most once per period, only while a step is in fl
       return super.commit(changes, message);
     }
   }
-  const store = new Timed(seedBookFiles());
+  const store = new Timed(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ delayMs: 320 });
   const { session: autopilot } = session(store, ai, { persistHeartbeatMs: 70, heartbeatMs: 0 });
   autopilot.subscribe((event) => {
@@ -276,7 +276,7 @@ test("a heartbeat never overlaps the step's own commit or the run's closing comm
       }
     }
   }
-  const store = new Windows(seedBookFiles());
+  const store = new Windows(seedBookFiles({ chapters: 1 }));
   const { session: autopilot, events } = session(store, createFakeAutopilotAi({ delayMs: 6 }), { persistHeartbeatMs: 4, heartbeatMs: 0 });
   await autopilot.start(ONE_CHAPTER);
   await autopilot.waitForIdle();
@@ -299,7 +299,7 @@ test("a heartbeat that conflicts is ignored and tried again at the next tick; th
     }
   }
   const baseline = await runWholeBook({ persistHeartbeatMs: 0, heartbeatMs: 0 }, ONE_CHAPTER);
-  const store = new Conflicting(seedBookFiles());
+  const store = new Conflicting(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ delayMs: 8 });
   const { session: autopilot, events } = session(store, ai, { persistHeartbeatMs: 3, heartbeatMs: 0 });
   await autopilot.start(ONE_CHAPTER);
@@ -318,7 +318,7 @@ test("a store that fails while the heartbeat is written does not stop the run ei
       return super.commit(changes, message);
     }
   }
-  const store = new Broken(seedBookFiles());
+  const store = new Broken(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ delayMs: 8 });
   const { session: autopilot, events } = session(store, ai, { persistHeartbeatMs: 3, heartbeatMs: 0 });
   await autopilot.start(ONE_CHAPTER);
@@ -331,7 +331,7 @@ test("a store that fails while the heartbeat is written does not stop the run ei
 // ─── the lease is still lost to another runner, and found out sooner ────────
 
 test("another runner taking the book during a long step is still detected when the step ends: the old run writes nothing", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const reached = deferred();
   const release = deferred();
   const aiA = gatedAi((call) => {
@@ -367,7 +367,7 @@ test("another runner taking the book during a long step is still detected when t
 });
 
 test("a heartbeat that finds another runner's id stops the old run at once: its request in flight is abandoned and nothing more is written", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const aiA = hangingAi();
   const holdB = holdingAi((request, call) => call === 1);
   const a = session(store, aiA, { persistHeartbeatMs: 140, heartbeatMs: 0 });
@@ -396,7 +396,7 @@ test("a heartbeat that finds another runner's id stops the old run at once: its 
 });
 
 test("a heartbeat does not bring back a runner that somebody else cleared", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const reached = deferred();
   const release = deferred();
   const ai = gatedAi((call) => {
@@ -419,7 +419,7 @@ test("a heartbeat does not bring back a runner that somebody else cleared", asyn
 // ─── (a) the live signal ────────────────────────────────────────────────────
 
 test("while a run is active the session emits a state event every heartbeatMs with the current heartbeat, and nothing else is saved", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const reached = deferred();
   const release = deferred();
   const ai = gatedAi((call) => {
@@ -459,7 +459,7 @@ test("while a run is active the session emits a state event every heartbeatMs wi
 });
 
 test("the live heartbeats are not kept in the replay buffer: they do not push the meaningful events out", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ delayMs: 80 });
   const { session: autopilot, events } = session(store, ai, { heartbeatMs: 2, persistHeartbeatMs: 0 });
   await autopilot.start(ONE_CHAPTER);
@@ -480,12 +480,12 @@ test("a start that fails, a pause and a run that ends all leave no heartbeat beh
       throw new Error("working copy unavailable");
     }
   }
-  const failing = session(new Unavailable(seedBookFiles()), createFakeAutopilotAi(), { heartbeatMs: 5, persistHeartbeatMs: 5 });
+  const failing = session(new Unavailable(seedBookFiles({ chapters: 1 })), createFakeAutopilotAi(), { heartbeatMs: 5, persistHeartbeatMs: 5 });
   await assert.rejects(() => failing.session.start(ONE_CHAPTER), /working copy unavailable/);
   await sleep(40);
   assert.equal(failing.events.length, 0, "a start that failed emits nothing, not even a heartbeat");
 
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { session: autopilot, events } = session(store, createFakeAutopilotAi({ delayMs: 30 }), { heartbeatMs: 5, persistHeartbeatMs: 5 });
   await autopilot.start(ONE_CHAPTER);
   autopilot.pause("now");

@@ -62,7 +62,7 @@ function holdingAi(label = HELD) {
 
 /** A book whose run is held in the middle of its first scene: the run is active, four steps are saved. */
 async function heldRun({ options = {}, language = "en", extra = {} } = {}) {
-  const store = new MemoryBookStore(seedBookFiles({ language }));
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2, language }));
   const ai = holdingAi();
   const { session, events } = newSession(store, ai, extra);
   await session.start({ brief: TWO.brief, options: { ...FAST, ...options } });
@@ -80,7 +80,7 @@ async function stoppedByServer(options = { resumeAfterRestart: true }) {
 }
 
 /** A state file as a host left it: `change` edits a new state of the book. */
-function withState(change, files = seedBookFiles()) {
+function withState(change, files = seedBookFiles({ chapters: 2 })) {
   const state = change(createAutopilotState(new Date(), TWO.brief, { ...FAST, resumeAfterRestart: true }));
   return new MemoryBookStore({ ...files, [STATE]: serializeAutopilotState(state) });
 }
@@ -181,7 +181,7 @@ test("a pause of the author never writes the server's word: now, at the end of t
 });
 
 test("the server's stop of a start in flight pauses the run as soon as it exists, with the server's word; a pause of the author asked first stays the author's", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const { session } = newSession(store, fakeAi());
   const starting = session.start(TWO);
   assert.equal(session.stopForShutdown(), true, "a start in flight is stopped");
@@ -190,7 +190,7 @@ test("the server's stop of a start in flight pauses the run as soon as it exists
   assert.equal(stateOf(store).status, "paused");
   assert.equal(stateOf(store).stoppedBy, "server-shutdown");
 
-  const other = new MemoryBookStore(seedBookFiles());
+  const other = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const { session: second } = newSession(other, fakeAi());
   const again = second.start(TWO);
   second.pause("now");
@@ -234,10 +234,10 @@ test("a pause of the author with nothing running takes the server's word away (f
   assert.equal(await session.forgetStopCause(), null, "a second time there is nothing to take away");
   assert.equal(stateOf(store).version, version + 1, "and nothing is written");
 
-  const empty = new MemoryBookStore(seedBookFiles());
+  const empty = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   assert.equal(await newSession(empty, fakeAi()).session.forgetStopCause(), null);
   assert.equal(empty.files.has(STATE), false, "a book without a state does not get one");
-  const corrupt = new MemoryBookStore({ ...seedBookFiles(), [STATE]: "{ not json" });
+  const corrupt = new MemoryBookStore({ ...seedBookFiles({ chapters: 2 }), [STATE]: "{ not json" });
   assert.equal(await newSession(corrupt, fakeAi()).session.forgetStopCause(), null, "a state that cannot be read is no error here");
   assert.equal(corrupt.files.get(STATE), "{ not json", "and it is left as it is");
 
@@ -249,7 +249,7 @@ test("a pause of the author with nothing running takes the server's word away (f
 
 test("a start of the host after a restart says so first, in the language of the book; no other start does", async () => {
   for (const [language, title] of [["en", "Resumed by itself after the server restarted."], ["it", "Ripreso da solo dopo il riavvio del server."]]) {
-    const store = new MemoryBookStore(seedBookFiles({ language }));
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 2, language }));
     const { session, events } = newSession(store, fakeAi());
     await session.start({ ...TWO, afterRestart: true, limits: { steps: 1 } });
     await session.waitForIdle();
@@ -267,7 +267,7 @@ test("a start of the host after a restart says so first, in the language of the 
 
 test("restartResumeCause: a run going on when the host stopped, or paused by the server's stop, with the option on; nothing else", async () => {
   const cause = (store, extra) => newSession(store, fakeAi(), extra).session.restartResumeCause();
-  assert.equal(await cause(new MemoryBookStore(seedBookFiles())), null, "no state");
+  assert.equal(await cause(new MemoryBookStore(seedBookFiles({ chapters: 2 }))), null, "no state");
   assert.equal(await cause(withState((state) => ({ ...state, status: "paused", stoppedBy: "server-shutdown" }))), "server-shutdown");
   assert.equal(await cause(withState((state) => ({ ...state, status: "paused" }))), null, "a pause of the author, or of the run itself");
   assert.equal(await cause(withState((state) => ({ ...state, status: "paused", stoppedBy: "server-shutdown", options: { ...state.options, resumeAfterRestart: undefined } }))), null, "the option off");
@@ -279,7 +279,7 @@ test("restartResumeCause: a run going on when the host stopped, or paused by the
   for (const status of ["idle", "completed", "error", "waiting-author"]) {
     assert.equal(await cause(withState((state) => ({ ...state, status, runner: null }))), null, status);
   }
-  assert.equal(await cause(new MemoryBookStore({ ...seedBookFiles(), [STATE]: "{ not json" })), null, "a state that cannot be read");
+  assert.equal(await cause(new MemoryBookStore({ ...seedBookFiles({ chapters: 2 }), [STATE]: "{ not json" })), null, "a state that cannot be read");
 
   const { store } = await stoppedByServer();
   const ai = holdingAi("autopilot:director-review:1");
@@ -304,7 +304,7 @@ test("holdAfterRestart: the run waits for the author with the reason in its mess
   assert.equal(await session.holdAfterRestart({ times: 3, hours: 24 }), null, "a second time there is nothing to hold");
   assert.equal(stateOf(paused).version, version, "and nothing is written");
 
-  const running = withState((state) => ({ ...state, status: "running", runner: runner() }), seedBookFiles({ language: "it" }));
+  const running = withState((state) => ({ ...state, status: "running", runner: runner() }), seedBookFiles({ chapters: 2, language: "it" }));
   const italian = await newSession(running, fakeAi()).session.holdAfterRestart({ times: 3, hours: 24 });
   assert.equal(italian.status, "paused");
   assert.equal(italian.runner, null);
@@ -314,7 +314,7 @@ test("holdAfterRestart: the run waits for the author with the reason in its mess
   const before = authorPaused.files.get(STATE);
   assert.equal(await newSession(authorPaused, fakeAi()).session.holdAfterRestart({ times: 3, hours: 24 }), null, "a pause of the author is left as it is");
   assert.equal(authorPaused.files.get(STATE), before);
-  const empty = new MemoryBookStore(seedBookFiles());
+  const empty = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   assert.equal(await newSession(empty, fakeAi()).session.holdAfterRestart({ times: 3, hours: 24 }), null);
   assert.equal(empty.files.has(STATE), false, "a book without a state does not get one");
 });
@@ -334,8 +334,8 @@ function fakeServer(features) {
 }
 
 const serverClient = (server) => new engine.NarrariumServerClient({ baseUrl: "http://127.0.0.1:24242", token: "nrs_me", fetch: server.fetch });
-const WITH = ["autopilot", "autopilot-controls", "autopilot-retry", "autopilot-auto-resume"];
-const WITHOUT = ["autopilot", "autopilot-controls", "autopilot-retry"];
+const WITH = ["autopilot", "autopilot-controls", "autopilot-retry", "autopilot-auto-resume", "autopilot-outline-brief"];
+const WITHOUT = ["autopilot", "autopilot-controls", "autopilot-retry", "autopilot-outline-brief"];
 
 test("a server says it resumes runs after a restart with the feature autopilot-auto-resume; reading it never throws", () => {
   assert.equal(engine.SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, "autopilot-auto-resume");

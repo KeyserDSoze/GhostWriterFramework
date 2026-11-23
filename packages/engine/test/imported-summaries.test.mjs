@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as engine from "../dist/index.js";
-import { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } from "../dist/testing/index.js";
+import { MemoryBookStore, createFakeAutopilotAi, outlineEntryFiles, seedBookFiles } from "../dist/testing/index.js";
 
 // New exports are read from the namespace so that, before they exist, each test fails on its own.
 const { AI_CAPABILITIES, AutopilotSession, createAutopilotState, parseAutopilotState, parseMarkdown, serializeAutopilotState } = engine;
@@ -62,7 +62,9 @@ const summaryCalls = (ai) => ai.calls.filter((call) => SUMMARY_LABEL.test(call.l
 const summaryNumbers = (ai) => summaryCalls(ai).map((call) => Number(SUMMARY_LABEL.exec(call.label)[1]));
 
 async function run(files, ai, start = { brief: SIX, options: FAST }, extra = {}) {
-  const store = new MemoryBookStore(files);
+  // The chapters of the book are the entries of its outline: those the run's brief asks for, where the files have none.
+  const entries = Object.entries(outlineEntryFiles(start.brief?.targetChapters ?? 0)).filter(([path]) => !(path in files));
+  const store = new MemoryBookStore({ ...files, ...Object.fromEntries(entries) });
   const events = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 0, ...extra });
   session.subscribe((event) => events.push(event));

@@ -1,7 +1,7 @@
 import type { BookSnapshot, ChapterInfo } from "../book/snapshot.js";
 import { chapterNumberFromSlug, chapterSlug, paragraphFilePath, paragraphSlug } from "../book/paths.js";
 import type { DirectorProfile } from "../profiles/director.js";
-import { isItalian } from "../util/text.js";
+import { countWords, isItalian } from "../util/text.js";
 import { advancePendingReviews, frozenQuestionMessage, inRevision, isFrozenQuestion, needsFreezeStep, noteOutlineRewrite, startedReview, type PlannerFrozen } from "./frozen.js";
 import type { AutopilotMessageCode, AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, InsightTone, PlannedChapter, PlannedScene } from "./types.js";
 
@@ -53,13 +53,25 @@ export interface PlannerOutline {
 }
 
 /**
- * The number of chapters the book is planned to: the brief's, or the last chapter of the author's outline when it asks for more.
- * Chapters taken out of the plan because the author deleted their entry count among them, so that the book is not extended to
- * replace them.
+ * The number of chapters the book has: the chapter entries of the outline, up to the last one (its number; with no number between two
+ * entries, the planner plans that chapter freely, as the outline warns). Zero when the outline has no chapter: then nothing is planned.
  */
-export function effectiveTargetChapters(state: Pick<AutopilotState, "brief" | "plan">, outline?: Pick<PlannerOutline, "lastChapter"> | null): number {
-  const removed = state.plan?.removedChapters?.length ?? 0;
-  return Math.max(1, Math.max(state.brief.targetChapters, outline?.lastChapter ?? 0) - removed);
+export function bookChapters(outline?: Pick<PlannerOutline, "lastChapter"> | null): number {
+  return Math.max(0, outline?.lastChapter ?? 0);
+}
+
+/**
+ * The scenes a chapter has is the planner's to decide, from the outline entry of the chapter (its text, `entryText`; or the summary and the
+ * events of the plan when the entry has no text). The rule is deterministic: 2 scenes for a short text (up to 40 words), 3 up to 100 words,
+ * 4 for more. The words per scene (`wordsPerScene` of the brief) apply to each of them.
+ */
+export const SCENES_PER_CHAPTER = { min: 2, max: 4 } as const;
+
+export function scenesForChapter(entryText: string): number {
+  const words = countWords(entryText);
+  if (words <= 40) return SCENES_PER_CHAPTER.min;
+  if (words <= 100) return 3;
+  return SCENES_PER_CHAPTER.max;
 }
 
 export interface TaskDescriptor {
@@ -245,8 +257,9 @@ function descriptor(kind: AutopilotTaskKind, phase: AutopilotPhase, ctx: Planner
 /** Whether another batch follows this one: chapters still missing from the plan, or batches a revision has still to regenerate. */
 function moreBatchesFollow(plan: AutopilotPlan | null, batch: PlanBatch): boolean {
   const present = new Set((plan?.chapters ?? []).map((chapter) => chapter.number));
+  const removed = new Set(plan?.removedChapters ?? []);
   for (let number = batch.range.start; number <= batch.range.last; number += 1) {
-    if (!present.has(number) && (number < batch.from || number > batch.to)) return true;
+    if (!present.has(number) && !removed.has(number) && (number < batch.from || number > batch.to)) return true;
   }
   return Boolean(plan?.revisionNotes.some((note) => !isExtensionNote(note))) && revisionBatchStarts(plan!, batch.range).some((start) => start !== batch.from);
 }
@@ -343,9 +356,13 @@ export interface PlanBatch {
   batched: boolean;
 }
 
+/**
+ * The chapters the plan still has to cover: from the chapter after the last one written, to the book's last chapter. The count is taken
+ * from the numbers, not from how many chapters are written: the written chapters need not be 1 to n (a book can continue at chapter 1200).
+ */
 export function planRange(imported: ReadonlyArray<{ number: number }>, targetChapters: number): PlanRange {
   const start = imported.reduce((highest, chapter) => Math.max(highest, chapter.number), 0) + 1;
-  const count = Math.max(1, targetChapters - imported.length);
+  const count = Math.max(1, targetChapters - start + 1);
   return { start, count, last: start + count - 1 };
 }
 
@@ -375,20 +392,21 @@ function batchAt(range: PlanRange, from: number): PlanBatch {
 /**
  * The batch the plan task runs next, or `null` when there is nothing to plan: the first chapter of the range that is not in
  * the plan yet, else the first batch a revision still has to regenerate. A range that fits one batch is always planned
- * whole.
+ * whole. A chapter the author took out of the outline (`removedChapters`) is not missing.
  */
 export function nextPlanBatch(plan: AutopilotPlan | null, range: PlanRange): PlanBatch | null {
   if (!plan) return batchAt(range, range.start);
   if (plan.approved) return null;
-  const missing = firstMissingChapter(plan.chapters, range);
+  const missing = firstMissingChapter(plan.chapters, range, plan.removedChapters);
   if (missing !== undefined) return batchAt(range, missing);
   return plan.revisionNotes.length ? batchAt(range, revisionBatchStarts(plan, range)[0]) : null;
 }
 
-/** The first chapter of the range that the chapters do not have. */
-export function firstMissingChapter(chapters: ReadonlyArray<{ number: number }>, range: PlanRange): number | undefined {
+/** The first chapter of the range that the chapters do not have, and that was not taken out of the plan. */
+export function firstMissingChapter(chapters: ReadonlyArray<{ number: number }>, range: PlanRange, removed: readonly number[] = []): number | undefined {
   const present = new Set(chapters.map((chapter) => chapter.number));
-  for (let number = range.start; number <= range.last; number += 1) if (!present.has(number)) return number;
+  const gone = new Set(removed);
+  for (let number = range.start; number <= range.last; number += 1) if (!present.has(number) && !gone.has(number)) return number;
   return undefined;
 }
 
@@ -508,7 +526,7 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
 
   if (!state.plan && state.concept.done) {
     const imported = importedChapters(snapshot);
-    if (imported.length && imported.length >= effectiveTargetChapters(state, ctx.outline)) {
+    if (imported.length && imported.reduce((highest, chapter) => Math.max(highest, chapter.number), 0) >= bookChapters(ctx.outline)) {
       state.plan = { chapters: imported, approved: true, rounds: 0, revisionNotes: [], readerReactions: [], readersDone: true, awaitingAuthor: false };
     }
   }
@@ -678,6 +696,11 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
   const edited = editedChapter(state);
   if (edited) return chapterStep(edited, state, ctx);
 
+  // The length of the book is its chapters in the outline: with none, there is nothing to plan, and the author writes them first.
+  if (!state.plan?.approved && bookChapters(ctx.outline) === 0) {
+    return { kind: "stop", status: "paused", message: italian ? "La Scaletta non ha capitoli: scrivi i capitoli nella Scaletta, poi riprendi." : "The outline has no chapters: write the chapters in the Scaletta, then resume." };
+  }
+
   if (!state.concept.done) return { kind: "task", task: descriptor("concept", "concept", ctx) };
 
   const plan = state.plan;
@@ -685,7 +708,7 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
     // Before anything is planned after them, the chapters the author wrote get the summaries the story so far is made of.
     const unsummarized = nextImportedWithoutSummary(state, ctx.snapshot);
     if (unsummarized) return { kind: "task", task: descriptor("summarize-imported", phaseOf(state), ctx, { chapter: unsummarized }) };
-    const batch = nextPlanBatch(plan, planRange(importedChapters(ctx.snapshot), effectiveTargetChapters(state, ctx.outline)));
+    const batch = nextPlanBatch(plan, planRange(importedChapters(ctx.snapshot), bookChapters(ctx.outline)));
     if (batch) return { kind: "task", task: planDescriptor(ctx, plan, batch) };
   }
 

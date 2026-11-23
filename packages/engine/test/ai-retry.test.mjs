@@ -102,7 +102,7 @@ function scripted(script, options = {}) {
 }
 
 async function run(ai, start = ONE_SCENE, extra = {}) {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const emitted = [];
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 40, random: () => 0.5, ...extra });
   session.subscribe((event) => emitted.push(event));
@@ -174,7 +174,7 @@ test("with retryDelayMs 0 every delay is 0, Retry-After included", async () => {
 });
 
 test("without retryDelayMs the delays are the real ones: 4 s, 12 s, 36 s", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const emitted = [];
   const ai = scripted((request, seen) => request.label === "autopilot:concept" && seen === 0 ? unavailable() : undefined);
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", random: () => 0.5 });
@@ -270,7 +270,7 @@ async function waitFor(condition, timeoutMs = 4_000) {
 }
 
 test("Pause now interrupts a long wait between retries", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const emitted = [];
   const ai = scripted((request) => request.label === "autopilot:concept" ? unavailable() : undefined);
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 60_000, random: () => 0.5 });
@@ -289,7 +289,7 @@ test("Pause now interrupts a long wait between retries", async () => {
 });
 
 test("Pause after the step also ends the wait instead of sitting through it", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const emitted = [];
   const ai = scripted((request) => request.label === "autopilot:concept" ? unavailable() : undefined);
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 60_000, random: () => 0.5 });
@@ -311,7 +311,7 @@ test("Pause after the step also ends the wait instead of sitting through it", as
 
 test("a retry that was waiting is cancelled cleanly when the run is stopped before the wait starts", async () => {
   const ai = scripted((request) => request.label === "autopilot:concept" ? unavailable() : undefined);
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const session = new AutopilotSession({ bookId: "book", store, ai, host: "server", hostLabel: "test", retryDelayMs: 60_000 });
   await session.start(ONE_SCENE);
   session.pause("now");

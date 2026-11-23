@@ -25,6 +25,17 @@ const BOOK_OPINION = "evaluations/director/book.md";
 const clock = () => new Date("2026-01-01T00:00:00.000Z");
 const digest = (text) => createHash("sha256").update(text).digest("hex");
 
+/** Entries the autopilot wrote and nobody touched since: they bind nothing, so the book is asked what it always was. */
+async function intactEntries(count) {
+  const files = {};
+  for (let number = 1; number <= count; number += 1) {
+    const title = `Chapter Title ${number}`;
+    const body = `Event ${number} happens and the story turns.`;
+    files[engine.outlineChapterPath(number)] = `---\ntype: outline-chapter\nnumber: ${number}\ntitle: ${title}\norigin: autopilot\ndigest: ${await engine.outlineEntryDigest({ title, body })}\n---\n\n${body}\n`;
+  }
+  return files;
+}
+
 /**
  * The book as the engine wrote it before it froze the chapters it approves: the same files without the freeze record (`frozen`, the last
  * key of the frontmatter of a chapter.md), and the director's judgement of the book with the source hash of those chapter files (it is
@@ -87,12 +98,12 @@ async function batchedAndRevised() {
     reviews += 1;
     return reviews === 1 ? reply({ verdict: "revise", score: 6, summary: "Two chapters need work.", strengths: ["Stakes"], changes: [{ chapterNumber: 3, instruction: "Make it darker." }, { chapterNumber: 22, instruction: "Make it faster." }], guidance: ["Keep the sea present."] }) : undefined;
   });
-  return run(seedBookFiles(), ai, { brief: { idea: "A harbor built on glass hides a lie.", targetChapters: 25, scenesPerChapter: 2, wordsPerScene: 300, genre: "Mystery", audience: "Adults" }, options: { maxReaders: 2, pauseAfterPlan: false, chaptersPerRun: 1 } });
+  return run({ ...seedBookFiles(), ...(await intactEntries(25)) }, ai, { brief: { idea: "A harbor built on glass hides a lie.", targetChapters: 25, scenesPerChapter: 2, wordsPerScene: 300, genre: "Mystery", audience: "Adults" }, options: { maxReaders: 2, pauseAfterPlan: false, chaptersPerRun: 1 } });
 }
 
 /** A book the author began: two chapters written (one without a summary), a binding synopsis, two chapters planned after them, written and judged, and the final judgement. */
 async function importedWithSynopsis(prepare) {
-  const files = seedBookFiles({ title: "Il faro di sale", language: "it" });
+  const files = { ...seedBookFiles({ title: "Il faro di sale", language: "it" }), ...(await intactEntries(4)) };
   files["chapters/001-the-arrival/chapter.md"] = "---\ntype: chapter\nid: chapter:001-the-arrival\nnumber: 1\ntitle: The Arrival\nsummary: Mira arrives at the harbor and finds the lighthouse dark.\n---\n\n# The Arrival\n";
   files["chapters/001-the-arrival/001-dawn.md"] = "---\ntype: paragraph\nid: paragraph:001-the-arrival:001-dawn\nchapter: chapter:001-the-arrival\nnumber: 1\ntitle: Dawn\n---\n\nThe author's own opening scene, written before the autopilot: Mira walks down the stone steps toward the silent boats.";
   files["chapters/002-the-storm/001-wind.md"] = "---\ntype: paragraph\nid: paragraph:002-the-storm:001-wind\nchapter: chapter:002-the-storm\nnumber: 1\ntitle: Wind\n---\n\nThe author's second chapter: the wind carries salt and memory across the harbor while the council meets in secret.";
@@ -104,7 +115,7 @@ async function importedWithSynopsis(prepare) {
 
 /** A small English book written to the end with readers, specialists, a director who revises every chapter once, and the final judgement. */
 async function wholeSmallBook() {
-  return run(seedBookFiles(), createFakeAutopilotAi(), { brief: { idea: "A lighthouse keeper's last winter.", targetChapters: 2, scenesPerChapter: 2, wordsPerScene: 300 }, options: { maxReaders: 2, pauseAfterPlan: false } });
+  return run({ ...seedBookFiles(), ...(await intactEntries(2)) }, createFakeAutopilotAi(), { brief: { idea: "A lighthouse keeper's last winter.", targetChapters: 2, scenesPerChapter: 2, wordsPerScene: 300 }, options: { maxReaders: 2, pauseAfterPlan: false } });
 }
 
 test("a book without an outline and without an evaluation style sends, byte for byte, the requests it always sent", async () => {

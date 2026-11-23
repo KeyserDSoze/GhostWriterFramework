@@ -64,6 +64,22 @@ async function editOutline(store, edit) {
 
 const insights = (events, code) => events.filter((event) => event.type === "insight" && event.code === code);
 
+/** The author's entries of these chapters, the way `outlineEntryFiles` writes them. */
+function entriesOf(numbers) {
+  return Object.fromEntries(numbers.map((number) => [engine.outlineChapterPath(number), entry({ title: `Chapter Title ${number}`, body: `Event ${number} happens and the story turns.` })]));
+}
+
+/** Entries the autopilot wrote and nobody touched since: intact, they bind nothing, and the chapters they number are the book's. */
+async function autopilotEntries(numbers) {
+  const files = {};
+  for (const number of numbers) {
+    const title = `Chapter Title ${number}`;
+    const body = `Event ${number} happens and the story turns.`;
+    files[engine.outlineChapterPath(number)] = `---\ntype: outline-chapter\nnumber: ${number}\ntitle: ${title}\norigin: autopilot\ndigest: ${await engine.outlineEntryDigest({ title, body })}\n---\n\n${body}\n`;
+  }
+  return files;
+}
+
 /** A book whose author wrote the outline before the autopilot: three chapters for a brief of two, the second with its own ghostwriter, the third with one that does not exist. */
 function authoredBook() {
   return {
@@ -82,7 +98,8 @@ test("the plan follows the author's outline: its chapters, its order, its titles
   const files = authoredBook();
   const store = new MemoryBookStore(files);
   const ai = createFakeAutopilotAi();
-  const { state, events } = await run(store, ai, { brief: { idea: "x", targetChapters: 2, scenesPerChapter: 1, wordsPerScene: 300 }, options: { ...FAST, pauseAfterPlan: true } });
+  // No idea is sent: the description of the book is the author's own text, and a brief's idea would replace it.
+  const { state, events } = await run(store, ai, { brief: { targetChapters: 2, scenesPerChapter: 1, wordsPerScene: 300 }, options: { ...FAST, pauseAfterPlan: true } });
   assert.equal(state.status, "paused", state.lastError?.message);
   const plan = call(ai, "autopilot:plan").user;
   assert.match(plan, /numbered 1 to 3/, "max(brief.targetChapters, the last chapter of the outline)");
@@ -116,7 +133,7 @@ test("the plan follows the author's outline: its chapters, its order, its titles
 test("the synopsis of the brief is the fallback: alone it binds as ever, next to an outline the outline wins", async () => {
   const synopsis = "1. Mira arrives. 2. The storm.";
   const alone = createFakeAutopilotAi();
-  await run(new MemoryBookStore(seedBookFiles()), alone, { brief: { idea: "x", synopsis, targetChapters: 2, scenesPerChapter: 1 }, options: { ...FAST, pauseAfterPlan: true } });
+  await run(new MemoryBookStore({ ...seedBookFiles({ chapters: 2 }), ...(await autopilotEntries([1, 2])) }), alone, { brief: { idea: "x", synopsis, targetChapters: 2, scenesPerChapter: 1 }, options: { ...FAST, pauseAfterPlan: true } });
   assert.match(call(alone, "autopilot:plan").user, /Follow the author's chapter-by-chapter synopsis exactly: same chapters, same order, same events\. Enrich, never change\./);
   assert.doesNotMatch(call(alone, "autopilot:plan").user, /AUTHOR'S OUTLINE/);
 
@@ -130,7 +147,7 @@ test("the synopsis of the brief is the fallback: alone it binds as ever, next to
 });
 
 test("the outline of a long book reaches every batch around the chapters it plans, and no prompt grows with it", async () => {
-  const files = seedBookFiles();
+  const files = seedBookFiles({ chapters: 12 });
   for (let number = 1; number <= 120; number += 1) files[engine.outlineChapterPath(number)] = entry({ title: `Outline ${number}`, body: `What happens in chapter ${number}. MARK-${number}-END ${"The tide keeps rising. ".repeat(30)}` });
   const store = new MemoryBookStore(files);
   const ai = createFakeAutopilotAi();
@@ -166,20 +183,21 @@ test("a ghostwriter the outline named before it existed writes the chapter once 
 
 // ─── E4-4: the plan fills the outline ───────────────────────────────────────
 
-test("the plan fills an empty outline in the same commit: the chapters it planned and the book's description, as the autopilot's", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+test("the plan fills the chapter the outline leaves without an entry, in the same commit, and the book's description, as the autopilot's", async () => {
+  const files = { ...seedBookFiles(), ...entriesOf([1, 3]) };
+  const store = new MemoryBookStore(files);
   const ai = createFakeAutopilotAi();
-  const { state } = await run(store, ai, { brief: { idea: "A harbor built on glass hides a lie.", targetChapters: 3, scenesPerChapter: 1 }, options: { ...FAST, pauseAfterPlan: true } });
+  const { state } = await run(store, ai, { brief: { targetChapters: 3, scenesPerChapter: 1 }, options: { ...FAST, pauseAfterPlan: true } });
   assert.equal(state.status, "paused", state.lastError?.message);
   const outline = await outlineOf(store);
-  assert.deepEqual(outline.chapters.map((item) => [item.number, item.title, item.origin, item.intact]), [[1, "Chapter Title 1", "autopilot", true], [2, "Chapter Title 2", "autopilot", true], [3, "Chapter Title 3", "autopilot", true]]);
-  assert.equal(outline.chapters[0].body, "Summary of chapter 1.\n\n- Event 1", "the summary of the plan, then its key events as a list");
+  assert.deepEqual(outline.chapters.map((item) => [item.number, item.title, item.origin, item.intact]), [[1, "Chapter Title 1", "author", false], [2, "Chapter Title 2", "autopilot", true], [3, "Chapter Title 3", "author", false]]);
+  assert.equal(outline.chapters[1].body, "Summary of chapter 2.\n\n- Event 2", "the summary of the plan, then its key events as a list");
   assert.deepEqual(state.plan.chapters.map((chapter) => chapter.outlineDigest), outline.chapters.map((item) => item.contentDigest));
   assert.equal(outline.book.origin, "autopilot");
   assert.equal(outline.book.intact, true);
   assert.match(outline.book.body, /glassmaker's daughter/, "the logline of the concept");
   const commit = store.commits.find((entry) => entry.message.startsWith("Autopilot: Planning"));
-  assert.ok(["outline/book.md", "outline/chapters/001.md", "outline/chapters/003.md", "autopilot/state.json"].every((path) => commit.paths.includes(path)), "one commit for the plan and its outline");
+  assert.ok(["outline/book.md", "outline/chapters/002.md", "autopilot/state.json"].every((path) => commit.paths.includes(path)), "one commit for the plan and its outline");
   assert.deepEqual(outline.warnings, []);
 });
 
@@ -189,20 +207,23 @@ test("the option fillOutline is on by default, saved, and off leaves the outline
   assert.equal(engine.normalizeOptions({ fillOutline: false }).fillOutline, false);
   assert.equal(engine.normalizeOptions({ fillOutline: "nonsense" }, { ...engine.DEFAULT_OPTIONS, fillOutline: false }).fillOutline, false, "a value nobody knows changes nothing");
   assert.equal(engine.parseAutopilotState(JSON.stringify({ options: { fillOutline: false } })).options.fillOutline, false);
-  const store = new MemoryBookStore(seedBookFiles());
-  const { state } = await run(store, createFakeAutopilotAi(), { brief: { idea: "x", targetChapters: 2, scenesPerChapter: 1 }, options: { ...FAST, pauseAfterPlan: true, fillOutline: false } });
+  const files = { ...seedBookFiles(), ...entriesOf([1, 3]) };
+  const store = new MemoryBookStore(files);
+  const { state } = await run(store, createFakeAutopilotAi(), { brief: { targetChapters: 2, scenesPerChapter: 1 }, options: { ...FAST, pauseAfterPlan: true, fillOutline: false } });
   assert.equal(state.options.fillOutline, false);
-  assert.ok(![...store.files.keys()].some((path) => path.startsWith("outline/")), "nothing written in outline/");
+  assert.deepEqual([...store.files.keys()].filter((path) => path.startsWith("outline/") && path !== engine.OUTLINE_BRIEF_FILE).sort(), Object.keys(files).filter((path) => path.startsWith("outline/")).sort(), "nothing written in outline/ but the brief the run was given");
 });
 
 test("the plan never touches the author's entries, rewrites its own untouched ones, and leaves its own once the author changed them", async () => {
   const two = await engine.outlineEntryDigest({ title: "Old two", body: "Written by an earlier plan." });
   const three = await engine.outlineEntryDigest({ title: "Old three", body: "Written by an earlier plan." });
+  const four = await engine.outlineEntryDigest({ title: "Old four", body: "Written by an earlier plan." });
   const files = {
-    ...seedBookFiles(),
+    ...seedBookFiles({ chapters: 4 }),
     "outline/chapters/001.md": entry({ title: "The Arrival", body: "The author's chapter one. AUTHOR-1" }),
     "outline/chapters/002.md": entry({ title: "Old two", body: "Written by an earlier plan.", origin: "autopilot", digest: two }),
     "outline/chapters/003.md": entry({ title: "Old three", body: "Written by an earlier plan, then corrected by the author.", origin: "autopilot", digest: three }),
+    "outline/chapters/004.md": entry({ title: "Old four", body: "Written by an earlier plan.", origin: "autopilot", digest: four }),
   };
   let planCalls = 0;
   let reviews = 0;
@@ -230,7 +251,7 @@ test("the plan never touches the author's entries, rewrites its own untouched on
 });
 
 test("the chapters the author wrote get an entry only when they have none, with their summary", async () => {
-  const files = seedBookFiles();
+  const files = { ...seedBookFiles(), ...entriesOf([1, 3]) };
   files["chapters/001-the-arrival/chapter.md"] = "---\ntype: chapter\nid: chapter:001-the-arrival\nnumber: 1\ntitle: The Arrival\nsummary: Mira arrives.\n---\n\n# The Arrival\n";
   files["chapters/001-the-arrival/001-dawn.md"] = "---\ntype: paragraph\nid: paragraph:001-the-arrival:001-dawn\nchapter: chapter:001-the-arrival\nnumber: 1\ntitle: Dawn\n---\n\nThe author's opening scene, long enough to be a scene of its own.";
   files["chapters/002-the-storm/001-wind.md"] = "---\ntype: paragraph\nid: paragraph:002-the-storm:001-wind\nchapter: chapter:002-the-storm\nnumber: 1\ntitle: Wind\n---\n\nThe author's second chapter, a storm over the harbor.";
@@ -248,7 +269,7 @@ test("the chapters the author wrote get an entry only when they have none, with 
 // ─── E4-5: the author changes the outline of a chapter not written yet ─────
 
 async function plannedBook(chapters = 3, extra = {}) {
-  const store = new MemoryBookStore({ ...seedBookFiles(), "ghostwriters/noir.md": NOIR });
+  const store = new MemoryBookStore({ ...seedBookFiles(), ...(await autopilotEntries(Array.from({ length: chapters }, (_, index) => index + 1))), "ghostwriters/noir.md": NOIR });
   const ai = createFakeAutopilotAi();
   const { state } = await run(store, ai, { brief: { idea: "x", targetChapters: chapters, scenesPerChapter: 1, wordsPerScene: 300 }, options: { ...FAST, pauseAfterPlan: true, ...extra } });
   assert.equal(state.status, "paused", state.lastError?.message);
@@ -335,7 +356,7 @@ test("the outline of a chapter already written that changed is said once, and th
 });
 
 test("an entry that changes while its chapter is being written has a code of its own; once the chapter is closed, the notice of a written chapter has its own", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
   const { session, events } = newSession(store, ai);
   let paused = false;
@@ -358,7 +379,7 @@ test("an entry that changes while its chapter is being written has a code of its
 });
 
 test("an entry the author adds after the last chapter extends a finished book, following the entry", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const ai = createFakeAutopilotAi();
   const first = await run(store, ai, { brief: { idea: "x", targetChapters: 2, scenesPerChapter: 1 }, options: { ...FAST } });
   assert.equal(first.state.status, "completed", first.state.lastError?.message);
@@ -376,12 +397,13 @@ test("an entry the author adds after the last chapter extends a finished book, f
 test("the planner counts the chapters of the outline, and plans again a chapter whose entry changed before its scenes", () => {
   const snapshot = { files: new Map(), book: { title: "B", language: "en", description: "" }, chapters: [], canon: [], personaPaths: [], ghostwriterSlugs: [], hasDirector: false };
   const context = { snapshot, director: engine.defaultDirector("en"), readers: [], language: "en", storyDesignThin: false };
-  const state = engine.createAutopilotState(new Date(0), { idea: "x", targetChapters: 3 }, FAST);
+  const state = engine.createAutopilotState(new Date(0), { idea: "x" }, FAST);
   state.concept = { done: true, generated: false, secrets: [] };
-  assert.equal(engine.nextStep(state, context).task.title, "Planning 3 chapters");
+  assert.equal(engine.nextStep(state, context).kind, "stop", "no chapter in the outline: nothing to plan");
+  assert.equal(engine.nextStep(state, { ...context, outline: { lastChapter: 3 } }).task.title, "Planning 3 chapters");
   assert.equal(engine.nextStep(state, { ...context, outline: { lastChapter: 5 } }).task.title, "Planning 5 chapters");
-  assert.equal(engine.effectiveTargetChapters(state, { lastChapter: 5 }), 5);
-  assert.equal(engine.effectiveTargetChapters(state, { lastChapter: 2 }), 3);
+  assert.equal(engine.bookChapters({ lastChapter: 5 }), 5);
+  assert.equal(engine.bookChapters(null), 0);
   const chapter = (number) => ({ number, title: `T${number}`, slug: engine.chapterSlug(number, `T${number}`), summary: "", goal: "", pov: [], keyEvents: [], reveals: [], status: "planned", scenes: [] });
   state.plan = { chapters: [chapter(1), chapter(2)], approved: true, rounds: 0, revisionNotes: [], readerReactions: [], readersDone: true, awaitingAuthor: false };
   assert.equal(engine.nextStep(state, context).task.kind, "scenes");

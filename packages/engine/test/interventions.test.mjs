@@ -83,7 +83,7 @@ const occurrences = (text, needle) => text.split(needle).length - 1;
 
 /** The AI calls of the same book when nobody intervenes. */
 async function baselineLabels(start = ONE_CHAPTER, options = {}) {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: start.brief?.targetChapters ?? 1 }));
   const ai = createFakeAutopilotAi(options);
   const { session: autopilot } = session(store, ai);
   await autopilot.start(start);
@@ -101,7 +101,7 @@ function pauseAfter(autopilot, taskKind) {
 // ─── Q2: interventions are saved at once ────────────────────────────────────
 
 test("an intervention made during a step is in the saved state before the step ends, and another session sees it", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { ai, gate, reached } = holdingAi((request, call) => call === 1);
   const { session: autopilot } = session(store, ai);
   await autopilot.start(ONE_CHAPTER);
@@ -133,7 +133,7 @@ test("an intervention made during a step is in the saved state before the step e
 
 test("two interventions in the same step are both saved at once, merged by the step's commit, and cost no AI call", async () => {
   const labels = await baselineLabels();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { ai, gate, reached } = holdingAi((request, call) => call === 1);
   const { session: autopilot, events } = session(store, ai);
   await autopilot.start(ONE_CHAPTER);
@@ -164,7 +164,7 @@ test("two interventions in the same step are both saved at once, merged by the s
 });
 
 test("a heartbeat that rewrote the state file between the author's save and the step's commit does not lose the save", async () => {
-  const store = new AtomicStore(seedBookFiles());
+  const store = new AtomicStore(seedBookFiles({ chapters: 1 }));
   const { ai, gate, reached } = holdingAi((request, call) => call === 1);
   const { session: autopilot, events } = session(store, ai, { persistHeartbeatMs: 8, heartbeatMs: 0 });
   await autopilot.start(ONE_CHAPTER);
@@ -183,7 +183,7 @@ test("a heartbeat that rewrote the state file between the author's save and the 
 });
 
 test("a crash right after an intervention loses nothing: a new session sees the pending note and delivers it to the next writing step", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const reached = deferred();
   const base = createFakeAutopilotAi();
   const dying = {
@@ -232,7 +232,7 @@ test("an intervention that arrives while the run closes is not lost", async () =
       return super.commit(changes, message);
     }
   }
-  const store = new Closing(seedBookFiles());
+  const store = new Closing(seedBookFiles({ chapters: 1 }));
   const { session: autopilot } = session(store, createFakeAutopilotAi({ delayMs: 30 }));
   let returned;
   store.onFinish = async () => {
@@ -252,7 +252,7 @@ test("an intervention that arrives while the run closes is not lost", async () =
 });
 
 test("interrupt: true still restarts the step with the intervention, and the intervention is saved before the restart", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ delayMs: 60 });
   const { session: autopilot, events } = session(store, ai);
   await autopilot.start(ONE_CHAPTER);
@@ -274,7 +274,7 @@ test("interrupt: true still restarts the step with the intervention, and the int
 });
 
 test("a next_step note with interrupt: true reaches the repeated step once and is applied by it", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ delayMs: 60 });
   const { session: autopilot } = session(store, ai);
   await autopilot.start(ONE_CHAPTER);
@@ -290,7 +290,7 @@ test("a next_step note with interrupt: true reaches the repeated step once and i
 });
 
 test("a rule added mid-step arrives in the prompt of the next step exactly once, and in no earlier one", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { ai, gate, reached } = holdingAi((request) => request.label === "autopilot:plan");
   const { session: autopilot } = session(store, ai);
   await autopilot.start(ONE_CHAPTER);
@@ -313,7 +313,7 @@ test("a rule added mid-step arrives in the prompt of the next step exactly once,
 });
 
 test("a rewrite request made while a step runs behaves as it did when it was handed over in memory: its effects land on the state the step produced", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const { ai, gate, reached } = holdingAi((request) => request.label === "autopilot:scenes:2", { reviewVerdict: () => "approve" });
   const { session: autopilot, events } = session(store, ai);
   await autopilot.start(TWO_CHAPTERS);
@@ -336,7 +336,7 @@ test("a rewrite request made while a step runs behaves as it did when it was han
 });
 
 test("a rewrite request made while the director approves the plan reopens it with the author's note, as before", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { ai, gate, reached } = holdingAi((request) => request.label === "autopilot:plan-review");
   const { session: autopilot } = session(store, ai);
   await autopilot.start(ONE_CHAPTER);
@@ -353,7 +353,7 @@ test("a rewrite request made while the director approves the plan reopens it wit
 });
 
 test("a change of anything other than the author's parts during a step is still a conflict: the step is repeated on the latest state, as before", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { ai, gate, reached } = holdingAi((request, call) => call === 1);
   const { session: autopilot, events } = session(store, ai);
   await autopilot.start(ONE_CHAPTER);
@@ -370,7 +370,7 @@ test("a change of anything other than the author's parts during a step is still 
 });
 
 test("a run used on its own keeps the in-memory path: the intervention is saved with the step, and never lost", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { ai, gate, reached } = holdingAi((request, call) => call === 1);
   const emitted = [];
   const run = new AutopilotRun({ bookId: "book-1", store, ai, host: "server", hostLabel: "test-host", retryDelayMs: 0, emit: (event) => emitted.push(event) });
@@ -476,7 +476,7 @@ test("reconcileAuthorChanges: a heartbeat is nothing, a rewrite lands on the sta
 // ─── Q3: a note goes to one writing step ────────────────────────────────────
 
 test("a note recorded before the chapter closes survives the closing and reaches the next writing step once", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
   const { session: autopilot } = session(store, ai);
   const off = pauseAfter(autopilot, "director-review");
@@ -506,7 +506,7 @@ test("a note recorded before the chapter closes survives the closing and reaches
 });
 
 test("a note recorded before a repair is not delivered to the repair, and is delivered once to the writing step that follows", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const ai = createFakeAutopilotAi();
   const { session: autopilot } = session(store, ai);
   const off = pauseAfter(autopilot, "director-review");
@@ -533,7 +533,7 @@ test("a note recorded before a repair is not delivered to the repair, and is del
 });
 
 test("a note delivered to a rewrite for the author's revision is in its prompt once, and applied by it", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
   const { session: autopilot } = session(store, ai);
   await autopilot.start(ONE_CHAPTER);
@@ -561,7 +561,7 @@ test("a note delivered to a rewrite for the author's revision is in its prompt o
 
 function plannerContext() {
   const snapshot = { files: new Map(), book: { title: "B", language: "en", description: "" }, chapters: [], canon: [], personaPaths: [], ghostwriterSlugs: [], hasDirector: false };
-  return { snapshot, director: engine.defaultDirector("en"), readers: [], language: "en", storyDesignThin: false };
+  return { snapshot, director: engine.defaultDirector("en"), readers: [], language: "en", storyDesignThin: false, outline: { lastChapter: 1 } };
 }
 
 test("the steps that write accept notes; the closing of a chapter, the repair and the reviews do not", () => {
@@ -604,7 +604,7 @@ test("the steps that write accept notes; the closing of a chapter, the repair an
 // ─── Q4: rules can be edited, removed and are capped ────────────────────────
 
 async function pausedBookWithRules(...rules) {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = createFakeAutopilotAi();
   const { session: autopilot, events } = session(store, ai);
   for (const text of rules) await autopilot.intervene({ scope: "from_now", text });
@@ -694,14 +694,14 @@ test("a rule is capped at 800 characters: longer text is refused with the limit 
   assert.equal(note.interventions.at(-1).text.length, 3000, "a note is used once and is not a rule: it keeps its length");
   assert.equal(note.constraints.length, 2);
 
-  const run = new AutopilotRun({ bookId: "book-1", store: new MemoryBookStore(seedBookFiles()), ai: createFakeAutopilotAi(), host: "server", hostLabel: "t", emit: () => undefined });
+  const run = new AutopilotRun({ bookId: "book-1", store: new MemoryBookStore(seedBookFiles({ chapters: 1 })), ai: createFakeAutopilotAi(), host: "server", hostLabel: "t", emit: () => undefined });
   assert.throws(() => run.intervene({ scope: "from_now", text: tooLong }), ruleError("rule_too_long", /800/), "a bare run refuses it when it is handed over, not when a step later drains it");
   assert.equal(MAX_CONSTRAINTS, 80, "the cap on the number of rules is unchanged");
 });
 
 test("rules saved by older versions (a plain array of strings) are valid and can be edited", async () => {
   const state = JSON.stringify({ schemaVersion: 1, status: "paused", constraints: ["Old rule one.", "Old rule two."], interventions: [], brief: { idea: "x" } });
-  const store = new MemoryBookStore({ ...seedBookFiles(), [STATE]: state });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 1 }), [STATE]: state });
   const { session: autopilot } = session(store, createFakeAutopilotAi());
   assert.deepEqual((await autopilot.snapshot()).state.constraints, ["Old rule one.", "Old rule two."]);
   const updated = await autopilot.updateRule(1, "New rule two.", "Old rule two.");
@@ -712,7 +712,7 @@ test("rules saved by older versions (a plain array of strings) are valid and can
 });
 
 test("a rule edited or removed while a step runs is saved at once, merged by the step's commit, and the next prompt has the new text only", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const { ai, gate, reached } = holdingAi((request) => request.label === "autopilot:plan");
   const { session: autopilot, events } = session(store, ai);
   await autopilot.intervene({ scope: "from_now", text: "Never use the word suddenly." });
@@ -751,7 +751,7 @@ test("an answer to the director's question is a one-time note, unless the author
     };
   };
   const answered = async (answer) => {
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
     const ai = asking();
     const { session: autopilot } = session(store, ai);
     await autopilot.start(ONE_CHAPTER);
@@ -782,7 +782,7 @@ test("an answer to the director's question is a one-time note, unless the author
   const accepted = await answered({ answer: "No, never.", accept: true, asRule: true });
   assert.deepEqual(accepted.after.constraints, [], "accepting the work records nothing, whatever asRule says");
 
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   const ai = asking();
   const { session: autopilot } = session(store, ai);
   await autopilot.start(ONE_CHAPTER);
@@ -809,7 +809,7 @@ function seeded(seed) {
 
 async function storm(seed, { risky }) {
   const random = seeded(seed * 7919);
-  const store = new AtomicStore(seedBookFiles());
+  const store = new AtomicStore(seedBookFiles({ chapters: 2 }));
   const ai = createFakeAutopilotAi({ delayMs: 4, reviewVerdict: () => "approve" });
   const { session: autopilot, events } = session(store, ai, { persistHeartbeatMs: 2 + Math.floor(random() * 5), heartbeatMs: 3 });
   await autopilot.start({ brief: { idea: "x", targetChapters: 2, scenesPerChapter: 1, wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });

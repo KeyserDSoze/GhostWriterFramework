@@ -120,7 +120,7 @@ test("a conflict with GitHub is a `conflict`, and its detail says how many files
 });
 
 test("a run whose book conflicts with GitHub stops at once, with the kind and the number of files in lastError, and is not retried", async () => {
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   let pulls = 0;
   const events = [];
   const session = new AutopilotSession({

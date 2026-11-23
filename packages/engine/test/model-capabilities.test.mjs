@@ -251,7 +251,7 @@ test("in a whole run: a declared reasoning model that spends its limit before it
       if (!tool) return Response.json({ choices: [{ message: { content: out.text }, finish_reason: "stop" }], usage });
       return Response.json({ choices: [{ message: { tool_calls: [{ function: { name: tool.name, arguments: JSON.stringify(out.json) } }] }, finish_reason: "tool_calls" }], usage });
     };
-    const store = new MemoryBookStore(seedBookFiles());
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
     const events = [];
     const session = new AutopilotSession({ bookId: "book", store, ai: createFetchAi(pickAiRuntimeConfig(withModel(flags)), { fetch }), host: "server", hostLabel: "test", retryDelayMs: 0 });
     session.subscribe((event) => events.push(event));

@@ -53,7 +53,7 @@ const durationOf = (activity) => Date.parse(activity.endedAt) - Date.parse(activ
 
 test("three steps with a fake clock: the worked time is the sum of their durations, saved with the other statistics and in the summary", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const { session: autopilot, events } = session(store, slowAi(clock, cost), clock);
   await steps(autopilot, 3, BOOK());
   const state = stateOf(store);
@@ -74,7 +74,7 @@ test("three steps with a fake clock: the worked time is the sum of their duratio
 
 test("a long pause between two runs does not count, whoever runs next", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const first = session(store, slowAi(clock, cost), clock);
   await steps(first.session, 3, BOOK());
   assert.equal(stateOf(store).stats.workedMs, 7500);
@@ -96,7 +96,7 @@ test("a long pause between two runs does not count, whoever runs next", async ()
 
 test("the wait for the author does not count", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const base = slowAi(clock, cost);
   const question = { question: "Which ending?", options: ["Hopeful", "Bleak"] };
   const ai = {
@@ -124,7 +124,7 @@ test("the wait for the author does not count", async () => {
 
 test("a step that failed and was tried again counts the attempt that was saved: not the failed one, nor the wait between the two", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const base = slowAi(clock, cost);
   let failed = 0;
   const ai = {
@@ -153,7 +153,7 @@ test("a step that failed and was tried again counts the attempt that was saved: 
 
 test("a step that is abandoned, or that fails for good, adds nothing", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const base = slowAi(clock, cost);
   const failing = {
     calls: base.calls,
@@ -174,7 +174,7 @@ test("a step that is abandoned, or that fails for good, adds nothing", async () 
 
 test("a clock that goes backwards never makes the worked time negative or fractional", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const ai = slowAi(clock, (request) => (request.label === "autopilot:concept" ? -5000 : 400));
   const { session: autopilot } = session(store, ai, clock);
   await steps(autopilot, 2, BOOK());
@@ -185,7 +185,7 @@ test("a clock that goes backwards never makes the worked time negative or fracti
 
 test("a pause that abandons the request in flight adds nothing for the step it cut short", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 2 }));
   const base = slowAi(clock, cost);
   let reached;
   const waiting = new Promise((resolve) => {
@@ -213,7 +213,7 @@ test("a pause that abandons the request in flight adds nothing for the step it c
 
 test("the worked time survives the limit of the activity log: it counts every step, not the last 200", async () => {
   const clock = fakeClock();
-  const store = new MemoryBookStore(seedBookFiles());
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 70 }));
   const ai = slowAi(clock, () => 13, { scenes: 1, words: 120 });
   const { session: autopilot, events } = session(store, ai, clock);
   await autopilot.start({ brief: { idea: "x", targetChapters: 70, scenesPerChapter: 1, wordsPerScene: 200 }, options: FAST });
@@ -234,7 +234,7 @@ test("the worked time survives the limit of the activity log: it counts every st
 test("a state saved before the worked time existed starts from zero, and its summary says nothing of it until a step is saved", async () => {
   const old = createAutopilotState(new Date(0), BOOK().brief, FAST);
   assert.equal("workedMs" in old.stats, false, "a state that was just created has none either");
-  const store = new MemoryBookStore({ ...seedBookFiles(), [STATE]: serializeAutopilotState({ ...old, stats: { tasks: 4, aiCalls: 9, inputTokens: 900, outputTokens: 400, cost: 0.1, failures: 0 } }) });
+  const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 2 }), [STATE]: serializeAutopilotState({ ...old, stats: { tasks: 4, aiCalls: 9, inputTokens: 900, outputTokens: 400, cost: 0.1, failures: 0 } }) });
   const parsed = stateOf(store);
   assert.equal(parsed.stats.workedMs, undefined);
   assert.equal("workedMs" in parsed.stats, false);

@@ -1,3 +1,4 @@
+import { OUTLINE_BRIEF_DEFAULT, OUTLINE_BRIEF_WORDS_PER_SCENE } from "../book/outline-brief.js";
 import { isValidGhostwriterSlug } from "../book/paths.js";
 import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
 import { clipText, countWords } from "../util/text.js";
@@ -108,15 +109,7 @@ export function normalizeRuleText(text: string): string {
   return rule;
 }
 
-export const DEFAULT_BRIEF: AutopilotBrief = {
-  idea: "",
-  synopsis: "",
-  targetChapters: 12,
-  scenesPerChapter: 3,
-  wordsPerScene: 1400,
-  genre: "",
-  audience: "",
-};
+export const DEFAULT_BRIEF: AutopilotBrief = { ...OUTLINE_BRIEF_DEFAULT };
 
 export const DEFAULT_OPTIONS: AutopilotOptions = {
   readers: true,
@@ -136,14 +129,16 @@ export const DEFAULT_OPTIONS: AutopilotOptions = {
 const STATUSES: AutopilotStatus[] = ["idle", "running", "paused", "waiting-author", "error", "completed"];
 const PHASES: AutopilotPhase[] = ["concept", "plan", "write", "review", "final", "completed"];
 
+/**
+ * The brief as a state keeps it. `targetChapters` and `scenesPerChapter` of an older state are not read: the chapters are the outline's
+ * (`bookChapters`) and the planner decides the scenes of each chapter.
+ */
 export function normalizeBrief(value: unknown, base: AutopilotBrief = DEFAULT_BRIEF): AutopilotBrief {
   const source = asRecord(value);
   return {
     idea: asString(source.idea, base.idea),
     synopsis: asString(source.synopsis, base.synopsis),
-    targetChapters: asInteger(source.targetChapters, base.targetChapters, 1, MAX_BOOK_CHAPTERS),
-    scenesPerChapter: asInteger(source.scenesPerChapter, base.scenesPerChapter, 1, 20),
-    wordsPerScene: asInteger(source.wordsPerScene, base.wordsPerScene, 200, 8000),
+    wordsPerScene: asInteger(source.wordsPerScene, base.wordsPerScene, OUTLINE_BRIEF_WORDS_PER_SCENE.min, OUTLINE_BRIEF_WORDS_PER_SCENE.max),
     genre: asString(source.genre, base.genre),
     audience: asString(source.audience, base.audience),
   };
