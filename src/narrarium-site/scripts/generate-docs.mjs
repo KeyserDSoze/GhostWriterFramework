@@ -28,8 +28,7 @@ const groupLabels = {
 
 async function main() {
   const [referenceDocs, packageReadmes, guideDocs, appDocsSource, appGuides] = await Promise.all([
-    // The owner's operations guide for the Worker (Cloudflare, Google, Microsoft, GitHub consoles) is not a public document.
-    fg("docs/**/*.md", { cwd: workspaceRoot, onlyFiles: true, ignore: ["docs/guide-*.md", "docs/guida-cloudflare-e-accessi.it.md", "docs/cloudflare-and-sign-in-setup.en.md"] }),
+    fg("docs/**/*.md", { cwd: workspaceRoot, onlyFiles: true, ignore: ["docs/guide-*.md"] }),
     fg("packages/*/README.md", { cwd: workspaceRoot, onlyFiles: true }),
     fg("docs/guide-*.md", { cwd: workspaceRoot, onlyFiles: true }),
     readFile(path.join(siteRoot, "src", "lib", "appDocs.ts"), "utf8"),

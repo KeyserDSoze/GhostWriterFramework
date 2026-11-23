@@ -1,5 +1,37 @@
 [
   {
+    "version": "0.98.0",
+    "date": "2026-11-24",
+    "en": {
+      "title": "The autopilot keeps the messages it sends and the answers it gets, and a new book gets a complete repository",
+      "summary": "For every AI call the autopilot now keeps the system message, the user message and the answer as it streams, and you can read them in the Live page. A new GitHub book is created with the whole framework repository.",
+      "changes": [
+        "For each AI call of a step the autopilot keeps the system message, the user message and the response, which fills in while it arrives. Open a step in the Live page to read them, with Copy, a Raw view, a Follow button and Keep to protect a step from being dropped.",
+        "The messages stay on this device (up to 256 MiB per book) and, for a book your personal server runs, in a private folder of the server outside git; this device also keeps a copy of what the server recorded. Keys and passwords are never recorded.",
+        "A new «AI calls» tab in the autopilot's settings lets you also copy them to a dedicated branch of the book's GitHub repository (never a public one), to Google Drive or to OneDrive, with a note on privacy, a queue that waits when you are offline, and a way to delete the copies.",
+        "A switch for each book and device turns the keeping off, and the owner of a personal server can turn it off for the whole server in the admin panel.",
+        "A step that answers with a value (not prose) now streams its text too, so it can be read while it arrives.",
+        "A new book on GitHub is created with the complete repository of the framework: the reader, the GitHub Pages workflow, the rules for OpenCode and Claude and the scripts (116 files), for your account or an organization, private or public.",
+        "If your token cannot write workflow files or turn Pages on, the book is still created complete and the page says exactly which permission to add or which steps to do by hand; if the first commit fails you can retry into the empty repository.",
+        "Attaching a book kept on this device to GitHub now sends a few requests instead of one for every file."
+      ]
+    },
+    "it": {
+      "title": "L'autopilot tiene i messaggi che invia e le risposte che riceve, e un libro nuovo ha un repository completo",
+      "summary": "Per ogni chiamata AI l'autopilot ora tiene il messaggio di sistema, il messaggio utente e la risposta mentre arriva, e puoi leggerli nella pagina In diretta. Un nuovo libro GitHub viene creato con tutto il repository del framework.",
+      "changes": [
+        "Per ogni chiamata AI di un passo l'autopilot tiene il messaggio di sistema, il messaggio utente e la risposta, che si riempie mentre arriva. Apri un passo nella pagina In diretta per leggerli, con Copia, una vista Grezza, un pulsante Segui e Tieni per proteggere un passo dallo scarto.",
+        "I messaggi restano su questo dispositivo (fino a 256 MiB per libro) e, per un libro che gira sul tuo server personale, in una cartella privata del server fuori da git; questo dispositivo tiene anche una copia di ciò che il server ha registrato. Chiavi e password non vengono mai registrate.",
+        "Una nuova scheda «Chiamate AI» nelle impostazioni dell'autopilot permette di copiarli anche su un ramo dedicato del repository GitHub del libro (mai uno pubblico), su Google Drive o su OneDrive, con una nota sulla privacy, una coda che aspetta quando sei offline e un modo per cancellare le copie.",
+        "Un interruttore per ogni libro e dispositivo spegne la conservazione, e il proprietario di un server personale può spegnerla per tutto il server nel pannello admin.",
+        "Un passo che risponde con un valore (non prosa) ora manda in streaming anche il suo testo, quindi si può leggere mentre arriva.",
+        "Un nuovo libro su GitHub viene creato con il repository completo del framework: il lettore, il workflow di GitHub Pages, le regole per OpenCode e Claude e gli script (116 file), per il tuo account o per un'organizzazione, privato o pubblico.",
+        "Se il tuo token non può scrivere file di workflow o attivare Pages, il libro viene creato comunque completo e la pagina dice esattamente quale permesso aggiungere o quali passi fare a mano; se il primo commit fallisce puoi riprovare nel repository vuoto.",
+        "Collegare a GitHub un libro tenuto su questo dispositivo ora invia poche richieste invece di una per ogni file."
+      ]
+    }
+  },
+  {
     "version": "0.97.0",
     "date": "2026-11-23",
     "en": {
