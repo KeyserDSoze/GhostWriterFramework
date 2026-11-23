@@ -213,6 +213,20 @@ function scrub(text: string): string {
   return clear.length > MESSAGE_CHARACTERS ? `${clear.slice(0, MESSAGE_CHARACTERS - 1).trimEnd()}…` : clear;
 }
 
+/** What the connection did, for the text that is copied: figures and words of closed lists, in English, and never the end of the stream or the reply (they are words of the book). */
+function transportLines(transport: NonNullable<AutopilotErrorDetail["transport"]>): string[] {
+  const lines: string[] = [];
+  if (transport.status !== undefined) lines.push(`Response: HTTP ${transport.status}`);
+  if (transport.bytes !== undefined) lines.push(`Received: ${transport.bytes} bytes${transport.chunks !== undefined ? ` in ${transport.chunks} chunks` : ""}${transport.events !== undefined ? `, ${transport.events} events` : ""}`);
+  if (transport.lastChunkAfterMs !== undefined) lines.push(`Last chunk: ${transport.lastChunkAfterMs} ms after the start${transport.silentMs !== undefined ? `, ${transport.silentMs} ms before the end` : ""}`);
+  if (transport.end) lines.push(`Stream ended: ${transport.end}`);
+  if (transport.finishReason) lines.push(`Finish reason: ${transport.finishReason}`);
+  if (transport.usageReceived !== undefined) lines.push(`Tokens: ${transport.usageReceived ? "reported by the provider" : transport.usageRequested === false ? "not asked of this provider (estimated)" : "not reported by the provider (estimated)"}`);
+  if (transport.requestId) lines.push(`Request id: ${transport.requestId}`);
+  if (transport.partialCharacters) lines.push(`Reply that had arrived (not used): ${transport.partialCharacters} characters`);
+  return lines;
+}
+
 /**
  * What a person can copy to say what went wrong: short, in English whatever the language of the app (it is for whoever helps), with no key, no path of a disk, and no
  * text of a prompt or of the book: the category, where it happened, the words of the failure, the versions and the time.
@@ -238,6 +252,7 @@ export function diagnosticsText({ source, appVersion, engineVersion, host, at, i
   const integration = clean(detail.integration);
   if (integration) lines.push(`Integration: ${integrationName ? `${integrationName} (${integration})` : integration}`);
   if (typeof detail.attempt === "number" && typeof detail.retries === "number") lines.push(`Retry: ${detail.attempt} of ${detail.retries}`);
+  if (detail.transport) lines.push(...transportLines(detail.transport));
   if (source.retry) lines.push(`Next attempt: ${source.retry.at}`);
   if (source.message) lines.push(`Message: ${scrub(source.message)}`);
   return lines.join("\n");

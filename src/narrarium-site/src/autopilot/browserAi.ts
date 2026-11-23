@@ -75,8 +75,9 @@ function closeAttempt(config: AiRuntimeConfig, debugId: string | undefined, end:
   const delta = usage ? chatDelta(usage, pricing) : undefined;
   const cost = pricing ? delta?.chatCost : undefined;
   if (debugId) {
-    // What came back, whether it worked or not: read as a stream, how long the first byte took, whether the model called the function, which deadline ran out.
-    const came = { streamed: end.streamed, firstByteMs: end.firstByteMs, toolCalled: end.toolCalled };
+    // What came back, whether it worked or not: read as a stream, how long the first byte took, whether the model called the function, which deadline ran out, what the transport saw
+    // (the store keeps its figures and never the end of the stream, which is words of the model: this history keeps metadata only).
+    const came = { streamed: end.streamed, firstByteMs: end.firstByteMs, toolCalled: end.toolCalled, transport: end.transport };
     useLlmDebugStore.getState().finish(debugId, end.outcome === "ok"
       ? { status: "done", response: end.text, ...came, ...usage, cost }
       : { status: "error", error: end.error, failureKind: end.failureKind, timeoutMs: end.timeoutMs, timeoutPhase: end.timeoutPhase, ...came, ...usage, cost });

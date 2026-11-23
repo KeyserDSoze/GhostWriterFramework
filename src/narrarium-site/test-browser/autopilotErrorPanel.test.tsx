@@ -782,3 +782,54 @@ describe("a failure the runner is going to try again", () => {
     expect(timer()).toHaveTextContent(t("autopilot.failure.countdown.in", { time: "12 s" }));
   });
 });
+
+describe("what the connection did, for a call that failed after the provider answered", () => {
+  const TRANSPORT = { status: 200, bytes: 25_088, chunks: 118, events: 120, lastChunkAfterMs: 42_000, silentMs: 98_000, end: "reset" as const, usageReceived: false, usageRequested: true, requestId: "req-4711", tail: "data: {\"choices\":[{\"delta\":{\"content\":\"the lighthouse w", partialCharacters: 9 };
+  const clipboard = () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    return writeText;
+  };
+  const technical = () => within((within(panel() as HTMLElement).getByText(t("autopilot.failure.actions.details")).closest("details")) as HTMLElement);
+
+  it("is in the technical details: how much arrived, when the last piece did, how the stream ended, the tokens, the request, how much of the reply was kept, and the end of what arrived", () => {
+    failing({ kind: "network", message: "the connection with the provider was lost while it was answering", detail: { ...DETAIL, status: undefined, transport: TRANSPORT } });
+    show();
+    const details = technical();
+    expect(details.getByText(t("autopilot.failure.transport.title"))).toBeInTheDocument();
+    for (const text of ["Received 24.5 KB in 118 chunks (HTTP 200)", "Last chunk 42 s into the call, 98 s before it ended", "Stream: the connection was lost", "Tokens: the provider sent none (estimated)", "Request id: req-4711", "9 characters of the reply had arrived and were not used"]) {
+      expect(details.getByText(text)).toBeInTheDocument();
+    }
+    expect(details.getByText(t("autopilot.failure.transport.tail"))).toBeInTheDocument();
+    expect(panel()?.querySelector("[data-error-transport-tail]")?.textContent).toBe(TRANSPORT.tail);
+  });
+
+  it.each(["en", "it"] as const)("is in the words of the language of the app (%s)", async (language) => {
+    await i18n.changeLanguage(language);
+    failing({ kind: "network", detail: { ...DETAIL, status: undefined, transport: TRANSPORT } });
+    show();
+    expect(technical().getByText(t("autopilot.failure.transport.title"))).toBeInTheDocument();
+    expect(technical().getByText(t("autopilot.failure.transport.end.reset"))).toBeInTheDocument();
+    expect(technical().getByText(t("autopilot.failure.transport.requestId", { id: "req-4711" }))).toBeInTheDocument();
+  });
+
+  it("is not there for a failure that carries nothing of the kind, and the panel is as it was", () => {
+    failing({ kind: "network", detail: { ...DETAIL, status: undefined } });
+    show();
+    expect(panel()?.querySelector("[data-error-transport]")).toBeNull();
+  });
+
+  it("is in the text that is copied as figures and words of a closed list, and the end of the stream is not: it is words of the book", async () => {
+    const writeText = clipboard();
+    failing({ kind: "network", detail: { ...DETAIL, status: undefined, transport: TRANSPORT } });
+    show();
+    fireEvent.click(screen.getByRole("button", { name: t("autopilot.failure.actions.copy") }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const text = (writeText.mock.calls[0] as unknown as [string])[0];
+    for (const line of ["Response: HTTP 200", "Received: 25088 bytes in 118 chunks, 120 events", "Last chunk: 42000 ms after the start, 98000 ms before the end", "Stream ended: reset", "Tokens: not reported by the provider (estimated)", "Request id: req-4711", "Reply that had arrived (not used): 9 characters"]) {
+      expect(text).toContain(line);
+    }
+    expect(text).not.toContain("lighthouse");
+    expect(text).not.toContain("data: {");
+  });
+});

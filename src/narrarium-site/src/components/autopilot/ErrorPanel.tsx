@@ -2,13 +2,14 @@ import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState,
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Copy, Loader2, Pause, Play, Timer } from "lucide-react";
-import { ENGINE_VERSION, type AutopilotActivity, type AutopilotEvent } from "narrarium-engine";
+import { ENGINE_VERSION, type AutopilotActivity, type AutopilotErrorDetail, type AutopilotEvent } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { ConnectionCheck } from "@/components/autopilot/ConnectionCheck";
 import { GithubConflictsAction } from "@/components/autopilot/GithubConflictsAction";
 import { ErrorFiles } from "@/components/autopilot/StopNotices";
 import { KindIcon } from "@/components/autopilot/KindIcon";
 import { APP_VERSION } from "@/config/version";
+import { transportBadges } from "@/debug/attemptBadges";
 import { githubConflictsOfError, githubConflictsSettled } from "@/autopilot/githubConflicts";
 import { useBookAutopilotView, useNow } from "@/autopilot/hooks";
 import { diagnosticsText, errorActions, errorFacts, failureSource, formatCountdown, formatLimit, offersConnectionCheck, retryAfterSeconds, secondsLeft, timeoutOf, type ErrorFact, type FailureSource, type TimeoutNote } from "@/autopilot/errorModel";
@@ -77,6 +78,32 @@ function Countdown({ at, notBefore }: { at: string; notBefore?: string | null })
       </p>
       <p role="status" data-error-announcement className="sr-only">{announcement}</p>
     </>
+  );
+}
+
+/**
+ * What the connection did, for the technical details: how much of the reply arrived, when the last piece did, how the stream ended, whether the provider reported the tokens, the request it
+ * calls the call, how much of the reply was kept, and the end of what arrived (words of the model: they are on this screen, and never in the text that is copied).
+ */
+function TransportDetails({ transport }: { transport: AutopilotErrorDetail["transport"] }) {
+  const { t, i18n } = useTranslation();
+  if (!transport) return null;
+  const badges = transportBadges(transport, true, i18n.resolvedLanguage ?? i18n.language, "autopilot.failure.transport");
+  if (!badges.length && !transport.tail && !transport.partialCharacters) return null;
+  return (
+    <div data-error-transport className="mt-2 space-y-1">
+      <p className="font-medium">{t("autopilot.failure.transport.title")}</p>
+      <ul className="list-disc space-y-0.5 pl-4">
+        {badges.map((badge) => <li key={badge.id}>{t(badge.key, badge.params)}</li>)}
+        {transport.partialCharacters ? <li>{t("autopilot.failure.transport.partial", { count: transport.partialCharacters })}</li> : null}
+      </ul>
+      {transport.tail && (
+        <>
+          <p className="text-muted-foreground">{t("autopilot.failure.transport.tail")}</p>
+          <p data-error-transport-tail className="whitespace-pre-wrap break-all rounded-md bg-muted/60 p-2 font-mono">{transport.tail}</p>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -338,6 +365,7 @@ function FailurePanel({ bookId, control, actions, wait }: FailurePanelProps) {
         <details className="text-xs">
           <summary className="inline-flex min-h-6 cursor-pointer items-center rounded-sm font-medium underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{t("autopilot.failure.actions.details")}</summary>
           <p className="mt-1 whitespace-pre-wrap break-words rounded-md bg-muted/60 p-2 font-mono">{source.message}</p>
+          <TransportDetails transport={source.detail.transport} />
         </details>
       )}
     </PanelSection>

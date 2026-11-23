@@ -75,6 +75,32 @@ export interface LlmDebugEntry {
   toolCalled?: boolean;
   /** For a timeout: which deadline ran out. */
   timeoutPhase?: "start" | "idle" | "total";
+  /**
+   * At the end: what the transport saw of the call (the engine's `AiTransportDiagnostics`), kept as numbers, flags and the few words of a closed list. The end of the stream (`tail`) and the
+   * reply that had arrived are never kept: this history stores metadata only, and is saved in the browser.
+   */
+  transport?: LlmDebugTransport;
+}
+
+/** What the debug history keeps of the transport of a call: the figures of the response, how the stream ended, and the id the provider gave the request. */
+export interface LlmDebugTransport {
+  /** The HTTP status of the response. */
+  status?: number;
+  bytes?: number;
+  chunks?: number;
+  events?: number;
+  /** Milliseconds from the start of the call to its last chunk, and from that chunk to the end of the call. */
+  lastChunkAfterMs?: number;
+  silentMs?: number;
+  /** How the stream ended: `done` (`[DONE]`), `closed` (without it), `reset` (the connection broke), `error` (the provider reported a failure), `timeout` (a deadline ran out). */
+  end?: "done" | "closed" | "reset" | "error" | "timeout";
+  /** How the provider said the reply ended (`stop`, `length`...). */
+  finishReason?: string;
+  /** The provider reported the tokens, and the request asked it to. */
+  usageReceived?: boolean;
+  usageRequested?: boolean;
+  /** What the provider or its gateway calls the request (letters, digits and a few signs). */
+  requestId?: string;
 }
 
 function storageKey(identity: string): string {
@@ -128,6 +154,9 @@ const STREAM_MODES = new Set(["auto", "off"]);
 const TIMEOUT_PHASES = new Set(["start", "idle", "total"]);
 const MAX_SKIPPED_MODELS = 8;
 const MAX_MODEL_NAME = 120;
+const STREAM_ENDS = new Set(["done", "closed", "reset", "error", "timeout"]);
+const REQUEST_ID = /^[A-Za-z0-9._:-]{1,100}$/;
+const FINISH_REASON = /^[A-Za-z0-9_ .:-]{1,60}$/;
 
 const flag = (value: unknown): boolean | undefined => (typeof value === "boolean" ? value : undefined);
 const milliseconds = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined);
@@ -156,6 +185,30 @@ function deadlines(value: unknown): LlmDebugEntry["timeouts"] {
   return { startMs: start, idleMs: idle, capMs: cap, ...(raised !== undefined ? { raisedFrom: raised } : {}) };
 }
 
+const count = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1e12 ? Math.round(value) : undefined);
+
+/** What the store keeps of the transport of a call: figures, flags and words of closed lists, an id of plain characters, and nothing else, whatever it is given. `undefined` when nothing is left. */
+function transportFields(value: unknown): LlmDebugTransport | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const source = value as Record<string, unknown>;
+  const status = count(source.status);
+  const fields: Record<string, unknown> = {
+    status: status !== undefined && status >= 100 && status <= 599 ? status : undefined,
+    bytes: count(source.bytes),
+    chunks: count(source.chunks),
+    events: count(source.events),
+    lastChunkAfterMs: count(source.lastChunkAfterMs),
+    silentMs: count(source.silentMs),
+    end: word(source.end, STREAM_ENDS),
+    finishReason: typeof source.finishReason === "string" && FINISH_REASON.test(source.finishReason) ? source.finishReason : undefined,
+    usageReceived: flag(source.usageReceived),
+    usageRequested: flag(source.usageRequested),
+    requestId: typeof source.requestId === "string" && REQUEST_ID.test(source.requestId) ? source.requestId : undefined,
+  };
+  const kept = Object.fromEntries(Object.entries(fields).filter(([, entry]) => entry !== undefined));
+  return Object.keys(kept).length ? kept as LlmDebugTransport : undefined;
+}
+
 /** What the store keeps of how an attempt was asked: flags, numbers and the few words of the engine, and nothing else, whatever it is given. A field that is not valid is left out. */
 function attemptFields(entry: LlmDebugEntry): Partial<LlmDebugEntry> {
   const fields: Record<string, unknown> = {
@@ -172,6 +225,7 @@ function attemptFields(entry: LlmDebugEntry): Partial<LlmDebugEntry> {
     firstByteMs: milliseconds(entry.firstByteMs),
     toolCalled: flag(entry.toolCalled),
     timeoutPhase: word(entry.timeoutPhase, TIMEOUT_PHASES),
+    transport: transportFields(entry.transport),
   };
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as Partial<LlmDebugEntry>;
 }
@@ -182,7 +236,7 @@ function storageErrorMessage(error: unknown, fallback: string): string {
 }
 
 export function redactLlmDebugEntry(entry: LlmDebugEntry): LlmDebugEntry {
-  const { structured: _s, tools: _t, stream: _st, streamMode: _sm, thinking: _th, reasoningParameter: _rp, toolsOnly: _to, skipped: _sk, timeouts: _ti, streamed: _sd, firstByteMs: _fb, toolCalled: _tc, timeoutPhase: _tp, ...rest } = entry;
+  const { structured: _s, tools: _t, stream: _st, streamMode: _sm, thinking: _th, reasoningParameter: _rp, toolsOnly: _to, skipped: _sk, timeouts: _ti, streamed: _sd, firstByteMs: _fb, toolCalled: _tc, timeoutPhase: _tp, transport: _tr, ...rest } = entry;
   return {
     ...rest,
     ...attemptFields(entry),

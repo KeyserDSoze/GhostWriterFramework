@@ -17,7 +17,7 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings } from "@/types/settings";
-import { assertProvidersClean, createFakeProvider, failReply, textReply, type ProviderReply } from "./helpers/fakeProvider";
+import { assertProvidersClean, createFakeProvider, failReply, streamedReply, textReply, type ProviderReply } from "./helpers/fakeProvider";
 import { compatible, endpointsOf, settingsOf } from "./helpers/aiFixtures";
 
 type Language = "en" | "it";
@@ -359,11 +359,35 @@ describe("a provider that refuses streamed replies: the safety valve", () => {
 
     const answer = await createBrowserAi().complete(ASK);
     expect(answer.text).toBe("A scene, whole.");
-    expect(fake.calls).toHaveLength(2);
-    const [first, second] = fake.calls;
+    // The message names `stream_options`, so the client asked the refused request again without it (a provider that only refuses the option takes that); this one refuses every stream, which is
+    // what the first two calls are, and the third is the call that goes through once the author has turned streaming off.
+    expect(fake.calls).toHaveLength(3);
+    const [first, again, second] = fake.calls;
     expect(first.body.stream).toBe(true);
+    expect(first.body.stream_options).toEqual({ include_usage: true });
+    expect(again.body.stream).toBe(true);
+    expect(again.body).not.toHaveProperty("stream_options");
     expect(second.body).not.toHaveProperty("stream");
     expect(second.body).not.toHaveProperty("stream_options");
     expect(second.headers.accept).toBe("application/json");
+  });
+
+  it("a provider that refuses only the option `stream_options` is asked again without it, and the call goes through with its tokens estimated", async () => {
+    const fixture = compatible("lab", undefined, {});
+    const refuse: ProviderReply = (call) => ("stream_options" in call.body ? failReply(400, "Unrecognized request argument supplied: stream_options") : streamedReply("A scene, streamed.", null));
+    const fake = createFakeProvider(endpointsOf([fixture]), refuse);
+    vi.stubGlobal("fetch", fake.fetch);
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, ...settingsOf([fixture]), aiIntegrations: [fixture.integration] } });
+
+    const answer = await createBrowserAi().complete(ASK);
+    expect(answer.text).toBe("A scene, streamed.");
+    expect(answer.usageKnown, "the provider reported no tokens: they are an estimate, and say so").toBe(false);
+    expect(fake.calls).toHaveLength(2);
+    expect(fake.calls.map((call) => call.body.stream)).toEqual([true, true]);
+    expect(fake.calls[0].body.stream_options).toEqual({ include_usage: true });
+    expect(fake.calls[1].body).not.toHaveProperty("stream_options");
+    const [entry] = useLlmDebugStore.getState().entries;
+    expect(useLlmDebugStore.getState().entries).toHaveLength(1);
+    expect(entry).toMatchObject({ status: "done", streamed: true, transport: { status: 200, usageRequested: false, usageReceived: false } });
   });
 });
