@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import path from "node:path";
 import { SERVER_SCOPES, type ServerScope } from "narrarium-engine";
 import { HttpError, retryAfter } from "./errors.js";
+import { DeviceStore, type DeviceGrant, type PublicDevice } from "./admin-devices.js";
 import { atomicJson, atomicWrite, readJson, readPrivateText } from "./files.js";
 import { LOCAL_SOURCE, WindowLimiter } from "./limits.js";
 import { isEncryptedSecret, type EncryptedSecret, type Vault } from "./vault.js";
@@ -196,7 +197,7 @@ async function adminCodeFromFile(file: string): Promise<string> {
 /** Admin code, admin sessions, client tokens with scopes and pairing of new clients. */
 export class Auth {
   /** Least recently used first: a session that is used moves to the end, so the first one is always the one to close. */
-  private readonly sessions = new Map<string, { csrf: string; until: number; source: string }>();
+  private readonly sessions = new Map<string, { csrf: string; until: number; source: string; deviceId?: string }>();
   private readonly lastSeen = new Map<string, string>();
   private tail: Promise<unknown> = Promise.resolve();
   /** Wrong admin codes per source. In memory only: nothing anonymous is ever written to disk. */
@@ -205,7 +206,7 @@ export class Auth {
   /** Wrong codes per source inside the current pairing: `PAIRING_GUESSES_TOTAL` at most in all, so it stays small. */
   private guessing: { pairingId: string; bySource: Map<string, number> } | undefined;
 
-  private constructor(private readonly root: string, private readonly vault: Vault, private state: AuthState) {}
+  private constructor(private readonly root: string, private readonly vault: Vault, private state: AuthState, private readonly devices: DeviceStore) {}
 
   private get statePath(): string {
     return path.join(this.root, "private", "authorization.json");
@@ -219,53 +220,74 @@ export class Auth {
     const statePath = path.join(root, "private", "authorization.json");
     const code = await adminCodeFromFile(path.join(root, "private", ADMIN_CODE_FILE));
     const stored = await readJson(statePath, 1024 * 1024);
+    const devices = await DeviceStore.open(root);
     let state: AuthState;
     if (stored === undefined) {
       state = { version: 1, adminHash: hash(code), clients: [] };
       await atomicJson(statePath, state);
+      await devices.clear();
     } else {
       state = parseState(stored);
-      // Editing the code file and restarting replaces the code.
+      // Editing the code file and restarting replaces the code, and a device that was let in with the old one is not let in any more.
       if (state.adminHash !== hash(code)) {
         state = { ...state, adminHash: hash(code) };
         await atomicJson(statePath, state);
+        await devices.clear();
       }
     }
-    return new Auth(root, vault, state);
+    return new Auth(root, vault, state, devices);
   }
 
-  private change<T>(action: (state: AuthState) => T | Promise<T>): Promise<T> {
-    const next = this.tail.catch(() => undefined).then(async () => {
-      const draft = structuredClone(this.state);
-      const result = await action(draft);
-      await atomicJson(this.statePath, draft);
-      this.state = draft;
-      return result;
-    });
+  /** One thing at a time changes the files and the sessions that go with them; a failure of one does not stop the next. */
+  private serialize<T>(action: () => Promise<T>): Promise<T> {
+    const next = this.tail.catch(() => undefined).then(action);
     this.tail = next;
     return next;
   }
 
-  /** Replace the admin code; every admin session ends. Client tokens are not affected. */
-  async replaceAdminCode(value: string): Promise<void> {
+  private async commit<T>(action: (state: AuthState) => T | Promise<T>): Promise<T> {
+    const draft = structuredClone(this.state);
+    const result = await action(draft);
+    await atomicJson(this.statePath, draft);
+    this.state = draft;
+    return result;
+  }
+
+  private change<T>(action: (state: AuthState) => T | Promise<T>): Promise<T> {
+    return this.serialize(() => this.commit(action));
+  }
+
+  /**
+   * Replace the admin code; every admin session ends, and so does every remembered device (what was let in with the old code is not let in with the new one). The devices go first, so a
+   * failure leaves the code as it was; and the whole change is one step in the queue, so a device cannot be made or used halfway through it. Client tokens are not affected.
+   */
+  async replaceAdminCode(value: string): Promise<{ revokedDevices: number }> {
     const code = assertAdminCode(value);
-    const previous = await fs.readFile(this.adminCodePath, "utf8");
-    await atomicWrite(this.adminCodePath, `${code}\n`);
-    try {
-      await this.change((state) => {
-        state.adminHash = hash(code);
-      });
-      this.sessions.clear();
-    } catch (error) {
-      await atomicWrite(this.adminCodePath, previous);
-      throw error;
-    }
+    return this.serialize(async () => {
+      const previous = await fs.readFile(this.adminCodePath, "utf8");
+      const revokedDevices = await this.devices.clear();
+      await atomicWrite(this.adminCodePath, `${code}\n`);
+      try {
+        await this.commit((state) => {
+          state.adminHash = hash(code);
+        });
+        this.sessions.clear();
+      } catch (error) {
+        await atomicWrite(this.adminCodePath, previous);
+        throw error;
+      }
+      return { revokedDevices };
+    });
   }
 
   async rotateAdminCode(): Promise<string> {
+    return (await this.rotateAdminCodeCounting()).code;
+  }
+
+  /** A new random admin code, with how many remembered devices it ended. */
+  async rotateAdminCodeCounting(): Promise<{ code: string; revokedDevices: number }> {
     const code = secret();
-    await this.replaceAdminCode(code);
-    return code;
+    return { code, ...(await this.replaceAdminCode(code)) };
   }
 
   /** The client owning this token, optionally checking a scope. */
@@ -308,6 +330,72 @@ export class Auth {
   }
 
   /**
+   * Sign in with the token of a remembered device. It goes through the very same budget as the admin code, from the same source, and is refused in the very same words: a wrong token, an
+   * unknown one and a wrong code cannot be told apart, and the budget cannot be used to guess a token either. The session it opens belongs to the device, so revoking the device closes it.
+   */
+  async loginWithDevice(token: string, source: string = LOCAL_SOURCE): Promise<{ cookie: string; csrf: string; deviceId: string }> {
+    const verdict = this.logins.hit(source);
+    if (!verdict.allowed) throw tooManyAttempts(verdict.retryAfterMs);
+    return this.serialize(async () => {
+      const device = this.devices.find(token);
+      if (!device) throw new HttpError(401, "admin_login", "Wrong admin code.");
+      await this.devices.touch(device.id, Date.now());
+      this.logins.reset(source);
+      const cookie = secret();
+      const csrf = secret();
+      this.makeRoomForSession(source);
+      this.sessions.set(cookie, { csrf, until: Date.now() + ADMIN_SESSION_MS, source, deviceId: device.id });
+      return { cookie, csrf, deviceId: device.id };
+    });
+  }
+
+  /**
+   * Remember the device of a session that has just signed in with the admin code: a token that only the device will hold. `undefined` when there is room for no more devices, or when the session
+   * itself came from a device (a device does not make another). The session now belongs to the device.
+   */
+  async rememberDevice(cookie: string | undefined, label: string): Promise<DeviceGrant | undefined> {
+    return this.serialize(async () => {
+      const session = cookie ? this.sessions.get(cookie) : undefined;
+      if (!cookie || !session || session.until < Date.now()) throw new HttpError(401, "admin_session", "Sign in to the admin panel again.");
+      if (session.deviceId) return undefined;
+      const grant = await this.devices.add(label, Date.now());
+      if (grant) session.deviceId = grant.id;
+      return grant;
+    });
+  }
+
+  listDevices(): PublicDevice[] {
+    return this.devices.list();
+  }
+
+  get deviceCount(): number {
+    return this.devices.count;
+  }
+
+  /** Set when the devices file could not be read at start: the devices were forgotten and the file was kept aside. */
+  get devicesWarning(): string | undefined {
+    return this.devices.warning;
+  }
+
+  /** End one device: its token no longer signs in, and the sessions it opened are closed. `undefined` when there was no such device. */
+  async revokeDevice(id: string): Promise<PublicDevice | undefined> {
+    return this.serialize(async () => {
+      const removed = await this.devices.remove(id);
+      if (removed) for (const [cookie, session] of this.sessions) if (session.deviceId === id) this.sessions.delete(cookie);
+      return removed;
+    });
+  }
+
+  /** End every device, and the sessions they opened; how many devices there were. */
+  async revokeAllDevices(): Promise<number> {
+    return this.serialize(async () => {
+      const count = await this.devices.clear();
+      for (const [cookie, session] of this.sessions) if (session.deviceId !== undefined) this.sessions.delete(cookie);
+      return count;
+    });
+  }
+
+  /**
    * Expired sessions go first. Then a source over its own limit closes its own least recently used sessions, and a full table
    * closes the least recently used one: signing in many times can end the sessions of the one who does it, never everybody's.
    */
@@ -343,6 +431,12 @@ export class Auth {
     if (csrf !== undefined && !sameSecret(session.csrf, csrf)) throw new HttpError(403, "csrf", "This admin request is not authorized.");
     this.sessions.delete(cookie);
     this.sessions.set(cookie, session);
+  }
+
+  /** The token that the changes of this session must carry, for a page that has the cookie but lost the token (a second tab, a reload that cleared its storage). */
+  sessionToken(cookie: string | undefined): string {
+    this.adminSession(cookie);
+    return this.sessions.get(cookie as string)?.csrf ?? "";
   }
 
   logout(cookie: string | undefined): void {

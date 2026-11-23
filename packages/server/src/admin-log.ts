@@ -21,6 +21,8 @@ export const ADMIN_ACTIONS = {
   "admin.login": "access",
   "admin.code.set": "access",
   "admin.code.rotate": "access",
+  "admin.device.remember": "access",
+  "admin.device.revoke": "access",
   "pairing.start": "clients",
   "pairing.request": "clients",
   "pairing.approve": "clients",

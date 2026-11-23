@@ -42,6 +42,7 @@ import {
   type ServerUpdateResult,
 } from "narrarium-engine";
 import { clientAction, approvedBases, mcpChanges, networkChanges, refusalIsLogged, spendChanges } from "./admin-actions.js";
+import { deviceLabel } from "./admin-devices.js";
 import { ERROR_ATTENTION_MS, buildHealth, diskSpace, errorKind, routeShape, type HealthReport, type LastServerError } from "./admin-health.js";
 import { ADMIN_ACTION_TYPES, AdminLog, type AdminActionType, type AdminActor, type AdminLogInput } from "./admin-log.js";
 import type { AdminPanelOptions } from "./admin-options.js";
@@ -964,6 +965,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         apps: hosted.flatMap(({ book }) => oauth.grantsOf(book.bookId).map((grant) => ({ name: grant.name, bookId: book.bookId, scopes: grant.scopes }))),
         mcp: { booksOn: hosted.filter(({ book }) => mcpBooks.peek(book.bookId)?.enabled === true).length, passkeys: oauth.passkeyViews().filter((key) => key.usable).length, publicUrl: data.config.publicUrl, canAddPasskey: oauth.canAddPasskey },
         aiBases: data.config.allowedAiBases,
+        devices: { count: auth.deviceCount },
         spend: { unlimited: settings.maxTokensPerDay === 0 && settings.maxCostPerDay === 0 && settings.maxTokensPerRun === 0 && settings.maxCostPerRun === 0, paused: settings.paused },
         aiConfigured,
       });
@@ -1535,19 +1537,27 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           if (!releaseAnonymous) throw anonymousRefusal();
           response.once("close", releaseAnonymous);
           const body = asObject(await readBody(request, 4096));
-          let session: Awaited<ReturnType<typeof auth.login>>;
+          // A code is what is checked when there is one; otherwise a device token, whatever it holds (a wrong kind of value is a wrong token), and with nothing at all it is a wrong code.
+          const byDevice = typeof body.code !== "string" && Object.hasOwn(body, "deviceToken");
+          let session: { cookie: string; csrf: string; deviceId?: string };
           try {
-            session = await auth.login(typeof body.code === "string" ? body.code.trim() : "", source);
+            session = byDevice ? await auth.loginWithDevice(typeof body.deviceToken === "string" ? body.deviceToken : "", source) : await auth.login(typeof body.code === "string" ? body.code.trim() : "", source);
           } catch (error) {
-            // Wrong codes in a run are counted in one entry; the code that was typed is never written.
-            void adminLog.record({ action: "admin.login", actor: { kind: "anonymous" }, ok: false, code: errorStatus(error).code, source });
+            // Wrong codes and wrong tokens in a run are counted in one entry; what was typed or sent is never written.
+            void adminLog.record({ action: "admin.login", actor: { kind: "anonymous" }, ok: false, code: errorStatus(error).code, detail: byDevice ? "device" : "code", source });
             throw error;
           }
-          const written = adminLog.record({ action: "admin.login", actor: { kind: "admin" }, source });
+          const written = [adminLog.record({ action: "admin.login", actor: { kind: "admin" }, detail: byDevice ? "device" : "code", source })];
+          // Asked for at a sign-in with the code only: what the page keeps is a token that this server made, never the code.
+          let remembered: Awaited<ReturnType<typeof auth.rememberDevice>>;
+          if (!byDevice && body.remember === true) {
+            remembered = await auth.rememberDevice(session.cookie, deviceLabel(header(request, "user-agent")));
+            if (remembered) written.push(adminLog.record({ action: "admin.device.remember", actor: { kind: "admin" }, object: remembered.id, label: remembered.label, source }));
+          }
           const secure = header(request, "origin")?.startsWith("https://") ? "; Secure" : "";
           response.setHeader("set-cookie", `${cookieName}=${session.cookie}; HttpOnly; SameSite=Strict; Path=/admin/; Max-Age=1800${secure}`);
-          sendJson(response, 200, { csrf: session.csrf });
-          await written;
+          sendJson(response, 200, { csrf: session.csrf, ...(remembered ? { device: { id: remembered.id, token: remembered.token, label: remembered.label, createdAt: remembered.createdAt } } : {}), ...(!byDevice && body.remember === true && !remembered ? { deviceLimit: true } : {}) });
+          await Promise.all(written);
           return;
         }
         const cookie = new RegExp(`(?:^|;\\s*)${cookieName}=([A-Za-z0-9_-]+)`).exec(header(request, "cookie") ?? "")?.[1];
@@ -1557,9 +1567,34 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         const ownerSource = sourceOf(request, tunnelTrusted());
         const note = (action: AdminLogInput["action"], fields: Omit<AdminLogInput, "action" | "actor" | "source"> = {}) => adminLog.record({ action, actor: { kind: "admin" }, source: ownerSource, ...fields });
         if (path === "/admin/api/logout" && request.method === "POST") {
+          // Signing out can also forget the device that does it: the page says which one it is.
+          const forgotten = typeof body.deviceId === "string" ? await auth.revokeDevice(body.deviceId) : undefined;
+          if (forgotten) await note("admin.device.revoke", { object: forgotten.id, label: forgotten.label, detail: "sign-out" });
           auth.logout(cookie);
           response.setHeader("set-cookie", `${cookieName}=; HttpOnly; SameSite=Strict; Path=/admin/; Max-Age=0`);
           sendJson(response, 200, { ok: true });
+          return;
+        }
+        // A page that has the cookie and lost the token for changes (a second tab, a reload) asks for it here instead of signing in again.
+        if (path === "/admin/api/session" && request.method === "GET") {
+          sendJson(response, 200, { csrf: auth.sessionToken(cookie) });
+          return;
+        }
+        if (path === "/admin/api/devices" && request.method === "GET") {
+          sendJson(response, 200, { devices: auth.listDevices(), ...(auth.devicesWarning ? { warning: auth.devicesWarning } : {}) });
+          return;
+        }
+        if (path === "/admin/api/devices/revoke" && request.method === "POST") {
+          if (typeof body.id !== "string") throw new HttpError(400, "invalid_request", "Which device?");
+          const removed = await auth.revokeDevice(body.id);
+          if (removed) await note("admin.device.revoke", { object: removed.id, label: removed.label });
+          sendJson(response, 200, { revoked: Boolean(removed) });
+          return;
+        }
+        if (path === "/admin/api/devices/revoke-all" && request.method === "POST") {
+          const revoked = await auth.revokeAllDevices();
+          if (revoked) await note("admin.device.revoke", { object: String(revoked), detail: "all" });
+          sendJson(response, 200, { revoked });
           return;
         }
         if (path === "/admin/api/status" && request.method === "GET") {
@@ -1593,14 +1628,16 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           return;
         }
         if (path === "/admin/api/admin-code/rotate" && request.method === "POST") {
-          const code = await auth.rotateAdminCode();
+          const { code, revokedDevices } = await auth.rotateAdminCodeCounting();
           await note("admin.code.rotate");
+          if (revokedDevices) await note("admin.device.revoke", { object: String(revokedDevices), detail: "code-changed" });
           sendJson(response, 200, { code });
           return;
         }
         if (path === "/admin/api/admin-code/set" && request.method === "POST") {
-          await auth.replaceAdminCode(typeof body.code === "string" ? body.code : "");
+          const { revokedDevices } = await auth.replaceAdminCode(typeof body.code === "string" ? body.code : "");
           await note("admin.code.set");
+          if (revokedDevices) await note("admin.device.revoke", { object: String(revokedDevices), detail: "code-changed" });
           sendJson(response, 200, { changed: true });
           return;
         }

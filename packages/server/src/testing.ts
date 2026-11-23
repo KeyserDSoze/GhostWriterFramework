@@ -29,6 +29,7 @@ export * from "./ai-approval.js";
 export * from "./spend.js";
 export * from "./admin-client.js";
 export * from "./admin-log.js";
+export * from "./admin-devices.js";
 export * from "./admin-actions.js";
 export * from "./admin-runs.js";
 export * from "./admin-health.js";

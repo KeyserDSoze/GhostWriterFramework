@@ -12,7 +12,7 @@ export const RISK_LEVELS = ["high", "medium", "note"] as const;
 export type RiskLevel = (typeof RISK_LEVELS)[number];
 
 /** The risks, in the order a person reads them (so, by level, then the order the owner is most likely to act in). */
-export const RISK_IDS = ["remote-admin", "client-update", "oauth-write", "spend-unlimited", "no-passkey", "client-run", "ai-remote"] as const;
+export const RISK_IDS = ["remote-admin", "client-update", "oauth-write", "spend-unlimited", "no-passkey", "client-run", "ai-remote", "device-remember"] as const;
 export type RiskId = (typeof RISK_IDS)[number];
 
 const LEVEL_OF: Record<RiskId, RiskLevel> = {
@@ -23,6 +23,7 @@ const LEVEL_OF: Record<RiskId, RiskLevel> = {
   "no-passkey": "medium",
   "client-run": "note",
   "ai-remote": "note",
+  "device-remember": "note",
 };
 
 /** How many names a risk lists: the count is of all of them. */
@@ -53,6 +54,8 @@ export interface RiskInput {
   spend?: { unlimited?: boolean; paused?: boolean };
   /** An AI is set up, so there is something to spend. */
   aiConfigured?: boolean;
+  /** The browsers that the owner asked the panel to remember: how many. */
+  devices?: { count?: number };
 }
 
 const record = (value: unknown): Record<string, unknown> => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {});
@@ -146,6 +149,10 @@ export function buildRisks(input: RiskInput): RiskReport {
 
   const bases = remoteBases(source.aiBases);
   if (bases.count) found.set("ai-remote", { count: bases.count, hosts: bases.hosts });
+
+  // A remembered browser signs in without the code: how many there are, and whether the panel is open to the internet, which is what makes a stolen one matter.
+  const devices = whole(record(source.devices).count);
+  if (devices > 0) found.set("device-remember", { count: devices, remote: found.has("remote-admin") });
 
   const risks: Risk[] = RISK_IDS.flatMap((id) => {
     const facts = found.get(id);
