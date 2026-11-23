@@ -15,6 +15,8 @@ import { mergeLocalDeviceSettings } from "@/account/dataProjection";
 import { acquireMicrosoftConnectionToken } from "@/account/microsoftConnectionToken";
 import { acquireGoogleConnectionToken } from "@/account/googleConnectionToken";
 import { BrokerError } from "@/account/credentialBroker";
+import { requiresSignInRenewal, signInRenewalCode, withoutHelpLinks } from "@/account/signInRenewal";
+import { AccountSyncFailure } from "@/account/syncFailure";
 
 export interface ReplicaCandidate {
   id: "local" | AccountSyncBackendKind;
@@ -116,14 +118,16 @@ const MAX_ERROR_MESSAGE_LENGTH = 300;
 
 function describeAccountSyncError(error: unknown): string | undefined {
   const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  const message = raw.replace(/\s+/g, " ").trim();
+  const message = withoutHelpLinks(raw);
   return message ? message.slice(0, MAX_ERROR_MESSAGE_LENGTH) : undefined;
 }
 
 /** Records why a replica could not be reached: a lost login needs the owner, anything else is an error or being offline. */
 export async function setReplicaFailure(kind: AccountSyncBackendKind, error: unknown): Promise<void> {
   const errorKind = classifyAccountSyncError(error);
-  const patch = errorKind === "credential-expired" || errorKind === "credential-missing"
+  // A renewal that merely timed out while the device has no connection says nothing about the login.
+  const renewalTimedOutOffline = navigator.onLine === false && /^(?:timed_out|monitor_window_timeout)$/.test(renewalCodeOf(error) ?? "");
+  const patch = !renewalTimedOutOffline && (errorKind === "credential-expired" || errorKind === "credential-missing")
     ? { status: "needs-auth" as const, errorKind }
     : navigator.onLine === false
       ? { status: "offline" as const, errorKind: "offline" as const }
@@ -131,11 +135,17 @@ export async function setReplicaFailure(kind: AccountSyncBackendKind, error: unk
   await useConnectionStore.getState().updateReplica(kind, { ...patch, lastErrorMessage: describeAccountSyncError(error), lastAttemptAtUtc: new Date().toISOString() });
 }
 
+function renewalCodeOf(error: unknown): string | undefined {
+  return error instanceof AccountCredentialError ? error.code : signInRenewalCode(error);
+}
+
 export function classifyAccountSyncError(error: unknown) {
   if (error instanceof AccountCredentialError) return error.reason === "expired" ? "credential-expired" as const : "credential-missing" as const;
   // The broker says what it means: only a refused refresh token (or a broker that no longer serves) needs the owner.
   // Everything else is a passing problem and must never be mistaken for a lost login by the heuristics below.
   if (error instanceof BrokerError) return error.code === "rate_limited" ? "rate-limited" as const : error.code === "invalid_grant" || error.code === "not_configured" ? "credential-expired" as const : "network" as const;
+  // MSAL (a silent renewal that timed out or needs the owner) and Google's sign-in window say the login has to be renewed.
+  if (requiresSignInRenewal(error)) return "credential-expired" as const;
   const value = error && typeof error === "object" ? error as { status?: unknown; code?: unknown; message?: unknown } : {};
   const message = typeof value.message === "string" ? value.message.toLowerCase() : "";
   const statusMatch = message.match(/(?:^|[\s:(])([1-5]\d{2})(?:[\s).]|$)/);
@@ -279,13 +289,13 @@ export async function syncOneAccountReplica(kind: AccountSyncBackendKind): Promi
   if (result.synced.includes(kind) || result.reconciliation) return;
   const failure = result.failures.get(kind);
   if (failure) {
-    const detail = failure instanceof Error ? failure.message : String(failure);
-    throw new Error(`${backendLabel(kind)} sync failed (${classifyAccountSyncError(failure)}): ${detail}`);
+    const detail = withoutHelpLinks(failure instanceof Error ? failure.message : String(failure));
+    throw new AccountSyncFailure(kind, classifyAccountSyncError(failure), `${backendLabel(kind)} sync failed (${classifyAccountSyncError(failure)}): ${detail}`);
   }
   const configuration = useConnectionStore.getState().configuration;
   const replica = kind === "google-drive" ? configuration.google?.replica : kind === "onedrive" ? configuration.microsoft?.replica : configuration.github?.replica;
   if (replica?.status === "error" || replica?.status === "offline" || replica?.status === "needs-auth") {
-    throw new Error(`${backendLabel(kind)} sync failed (${replica.errorKind ?? replica.status}).`);
+    throw new AccountSyncFailure(kind, replica.errorKind ?? "unknown", `${backendLabel(kind)} sync failed (${replica.errorKind ?? replica.status}).`);
   }
 }
 

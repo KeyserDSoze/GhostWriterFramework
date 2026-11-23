@@ -260,8 +260,9 @@ export function installAccountDirtyPropagation(): void {
 }
 
 export class AccountCredentialError extends Error {
-  constructor(readonly backend: AccountSyncBackendKind, readonly reason: "missing" | "expired") {
-    super(`${backend} credential is ${reason}.`);
+  /** `code` is the provider's own code for why the sign-in has to be renewed (such as MSAL's `timed_out`), when there is one. */
+  constructor(readonly backend: AccountSyncBackendKind, readonly reason: "missing" | "expired", readonly code?: string) {
+    super(`${backend} credential is ${reason}${code ? ` (${code})` : ""}.`);
     this.name = "AccountCredentialError";
   }
 }

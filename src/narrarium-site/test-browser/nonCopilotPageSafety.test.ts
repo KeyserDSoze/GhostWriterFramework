@@ -33,7 +33,9 @@ describe("non-Copilot page safety contracts", () => {
   it("gates Reader resources, EPUB Markdown, and CSP at their shared boundaries", () => {
     const reader = source("src/pages/ReaderPreviewPage.tsx");
     const epub = source("src/export/bookExport.ts");
-    const html = source("index.html");
+    // The policy is written once, in csp.ts, and index.html takes it from there.
+    const html = source("csp.ts");
+    expect(source("index.html")).toContain('content="%NARRARIUM_CSP%"');
     expect(reader).toContain("isApprovedRepositoryAssetPath(src)");
     expect(reader).toContain("if (!isApprovedRepositoryAssetPath(path)) return undefined");
     expect(epub).toContain("renderEpubMarkdownHtml");
@@ -42,7 +44,7 @@ describe("non-Copilot page safety contracts", () => {
     expect(html).toContain("img-src 'self' data: blob:");
     expect(html).toContain("upgrade-insecure-requests");
     // Plain HTTP is allowed only towards this computer (the personal server started with npx).
-    expect(html).toContain("connect-src 'self' https: http://127.0.0.1:* http://localhost:*;");
+    expect(html).toContain("connect-src 'self' https: http://127.0.0.1:* http://localhost:*");
   });
 
   it("keeps the anonymous local workspace usable and protects destructive actions", () => {

@@ -14,7 +14,7 @@ import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
 import { useAuthStore } from "@/store/authStore";
 
 /** An upgrade of a connection keeps its sync switch and history; a failure it had been waiting on is cleared. */
-function upgradedReplica(replica: LocalReplicaState): LocalReplicaState {
+export function upgradedReplica(replica: LocalReplicaState): LocalReplicaState {
   return replica.enabled ? { ...replica, status: "dirty", errorKind: undefined, lastErrorMessage: undefined } : replica;
 }
 

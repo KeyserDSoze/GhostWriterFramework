@@ -168,7 +168,7 @@ function BackendSection({ entry, disabled, busy, onSync }: { entry: SyncBackendS
         <span className="text-sm font-medium">{entry.name}</span>
         <span className={cn("inline-flex items-center gap-1 text-xs", isFailureStatus(replica.status) ? `font-medium ${AMBER_TEXT}` : "text-muted-foreground")}>
           <StatusIcon aria-hidden="true" className={cn("h-3.5 w-3.5", replica.status === "syncing" && "motion-safe:animate-spin")} />
-          {t(`accountSync.state.${replica.status}`, { defaultValue: replica.status })}
+          {t(`accountSync.state.${replica.status}`, { defaultValue: replica.status, service: entry.name })}
         </span>
       </div>
       <p className="px-1 pt-1 text-xs text-muted-foreground">
@@ -176,16 +176,16 @@ function BackendSection({ entry, disabled, busy, onSync }: { entry: SyncBackendS
       </p>
       {failed && (
         <div className="px-1 pt-1 text-xs">
-          <p><span className="font-medium">{t("syncStatus.popover.lastError")}:</span> {t(`accountSync.error.${replica.errorKind}`, { defaultValue: replica.errorKind })}</p>
+          <p><span className="font-medium">{t("syncStatus.popover.lastError")}:</span> {t(`accountSync.error.${replica.errorKind}`, { defaultValue: replica.errorKind, service: entry.name })}</p>
           {replica.lastErrorMessage && <p className="mt-1 break-words font-mono text-xs text-muted-foreground">{replica.lastErrorMessage}</p>}
         </div>
       )}
       <div className="mt-1">
         {replica.status === "needs-auth" && (
           <DropdownMenuItem asChild className="cursor-pointer gap-2 text-xs">
-            <Link to="/app/account-sync" aria-label={`${t("syncStatus.popover.reconnect")}: ${entry.name}`}>
+            <Link to="/app/account-sync">
               <KeyRound aria-hidden="true" className="h-3.5 w-3.5" />
-              {t("syncStatus.popover.reconnect")}
+              {t("accountSync.card.reconnectService", { service: entry.name })}
             </Link>
           </DropdownMenuItem>
         )}

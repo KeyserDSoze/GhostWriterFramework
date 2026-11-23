@@ -3,12 +3,7 @@ import { acquireBrokerAccessToken, type AcquireOptions } from "@/account/brokerA
 import { AccountCredentialError, useConnectionStore } from "@/account/connectionStore";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 import { useAuthStore } from "@/store/authStore";
-
-function requiresMicrosoftInteraction(error: unknown): boolean {
-  const value = error && typeof error === "object" ? error as { errorCode?: unknown; subError?: unknown; message?: unknown } : {};
-  const detail = [value.errorCode, value.subError, value.message].filter((entry): entry is string => typeof entry === "string").join(" ").toLowerCase();
-  return /interaction_required|login_required|consent_required|no_account/.test(detail);
-}
+import { signInRenewalCode } from "@/account/signInRenewal";
 
 /**
  * The access token for syncing with OneDrive.
@@ -33,7 +28,8 @@ export async function acquireMicrosoftConnectionToken(options: AcquireOptions = 
       || connection.accessTokenExpiry <= Date.now() + 60_000;
     result = await instance.acquireTokenSilent({ ...microsoftSilentRequest(account), forceRefresh });
   } catch (error) {
-    if (requiresMicrosoftInteraction(error)) throw new AccountCredentialError("onedrive", "expired");
+    const code = signInRenewalCode(error);
+    if (code) throw new AccountCredentialError("onedrive", "expired", code);
     throw error;
   }
   if (!result.account || result.account.homeAccountId !== connection.homeAccountId || result.account.localAccountId !== connection.localAccountId) {

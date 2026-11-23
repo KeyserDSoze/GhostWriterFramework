@@ -62,7 +62,7 @@ const CASES: Case[] = [
   { state: "pending", replicas: { google: replica("idle"), microsoft: replica("dirty") }, attention: false,
     en: { name: "Sync status: Pending", label: "Pending", tooltip: "Saved locally · changes waiting to sync" }, it: { name: "Stato della sincronizzazione: In attesa", label: "In attesa", tooltip: "Salvato localmente · modifiche in attesa di sincronizzazione" } },
   { state: "needs-login", replicas: { google: replica("idle"), microsoft: replica("needs-auth", { errorKind: "credential-expired" }) }, attention: true,
-    en: { name: "Sync status: Login needed", label: "Login needed", tooltip: "Saved locally · OneDrive needs login" }, it: { name: "Stato della sincronizzazione: Accesso necessario", label: "Accesso necessario", tooltip: "Salvato localmente · OneDrive richiede l'accesso" } },
+    en: { name: "Sync status: Login needed", label: "Login needed", tooltip: "Saved locally · reconnect OneDrive" }, it: { name: "Stato della sincronizzazione: Accesso necessario", label: "Accesso necessario", tooltip: "Salvato localmente · riconnetti OneDrive" } },
   { state: "failed", replicas: { google: replica("error", { errorKind: "unknown", lastErrorMessage: RAW_MESSAGE }) }, attention: true,
     en: { name: "Sync status: Sync failed", label: "Sync failed", tooltip: "Saved locally · Google Drive sync failed" }, it: { name: "Stato della sincronizzazione: Sync non riuscita", label: "Sync non riuscita", tooltip: "Salvato localmente · sincronizzazione con Google Drive non riuscita" } },
   { state: "remote-offline", replicas: { github: replica("offline", { errorKind: "offline" }) }, attention: true,
@@ -169,8 +169,9 @@ describe.each(["en", "it"] as const)("sync status indicator in the header (%s)",
     expect(syncTime.textContent).toMatch(language === "it" ? "21 nov 2026, 22:28" : /^Nov 21, 2026, 10:28\sPM$/);
 
     const onedrive = within(screen.getByRole("group", { name: "OneDrive" }));
-    expect(onedrive.getByText(language === "it" ? "Accesso necessario" : "Login needed")).toBeInTheDocument();
-    expect(onedrive.getByText(language === "it" ? "L'accesso è scaduto. Riconnettiti per continuare a sincronizzare." : "The login has expired. Reconnect to keep syncing.")).toBeInTheDocument();
+    // The state in words, and the link that acts on it.
+    expect(onedrive.getAllByText(language === "it" ? "Riconnetti OneDrive" : "Reconnect OneDrive")).toHaveLength(2);
+    expect(onedrive.getByText(language === "it" ? "L'accesso a OneDrive va rinnovato. Riconnetti OneDrive per continuare a sincronizzare; non si perde nulla, i dati restano su questo dispositivo." : "The OneDrive sign-in needs to be renewed. Reconnect OneDrive to keep syncing; nothing is lost, your data stays on this device.")).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "OneDrive" }).querySelector("time")).toHaveAttribute("datetime", OLDER_SYNC);
     expect(menu.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
   });
@@ -191,10 +192,10 @@ describe.each(["en", "it"] as const)("sync status indicator in the header (%s)",
 
     expect(screen.getByRole("menuitem", { name: `${syncNow}: Google Drive` })).toHaveTextContent(syncNow);
     expect(screen.getByRole("menuitem", { name: `${syncNow}: OneDrive` })).toHaveTextContent(syncNow);
-    const link = screen.getByRole("menuitem", { name: `${reconnect}: OneDrive` });
+    const link = screen.getByRole("menuitem", { name: `${reconnect} OneDrive` });
     expect(link.tagName).toBe("A");
     expect(link).toHaveAttribute("href", "/app/account-sync");
-    expect(screen.queryByRole("menuitem", { name: `${reconnect}: Google Drive` })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: `${reconnect} Google Drive` })).toBeNull();
 
     const page = screen.getByRole("menuitem", { name: language === "it" ? "Account e sincronizzazione" : "Account & Sync" });
     expect(page.tagName).toBe("A");
@@ -282,7 +283,7 @@ describe("sync status indicator announcements", () => {
     expect(message()).toBe("Google Drive sync failed.");
 
     await setReplicas({ google: replica("needs-auth", { errorKind: "credential-expired" }) });
-    expect(message()).toBe("Google Drive needs login.");
+    expect(message()).toBe("The Google Drive sign-in needs to be renewed. Reconnect Google Drive.");
 
     await setSyncing(true);
     await setReplicas({ google: replica("syncing") });

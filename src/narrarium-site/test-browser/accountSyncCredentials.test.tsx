@@ -60,6 +60,8 @@ const TEXTS = {
     memoryOnly: /Credenziali durature: attive finché questa scheda resta aperta/,
     sessionGoogle: "Credenziali a sessione: dopo circa un'ora devi riconnetterti.",
     sessionMicrosoft: "Credenziali a sessione: dopo circa 24 ore devi riconnetterti.",
+    noLongLivedGoogle: "Questa connessione dura circa un'ora perché su questo sito l'accesso duraturo non è ancora attivo. Ti verrà chiesto di riconnettere Google Drive.",
+    noLongLivedMicrosoft: "Questa connessione dura circa un giorno perché su questo sito l'accesso duraturo non è ancora attivo. Ti verrà chiesto di riconnettere OneDrive.",
     upgrade: "Passa a credenziali durature",
     reconnect: "Riconnetti", connect: "Connetti", disconnect: "Disconnetti", cancel: "Annulla",
     waiting: "In attesa della finestra di accesso Microsoft…",
@@ -78,6 +80,8 @@ const TEXTS = {
     memoryOnly: /Long-lived credentials: active while this tab stays open/,
     sessionGoogle: "Session credentials: after about an hour you have to reconnect.",
     sessionMicrosoft: "Session credentials: after about 24 hours you have to reconnect.",
+    noLongLivedGoogle: "This connection lasts about an hour because long-lived sign-in is not enabled on this site yet. You will be asked to reconnect Google Drive.",
+    noLongLivedMicrosoft: "This connection lasts about a day because long-lived sign-in is not enabled on this site yet. You will be asked to reconnect OneDrive.",
     upgrade: "Switch to long-lived credentials",
     reconnect: "Reconnect", connect: "Connect", disconnect: "Disconnect", cancel: "Cancel",
     waiting: "Waiting for the Microsoft sign-in window…",
@@ -167,6 +171,24 @@ describe.each(["it", "en"] as const)("Account & Sync credentials in %s", (langua
         expect(view.queryByText(/credenziali durature|long-lived credentials/i)).not.toBeInTheDocument();
       }
       expect(net.calls).toHaveLength(0);
+    });
+
+    it("says honestly that a session connection ends, and why, and only when it is one", async () => {
+      seed({ google: googleConnection(), microsoft: microsoftConnection() });
+      await open(language);
+      expect(await within(card("Google Drive")).findByText(text.noLongLivedGoogle)).toBeInTheDocument();
+      expect(await within(card("OneDrive")).findByText(text.noLongLivedMicrosoft)).toBeInTheDocument();
+      expect(within(card("OneDrive")).queryByText(text.upgrade)).not.toBeInTheDocument();
+      expect(net.calls).toHaveLength(0);
+    });
+
+    it("says nothing of the kind about a connection that holds long-lived credentials", async () => {
+      seed({ google: googleConnection({ refreshToken: SECRETS.refresh }), microsoft: microsoftConnection({ refreshToken: SECRETS.refresh }) });
+      await open(language);
+      await act(async () => { await Promise.resolve(); });
+      for (const name of ["Google Drive", "OneDrive"]) {
+        expect(within(card(name)).queryByText(/lasts about|dura circa/)).not.toBeInTheDocument();
+      }
     });
 
     it("still connects Google with the implicit flow and OneDrive with MSAL", async () => {
@@ -436,7 +458,7 @@ describe.each(["it", "en"] as const)("Account & Sync credentials in %s", (langua
       await waitFor(() => expect(net.broker("/oauth/status")).toHaveLength(1));
       await act(async () => { await Promise.resolve(); });
 
-      fireEvent.click(within(card("Google Drive")).getByRole("button", { name: text.reconnect }));
+      fireEvent.click(within(card("Google Drive")).getByRole("button", { name: `${text.reconnect} Google Drive` }));
 
       expect(google.triggers["auth-code"]).toHaveBeenCalledTimes(1);
       expect(google.triggers.implicit).not.toHaveBeenCalled();

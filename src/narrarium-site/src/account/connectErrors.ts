@@ -5,6 +5,7 @@
  */
 import type { TFunction } from "i18next";
 import { BrokerError } from "@/account/credentialBroker";
+import { signInRenewalCode } from "@/account/signInRenewal";
 
 export type ConnectFlowErrorCode =
   | "unsupported"
@@ -65,4 +66,15 @@ export function describeConnectError(error: unknown, t: TFunction): string | nul
     return t("accountSync.connectError.brokerUnavailable");
   }
   return null;
+}
+
+/**
+ * The text for an interactive sign-in of Microsoft (MSAL) or Google (the sign-in window) that did not end: the window was
+ * closed, blocked or timed out, or the access was refused. The code stays in the sentence as its detail; nothing else of the
+ * library's message (its help address, its stack) reaches the page. Null when the error is not one of these.
+ */
+export function describeSignInFailure(error: unknown, backend: "google-drive" | "onedrive", t: TFunction): string | null {
+  const code = signInRenewalCode(error);
+  if (!code) return null;
+  return t(backend === "onedrive" ? "accountSync.connectError.renewMicrosoft" : "accountSync.connectError.renewGoogle", { code });
 }

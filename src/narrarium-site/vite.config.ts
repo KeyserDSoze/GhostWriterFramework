@@ -4,6 +4,7 @@ import path from "path";
 import { createRequire } from "module";
 import tailwindcss from "tailwindcss";
 import autoprefixer from "autoprefixer";
+import { APP_CONTENT_SECURITY_POLICY, CSP_PLACEHOLDER } from "./csp.ts";
 
 const require = createRequire(import.meta.url);
 const pkg = require("./package.json") as { version: string };
@@ -25,6 +26,13 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    {
+      name: "narrarium-content-security-policy",
+      transformIndexHtml: {
+        order: "pre",
+        handler: (html) => html.replaceAll(CSP_PLACEHOLDER, APP_CONTENT_SECURITY_POLICY),
+      },
+    },
     {
       name: "narrarium-version-manifest",
       generateBundle() {

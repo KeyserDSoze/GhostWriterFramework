@@ -13,7 +13,7 @@ import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftMsalInstance, microsoftSilentRequest, setMicrosoftRememberMe } from "@/config/msal";
 import { useConnectionStore } from "@/account/connectionStore";
 import { completeGoogleCodeConnection, completeMicrosoftBrokerConnection } from "@/account/brokerConnect";
-import { ConnectFlowError, describeConnectError } from "@/account/connectErrors";
+import { ConnectFlowError, describeConnectError, describeSignInFailure } from "@/account/connectErrors";
 import { credentialMode } from "@/account/credentialMode";
 import { beginMicrosoftSignIn, type MicrosoftSignInSession } from "@/account/microsoftSignIn";
 import { useBrokerAvailability } from "@/hooks/useBrokerAvailability";
@@ -23,6 +23,8 @@ import { connectGitHubCredential } from "@/github/githubConnection";
 import { loadLocalAccountSnapshot } from "@/account/accountLocalStore";
 import type { AccountSyncBackendKind, LocalGoogleConnection, LocalMicrosoftConnection } from "@/account/types";
 import { isFailureStatus } from "@/account/syncStatus";
+import { describeSyncFailure } from "@/account/syncFailure";
+import { upgradedReplica } from "@/account/brokerConnect";
 import { useSettingsStore } from "@/store/settingsStore";
 import { deleteAllNarrariumLocalData, getFullDeviceSafetyReport } from "@/account/dataSafety";
 import { useAuthStore } from "@/store/authStore";
@@ -84,8 +86,8 @@ export function AccountSyncPage() {
       } catch (cause) { setError(describeConnectError(cause, t) ?? String(cause)); }
       finally { setBusy(null); }
     },
-    onError: (cause) => setError(cause.error_description ?? "Google connection failed."),
-    onNonOAuthError: (cause) => { if (cause.type === "popup_failed_to_open") setError(t("accountSync.connectError.popupBlocked")); },
+    onError: (cause) => setError(describeSignInFailure(cause, "google-drive", t) ?? cause.error_description ?? "Google connection failed."),
+    onNonOAuthError: (cause) => { setError(cause.type === "popup_failed_to_open" ? t("accountSync.connectError.popupBlocked") : describeSignInFailure(cause, "google-drive", t) ?? t("accountSync.connectError.renewGoogle", { code: cause.type })); },
   });
 
   const googleLogin = useGoogleLogin({
@@ -93,11 +95,14 @@ export function AccountSyncPage() {
     onSuccess: async (response) => {
       setBusy("google");
       setError(null);
+      const intent = googleIntent.current;
+      googleIntent.current = {};
       try {
         const profileResponse = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${response.access_token}` } });
         if (!profileResponse.ok) throw new Error(`Google profile failed (${profileResponse.status}).`);
         const profile = await profileResponse.json() as { sub?: string; name?: string; email?: string; picture?: string };
         if (!profile.sub) throw new Error("Google did not return an immutable account ID.");
+        if (intent.expectedAccountId && profile.sub !== intent.expectedAccountId) throw new ConnectFlowError("wrong_account");
         // A long-lived credential already held for this same account is not lost by signing in again with a session token.
         const existing = useConnectionStore.getState().configuration.google;
         const carriedRefreshToken = existing?.identity.providerAccountId === profile.sub ? existing.refreshToken : undefined;
@@ -105,18 +110,20 @@ export function AccountSyncPage() {
           identity: { provider: "google", providerAccountId: profile.sub, displayName: profile.name || profile.email || "Google", email: profile.email, avatarUrl: profile.picture },
           accessToken: response.access_token,
           accessTokenExpiry: Date.now() + (("expires_in" in response ? Number(response.expires_in) : 3_600) - 60) * 1_000,
-          rememberMe,
+          rememberMe: intent.rememberMe ?? rememberMe,
           ...(carriedRefreshToken ? { refreshToken: carriedRefreshToken } : {}),
+          // Signing in again after the login lapsed keeps the replica: the changes waiting to sync are not lost.
+          ...(intent.upgrade && existing?.identity.providerAccountId === profile.sub ? { replica: upgradedReplica(existing.replica) } : {}),
         });
-        useAuthStore.getState().setInteractiveAuth(response.access_token, { provider: "google", providerAccountId: profile.sub, name: profile.name || profile.email || "Google", email: profile.email ?? "", picture: profile.picture ?? "" }, "expires_in" in response ? Number(response.expires_in) : 3_600, rememberMe);
+        useAuthStore.getState().setInteractiveAuth(response.access_token, { provider: "google", providerAccountId: profile.sub, name: profile.name || profile.email || "Google", email: profile.email ?? "", picture: profile.picture ?? "" }, "expires_in" in response ? Number(response.expires_in) : 3_600, intent.rememberMe ?? rememberMe);
         const migration = await migrateConnectedProviderRepositories();
         if (migration.error) throw migration.error;
         await syncOneAccountReplica("google-drive");
         await refreshLocalSummary();
-      } catch (cause) { setError(String(cause)); }
+      } catch (cause) { setError(describeConnectError(cause, t) ?? describeSyncFailure(cause, t)); }
       finally { setBusy(null); }
     },
-    onError: (cause) => setError(cause.error_description ?? "Google connection failed."),
+    onError: (cause) => setError(describeSignInFailure(cause, "google-drive", t) ?? cause.error_description ?? "Google connection failed."),
   });
 
   /** Google: the authorization code flow when the broker serves it, the implicit flow as ever when it does not. */
@@ -131,7 +138,7 @@ export function AccountSyncPage() {
   /** Microsoft: the sign-in window with PKCE when the broker serves it, MSAL as ever when it does not. */
   function connectMicrosoft(upgrade = false) {
     if (brokerMicrosoft === true) connectMicrosoftLongLived(upgrade);
-    else void connectMicrosoftWithMsal();
+    else void connectMicrosoftWithMsal(upgrade);
   }
 
   function connectMicrosoftLongLived(upgrade: boolean) {
@@ -164,15 +171,19 @@ export function AccountSyncPage() {
     setMicrosoftPending(false);
   }
 
-  async function connectMicrosoftWithMsal() {
+  async function connectMicrosoftWithMsal(reconnect = false) {
+    // Signing in again after the login lapsed keeps the replica (its last sync, its enabled state): the data waiting to sync is not lost.
+    const reconnecting = reconnect ? useConnectionStore.getState().configuration.microsoft : undefined;
     setBusy("microsoft");
     setError(null);
     try {
-      setMicrosoftRememberMe(rememberMe);
-      const client = microsoftMsalInstance(rememberMe);
+      const keepSignedIn = reconnecting ? reconnecting.rememberMe : rememberMe;
+      setMicrosoftRememberMe(keepSignedIn);
+      const client = microsoftMsalInstance(keepSignedIn);
       await ensureMsalInitialized(client);
-      const login = await client.loginPopup({ scopes: MICROSOFT_SCOPES, prompt: "select_account" });
+      const login = await client.loginPopup({ scopes: MICROSOFT_SCOPES, prompt: "select_account", ...(reconnecting?.identity.email ? { loginHint: reconnecting.identity.email } : {}) });
       if (!login.account?.homeAccountId || !login.account.localAccountId) throw new Error("Microsoft did not return immutable account IDs.");
+      if (reconnecting && login.account.homeAccountId !== reconnecting.homeAccountId) throw new ConnectFlowError("wrong_account");
       const result = await client.acquireTokenSilent(microsoftSilentRequest(login.account)).catch(() => login);
       const profileResponse = await fetchMicrosoftGraph("https://graph.microsoft.com/v1.0/me", { headers: { Authorization: `Bearer ${result.accessToken}` } });
       if (!profileResponse.ok) throw new Error(`Microsoft profile failed (${profileResponse.status}).`);
@@ -183,14 +194,15 @@ export function AccountSyncPage() {
         accessTokenExpiry: result.expiresOn?.getTime(),
         homeAccountId: login.account.homeAccountId,
         localAccountId: login.account.localAccountId,
-        rememberMe,
+        rememberMe: keepSignedIn,
+        ...(reconnecting ? { replica: upgradedReplica(reconnecting.replica) } : {}),
       });
-      useAuthStore.getState().setInteractiveAuth(result.accessToken, { provider: "microsoft", providerAccountId: login.account.homeAccountId, name: profile.displayName || profile.mail || "Microsoft", email: profile.mail ?? profile.userPrincipalName ?? "", picture: "", homeAccountId: login.account.homeAccountId, localAccountId: login.account.localAccountId }, Math.max(120, Math.round(((result.expiresOn?.getTime() ?? Date.now() + 3_600_000) - Date.now()) / 1_000)), rememberMe);
+      useAuthStore.getState().setInteractiveAuth(result.accessToken, { provider: "microsoft", providerAccountId: login.account.homeAccountId, name: profile.displayName || profile.mail || "Microsoft", email: profile.mail ?? profile.userPrincipalName ?? "", picture: "", homeAccountId: login.account.homeAccountId, localAccountId: login.account.localAccountId }, Math.max(120, Math.round(((result.expiresOn?.getTime() ?? Date.now() + 3_600_000) - Date.now()) / 1_000)), keepSignedIn);
       const migration = await migrateConnectedProviderRepositories();
       if (migration.error) throw migration.error;
       await syncOneAccountReplica("onedrive");
       await refreshLocalSummary();
-    } catch (cause) { setError(String(cause)); }
+    } catch (cause) { setError(describeConnectError(cause, t) ?? describeSignInFailure(cause, "onedrive", t) ?? describeSyncFailure(cause, t)); }
     finally { setBusy(null); }
   }
 
@@ -212,7 +224,7 @@ export function AccountSyncPage() {
     setBusy(kind ?? "all");
     setError(null);
     try { if (kind) await syncOneAccountReplica(kind); else await syncAllAccountReplicas(); await refreshLocalSummary(); }
-    catch (cause) { setError(String(cause)); }
+    catch (cause) { setError(describeSyncFailure(cause, t)); }
     finally { setBusy(null); }
   }
 
@@ -312,10 +324,10 @@ export function AccountSyncPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <ConnectionCard title="Google Drive" icon={<Cloud className="h-5 w-5" />} connected={Boolean(configuration.google)} enabled={configuration.google?.replica.enabled} status={configuration.google?.replica.status} errorKind={configuration.google?.replica.errorKind} errorMessage={configuration.google?.replica.lastErrorMessage} lastSync={configuration.google?.replica.lastSuccessfulSyncAtUtc} busy={syncing || busy === "google" || busy === "google-drive" || busy === "google-legacy-chats"} onToggle={(enabled) => useConnectionStore.getState().setEnabled("google-drive", enabled)} credentials={configuration.google && <CredentialStatus provider="google" connection={configuration.google} brokerAvailable={brokerGoogle} busy={syncing || busy !== null} onUpgrade={() => connectGoogleAccount(true)} />} onConnect={() => connectGoogleAccount()} onSync={() => runSync("google-drive")} onDisconnect={() => disconnect("google-drive")} onDelete={() => removeRemote("google-drive")}>
+        <ConnectionCard title="Google Drive" icon={<Cloud className="h-5 w-5" />} connected={Boolean(configuration.google)} enabled={configuration.google?.replica.enabled} status={configuration.google?.replica.status} errorKind={configuration.google?.replica.errorKind} errorMessage={configuration.google?.replica.lastErrorMessage} lastSync={configuration.google?.replica.lastSuccessfulSyncAtUtc} busy={syncing || busy === "google" || busy === "google-drive" || busy === "google-legacy-chats"} onToggle={(enabled) => useConnectionStore.getState().setEnabled("google-drive", enabled)} credentials={configuration.google && <CredentialStatus provider="google" connection={configuration.google} brokerAvailable={brokerGoogle} busy={syncing || busy !== null} onUpgrade={() => connectGoogleAccount(true)} />} onConnect={() => connectGoogleAccount()} onReconnect={() => connectGoogleAccount(true)} onSync={() => runSync("google-drive")} onDisconnect={() => disconnect("google-drive")} onDelete={() => removeRemote("google-drive")}>
           {configuration.google && <div className="space-y-2 border-t pt-3"><p className="text-xs text-muted-foreground">{italian ? "Recupera le conversazioni conservate nella vecchia cartella Google Drive/Narrarium/chats. L'importazione non modifica i file originali." : "Recover conversations stored in the old Google Drive/Narrarium/chats folder. Importing does not modify the original files."}</p><Button size="sm" variant="outline" onClick={() => void importLegacyGoogleChats()} disabled={syncing || busy !== null}>{busy === "google-legacy-chats" && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}{italian ? "Importa chat legacy" : "Import legacy chats"}</Button></div>}
         </ConnectionCard>
-        <ConnectionCard title="OneDrive" icon={<Cloud className="h-5 w-5" />} connected={Boolean(configuration.microsoft)} enabled={configuration.microsoft?.replica.enabled} status={configuration.microsoft?.replica.status} errorKind={configuration.microsoft?.replica.errorKind} errorMessage={configuration.microsoft?.replica.lastErrorMessage} lastSync={configuration.microsoft?.replica.lastSuccessfulSyncAtUtc} busy={syncing || busy === "microsoft" || busy === "onedrive"} credentials={configuration.microsoft && <CredentialStatus provider="microsoft" connection={configuration.microsoft} brokerAvailable={brokerMicrosoft} busy={syncing || busy !== null} onUpgrade={() => connectMicrosoft(true)} />} onToggle={(enabled) => useConnectionStore.getState().setEnabled("onedrive", enabled)} onConnect={() => connectMicrosoft()} onSync={() => runSync("onedrive")} onDisconnect={() => disconnect("onedrive")} onDelete={() => removeRemote("onedrive")}>
+        <ConnectionCard title="OneDrive" icon={<Cloud className="h-5 w-5" />} connected={Boolean(configuration.microsoft)} enabled={configuration.microsoft?.replica.enabled} status={configuration.microsoft?.replica.status} errorKind={configuration.microsoft?.replica.errorKind} errorMessage={configuration.microsoft?.replica.lastErrorMessage} lastSync={configuration.microsoft?.replica.lastSuccessfulSyncAtUtc} busy={syncing || busy === "microsoft" || busy === "onedrive"} credentials={configuration.microsoft && <CredentialStatus provider="microsoft" connection={configuration.microsoft} brokerAvailable={brokerMicrosoft} busy={syncing || busy !== null} onUpgrade={() => connectMicrosoft(true)} />} onToggle={(enabled) => useConnectionStore.getState().setEnabled("onedrive", enabled)} onConnect={() => connectMicrosoft()} onReconnect={() => connectMicrosoft(true)} onSync={() => runSync("onedrive")} onDisconnect={() => disconnect("onedrive")} onDelete={() => removeRemote("onedrive")}>
           <div role="status" className={microsoftPending ? "space-y-1 border-t pt-3 text-xs" : undefined}>{microsoftPending && <><p className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" /><span>{t("accountSync.microsoftSignIn.waiting")}</span></p><p className="text-muted-foreground">{t("accountSync.microsoftSignIn.hint")}</p></>}</div>
           {microsoftPending && <Button size="sm" variant="outline" onClick={cancelMicrosoftSignIn}>{t("common.cancel")}</Button>}
         </ConnectionCard>
@@ -342,6 +354,15 @@ function CredentialStatus(props: { provider: "google" | "microsoft"; connection:
   const { t } = useTranslation();
   const mode = credentialMode(props.connection);
   const offer = mode === "session" && props.brokerAvailable === true;
+  // Where the broker does not serve the provider, a session connection is all there is: say so, and why it ends.
+  if (mode === "session" && props.brokerAvailable === false) {
+    return (
+      <p className="flex items-start gap-2 rounded-md border p-2 text-xs text-muted-foreground">
+        <Clock aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>{t(props.provider === "google" ? "accountSync.credentials.sessionNoLongLivedGoogle" : "accountSync.credentials.sessionNoLongLivedMicrosoft")}</span>
+      </p>
+    );
+  }
   if (mode === "session" && !offer) return null;
   const Icon = mode === "session" ? Clock : ShieldCheck;
   const label = mode === "long-lived" ? t("accountSync.credentials.longLived") : mode === "long-lived-memory" ? t("accountSync.credentials.longLivedMemory") : t(props.provider === "google" ? "accountSync.credentials.sessionGoogle" : "accountSync.credentials.sessionMicrosoft");
@@ -355,12 +376,12 @@ function CredentialStatus(props: { provider: "google" | "microsoft"; connection:
   );
 }
 
-function ConnectionCard(props: { title: string; icon: React.ReactNode; connected: boolean; credentials?: React.ReactNode; enabled?: boolean; status?: string; errorKind?: string; errorMessage?: string; lastSync?: string; detail?: string; busy: boolean; connectDisabled?: boolean; onToggle?: (enabled: boolean) => void | Promise<void>; onConnect: () => void | Promise<void>; onSync: () => void | Promise<void>; onDisconnect: () => void | Promise<void>; onDelete: () => void | Promise<void>; children?: React.ReactNode }) {
+function ConnectionCard(props: { title: string; icon: React.ReactNode; connected: boolean; credentials?: React.ReactNode; enabled?: boolean; status?: string; errorKind?: string; errorMessage?: string; lastSync?: string; detail?: string; busy: boolean; connectDisabled?: boolean; onToggle?: (enabled: boolean) => void | Promise<void>; onConnect: () => void | Promise<void>; onReconnect?: () => void | Promise<void>; onSync: () => void | Promise<void>; onDisconnect: () => void | Promise<void>; onDelete: () => void | Promise<void>; children?: React.ReactNode }) {
   const { t } = useTranslation();
   const toggleId = useId();
-  const state = t(`accountSync.state.${props.status ?? "idle"}`, { defaultValue: props.status ?? "idle" });
+  const state = t(`accountSync.state.${props.status ?? "idle"}`, { defaultValue: props.status ?? "idle", service: props.title });
   const failed = Boolean(props.errorKind && isFailureStatus(props.status));
-  return <Card><CardHeader><CardTitle className="flex items-center gap-2">{props.icon}{props.title}</CardTitle><CardDescription>{props.detail ?? (props.connected ? t("accountSync.card.status", { state }) : t("accountSync.card.notConnected"))}</CardDescription></CardHeader><CardContent className="space-y-3">{props.lastSync && <p className="text-xs text-muted-foreground">{t("accountSync.card.lastSync")}: <LocalTime value={props.lastSync} /></p>}{failed && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs"><p className="font-medium">{t("accountSync.card.lastError")}</p><p>{t(`accountSync.error.${props.errorKind}`, { defaultValue: props.errorKind })}</p>{props.errorMessage && <p className="mt-1 break-words font-mono text-xs text-muted-foreground">{props.errorMessage}</p>}</div>}{props.connected && props.credentials}{props.connected ? <><div className="flex items-center justify-between rounded-md border p-2"><Label htmlFor={toggleId}>{t("accountSync.card.dataSync")}</Label><Switch id={toggleId} checked={Boolean(props.enabled)} onCheckedChange={(enabled) => void props.onToggle?.(enabled)} /></div><div className="flex flex-wrap gap-2"><Button size="sm" onClick={() => void props.onSync()} disabled={props.busy || !props.enabled}><RefreshCw className="mr-1 h-4 w-4" />{t("accountSync.card.sync")}</Button>{props.status === "needs-auth" && <Button size="sm" variant="outline" onClick={() => void props.onConnect()} disabled={props.connectDisabled}>{t("accountSync.card.reconnect")}</Button>}<Button size="sm" variant="outline" onClick={() => void props.onDisconnect()}><Unplug className="mr-1 h-4 w-4" />{t("accountSync.card.disconnect")}</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => void props.onDelete()}><Trash2 className="mr-1 h-4 w-4" />{t("accountSync.card.deleteRemote")}</Button></div></> : <Button onClick={() => void props.onConnect()} disabled={props.busy || props.connectDisabled}>{props.busy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}{props.title === "GitHub" ? t("accountSync.card.connectOAuth") : t("accountSync.card.connect")}</Button>}{props.children}</CardContent></Card>;
+  return <Card><CardHeader><CardTitle className="flex items-center gap-2">{props.icon}{props.title}</CardTitle><CardDescription>{props.detail ?? (props.connected ? t("accountSync.card.status", { state }) : t("accountSync.card.notConnected"))}</CardDescription></CardHeader><CardContent className="space-y-3">{props.lastSync && <p className="text-xs text-muted-foreground">{t("accountSync.card.lastSync")}: <LocalTime value={props.lastSync} /></p>}{failed && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs"><p className="font-medium">{t("accountSync.card.lastError")}</p><p>{t(`accountSync.error.${props.errorKind}`, { defaultValue: props.errorKind, service: props.title })}</p>{props.errorMessage && <p className="mt-1 break-words font-mono text-xs text-muted-foreground">{props.errorMessage}</p>}</div>}{props.connected && props.credentials}{props.connected ? <><div className="flex items-center justify-between rounded-md border p-2"><Label htmlFor={toggleId}>{t("accountSync.card.dataSync")}</Label><Switch id={toggleId} checked={Boolean(props.enabled)} onCheckedChange={(enabled) => void props.onToggle?.(enabled)} /></div><div className="flex flex-wrap gap-2"><Button size="sm" onClick={() => void props.onSync()} disabled={props.busy || !props.enabled}><RefreshCw className="mr-1 h-4 w-4" />{t("accountSync.card.sync")}</Button>{props.status === "needs-auth" && <Button size="sm" variant="outline" onClick={() => void (props.onReconnect ?? props.onConnect)()} disabled={props.connectDisabled || props.busy}>{t("accountSync.card.reconnectService", { service: props.title })}</Button>}<Button size="sm" variant="outline" onClick={() => void props.onDisconnect()}><Unplug className="mr-1 h-4 w-4" />{t("accountSync.card.disconnect")}</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => void props.onDelete()}><Trash2 className="mr-1 h-4 w-4" />{t("accountSync.card.deleteRemote")}</Button></div></> : <Button onClick={() => void props.onConnect()} disabled={props.busy || props.connectDisabled}>{props.busy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}{props.title === "GitHub" ? t("accountSync.card.connectOAuth") : t("accountSync.card.connect")}</Button>}{props.children}</CardContent></Card>;
 }
 
 function ReconciliationDialog({ italian }: { italian: boolean }) {

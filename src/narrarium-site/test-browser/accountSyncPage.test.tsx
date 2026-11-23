@@ -28,14 +28,14 @@ const TEXTS = {
   it: {
     notConnected: "Non connesso", dataSync: "Sincronizzazione dei dati dell'account", sync: "Sincronizza", disconnect: "Disconnetti", deleteRemote: "Elimina dati remoti",
     lastSync: "Ultima sincronizzazione", reconnect: "Riconnetti", connectOAuth: "Connetti con OAuth", lastError: "Ultimo errore",
-    failed: "Sincronizzazione non riuscita", unknownKind: "Qualcosa è andato storto durante la sincronizzazione.", needsLogin: "Accesso necessario", expiredKind: "L'accesso è scaduto. Riconnettiti per continuare a sincronizzare.",
+    failed: "Sincronizzazione non riuscita", unknownKind: "Qualcosa è andato storto durante la sincronizzazione.", needsLogin: "Riconnetti OneDrive", expiredKind: "L'accesso a OneDrive va rinnovato. Riconnetti OneDrive per continuare a sincronizzare; non si perde nulla, i dati restano su questo dispositivo.",
     status: (state: string) => `Stato: ${state}`, upToDate: "Aggiornato",
     sync1: "21 nov 2026, 22:28", workspaceDate: "21 nov 2026, 22:15", counts: "1 libro · 2 chat",
   },
   en: {
     notConnected: "Not connected", dataSync: "Account data sync", sync: "Sync", disconnect: "Disconnect", deleteRemote: "Delete remote",
     lastSync: "Last sync", reconnect: "Reconnect", connectOAuth: "Connect OAuth", lastError: "Last error",
-    failed: "Sync failed", unknownKind: "Something unexpected went wrong while syncing.", needsLogin: "Login needed", expiredKind: "The login has expired. Reconnect to keep syncing.",
+    failed: "Sync failed", unknownKind: "Something unexpected went wrong while syncing.", needsLogin: "Reconnect OneDrive", expiredKind: "The OneDrive sign-in needs to be renewed. Reconnect OneDrive to keep syncing; nothing is lost, your data stays on this device.",
     status: (state: string) => `Status: ${state}`, upToDate: "Up to date",
     sync1: /^Nov 21, 2026, 10:28\sPM$/, workspaceDate: /^Nov 21, 2026, 10:15\sPM$/, counts: "1 book · 2 chats",
   },
@@ -113,10 +113,10 @@ describe.each(["it", "en"] as const)("Account & Sync page in %s", (language) => 
     expect(driveCard.getByRole("button", { name: text.disconnect })).toBeInTheDocument();
     expect(driveCard.getByRole("button", { name: text.deleteRemote })).toBeInTheDocument();
     expect(driveCard.getByText(`${text.lastSync}:`, { exact: false })).toBeInTheDocument();
-    expect(driveCard.queryByRole("button", { name: text.reconnect })).not.toBeInTheDocument();
+    expect(driveCard.queryByRole("button", { name: `${text.reconnect} Google Drive` })).not.toBeInTheDocument();
 
     const driveNeedingLogin = within(card("OneDrive"));
-    expect(driveNeedingLogin.getByRole("button", { name: text.reconnect })).toBeInTheDocument();
+    expect(driveNeedingLogin.getByRole("button", { name: `${text.reconnect} OneDrive` })).toBeInTheDocument();
     expect(driveNeedingLogin.getByText(text.status(text.needsLogin))).toBeInTheDocument();
 
     const github = within(card("GitHub"));
