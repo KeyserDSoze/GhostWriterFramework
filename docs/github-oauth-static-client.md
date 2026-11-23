@@ -3,7 +3,7 @@
 Narrarium offers two ways to reach GitHub, and both can create a complete book repository wherever their permissions allow it:
 
 - a **personal access token** (PAT), which works as it always did;
-- **Connect with GitHub**: Narrarium's **GitHub App**, through the token broker (the Cloudflare Worker, `infra/models-github-proxy`), so there is no token to paste.
+- **Connect with GitHub**: Narrarium's **GitHub App**, through the token broker (the Cloudflare Worker, `src/auth-proxy`), so there is no token to paste.
 
 ## Why the broker
 

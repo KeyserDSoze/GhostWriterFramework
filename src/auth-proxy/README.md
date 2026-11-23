@@ -290,6 +290,16 @@ il Worker **nuovo** (il vecchio `models-github-proxy` non viene toccato); (c)
 variabile `VITE_GITHUB_MODELS_BASE` sul nuovo indirizzo e ripubblica il sito; (f) prova un
 collegamento vero a Google Drive e OneDrive; (g) solo allora elimina il vecchio Worker.
 
+I segreti, a mano (il valore si incolla al prompt, **mai** nella riga di comando; `set-secrets.sh`
+fa la stessa cosa con input nascosto):
+
+```bash
+gh secret set GOOGLE_OAUTH_CLIENT_SECRET
+gh secret set MICROSOFT_OAUTH_CLIENT_SECRET
+gh secret set GH_APP_CLIENT_SECRET     # client secret della GitHub App; il deploy lo carica come GITHUB_APP_CLIENT_SECRET
+gh workflow run deploy-auth-proxy.yml
+```
+
 Per Microsoft c'è lo script di sola lettura `scripts/check-microsoft-app.sh` (usa `az`): dice
 quali dei quattro URI di ritorno mancano. Per Google non esiste una CLI per il client OAuth:
 la guida ha la lista dei controlli sulla console.

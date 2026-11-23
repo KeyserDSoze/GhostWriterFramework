@@ -36,8 +36,8 @@ describe("normalizeBaseUrl", () => {
 
 describe("retargetWorkerName", () => {
   it("points a *.workers.dev URL at another Worker of the same account", () => {
-    assert.equal(retargetWorkerName("https://models-github-proxy.example-acct.workers.dev", "auth-proxy"), "https://auth-proxy.example-acct.workers.dev");
-    assert.equal(retargetWorkerName("https://models-github-proxy.example-acct.workers.dev/inference/", "auth-proxy"), "https://auth-proxy.example-acct.workers.dev");
+    assert.equal(retargetWorkerName("https://old-worker.example-acct.workers.dev", "auth-proxy"), "https://auth-proxy.example-acct.workers.dev");
+    assert.equal(retargetWorkerName("https://old-worker.example-acct.workers.dev/inference/", "auth-proxy"), "https://auth-proxy.example-acct.workers.dev");
   });
 
   it("leaves other URLs alone (custom domain, loopback) and refuses an invalid name", () => {
