@@ -165,6 +165,13 @@ export interface AutopilotOptions {
    * of older engines). Saved with the other options, and it can change while a run goes on, also while the run waits.
    */
   longRetry?: AutopilotLongRetry;
+  /**
+   * «Resume after a restart»: a personal server that stopped while the run went on (Ctrl+C, a service stop: the run was paused with
+   * `stoppedBy: "server-shutdown"`), or that ended without pausing it, resumes it by itself when it starts again, at most three times a day.
+   * A run the author paused is never resumed. Absent: off, the default (also for the books of older engines); only a server reads it. Saved
+   * with the other options, and it can change while a run goes on.
+   */
+  resumeAfterRestart?: boolean;
 }
 
 /** The longest wait of «Retry later», in minutes (a week), and the most cycles that are not "unlimited". */
@@ -183,8 +190,11 @@ export interface AutopilotLongRetry {
   cycles: number | "unlimited";
 }
 
-/** The options that can change while a run goes on: the run reads them again at the end of every step and of every chapter (and `longRetry` when a step has failed). */
-export const LIVE_AUTOPILOT_OPTIONS = ["publishEvery", "pauseAfterEachChapter", "frozenEdits", "longRetry"] as const;
+/**
+ * The options that can change while a run goes on: the run reads them again at the end of every step and of every chapter (and `longRetry` when
+ * a step has failed); `resumeAfterRestart` is read by the server when it starts again.
+ */
+export const LIVE_AUTOPILOT_OPTIONS = ["publishEvery", "pauseAfterEachChapter", "frozenEdits", "longRetry", "resumeAfterRestart"] as const;
 
 /**
  * What the author can change while a run goes on. `publishEvery: null` takes the choice back, so that the host decides again; `longRetry: null`
@@ -195,6 +205,7 @@ export interface AutopilotLiveOptions {
   pauseAfterEachChapter?: boolean;
   frozenEdits?: FrozenEditsMode;
   longRetry?: AutopilotLongRetry | null;
+  resumeAfterRestart?: boolean;
 }
 
 /** What `AutopilotSession.updateOptions` takes: the settings above at any time, and any other option when no run is active. */
@@ -586,6 +597,20 @@ export interface AutopilotRetryInfo {
   longTerm?: { cycle: number; cycles: number | null };
 }
 
+/**
+ * Why a run paused when neither the author nor the run itself paused it (`AutopilotState.stoppedBy`): `server-shutdown`, the personal server
+ * that ran it was stopping (`AutopilotSession.stopForShutdown`: Ctrl+C, a service stop). A server that starts again resumes such a run by
+ * itself when the author asked for it (`options.resumeAfterRestart`).
+ */
+export type AutopilotStopCause = "server-shutdown";
+
+/**
+ * What a host that has just started finds of a run it may resume by itself (`AutopilotSession.restartResumeCause`): `interrupted`, the state
+ * still says that the run goes on, with this host's runner (its process ended without pausing it) or with one silent for too long;
+ * `server-shutdown`, the run was paused because the server stopped.
+ */
+export type AutopilotRestartCause = "interrupted" | AutopilotStopCause;
+
 export interface AutopilotState {
   schemaVersion: 1;
   status: AutopilotStatus;
@@ -627,6 +652,11 @@ export interface AutopilotState {
   /** Short human message about the current status ("Plan ready for review"). */
   message: string | null;
   lastError: AutopilotLastError | null;
+  /**
+   * Why the run is paused, when the server that ran it paused it because the server was stopping (`AutopilotStopCause`). Absent (null) for any
+   * other pause, and in the files of older engines. Only a `paused` state has it: any start, and a pause of the author, take it away.
+   */
+  stoppedBy?: AutopilotStopCause;
   createdAt: string;
   updatedAt: string;
   /** Incremented at every saved change of this file. */
@@ -704,14 +734,18 @@ export type AutopilotMessageCode =
   | "longRetryWait"
   | "longRetryExhausted"
   | "longRetryOff"
-  | "retrySkipped";
+  | "retrySkipped"
+  | "serverShutdown"
+  | "resumedAfterRestart";
 
 /**
  * Live events: everything the autopilot does, as it happens. `run-ended` carries a `code` when the run ended for a
  * reason a client can translate (`takenOver`: another runner owns the book now, so this run stopped without saving;
  * `chapterPause`: the author asked to pause at the end of the chapter and the chapter is closed; `stepLimit` and
  * `chapterLimit`: the steps or the chapters the run was limited to are done; `longRetryExhausted`: the step failed again after
- * every cycle of «Retry later»; `longRetryOff`: «Retry later» was turned off while the run waited for it).
+ * every cycle of «Retry later»; `longRetryOff`: «Retry later» was turned off while the run waited for it; `serverShutdown`: the
+ * server that ran it was stopping, and the state says so in `stoppedBy`). A `resumedAfterRestart` insight, right after `run-started`,
+ * says that the server resumed the run by itself when it started again (`options.resumeAfterRestart`).
  * A `failureRetry` insight carries `attempt` (the retry about to happen), `retries` (how many this kind of failure
  * allows) and `waitMs` (how long the runner waits first); while it waits, the `state` events carry the same in `summary.retry`
  * (with the time of the next attempt), and one more `state` event says that nothing waits any more. A `longRetryWait` insight (a wait of

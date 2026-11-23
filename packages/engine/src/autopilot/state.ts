@@ -22,6 +22,7 @@ import type {
   AutopilotState,
   AutopilotStateSummary,
   AutopilotStatus,
+  AutopilotStopCause,
   AutopilotTaskKind,
   AuthorIntervention,
   ChapterReview,
@@ -223,6 +224,8 @@ export function normalizeOptions(value: unknown, base: AutopilotOptions = DEFAUL
   const publishEvery = source.publishEvery === null ? undefined : publishModeOf(source.publishEvery) ?? base.publishEvery;
   // `null` turns «Retry later» off; a value that is not a policy leaves it as it was (off, for a file read on its own).
   const longRetry = source.longRetry === null ? undefined : readLongRetry(source.longRetry) ?? readLongRetry(base.longRetry);
+  // Off unless the author turned it on: what is not true or false leaves it as it was (off, for a file read on its own).
+  const resumeAfterRestart = asBoolean(source.resumeAfterRestart, base.resumeAfterRestart === true);
   return {
     readers: asBoolean(source.readers, base.readers),
     maxReaders: asInteger(source.maxReaders, base.maxReaders, 1, 20),
@@ -238,6 +241,7 @@ export function normalizeOptions(value: unknown, base: AutopilotOptions = DEFAUL
     frozenEdits: frozenEditsModeOf(source.frozenEdits) ?? base.frozenEdits ?? "ask",
     ...(publishEvery ? { publishEvery } : {}),
     ...(longRetry ? { longRetry } : {}),
+    ...(resumeAfterRestart ? { resumeAfterRestart: true } : {}),
   };
 }
 
@@ -714,6 +718,18 @@ function readLastErrorCode(value: unknown): AutopilotLastErrorCode | undefined {
   return typeof value === "string" ? LAST_ERROR_CODES.find((code) => code === value) : undefined;
 }
 
+/** Why the server stopped a run, as a file says it: exactly `server-shutdown`; anything else (a missing field, `null`, another word) is none. */
+function readStopCause(value: unknown): AutopilotStopCause | undefined {
+  return value === "server-shutdown" ? value : undefined;
+}
+
+/** The state without the word of a server that stopped the run (`stoppedBy`): what a start, and a pause of the author, leave. The same state when it has none. */
+export function withoutStopCause(state: AutopilotState): AutopilotState {
+  if (state.stoppedBy === undefined) return state;
+  const { stoppedBy: _stoppedBy, ...rest } = state;
+  return rest;
+}
+
 /** Tolerant reader for `autopilot/state.json`, including hand edits and older files. */
 export function normalizeAutopilotState(value: unknown, now = new Date()): AutopilotState {
   const source = asRecord(value);
@@ -737,9 +753,12 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
   const pendingReviews = normalizePendingReviews(source.pendingReviews);
   const frozenSince = readMoment(source.frozenSince);
   const frozenSeen = textList(source.frozenSeen, MAX_FROZEN_SEEN);
+  const status = asOneOf(source.status, STATUSES, "idle");
+  // Only a paused state was stopped by the server: on any other the word means nothing, and it is dropped.
+  const stoppedBy = status === "paused" ? readStopCause(source.stoppedBy) : undefined;
   return {
     schemaVersion: 1,
-    status: asOneOf(source.status, STATUSES, "idle"),
+    status,
     phase: asOneOf(source.phase, PHASES, "concept"),
     brief: normalizeBrief(source.brief),
     options: normalizeOptions(source.options),
@@ -792,6 +811,7 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
         ...(errorCode ? { code: errorCode } : {}),
       }
       : null,
+    ...(stoppedBy ? { stoppedBy } : {}),
     createdAt: asString(source.createdAt) || base.createdAt,
     updatedAt: asString(source.updatedAt) || base.updatedAt,
     version: asInteger(source.version, 0, 0, Number.MAX_SAFE_INTEGER),

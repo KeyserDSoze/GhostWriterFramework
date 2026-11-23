@@ -9,7 +9,7 @@ import { askDirector, type AskDirectorResult } from "../director/opinion.js";
 import { parseMarkdown } from "../markdown/frontmatter.js";
 import { defaultDirector } from "../profiles/director.js";
 import { randomId } from "../util/hash.js";
-import { languageCode } from "../util/text.js";
+import { isItalian, languageCode } from "../util/text.js";
 import {
   applyFrozenDecision,
   forgetFrozenChapter,
@@ -39,7 +39,7 @@ import {
   type AutopilotHooks,
   type StoredAutopilot,
 } from "./runner.js";
-import { AutopilotRuleError, DEFAULT_OPTIONS, createAutopilotState, hostDefaultPublish, normalizeBrief, normalizeOptions, normalizeRuleText, summarizeAutopilotState } from "./state.js";
+import { AutopilotRuleError, DEFAULT_OPTIONS, createAutopilotState, hostDefaultPublish, normalizeBrief, normalizeOptions, normalizeRuleText, summarizeAutopilotState, withoutStopCause } from "./state.js";
 import {
   FROZEN_ACTIONS,
   FROZEN_CHANGE_ACTIONS,
@@ -52,6 +52,7 @@ import {
   type AutopilotPauseMode,
   type AutopilotPausePending,
   type AutopilotPublishMode,
+  type AutopilotRestartCause,
   type AutopilotRunnerInfo,
   type AutopilotSnapshot,
   type AutopilotState,
@@ -169,6 +170,13 @@ function sameState(left: AutopilotState, right: AutopilotState): boolean {
   return plain(left) === plain(right);
 }
 
+/** Why a server that started again did not resume the run by itself (`holdAfterRestart`): it already did so `times` times in the last `hours` hours. */
+function restartLimitMessage(italian: boolean, times: number, hours: number): string {
+  return italian
+    ? `Non ripreso dopo il riavvio del server: l'autopilot si è già ripreso da solo ${times} ${times === 1 ? "volta" : "volte"} nelle ultime ${hours} ore. Riprendilo quando vuoi.`
+    : `Not resumed after the server restart: the autopilot already resumed by itself ${times} ${times === 1 ? "time" : "times"} in the last ${hours} hours. Resume it when you are ready.`;
+}
+
 /**
  * Control surface of one book's autopilot. The browser and the personal server both use
  * this class, so start, pause, interventions, questions and live events behave identically.
@@ -180,6 +188,8 @@ export class AutopilotSession {
   private starting: Promise<void> | null = null;
   /** A pause asked for while a start was in flight: it is applied as soon as the run exists. The stricter request is the one kept: `now`, then `after-step`, then `after-chapter`. */
   private pendingPause: AutopilotPauseMode | null = null;
+  /** The pause that waits for the run to exist is the server's stop (`stopForShutdown`), not the author's. */
+  private pendingShutdown = false;
   private seq = 0;
   private events: AutopilotEvent[] = [];
   private readonly listeners = new Set<AutopilotListener>();
@@ -349,8 +359,11 @@ export class AutopilotSession {
   /**
    * Start or resume. Resolves once the run has saved its start, rejects if it could not start. `options.limits` bound this run only
    * (pause after that many steps or chapters; see `AutopilotRunLimits`): they are not saved, and the next run starts without them.
+   * `afterRestart` is the host's own, never a request's: the server resumes the run by itself after it started again
+   * (`options.resumeAfterRestart`), and the run says so first (a `resumedAfterRestart` insight). Any start takes away what the server
+   * said of its stop (`stoppedBy`).
    */
-  async start(options: StartOptions & { force?: boolean } = {}): Promise<void> {
+  async start(options: StartOptions & { force?: boolean; afterRestart?: boolean } = {}): Promise<void> {
     // The claim is taken before anything is awaited: two concurrent calls can never both create a run.
     if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
     const starting = this.launch(options);
@@ -360,10 +373,11 @@ export class AutopilotSession {
     } finally {
       if (this.starting === starting) this.starting = null;
       this.pendingPause = null;
+      this.pendingShutdown = false;
     }
   }
 
-  private async launch(options: StartOptions & { force?: boolean }): Promise<void> {
+  private async launch(options: StartOptions & { force?: boolean; afterRestart?: boolean }): Promise<void> {
     const stored = await readStoredAutopilot(this.config.store);
     assertStoredStateReadable(stored);
     const runner = stored.state?.runner;
@@ -415,9 +429,13 @@ export class AutopilotSession {
     this.runPromise.catch(() => undefined);
     this.startBeat(run);
     const pause = this.pendingPause;
+    const shutdown = this.pendingShutdown;
     this.pendingPause = null;
-    if (pause === "now") run.stop();
-    else if (pause === "after-step") run.stopAfterStep();
+    this.pendingShutdown = false;
+    if (pause === "now") {
+      if (shutdown) run.stopForShutdown();
+      else run.stop();
+    } else if (pause === "after-step") run.stopAfterStep();
     else if (pause === "after-chapter") run.stopAfterChapter();
     await started;
   }
@@ -426,7 +444,8 @@ export class AutopilotSession {
    * `now` abandons the request in flight; `after-step` lets the current step finish and save, then pauses; `after-chapter` goes on to
    * the end of the chapter in progress (its closing and its publishing included), then pauses (with no chapter in progress it is
    * `after-step`). The stricter request is the one that counts: `after-step` is not undone by a later `after-chapter`, and `now`
-   * by neither. Every change of the pause that waits is a `state` event (`pausePending` of the summary).
+   * by neither. Every change of the pause that waits is a `state` event (`pausePending` of the summary). With no run active, nor starting, it
+   * pauses nothing and answers `false` (a host whose author paused then calls `forgetStopCause`).
    */
   pause(mode: AutopilotPauseMode = "after-step"): boolean {
     const asked: AutopilotPauseMode = mode === "now" || mode === "after-chapter" ? mode : "after-step";
@@ -445,7 +464,86 @@ export class AutopilotSession {
       return left && rank[left] > rank[right] ? left : right;
     };
     this.pendingPause = strictest(this.pendingPause, asked);
+    this.pendingShutdown = false;
     return true;
+  }
+
+  /**
+   * Pause now because the host is stopping (the personal server's Ctrl+C, a service stop): as `pause("now")`, and the paused state says so
+   * (`stoppedBy: "server-shutdown"`), so that the server, when it starts again, resumes the run if the author asked for it
+   * (`options.resumeAfterRestart`). A pause the author asked for before stays the author's. `false` when no run is active nor starting.
+   */
+  stopForShutdown(): boolean {
+    const run = this.run;
+    if (run) {
+      run.stopForShutdown();
+      return true;
+    }
+    if (!this.starting) return false;
+    // A start in flight stops as soon as its run exists: the server's stop, unless the author asked for a pause first.
+    if (this.pendingPause === null) this.pendingShutdown = true;
+    this.pendingPause = "now";
+    return true;
+  }
+
+  /**
+   * What a host that has just started finds of the run of this book, when the author asked that the run be resumed by itself after a restart
+   * (`options.resumeAfterRestart`): `interrupted` when the state still says that the run goes on, with this host's runner (the process ended
+   * without pausing it) or with a runner silent for longer than `RUNNER_STALE_MINUTES`; `server-shutdown` when the run was paused because the
+   * server stopped (`stoppedBy`). `null` for anything else: the option off, a run the author paused (or that paused by itself), a run of another
+   * host that is alive, a run active in this session, no state, a state that cannot be read. It reads, and changes nothing.
+   */
+  async restartResumeCause(): Promise<AutopilotRestartCause | null> {
+    if (this.running) return null;
+    const stored = await readStoredAutopilot(this.config.store);
+    if (stored.corrupt) return null;
+    return this.restartCauseOf(stored.state, await this.ownRunnerAliveElsewhere());
+  }
+
+  private restartCauseOf(state: AutopilotState | null, ownAliveElsewhere: boolean): AutopilotRestartCause | null {
+    if (!state || state.options.resumeAfterRestart !== true) return null;
+    if (state.status === "paused") return state.stoppedBy === "server-shutdown" ? "server-shutdown" : null;
+    if (state.status !== "running" || !state.runner) return null;
+    if (runnerActivity(state, this.now()) === "stale") return "interrupted";
+    return this.isOwnRunner(state.runner) && !ownAliveElsewhere ? "interrupted" : null;
+  }
+
+  /**
+   * Leave for the author the run that `restartResumeCause` found, when the host does not resume it by itself because it already did so
+   * `limit.times` times in the last `limit.hours` hours: the state says why in its message (in the language of the book), a state that still
+   * says `running` is paused, and what the server said of its stop (`stoppedBy`) goes, so that only the author resumes it now. Nothing is
+   * written when the run is no longer such a run (the author resumed or paused it meanwhile), nor while a run is active here: `null` then.
+   */
+  async holdAfterRestart(limit: { times: number; hours: number }): Promise<AutopilotState | null> {
+    if (this.running) return null;
+    const language = await loadBookSnapshot(this.config.store, this.bookCache).then((snapshot) => languageCode(snapshot.book.language), () => "");
+    const message = restartLimitMessage(isItalian(language), limit.times, limit.hours);
+    const ownAliveElsewhere = await this.ownRunnerAliveElsewhere();
+    let held = false;
+    const saved = await this.mutate("Autopilot: not resumed after the restart", (state) => {
+      held = this.restartCauseOf(state, ownAliveElsewhere) !== null;
+      return held ? { ...withoutStopCause(state), status: "paused", runner: null, message } : state;
+    }, { create: false });
+    return held ? saved : null;
+  }
+
+  /**
+   * The author paused the book when no run was active (`pause()` answered `false`): a run the server paused when it stopped (`stoppedBy`) is from now
+   * on paused by the author, and a server that starts again does not resume it. Answers the state saved, or `null` when there was nothing to take
+   * away (and nothing is written: also for a book without a state, and while a run is active, whose state has none).
+   */
+  async forgetStopCause(): Promise<AutopilotState | null> {
+    if (this.running) return null;
+    // A state that cannot be read has nothing to take away, and is never written over; nor has one without the server's word.
+    const stored = await readStoredAutopilot(this.config.store);
+    if (stored.corrupt || !stored.state?.stoppedBy) return null;
+    let forgot = false;
+    const saved = await this.mutate("Autopilot: paused by the author", (state) => {
+      const plain = withoutStopCause(state);
+      forgot = plain !== state;
+      return plain;
+    }, { create: false });
+    return forgot ? saved : null;
   }
 
   /**
@@ -483,14 +581,17 @@ export class AutopilotSession {
     await this.runPromise?.catch(() => undefined);
   }
 
-  /** Save a change of the state with a compare-and-swap commit, read again and tried again when the file changed in between (a run saves it too). A change that returns the state it was given writes nothing. */
-  private async mutate(message: string, change: (state: AutopilotState) => AutopilotState): Promise<AutopilotState> {
+  /**
+   * Save a change of the state with a compare-and-swap commit, read again and tried again when the file changed in between (a run saves it too). A change that returns the state it was given writes nothing,
+   * except for a book without a state, which gets one; with `create: false` it gets none either.
+   */
+  private async mutate(message: string, change: (state: AutopilotState) => AutopilotState, options: { create?: boolean } = {}): Promise<AutopilotState> {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const stored = await readStoredAutopilot(this.config.store);
       assertStoredStateReadable(stored);
       const base = stored.state ?? createAutopilotState(this.now());
       const changed = change(base);
-      if (changed === base && stored.state) return base;
+      if (changed === base && (stored.state || options.create === false)) return base;
       const next = stampState(changed, this.now());
       try {
         await this.config.store.commit([stateChange(next, stored.stateHash)], message);
@@ -702,8 +803,9 @@ export class AutopilotSession {
   /**
    * Change the options, also while a run goes on, for the settings that can (`LIVE_AUTOPILOT_OPTIONS`): where the book is published
    * (`publishEvery`; `null` takes the choice back, so that the host decides again), whether to pause after every chapter
-   * (`pauseAfterEachChapter`), what to do with a change of a frozen chapter (`frozenEdits`) and «Retry later» (`longRetry`; `null` turns it
-   * off). They are saved at once with a compare-and-swap commit, as an intervention is: the step that is running neither fails nor is
+   * (`pauseAfterEachChapter`), what to do with a change of a frozen chapter (`frozenEdits`), «Retry later» (`longRetry`; `null` turns it
+   * off) and «Resume after a restart» (`resumeAfterRestart`, which the server reads when it starts again). They are saved at once with a
+   * compare-and-swap commit, as an intervention is: the step that is running neither fails nor is
    * repeated, and the run reads the new value at the end of that step (or of the chapter); `longRetry` when a step has failed, and turning it
    * off while the run waits for it ends the wait (the run stops with the failure it waited to try again), while new minutes or cycles count from
    * the next cycle. Any other option is refused while a run is active, as `configure` refuses it (`AutopilotBusyError`), and nothing of such a

@@ -35,6 +35,7 @@ import {
   serializeActivityLog,
   serializeAutopilotState,
   summarizeAutopilotState,
+  withoutStopCause,
 } from "./state.js";
 import { TASK_EXECUTORS, type TaskContext } from "./tasks.js";
 import {
@@ -647,6 +648,16 @@ function chapterLimitMessage(italian: boolean, chapters: number): string {
   return chapters === 1 ? "1 chapter completed in this session." : `${chapters} chapters completed in this session.`;
 }
 
+/** Why the run is paused when the server that ran it was stopping (`stoppedBy: "server-shutdown"`). */
+function serverShutdownMessage(italian: boolean): string {
+  return italian ? "In pausa perché il server si è fermato." : "Paused because the server stopped.";
+}
+
+/** What the run says first when the server resumed it by itself after it started again (`options.resumeAfterRestart`). */
+function resumedAfterRestartTitle(italian: boolean): string {
+  return italian ? "Ripreso da solo dopo il riavvio del server." : "Resumed by itself after the server restarted.";
+}
+
 interface StepContext {
   planner: PlannerContext;
   director: DirectorProfile;
@@ -666,6 +677,8 @@ export class AutopilotRun {
   private stopRequested = false;
   /** A pause at the end of the chapter was asked for: the run goes on until the chapter in progress is closed and published. */
   private chapterStopRequested = false;
+  /** The stop came from the server that is stopping (`stopForShutdown`), not from the author: the paused state says so. */
+  private shutdown = false;
   /** The step in flight, or waiting to be retried, is part of a chapter in progress: a pause at the end of the chapter does not cut its wait. */
   private inChapter = false;
   private interrupted = false;
@@ -731,12 +744,25 @@ export class AutopilotRun {
 
   /** Stop now: the AI request in flight is abandoned (the provider may still bill it). */
   stop(): void {
+    this.shutdown = false;
     this.stopRequested = true;
     this.controller.abort(abortError("Paused by the author."));
   }
 
+  /**
+   * Stop now because the server that runs the book is stopping (Ctrl+C, a service stop): as `stop`, and the paused state says so
+   * (`stoppedBy: "server-shutdown"`), so that the server can resume it when it starts again. A pause the author asked for before (a stop, or
+   * one that waits for the end of the step or of the chapter) stays the author's: the run ends as paused by the author.
+   */
+  stopForShutdown(): void {
+    if (!this.stopRequested && !this.chapterStopRequested && !this.controller.signal.aborted) this.shutdown = true;
+    this.stopRequested = true;
+    this.controller.abort(abortError("Paused because the server is stopping."));
+  }
+
   /** Finish and save the current step, then pause. A wait before a retry ends at once. */
   stopAfterStep(): void {
+    this.shutdown = false;
     this.stopRequested = true;
     this.waiting?.abort();
   }
@@ -748,6 +774,7 @@ export class AutopilotRun {
    * and the run says so); the wait before the retry of a step of the chapter goes on, because the chapter still has to be finished.
    */
   stopAfterChapter(): void {
+    this.shutdown = false;
     this.chapterStopRequested = true;
     if (!this.inChapter) this.waiting?.abort();
   }
@@ -996,7 +1023,7 @@ export class AutopilotRun {
     }
   }
 
-  async execute(start: StartOptions = {}): Promise<AutopilotState> {
+  async execute(start: StartOptions & { afterRestart?: boolean } = {}): Promise<AutopilotState> {
     const { store } = this;
     this.limits = normalizeRunLimits(start.limits) ?? {};
     const stored = await readStoredAutopilot(store);
@@ -1004,7 +1031,8 @@ export class AutopilotRun {
     let state = stored.state ?? createAutopilotState(this.now(), start.brief, start.options);
     const startedAt = this.now().toISOString();
     state = extendPlanIfNeeded({
-      ...state,
+      // A run that starts is nobody's pause any more: what the server said of its stop goes.
+      ...withoutStopCause(state),
       brief: normalizeBrief(start.brief ?? {}, state.brief),
       options: normalizeOptions(start.options ?? {}, state.options),
       plan: state.plan ? { ...state.plan, awaitingAuthor: false } : null,
@@ -1018,6 +1046,11 @@ export class AutopilotRun {
     this.known = state;
     this.emit({ type: "run-started", runId: this.runId, host: this.config.host });
     this.emit({ type: "state", state: this.summarize(state) });
+    if (start.afterRestart) {
+      // Said in the language of the book, which no step has read yet: a book that cannot be read now is told in English (the step will say why).
+      this.language = await loadBookSnapshot(store, this.cache).then((snapshot) => languageCode(snapshot.book.language), () => this.language);
+      this.emit({ type: "insight", tone: "info", code: "resumedAfterRestart", title: resumedAfterRestartTitle(isItalian(this.language)) });
+    }
     this.armHeartbeat();
     try {
       return await this.runSteps(state);
@@ -1538,11 +1571,22 @@ export class AutopilotRun {
    * `code` is the reason a client can say in its language (`run-ended`'s `code`), when there is one.
    */
   private async finish(state: AutopilotState, status: AutopilotState["status"], message: string | null, code?: AutopilotMessageCode): Promise<AutopilotState> {
-    this.endCode = code;
+    const ending = state.question ? "waiting-author" : status;
+    // A pause that the server's stop caused (and nothing else: a limit, a budget, the end of a chapter have their own words) says so, so that the
+    // server can resume the run when it starts again.
+    const shutdown = this.shutdown && ending === "paused" && message === null && code === undefined;
+    this.endCode = shutdown ? "serverShutdown" : code;
     this.closed = true;
     this.disarmHeartbeat();
     await this.heartbeatInFlight;
-    const ended: AutopilotState = { ...state, status: state.question ? "waiting-author" : status, message, runner: null, phase: phaseOf(state) };
+    const ended: AutopilotState = {
+      ...withoutStopCause(state),
+      status: ending,
+      message: shutdown ? serverShutdownMessage(isItalian(this.language)) : message,
+      runner: null,
+      phase: phaseOf(state),
+      ...(shutdown ? { stoppedBy: "server-shutdown" as const } : {}),
+    };
     let final = ended;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       let stored: StoredAutopilot;

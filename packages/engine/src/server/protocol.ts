@@ -268,6 +268,22 @@ export function serverSupportsAutopilotRetry(info: { features?: unknown } | read
 export type RetryNowResponse = AutopilotSnapshot & { skipped: boolean };
 
 /**
+ * The `ServerInfo.features` entry of a server that resumes a run by itself when it starts again, for the books whose author turned «Resume after a
+ * restart» on (`options.resumeAfterRestart`): a run that was going on when the server stopped (paused with `stoppedBy: "server-shutdown"`, or left
+ * `running` by a process that ended), at most three times a day per book; a run the author paused never. It takes `resumeAfterRestart` (`true` or
+ * `false`) in `PUT /api/v1/books/:id/autopilot/options`, `configure` and `start`. A server without it refuses the option in the options route (400)
+ * and drops it from `configure` and `start` (its engine does not know it): the engine's client never sends it to such a server (it refuses with
+ * `feature_unavailable`).
+ */
+export const SERVER_FEATURE_AUTOPILOT_AUTO_RESUME = "autopilot-auto-resume";
+
+/** Whether the server announces that it resumes runs by itself after a restart. Takes its info or the list of its features. Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsAutopilotAutoResume(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  const features = Array.isArray(info) ? info : (info as { features?: unknown } | null | undefined)?.features;
+  return Array.isArray(features) && features.includes(SERVER_FEATURE_AUTOPILOT_AUTO_RESUME);
+}
+
+/**
  * The `ServerInfo.features` entry of a server that lists the conflicts of a GitHub book with GitHub and resolves them: `GET /api/v1/books/:id/github-conflicts`
  * and `POST /api/v1/books/:id/github-conflicts/resolve`. A server without it answers 404 to them: the engine's client refuses before sending
  * (`feature_unavailable`).
@@ -487,7 +503,7 @@ export type PauseAutopilotMode = AutopilotPauseMode | "cancel";
 
 export type StartAutopilotRequest = StartOptions & { force?: boolean };
 export type PauseAutopilotRequest = { mode: PauseAutopilotMode };
-/** The body of `PUT /api/v1/books/:id/autopilot/options`: at least one of the settings that can change while a run goes on (`longRetry` only for a server that announces `SERVER_FEATURE_AUTOPILOT_RETRY`). */
+/** The body of `PUT /api/v1/books/:id/autopilot/options`: at least one of the settings that can change while a run goes on (`longRetry` only for a server that announces `SERVER_FEATURE_AUTOPILOT_RETRY`, `resumeAfterRestart` only for one that announces `SERVER_FEATURE_AUTOPILOT_AUTO_RESUME`). */
 export type UpdateAutopilotOptionsRequest = AutopilotLiveOptions;
 /**
  * The body of `PUT /api/v1/books/:id/autopilot/rules/:index`: the new text of the rule at that index of `state.constraints`, and the text the

@@ -9,6 +9,7 @@ import {
   normalizeServerUrl,
   randomNonce,
   serverCompatibility,
+  serverSupportsAutopilotAutoResume,
   serverSupportsAutopilotRetry,
   serverSupportsGithubConflicts,
   verifyServerIdentity,
@@ -215,24 +216,32 @@ export class NarrariumServerClient {
   }
 
   /**
-   * `options.longRetry` («Retry later») goes only to a server that announces `SERVER_FEATURE_AUTOPILOT_RETRY`: an older one refuses it in the
-   * options route, and drops it from `configure` and `start` without a word. With the setting in a request (`null` included) the client asks the
-   * server's features first, and refuses for a server without it before anything is sent: a `ServerRequestError` with status 501 and code
-   * `feature_unavailable`. A request without it asks nothing more.
+   * The settings that only a newer server knows go only to a server that announces them: `options.longRetry` («Retry later») to one that announces
+   * `SERVER_FEATURE_AUTOPILOT_RETRY`, `options.resumeAfterRestart` («Resume after a restart») to one that announces `SERVER_FEATURE_AUTOPILOT_AUTO_RESUME`.
+   * An older one refuses them in the options route, and drops them from `configure` and `start` without a word. With such a setting in a request
+   * (`null` and `false` included) the client asks the server's features first, and refuses for a server without it before anything is sent: a
+   * `ServerRequestError` with status 501 and code `feature_unavailable`. A request without them asks nothing more.
    */
-  private async assertLongRetrySupported(options: unknown): Promise<void> {
-    if (!options || typeof options !== "object" || (options as { longRetry?: unknown }).longRetry === undefined) return;
-    if (serverSupportsAutopilotRetry(await this.info())) return;
-    throw new ServerRequestError(`This personal server does not have "Retry later" (it does not announce the feature autopilot-retry): update the server, or leave longRetry out.`, 501, "feature_unavailable");
+  private async assertOptionsSupported(options: unknown): Promise<void> {
+    if (!options || typeof options !== "object") return;
+    const { longRetry, resumeAfterRestart } = options as { longRetry?: unknown; resumeAfterRestart?: unknown };
+    if (longRetry === undefined && resumeAfterRestart === undefined) return;
+    const info = await this.info();
+    if (longRetry !== undefined && !serverSupportsAutopilotRetry(info)) {
+      throw new ServerRequestError(`This personal server does not have "Retry later" (it does not announce the feature autopilot-retry): update the server, or leave longRetry out.`, 501, "feature_unavailable");
+    }
+    if (resumeAfterRestart !== undefined && !serverSupportsAutopilotAutoResume(info)) {
+      throw new ServerRequestError(`This personal server does not resume the autopilot by itself after a restart (it does not announce the feature autopilot-auto-resume): update the server, or leave resumeAfterRestart out.`, 501, "feature_unavailable");
+    }
   }
 
   /**
    * Start or resume the autopilot: `POST …/autopilot/start`. `limits` (`{ steps?, chapters? }`: pause after that many steps or chapters
    * of this run) need a server that announces `SERVER_FEATURE_AUTOPILOT_CONTROLS`: an older one ignores them and runs on. `options.longRetry`
-   * needs `SERVER_FEATURE_AUTOPILOT_RETRY` (see `assertLongRetrySupported`).
+   * needs `SERVER_FEATURE_AUTOPILOT_RETRY` and `options.resumeAfterRestart` `SERVER_FEATURE_AUTOPILOT_AUTO_RESUME` (see `assertOptionsSupported`).
    */
   async startAutopilot(bookId: string, options: StartOptions & { force?: boolean } = {}): Promise<AutopilotSnapshot> {
-    await this.assertLongRetrySupported(options?.options);
+    await this.assertOptionsSupported(options?.options);
     return this.request("POST", bookRoute(bookId, "/autopilot/start"), options, { timeoutMs: 300_000 });
   }
 
@@ -247,11 +256,12 @@ export class NarrariumServerClient {
   /**
    * Change where the book is published, whether the run pauses after every chapter, what to do with a change of a frozen chapter and «Retry
    * later», also while a run goes on: `PUT …/autopilot/options` (a server that announces `SERVER_FEATURE_AUTOPILOT_CONTROLS`; `longRetry` one
-   * that announces `SERVER_FEATURE_AUTOPILOT_RETRY`, see `assertLongRetrySupported`). `publishEvery: null` takes the choice back, `longRetry: null`
+   * that announces `SERVER_FEATURE_AUTOPILOT_RETRY`, `resumeAfterRestart` one that announces `SERVER_FEATURE_AUTOPILOT_AUTO_RESUME`, see
+   * `assertOptionsSupported`). `publishEvery: null` takes the choice back, `longRetry: null`
    * turns it off. Answers the snapshot, like `configureAutopilot`.
    */
   async updateAutopilotOptions(bookId: string, input: UpdateAutopilotOptionsRequest): Promise<AutopilotSnapshot> {
-    await this.assertLongRetrySupported(input);
+    await this.assertOptionsSupported(input);
     return this.request("PUT", bookRoute(bookId, "/autopilot/options"), input);
   }
 
@@ -355,9 +365,12 @@ export class NarrariumServerClient {
     return this.request("POST", bookRoute(bookId, `/chapters/${encodeURIComponent(slug)}/freeze`), body);
   }
 
-  /** Change the brief or the options while the autopilot is not running: `POST …/autopilot/configure`. `options.longRetry` needs `SERVER_FEATURE_AUTOPILOT_RETRY` (see `assertLongRetrySupported`). */
+  /**
+   * Change the brief or the options while the autopilot is not running: `POST …/autopilot/configure`. `options.longRetry` needs
+   * `SERVER_FEATURE_AUTOPILOT_RETRY` and `options.resumeAfterRestart` `SERVER_FEATURE_AUTOPILOT_AUTO_RESUME` (see `assertOptionsSupported`).
+   */
   async configureAutopilot(bookId: string, input: StartOptions): Promise<AutopilotSnapshot> {
-    await this.assertLongRetrySupported(input?.options);
+    await this.assertOptionsSupported(input?.options);
     return this.request("POST", bookRoute(bookId, "/autopilot/configure"), input);
   }
 
