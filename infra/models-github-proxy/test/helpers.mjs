@@ -11,14 +11,19 @@ export const GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 export const MICROSOFT_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 export const MICROSOFT_SCOPE = "User.Read Files.ReadWrite offline_access";
 export const MICROSOFT_REDIRECT_URI = "https://narrarium.net/auth/microsoft-callback.html";
-export const PROVIDER_URLS = [GOOGLE_TOKEN_URL, GOOGLE_REVOKE_URL, MICROSOFT_TOKEN_URL];
+export const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
+export const FAKE_GITHUB_CLIENT_ID = "Iv1.fakegithubclient00";
+export const GITHUB_GRANT_URL = `https://api.github.com/applications/${FAKE_GITHUB_CLIENT_ID}/grant`;
+export const GITHUB_REDIRECT_URI = "https://narrarium.net/auth/github/callback";
+export const PROVIDER_URLS = [GOOGLE_TOKEN_URL, GOOGLE_REVOKE_URL, MICROSOFT_TOKEN_URL, GITHUB_TOKEN_URL, GITHUB_GRANT_URL];
 
 // Obviously fake values: nothing in this suite is, or resembles, a real credential.
 export const FAKE_GOOGLE_CLIENT_ID = "fake-google-client.apps.googleusercontent.com";
 export const FAKE_GOOGLE_SECRET = "FAKE-google-secret-0123456789abcdef";
 export const FAKE_MICROSOFT_CLIENT_ID = "00000000-0000-0000-0000-00000000fake";
 export const FAKE_MICROSOFT_SECRET = "FAKE-microsoft-secret-fedcba9876543210";
-export const CLIENT_SECRETS = [FAKE_GOOGLE_SECRET, FAKE_MICROSOFT_SECRET];
+export const FAKE_GITHUB_SECRET = "FAKE-github-secret-0123456789fedcba98765432";
+export const CLIENT_SECRETS = [FAKE_GOOGLE_SECRET, FAKE_MICROSOFT_SECRET, FAKE_GITHUB_SECRET];
 
 export function configuredEnv(overrides = {}) {
   return {
@@ -26,6 +31,8 @@ export function configuredEnv(overrides = {}) {
     GOOGLE_CLIENT_SECRET: FAKE_GOOGLE_SECRET,
     MICROSOFT_CLIENT_ID: FAKE_MICROSOFT_CLIENT_ID,
     MICROSOFT_CLIENT_SECRET: FAKE_MICROSOFT_SECRET,
+    GITHUB_APP_CLIENT_ID: FAKE_GITHUB_CLIENT_ID,
+    GITHUB_APP_CLIENT_SECRET: FAKE_GITHUB_SECRET,
     ...overrides,
   };
 }
@@ -89,6 +96,15 @@ export const MICROSOFT_TOKEN_REPLY = {
   access_token: "ey.microsoft-access-token",
   refresh_token: "0.microsoft-refresh-token",
   id_token: "microsoft.id.token",
+};
+
+export const GITHUB_TOKEN_REPLY = {
+  access_token: "ghu_fakegithubaccesstoken0123456789",
+  expires_in: 28800,
+  refresh_token: "ghr_fakegithubrefreshtoken0123456789",
+  refresh_token_expires_in: 15897600,
+  token_type: "bearer",
+  scope: "",
 };
 
 /**
@@ -161,6 +177,45 @@ export const OAUTH_ROUTES = [
     upstream: null,
     success: 204,
     reply: null,
+  },
+  {
+    label: "github token",
+    path: "/oauth/github/token",
+    request: {
+      code: "github-auth-code",
+      codeVerifier: "github-code-verifier-0123456789-abcdefghijklmnopqrstuvwxyz",
+      redirectUri: GITHUB_REDIRECT_URI,
+    },
+    fields: { code: 4096, codeVerifier: 128, redirectUri: 2048 },
+    upstream: GITHUB_TOKEN_URL,
+    success: 200,
+    reply: () => jsonResponse(200, GITHUB_TOKEN_REPLY),
+  },
+  {
+    label: "github refresh",
+    path: "/oauth/github/refresh",
+    request: { refreshToken: "ghr_github-refresh-token-in" },
+    fields: { refreshToken: 4096 },
+    upstream: GITHUB_TOKEN_URL,
+    success: 200,
+    reply: () =>
+      jsonResponse(200, {
+        access_token: "ghu_fakegithubrefreshedaccess0123",
+        expires_in: 28800,
+        refresh_token: "ghr_fakegithubrotatedrefresh0123",
+        refresh_token_expires_in: 15897600,
+        token_type: "bearer",
+        scope: "",
+      }),
+  },
+  {
+    label: "github revoke",
+    path: "/oauth/github/revoke",
+    request: { token: "ghu_github-token-to-revoke" },
+    fields: { token: 4096 },
+    upstream: GITHUB_GRANT_URL,
+    success: 204,
+    reply: () => new Response(null, { status: 204 }),
   },
 ];
 

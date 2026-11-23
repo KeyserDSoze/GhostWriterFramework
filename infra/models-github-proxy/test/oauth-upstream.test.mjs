@@ -128,7 +128,8 @@ for (const route of TOKEN_ROUTES) {
         JSON.stringify({ expires_in: 3600 }),
         JSON.stringify({ access_token: "", expires_in: 3600 }),
         JSON.stringify({ access_token: 12345, expires_in: 3600 }),
-        JSON.stringify({ error: "invalid_grant" }),
+        // GitHub reports errors in a 200 body: oauth-github.test.mjs covers how they are mapped.
+        ...(route.label.startsWith("github") ? [] : [JSON.stringify({ error: "invalid_grant" })]),
       ];
       for (const body of bodies) {
         provider.reply(() => new Response(body, { status: 200, headers: { "Content-Type": "application/json" } }));

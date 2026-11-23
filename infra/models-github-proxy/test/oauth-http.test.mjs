@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   ALLOWED_ORIGIN,
+  CLIENT_SECRETS,
+  FAKE_GITHUB_CLIENT_ID,
+  FAKE_GITHUB_SECRET,
   FAKE_GOOGLE_CLIENT_ID,
   FAKE_GOOGLE_SECRET,
   FAKE_MICROSOFT_CLIENT_ID,
@@ -262,13 +265,15 @@ describe("OAuth broker: routes and methods", () => {
 
 describe("OAuth broker: GET /oauth/status", () => {
   const cases = [
-    ["both providers configured", configuredEnv(), { google: true, microsoft: true }],
-    ["nothing configured", {}, { google: false, microsoft: false }],
-    ["only Google", configuredEnv({ MICROSOFT_CLIENT_SECRET: undefined }), { google: true, microsoft: false }],
-    ["only Microsoft", configuredEnv({ GOOGLE_CLIENT_SECRET: undefined }), { google: false, microsoft: true }],
-    ["client id without a secret", configuredEnv({ GOOGLE_CLIENT_SECRET: "", MICROSOFT_CLIENT_SECRET: "" }), { google: false, microsoft: false }],
-    ["secret without a client id", configuredEnv({ GOOGLE_CLIENT_ID: undefined, MICROSOFT_CLIENT_ID: undefined }), { google: false, microsoft: false }],
-    ["blank values", configuredEnv({ GOOGLE_CLIENT_SECRET: "   ", MICROSOFT_CLIENT_ID: "\n" }), { google: false, microsoft: false }],
+    ["every provider configured", configuredEnv(), { google: true, microsoft: true, github: true }],
+    ["nothing configured", {}, { google: false, microsoft: false, github: false }],
+    ["only Google", configuredEnv({ MICROSOFT_CLIENT_SECRET: undefined, GITHUB_APP_CLIENT_SECRET: undefined }), { google: true, microsoft: false, github: false }],
+    ["only Microsoft", configuredEnv({ GOOGLE_CLIENT_SECRET: undefined, GITHUB_APP_CLIENT_SECRET: undefined }), { google: false, microsoft: true, github: false }],
+    ["only GitHub", configuredEnv({ GOOGLE_CLIENT_SECRET: undefined, MICROSOFT_CLIENT_SECRET: undefined }), { google: false, microsoft: false, github: true }],
+    ["client id without a secret", configuredEnv({ GOOGLE_CLIENT_SECRET: "", MICROSOFT_CLIENT_SECRET: "", GITHUB_APP_CLIENT_SECRET: "" }), { google: false, microsoft: false, github: false }],
+    ["secret without a client id", configuredEnv({ GOOGLE_CLIENT_ID: undefined, MICROSOFT_CLIENT_ID: undefined, GITHUB_APP_CLIENT_ID: undefined }), { google: false, microsoft: false, github: false }],
+    ["the GitHub client id left empty, as in wrangler.toml before the app exists", configuredEnv({ GITHUB_APP_CLIENT_ID: "" }), { google: true, microsoft: true, github: false }],
+    ["blank values", configuredEnv({ GOOGLE_CLIENT_SECRET: "   ", MICROSOFT_CLIENT_ID: "\n", GITHUB_APP_CLIENT_ID: " " }), { google: false, microsoft: false, github: false }],
   ];
   for (const [label, env, expected] of cases) {
     it(`reports ${label}`, async () => {
@@ -278,11 +283,11 @@ describe("OAuth broker: GET /oauth/status", () => {
     });
   }
 
-  it("answers with exactly two booleans and never exposes a secret or a client id", async () => {
+  it("answers with exactly three booleans and never exposes a secret or a client id", async () => {
     const response = await oauthCall("/oauth/status", { method: "GET" });
     const text = await response.text();
-    assert.equal(text, '{"google":true,"microsoft":true}');
-    assertNoneOf(`${text}\n${headerText(response)}`, [FAKE_GOOGLE_SECRET, FAKE_MICROSOFT_SECRET, FAKE_GOOGLE_CLIENT_ID, FAKE_MICROSOFT_CLIENT_ID], "the status response");
+    assert.equal(text, '{"google":true,"microsoft":true,"github":true}');
+    assertNoneOf(`${text}\n${headerText(response)}`, [...CLIENT_SECRETS, FAKE_GOOGLE_CLIENT_ID, FAKE_MICROSOFT_CLIENT_ID, FAKE_GITHUB_CLIENT_ID], "the status response");
   });
 
   it("is not counted against the rate limit", async () => {
@@ -431,16 +436,23 @@ describe("OAuth broker: configuration", () => {
   it("answers 501 not_configured for every provider route when id or secret is missing", async () => {
     const variants = {
       "no configuration": {},
-      "id only": { GOOGLE_CLIENT_ID: FAKE_GOOGLE_CLIENT_ID, MICROSOFT_CLIENT_ID: FAKE_MICROSOFT_CLIENT_ID },
-      "secret only": { GOOGLE_CLIENT_SECRET: FAKE_GOOGLE_SECRET, MICROSOFT_CLIENT_SECRET: FAKE_MICROSOFT_SECRET },
-      "blank values": configuredEnv({ GOOGLE_CLIENT_ID: " ", GOOGLE_CLIENT_SECRET: "", MICROSOFT_CLIENT_ID: "", MICROSOFT_CLIENT_SECRET: " " }),
+      "id only": { GOOGLE_CLIENT_ID: FAKE_GOOGLE_CLIENT_ID, MICROSOFT_CLIENT_ID: FAKE_MICROSOFT_CLIENT_ID, GITHUB_APP_CLIENT_ID: FAKE_GITHUB_CLIENT_ID },
+      "secret only": { GOOGLE_CLIENT_SECRET: FAKE_GOOGLE_SECRET, MICROSOFT_CLIENT_SECRET: FAKE_MICROSOFT_SECRET, GITHUB_APP_CLIENT_SECRET: FAKE_GITHUB_SECRET },
+      "blank values": configuredEnv({
+        GOOGLE_CLIENT_ID: " ",
+        GOOGLE_CLIENT_SECRET: "",
+        MICROSOFT_CLIENT_ID: "",
+        MICROSOFT_CLIENT_SECRET: " ",
+        GITHUB_APP_CLIENT_ID: "",
+        GITHUB_APP_CLIENT_SECRET: "\n",
+      }),
     };
     for (const [label, env] of Object.entries(variants)) {
       for (const route of OAUTH_ROUTES) {
         const response = await oauthCall(route.path, { json: route.request }, env);
         assert.equal(response.status, 501, `${label}: ${route.label}`);
         const body = await assertError(response, 501, "not_configured");
-        assertNoneOf(`${body.message}\n${headerText(response)}`, [FAKE_GOOGLE_SECRET, FAKE_MICROSOFT_SECRET], "the 501 response");
+        assertNoneOf(`${body.message}\n${headerText(response)}`, CLIENT_SECRETS, "the 501 response");
       }
     }
     assert.equal(provider.calls.length, 0);

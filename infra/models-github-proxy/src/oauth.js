@@ -1,5 +1,5 @@
 /**
- * Stateless OAuth token broker for Google Drive and Microsoft OneDrive.
+ * Stateless OAuth token broker for Google Drive, Microsoft OneDrive and GitHub.
  *
  * A browser-only app cannot keep a client secret, and without one Google gives a web
  * client no refresh token while Microsoft caps the refresh token of a single-page app at
@@ -35,6 +35,14 @@ const MAX_REDIRECT_URI_LENGTH = 2048;
 const MAX_CODE_VERIFIER_LENGTH = 128;
 const MAX_SHORT_FIELD_LENGTH = 2048;
 
+/** Name of the optional Workers Rate Limiting binding (wrangler.toml [[ratelimits]]). */
+export const RATE_LIMIT_BINDING = "OAUTH_RATE_LIMITER";
+/** The binding counts in fixed windows of unknown phase; this is the longest wait a client can need. */
+const RATE_LIMIT_BINDING_RETRY_AFTER_SECONDS = 60;
+
+const GITHUB_API_VERSION = "2026-03-10";
+const GITHUB_USER_AGENT = "narrarium-oauth-broker";
+
 /** Fixed scope of the Microsoft requests; never taken from the caller. */
 const MICROSOFT_SCOPE = "User.Read Files.ReadWrite offline_access";
 
@@ -51,6 +59,13 @@ const PROVIDERS = {
     clientIdVariable: "MICROSOFT_CLIENT_ID",
     clientSecretVariable: "MICROSOFT_CLIENT_SECRET",
     tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+  },
+  github: {
+    name: "GitHub",
+    clientIdVariable: "GITHUB_APP_CLIENT_ID",
+    clientSecretVariable: "GITHUB_APP_CLIENT_SECRET",
+    tokenUrl: "https://github.com/login/oauth/access_token",
+    grantUrl: (clientId) => `https://api.github.com/applications/${encodeURIComponent(clientId)}/grant`,
   },
 };
 
@@ -158,14 +173,31 @@ function readCredentials(env, provider) {
   return clientId && clientSecret ? { clientId, clientSecret } : null;
 }
 
-function enforceRateLimit(request) {
-  // Cloudflare always sets cf-connecting-ip; without it (local dev, tests) there is nothing to key on.
-  const address = request.headers.get("cf-connecting-ip");
-  if (!address) return;
-  const { limited, retryAfter } = rateLimiter.check(address.trim());
-  if (limited) {
-    throw new HttpError(429, "rate_limited", "Too many requests. Try again in a moment.", { "Retry-After": String(retryAfter) });
+function rateLimited(retryAfter) {
+  return new HttpError(429, "rate_limited", "Too many requests. Try again in a moment.", { "Retry-After": String(retryAfter) });
+}
+
+// The optional Workers Rate Limiting binding adds a limit shared by the isolates of a data centre.
+// A missing or failing binding never blocks a request: the in-memory limit above still applies.
+async function enforceBindingRateLimit(env, address) {
+  const binding = env[RATE_LIMIT_BINDING];
+  if (!binding || typeof binding.limit !== "function") return;
+  let verdict;
+  try {
+    verdict = await binding.limit({ key: address });
+  } catch {
+    return;
   }
+  if (verdict && verdict.success === false) throw rateLimited(RATE_LIMIT_BINDING_RETRY_AFTER_SECONDS);
+}
+
+async function enforceRateLimit(request, env) {
+  // Cloudflare always sets cf-connecting-ip; without it (local dev, tests) there is nothing to key on.
+  const address = request.headers.get("cf-connecting-ip")?.trim();
+  if (!address) return;
+  const { limited, retryAfter } = rateLimiter.check(address);
+  if (limited) throw rateLimited(retryAfter);
+  await enforceBindingRateLimit(env, address);
 }
 
 function payloadTooLarge() {
@@ -252,8 +284,8 @@ function toUpstreamError(provider, error) {
   return new HttpError(502, "upstream_error", `${provider.name} could not be reached.`);
 }
 
-// One form POST to a fixed provider endpoint. Nothing of the caller's request is forwarded.
-async function postForm(provider, url, fields) {
+// One call to a fixed provider endpoint. Nothing of the caller's request is forwarded.
+async function callUpstream(provider, url, init) {
   const controller = new AbortController();
   let timer;
   const timeout = new Promise((_, reject) => {
@@ -263,13 +295,7 @@ async function postForm(provider, url, fields) {
     }, UPSTREAM_TIMEOUT_MS);
   });
   const exchange = (async () => {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-      body: new URLSearchParams(fields).toString(),
-      redirect: "manual",
-      signal: controller.signal,
-    });
+    const response = await fetch(url, { ...init, redirect: "manual", signal: controller.signal });
     return { status: response.status, text: await readUpstreamText(response, provider) };
   })();
   try {
@@ -279,6 +305,14 @@ async function postForm(provider, url, fields) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function postForm(provider, url, fields) {
+  return callUpstream(provider, url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    body: new URLSearchParams(fields).toString(),
+  });
 }
 
 function parseJson(text) {
@@ -382,13 +416,18 @@ async function googleRevoke(body, { provider }) {
   throw describeFailure(provider, status, data, { reauthenticate: false });
 }
 
-async function microsoftToken(body, { provider, credentials, env }) {
-  const code = readField(body, "code");
-  const codeVerifier = readField(body, "codeVerifier", MAX_CODE_VERIFIER_LENGTH);
+function readRedirectUri(body, env) {
   const redirectUri = readField(body, "redirectUri", MAX_REDIRECT_URI_LENGTH);
   if (!allowedRedirectUris(env).includes(redirectUri)) {
     throw new HttpError(400, "invalid_request", "redirectUri is not on the list of allowed redirect URIs.");
   }
+  return redirectUri;
+}
+
+async function microsoftToken(body, { provider, credentials, env }) {
+  const code = readField(body, "code");
+  const codeVerifier = readField(body, "codeVerifier", MAX_CODE_VERIFIER_LENGTH);
+  const redirectUri = readRedirectUri(body, env);
   const tokens = await requestTokens(provider, {
     grant_type: "authorization_code",
     code,
@@ -425,6 +464,111 @@ async function microsoftRevoke(body) {
   return noContent();
 }
 
+// GitHub reports OAuth errors inside an HTTP 200 JSON body ({"error": "bad_verification_code"}), so the
+// body is read for an error before the status is trusted. Only these codes, never GitHub's description, are quoted.
+const GITHUB_REAUTHENTICATION_ERRORS = new Set(["bad_verification_code", "bad_refresh_token", "invalid_grant"]);
+
+function wrongGithubCredentials() {
+  return new HttpError(501, "not_configured", "GitHub sign-in is configured with a wrong client id or secret on this server.");
+}
+
+function describeGithubError(provider, status, data) {
+  const code = data !== null && typeof data === "object" && typeof data.error === "string" ? data.error : "";
+  if (GITHUB_REAUTHENTICATION_ERRORS.has(code)) {
+    return new HttpError(400, "invalid_grant", "GitHub rejected the authorization code or refresh token. Connect again.");
+  }
+  if (code === "unverified_user_email") {
+    return new HttpError(400, "invalid_grant", "GitHub says the primary email address of the account is not verified. Verify it on GitHub, then connect again.");
+  }
+  if (code === "incorrect_client_credentials") return wrongGithubCredentials();
+  return describeFailure(provider, status, data, { reauthenticate: false });
+}
+
+function nonExpiringGithubToken() {
+  return new HttpError(
+    502,
+    "upstream_error",
+    'GitHub returned a token without expiry or refresh token. Turn on "Expire user authorization tokens" in the GitHub App settings.',
+  );
+}
+
+async function requestGithubTokens(provider, fields) {
+  const { status, text } = await postForm(provider, provider.tokenUrl, fields);
+  const data = parseJson(text);
+  if ((data !== null && typeof data === "object" && typeof data.error === "string") || status !== 200) {
+    throw describeGithubError(provider, status, data);
+  }
+  if (data === null || typeof data !== "object" || Array.isArray(data) || typeof data.access_token !== "string" || data.access_token === "") {
+    throw new HttpError(502, "upstream_error", `${provider.name} answered with an unexpected response.`);
+  }
+  const expiresIn = parseExpiresIn(data.expires_in);
+  const refreshToken = optionalString(data.refresh_token);
+  // A GitHub App without token expiry would hand out a token that lives forever: refuse it.
+  if (expiresIn === null || !refreshToken) throw nonExpiringGithubToken();
+  return {
+    accessToken: data.access_token,
+    expiresIn,
+    refreshToken,
+    refreshTokenExpiresIn: parseExpiresIn(data.refresh_token_expires_in) ?? undefined,
+    // GitHub Apps always report an empty scope: it is left out.
+    scope: optionalString(data.scope, MAX_SHORT_FIELD_LENGTH),
+  };
+}
+
+const GITHUB_TOKEN_KEYS = ["accessToken", "expiresIn", "refreshToken", "refreshTokenExpiresIn", "scope"];
+
+async function githubToken(body, { provider, credentials, env }) {
+  const code = readField(body, "code");
+  const codeVerifier = readField(body, "codeVerifier", MAX_CODE_VERIFIER_LENGTH);
+  const redirectUri = readRedirectUri(body, env);
+  const tokens = await requestGithubTokens(provider, {
+    client_id: credentials.clientId,
+    client_secret: credentials.clientSecret,
+    code,
+    code_verifier: codeVerifier,
+    redirect_uri: redirectUri,
+  });
+  return tokenAnswer(tokens, GITHUB_TOKEN_KEYS);
+}
+
+// GitHub rotates the refresh token on every use: the answer always carries the new one.
+async function githubRefresh(body, { provider, credentials }) {
+  const refreshToken = readField(body, "refreshToken");
+  const tokens = await requestGithubTokens(provider, {
+    client_id: credentials.clientId,
+    client_secret: credentials.clientSecret,
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+  });
+  return tokenAnswer(tokens, GITHUB_TOKEN_KEYS);
+}
+
+function basicAuthorization(clientId, clientSecret) {
+  let binary = "";
+  for (const byte of new TextEncoder().encode(`${clientId}:${clientSecret}`)) binary += String.fromCharCode(byte);
+  return `Basic ${btoa(binary)}`;
+}
+
+// Deleting the grant revokes every token the app holds for that user, on every device.
+async function githubRevoke(body, { provider, credentials }) {
+  const token = readField(body, "token");
+  const { status, text } = await callUpstream(provider, provider.grantUrl(credentials.clientId), {
+    method: "DELETE",
+    headers: {
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+      Authorization: basicAuthorization(credentials.clientId, credentials.clientSecret),
+      "X-GitHub-Api-Version": GITHUB_API_VERSION,
+      "User-Agent": GITHUB_USER_AGENT,
+    },
+    body: JSON.stringify({ access_token: token }),
+  });
+  // 404: there is no such grant (already revoked, or a token GitHub no longer knows): nothing is left to revoke.
+  if ((status >= 200 && status < 300) || status === 404) return noContent();
+  if (status === 401) throw wrongGithubCredentials();
+  throw describeFailure(provider, status, parseJson(text), { reauthenticate: false });
+}
+
 const HANDLERS = {
   "google/token": googleToken,
   "google/refresh": googleRefresh,
@@ -432,10 +576,13 @@ const HANDLERS = {
   "microsoft/token": microsoftToken,
   "microsoft/refresh": microsoftRefresh,
   "microsoft/revoke": microsoftRevoke,
+  "github/token": githubToken,
+  "github/refresh": githubRefresh,
+  "github/revoke": githubRevoke,
 };
 
 async function handleProviderRoute(request, env, route, allowedOrigin) {
-  enforceRateLimit(request);
+  await enforceRateLimit(request, env);
   const provider = PROVIDERS[route.provider];
   const credentials = readCredentials(env, provider);
   if (!credentials) {
@@ -466,7 +613,12 @@ export async function handleOAuth(request, env) {
     }
     if (route.status) {
       const configured = (provider) => readCredentials(config, provider) !== null;
-      return jsonResponse(200, { google: configured(PROVIDERS.google), microsoft: configured(PROVIDERS.microsoft) }, allowedOrigin);
+      const flags = {
+        google: configured(PROVIDERS.google),
+        microsoft: configured(PROVIDERS.microsoft),
+        github: configured(PROVIDERS.github),
+      };
+      return jsonResponse(200, flags, allowedOrigin);
     }
     return await handleProviderRoute(request, config, route, allowedOrigin);
   } catch (error) {

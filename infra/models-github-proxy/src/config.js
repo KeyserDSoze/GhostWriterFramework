@@ -1,7 +1,7 @@
 /**
  * Configuration shared by the transparent proxy and the OAuth token broker:
- * which origins may call the Worker and which Microsoft redirect URIs the broker
- * may exchange an authorization code for.
+ * which origins may call the Worker and which redirect URIs (Microsoft and GitHub
+ * callback pages) the broker may exchange an authorization code for.
  */
 
 /** Origins allowed to use the Worker (production + www + local dev). */
@@ -12,12 +12,16 @@ export const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:4173",
 ];
 
-/** Redirect URIs of the Microsoft sign-in callback page the broker accepts by default. */
+/** Redirect URIs of the Microsoft and GitHub sign-in callback pages the broker accepts by default. */
 export const DEFAULT_ALLOWED_REDIRECT_URIS = [
   "https://narrarium.net/auth/microsoft-callback.html",
   "https://www.narrarium.net/auth/microsoft-callback.html",
   "http://localhost:5173/auth/microsoft-callback.html",
   "http://localhost:4173/auth/microsoft-callback.html",
+  "https://narrarium.net/auth/github/callback",
+  "https://www.narrarium.net/auth/github/callback",
+  "http://localhost:5173/auth/github/callback",
+  "http://localhost:4173/auth/github/callback",
 ];
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);

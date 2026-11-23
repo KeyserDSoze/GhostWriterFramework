@@ -55,6 +55,11 @@ describe("wrangler.toml", () => {
     assert.equal(vars.MICROSOFT_CLIENT_ID, PUBLIC_MICROSOFT_CLIENT_ID);
   });
 
+  it("declares the GitHub App client id, empty until the app is registered", () => {
+    assert.equal(Object.hasOwn(vars, "GITHUB_APP_CLIENT_ID"), true);
+    assert.equal(vars.GITHUB_APP_CLIENT_ID, "");
+  });
+
   it("lists the same redirect URIs the code defaults to", () => {
     assert.deepEqual(vars.ALLOWED_REDIRECT_URIS.split(",").map((entry) => entry.trim()), DEFAULT_ALLOWED_REDIRECT_URIS);
     assert.deepEqual(DEFAULT_ALLOWED_REDIRECT_URIS, [
@@ -62,7 +67,19 @@ describe("wrangler.toml", () => {
       "https://www.narrarium.net/auth/microsoft-callback.html",
       "http://localhost:5173/auth/microsoft-callback.html",
       "http://localhost:4173/auth/microsoft-callback.html",
+      "https://narrarium.net/auth/github/callback",
+      "https://www.narrarium.net/auth/github/callback",
+      "http://localhost:5173/auth/github/callback",
+      "http://localhost:4173/auth/github/callback",
     ]);
+  });
+
+  it("declares the optional Workers Rate Limiting binding the code looks for", () => {
+    assert.match(toml, /^\[\[ratelimits\]\]$/m);
+    assert.match(toml, /^name = "OAUTH_RATE_LIMITER"$/m);
+    assert.match(toml, /^namespace_id = "\d+"$/m);
+    assert.match(toml, /^\s+limit = 30$/m);
+    assert.match(toml, /^\s+period = 60$/m);
   });
 
   it("declares the optional ALLOWED_ORIGINS_EXTRA, empty by default", () => {
@@ -104,8 +121,9 @@ describe("package.json", () => {
 describe("no secret is committed with the Worker", () => {
   const files = listFiles(workerDir);
 
-  it("contains no Google or Microsoft client secret, and no private key", () => {
+  it("contains no Google, Microsoft or GitHub client secret, and no private key", () => {
     const patterns = {
+      "GitHub token": /\bgh[pousr]_[A-Za-z0-9]{36,}/,
       "Google client secret": /GOCSPX-[A-Za-z0-9_-]{20,}/,
       "Microsoft client secret value": /\b[A-Za-z0-9_.~-]{3}[0-9]Q~[A-Za-z0-9_.~-]{25,}/,
       "private key": /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
@@ -141,6 +159,14 @@ describe("README.md", () => {
       "gh secret set MICROSOFT_OAUTH_CLIENT_SECRET",
       "gh workflow run deploy-worker.yml",
       "wrangler secret delete",
+      "/oauth/github/token",
+      "/oauth/github/revoke",
+      "GITHUB_APP_CLIENT_ID",
+      "GITHUB_APP_CLIENT_SECRET",
+      "gh secret set GH_APP_CLIENT_SECRET",
+      "set-secrets.sh",
+      "check-status.mjs",
+      "OAUTH_RATE_LIMITER",
     ]) {
       assert.ok(readme.includes(expected), `the README mentions ${expected}`);
     }

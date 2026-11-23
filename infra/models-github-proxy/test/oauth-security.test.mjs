@@ -3,8 +3,13 @@ import { describe, it } from "node:test";
 import worker from "../src/index.js";
 import {
   CLIENT_SECRETS,
+  FAKE_GITHUB_CLIENT_ID,
+  FAKE_GITHUB_SECRET,
   FAKE_GOOGLE_SECRET,
   FAKE_MICROSOFT_SECRET,
+  GITHUB_GRANT_URL,
+  GITHUB_TOKEN_REPLY,
+  GITHUB_TOKEN_URL,
   GOOGLE_REVOKE_URL,
   GOOGLE_TOKEN_REPLY,
   GOOGLE_TOKEN_URL,
@@ -40,6 +45,10 @@ const PROVIDER_TOKENS = [
   MICROSOFT_TOKEN_REPLY.access_token,
   MICROSOFT_TOKEN_REPLY.refresh_token,
   MICROSOFT_TOKEN_REPLY.id_token,
+  GITHUB_TOKEN_REPLY.access_token,
+  GITHUB_TOKEN_REPLY.refresh_token,
+  "ghu_fakegithubrefreshedaccess0123",
+  "ghr_fakegithubrotatedrefresh0123",
   "ya29.google-refreshed",
   "ey.microsoft-refreshed",
   "0.microsoft-rotated-refresh-token",
@@ -173,11 +182,17 @@ describe("what the Worker sends to the providers", () => {
     }
     assert.equal(provider.calls.length, PROVIDER_ROUTES.length);
     for (const call of provider.calls) {
-      assert.deepEqual([...headersOf(call).keys()].sort(), ["accept", "content-type"], call.url);
+      // GitHub's revocation is the one call that authenticates in a header (Basic, built from the Worker's own configuration).
+      const fixed = call.url === GITHUB_GRANT_URL ? ["accept", "authorization", "content-type", "user-agent", "x-github-api-version"] : ["accept", "content-type"];
+      assert.deepEqual([...headersOf(call).keys()].sort(), fixed, call.url);
+      if (call.url === GITHUB_GRANT_URL) {
+        const sent = headersOf(call).get("authorization");
+        assert.equal(sent, `Basic ${Buffer.from(`${FAKE_GITHUB_CLIENT_ID}:${FAKE_GITHUB_SECRET}`).toString("base64")}`);
+      }
     }
   });
 
-  it("only ever calls the three fixed provider endpoints, whatever the body says", async () => {
+  it("only ever calls the fixed provider endpoints, whatever the body says", async () => {
     for (const route of PROVIDER_ROUTES) {
       provider.reply(route.reply);
       await oauthCall(route.path, {
@@ -210,14 +225,21 @@ describe("what the Worker sends to the providers", () => {
       const headers = [...headersOf(call)].map(([name, value]) => `${name}: ${value}`).join("\n");
       assertNoneOf(`${call.url}\n${headers}`, CLIENT_SECRETS, `the URL and headers of ${call.url}`);
 
-      const form = formOf(call);
       const body = String(call.init.body);
+      if (call.url === GITHUB_GRANT_URL) {
+        assertNoneOf(body, CLIENT_SECRETS, "a GitHub revoke request");
+        continue;
+      }
+      const form = formOf(call);
       if (call.url === GOOGLE_TOKEN_URL) {
         assert.equal(form.client_secret, FAKE_GOOGLE_SECRET);
-        assertNoneOf(body, [FAKE_MICROSOFT_SECRET], "a Google request");
+        assertNoneOf(body, [FAKE_MICROSOFT_SECRET, FAKE_GITHUB_SECRET], "a Google request");
       } else if (call.url === MICROSOFT_TOKEN_URL) {
         assert.equal(form.client_secret, FAKE_MICROSOFT_SECRET);
-        assertNoneOf(body, [FAKE_GOOGLE_SECRET], "a Microsoft request");
+        assertNoneOf(body, [FAKE_GOOGLE_SECRET, FAKE_GITHUB_SECRET], "a Microsoft request");
+      } else if (call.url === GITHUB_TOKEN_URL) {
+        assert.equal(form.client_secret, FAKE_GITHUB_SECRET);
+        assertNoneOf(body, [FAKE_GOOGLE_SECRET, FAKE_MICROSOFT_SECRET], "a GitHub request");
       } else {
         assert.equal(call.url, GOOGLE_REVOKE_URL);
         assertNoneOf(body, CLIENT_SECRETS, "a revoke request");
