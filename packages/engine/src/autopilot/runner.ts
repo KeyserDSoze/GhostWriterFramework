@@ -420,7 +420,7 @@ function retryKindOf(error: unknown): "boost" | "transient" | "rejected" | "othe
   return error instanceof AiProviderError ? "transient" : "other";
 }
 
-const TIME_DEPENDENT_STATUSES = new Set([408, 429, 502, 503, 504]);
+const TIME_DEPENDENT_STATUSES = new Set([408, 429, 502, 503, 504, 520, 521, 522, 523, 524]);
 const TIME_DEPENDENT_WORDS = /time[ds]? ?out|network|connection|fetch failed|econn|enotfound|eai_again|socket|overload|rate[ _-]?limit|too many requests|temporar|unavailable|try again/i;
 
 /**

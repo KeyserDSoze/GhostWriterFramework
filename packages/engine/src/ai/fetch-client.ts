@@ -9,7 +9,7 @@ import { effectiveAiBase, endpointOrigin, type AiReasoningEffort, type ChatReque
 import type { AiCandidate } from "./router.js";
 import { candidateBoundary, planAttempts, type PlannedAttempt } from "./routing.js";
 import { isEmptyToolArguments, splitReasoningBlock, structuredFromReply } from "./structured.js";
-import { AiFallbackBlockedError, AiProviderError, AiReplyRejectedError, type AiMessage, type AiPort, type AiProviderErrorDetails, type AiRequest, type AiResponse, type AiTimeoutPhase, type AiUsage } from "./types.js";
+import { AiFallbackBlockedError, AiProviderError, AiReplyRejectedError, AiStreamInterruptedError, MAX_PARTIAL_CHARACTERS, TRANSPORT_TAIL_CHARACTERS, type AiMessage, type AiPort, type AiProviderErrorDetails, type AiRequest, type AiResponse, type AiStreamEnd, type AiTimeoutPhase, type AiTransportDiagnostics, type AiUsage } from "./types.js";
 
 // The deadlines of a call: how long a provider has to begin answering, the least it is given, and the most a call may take.
 export { DEFAULT_REQUEST_TIMEOUT_MS, MIN_REQUEST_TIMEOUT_MS, TOTAL_REQUEST_CAP_MS } from "./deadlines.js";
@@ -151,6 +151,16 @@ export interface FetchAiAttemptEnd {
   replyCharacters?: number;
   /** Characters of reasoning that came with it (the reasoning field of the provider, and a `<think>` block in the text). Only the count, never the words. Present with `finishReason`. */
   reasoningCharacters?: number;
+  /**
+   * What the transport saw of the call: the HTTP status, the bytes and chunks that arrived, when the last one did and what the end of them said, how the provider ended the reply, whether it reported
+   * the tokens, and how the stream ended. It is what tells a stream that was cut from one that was slow. Absent when no response arrived (the connection failed first). Never a key.
+   */
+  transport?: AiTransportDiagnostics;
+  /**
+   * For an attempt that failed after the model had started to answer: the reply that had arrived (its text, or the arguments of its function call), at most `MAX_PARTIAL_CHARACTERS` characters, cleaned of
+   * credentials. The engine does not apply it; this is where a host finds it. Absent when none had arrived.
+   */
+  partialText?: string;
   durationMs: number;
 }
 
@@ -190,6 +200,14 @@ export interface FetchAiOptions {
    * where it is. Throw to cancel the whole call.
    */
   acknowledgeFallback?: (from: FetchAiFallbackTarget, to: FetchAiFallbackTarget, info: FetchAiFallbackInfo) => boolean | Promise<boolean>;
+  /**
+   * Where the client remembers the requests that a provider refused because of `stream_options` (`include_usage`), so that they are sent without it from then on: the key is the address of the
+   * request. The option is asked of every provider (it is how a stream reports its tokens), and a provider that answers 400 or 422 naming it is asked again, at once, without it and not again after
+   * (its replies then carry no token count, and say so: their usage is an estimate). The default is one set for each client, so a call asks every address once, whatever came before it: the
+   * app's hosts leave it at that, so that the same configuration builds the same requests in every host, at the price of one refusal (which costs nothing: it is answered before any work) per call
+   * to a provider that refuses. An embedder that wants to ask once for all its calls shares one set between its clients.
+   */
+  usageOptionRefusals?: Set<string>;
 }
 
 function notify<T>(hook: ((value: T) => void) | undefined, value: T): void {
@@ -214,6 +232,7 @@ function fallbackTarget(candidate: AiCandidate): FetchAiFallbackTarget {
  * What failed attempts cost is added to the final response (or error), so budgets never under-count.
  */
 export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions = {}): AiPort {
+  const refusals = options.usageOptionRefusals ?? new Set<string>();
   return {
     async complete(request: AiRequest): Promise<AiResponse> {
       let startedAt = Date.now();
@@ -280,7 +299,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
         tried += 1;
         try {
           if (!attempt.built) throw attempt.buildError;
-          const response = await callCandidate(config, attempt, attempt.built, request, options, deadlines, secrets, trace);
+          const response = await callCandidate(config, attempt, attempt.built, request, options, deadlines, secrets, trace, refusals);
           notify(options.onAttemptEnd, {
             ...identity,
             outcome: "ok",
@@ -291,6 +310,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
             currency: response.currency,
             text: response.text,
             ...replyTrace(trace, Boolean(request.json)),
+            ...(trace.transport ? { transport: trace.transport } : {}),
             durationMs: Date.now() - attemptStarted,
           });
           return withSpent(response, spent);
@@ -304,7 +324,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           }
           addSpent(spent, error);
           lastError = error;
-          request.onText?.("");
+          notify(request.onText, "");
         }
       }
       const notes: string[] = [];
@@ -384,6 +404,8 @@ interface AttemptTrace {
   finishReason?: string;
   replyCharacters?: number;
   reasoningCharacters?: number;
+  /** What the transport saw, for the attempt's end hook: set once the reply has been read, before it is judged. */
+  transport?: AiTransportDiagnostics;
 }
 
 type ReplyTrace = Pick<FetchAiAttemptEnd, "streamed" | "firstByteMs" | "toolCalled" | "finishReason" | "replyCharacters" | "reasoningCharacters">;
@@ -415,17 +437,29 @@ function failedAttempt(identity: Pick<FetchAiAttemptEnd, "attemptId" | "label" |
     ...(timedOut ? { timeoutMs: provider?.timeout?.ms ?? timeoutMs } : {}),
     ...(timedOut && provider?.timeout ? { timeoutPhase: provider.timeout.phase } : {}),
     ...reply,
+    ...(provider?.transport ? { transport: provider.transport } : {}),
+    ...(provider?.partialText ? { partialText: provider.partialText } : {}),
     durationMs,
   };
 }
 
+/** A count of tokens: a number that is not negative. */
+function tokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * The tokens a provider reports (`usage`): OpenAI's `prompt_tokens` and `completion_tokens`, or the `input_tokens` and `output_tokens` that other providers and the Responses API use; the tokens
+ * served from the cache by whichever field says it (`prompt_tokens_details.cached_tokens`, `input_tokens_details.cached_tokens`, `prompt_cache_hit_tokens`, `cache_read_input_tokens`).
+ */
 function normalizeUsage(value: unknown): AiUsage | undefined {
   if (!value || typeof value !== "object") return undefined;
-  const usage = value as { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
+  const usage = value as Record<string, unknown>;
+  const details = (usage.prompt_tokens_details ?? usage.input_tokens_details) as { cached_tokens?: unknown } | null | undefined;
   return {
-    inputTokens: usage.prompt_tokens ?? 0,
-    outputTokens: usage.completion_tokens ?? 0,
-    cachedInputTokens: usage.prompt_tokens_details?.cached_tokens ?? 0,
+    inputTokens: tokenCount(usage.prompt_tokens) ?? tokenCount(usage.input_tokens) ?? 0,
+    outputTokens: tokenCount(usage.completion_tokens) ?? tokenCount(usage.output_tokens) ?? 0,
+    cachedInputTokens: tokenCount(details?.cached_tokens) ?? tokenCount(usage.prompt_cache_hit_tokens) ?? tokenCount(usage.cache_read_input_tokens) ?? 0,
   };
 }
 
@@ -452,7 +486,8 @@ function parseRetryAfter(value: string | null | undefined): number | undefined {
   return Number.isNaN(date) ? undefined : Math.min(MAX_RETRY_AFTER_MS, Math.max(0, date - Date.now()));
 }
 
-const TRANSIENT_STATUSES = new Set([408, 429, 502, 503, 504]);
+/** The statuses that depend on the moment: a timeout, a rate limit, a gateway that cannot reach the model or that gave up waiting for it, and the origin errors (520-524) that Cloudflare says for the same. */
+const TRANSIENT_STATUSES = new Set([408, 429, 502, 503, 504, 520, 521, 522, 523, 524]);
 /**
  * What a refusal of the thinking parameter says: the name of the one that the level travels in, in the provider's message or in the `param` of its error
  * object (some providers say only `"param": "reasoning_effort"`): the OpenAI field, or the chat-template argument (`chat_template_kwargs`, `reasoning_strength`).
@@ -490,7 +525,9 @@ async function providerError(response: Response, provider: string, model: string
       if (typeof refused === "string") param = refused;
       detail = typeof message === "string" ? message : raw;
     } catch {
-      detail = raw;
+      // A gateway in front of the provider answers with a page of its own (Cloudflare's 524, an nginx 502): its title says what it is, its markup says nothing.
+      const page = /^\s*<(?:!doctype\s+html|html)\b/i.test(raw) ? /<title[^>]*>([^<]{1,200})<\/title>/i.exec(raw)?.[1]?.replace(/\s+/g, " ").trim() : undefined;
+      detail = /^\s*<(?:!doctype\s+html|html)\b/i.test(raw) ? `an HTML page from a gateway or a proxy${page ? ` ("${page}")` : ""}, not an answer of the provider` : raw;
     }
   } catch {
     detail = response.statusText;
@@ -515,12 +552,12 @@ async function providerError(response: Response, provider: string, model: string
   );
 }
 
-/** What a host of the stream reader hears: the events, the bytes (it may stop the stream by throwing) and the end of every piece. */
+/** What a host of the stream reader hears: the events, the chunks (it may stop the stream by throwing) and the end of every piece. */
 interface StreamHooks {
-  /** An event arrived: its `data:` lines, joined. */
-  onData: (data: string) => void;
-  /** Bytes arrived, comments that only keep the connection open included. */
-  onBytes: (count: number) => void;
+  /** An event arrived: its `data:` lines, joined, and the name its `event:` line gave it (lower case; empty when it had none). */
+  onData: (data: string, event: string) => void;
+  /** A chunk arrived: its bytes (comments that only keep the connection open included) and the text they decode to. */
+  onChunk: (count: number, decoded: string) => void;
   /** A piece was read and every event in it delivered. */
   onPiece: () => void;
 }
@@ -534,18 +571,24 @@ class StreamReadError extends Error {
 }
 
 /**
- * Reads server-sent events; resolves `true` when the provider closed the stream with `[DONE]`. An event is its `data:`
- * lines joined with a newline, ended by a blank line; a value that is complete as it stands (one JSON object, or
- * `[DONE]`) is delivered at once, so servers that leave out the blank lines still stream.
- * Every piece that arrives starts the idle deadline again, a comment (`: keep-alive`) too, and no read can hold the call past
+ * Reads server-sent events; resolves `true` when the provider closed the stream with `[DONE]`. A line ends with a line feed, a carriage return or both (the specification allows
+ * the three, and a pair cut between two chunks is one end). An event is its `data:` lines joined with a newline, ended by a blank line, and it may be named by an `event:` line;
+ * a value that is complete as it stands (one JSON object, or `[DONE]`) is delivered at once, so servers that leave out the blank lines still stream. Lines that are
+ * neither (`: keep-alive` comments, `id:`, `retry:`) are ignored, and the text of a character that a chunk cuts in two is kept until the rest comes.
+ * Every piece that arrives starts the idle deadline again, a comment too, and no read can hold the call past
  * a deadline or the author's cancel. However it ends, but by the end of the stream, the reader is released.
  */
 async function readEventStream(response: Response, clock: DeadlineClock, hooks: StreamHooks): Promise<boolean> {
   if (!response.body) throw new AiProviderError("The provider returned an empty stream.", undefined, true, { transient: true });
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  /** The line that is being read: what has arrived of it. */
   let buffer = "";
+  /** The last line ended with a carriage return: a line feed that opens the next chunk is the other half of the same end. */
+  let skipLineFeed = false;
   let pending: string[] = [];
+  /** The name that the `event:` line of the event being read gave it. */
+  let named = "";
   let exhausted = false;
   const complete = (value: string): boolean => {
     const text = value.trim();
@@ -560,8 +603,14 @@ async function readEventStream(response: Response, clock: DeadlineClock, hooks: 
   };
   const flush = (): boolean => {
     const lines = pending;
+    const event = named;
     pending = [];
-    if (!lines.length) return false;
+    named = "";
+    if (!lines.length) {
+      // An `event: error` with no data at all still says that the provider failed.
+      if (event === "error") hooks.onData("", event);
+      return false;
+    }
     const joined = lines.join("\n").trim();
     if (joined === "[DONE]") return true;
     if (lines.length > 1 && !complete(joined)) {
@@ -569,19 +618,51 @@ async function readEventStream(response: Response, clock: DeadlineClock, hooks: 
       for (const line of lines) {
         const single = line.trim();
         if (single === "[DONE]") return true;
-        if (single) hooks.onData(single);
+        if (single) hooks.onData(single, event);
       }
       return false;
     }
-    if (joined) hooks.onData(joined);
+    if (joined || event === "error") hooks.onData(joined, event);
     return false;
   };
   const takeLine = (line: string): boolean => {
-    const clean = line.replace(/\r$/, "");
-    if (!clean) return flush();
-    if (!clean.startsWith("data:")) return false;
-    pending.push(clean.slice(5).trimStart());
+    if (!line) return flush();
+    if (line.startsWith("event:")) {
+      named = line.slice(6).trim().toLowerCase();
+      return false;
+    }
+    if (!line.startsWith("data:")) return false;
+    pending.push(line.slice(5).trimStart());
     return complete(pending.join("\n")) ? flush() : false;
+  };
+  /** Splits what arrived into lines and takes them; `true` when the end marker was among them. */
+  const feed = (decoded: string): boolean => {
+    let text = decoded;
+    if (skipLineFeed) {
+      skipLineFeed = false;
+      if (text.charCodeAt(0) === 10) text = text.slice(1);
+    }
+    buffer += text;
+    let start = 0;
+    for (let at = 0; at < buffer.length; at += 1) {
+      const code = buffer.charCodeAt(at);
+      if (code !== 10 && code !== 13) continue;
+      const line = buffer.slice(start, at);
+      if (code === 13) {
+        if (at + 1 < buffer.length) {
+          if (buffer.charCodeAt(at + 1) === 10) at += 1;
+        } else {
+          skipLineFeed = true;
+        }
+      }
+      start = at + 1;
+      if (takeLine(line)) {
+        buffer = "";
+        return true;
+      }
+    }
+    buffer = buffer.slice(start);
+    return false;
   };
   try {
     for (;;) {
@@ -597,18 +678,13 @@ async function readEventStream(response: Response, clock: DeadlineClock, hooks: 
         break;
       }
       clock.activity();
-      hooks.onBytes(piece.value.byteLength);
-      buffer += decoder.decode(piece.value, { stream: true });
-      let newline = buffer.indexOf("\n");
-      while (newline >= 0) {
-        const line = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + 1);
-        if (takeLine(line)) return true;
-        newline = buffer.indexOf("\n");
-      }
+      const decoded = decoder.decode(piece.value, { stream: true });
+      hooks.onChunk(piece.value.byteLength, decoded);
+      if (feed(decoded)) return true;
       hooks.onPiece();
     }
-    buffer += decoder.decode();
+    const rest = decoder.decode();
+    if (rest && feed(rest)) return true;
     if (buffer.trim() && takeLine(buffer)) return true;
     return flush();
   } finally {
@@ -621,7 +697,7 @@ async function readEventStream(response: Response, clock: DeadlineClock, hooks: 
  * Reads the whole body of a reply that is one JSON value. Like the stream reader it starts the idle deadline again at every piece, cannot
  * be held past a deadline or the author's cancel, and releases the body however it ends (`response.json()` would keep it locked).
  */
-async function readJsonBody(response: Response, clock: DeadlineClock, onBytes: (count: number) => void): Promise<unknown> {
+async function readJsonBody(response: Response, clock: DeadlineClock, onChunk: (count: number, decoded: string) => void): Promise<unknown> {
   if (!response.body) return clock.guard(response.json());
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -640,8 +716,9 @@ async function readJsonBody(response: Response, clock: DeadlineClock, onBytes: (
         break;
       }
       clock.activity();
-      onBytes(piece.value.byteLength);
-      body += decoder.decode(piece.value, { stream: true });
+      const decoded = decoder.decode(piece.value, { stream: true });
+      onChunk(piece.value.byteLength, decoded);
+      body += decoded;
     }
     body += decoder.decode();
     return JSON.parse(body);
@@ -676,10 +753,13 @@ const PERMANENT_STREAM_ERROR = /authenticat|unauthori[sz]ed|forbidden|permission
 const TRANSIENT_STREAM_ERROR = /overload|rate[_ -]?limit|too many requests|temporar|unavailable|busy|try again|time[ds]? ?out|capacity/i;
 
 /**
- * A failure the provider reported inside the stream (`{"error": {...}}` or `{"error": "..."}`), or `null` when the
- * chunk carries none. It is retried unless its status or code says authentication or an invalid request.
+ * A failure the provider reported inside the stream (`{"error": {...}}`, `{"error": "..."}`, or an `event: error`), or `null` when the
+ * chunk carries none. It is retried unless its status or code says authentication or an invalid request. `started`: the model had already written something, so the provider was answering
+ * when it failed and the reply stopped halfway: that is a failure of the moment (`AiStreamInterruptedError`, `transient`), whatever the runtime calls it (a 500, a crash, no status at all),
+ * as long as it is not one of those that never change. A failure before any of the reply is the provider refusing or failing at the start: it is `transient` only when its status or
+ * its words say it depends on the moment (a deterministic failure, `context too long`, would be the same every time).
  */
-function streamError(value: unknown, label: string, details: AiProviderErrorDetails, redact: (text: string) => string): AiProviderError | null {
+function streamError(value: unknown, label: string, details: AiProviderErrorDetails, redact: (text: string) => string, started: boolean): AiProviderError | null {
   const source = value && typeof value === "object" ? value as Record<string, unknown> : null;
   const message = typeof value === "string" ? value.trim() : typeof source?.message === "string" ? source.message.trim() : "";
   if (!source && !message) return null;
@@ -690,14 +770,21 @@ function streamError(value: unknown, label: string, details: AiProviderErrorDeta
   const permanent = (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429) || PERMANENT_STREAM_ERROR.test(words);
   const transient = !permanent && ((status !== undefined && TRANSIENT_STATUSES.has(status)) || TRANSIENT_STREAM_ERROR.test(`${message} ${words}`));
   const detail = redact(message || (source && Object.keys(source).length ? JSON.stringify(source) : "no details")).replace(/\s+/g, " ").slice(0, 400);
-  return new AiProviderError(redact(`${label}: the provider reported an error during the reply — ${detail}`), status, !permanent, { ...details, ...(transient ? { transient: true } : {}) });
+  const said = redact(`${label}: the provider reported an error during the reply — ${detail}`);
+  if (started && !permanent) return new AiStreamInterruptedError(said, "provider-error", status, details);
+  return new AiProviderError(said, status, !permanent, { ...details, ...(transient ? { transient: true } : {}) });
 }
 
-/** Characters of reasoning a reply carried. Only the count is kept, never the reasoning itself. */
+/**
+ * Characters of reasoning a reply carried. Only the count is kept, never the reasoning itself. The reasoning is in `reasoning_content` (llama.cpp, DeepSeek, older vLLM) or in `reasoning`
+ * (newer vLLM, OpenRouter); a runtime that is moving from the first to the second sends the same words under both names, and they are counted once.
+ */
 function reasoningLength(source: unknown): number {
   if (!source || typeof source !== "object") return 0;
   const { reasoning_content: content, reasoning } = source as { reasoning_content?: unknown; reasoning?: unknown };
-  return (typeof content === "string" ? content.length : 0) + (typeof reasoning === "string" ? reasoning.length : 0);
+  const first = typeof content === "string" ? content : "";
+  const second = typeof reasoning === "string" ? reasoning : "";
+  return first === second ? first.length : first.length + second.length;
 }
 
 /** A function call of a reply: its name and its arguments, as text. */
@@ -745,7 +832,49 @@ interface StreamedChunk {
   error?: unknown;
 }
 
-async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, built: ChatRequest, request: AiRequest, options: FetchAiOptions, deadlines: ResolvedDeadlines, secrets: readonly string[], trace: AttemptTrace): Promise<AiResponse> {
+/** What of the end of a stream is kept to cut the reported tail from: longer than the tail, so that a credential that the cut would divide has been replaced whole before it is. */
+const TAIL_WINDOW_CHARACTERS = TRANSPORT_TAIL_CHARACTERS * 3;
+/** The headers in which a provider or its gateway puts the id of a request: it is what they look a call up by in their logs. */
+const REQUEST_ID_HEADERS = ["x-llmproxy-request-id", "x-request-id", "request-id", "x-ms-request-id", "apim-request-id"];
+/** The most addresses a set of refusals of `stream_options` keeps. */
+const MAX_REMEMBERED_REFUSALS = 200;
+
+/** The id that a response carries for its request, when it is one (letters, digits and a few signs: never anything a key could be). */
+function requestIdOf(headers: Headers | undefined): string | undefined {
+  for (const name of REQUEST_ID_HEADERS) {
+    const value = headers?.get?.(name)?.trim();
+    if (value && /^[A-Za-z0-9._:-]{1,100}$/.test(value)) return value;
+  }
+  return undefined;
+}
+
+/** The text of a reasoning field in a piece of a stream, with the closing quote when the piece has it (a window of a stream may end, or begin, inside one). */
+const REASONING_FIELD = /("(?:reasoning_content|reasoning)"\s*:\s*")(?:[^"\\]|\\.)*("?)/g;
+
+/**
+ * The end of a stream as the diagnostics keep it: what arrived, without the words of the model's reasoning (the engine never keeps them: only their count). `whole`: the window holds the
+ * beginning of the stream. A window that begins somewhere inside the stream may begin inside a reasoning field, which cannot be told, so its first line (which may be cut) is dropped.
+ */
+function streamTail(window: string, whole: boolean): string {
+  let text = window;
+  if (!whole) {
+    const at = text.search(/\r\n|\r|\n/);
+    text = at < 0 ? "" : text.slice(at + (text.startsWith("\r\n", at) ? 2 : 1));
+  }
+  return text.replace(REASONING_FIELD, "$1…$2");
+}
+
+/** A refusal of `stream_options`: a 400 or a 422 whose message names the option (or `include_usage`). */
+function refusesUsageOption(failure: AiProviderError, label: string): boolean {
+  return (failure.status === 400 || failure.status === 422) && /stream[_ -]?options|include[_ -]?usage/i.test(failure.message.replace(label, ""));
+}
+
+function withoutUsageOption(body: Record<string, unknown>): Record<string, unknown> {
+  const { stream_options: _refused, ...rest } = body;
+  return rest;
+}
+
+async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, built: ChatRequest, request: AiRequest, options: FetchAiOptions, deadlines: ResolvedDeadlines, secrets: readonly string[], trace: AttemptTrace, refusals: Set<string>): Promise<AiResponse> {
   const { candidate } = attempt;
   const { integration, model } = candidate;
   const label = `${integration.provider} ${model}`;
@@ -766,15 +895,28 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
   let wholeArguments = "";
   /** The response ended properly: a stream that closed with `[DONE]`, or a complete JSON body. */
   let ended = true;
+  /** How the stream ended, once it has: what the diagnostics say unless a failure tells better. */
+  let streamEnd: AiStreamEnd | undefined;
   let bytes = 0;
+  let chunks = 0;
   let events = 0;
+  let lastChunkAt: number | undefined;
+  /** The end of what arrived, as it came (see `TAIL_WINDOW_CHARACTERS`), and how many characters arrived in all. */
+  let tailWindow = "";
+  let tailCharacters = 0;
+  let status: number | undefined;
+  let requestId: string | undefined;
+  /** The request that is answered asks the provider for the tokens of the stream (`stream_options.include_usage`). */
+  let usageRequested = Boolean(built.body.stream_options);
   let lastProgressAt: number | undefined;
   let response: Response | undefined;
   /** Where the call is, to say what went wrong when something does. */
   let stage: "send" | "stream" | "json" | "other" = "send";
 
   const callArguments = (): string => wholeArguments || chosenArguments(calls.values(), wanted);
-  /** What the attempt used: the provider's count, else an estimate once the model has started to answer. */
+  /** The model has written something of the reply (its text, its reasoning or the call of its function): the provider is answering. */
+  const started = (): boolean => Boolean(text || reasoningCharacters || calls.size || wholeArguments);
+  /** What an attempt used: the provider's count, else an estimate once the model has started to answer. */
   const measure = (): { usage?: AiUsage; usageKnown?: boolean } => {
     if (usage && usage.inputTokens + usage.outputTokens > 0) return { usage, usageKnown: true };
     const args = callArguments();
@@ -784,8 +926,30 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       usageKnown: false,
     };
   };
-  const details = (extra: AiProviderErrorDetails = {}): AiProviderErrorDetails => {
+  /** What the transport saw: the numbers of the response, the end of what arrived and how it ended (`end`, else how the stream ended). Nothing of it is a key. */
+  const transport = (end: AiStreamEnd | undefined = streamEnd, withTail = true): AiTransportDiagnostics => {
+    const tail = withTail ? redact(streamTail(tailWindow, tailCharacters <= TAIL_WINDOW_CHARACTERS)).slice(-TRANSPORT_TAIL_CHARACTERS) : "";
+    const shown = redact(finishReason).replace(/\s+/g, " ").trim().slice(0, 60);
+    return {
+      ...(status !== undefined ? { status } : {}),
+      streamed: trace.streamed,
+      bytes,
+      chunks,
+      events,
+      ...(lastChunkAt !== undefined ? { lastChunkAfterMs: Math.max(0, lastChunkAt - trace.startedAt), lastChunkAt: new Date(lastChunkAt).toISOString(), silentMs: Math.max(0, Date.now() - lastChunkAt) } : {}),
+      ...(tail ? { tail } : {}),
+      ...(shown ? { finishReason: shown } : {}),
+      usageReceived: Boolean(usage && usage.inputTokens + usage.outputTokens > 0),
+      usageRequested,
+      ...(end ? { end } : {}),
+      ...(requestId ? { requestId } : {}),
+    };
+  };
+  const details = (extra: AiProviderErrorDetails = {}, end?: AiStreamEnd): AiProviderErrorDetails => {
     const measured = measure();
+    // The reply that had arrived: its text without a reasoning block, else the arguments of its function.
+    const written = splitReasoningBlock(text).reply;
+    const partial = written.trim() ? written : callArguments();
     return {
       usage: measured.usage,
       cost: estimateCost(measured.usage, candidate.pricing),
@@ -794,6 +958,8 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       model,
       provider: integration.provider,
       integrationId: integration.id,
+      ...(status !== undefined || bytes > 0 ? { transport: transport(end) } : {}),
+      ...(partial ? { partialText: redact(partial.slice(0, MAX_PARTIAL_CHARACTERS)) } : {}),
       ...extra,
     };
   };
@@ -809,7 +975,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     undefined,
     true,
     {
-      ...(answering ? details() : {}),
+      ...(answering ? details({}, "timeout") : {}),
       transient: true,
       timedOut: true,
       timeout: { phase: expired.phase, ms: expired.ms, ...(expired.phase === "start" && deadlines.raisedFrom !== undefined ? { raisedFrom: deadlines.raisedFrom } : {}) },
@@ -840,16 +1006,25 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       if (typeof fn.arguments === "string") call.arguments += fn.arguments;
     }
   };
-  const take = (data: string): void => {
-    let chunk: StreamedChunk;
+  const take = (data: string, event = ""): void => {
+    let parsed: unknown;
     try {
-      chunk = JSON.parse(data);
+      parsed = JSON.parse(data);
     } catch {
-      return;
+      parsed = undefined;
+    }
+    let chunk: StreamedChunk;
+    if (event === "error") {
+      // An `event: error`: whatever its data is (an error object, a message, nothing), the provider is reporting a failure.
+      const inner = parsed && typeof parsed === "object" && "error" in parsed ? (parsed as { error?: unknown }).error : parsed;
+      chunk = { error: inner || data.trim() || "the provider sent an error event without details" };
+    } else {
+      if (parsed === undefined) return;
+      chunk = parsed as StreamedChunk;
     }
     if (!chunk || typeof chunk !== "object") return;
     if (chunk.error) {
-      const failure = streamError(chunk.error, label, details(), redact);
+      const failure = streamError(chunk.error, label, details({}, "error"), redact, started());
       if (failure) throw failure;
     }
     const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
@@ -860,7 +1035,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     if (delta?.content) {
       text += delta.content;
       // The text of a structured reply is no prose for the listener: its progress is `onProgress`.
-      if (!structured) request.onText?.(text);
+      if (!structured) notify(request.onText, text);
     }
     addCalls(delta?.tool_calls);
     // Some providers end the stream with the whole message instead of (or after) the pieces.
@@ -872,38 +1047,69 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     }
     const reason = choices.find((choice) => typeof choice?.finish_reason === "string" && choice.finish_reason)?.finish_reason;
     if (reason) finishReason = reason;
-    if (chunk.usage) usage = normalizeUsage(chunk.usage);
+    // The usage comes in whichever chunk the provider puts it (the last one with no choice, the one that finishes the reply, or every one); a count of zero does not replace one that was read.
+    if (chunk.usage) {
+      const next = normalizeUsage(chunk.usage);
+      if (next && (next.inputTokens + next.outputTokens > 0 || !usage)) usage = next;
+    }
   };
-  const countBytes = (count: number, what: "stream" | "reply"): void => {
+  const chunkArrived = (count: number, decoded: string, what: "stream" | "reply"): void => {
     bytes += count;
+    chunks += 1;
+    lastChunkAt = Date.now();
+    tailCharacters += decoded.length;
+    tailWindow = decoded.length >= TAIL_WINDOW_CHARACTERS ? decoded.slice(-TAIL_WINDOW_CHARACTERS) : (tailWindow + decoded).slice(-TAIL_WINDOW_CHARACTERS);
     trace.firstByteMs ??= elapsed();
     if (bytes > MAX_STREAM_TRANSPORT_BYTES) throw runaway(`the ${what} passed the safety limit of ${MAX_STREAM_TRANSPORT_BYTES / 1_000_000} MB (a model that loops while reasoning looks like this)`);
   };
   const hooks: StreamHooks = {
-    onData: (data) => {
+    onData: (data, event) => {
       events += 1;
-      take(data);
+      take(data, event);
     },
-    onBytes: (count) => countBytes(count, "stream"),
+    onChunk: (count, decoded) => chunkArrived(count, decoded, "stream"),
     onPiece: reportProgress,
   };
 
-  try {
+  // What is sent: an address that refused `stream_options` before is not asked it again.
+  let body = built.body;
+  if (usageRequested && refusals.has(built.url)) {
+    body = withoutUsageOption(body);
+    usageRequested = false;
+  }
+  const send = (): Promise<Response> => {
     const sent = Promise.resolve(fetchImpl(built.url, {
       method: "POST",
       headers: built.headers,
-      body: JSON.stringify(built.body),
+      body: JSON.stringify(body),
       signal: clock.signal,
     }));
     // A reply that comes after the call was given up is dropped, and its body let go.
     sent.then((late) => {
       if (clock.interrupted()) discardBody(late);
     }, () => undefined);
-    response = await clock.guard(sent);
-    stage = "other";
-    if (!response.ok) {
+    return clock.guard(sent);
+  };
+
+  try {
+    for (;;) {
+      stage = "send";
+      response = await send();
+      stage = "other";
+      status = response.status;
+      requestId = requestIdOf(response.headers);
+      if (response.ok) break;
       trace.firstByteMs ??= elapsed();
       const failure = await clock.guard(providerError(response, integration.provider, model, redact, built.thinking ? { integration: integration.name, parameter: built.reasoningParameter ?? "reasoning_effort" } : undefined));
+      failure.transport = transport();
+      // A provider that refuses `stream_options` is asked again, at once, without it, and is not asked it again: its replies carry no token count, which is then an estimate.
+      if (usageRequested && refusesUsageOption(failure, label)) {
+        if (refusals.size >= MAX_REMEMBERED_REFUSALS) refusals.delete(refusals.values().next().value as string);
+        refusals.add(built.url);
+        usageRequested = false;
+        body = withoutUsageOption(body);
+        continue;
+      }
       // A provider that cannot stream says so with a 400: tell where to switch streaming off.
       if (built.stream && (failure.status === 400 || failure.status === 422) && /stream/i.test(failure.message.replace(label, ""))) {
         failure.message = redact(`${failure.message}${/[.!?]$/.test(failure.message) ? "" : "."} If this provider cannot stream its replies, set "Streaming" of the integration "${integration.name}" to "off".`);
@@ -918,16 +1124,17 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     if (streamed) {
       stage = "stream";
       ended = await readEventStream(response, clock, hooks);
+      streamEnd = ended ? "done" : "closed";
     } else {
       stage = "json";
       trace.firstByteMs ??= elapsed();
-      const payload = await readJsonBody(response, clock, (count) => countBytes(count, "reply")) as {
+      const payload = await readJsonBody(response, clock, (count, decoded) => chunkArrived(count, decoded, "reply")) as {
         choices?: Array<{ message?: { content?: string | null; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: Array<{ function?: { arguments?: string } }> }; finish_reason?: string | null }>;
         usage?: unknown;
         error?: unknown;
       } | null;
       if (payload?.error) {
-        const failure = streamError(payload.error, label, details(), redact);
+        const failure = streamError(payload.error, label, details(), redact, false);
         if (failure) throw failure;
       }
       const choice = payload?.choices?.[0];
@@ -938,7 +1145,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       reasoningCharacters = reasoningLength(choice?.message);
       usage = normalizeUsage(payload?.usage);
       // A plain reply that came whole still reaches the listener of the text, once.
-      if (!structured && text) request.onText?.(text);
+      if (!structured && text) notify(request.onText, text);
     }
     stage = "other";
 
@@ -950,9 +1157,12 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     trace.finishReason = shown;
     trace.replyCharacters = read.reply.trim().length + (isEmptyToolArguments(readArguments) ? 0 : readArguments.trim().length);
     trace.reasoningCharacters = reasoningCharacters + read.reasoningCharacters;
-    if (outcome === "incomplete") throw new AiProviderError(`${label}: the stream ended before the reply was complete.`, undefined, true, details({ transient: true }));
-    if (outcome === "unexpected") throw new AiProviderError(`${label}: unexpected finish reason "${shown}" and the stream did not end with [DONE]: the reply may be incomplete.`, undefined, true, details());
-    if (outcome === "failed") throw new AiProviderError(`${label}: the provider ended the reply with the finish reason "${shown}".`, undefined, true, details());
+    // The record of an attempt that worked carries numbers only: the end of the stream is for the one that failed.
+    trace.transport = transport(undefined, false);
+    // A reply that stops halfway (the stream closed too early, or the provider ended it with an error or an abort) is a failure of the moment, and what had arrived goes with it.
+    if (outcome === "incomplete") throw new AiStreamInterruptedError(`${label}: the stream ended before the reply was complete.`, "ended", undefined, details());
+    if (outcome === "unexpected") throw new AiStreamInterruptedError(`${label}: unexpected finish reason "${shown}" and the stream did not end with [DONE]: the reply may be incomplete.`, "ended", undefined, details());
+    if (outcome === "failed") throw new AiStreamInterruptedError(`${label}: the provider ended the reply with the finish reason "${shown}".`, /abort|cancel/i.test(shown) ? "provider-abort" : "provider-error", undefined, details({}, "error"));
     if (outcome === "filtered") throw new AiProviderError(`${label}: the provider filtered the reply content (${shown}).`, undefined, false, details());
     // Some local servers leave the reasoning in the content as a leading <think> block: it is not the reply.
     const inline = splitReasoningBlock(text);
@@ -1015,14 +1225,14 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     if (error instanceof AiProviderError) throw error;
     if (stage === "send") throw new AiProviderError(redact(`${label}: ${error instanceof Error ? error.message : String(error)}`), undefined, true, { transient: true });
     if (stage === "stream" && error instanceof StreamReadError) {
-      throw new AiProviderError(
+      throw new AiStreamInterruptedError(
         redact(`${label}: the connection with the provider was lost while it was answering, so the reply could not be read. Nothing was applied. If this happens every time, check the proxy or the tunnel between this app and the provider.`),
+        "lost",
         undefined,
-        true,
-        details({ transient: true }),
+        details({}, "reset"),
       );
     }
-    if (stage === "stream" || stage === "json") throw new AiProviderError(redact(`${label}: the reply could not be read.`), undefined, true, details({ transient: true }));
+    if (stage === "stream" || stage === "json") throw new AiProviderError(redact(`${label}: the reply could not be read.`), undefined, true, details({ transient: true }, stage === "stream" ? "reset" : undefined));
     throw error;
   } finally {
     clock.dispose();

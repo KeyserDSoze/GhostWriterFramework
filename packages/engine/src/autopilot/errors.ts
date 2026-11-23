@@ -1,12 +1,12 @@
 import { redactSecrets } from "../ai/redact.js";
 import { endpointOrigin } from "../ai/request.js";
-import { AiFallbackBlockedError, AiProviderError, AiPromptTooLargeError, AiReplyRejectedError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, type AiTimeoutPhase } from "../ai/types.js";
+import { AiFallbackBlockedError, AiProviderError, AiPromptTooLargeError, AiReplyRejectedError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, TRANSPORT_TAIL_CHARACTERS, type AiStreamEnd, type AiTimeoutPhase } from "../ai/types.js";
 import { isBookConflictError } from "../book/store.js";
 import { FrontmatterError } from "../markdown/frontmatter.js";
 import { GITHUB_CONFLICT_CODE } from "../server/protocol.js";
 import { StructuredReplyError } from "../util/json.js";
 import { clipText } from "../util/text.js";
-import { AUTOPILOT_ERROR_KINDS, type AutopilotErrorDetail, type AutopilotErrorKind } from "./types.js";
+import { AUTOPILOT_ERROR_KINDS, type AutopilotErrorDetail, type AutopilotErrorKind, type AutopilotTransportDetail } from "./types.js";
 
 /** Characters of one text of an error's detail (a model, a provider, an integration): they are names, not messages. */
 const MAX_DETAIL_CHARACTERS = 160;
@@ -106,6 +106,63 @@ function conflictFiles(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= MAX_CONFLICT_FILES ? value : undefined;
 }
 
+const STREAM_ENDS: readonly AiStreamEnd[] = ["done", "closed", "reset", "error", "timeout"];
+/** The most a count of bytes, chunks, events or characters can be in a detail read from a file: far above what a call may carry (`MAX_STREAM_TRANSPORT_BYTES`), so that a number from a file is never bigger. */
+const MAX_TRANSPORT_COUNT = 10_000_000_000;
+/** The longest request id a detail keeps: letters, digits and a few signs. */
+const REQUEST_ID = /^[A-Za-z0-9._:-]{1,100}$/;
+
+function transportCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= MAX_TRANSPORT_COUNT ? Math.round(value) : undefined;
+}
+
+/**
+ * The end of a stream as a detail keeps it: the last `TRANSPORT_TAIL_CHARACTERS` characters of a longer text, with credentials replaced. It is cut to a window longer than what is kept before
+ * the credentials are replaced and to what is kept after, so that a credential that the cut would divide is replaced whole and no fragment of one is left.
+ */
+function tailText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = redactSecrets(value.slice(-TRANSPORT_TAIL_CHARACTERS * 3)).slice(-TRANSPORT_TAIL_CHARACTERS);
+  return text.trim() ? text : undefined;
+}
+
+/**
+ * What the transport saw, from what an error of the engine's client carries (`transport`, `partialText`) or from a detail read from a file (`transport`, with `partialCharacters`): only the known fields
+ * that are valid, no credential in any of them. `undefined` when nothing is left.
+ */
+function transportDetailOf(transport: unknown, partialText: unknown, partialCount?: unknown): AutopilotTransportDetail | undefined {
+  const source = record(transport);
+  const status = httpStatus(source.status);
+  const bytes = transportCount(source.bytes);
+  const chunks = transportCount(source.chunks);
+  const events = transportCount(source.events);
+  const lastChunkAfterMs = transportCount(source.lastChunkAfterMs);
+  const silentMs = transportCount(source.silentMs);
+  const end = STREAM_ENDS.find((entry) => entry === source.end);
+  const finishReason = shortText(source.finishReason)?.slice(0, 60);
+  const tail = tailText(source.tail);
+  const requestId = typeof source.requestId === "string" && REQUEST_ID.test(source.requestId) ? source.requestId : undefined;
+  const partialCharacters = typeof partialText === "string" ? partialText.length : transportCount(partialCount);
+  const detail: AutopilotTransportDetail = {
+    ...(status !== undefined ? { status } : {}),
+    ...(bytes !== undefined ? { bytes } : {}),
+    ...(chunks !== undefined ? { chunks } : {}),
+    ...(events !== undefined ? { events } : {}),
+    ...(lastChunkAfterMs !== undefined ? { lastChunkAfterMs } : {}),
+    ...(silentMs !== undefined ? { silentMs } : {}),
+    ...(end ? { end } : {}),
+    ...(finishReason ? { finishReason } : {}),
+    ...(typeof source.usageReceived === "boolean" ? { usageReceived: source.usageReceived } : {}),
+    ...(typeof source.usageRequested === "boolean" ? { usageRequested: source.usageRequested } : {}),
+    ...(tail ? { tail } : {}),
+    ...(requestId ? { requestId } : {}),
+    ...(partialCharacters ? { partialCharacters } : {}),
+  };
+  // A response that carried nothing (a refusal: its status is the detail's own) says nothing more; a request id, or anything that arrived, does.
+  const says = (detail.bytes ?? 0) > 0 || detail.end || detail.finishReason || detail.tail || detail.requestId || detail.partialCharacters;
+  return says ? detail : undefined;
+}
+
 function detailOf(error: unknown): AutopilotErrorDetail {
   const source = record(error);
   const target = record(source.target);
@@ -123,6 +180,8 @@ function detailOf(error: unknown): AutopilotErrorDetail {
   const phase = timeoutPhase(timeout.phase);
   // A conflict with GitHub says how many files the author has to decide about.
   const githubConflicts = source.code === GITHUB_CONFLICT_CODE ? conflictFiles(source.total) : undefined;
+  // What the transport saw of a call that failed after the provider answered, and how much of the reply had arrived.
+  const transport = transportDetailOf(source.transport, source.partialText);
   return {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
@@ -133,6 +192,7 @@ function detailOf(error: unknown): AutopilotErrorDetail {
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(phase ? { timeoutPhase: phase } : {}),
     ...(githubConflicts !== undefined ? { githubConflicts } : {}),
+    ...(transport ? { transport } : {}),
   };
 }
 
@@ -199,6 +259,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
   const timeoutMs = timeoutMilliseconds(source.timeoutMs);
   const phase = timeoutPhase(source.timeoutPhase);
   const githubConflicts = conflictFiles(source.githubConflicts);
+  const transport = transportDetailOf(source.transport, undefined, record(source.transport).partialCharacters);
   const detail: AutopilotErrorDetail = {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
@@ -211,6 +272,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(phase ? { timeoutPhase: phase } : {}),
     ...(githubConflicts !== undefined ? { githubConflicts } : {}),
+    ...(transport ? { transport } : {}),
   };
   return Object.keys(detail).length ? detail : undefined;
 }

@@ -399,18 +399,25 @@ test("the story so far and the lists of the chapters grow with the book until th
 
 test("five thousand chapters are estimated at once: an arithmetic of a few steps, not a walk through the book", () => {
   const thousands = { brief: { targetChapters: 5000, scenesPerChapter: 3, wordsPerScene: 1400 }, options: { readers: true, maxReaders: 5, readersOnPlan: true, specialists: true } };
-  estimate(thousands);
-  const start = performance.now();
+  // The fastest of several runs: a pause of the collector or a busy machine makes one run slow, and says nothing about the arithmetic.
+  const fastest = (run) => {
+    let best = Number.POSITIVE_INFINITY;
+    for (let attempt = 0; attempt < 7; attempt += 1) {
+      const start = performance.now();
+      run();
+      best = Math.min(best, performance.now() - start);
+    }
+    return best;
+  };
   const result = estimate(thousands);
-  const elapsed = performance.now() - start;
+  const elapsed = fastest(() => estimate(thousands));
   assert.ok(elapsed < 50, `${elapsed.toFixed(2)} ms`);
   assert.equal(result.chapters, 5000);
   assert.deepEqual(rangeOf(result.steps.plan.calls), [250, 750]);
   assert.deepEqual(rangeOf(result.steps.write.calls), [15_000, 15_000]);
   assert.deepEqual(rangeOf(result.calls), [5000 * 16 + 1 + 250 + 5 + 1 + 1, 5000 * 30 + 1 + 750 + 5 + 3 + 1]);
-  const huge = performance.now();
-  estimate({ ...thousands, brief: { ...thousands.brief, targetChapters: 100_000 } });
-  assert.ok(performance.now() - huge < 50, "a hundred thousand chapters too");
+  const huge = fastest(() => estimate({ ...thousands, brief: { ...thousands.brief, targetChapters: 100_000 } }));
+  assert.ok(huge < 50, `a hundred thousand chapters too: ${huge.toFixed(2)} ms`);
   const slow = performance.now();
   for (let count = 0; count < 200; count += 1) estimate(NOVELLA);
   assert.ok(performance.now() - slow < 3000, "and a preview that is asked on every key the author types: two hundred of them in a few seconds, at the slowest");

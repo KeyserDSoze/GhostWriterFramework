@@ -146,12 +146,13 @@ export function startClock(parent: AbortSignal | undefined, deadlines: AttemptDe
   let expired: ExpiredDeadline | undefined;
   let over = false;
   let watching = false;
-  let reject: (reason: unknown) => void = () => undefined;
-  const interruption = new Promise<never>((_resolve, rejectIt) => {
-    reject = rejectIt;
-  });
-  // Nobody may be racing it when it rejects: that is not an unhandled rejection.
-  interruption.catch(() => undefined);
+  /** Why the attempt was interrupted, once it was: what the waits that are open, and the ones that begin later, are rejected with. */
+  let interruption: { reason: unknown } | undefined;
+  /**
+   * The waits that are open (`guard`): each one is its own promise, and leaves this set when its own promise settles, so that a stream of a hundred thousand reads leaves nothing
+   * behind (racing every read against one promise that lives as long as the call would keep a reaction on it for each read until the call is over).
+   */
+  const waits = new Set<(reason: unknown) => void>();
   let capTimer: Timer | undefined;
   let startTimer: Timer | undefined;
   let idleTimer: Timer | undefined;
@@ -159,7 +160,9 @@ export function startClock(parent: AbortSignal | undefined, deadlines: AttemptDe
   const interrupt = (reason: unknown): void => {
     if (over || controller.signal.aborted) return;
     controller.abort(reason);
-    reject(reason);
+    interruption = { reason };
+    for (const rejectWait of [...waits]) rejectWait(reason);
+    waits.clear();
   };
   const expire = (phase: AiTimeoutPhase, ms: number) => (): void => {
     if (over || controller.signal.aborted) return;
@@ -182,7 +185,23 @@ export function startClock(parent: AbortSignal | undefined, deadlines: AttemptDe
 
   return {
     signal: controller.signal,
-    guard: <T>(promise: Promise<T>): Promise<T> => Promise.race([interruption, promise]),
+    guard: <T>(promise: Promise<T>): Promise<T> => new Promise<T>((resolve, rejectWait) => {
+      if (interruption) {
+        rejectWait(interruption.reason);
+        return;
+      }
+      waits.add(rejectWait);
+      promise.then(
+        (value) => {
+          waits.delete(rejectWait);
+          resolve(value);
+        },
+        (error: unknown) => {
+          waits.delete(rejectWait);
+          rejectWait(error);
+        },
+      );
+    }),
     streaming(): void {
       if (over || controller.signal.aborted) return;
       if (startTimer !== undefined) clearTimeout(startTimer);

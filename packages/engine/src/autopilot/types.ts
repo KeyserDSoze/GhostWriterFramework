@@ -1,4 +1,4 @@
-import type { AiTimeoutPhase, AiUsage } from "../ai/types.js";
+import type { AiStreamEnd, AiTimeoutPhase, AiUsage } from "../ai/types.js";
 import type { ChapterFreezeAuthor, FrozenChapterChanges } from "../book/freeze.js";
 
 /** Lifecycle of the autopilot of one book. */
@@ -525,6 +525,34 @@ export type AutopilotErrorKind = "network" | "auth" | "rate_limit" | "timeout" |
 
 export const AUTOPILOT_ERROR_KINDS: readonly AutopilotErrorKind[] = ["network", "auth", "rate_limit", "timeout", "truncated", "refused", "conflict", "budget", "limit", "profile", "config", "provider", "unknown"];
 
+/**
+ * What the transport saw of the call that failed (`AiTransportDiagnostics`, kept short), so that a stream that was cut can be told from one that was slow: the HTTP status of the response, how much
+ * arrived (bytes, chunks, events) and when the last chunk did, how the stream ended, how the provider said the reply ended, whether it reported the tokens, the last characters that arrived
+ * (at most 300, with credentials replaced) and the request id the provider or its gateway gave. Every field is optional: a failure keeps those it has.
+ */
+export interface AutopilotTransportDetail {
+  /** The HTTP status of the response (a stream that is cut still began with a 200). */
+  status?: number;
+  bytes?: number;
+  chunks?: number;
+  events?: number;
+  /** Milliseconds from the start of the attempt to the last chunk, and from the last chunk to the end of the attempt (the silence before the end). */
+  lastChunkAfterMs?: number;
+  silentMs?: number;
+  /** How the stream ended: `done` (`[DONE]`), `closed` (closed without it), `reset` (the connection broke), `error` (the provider reported a failure in it), `timeout` (a deadline ran out). */
+  end?: AiStreamEnd;
+  /** How the provider said the reply ended (`stop`, `length`, `abort`...), when it said. */
+  finishReason?: string;
+  /** The provider reported the tokens of the call, and whether the request asked for them (`stream_options.include_usage`). */
+  usageReceived?: boolean;
+  usageRequested?: boolean;
+  /** The last characters that arrived (at most 300). */
+  tail?: string;
+  requestId?: string;
+  /** Characters of the reply that had arrived when it failed: the engine keeps it on its error and never applies it. */
+  partialCharacters?: number;
+}
+
 /** Where an error happened. Short, and never a secret: `endpoint` is the origin of the provider's address, never a path or a query. */
 export interface AutopilotErrorDetail {
   /** The HTTP status the provider answered, when it answered. */
@@ -553,6 +581,8 @@ export interface AutopilotErrorDetail {
    * GitHub, so that the author has to choose a version of each (`GET …/github-conflicts` lists them). Absent for any other failure.
    */
   githubConflicts?: number;
+  /** For a call to a model that failed after the provider answered: what the transport saw of it (see `AutopilotTransportDetail`). Absent when no response arrived. */
+  transport?: AutopilotTransportDetail;
 }
 
 /**

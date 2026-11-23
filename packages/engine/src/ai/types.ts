@@ -123,10 +123,58 @@ export interface AiTimeoutDetails {
   raisedFrom?: number;
 }
 
+/**
+ * How a streamed reply ended, as far as the engine could tell: `done` (the provider closed it with `[DONE]`), `closed` (the provider closed the connection without
+ * it), `reset` (the connection broke while the stream was read), `error` (the provider reported a failure, or an abort, inside the stream) or `timeout` (a deadline ran out).
+ */
+export type AiStreamEnd = "done" | "closed" | "reset" | "error" | "timeout";
+
+/** The most characters of the end of a stream that its diagnostics keep. */
+export const TRANSPORT_TAIL_CHARACTERS = 300;
+
+/**
+ * What the transport saw of a call, to say where a reply stopped and why when it did: the numbers of the response, the end of what arrived and how the stream ended. Never a key:
+ * the tail is cleaned of credentials before it is kept, and the request id is only what a gateway puts in a header to find the call in its logs.
+ */
+export interface AiTransportDiagnostics {
+  /** The HTTP status of the response. Absent when none arrived (the connection failed first). */
+  status?: number;
+  /** The reply was read as a stream of events (and not as one JSON body). */
+  streamed: boolean;
+  /** Bytes of the body that arrived (comments that only keep the connection open included), the reads that brought them, and the events they held. */
+  bytes: number;
+  chunks: number;
+  events: number;
+  /** When the last chunk of the body arrived: the milliseconds from the start of the attempt, and the time. Absent when no chunk did. */
+  lastChunkAfterMs?: number;
+  lastChunkAt?: string;
+  /** The milliseconds between the last chunk and the end of the attempt: the silence that came before the end. Absent when no chunk arrived. */
+  silentMs?: number;
+  /** The last `TRANSPORT_TAIL_CHARACTERS` characters that arrived, as they came (the end of the last event, usually), with credentials replaced. */
+  tail?: string;
+  /** How the provider said the reply ended (`stop`, `length`...), when it said. */
+  finishReason?: string;
+  /** The provider reported the tokens of the call (a usage object came in the stream or the body). */
+  usageReceived: boolean;
+  /** `stream_options.include_usage` was in the request that this response answers. `false` for a provider that refused it, and for a reply that is not a stream. */
+  usageRequested: boolean;
+  /** How the stream ended. Absent for a reply that was not a stream. */
+  end?: AiStreamEnd;
+  /** What the provider or its gateway calls this request (`X-LlmProxy-Request-Id`, `X-Request-Id`), to find it in their logs. */
+  requestId?: string;
+}
+
 /** What a failed attempt already cost: the provider may bill a reply the engine rejects. */
 export interface AiProviderErrorDetails {
   /** Where the request went. Set by the engine's client on the errors of the candidates it tried. */
   target?: AiErrorTarget;
+  /** What the transport saw of the failed call (see `AiTransportDiagnostics`). */
+  transport?: AiTransportDiagnostics;
+  /**
+   * The reply that had arrived when the call failed: its text, or the arguments of its function call. The engine never applies it, and does not lose it: it is here for a host
+   * that wants to show or keep it. At most `MAX_PARTIAL_CHARACTERS` characters. Absent when nothing of the reply had arrived.
+   */
+  partialText?: string;
   usage?: AiUsage;
   /** `false` when the provider reported no tokens and `usage` is an estimate. */
   usageKnown?: boolean;
@@ -152,8 +200,13 @@ export interface AiProviderErrorDetails {
   timeout?: AiTimeoutDetails;
 }
 
+/** The most characters of a reply that stopped halfway that an error keeps (`AiProviderErrorDetails.partialText`). */
+export const MAX_PARTIAL_CHARACTERS = 200_000;
+
 export class AiProviderError extends Error {
   target?: AiErrorTarget;
+  transport?: AiTransportDiagnostics;
+  partialText?: string;
   usage?: AiUsage;
   usageKnown?: boolean;
   cost?: number;
@@ -174,6 +227,21 @@ export class AiProviderError extends Error {
     super(message);
     this.name = "AiProviderError";
     Object.assign(this, details);
+  }
+}
+
+/** How a reply that was being streamed stopped: the connection was lost (`lost`), the provider closed the stream too early (`ended`), reported a failure inside it (`provider-error`) or ended it with an abort (`provider-abort`). */
+export type AiStreamInterruption = "lost" | "ended" | "provider-error" | "provider-abort";
+
+/**
+ * A reply that was being streamed stopped before it was complete: the connection was lost, the provider closed the stream early, reported a failure inside it or ended it with an abort.
+ * The provider had accepted the request and was answering, so a stream that stops is a failure of the moment: it is always retryable and `transient`, and the run repeats the
+ * step as it repeats any transient failure. What had arrived is not thrown away: `partialText` and `transport` say where it stopped. The engine never applies a reply that stopped halfway.
+ */
+export class AiStreamInterruptedError extends AiProviderError {
+  constructor(message: string, readonly how: AiStreamInterruption, status?: number, details: AiProviderErrorDetails = {}) {
+    super(message, status, true, { ...details, transient: true });
+    this.name = "AiStreamInterruptedError";
   }
 }
 
