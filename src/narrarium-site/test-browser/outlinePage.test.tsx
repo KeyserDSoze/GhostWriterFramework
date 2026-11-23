@@ -145,7 +145,7 @@ describe("an outline of mixed entries", () => {
     expect(within(entryOf(3)).getByText(t("outline.status.author"))).toBeInTheDocument();
     expect(within(entryOf(1)).getByText(t("outline.status.approved"))).toBeInTheDocument();
     expect(within(entryOf(1)).getByRole("link", { name: t("outline.status.written") })).toHaveAttribute("href", "/app/books/book-1/chapters/001-planned-1");
-    expect(screen.getByLabelText(t("outline.book.description"))).toHaveValue("A harbor built on glass.");
+    expect(screen.getByLabelText(t("outline.book.idea"))).toHaveValue("A harbor built on glass.");
   });
 
   it("gives every field a name that says its chapter", async () => {

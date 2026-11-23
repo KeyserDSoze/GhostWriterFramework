@@ -5,7 +5,6 @@ import { ChevronLeft, ChevronRight, CircleHelp, FileInput, ListTree, Loader2, Pl
 import { changeOfWritten, chapterFilePath, groupOutlineChanges, type AutopilotState, type OutlineChangeGroup, type OutlineEdit } from "narrarium-engine";
 import "@/i18n/outline";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,11 +12,14 @@ import { Label } from "@/components/ui/label";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { FileChangedNotice } from "@/components/book/FileChangedNotice";
 import { OutlineEntryCard, type OutlineEntryHandlers } from "@/components/outline/OutlineEntryCard";
+import { OutlineBookSection } from "@/components/outline/OutlineBookSection";
+import { useOutlineBriefEditor } from "@/components/outline/useOutlineBriefEditor";
 import { ConvertSynopsisDialog, DeleteEntryDialog } from "@/components/outline/OutlineDialogs";
 import { draftChanged, useOutlineEditor } from "@/components/outline/useOutlineEditor";
 import { OutlineBodyAssist, OutlineAssistDialog, useOutlineAssist, useOutlineDescriptionAssist } from "@/components/outline/OutlineAssist";
 import { useAutopilotStore } from "@/autopilot/store";
 import { autopilotSettingsHref } from "@/autopilot/pageRoute";
+import { OUTLINE_BRIEF_FILE } from "@/autopilot/outlineBrief";
 import { formatCount } from "@/autopilot/format";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
@@ -60,6 +62,18 @@ export function OutlinePage() {
     .join(" "), [t]);
   const editor = useOutlineEditor({ source, ghostwriters: ghostwriterSlugs, describe, afterSave });
   const { entries, byNumber, drafts, busy } = editor;
+  // The brief of the book is a file of the outline: it is read with the outline and saved with its commits, and what it says is the author's.
+  const briefEditor = useOutlineBriefEditor({ file: editor.snapshot?.files.get(OUTLINE_BRIEF_FILE), source, refresh: editor.refresh });
+  // What the brief's own save refused or failed to write, said above the page until the next save (the outline's own refusals are its `failure`).
+  const [briefFailure, setBriefFailure] = useState<string | null>(null);
+  // «Save all» (and Ctrl+S): the book and its entries through the outline's commit, then the brief's fields through the brief's commit. Each part says what it did.
+  const saveAll = async (): Promise<boolean> => {
+    const outlineSaved = await editor.saveAll();
+    const result = await briefEditor.save();
+    setBriefFailure(result.status === "conflict" ? "" : result.status === "failed" ? result.message ?? "" : null);
+    if (result.status === "saved") editor.announce(t("outline.brief.result.saved"));
+    return outlineSaved && (result.status === "saved" || result.status === "unchanged");
+  };
 
   // The outline changes outside the page too: the autopilot fills it, the Copilot edits it, another tab saves it. Read again what changed when
   // the page comes back into view, when the autopilot of the book finishes a step and when the book is read again after a change.
@@ -81,7 +95,11 @@ export function OutlinePage() {
     return () => window.removeEventListener("focus", onFocus);
   }, [refresh]);
 
-  useRegisterPageSave({ dirty: editor.dirty, enabled: Boolean(editor.snapshot), onSave: () => editor.saveAll() });
+  useRegisterPageSave({
+    dirty: editor.dirty || briefEditor.dirty,
+    enabled: Boolean(editor.snapshot),
+    onSave: saveAll,
+  });
 
   autopilotRef.current = editor.autopilot;
   const written = useMemo(() => writtenChapters(structure?.chapters ?? []), [structure?.chapters]);
@@ -220,7 +238,7 @@ export function OutlinePage() {
     }
   };
 
-  const synopsis = editor.autopilot?.brief.synopsis?.trim() ?? "";
+  const synopsis = (briefEditor.brief.synopsis || editor.autopilot?.brief.synopsis || "").trim();
   const confirmConvert = async () => {
     if (!converted) return;
     const edits: OutlineEdit[] = [];
@@ -296,6 +314,7 @@ export function OutlinePage() {
 
       {editor.changedElsewhere && <FileChangedNotice message={t("outline.changedElsewhere")} reloadLabel={t("outline.reload")} onReload={() => void editor.reload()} />}
       {editor.failure && <Alert variant="destructive"><AlertDescription><span className="font-medium">{t("outline.saveFailed")}</span> {editor.failure}</AlertDescription></Alert>}
+      {briefFailure !== null && <Alert variant="destructive"><AlertDescription><span className="font-medium">{t("outline.brief.saveFailed")}</span> {briefFailure || t("outline.brief.result.conflict")}</AlertDescription></Alert>}
       {editor.loadFailed && !snapshot && (
         <Alert variant="destructive">
           <AlertDescription className="flex flex-wrap items-center gap-3"><span>{t("outline.loadFailed")}</span><Button size="sm" variant="outline" onClick={() => void editor.reload()}>{t("common.retry")}</Button></AlertDescription>
@@ -306,27 +325,18 @@ export function OutlinePage() {
         (editor.loading || structureLoading || !source) && !editor.loadFailed ? <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("outline.loading")}</p> : null
       ) : (
         <>
-          <section aria-labelledby="outline-book-title" className="space-y-3 rounded-2xl border border-layer bg-card p-4 shadow-sm sm:p-5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 id="outline-book-title" className="text-lg font-semibold">{t("outline.book.title")}</h2>
-              {editor.bookDirty && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-medium">{t("outline.book.unsaved")}</span>
-                  <Button size="sm" onClick={() => void editor.saveBook()} disabled={busy}><Save className="h-4 w-4" aria-hidden="true" />{t("outline.book.save")}</Button>
-                </div>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="outline-working-title">{t("outline.book.workingTitle")}</Label>
-              <Input id="outline-working-title" value={bookTitle} onChange={(event) => editor.editBook({ title: event.target.value })} aria-describedby="outline-working-title-hint" className="h-9" />
-              <p id="outline-working-title-hint" className="text-xs text-muted-foreground">{t("outline.book.workingTitleHint")}</p>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="outline-description">{t("outline.book.description")}</Label>
-              <AutoTextarea ref={descriptionRef} id="outline-description" value={bookBody} onChange={(event) => editor.editBook({ body: event.target.value })} minRows={3} maxHeight={640} placeholder={t("outline.book.descriptionPlaceholder")} className="text-sm leading-6" />
-            </div>
-            <p className="text-xs text-muted-foreground">{t("outline.savingHint")}</p>
-          </section>
+          <OutlineBookSection
+            workingTitle={bookTitle}
+            idea={bookBody}
+            brief={briefEditor.brief}
+            dirty={editor.bookDirty || briefEditor.dirty}
+            busy={busy}
+            ideaRef={descriptionRef}
+            onTitle={(title) => editor.editBook({ title })}
+            onIdea={(body) => editor.editBook({ body })}
+            onBrief={briefEditor.edit}
+            onSave={() => void saveAll()}
+          />
 
           {entries.length === 0 ? (
             <section aria-labelledby="outline-empty-title" className="space-y-3 rounded-2xl border border-dashed border-layer p-5 sm:p-6">

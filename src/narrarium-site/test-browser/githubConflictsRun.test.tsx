@@ -60,7 +60,7 @@ const scene = (text: string) => `---\ntype: paragraph\nid: paragraph:${SLUG}:001
 /** A book of one chapter that the autopilot wrote and approved, and nothing else to write: a run that gets past its first step has finished it. */
 function bookFiles(): Record<string, string> {
   const state: AutopilotState = {
-    ...createAutopilotState(new Date("2026-11-21T10:00:00.000Z"), { idea: "A harbor town built on glass hides a lie.", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }),
+    ...createAutopilotState(new Date("2026-11-21T10:00:00.000Z"), { idea: "A harbor town built on glass hides a lie.", wordsPerScene: 300 }),
     status: "paused",
     phase: "write",
     plan: { chapters: [{ number: 1, title: "The key", slug: SLUG, summary: "Mira finds the key under the pier.", goal: "Find the key.", pov: [], keyEvents: ["Mira finds the key"], reveals: [], status: "done", scenes: [] }], approved: true, rounds: 1 },

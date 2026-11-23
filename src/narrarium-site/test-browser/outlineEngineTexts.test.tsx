@@ -12,6 +12,7 @@ import { ProfileProblemsNotice } from "@/components/autopilot/StopNotices";
 import { TimelineGroupView } from "@/components/autopilot/timeline/Group";
 import { PlanCard } from "@/pages/AutopilotPage";
 import { SetupCard } from "@/components/autopilot/config/SetupCard";
+import { EMPTY_OUTLINE_BRIEF } from "@/autopilot/outlineBrief";
 import { useBooksStore } from "@/store/booksStore";
 import type { TimelineGroup } from "@/autopilot/timelineModel";
 import type { BookEntry } from "@/types/settings";
@@ -20,6 +21,8 @@ import { chapter, planOf } from "./helpers/autopilotFixtures";
 type Language = "en" | "it";
 const BOOK: BookEntry = { id: "book-1", owner: "local", repo: "book-1", name: "The Glass Harbor", tokenIndex: null, storageMode: "local-only", addedAt: "2026-11-21T00:00:00.000Z" };
 const fixed = (language: Language) => i18n.getFixedT(language);
+/** The props the form takes from the page: the Scaletta, the tab shown and the reset. */
+const FORM = { outline: { brief: EMPTY_OUTLINE_BRIEF, chapters: 2, lastChapter: 2, readable: true, loaded: true, reload: vi.fn() }, tab: "review", onTab: vi.fn(), onReset: vi.fn(), profiles: null };
 
 const insight = (body: Partial<Extract<AutopilotEvent, { type: "insight" }>>): AutopilotEvent => ({ type: "insight", tone: "info", title: "The engine's own words", bookId: BOOK.id, at: "2026-11-21T10:00:00.000Z", seq: 1, ...body }) as AutopilotEvent;
 
@@ -84,9 +87,9 @@ describe("a stop for an evaluation style that cannot be read", () => {
   });
 
   it("is what the engine really says when the file is broken", async () => {
-    const store = new MemoryBookStore({ ...seedBookFiles(), "evaluation-guidelines.md": "---\ncriteria:\n  voice: [unclosed\n---\n\nBe strict.\n" });
+    const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 1 }), "evaluation-guidelines.md": "---\ncriteria:\n  voice: [unclosed\n---\n\nBe strict.\n" });
     const session = new AutopilotSession({ bookId: "book-1", store, ai: createFakeAutopilotAi(), host: "browser", hostLabel: "test", retryDelayMs: 0 });
-    await session.start({ brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });
+    await session.start({ brief: { idea: "x", wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });
     await session.waitForIdle();
     const summary = summarizeAutopilotState((await session.snapshot()).state!);
     expect(summary.status).toBe("waiting-author");
@@ -152,7 +155,7 @@ describe("the settings of the autopilot", () => {
   });
 
   it("fill the outline with the plan unless the author turns it off", async () => {
-    render(<MemoryRouter><SetupCard book={BOOK} state={null} existingChapters={0} running={false} busy={false} disabled={false} run={run as never} /></MemoryRouter>);
+    render(<MemoryRouter><SetupCard book={BOOK} state={null} running={false} busy={false} disabled={false} run={run as never} {...FORM} /></MemoryRouter>);
     const toggle = screen.getByRole("switch", { name: fixed("en")("autopilot.setup.fillOutline") });
     expect(toggle).toHaveAttribute("aria-checked", "true");
     fireEvent.click(toggle);
@@ -164,16 +167,13 @@ describe("the settings of the autopilot", () => {
   it("read an older state without the option as on", () => {
     const older = state();
     delete (older.options as Partial<typeof DEFAULT_OPTIONS>).fillOutline;
-    render(<MemoryRouter><SetupCard book={BOOK} state={older} existingChapters={0} running={false} busy={false} disabled={false} run={run as never} /></MemoryRouter>);
+    render(<MemoryRouter><SetupCard book={BOOK} state={older} running={false} busy={false} disabled={false} run={run as never} {...FORM} /></MemoryRouter>);
     expect(screen.getByRole("switch", { name: fixed("en")("autopilot.setup.fillOutline") })).toHaveAttribute("aria-checked", "true");
   });
 
-  it.each<Language>(["en", "it"])("point from the chapter-by-chapter synopsis to the outline (%s)", async (language) => {
+  it.each<Language>(["en", "it"])("say where the brief is written: the overview links to the Scaletta, which holds the synopsis (%s)", async (language) => {
     await act(async () => { await i18n.changeLanguage(language); });
-    render(<MemoryRouter><SetupCard book={BOOK} state={null} existingChapters={0} running={false} busy={false} disabled={false} run={run as never} /></MemoryRouter>);
-    const synopsis = screen.getByLabelText(fixed(language)("autopilot.setup.synopsis"));
-    const note = document.getElementById(synopsis.getAttribute("aria-describedby") ?? "");
-    expect(note).toHaveTextContent(fixed(language)("autopilot.setup.synopsisOutline"));
-    expect(screen.getByRole("link", { name: fixed(language)("autopilot.setup.useOutline") })).toHaveAttribute("href", "/app/books/book-1/outline");
+    render(<MemoryRouter><SetupCard book={BOOK} state={null} running={false} busy={false} disabled={false} run={run as never} {...FORM} tab="overview" /></MemoryRouter>);
+    expect(screen.getByRole("link", { name: fixed(language)("autopilot.config.overview.edit") })).toHaveAttribute("href", "/app/books/book-1/outline");
   });
 });

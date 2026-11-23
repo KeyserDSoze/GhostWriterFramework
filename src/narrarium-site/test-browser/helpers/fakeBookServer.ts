@@ -6,6 +6,7 @@ import {
   NarrariumServerClient,
   SERVER_FEATURE_AUTOPILOT_CONTROLS,
   SERVER_FEATURE_AUTOPILOT_FROZEN,
+  SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF,
   SERVER_FEATURE_AUTOPILOT_RETRY,
   SERVER_FEATURE_GITHUB_CONFLICTS,
   SERVER_FEATURE_MCP,
@@ -40,11 +41,11 @@ import {
 import { MemoryBookStore, createFakeAutopilotAi } from "narrarium-engine/testing";
 
 /** A server that announces the quick controls of the autopilot (`SERVER_FEATURE_AUTOPILOT_CONTROLS`). */
-export const SERVER_INFO = { name: "narrarium-server", apiVersion: 1, serverVersion: "0.1.5", engineVersion: "0.1.5", serverId: "server-1", label: "Home server", git: true, features: [SERVER_FEATURE_AUTOPILOT_CONTROLS] } as ServerInfo;
-/** A server that predates them: it ignores `limits` and takes `after-chapter` and `cancel` for `after-step`. */
+export const SERVER_INFO = { name: "narrarium-server", apiVersion: 1, serverVersion: "0.1.5", engineVersion: "0.1.5", serverId: "server-1", label: "Home server", git: true, features: [SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF] } as ServerInfo;
+/** A server that predates them: it ignores `limits` and takes `after-chapter` and `cancel` for `after-step`. It also predates the length of the book from its Scaletta. */
 export const OLD_SERVER_INFO = { ...SERVER_INFO, serverVersion: "0.1.4", engineVersion: "0.1.4", features: [] } as ServerInfo;
 /** A server that announces «Retry later» and «Retry now» too (`SERVER_FEATURE_AUTOPILOT_RETRY`). */
-export const RETRY_SERVER_INFO = { ...SERVER_INFO, serverVersion: "0.1.10", engineVersion: "0.1.10", features: [SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RETRY] } as ServerInfo;
+export const RETRY_SERVER_INFO = { ...SERVER_INFO, serverVersion: "0.1.10", engineVersion: "0.1.10", features: [SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF] } as ServerInfo;
 export const PIN = "f".repeat(64);
 /** What the server says of an MCP address while it has no public address (the words of narrarium-server). */
 export const MCP_LOCAL_MESSAGE = "This server has no public address yet, so this address works only from this computer. Set the public address of the server in the admin panel (Approved network), then connect from anywhere.";

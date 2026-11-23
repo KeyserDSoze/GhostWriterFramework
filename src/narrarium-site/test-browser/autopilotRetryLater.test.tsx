@@ -22,6 +22,10 @@ vi.mock("@/autopilot/browserStore", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/autopilot/browserStore")>()),
   createBrowserBookStore: () => mocks.local,
 }));
+vi.mock("@/outline/outlineSource", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/outline/outlineSource")>();
+  return { ...original, browserOutlineSource: () => original.storeOutlineSource(mocks.local as never) };
+});
 
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
@@ -31,6 +35,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
 import { runningStep, seedRun } from "./helpers/autopilotBand";
 import { LOCAL_BOOK, T0, makeRuntime, seedBar, t } from "./helpers/quickCommands";
+import { renderWithScaletta, scalettaFiles } from "./helpers/scaletta";
 
 // «Retry later» in the configuration: a switch that is off unless the author turns it on, the words of the consent next to it, the minutes and the
 // restarts checked before anything is saved (nothing is cut to fit, and an empty field is never «no limit»), also while a run goes on.
@@ -60,7 +65,12 @@ function Page({ path = SETTINGS }: { path?: string }) {
 }
 
 const key = (name: string) => `autopilot.config.retryLater.${name}`;
-const card = () => within(screen.getByRole("region", { name: t("autopilot.config.sections.retry") }));
+/** «Retry later» is in its own tab: the tab is shown before anything is looked for in it. */
+const choose = (tab: string) => fireEvent.click(screen.getByRole("tab", { name: t(`autopilot.config.tabs.${tab}`) }));
+const card = () => {
+  choose("retries");
+  return within(document.getElementById("autopilot-panel-retries") as HTMLElement);
+};
 const toggle = () => card().getByRole("switch", { name: t(key("label")) });
 const minutes = () => card().getByLabelText(t(key("every"))) as HTMLInputElement;
 const restarts = () => card().getByLabelText(t(key("cycles.count"))) as HTMLInputElement;
@@ -84,7 +94,7 @@ beforeEach(async () => {
   mocks.runtime = { ...makeRuntime(), configure: vi.fn(async () => undefined), reset: vi.fn(async () => undefined) };
   mocks.book = LOCAL_BOOK;
   mocks.structure = { title: "The Glass Harbor", language: "en", owner: "local", repo: "book-1", defaultBranch: "main", loadedBranch: "main", rootFiles: [{ path: "book.md" }], firstClassFiles: [], chapters: [{ slug: "001-one", title: "One", paragraphs: [{}] }], ghostwriters: [], readerPersonas: [] };
-  mocks.local = new MemoryBookStore({ "director.md": "---\nname: Ada\n---\nThe vision.\n" });
+  mocks.local = new MemoryBookStore({ "director.md": "---\nname: Ada\n---\nThe vision.\n", ...scalettaFiles() });
   mocks.toast.mockReset();
 });
 
@@ -97,24 +107,25 @@ afterEach(async () => {
 });
 
 describe("«Retry later» in the configuration", () => {
-  it("is a card of its own, after the review and before what to expect and publishing, that a link can bring into view", async () => {
+  it("is a tab of its own, after the review and before publishing, that a link can bring into view", async () => {
     seedRun({ status: "paused" });
-    render(<Page path={`${SETTINGS}#autopilot-retry`} />);
-    const titles = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent?.trim());
-    expect(titles.slice(0, 5)).toEqual([t("autopilot.config.sections.book"), t("autopilot.config.sections.review"), t("autopilot.config.sections.retry"), t("autopilot.estimate.title"), t("autopilot.config.sections.publish")]);
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("region", { name: t("autopilot.config.sections.retry") })));
+    await renderWithScaletta(<Page path={`${SETTINGS}#autopilot-retries`} />);
+    const tabs = within(screen.getByRole("tablist")).getAllByRole("tab").map((element) => element.textContent);
+    expect(tabs.slice(0, 4)).toEqual([t("autopilot.config.tabs.overview"), t("autopilot.config.tabs.review"), t("autopilot.config.tabs.retries"), t("autopilot.config.tabs.publishing")]);
+    await waitFor(() => expect(screen.getByRole("tab", { name: t("autopilot.config.tabs.retries") })).toHaveAttribute("aria-selected", "true"));
+    await waitFor(() => expect(within(document.getElementById("autopilot-panel-retries") as HTMLElement).getByRole("switch", { name: t(key("label")) })).toBeInTheDocument());
   });
 
-  it("is off for a book that never turned it on, and shows nothing to fill in until it is on", () => {
+  it("is off for a book that never turned it on, and shows nothing to fill in until it is on", async () => {
     seedRun({ status: "paused" });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     expect(toggle()).not.toBeChecked();
     expect(card().queryByLabelText(t(key("every")))).toBeNull();
   });
 
-  it("says what it does and what it costs next to the switch, always, and the switch is described by it", () => {
+  it("says what it does and what it costs next to the switch, always, and the switch is described by it", async () => {
     seedRun({ status: "paused" });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     const consent = card().getByText(t(key("consent")));
     expect(consent).toBeVisible();
     expect(described(toggle())).toContain(t(key("consent")));
@@ -122,9 +133,9 @@ describe("«Retry later» in the configuration", () => {
     expect(card().getByText(t(key("consent")))).toBeVisible();
   });
 
-  it("starts from the recommended values once turned on, and sends nothing until it is saved", () => {
+  it("starts from the recommended values once turned on, and sends nothing until it is saved", async () => {
     seedRun({ status: "paused" });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     fireEvent.click(toggle());
     expect(toggle()).toBeChecked();
     expect(minutes()).toHaveValue(10);
@@ -137,7 +148,7 @@ describe("«Retry later» in the configuration", () => {
 
   it("is saved with the other settings while the autopilot is stopped", async () => {
     seedRun({ status: "paused" });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     fireEvent.click(toggle());
     type(minutes(), "30");
     type(restarts(), "4");
@@ -148,7 +159,7 @@ describe("«Retry later» in the configuration", () => {
 
   it("goes on until it works only when the author chooses it in words, and then the number is not read", async () => {
     seedRun({ status: "paused" });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     fireEvent.click(toggle());
     fireEvent.click(unlimited());
     expect(restarts()).toBeDisabled();
@@ -160,7 +171,7 @@ describe("«Retry later» in the configuration", () => {
 
   it("shows a book that has it on as it is, and turning it off sends that it is off", async () => {
     seedRun({ status: "paused", options: { longRetry: { everyMinutes: 45, cycles: "unlimited" } } });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     expect(toggle()).toBeChecked();
     expect(minutes()).toHaveValue(45);
     expect(unlimited()).toBeChecked();
@@ -170,9 +181,9 @@ describe("«Retry later» in the configuration", () => {
     expect(mocks.runtime.configure).toHaveBeenCalledWith("book-1", { brief: expect.anything(), options: expect.objectContaining({ longRetry: null }) });
   });
 
-  it("puts back the recommended values: every 10 minutes, 6 times", () => {
+  it("puts back the recommended values: every 10 minutes, 6 times", async () => {
     seedRun({ status: "paused" });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     fireEvent.click(toggle());
     type(minutes(), "300");
     fireEvent.click(unlimited());
@@ -193,7 +204,7 @@ describe("«Retry later» in the configuration", () => {
       ["", "empty"],
     ])("refuses %j minutes with a reason, and saves nothing: the focus goes to the field", async (text, problem) => {
       seedRun({ status: "paused" });
-      render(<Page />);
+      await renderWithScaletta(<Page />);
       fireEvent.click(toggle());
       type(minutes(), text);
       expect(minutes()).toHaveAttribute("aria-invalid", "true");
@@ -211,7 +222,7 @@ describe("«Retry later» in the configuration", () => {
       ["2.5", "whole"],
     ])("refuses %j restarts: an empty field is never «no limit»", async (text, problem) => {
       seedRun({ status: "paused" });
-      render(<Page />);
+      await renderWithScaletta(<Page />);
       fireEvent.click(toggle());
       type(restarts(), text);
       expect(restarts()).toHaveAttribute("aria-invalid", "true");
@@ -223,7 +234,7 @@ describe("«Retry later» in the configuration", () => {
 
     it("does not start a book with a value it would refuse either", async () => {
       seedRun({ status: "paused" });
-      render(<Page />);
+      await renderWithScaletta(<Page />);
       fireEvent.click(toggle());
       type(minutes(), "0");
       fireEvent.click(screen.getByRole("button", { name: t("autopilot.actions.resume") }));
@@ -234,7 +245,7 @@ describe("«Retry later» in the configuration", () => {
 
     it("takes the edges of the ranges, and a field that was wrong once is right again when corrected", async () => {
       seedRun({ status: "paused" });
-      render(<Page />);
+      await renderWithScaletta(<Page />);
       fireEvent.click(toggle());
       type(minutes(), "0");
       expect(minutes()).toHaveAttribute("aria-invalid", "true");
@@ -248,14 +259,14 @@ describe("«Retry later» in the configuration", () => {
 
   it("goes with the options when a book that never started is started, and is not sent at all when it is off", async () => {
     seedBar({ noState: true });
-    const view = render(<Page />);
+    const view = await renderWithScaletta(<Page />);
     fireEvent.click(toggle());
     fireEvent.click(screen.getByRole("button", { name: t("autopilot.actions.start") }));
     await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledWith("book-1", { brief: expect.anything(), options: expect.objectContaining({ longRetry: POLICY }) }));
     view.unmount();
     mocks.runtime.start.mockClear();
     seedBar({ noState: true });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     fireEvent.click(screen.getByRole("button", { name: t("autopilot.actions.start") }));
     await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledTimes(1));
     const [, sent] = mocks.runtime.start.mock.calls[0] as [string, { options: Record<string, unknown> }];
@@ -265,7 +276,7 @@ describe("«Retry later» in the configuration", () => {
   describe("while the autopilot runs", () => {
     it("can change, with updateOptions and nothing else, and the page says so", async () => {
       seedRun({ status: "running", running: true, live: { activity: LIVE } });
-      render(<Page />);
+      await renderWithScaletta(<Page />);
       expect(toggle()).toBeEnabled();
       expect(card().getByText(t(key("running")))).toBeInTheDocument();
       fireEvent.click(toggle());
@@ -276,7 +287,7 @@ describe("«Retry later» in the configuration", () => {
 
     it("says before it is turned off that a run waiting to retry would stop, and turning it off sends that it is off", async () => {
       seedRun({ status: "running", running: true, retry: { at: at(600), attempt: 3, retries: 3, longTerm: { cycle: 1, cycles: 6 } }, options: { longRetry: POLICY } });
-      render(<Page />);
+      await renderWithScaletta(<Page />);
       expect(card().getByText(t(key("waitingNow")))).toBeInTheDocument();
       fireEvent.click(toggle());
       expect(card().getByText(t(key("waitingNow")))).toBeInTheDocument();
@@ -286,10 +297,10 @@ describe("«Retry later» in the configuration", () => {
   });
 
   describe("on a personal server", () => {
-    it("that does not have it is off and cannot change, and the page says to update it", () => {
+    it("that does not have it is off and cannot change, and the page says to update it", async () => {
       mocks.book = SERVER_BOOK;
       seedRun({ book: SERVER_BOOK, status: "paused", server: "online" });
-      render(<Page />);
+      await renderWithScaletta(<Page />);
       expect(toggle()).toBeDisabled();
       expect(described(toggle())).toContain(t(key("oldServer"), { version: "0.1.10" }));
       expect(card().getByText(t(key("oldServer"), { version: "0.1.10" }))).toBeInTheDocument();
@@ -298,7 +309,7 @@ describe("«Retry later» in the configuration", () => {
     it("that has it can change it", async () => {
       mocks.book = SERVER_BOOK;
       seedRun({ book: SERVER_BOOK, status: "paused", server: "retry" });
-      render(<Page />);
+      await renderWithScaletta(<Page />);
       expect(toggle()).toBeEnabled();
       expect(card().queryByText(t(key("oldServer"), { version: "0.1.10" }))).toBeNull();
       fireEvent.click(toggle());
@@ -310,8 +321,9 @@ describe("«Retry later» in the configuration", () => {
   it("is in Italian when the app is", async () => {
     await i18n.changeLanguage("it");
     seedRun({ status: "paused" });
-    render(<Page />);
-    expect(screen.getByRole("region", { name: "Nuovi tentativi" })).toBeInTheDocument();
+    await renderWithScaletta(<Page />);
+    expect(screen.getByRole("tab", { name: "Nuovi tentativi" })).toBeInTheDocument();
+    choose("retries");
     fireEvent.click(screen.getByRole("switch", { name: "Riprova più tardi" }));
     expect(screen.getByRole("radio", { name: "Continua finché riesce o finché non lo fermo" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Usa i valori consigliati" })).toBeInTheDocument();

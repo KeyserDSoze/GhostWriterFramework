@@ -17,6 +17,10 @@ vi.mock("@/autopilot/loader", () => ({ loadAutopilotRuntime: async () => mocks.r
 vi.mock("@/drive/useSettings", () => ({ useSettings: () => ({ save: vi.fn(async () => true) }) }));
 vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast: mocks.toast }), toast: mocks.toast }));
 vi.mock("@/autopilot/browserStore", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/autopilot/browserStore")>()), createBrowserBookStore: () => mocks.local }));
+vi.mock("@/outline/outlineSource", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/outline/outlineSource")>();
+  return { ...original, browserOutlineSource: () => original.storeOutlineSource(mocks.local as never) };
+});
 
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
@@ -25,9 +29,18 @@ import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { runningStep, seedRun } from "./helpers/autopilotBand";
+import { renderWithScaletta, scalettaFiles } from "./helpers/scaletta";
 import { LOCAL_BOOK, makeRuntime } from "./helpers/quickCommands";
 
 type Language = "en" | "it";
+/** A part of the configuration sits in its tab: the tab is shown before anything is looked for in it. */
+const choose = (tab: string) => fireEvent.click(screen.getByRole("tab", { name: t(`autopilot.config.tabs.${tab}`) }));
+/** The panel of a tab: it is shown by `choose` before it is looked into. */
+const panelOf = (tab: string) => {
+  choose(tab);
+  return document.getElementById(`autopilot-panel-${tab}`) as HTMLElement;
+};
+
 const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options) as string;
 const ROOT = `/app/books/${LOCAL_BOOK.id}`;
 const MODES = ["ask", "auto", "notify"] as const;
@@ -50,7 +63,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await i18n.changeLanguage("en");
   mocks.book = LOCAL_BOOK;
-  mocks.local = new MemoryBookStore({});
+  mocks.local = new MemoryBookStore({ ...scalettaFiles() });
   mocks.runtime = { ...makeRuntime(), configure: vi.fn(async () => undefined), reset: vi.fn(async () => undefined) };
   mocks.toast.mockReset();
 });
@@ -67,10 +80,10 @@ describe.each<Language>(["en", "it"])("what the autopilot does when the author c
     await act(async () => { await i18n.changeLanguage(language); });
   });
 
-  it("is a choice of three in Review, asking every time unless the author chose otherwise, each saying what it does", () => {
+  it("is a choice of three in Review, asking every time unless the author chose otherwise, each saying what it does", async () => {
     seedRun({ status: "paused" });
-    render(<Page />);
-    const review = screen.getByRole("region", { name: t("autopilot.config.sections.review") });
+    await renderWithScaletta(<Page />);
+    const review = panelOf("review");
     expect(within(review).getByRole("group", { name: t("autopilot.config.frozenEdits.title") })).toBeInTheDocument();
     expect(within(group()).getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual([...MODES]);
     expect(choice("ask")).toBeChecked();
@@ -83,15 +96,17 @@ describe.each<Language>(["en", "it"])("what the autopilot does when the author c
 });
 
 describe("the choice about frozen chapters", () => {
-  it("shows the choice the book has", () => {
+  it("shows the choice the book has", async () => {
     seedRun({ status: "paused", options: { frozenEdits: "notify" } });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
+    panelOf("review");
     expect(choice("notify")).toBeChecked();
   });
 
   it("is saved with the other settings while the autopilot is stopped", async () => {
     seedRun({ status: "paused" });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
+    panelOf("review");
     fireEvent.click(choice("notify"));
     fireEvent.click(screen.getByRole("button", { name: t("autopilot.setup.save") }));
     await waitFor(() => expect(mocks.runtime.configure).toHaveBeenCalledTimes(1));
@@ -100,7 +115,8 @@ describe("the choice about frozen chapters", () => {
 
   it("changes while the autopilot runs, with updateOptions, and nothing else is sent", async () => {
     seedRun({ status: "running", running: true, live: { activity: runningStep("write", "Writing scene 2 of chapter 5 «Scene 2»", { chapterNumber: 5, sceneNumber: 2 }) } });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
+    panelOf("review");
     expect(choice("auto")).toBeEnabled();
     fireEvent.click(choice("auto"));
     fireEvent.click(screen.getByRole("button", { name: t("autopilot.setup.save") }));
@@ -108,29 +124,32 @@ describe("the choice about frozen chapters", () => {
     expect(mocks.runtime.configure).not.toHaveBeenCalled();
   });
 
-  it("cannot be changed for a book on a personal server that predates the frozen chapters, and says to update it", () => {
+  it("cannot be changed for a book on a personal server that predates the frozen chapters, and says to update it", async () => {
     const book = { ...LOCAL_BOOK, autopilotHost: "server" as const };
     mocks.book = book;
     seedRun({ book, status: "paused", server: "online" });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
+    panelOf("review");
     for (const mode of MODES) expect(choice(mode)).toBeDisabled();
     expect(group()).toHaveAccessibleDescription(t("autopilot.config.frozenEdits.oldServer", { version: "0.1.9" }));
   });
 
-  it("can be changed on a personal server that has them", () => {
+  it("can be changed on a personal server that has them", async () => {
     const book = { ...LOCAL_BOOK, autopilotHost: "server" as const };
     mocks.book = book;
     seedRun({ book, status: "paused", server: "online" });
     useAutopilotStore.setState((store) => ({ server: { ...store.server, info: { ...store.server.info!, features: [...(store.server.info!.features ?? []), SERVER_FEATURE_AUTOPILOT_FROZEN] } as ServerInfo } }));
-    render(<Page />);
+    await renderWithScaletta(<Page />);
+    panelOf("review");
     for (const mode of MODES) expect(choice(mode)).toBeEnabled();
   });
 });
 
 describe("the note of a question on the Configuration", () => {
-  it("names a question about a change for what it is", () => {
+  it("names a question about a change for what it is", async () => {
     seedRun({ status: "waiting-author", question: { id: "frozen-1-a", kind: "frozen-change", question: "You changed chapter 1.", context: "", options: [], askedAt: "2026-11-22T10:00:00.000Z" } });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
+    panelOf("review");
     expect(screen.getByText(t("autopilot.question.kinds.frozen-change"))).toBeInTheDocument();
   });
 });

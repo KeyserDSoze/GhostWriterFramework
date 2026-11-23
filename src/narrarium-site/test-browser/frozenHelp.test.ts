@@ -29,7 +29,7 @@ const LABELS = [
   "frozen.queued.start",
   "nav.autopilotLive",
   "nav.autopilotSettings",
-  "autopilot.config.sections.review",
+  "autopilot.config.tabs.review",
   "autopilot.config.frozenEdits.title",
   "autopilot.config.frozenEdits.ask",
   "autopilot.config.frozenEdits.auto",

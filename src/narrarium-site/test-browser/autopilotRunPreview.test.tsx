@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import {
   AUTOPILOT_PRESETS,
   DEFAULT_BRIEF,
+  type AutopilotPresetId,
   DEFAULT_OPTIONS,
   TWO_CALL_TASKS,
   countWords,
@@ -60,6 +61,10 @@ import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { longPlan } from "./helpers/autopilotFixtures";
+import { SCALETTA_IDEA, SCALETTA_SYNOPSIS, renderWithScaletta, sizeFiles } from "./helpers/scaletta";
+
+/** The words of the brief the Scaletta fixture holds: the engine counts them in the prompts, so an estimate with them is the one the page shows. */
+const SCALETTA_BRIEF = { idea: SCALETTA_IDEA, synopsis: SCALETTA_SYNOPSIS, genre: "mystery", audience: "adults" };
 import { seedRun } from "./helpers/autopilotBand";
 import { LOCAL_BOOK, makeRuntime, seedBar, t } from "./helpers/quickCommands";
 import { CLOUD, HOME, Page, field, measuredStep, region, statValue, structureOf, type, withAi, withModels } from "./helpers/setupEstimate";
@@ -73,7 +78,6 @@ const ADA = serializeDirector({ ...defaultDirector("en"), name: "Ada", maxReview
 const ROLE_OF: Record<string, string> = { autopilot: "writer", director: "director", "reader-evaluation": "readers", "reader-evaluation-summary": "readers", review: "specialists", "simple-tasks": "summaries" };
 const preview = () => region("autopilot.estimate.title");
 const settings = () => useSettingsStore.getState().settings;
-const radio = (id: string) => screen.getByRole("radio", { name: t(`autopilot.presets.${id}.name`) });
 const warnings = (code: string) => Array.from(preview().querySelectorAll(`[data-warning="${code}"]`)) as HTMLElement[];
 const range = (name: string) => ({ min: Number(statValue(name).dataset.min), max: Number(statValue(name).dataset.max) });
 const rowOf = (role: string) => preview().querySelector(`[data-role="${role}"]`) as HTMLElement;
@@ -86,15 +90,36 @@ async function showFresh(language: Language = "en", integrations = [CLOUD]) {
   await i18n.changeLanguage(language);
   seedBar({ noState: true });
   withAi(integrations);
-  render(<Page />);
+  await renderWithScaletta(<Page />);
+  await screen.findByRole("region", { name: t("autopilot.estimate.title") });
+  await read();
+}
+
+/**
+ * A book made from a size at its creation: its Scaletta has the size's chapter entries and words, and its first configuration starts with the size's
+ * review options (`startPreset`). The sizes are not chosen in the configuration any more.
+ */
+async function showSize(id: AutopilotPresetId, language: Language = "en") {
+  const preset = AUTOPILOT_PRESETS.find((entry) => entry.id === id)!;
+  mocks.book = { ...LOCAL_BOOK, startPreset: id };
+  mocks.local = new MemoryBookStore({ ...sizeFiles(preset.chapters, preset.wordsPerScene), "director.md": ADA });
+  await i18n.changeLanguage(language);
+  seedBar({ noState: true, book: mocks.book as typeof LOCAL_BOOK });
+  withAi([CLOUD]);
+  await renderWithScaletta(<Page />);
   await screen.findByRole("region", { name: t("autopilot.estimate.title") });
   await read();
 }
 
 /** What the engine says when it is asked, as the spec says, with the same inputs the form and the book give. */
-function engineSays(brief: Partial<typeof DEFAULT_BRIEF>, options: Partial<typeof DEFAULT_OPTIONS>, extra: Record<string, unknown> = {}): EstimateResult {
+/**
+ * The engine's estimate with the chapters of the book (`targetChapters`, which the Scaletta has: its entries, the last one the number of the chapters) and the
+ * brief's words; `extra` wins over all of it.
+ */
+function engineSays(brief: Partial<typeof DEFAULT_BRIEF> & { targetChapters?: number }, options: Partial<typeof DEFAULT_OPTIONS>, extra: Record<string, unknown> = {}): EstimateResult {
+  const { targetChapters = 12, ...words } = brief;
   return estimateAutopilotRun({
-    brief: { ...DEFAULT_BRIEF, ...brief }, options: { ...DEFAULT_OPTIONS, ...options }, maxReviewRounds: 3, language: "en", currency: "EUR",
+    brief: { ...DEFAULT_BRIEF, ...words }, outline: { entries: targetChapters, lastChapter: targetChapters, words: 0 }, options: { ...DEFAULT_OPTIONS, ...options }, maxReviewRounds: 3, language: "en", currency: "EUR",
     models: estimateModelsFromConfig(pickAiRuntimeConfig(settings())),
     readerPanelSize: PANEL,
     context: { directorWords: countWords(directorPrompt(parseDirector(ADA, "en"))) },
@@ -111,7 +136,7 @@ beforeEach(async () => {
   mocks.runtime = { ...makeRuntime(), configure: vi.fn(async () => undefined), reset: vi.fn(async () => undefined) };
   mocks.book = LOCAL_BOOK;
   mocks.structure = structureOf();
-  mocks.local = new MemoryBookStore({ "director.md": ADA });
+  mocks.local = new MemoryBookStore({ ...sizeFiles(12, DEFAULT_BRIEF.wordsPerScene), "director.md": ADA });
   mocks.verified.mockReset();
   mocks.toast.mockReset();
 });
@@ -128,17 +153,16 @@ afterEach(async () => {
 describe("the preview of the run, in the form of the autopilot", () => {
   it.each(LANGUAGES)("is a section of the page between the retries and publishing, with a title, and says what it is: an estimate, made before it starts (%s)", async (language) => {
     await showFresh(language);
-    const titles = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent?.trim());
-    expect(titles.slice(0, 5)).toEqual([t("autopilot.config.sections.book"), t("autopilot.config.sections.review"), t("autopilot.config.sections.retry"), t("autopilot.estimate.title"), t("autopilot.config.sections.publish")]);
+    const titles = within(document.getElementById("autopilot-panel-overview") as HTMLElement).getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent?.trim());
+    expect(titles).toEqual([t("autopilot.config.overview.state"), t("autopilot.config.overview.scaletta"), t("autopilot.estimate.title")]);
     expect(within(preview()).getByText(t("autopilot.estimate.intro"))).toBeInTheDocument();
   });
 
-  describe.each(LANGUAGES)("(%s)", (language) => it.each(PRESET_IDS)("shows, for «%s», the numbers of the engine called with the same inputs: the calls, the tokens, the cost, and the chapters and the words", async (id) => {
-    await showFresh(language);
-    fireEvent.click(radio(id));
+  describe.each(LANGUAGES)("(%s)", (language) => it.each(PRESET_IDS)("shows, for a book made from «%s», the numbers of the engine called with the same inputs: the calls, the tokens, the cost, and the chapters and the words", async (id) => {
+    await showSize(id, language);
     await pause();
     const preset = AUTOPILOT_PRESETS.find((entry) => entry.id === id)!;
-    const expected = engineSays(preset.brief, preset.options);
+    const expected = engineSays({ ...SCALETTA_BRIEF, targetChapters: preset.chapters, wordsPerScene: preset.wordsPerScene }, preset.options);
     expect(range("calls")).toEqual(expected.calls);
     expect(range("input-tokens")).toEqual(expected.inputTokens);
     expect(range("output-tokens")).toEqual(expected.outputTokens);
@@ -202,8 +226,7 @@ describe("the review rounds, which are the director's", () => {
   });
 
   it("have one link to the director's page for both notes: a target of 44 px after them, not a line-high link inside a sentence", async () => {
-    await showFresh();
-    fireEvent.click(radio("novel-draft"));
+    await showSize("novel-draft");
     await pause();
     const group = preview().querySelector("[data-estimate='rounds']") as HTMLElement;
     expect(group.querySelector("[data-estimate='preset-rounds']")).not.toBeNull();
@@ -215,30 +238,32 @@ describe("the review rounds, which are the director's", () => {
   });
 
   it("are the default director's when the book has none yet", async () => {
-    mocks.local = new MemoryBookStore({});
+    mocks.local = new MemoryBookStore(sizeFiles(12, DEFAULT_BRIEF.wordsPerScene));
     await showFresh();
     expect(within(preview()).getByText(t("autopilot.estimate.rounds.director", { count: defaultDirector("en").maxReviewRounds }))).toBeInTheDocument();
   });
 
   it("say, when the size chosen recommends others, that the preset does not change the director, and link to the director's page", async () => {
-    await showFresh();
-    fireEvent.click(radio("novel-draft"));
+    await showSize("novel-draft");
     await pause();
     const note = preview().querySelector("[data-estimate='preset-rounds']") as HTMLElement;
     expect(note).toHaveTextContent(t("autopilot.estimate.rounds.preset", { preset: t("autopilot.presets.novel-draft.name"), count: 1, rounds: 3 }));
     expect(within(note.closest("[data-estimate='rounds']") as HTMLElement).getByRole("link", { name: t("autopilot.estimate.rounds.open") })).toHaveAttribute("href", "/app/books/book-1/director");
     // The estimate is made with the director's three, not the preset's one.
-    expect(range("calls")).toEqual(engineSays(AUTOPILOT_PRESETS[2].brief, AUTOPILOT_PRESETS[2].options).calls);
+    expect(range("calls")).toEqual(engineSays({ targetChapters: AUTOPILOT_PRESETS[2].chapters, wordsPerScene: AUTOPILOT_PRESETS[2].wordsPerScene }, AUTOPILOT_PRESETS[2].options).calls);
     expect(((mocks.local as MemoryBookStore).files.get("director.md"))).toBe(ADA);
   });
 
   it("say nothing of it when the director allows what the size recommends, and when the numbers are the author's own", async () => {
-    mocks.local = new MemoryBookStore({ "director.md": serializeDirector({ ...defaultDirector("en"), maxReviewRounds: 1 }) });
-    await showFresh();
-    fireEvent.click(radio("novel-draft"));
-    await pause();
+    mocks.local = new MemoryBookStore({ ...sizeFiles(24, 1500), "director.md": serializeDirector({ ...defaultDirector("en"), maxReviewRounds: 1 }) });
+    mocks.book = { ...LOCAL_BOOK, startPreset: "novel-draft" };
+    seedBar({ noState: true, book: mocks.book as typeof LOCAL_BOOK });
+    await i18n.changeLanguage("en");
+    withAi([CLOUD]);
+    await renderWithScaletta(<Page />);
+    await read();
     expect(preview().querySelector("[data-estimate='preset-rounds']")).toBeNull();
-    type(field("autopilot.setup.chapters"), "30");
+    type(field("autopilot.setup.maxReaders"), "2");
     await pause();
     expect(preview().querySelector("[data-estimate='preset-rounds']")).toBeNull();
   });
@@ -300,7 +325,7 @@ describe("a book that is started, or that grows", () => {
     await i18n.changeLanguage("en");
     const seeded = seedRun({ status: "paused", chapters: longPlan(12, 4) });
     withAi([CLOUD]);
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     await screen.findByRole("region", { name: t("autopilot.estimate.title") });
     await read();
     const state = seeded.state as AutopilotState;
@@ -316,16 +341,19 @@ describe("a book that is started, or that grows", () => {
 
   it("counts only the new chapters when «Add chapters» asks for more than a finished book has", async () => {
     seedRun({ status: "completed", chapters: longPlan(12, 12), statePatch: { finalDone: true } });
+    mocks.local = new MemoryBookStore({ ...sizeFiles(12, DEFAULT_BRIEF.wordsPerScene), "director.md": ADA });
     withAi([CLOUD]);
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     await screen.findByRole("region", { name: t("autopilot.estimate.title") });
     await read();
     const headline = () => preview().querySelector("[data-estimate='book']") as HTMLElement;
     expect(preview()).toHaveTextContent(t("autopilot.estimate.nothingLeft"));
     expect(Number(headline().dataset.toWrite)).toBe(0);
-    type(field("autopilot.setup.chapters"), "16");
-    await pause();
-    expect(Number(headline().dataset.toWrite)).toBe(4);
+    // The author adds four entries to the Scaletta, and comes back to the configuration: the page reads them again when the window is back.
+    const store = mocks.local as MemoryBookStore;
+    for (const number of [13, 14, 15, 16]) store.files.set(`outline/chapters/${String(number).padStart(3, "0")}.md`, serializeOutlineChapter({ number, origin: "author" }));
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    await waitFor(() => expect(Number(headline().dataset.toWrite)).toBe(4), { timeout: 3000 });
     expect(Number(headline().dataset.chapters)).toBe(16);
     expect(preview()).not.toHaveTextContent(t("autopilot.estimate.nothingLeft"));
   });
@@ -338,18 +366,6 @@ describe("a book that is started, or that grows", () => {
     expect(range("calls")).toEqual(expected.calls);
   });
 
-  it("says that the outline of the author is longer than the brief when it asks for more chapters, and counts the book at the outline's length", async () => {
-    const entries = Object.fromEntries(Array.from({ length: 20 }, (_, index) => [outlineChapterPath(index + 1), serializeOutlineChapter({ number: index + 1, title: `Chapter ${index + 1}`, body: `What happens in chapter ${index + 1}, in a few words.`, origin: "author" })]));
-    mocks.local = new MemoryBookStore({ "director.md": ADA, ...entries });
-    await showFresh();
-    await waitFor(() => expect(Number((preview().querySelector("[data-estimate='book']") as HTMLElement).dataset.chapters)).toBe(20));
-    const words = Array.from({ length: 20 }, (_, index) => countWords(`Chapter ${index + 1} What happens in chapter ${index + 1}, in a few words.`)).reduce((sum, count) => sum + count, 0);
-    const expected = engineSays({}, {}, { outline: { entries: 20, lastChapter: 20, words }, context: { directorWords: countWords(directorPrompt(parseDirector(ADA, "en"))) } });
-    await waitFor(() => expect(range("calls")).toEqual(expected.calls));
-    const note = warnings("outlineLongerThanBrief")[0];
-    expect(note).toBeDefined();
-    expect(note).toHaveTextContent(expected.warnings.find((entry) => entry.code === "outlineLongerThanBrief")!.text);
-  });
 });
 
 describe("the warnings of the engine", () => {
@@ -419,7 +435,7 @@ describe("the warnings of the engine", () => {
   });
 
   it("have no list at all when there is nothing to say", async () => {
-    mocks.local = new MemoryBookStore({ "director.md": ADA });
+    mocks.local = new MemoryBookStore({ ...sizeFiles(12, DEFAULT_BRIEF.wordsPerScene), "director.md": ADA });
     await showFresh("en", [CLOUD]);
     // A model with a price and a window, whose speed no run has measured: only the note about the speed.
     expect(Array.from(preview().querySelectorAll("[data-warning]")).map((item) => (item as HTMLElement).dataset.warning)).toEqual(["noSpeed"]);
@@ -483,7 +499,7 @@ describe("what the assumptions are", () => {
 
   it("say what was assumed of the files of the book, and of the canon, when they were measured or not", async () => {
     mocks.structure = structureOf({ characters: [{}, {}, {}], locations: [{}, {}] });
-    mocks.local = new MemoryBookStore({ "director.md": ADA });
+    mocks.local = new MemoryBookStore({ ...sizeFiles(12, DEFAULT_BRIEF.wordsPerScene), "director.md": ADA });
     await showFresh();
     const details = preview().querySelector("details[data-estimate='assumptions']") as HTMLElement;
     expect(within(details).getByText(t("autopilot.estimate.assumptions.canon", { count: 5 }))).toBeInTheDocument();
@@ -497,7 +513,7 @@ describe("after the first run", () => {
   it("uses the speed the book measured, and says that it is based on what the book did", async () => {
     seedRun({ status: "paused", chapters: longPlan(12, 4), activities: RUN });
     withAi([CLOUD]);
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     await screen.findByRole("region", { name: t("autopilot.estimate.title") });
     await read();
     const speeds = measuredSpeed(RUN, { ignoreTasks: TWO_CALL_TASKS });
@@ -518,7 +534,7 @@ describe("after the first run", () => {
   it("uses the tokens a word it measured, when the scenes it wrote say enough, and says so", async () => {
     seedRun({ status: "paused", chapters: longPlan(12, 4), activities: [...RUN, ...writes] });
     withAi([CLOUD]);
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     await screen.findByRole("region", { name: t("autopilot.estimate.title") });
     await read();
     const note = preview().querySelector("[data-note='tokens']") as HTMLElement;
@@ -557,7 +573,7 @@ describe("a book that runs on the personal server", () => {
     else mocks.verified.mockResolvedValue({ client: { aiStatus: vi.fn(async () => status) }, info: {}, fingerprint: "f" });
     seedBar({ book: mocks.book as never, noState: true, server: "online" });
     withAi(integrations);
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     await screen.findByRole("region", { name: t("autopilot.estimate.title") });
     await read();
   }

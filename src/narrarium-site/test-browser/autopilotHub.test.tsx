@@ -187,7 +187,7 @@ describe.each<Language>(["en", "it"])("the card of a book on the Autopilot page 
 
   it("of a finished book: the director's vote on the whole book, and the way to the result", () => {
     const harbor = book(1, "The Glass Harbor");
-    seedHub([{ book: harbor, state: { status: "completed", phase: "completed", brief: { ...createAutopilotState(new Date(T0)).brief, targetChapters: 6 }, plan: { chapters: chapters(6, 6), approved: true, rounds: 1, revisionNotes: [], readerReactions: [], readersDone: true, awaitingAuthor: false }, finalDone: true, finalReview: { verdict: "approve", score: 8, text: "Good.", at: T0 } } }]);
+    seedHub([{ book: harbor, state: { status: "completed", phase: "completed", brief: { ...createAutopilotState(new Date(T0)).brief }, plan: { chapters: chapters(6, 6), approved: true, rounds: 1, revisionNotes: [], readerReactions: [], readersDone: true, awaitingAuthor: false }, finalDone: true, finalReview: { verdict: "approve", score: 8, text: "Good.", at: T0 } } }]);
     render(<Hub />);
     const ours = card(harbor);
     expect(within(ours).getByText(t("autopilot.hub.state.completed"))).toBeInTheDocument();

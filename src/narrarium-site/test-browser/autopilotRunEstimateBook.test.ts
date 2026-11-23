@@ -126,7 +126,7 @@ describe("the readers of the panel", () => {
 describe("the outline of the author", () => {
   const entry = (number: number, title: string, body: string, origin: "author" | "autopilot" = "author", digest?: string) => [outlineChapterPath(number), serializeOutlineChapter({ number, title, body, origin, digest })] as const;
 
-  it("counts the chapters the author wrote an entry for, the last of them, and their words with the description of the book", async () => {
+  it("counts the chapters the author wrote an entry for, the last of them, and their words, without the description of the book: the idea is the brief's", async () => {
     const intact = { title: "Filled in", body: "The autopilot wrote this one." };
     const digest = await outlineEntryDigest(intact);
     const files = Object.fromEntries([
@@ -139,7 +139,7 @@ describe("the outline of the author", () => {
     expect(outline).toEqual({
       entries: 2,
       lastChapter: 5,
-      words: countWords("The arrival The keeper reaches the harbor at dusk and finds the ledger open.") + countWords("The storm A storm closes the harbor for three days.") + countWords("A keeper, a ledger and the ships that never arrive."),
+      words: countWords("The arrival The keeper reaches the harbor at dusk and finds the ledger open.") + countWords("The storm A storm closes the harbor for three days."),
     });
   });
 

@@ -660,7 +660,7 @@ describe("the commands that start the autopilot", () => {
     // A book that is complete is not resumed: the main action is to add chapters, in the configuration (the plan is extended when the run starts again).
     expect(maybeButton("autopilot.actions.resume")).not.toBeInTheDocument();
     // Changed on purpose (the menu in groups): the configuration is a page of its own, with the number of chapters in front.
-    expect(screen.getByRole("link", { name: name("autopilot.actions.addChapters") })).toHaveAttribute("href", "/app/books/book-1/autopilot/settings#autopilot-chapters");
+    expect(screen.getByRole("link", { name: name("autopilot.actions.addChapters") })).toHaveAttribute("href", "/app/books/book-1/outline");
     expect(maybeButton("autopilot.quick.run.menu")).not.toBeInTheDocument();
     view.unmount();
     renderBar("dock");

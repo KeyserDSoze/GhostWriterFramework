@@ -63,8 +63,8 @@ beforeAll(async () => {
 
 beforeEach(() => {
   localStorage.clear();
-  const state = createAutopilotState(new Date("2026-11-21T10:00:00.000Z"), { idea: "A harbor town built on glass hides a lie.", targetChapters: 3, scenesPerChapter: 2, wordsPerScene: 300 }, { pauseAfterPlan: true, readersOnPlan: true, maxReaders: 2 });
-  local = new MemoryBookStore({ ...seedBookFiles(), [AUTOPILOT_STATE_FILE]: JSON.stringify(state) });
+  const state = createAutopilotState(new Date("2026-11-21T10:00:00.000Z"), { idea: "A harbor town built on glass hides a lie.", wordsPerScene: 300 }, { pauseAfterPlan: true, readersOnPlan: true, maxReaders: 2 });
+  local = new MemoryBookStore({ ...seedBookFiles({ chapters: 3 }), [AUTOPILOT_STATE_FILE]: JSON.stringify(state) });
   mocks.local = local;
   ai = createFakeAutopilotAi({ chapters: 3 });
   mocks.ai = ai;

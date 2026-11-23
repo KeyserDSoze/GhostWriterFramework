@@ -37,7 +37,7 @@ test("the texts of «Retry now» and «Retry later» are in the bundle loaded wi
     }
   }
   for (const [language, locale] of [["en", autopilotEn], ["it", autopilotIt]]) {
-    assert.equal(typeof get(locale, "autopilot.config.sections.retry"), "string", `${language}: the section of the configuration has a title`);
+    assert.equal(typeof get(locale, "autopilot.config.tabs.retries"), "string", `${language}: the tab of the configuration has a title`);
   }
 });
 

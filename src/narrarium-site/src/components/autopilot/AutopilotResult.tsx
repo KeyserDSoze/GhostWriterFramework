@@ -8,7 +8,7 @@ import { ScoresBlock } from "@/components/autopilot/result/Scores";
 import { useBandModel } from "@/components/autopilot/AutopilotControlBand";
 import { finalReviewOf, finalVerdict, workedSince, workedTime, type FinalVerdict } from "@/autopilot/bandModel";
 import { formatCost, formatCount, formatDate, formatDuration } from "@/autopilot/format";
-import { autopilotSettingsHref } from "@/autopilot/pageRoute";
+import { scalettaHref } from "@/autopilot/pageRoute";
 import { chapterScores, readFirst } from "@/autopilot/resultModel";
 import { openAskDirector } from "@/store/askDirectorStore";
 import { cn } from "@/lib/utils";
@@ -104,7 +104,7 @@ function ActionsBar({ bookId }: { bookId: string }) {
         <Clapperboard className="h-4 w-4" aria-hidden="true" />{t("autopilot.result.actions.ask")}
       </Button>
       <Button asChild size="sm" variant="outline">
-        <Link to={{ pathname: autopilotSettingsHref(bookId), hash: "autopilot-chapters" }}><Plus className="h-4 w-4" aria-hidden="true" />{t("autopilot.result.actions.add")}</Link>
+        <Link to={scalettaHref(bookId)}><Plus className="h-4 w-4" aria-hidden="true" />{t("autopilot.result.actions.add")}</Link>
       </Button>
     </div>
   );

@@ -30,6 +30,9 @@ import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { AutopilotPage } from "@/pages/AutopilotPage";
 import { SetupCard } from "@/components/autopilot/config/SetupCard";
+import { EMPTY_OUTLINE_BRIEF } from "@/autopilot/outlineBrief";
+const FORM = { outline: { brief: EMPTY_OUTLINE_BRIEF, chapters: 2, lastChapter: 2, readable: true, loaded: true, reload: vi.fn() }, tab: "review", onTab: vi.fn(), onReset: vi.fn(), profiles: null };
+
 import { autopilotRuntime } from "@/autopilot/runtime";
 import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useAuthStore } from "@/store/authStore";
@@ -51,7 +54,7 @@ const run = vi.fn(async (_name: string, action: (runtime: unknown, bookId: strin
 });
 
 function openForm(state: AutopilotState | null = null) {
-  render(<MemoryRouter><SetupCard book={BOOK} state={state} existingChapters={0} running={false} busy={false} disabled={false} run={run as never} /></MemoryRouter>);
+  render(<MemoryRouter><SetupCard book={BOOK} state={state} {...FORM} running={false} busy={false} disabled={false} run={run as never} /></MemoryRouter>);
 }
 
 const existing = (options: Record<string, unknown> = {}) => ({ ...createAutopilotState(new Date(T0), { ...DEFAULT_BRIEF, idea: "A glass harbor" }), options: { ...DEFAULT_OPTIONS, ...options } }) as AutopilotState;
@@ -158,7 +161,7 @@ describe("the token budget in the form of the autopilot", () => {
   });
 
   it("is locked while the autopilot runs, like the rest of the settings", () => {
-    render(<MemoryRouter><SetupCard book={BOOK} state={existing({ budgetTokens: 1000 })} existingChapters={0} running busy={false} disabled={false} run={run as never} /></MemoryRouter>);
+    render(<MemoryRouter><SetupCard book={BOOK} state={existing({ budgetTokens: 1000 })} {...FORM} running busy={false} disabled={false} run={run as never} /></MemoryRouter>);
     expect(tokensField()).toBeDisabled();
   });
 });

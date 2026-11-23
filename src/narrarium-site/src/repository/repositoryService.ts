@@ -452,6 +452,8 @@ export async function createLocalOnlyBookRepository(input: {
   title?: string;
   author?: string;
   language?: string;
+  /** Files the book starts with besides the scaffold: the outline of a size chosen at the creation. */
+  files?: Array<{ path: string; content: string }>;
 }): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure; cloned: boolean }> {
   const accountIdentity = input.accountIdentity ?? localWorkspaceScope();
   if (!input.book.localRepositoryId) throw new Error("A stable local repository identity is required.");
@@ -475,7 +477,7 @@ export async function createLocalOnlyBookRepository(input: {
     cloneStatus: "complete",
     expectedFileCount: 0,
   }, scope);
-  const files = buildInitialBookFiles({ title: input.title ?? input.book.name, author: input.author, language: input.language });
+  const files = [...buildInitialBookFiles({ title: input.title ?? input.book.name, author: input.author, language: input.language }), ...(input.files ?? [])];
   for (const file of files) await putCleanLocalFile({ repoId: meta.id, path: file.path, kind: "text", text: file.content, size: utf8Bytes(file.content) }, scope);
   await addLocalRepoLog(meta.id, scope, "clone", "Created local-only book repository");
   return { meta, structure: await buildLocalBookStructure(meta), cloned: true };

@@ -10,6 +10,11 @@ export function autopilotSettingsHref(bookId: string): string {
   return `${autopilotLiveHref(bookId)}/settings`;
 }
 
+/** The Scaletta of the book: where its chapters are added, edited and given their brief. */
+export function scalettaHref(bookId: string): string {
+  return `/app/books/${encodeURIComponent(bookId)}/outline`;
+}
+
 /**
  * Whether the path is a page of the autopilot (the live page and the configuration of a book, or the page of every book): the live panel
  * keeps out of their way.

@@ -17,7 +17,8 @@ export function useScrollToHash(ready: boolean, dependsOn: string): void {
     let frame = 0;
     const look = (frames: number) => {
       const element = document.getElementById(id);
-      if (element) {
+      // A part inside a tab that is not shown is looked for again: it is shown by the page a moment later.
+      if (element && !element.closest("[hidden]")) {
         followed.current = visit;
         element.scrollIntoView?.({ block: "start" });
         element.focus({ preventScroll: true });

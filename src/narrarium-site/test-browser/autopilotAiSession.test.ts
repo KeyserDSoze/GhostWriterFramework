@@ -64,9 +64,9 @@ async function runBook(host: "browser" | "server", retryAfter: string, setup: Se
     ai = createFetchAi(pickAiRuntimeConfig(JSON.parse(JSON.stringify(pickAiRuntimeConfig(used)))), { fetch: fake.fetch });
   }
   const events: AutopilotEvent[] = [];
-  const session = new AutopilotSession({ bookId: "book-1", store: new MemoryBookStore(seedBookFiles()), ai, host: "browser", hostLabel: `test ${host}`, retryDelayMs: 40, random: () => 0.5 });
+  const session = new AutopilotSession({ bookId: "book-1", store: new MemoryBookStore(seedBookFiles({ chapters: 1 })), ai, host: "browser", hostLabel: `test ${host}`, retryDelayMs: 40, random: () => 0.5 });
   session.subscribe((event) => events.push(event));
-  await session.start({ brief: { idea: "A harbor built on glass hides a lie.", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false, ...setup.options } });
+  await session.start({ brief: { idea: "A harbor built on glass hides a lie.", wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false, ...setup.options } });
   await session.waitForIdle();
   const state = (await session.snapshot()).state!;
   return { calls: fake.calls, events, state, retries: events.filter((event) => event.type === "insight" && event.code === "failureRetry") };

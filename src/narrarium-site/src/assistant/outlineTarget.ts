@@ -46,7 +46,7 @@ export function resolveChapterReference(prompt: string, route: { kind: string })
 export function chapterTargetInstruction(route: { kind: string }): string {
   const mode = chapterTargetMode(route);
   if (mode === "none") return "";
-  const shared = "The outline (the Scaletta) is the author's chapter-by-chapter plan of the book: outline/book.md holds the rough description, and outline/chapters/<NNN>.md one entry per chapter with a hypothetical title, what happens and its ghostwriter. The words «outline» and «scaletta» always mean it, on any page.";
+  const shared = "The outline (the Scaletta) is the author's chapter-by-chapter plan of the book: outline/book.md holds the idea of the book (its description, the pitch), and outline/chapters/<NNN>.md one entry per chapter with a hypothetical title, what happens and its ghostwriter. The words «outline» and «scaletta» always mean it, on any page.";
   return mode === "outline"
     ? `WHICH CHAPTER: ${shared} On this page «chapter N», «this chapter» and «that chapter» mean entry N of the outline (outline/chapters/<NNN>.md), not the chapter's written text: change only the outline, unless the author says «the written chapter» or «the chapter's text». If it is unclear whether the author means the entry of the outline or the written chapter, ask which one before changing anything.`
     : `WHICH CHAPTER: ${shared} On this page «chapter N» means the chapter of the book (its folder under chapters/, its text and files), not its entry of the outline. If it is unclear whether the author means the written chapter or its entry of the outline, ask which one before changing anything.`;

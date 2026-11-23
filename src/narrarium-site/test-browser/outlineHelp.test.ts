@@ -19,7 +19,7 @@ beforeAll(loadGuides);
 const LABELS = [
   "nav.outline",
   "outline.book.title",
-  "outline.book.description",
+  "outline.book.idea",
   "outline.entry.titleLabel",
   "outline.entry.bodyLabel",
   "outline.entry.ghostwriterLabel",

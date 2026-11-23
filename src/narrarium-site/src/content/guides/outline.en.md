@@ -1,10 +1,10 @@
 # The Outline (Scaletta)
 
-The Outline is the plan of the book, chapter by chapter: a rough description of the book and, for every chapter, a hypothetical title, what happens in it and, when it is not the book's, the ghostwriter that writes it. Open it from the book's menu (**Outline**). It lives in the files of the book (`outline/book.md` and one `outline/chapters/<NNN>.md` per chapter), so it travels with the book like everything else.
+The Outline is the plan of the book, chapter by chapter: the idea of the book (its premise, the pitch) and, for every chapter, a hypothetical title, what happens in it and, when it is not the book's, the ghostwriter that writes it. Open it from the book's menu (**Outline**). It lives in the files of the book (`outline/book.md` and one `outline/chapters/<NNN>.md` per chapter), so it travels with the book like everything else.
 
 ## The page
 
-At the top, **The book**: a working title (optional: the book's own title stays in its settings) and the **Rough description of the book**. Below, one card per chapter with its **Hypothetical title**, **What happens** (plain text: the events, the turning points, who is there; not prose) and its **Ghostwriter**, where **The book's ghostwriter (default)** is the first choice.
+At the top, **The book** is one card: a working title (optional: the book's own title stays in its settings), the **Idea, promise or pitch** (what the book is about, who it is about and what is at stake, in a sentence or two; the autopilot builds the concept and the plan from it), the genre, the audience, the **Words per scene** and the **Synopsis** (optional, chapter by chapter if you like). **Save all** (or Ctrl+S) saves the whole card at once: the idea and the title in the book, the brief fields in `outline/_brief.md`. The idea is the description of the book in `outline/book.md`; there is no other. Below, one card per chapter with its **Hypothetical title**, **What happens** (plain text: the events, the turning points, who is there; not prose) and its **Ghostwriter**, where **The book's ghostwriter (default)** is the first choice.
 
 Every card says in words, with an icon, what became of it: **Written by the autopilot, untouched**, **Yours**, **Chapter already written** (a link to the chapter), **Frozen chapter**, **Chapter approved**, or **Changed after the plan: the autopilot will plan it again**. A ghostwriter that does not exist, and a file the Outline cannot read, are said on the card.
 
@@ -20,7 +20,7 @@ The page shows 50 chapters at a time, with **Previous** and **Next**. **Filter c
 
 ## An empty Outline
 
-**Add the first chapter**, **Let the autopilot write it** (the autopilot's **Configuration** opens), or, when the brief has a chapter-by-chapter synopsis, **Convert the brief's synopsis**: the lines «Chapter 1: …» become chapters, the rest becomes the description, and you see everything before anything is written.
+**Add the first chapter**, **Let the autopilot write it** (the autopilot's **Configuration** opens), or, when the brief has a chapter-by-chapter synopsis, **Convert the brief's synopsis**: the lines «Chapter 1: …» become chapters, the rest becomes the idea of the book, and you see everything before anything is written.
 
 ## What the autopilot does with it
 

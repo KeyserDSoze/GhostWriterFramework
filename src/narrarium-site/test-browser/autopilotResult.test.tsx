@@ -475,7 +475,7 @@ describe("what to do next", () => {
     show();
     const group = screen.getByRole("group", { name: t("autopilot.result.actions.label") });
     // Changed on purpose (the menu in groups): the number of chapters is in the configuration, a page of its own.
-    expect(within(group).getByRole("link", { name: t("autopilot.result.actions.add") })).toHaveAttribute("href", "/app/books/book-1/autopilot/settings#autopilot-chapters");
+    expect(within(group).getByRole("link", { name: t("autopilot.result.actions.add") })).toHaveAttribute("href", "/app/books/book-1/outline");
     expect(within(group).getByRole("link", { name: t("autopilot.result.actions.read") })).toHaveAttribute("href", "/app/books/book-1/reader");
     expect(within(group).getByRole("link", { name: t("autopilot.result.actions.export") })).toHaveAttribute("href", "/app/books/book-1/export");
     expect(within(group).getByRole("button", { name: t("autopilot.result.actions.ask") })).toBeInTheDocument();

@@ -23,7 +23,7 @@ import { FakeLockRegistry } from "./helpers/fakeWebLocks";
 useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writer", name: "Writer", email: "writer@example.com", picture: "" } });
 
 const BOOK: BookEntry = { id: "book-1", owner: "local", repo: "book-1", name: "The Glass Harbor", tokenIndex: null, storageMode: "local-only", activeBranch: "main", addedAt: "2026-11-21T00:00:00.000Z" };
-const BRIEF = { idea: "A harbor built on glass hides a lie.", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 };
+const BRIEF = { idea: "A harbor built on glass hides a lie.", wordsPerScene: 300 };
 const OPTIONS = { readers: false, readersOnPlan: false, specialists: false, pauseAfterPlan: false };
 
 let bus: FakeBroadcastBus;
@@ -67,7 +67,7 @@ beforeEach(async () => {
   localStorage.clear();
   bus = new FakeBroadcastBus();
   locks = new FakeLockRegistry();
-  local = new MemoryBookStore(seedBookFiles());
+  local = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   mocks.local = local;
   mocks.ai = heldAi();
   let release: () => void = () => undefined;

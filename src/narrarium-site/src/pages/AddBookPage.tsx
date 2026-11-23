@@ -23,6 +23,9 @@ import { type BookEntry } from "@/types/settings";
 import { createLocalOnlyBookRepository } from "@/repository/repositoryService";
 import { defaultRepositoryName } from "@/narrarium/bookScaffold";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
+import { StartSizePicker } from "@/components/book/StartSizePicker";
+import { presetOutlineFiles } from "@/autopilot/outlineBrief";
+import type { AutopilotPresetId } from "narrarium-engine";
 
 export function AddBookPage() {
   const { t } = useTranslation();
@@ -42,6 +45,8 @@ export function AddBookPage() {
   const [storageMode, setStorageMode] = useState<"local-only" | "github">("local-only");
   const [creatingRepo, setCreatingRepo] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  // The size a new book starts from: its words per scene, its review settings and one empty chapter entry per chapter. Nothing for none.
+  const [startSize, setStartSize] = useState<AutopilotPresetId | null>(null);
 
   const activeToken =
     selectedToken === "default"
@@ -117,9 +122,10 @@ export function AddBookPage() {
           name: title,
           tokenIndex: null,
           activeBranch: `local:${localRepositoryId}`,
+          startPreset: startSize ?? undefined,
           addedAt: new Date().toISOString(),
         };
-        await createLocalOnlyBookRepository({ book: entry, accountIdentity: localWorkspaceScope(), title, language: settings.ui.language });
+        await createLocalOnlyBookRepository({ book: entry, accountIdentity: localWorkspaceScope(), title, language: settings.ui.language, files: startSize ? presetOutlineFiles(startSize) : undefined });
         patchSettings({ books: [...settings.books, entry] });
         await save();
         navigate(`/app/books/${entry.id}`);
@@ -130,6 +136,7 @@ export function AddBookPage() {
         title,
         private: newRepoVisibility === "private",
         language: settings.ui.language,
+        files: startSize ? presetOutlineFiles(startSize) : undefined,
       });
       const usingCustom = selectedToken === "custom";
       const entry: BookEntry = {
@@ -141,6 +148,7 @@ export function AddBookPage() {
         bookToken: usingCustom ? customToken.trim() : undefined,
         bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${repo.name} PAT` : undefined,
         activeBranch: repo.default_branch,
+        startPreset: startSize ?? undefined,
         addedAt: new Date().toISOString(),
       };
       patchSettings({ books: [...settings.books, entry] });
@@ -264,6 +272,7 @@ export function AddBookPage() {
               <p className="text-xs text-muted-foreground">{newRepoName.trim() ? t("addBook.repoNameHint") : t("addBook.repoNameHintEmpty")}</p>
             </div>}
           </div>
+          <StartSizePicker value={startSize} onChange={setStartSize} />
           {storageMode === "github" && <div className="grid gap-2 sm:max-w-xs">
             <Label>{t("addBook.visibility")}</Label>
             <Select value={newRepoVisibility} onValueChange={(value) => setNewRepoVisibility(value as "private" | "public")}>

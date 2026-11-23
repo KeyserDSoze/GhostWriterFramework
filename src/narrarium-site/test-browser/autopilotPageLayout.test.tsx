@@ -410,8 +410,8 @@ describe("a book that is finished", () => {
     expect(within(group).queryByRole("button", { name: quickName(t("autopilot.actions.resume")) })).not.toBeInTheDocument();
     const add = within(group).getByRole("link", { name: quickName(t("autopilot.actions.addChapters")) });
     expect(add.className).toMatch(/(^|\s)bg-primary(\s|$)/);
-    // Changed on purpose (the menu in groups): the number of chapters is in the configuration, a page of its own.
-    expect(add).toHaveAttribute("href", "/app/books/book-1/autopilot/settings#autopilot-chapters");
+    // Changed on purpose: the chapters are added in the Scaletta, where their entries are written; the configuration has no number of chapters.
+    expect(add).toHaveAttribute("href", "/app/books/book-1/outline");
   });
 
   it("says how it went in a card of its own, right under the band: the verdict of the director on the whole book, the time, the cost, the words", () => {
@@ -475,20 +475,19 @@ describe("a book that is finished", () => {
   });
 
   // Changed on purpose (the menu in groups): the settings are a page of their own, the configuration; the number of chapters takes the focus there.
-  it("takes the author to the configuration, with the number of chapters in front of them", async () => {
+  it("takes the author to the Scaletta, where the chapters are added", async () => {
     done();
     render(
       <MemoryRouter initialEntries={["/app/books/book-1/autopilot"]}>
         <Routes>
           <Route path="/app/books/:bookId/autopilot" element={<AutopilotPage />} />
           <Route path="/app/books/:bookId/autopilot/settings" element={<AutopilotSettingsPage />} />
+          <Route path="/app/books/:bookId/outline" element={<p>The Scaletta page</p>} />
         </Routes>
       </MemoryRouter>,
     );
     fireEvent.click(within(bandOf()).getByRole("link", { name: quickName(t("autopilot.actions.addChapters")) }));
-    const field = await screen.findByLabelText(t("autopilot.setup.chapters"));
-    await waitFor(() => expect(document.activeElement).toBe(field));
-    expect(screen.getByRole("heading", { level: 1, name: t("autopilot.config.title") })).toBeInTheDocument();
+    expect(await screen.findByText("The Scaletta page")).toBeInTheDocument();
   });
 
   it("offers the same way to the settings in the card, under a name of its own: two links of one name would be one too many for a screen reader", () => {
@@ -500,15 +499,12 @@ describe("a book that is finished", () => {
     expect(inCard.getAttribute("aria-label") ?? inCard.textContent).not.toBe(inBand.getAttribute("aria-label"));
   });
 
-  it("offers to write the new chapters, and not to add more, once the settings ask for more than the plan has", async () => {
-    done({ statePatch: { finalDone: true, brief: { idea: "", synopsis: "", targetChapters: 14, scenesPerChapter: 2, wordsPerScene: 700, genre: "", audience: "" } } });
+  it("offers to add chapters to a complete book: the band does not read the Scaletta, so it never offers to write chapters that may not be there", async () => {
+    done({ statePatch: { finalDone: true } });
     render(<Page />);
     const group = within(bandOf()).getByRole("group", { name: /Quick commands/ });
-    const write = within(group).getByRole("button", { name: quickName(t("autopilot.actions.writeNewChapters")) });
-    expect(write.className).toMatch(/(^|\s)bg-primary(\s|$)/);
-    expect(within(group).queryByRole("link", { name: quickName(t("autopilot.actions.addChapters")) })).not.toBeInTheDocument();
-    fireEvent.click(write);
-    await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledWith("book-1"));
+    expect(within(group).queryByRole("button", { name: quickName(t("autopilot.actions.writeNewChapters")) })).not.toBeInTheDocument();
+    expect(within(group).getByRole("link", { name: quickName(t("autopilot.actions.addChapters")) })).toBeInTheDocument();
   });
 
   it("has no card of the result while the book is not finished", () => {

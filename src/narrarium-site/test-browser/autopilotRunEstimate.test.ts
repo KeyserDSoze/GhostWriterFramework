@@ -11,7 +11,6 @@ import {
   estimateModelsFromConfig,
   estimateProgressFromChapters,
   estimateProgressFromState,
-  matchAutopilotPreset,
   measuredSpeed,
   type AiIntegrationConfig,
   type AiRuntimeConfig,
@@ -20,7 +19,7 @@ import {
   type PlannedChapter,
   type ServerAiStatus,
 } from "narrarium-engine";
-import { applyPreset, callsByRole, configFromServerStatus, estimateRun, groupWarnings, measuredTokensPerWord, presetOfForm, type EstimateSources, type SetupFormValues } from "@/autopilot/runEstimate";
+import { callsByRole, configFromServerStatus, estimateRun, groupWarnings, measuredTokensPerWord, type EstimateSources, type SetupFormValues } from "@/autopilot/runEstimate";
 import { activityOf } from "./helpers/autopilotBand";
 import { longPlan, planOf } from "./helpers/autopilotFixtures";
 
@@ -41,65 +40,35 @@ function stepOf(task: AutopilotActivity["task"], at: number, patch: Partial<Auto
 
 function sourcesOf(patch: Partial<EstimateSources> = {}): EstimateSources {
   return {
-    book: { read: true, directorRounds: 2, directorFile: true, context: {}, designWritten: false },
+    book: { read: true, directorRounds: 2, directorFile: true, context: {}, designWritten: false, outline: { entries: 12, lastChapter: 12, words: 0 } },
     language: "en", currency: "EUR", ai: CONFIG, aiFrom: "browser", activities: [], state: null, chapters: null, canonEntries: 0,
     ...patch,
   };
 }
 
+/** The outline of a book of `entries` chapters (the Scaletta's: its entries, and the last one is the number of the chapters). */
+const outlineOf = (entries: number, words = 0) => ({ entries, lastChapter: entries, words });
+/** The sources of a book whose Scaletta has `entries` chapters. */
+const withOutline = (entries: number, patch: Partial<EstimateSources> = {}) => sourcesOf({ ...patch, book: { ...sourcesOf().book, outline: outlineOf(entries) } });
+
 /** What the engine says when it is asked with the same inputs the form and the book give. */
 function engineSays(sources: EstimateSources, form: SetupFormValues, extra: Record<string, unknown> = {}) {
   const speeds = measuredSpeed(sources.activities, { ignoreTasks: TWO_CALL_TASKS });
   return estimateAutopilotRun({
-    brief: form.brief, options: form.options, maxReviewRounds: sources.book.directorRounds, language: sources.language, currency: sources.currency,
+    brief: form.brief, options: form.options, outline: sources.book.outline, maxReviewRounds: sources.book.directorRounds, language: sources.language, currency: sources.currency,
     models: estimateModelsFromConfig(sources.ai, speeds), readerPanelSize: sources.book.readerPanelSize,
     ...extra,
   });
 }
 
-describe("the sizes of the form", () => {
-  const touched = { ...FORM, brief: { ...FORM.brief, genre: "mystery", audience: "adults", synopsis: "Chapter one…", targetChapters: 99 }, options: { ...FORM.options, pauseAfterPlan: false, pauseAfterEachChapter: true, budgetLimit: 7, budgetTokens: 5000, chaptersPerRun: 3, fillOutline: false, publishEvery: "chapter" as const, frozenEdits: "auto" as const } };
-
-  it.each(AUTOPILOT_PRESETS)("puts the seven numbers of «$id» into the form, and touches nothing else: not the idea, the pauses, the budgets or the way the book is published", (preset) => {
-    const next = applyPreset(touched, preset.id);
-    expect(next.brief).toEqual({ ...touched.brief, ...preset.brief });
-    expect(next.options).toEqual({ ...touched.options, ...preset.options });
-    expect(Object.keys(preset.brief).length + Object.keys(preset.options).length).toBe(7);
-  });
-
-  it("does not change the form it is given", () => {
-    const before = JSON.stringify(touched);
-    applyPreset(touched, "story");
-    expect(JSON.stringify(touched)).toBe(before);
-  });
-
-  it("knows the preset a form is, with the engine's own rule, and Custom (null) as soon as one of the seven numbers leaves it", () => {
-    for (const preset of AUTOPILOT_PRESETS) {
-      const form = applyPreset(touched, preset.id);
-      expect(presetOfForm(form)).toBe(preset.id);
-      expect(presetOfForm(form)).toBe(matchAutopilotPreset({ brief: form.brief, options: form.options }));
-      expect(presetOfForm({ ...form, brief: { ...form.brief, targetChapters: form.brief.targetChapters + 1 } })).toBeNull();
-      expect(presetOfForm({ ...form, brief: { ...form.brief, wordsPerScene: form.brief.wordsPerScene + 100 } })).toBeNull();
-      expect(presetOfForm({ ...form, options: { ...form.options, maxReaders: form.options.maxReaders + 1 } })).toBeNull();
-      expect(presetOfForm({ ...form, options: { ...form.options, specialists: !form.options.specialists } })).toBeNull();
-      // What changes no number of the run keeps the preset.
-      expect(presetOfForm({ ...form, brief: { ...form.brief, idea: "Another idea" }, options: { ...form.options, budgetLimit: 1, pauseAfterPlan: !form.options.pauseAfterPlan } })).toBe(preset.id);
-    }
-  });
-
-  it("starts a new book as the novella: the numbers a book starts with are the ones of that preset", () => {
-    expect(presetOfForm({ brief: DEFAULT_BRIEF, options: DEFAULT_OPTIONS })).toBe("novella");
-  });
-});
-
 describe("the estimate of the form", () => {
-  it.each(AUTOPILOT_PRESETS)("is, for «$id», the estimate of the engine called with the inputs of the form and of the book", (preset) => {
+  it.each(AUTOPILOT_PRESETS)("is, for a book made from «$id», the estimate of the engine called with the inputs of the form and of the book", (preset) => {
     const activities = [stepOf("write", 0), stepOf("plan", 1)];
-    const sources = sourcesOf({ activities, book: { read: true, directorRounds: 3, directorFile: true, context: { designWords: 400, ghostwriterWords: 220 }, designWritten: true, readerPanelSize: 6, outline: { entries: 2, lastChapter: 2, words: 90 } } });
-    const form = applyPreset(FORM, preset.id);
+    const sources = sourcesOf({ activities, book: { read: true, directorRounds: 3, directorFile: true, context: { designWords: 400, ghostwriterWords: 220 }, designWritten: true, readerPanelSize: 6, outline: outlineOf(preset.chapters, 90) } });
+    const form = { ...FORM, brief: { ...FORM.brief, wordsPerScene: preset.wordsPerScene }, options: { ...FORM.options, ...preset.options } };
     const { estimate } = estimateRun(sources, form);
     const expected = engineSays(sources, form, {
-      outline: { entries: 2, lastChapter: 2, words: 90 },
+      outline: outlineOf(preset.chapters, 90),
       progress: { conceptDone: true },
       context: { designWords: 400, ghostwriterWords: 220 },
     });
@@ -107,7 +76,7 @@ describe("the estimate of the form", () => {
   });
 
   it("uses the rounds the director of the book has, and not the ones a preset recommends: a preset never writes director.md", () => {
-    const novel = applyPreset(FORM, "novel-draft");
+    const novel = { ...FORM, brief: { ...FORM.brief, wordsPerScene: 1500 }, options: { ...FORM.options, maxReaders: 3, readersOnPlan: true } };
     const one = estimateRun(sourcesOf({ book: { ...sourcesOf().book, directorRounds: 1 } }), novel).estimate;
     const three = estimateRun(sourcesOf({ book: { ...sourcesOf().book, directorRounds: 3 } }), novel).estimate;
     expect(three.calls.max).toBeGreaterThan(one.calls.max);
@@ -121,8 +90,8 @@ describe("the estimate of the form", () => {
 
   it("counts only what is left of a book that is started, from its state", () => {
     const state: AutopilotState = { ...createAutopilotState(new Date("2026-11-20T10:00:00Z")), plan: planOf(longPlan(12, 4)), concept: { ...createAutopilotState(new Date()).concept, done: true } };
-    const sources = sourcesOf({ state });
-    const form = { ...FORM, brief: { ...FORM.brief, targetChapters: 12 } };
+    const sources = withOutline(12, { state });
+    const form = FORM;
     const { estimate } = estimateRun(sources, form);
     expect(estimate.chaptersToWrite).toBe(8);
     expect(estimate).toEqual(engineSays(sources, form, { progress: estimateProgressFromState(state), context: estimateContextFromState(state) }));
@@ -133,11 +102,10 @@ describe("the estimate of the form", () => {
   it("counts only the new chapters when the settings ask for more than a finished book has", () => {
     const chapters: PlannedChapter[] = longPlan(12, 12);
     const state: AutopilotState = { ...createAutopilotState(new Date("2026-11-20T10:00:00Z")), status: "completed", plan: planOf(chapters), finalDone: true, concept: { ...createAutopilotState(new Date()).concept, done: true } };
-    const form = { ...FORM, brief: { ...FORM.brief, targetChapters: 16 } };
-    const { estimate } = estimateRun(sourcesOf({ state }), form);
+    const { estimate } = estimateRun(withOutline(16, { state }), FORM);
     expect(estimate.chapters).toBe(16);
     expect(estimate.chaptersToWrite).toBe(4);
-    expect(estimateRun(sourcesOf({ state }), { ...form, brief: { ...form.brief, targetChapters: 12 } }).estimate.chaptersToWrite).toBe(0);
+    expect(estimateRun(withOutline(12, { state }), FORM).estimate.chaptersToWrite).toBe(0);
   });
 
   it("reads the chapters of a book that never started: the ones with prose are done, and each one with no summary costs a call before the plan", () => {
@@ -152,7 +120,7 @@ describe("the estimate of the form", () => {
   it("has no concept step for a book that has a plan, whatever the flag of its state says: the planner does not plan before the concept", () => {
     const state: AutopilotState = { ...createAutopilotState(new Date("2026-11-20T10:00:00Z")), plan: planOf(longPlan(12, 4)) };
     expect(state.concept.done).toBe(false);
-    expect(estimateRun(sourcesOf({ state }), { ...FORM, brief: { ...FORM.brief, targetChapters: 12 } }).estimate.steps.concept.calls.max).toBe(0);
+    expect(estimateRun(withOutline(12, { state }), FORM).estimate.steps.concept.calls.max).toBe(0);
   });
 
   it("has no concept step for a book whose story design the author wrote, or whose state says it is done", () => {
@@ -162,11 +130,10 @@ describe("the estimate of the form", () => {
     expect(written.steps.concept.calls.min).toBe(0);
   });
 
-  it("gives the engine the outline of the author, which can make the book longer than the brief says", () => {
-    const sources = sourcesOf({ book: { ...sourcesOf().book, outline: { entries: 20, lastChapter: 20, words: 1200 } } });
+  it("gives the engine the outline of the author: its chapters are the book's, whatever the words per scene", () => {
+    const sources = withOutline(20, { book: { ...sourcesOf().book, outline: { entries: 20, lastChapter: 20, words: 1200 } } } as never);
     const { estimate } = estimateRun(sources, FORM);
     expect(estimate.chapters).toBe(20);
-    expect(estimate.warnings.map((warning) => warning.code)).toContain("outlineLongerThanBrief");
   });
 
   it("counts the canon from the entries the book has, at the size the engine gives its typical manifest of ten, and leaves the typical manifest to a book that has none yet", () => {
@@ -339,7 +306,6 @@ describe("the warnings, grouped the way an author reads them", () => {
     expect(windows.length).toBeGreaterThan(0);
     for (const group of windows) expect(group).toMatchObject({ severity: "error", text: expect.stringContaining("small-8k") });
     expect(groups.some((group) => group.code === "smallOutput")).toBe(true);
-    expect(groups.find((group) => group.code === "outlineLongerThanBrief")).toMatchObject({ severity: "info", text: estimate.warnings.find((warning) => warning.code === "outlineLongerThanBrief")?.text });
   });
 
   it("puts what stops the run before what only changes a figure, and that before what is only a note", () => {
@@ -374,9 +340,9 @@ describe("the calls by role", () => {
 
 describe("what the estimate does not need", () => {
   it("is in memory and fast, also for a book of five thousand chapters", () => {
-    const form = { ...FORM, brief: { ...FORM.brief, targetChapters: 5000 } };
+    const sources = withOutline(5000);
     const started = performance.now();
-    for (let index = 0; index < 20; index += 1) estimateRun(sourcesOf(), form);
+    for (let index = 0; index < 20; index += 1) estimateRun(sources, FORM);
     expect((performance.now() - started) / 20).toBeLessThan(50);
   });
 

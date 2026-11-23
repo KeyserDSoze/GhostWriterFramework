@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Gauge, Info } from "lucide-react";
-import { AUTOPILOT_PRESETS, isItalian, type AutopilotState, type EstimateCapability } from "narrarium-engine";
+import { autopilotPresetSkeleton, isItalian, type AutopilotPresetId, type AutopilotState, type EstimateCapability } from "narrarium-engine";
 import { Card } from "@/components/autopilot/Card";
 import { EstimateWarnings, RangeText, Stat, useLocale, useRoleNames, useWhyUnknown } from "@/components/autopilot/config/EstimateParts";
-import { callsByRole, estimateRun, groupWarnings, presetOfForm, type SetupFormValues } from "@/autopilot/runEstimate";
+import { callsByRole, estimateRun, groupWarnings, type SetupFormValues } from "@/autopilot/runEstimate";
 import { formatMinutes, formatMoney, formatTokens, formatWhole, roundMinutesRange, roundMoneyRange, roundRange, type Range } from "@/autopilot/runEstimateFormat";
 import { useBookAutopilotView } from "@/autopilot/hooks";
 import { useRunEstimateSources, type RunEstimateInputs } from "@/autopilot/useRunEstimate";
@@ -35,6 +35,8 @@ export interface RunPreviewProps {
   /** The author has changed something: only then is what the page works out told to a screen reader. */
   dirty: boolean;
   bookId: string;
+  /** The size the book was created from, while the autopilot has no state of its own: the size recommends its rounds of review. */
+  startPreset?: AutopilotPresetId | null;
 }
 
 /**
@@ -42,7 +44,7 @@ export interface RunPreviewProps {
  * figures follow every change after a short pause in the typing and are never in a live region; what they come to is said once, calmly, a little later. The estimate is the
  * engine's own: this card shows it, rounded outward to two figures so that none of them says more than it knows, and says in words what it cannot say.
  */
-export function RunPreview({ inputs, form, dirty, bookId }: RunPreviewProps) {
+export function RunPreview({ inputs, form, dirty, bookId, startPreset }: RunPreviewProps) {
   const { t } = useTranslation();
   const locale = useLocale();
   const settled = useSettled(form, PREVIEW_PAUSE_MS);
@@ -81,8 +83,7 @@ export function RunPreview({ inputs, form, dirty, bookId }: RunPreviewProps) {
   });
 
   // The director's rounds, and the size the form is: a size recommends rounds, and never writes them.
-  const presetId = presetOfForm(settled);
-  const preset = presetId ? AUTOPILOT_PRESETS.find((entry) => entry.id === presetId) : undefined;
+  const preset = startPreset ? autopilotPresetSkeleton(startPreset) : undefined;
   const rounds = sources.book.directorRounds;
   const directorHref = `/app/books/${encodeURIComponent(bookId)}/director`;
 
@@ -158,9 +159,9 @@ export function RunPreview({ inputs, form, dirty, bookId }: RunPreviewProps) {
             <caption className="sr-only">{t("autopilot.estimate.byRole")}</caption>
             <thead>
               <tr className="border-b text-left text-xs text-muted-foreground">
-                <th scope="col" className="w-[30%] py-1 pr-2 font-medium">{t("autopilot.estimate.role")}</th>
+                <th scope="col" className="w-[38%] py-1 pr-2 font-medium sm:w-[30%]">{t("autopilot.estimate.role")}</th>
                 <th scope="col" className="py-1 pr-2 font-medium">{t("autopilot.estimate.model")}</th>
-                <th scope="col" className="w-[34%] py-1 text-right font-medium sm:w-[28%]">{t("autopilot.estimate.calls")}</th>
+                <th scope="col" className="w-[28%] py-1 text-right font-medium sm:w-[28%]">{t("autopilot.estimate.calls")}</th>
               </tr>
             </thead>
             <tbody>
@@ -206,8 +207,8 @@ export function RunPreview({ inputs, form, dirty, bookId }: RunPreviewProps) {
 
 
 /** The preview of a book's run: it gathers what the estimate needs (the models, the log, the files, where the book is) and shows it. */
-export function BookRunPreview({ book, branch, structure, state, form, dirty }: { book: BookEntry; branch: string; structure: BookStructure | undefined; state: AutopilotState | null; form: SetupFormValues; dirty: boolean }) {
+export function BookRunPreview({ book, branch, structure, state, form, dirty, scaletta }: { book: BookEntry; branch: string; structure: BookStructure | undefined; state: AutopilotState | null; form: SetupFormValues; dirty: boolean; scaletta?: string }) {
   const view = useBookAutopilotView(book.id);
-  const inputs = useRunEstimateSources({ book, branch, structure, state, activities: view.snapshot?.activities });
-  return <RunPreview inputs={inputs} form={form} dirty={dirty} bookId={book.id} />;
+  const inputs = useRunEstimateSources({ book, branch, structure, state, activities: view.snapshot?.activities, scaletta });
+  return <RunPreview inputs={inputs} form={form} dirty={dirty} bookId={book.id} startPreset={state ? null : book.startPreset} />;
 }

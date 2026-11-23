@@ -33,7 +33,7 @@ const scene = (text: string) => `---\ntype: paragraph\nid: paragraph:${SLUG}:001
 /** A book of one chapter that the autopilot wrote and approved (before chapters were frozen by it), and nothing else to write. */
 function bookFiles(): Record<string, string> {
   const state: AutopilotState = {
-    ...createAutopilotState(new Date("2026-11-21T10:00:00.000Z"), { idea: "A harbor town built on glass hides a lie.", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }),
+    ...createAutopilotState(new Date("2026-11-21T10:00:00.000Z"), { idea: "A harbor town built on glass hides a lie.", wordsPerScene: 300 }),
     status: "paused",
     phase: "write",
     frozenSince: "2026-11-21T10:00:00.000Z",

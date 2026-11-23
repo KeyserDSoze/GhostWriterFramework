@@ -1,4 +1,5 @@
 import { resolveGitHubCredentialValue, type ResolvedGitHubCredential } from "@/github/githubCredentialRuntime";
+import type { AutopilotPresetId } from "narrarium-engine";
 
 // ─── Azure OpenAI ────────────────────────────────────────────────────────────
 
@@ -332,6 +333,8 @@ export interface BookEntry {
   bookTokenLabel?: string;
   /** Optional active branch selected for this book. Undefined = use the personal dev branch. */
   activeBranch?: string;
+  /** The size the book was created from ("Parti da una misura"): the review options its first autopilot configuration starts with, until the autopilot has a state. */
+  startPreset?: AutopilotPresetId;
   /** Optional export settings and saved Drive target for this book. */
   exportSettings?: Partial<BookExportSettings>;
   /** Per-book audit behavior. The model/provider is selected by the fixed audit router task. */

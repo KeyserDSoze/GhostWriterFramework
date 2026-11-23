@@ -127,19 +127,19 @@ describe("the live page of the autopilot (what is happening)", () => {
     expect(screen.queryByRole("link", { name: t("autopilot.live.configure") })).not.toBeInTheDocument();
   });
 
-  it("sends an old link to the settings of this page to the configuration, with the number of chapters in front", async () => {
+  it("sends an old link to the settings of this page to the configuration's overview", async () => {
     seedRun({ status: "completed", phase: "completed", chapters: longPlan(12, 12), statePatch: { finalDone: true } });
     render(<Page path="/app/books/book-1/autopilot#autopilot-setup" />);
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(`${SETTINGS}#autopilot-chapters`));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(`${SETTINGS}#autopilot-overview`));
   });
 
-  it("leads Add chapters, in the band and in the result, to the configuration with the number of chapters in front", () => {
+  it("leads Add chapters, in the band and in the result, to the Scaletta, where the chapters are added", () => {
     seedRun({ status: "completed", phase: "completed", chapters: longPlan(12, 12), message: "The book is complete.", statePatch: { finalDone: true } });
     render(<Page />);
     const inBand = within(bandOf()).getByRole("link", { name: quickName(t("autopilot.actions.addChapters")) });
-    expect(inBand).toHaveAttribute("href", `${SETTINGS}#autopilot-chapters`);
+    expect(inBand).toHaveAttribute("href", "/app/books/book-1/outline");
     const result = document.querySelector<HTMLElement>("[data-autopilot-result]") as HTMLElement;
-    expect(within(result).getByRole("link", { name: t("autopilot.result.actions.add") })).toHaveAttribute("href", `${SETTINGS}#autopilot-chapters`);
+    expect(within(result).getByRole("link", { name: t("autopilot.result.actions.add") })).toHaveAttribute("href", "/app/books/book-1/outline");
   });
 
   it("keeps the answer to the question of the director on this page", () => {

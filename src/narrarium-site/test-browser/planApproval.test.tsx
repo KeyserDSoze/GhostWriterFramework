@@ -76,7 +76,7 @@ interface Waiting {
 
 /** A plan that waits for the author, as the engine leaves it when it stops after the director approved it. */
 function seedWaiting({ chapters = CHAPTERS, plan = {}, activities = [CONCEPT, PLANNED, APPROVED], status = "paused", message = "The plan is ready: read it and resume when you want." }: Waiting = {}) {
-  const base = createAutopilotState(new Date(T0), { idea: IDEA, targetChapters: chapters.length });
+  const base = createAutopilotState(new Date(T0), { idea: IDEA });
   return seedRun({
     status,
     phase: "plan",

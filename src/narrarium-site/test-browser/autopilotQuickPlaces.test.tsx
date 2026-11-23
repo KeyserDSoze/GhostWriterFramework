@@ -17,6 +17,9 @@ import { AutopilotDock } from "@/components/autopilot/AutopilotDock";
 import { AutopilotLauncher } from "@/components/autopilot/AutopilotLauncher";
 import { AutopilotPage, WhereCard } from "@/pages/AutopilotPage";
 import { SetupCard } from "@/components/autopilot/config/SetupCard";
+import { EMPTY_OUTLINE_BRIEF } from "@/autopilot/outlineBrief";
+const FORM = { outline: { brief: EMPTY_OUTLINE_BRIEF, chapters: 2, lastChapter: 2, readable: true, loaded: true, reload: vi.fn() }, tab: "review", onTab: vi.fn(), onReset: vi.fn(), profiles: null };
+
 import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
@@ -282,7 +285,7 @@ describe("the choice of publishing in the configuration of the autopilot", () =>
 
   function openSetup(options: Record<string, unknown>) {
     const state = stateWith(options);
-    render(<MemoryRouter><SetupCard book={GITHUB_BOOK} state={state} existingChapters={1} running={false} busy={false} disabled={false} run={run as never} /></MemoryRouter>);
+    render(<MemoryRouter><SetupCard book={GITHUB_BOOK} state={state} {...FORM} tab="publishing" running={false} busy={false} disabled={false} run={run as never} /></MemoryRouter>);
   }
 
   it("shows how the author chose to publish from the quick commands, not an older option that says otherwise", () => {
@@ -319,7 +322,7 @@ describe("the choice of publishing in the configuration of the autopilot", () =>
 
   it("leaves the older option to decide, as it always did, when the author does not touch the choice", async () => {
     openSetup({ syncAfterChapter: true });
-    fireEvent.click(screen.getByRole("switch", { name: t("autopilot.setup.specialists") }));
+    fireEvent.click(screen.getByLabelText(t("autopilot.setup.specialists")));
     save();
     await waitFor(() => expect(runtime.configure).toHaveBeenCalledTimes(1));
     const options = (runtime.configure.mock.calls[0] as unknown as [string, { options: Record<string, unknown> }])[1].options;

@@ -1,10 +1,10 @@
 # La Scaletta
 
-La Scaletta è il piano del libro, capitolo per capitolo: una descrizione di massima del libro e, per ogni capitolo, un titolo ipotetico, cosa succede e, quando non è quello del libro, il ghostwriter che lo scrive. Aprila dal menu del libro (**Scaletta**). Vive nei file del libro (`outline/book.md` e un `outline/chapters/<NNN>.md` per capitolo), quindi viaggia con il libro come tutto il resto.
+La Scaletta è il piano del libro, capitolo per capitolo: l'idea del libro (la premessa, il pitch) e, per ogni capitolo, un titolo ipotetico, cosa succede e, quando non è quello del libro, il ghostwriter che lo scrive. Aprila dal menu del libro (**Scaletta**). Vive nei file del libro (`outline/book.md` e un `outline/chapters/<NNN>.md` per capitolo), quindi viaggia con il libro come tutto il resto.
 
 ## La pagina
 
-In alto, **Il libro**: un titolo di lavoro (facoltativo: il titolo vero del libro resta nelle sue impostazioni) e la **Descrizione di massima del libro**. Sotto, una scheda per capitolo con il **Titolo ipotetico**, **Cosa succede** (testo semplice: gli eventi, le svolte, chi c'è; non prosa) e il **Ghostwriter**, dove la prima scelta è **Ghostwriter del libro (predefinito)**.
+In alto, **Il libro** è una scheda sola: un titolo di lavoro (facoltativo: il titolo vero del libro resta nelle sue impostazioni), l'**Idea, promessa o pitch** (di cosa parla il libro, di chi parla e cosa è in gioco, in una o due frasi; dall'idea l'autopilot costruisce il concept e il piano), il genere, il pubblico, le **Parole per scena** e la **Sinossi** (facoltativa, capitolo per capitolo se vuoi). **Salva tutto** (o Ctrl+S) salva l'intera scheda in una volta: l'idea e il titolo nel libro, i campi del brief in `outline/_brief.md`. L'idea è la descrizione del libro in `outline/book.md`, e non ce n'è un'altra. Sotto, una scheda per capitolo con il **Titolo ipotetico**, **Cosa succede** (testo semplice: gli eventi, le svolte, chi c'è; non prosa) e il **Ghostwriter**, dove la prima scelta è **Ghostwriter del libro (predefinito)**.
 
 Ogni scheda dice a parole, con un'icona, cosa ne è stato: **Scritto dall'autopilot, non toccato**, **Tuo**, **Capitolo già scritto** (con il collegamento al capitolo), **Capitolo congelato**, **Capitolo approvato**, oppure **Cambiato dopo il piano: l'autopilot lo ripianificherà**. Un ghostwriter che non esiste, e un file che la Scaletta non riesce a leggere, sono segnalati sulla scheda.
 
@@ -20,7 +20,7 @@ La pagina mostra 50 capitoli alla volta, con **Precedenti** e **Successivi**. **
 
 ## Una Scaletta vuota
 
-**Aggiungi il primo capitolo**, **Lascia che la scriva l'autopilot** (si apre la **Configurazione** dell'autopilot) oppure, quando il brief ha una sinossi capitolo per capitolo, **Converti la sinossi del brief**: le righe «Capitolo 1: …» diventano capitoli, il resto diventa la descrizione, e vedi tutto prima che venga scritto qualcosa.
+**Aggiungi il primo capitolo**, **Lascia che la scriva l'autopilot** (si apre la **Configurazione** dell'autopilot) oppure, quando il brief ha una sinossi capitolo per capitolo, **Converti la sinossi del brief**: le righe «Capitolo 1: …» diventano capitoli, il resto diventa l'idea del libro, e vedi tutto prima che venga scritto qualcosa.
 
 ## Cosa ne fa l'autopilot
 

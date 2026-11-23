@@ -364,7 +364,7 @@ function clipped(text: string, max: number): string {
 }
 
 /**
- * The outline as the Copilot reads it on the Outline page and on the autopilot's pages, where «chapter N» is its entry N: the description of the book
+ * The outline as the Copilot reads it on the Outline page and on the autopilot's pages, where «chapter N» is its entry N: the idea of the book
  * and the entries around the one the author is working on (the first ones when none is), each cut to a few lines. The files that do not exist are
  * left out.
  */
@@ -447,7 +447,7 @@ export function buildContextSummary(
   switch (route.kind) {
     case "book": return `Book context for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-dashboard": return `Dashboard for ${structure?.title ?? book?.name ?? "book"}.`;
-    case "book-outline": return `Outline (Scaletta) of ${structure?.title ?? book?.name ?? "book"}: the rough description of the book (outline/book.md) and one entry per chapter (outline/chapters/<NNN>.md) with a hypothetical title, what happens and its ghostwriter. The autopilot follows it as binding.`;
+    case "book-outline": return `Outline (Scaletta) of ${structure?.title ?? book?.name ?? "book"}: the idea of the book (outline/book.md, its description) and one entry per chapter (outline/chapters/<NNN>.md) with a hypothetical title, what happens and its ghostwriter. The autopilot follows it as binding.`;
     case "book-autopilot": return `Autopilot of ${structure?.title ?? book?.name ?? "book"}, live: what it is doing, its history, its plan and the author's permanent rules.`;
     case "book-autopilot-settings": return `Autopilot configuration for ${structure?.title ?? book?.name ?? "book"}: the brief, how it reviews and publishes the book, the author's permanent rules and the profiles it uses.`;
     case "book-director": return `Director profile and opinions for ${structure?.title ?? book?.name ?? "book"}.`;

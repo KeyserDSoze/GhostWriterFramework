@@ -169,6 +169,7 @@ function engineSays(state: AutopilotState, brief: Partial<AutopilotBrief>, activ
   const speeds = measuredSpeed(activities, { ignoreTasks: TWO_CALL_TASKS });
   return estimateAutopilotRun({
     brief: { ...state.brief, ...brief },
+    outline: { entries: 0, lastChapter: state.plan?.chapters.length ?? 0, words: 0 },
     options: state.options,
     maxReviewRounds: 3,
     language: "en",
@@ -259,9 +260,9 @@ describe("what the rest will cost, at the end of a plan that waits for the autho
   });
 
   it("is the estimate of the engine called with the chapters and the scenes of the plan and the options of the run: the calls, the tokens sent and written, the cost", async () => {
-    const state = waiting(chaptersOf(14, 0, 4), { brief: { targetChapters: 12 }, options: { maxReaders: 3 } });
+    const state = waiting(chaptersOf(14, 0, 4), { options: { maxReaders: 3 } });
     await show(state);
-    const expected = engineSays(state, { targetChapters: 14, scenesPerChapter: 4 });
+    const expected = engineSays(state, {}, [], { scenesPerChapter: 4 });
     expect(range("calls")).toEqual(expected.calls);
     expect(range("tokens")).toEqual({ min: expected.inputTokens.min + expected.outputTokens.min, max: expected.inputTokens.max + expected.outputTokens.max });
     expect(expected.cost).not.toBeNull();
@@ -274,7 +275,7 @@ describe("what the rest will cost, at the end of a plan that waits for the autho
   it("counts only what is left: the chapters done are not paid for again", async () => {
     const state = waiting(chaptersOf(14, 5));
     await show(state);
-    expect(range("calls")).toEqual(engineSays(state, { targetChapters: 14 }).calls);
+    expect(range("calls")).toEqual(engineSays(state, {}).calls);
     expect(headline()).toHaveAttribute("data-to-write", "9");
     expect(headline()).toHaveTextContent(t("autopilot.estimate.remaining", { count: 9, total: 14, words: "37,800" }));
   });
@@ -325,7 +326,7 @@ describe("what the rest will cost, at the end of a plan that waits for the autho
     const activities = [measuredStep("concept", 0), measuredStep("plan", 1), measuredStep("plan-review", 2)];
     const state = waiting(chaptersOf(12));
     await show(state, { activities });
-    const expected = engineSays(state, { targetChapters: 12 }, activities);
+    const expected = engineSays(state, {}, activities);
     expect(expected.minutes).not.toBeNull();
     expect(range("minutes")).toEqual(expected.minutes);
     expect({ min: Number(value("minutes").dataset.shownMin), max: Number(value("minutes").dataset.shownMax) }).toEqual(roundMinutesRange(expected.minutes!));
@@ -466,7 +467,7 @@ describe("the problems it shows", () => {
   it("leave out the notes that are about something else: no price, no speed, a model that reasons, an outline longer than the brief", async () => {
     const reasoning = withModels(HOME, [{ id: "l1", name: "thinker", capabilities: ["default"], supportsToolCalls: true, supportsReasoning: true }]);
     await show(waiting(chaptersOf(12)), { integrations: [reasoning] });
-    for (const code of ["noPrice", "noSpeed", "reasoningModel", "outlineLongerThanBrief"]) expect(warnings(code), code).toHaveLength(0);
+    for (const code of ["noPrice", "noSpeed", "reasoningModel"]) expect(warnings(code), code).toHaveLength(0);
     expect(section().querySelectorAll("[data-warning]")).toHaveLength(0);
   });
 
@@ -523,7 +524,7 @@ describe("what it reads", () => {
 
   it("counts the author's outline as the full preview does: an entry beyond the plan makes the book longer", async () => {
     mocks.outline = [{ path: outlineChapterPath(12), content: serializeOutlineChapter({ number: 12, title: "The last tide", body: "The tide takes the town.", origin: "author" }) }];
-    const state = waiting(chaptersOf(11), { brief: { targetChapters: 11 } });
+    const state = waiting(chaptersOf(11));
     await show(state);
     expect(mocks.outlineReads).toHaveBeenCalledTimes(1);
     expect(headline()).toHaveAttribute("data-chapters", "12");
@@ -542,7 +543,7 @@ describe("when the plan is to be made again", () => {
   it("counts the plan made again and says so: the changes asked make the director review it before anything is written", async () => {
     const state = waiting(chaptersOf(12), { plan: { approved: false, awaitingAuthor: false, revisionNotes: ["Chapter 3: make it darker."] } });
     await show(state, { mode: "revise" });
-    const again = engineSays(state, { targetChapters: 12 });
+    const again = engineSays(state, {});
     expect(again.steps.plan.calls.max).toBeGreaterThan(0);
     expect(range("calls")).toEqual(again.calls);
     expect(within(section()).getByText(t("autopilot.approval.rest.again"))).toBeInTheDocument();

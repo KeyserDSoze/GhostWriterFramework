@@ -2462,7 +2462,7 @@ const it = {
       },
       "edit-outline": {
         name: "Modifica la Scaletta",
-        description: "Propone modifiche alla Scaletta (descrizione del libro, voci dei capitoli, aggiunte, spostamenti, eliminazioni). Nulla è scritto finché non applichi.",
+        description: "Propone modifiche alla Scaletta (idea del libro, voci dei capitoli, aggiunte, spostamenti, eliminazioni). Nulla è scritto finché non applichi.",
         output: "Proposta per la Scaletta",
       },
       "create-script": {

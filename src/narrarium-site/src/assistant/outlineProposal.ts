@@ -207,7 +207,7 @@ export function describeOutlineEdits(steps: readonly OutlineSeriesStep[], before
       case "remove": return italian
         ? `${named(step.number, step.origin).replace(/^il/, "Il")} esce dalla Scaletta${step.renumber ? ": i successivi risalgono di un posto" : ": i successivi mantengono il loro numero"}.`
         : `${named(step.number, step.origin).replace(/^chapter/, "Chapter")} leaves the outline${step.renumber ? ": the following chapters move one number down" : ": the following chapters keep their numbers"}.`;
-      default: return italian ? "Cambia la descrizione del libro nella Scaletta." : "The description of the book in the outline changes.";
+      default: return italian ? "Cambia l'idea del libro nella Scaletta." : "The idea of the book in the outline changes.";
     }
   });
 }

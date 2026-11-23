@@ -47,6 +47,7 @@ import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { LOCAL_BOOK, makeRuntime, seedBar, t } from "./helpers/quickCommands";
+import { renderWithScaletta, scalettaFiles } from "./helpers/scaletta";
 import { CLOUD, HOME, Page, field, region, statValue, structureOf, type, withAi } from "./helpers/setupEstimate";
 
 type Language = "en" | "it";
@@ -60,7 +61,7 @@ async function showFresh(language: Language = "en", integrations = [CLOUD]) {
   await i18n.changeLanguage(language);
   seedBar({ noState: true });
   withAi(integrations);
-  render(<Page />);
+  await renderWithScaletta(<Page />);
   await screen.findByRole("region", { name: t("autopilot.estimate.title") });
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
 }
@@ -79,7 +80,7 @@ beforeEach(async () => {
   mocks.runtime = { ...makeRuntime(), configure: vi.fn(async () => undefined), reset: vi.fn(async () => undefined) };
   mocks.book = LOCAL_BOOK;
   mocks.structure = structureOf();
-  mocks.local = new MemoryBookStore({});
+  mocks.local = new MemoryBookStore({ ...scalettaFiles() });
   mocks.estimates.count = 0;
 });
 
@@ -97,37 +98,34 @@ describe("the preview while the author types", () => {
     await showFresh();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const before = mocks.estimates.count;
-    const chapters = field("autopilot.setup.chapters");
-    chapters.focus();
-    for (const typed of ["5", "50", "500", "5000"]) {
-      type(chapters, typed, false);
-      expect(chapters.value).toBe(typed);
+    const readers = field("autopilot.setup.maxReaders");
+    readers.focus();
+    for (const typed of ["1", "2", "3", "4"]) {
+      type(readers, typed, false);
+      expect(readers.value).toBe(typed);
       await advance(Math.floor(PREVIEW_PAUSE_MS / 4));
     }
-    expect(chapters).toHaveFocus();
+    expect(readers).toHaveFocus();
     expect(mocks.estimates.count).toBe(before);
-    expect(headline().dataset.chapters).toBe("12");
     await advance(PREVIEW_PAUSE_MS);
     expect(mocks.estimates.count).toBe(before + 1);
-    expect(headline().dataset.chapters).toBe("5000");
-    expect(chapters).toHaveFocus();
+    expect(readers).toHaveFocus();
   });
 
-  it("calculates a book of five thousand chapters in less than a frame's worth of the pause: in memory, with no file read and no wait", async () => {
+  it("calculates in less than a frame's worth of the pause: in memory, with no file read and no wait", async () => {
     await showFresh();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    type(field("autopilot.setup.chapters"), "5000", false);
+    type(field("autopilot.setup.maxReaders"), "20", false);
     await advance(PREVIEW_PAUSE_MS + 10);
-    expect(headline().dataset.chapters).toBe("5000");
     expect(mocks.estimates.lastMs).toBeLessThan(50);
-    expect(Number(statValue("calls").dataset.max)).toBeGreaterThan(50_000);
+    expect(Number(statValue("calls").dataset.max)).toBeGreaterThan(0);
   });
 
   it("keeps the figures it had until the pause, and does not show a half-typed number", async () => {
     await showFresh();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const calls = statValue("calls").textContent;
-    type(field("autopilot.setup.chapters"), "2", false);
+    type(field("autopilot.setup.maxReaders"), "2", false);
     await advance(PREVIEW_PAUSE_MS / 2);
     expect(statValue("calls").textContent).toBe(calls);
     await advance(PREVIEW_PAUSE_MS);
@@ -148,19 +146,17 @@ describe.each(LANGUAGES)("what a screen reader is told (%s)", (language) => {
     const changes: string[] = [];
     const observer = new MutationObserver(() => changes.push(status().textContent ?? ""));
     observer.observe(status(), { childList: true, characterData: true, subtree: true });
-    const chapters = field("autopilot.setup.chapters");
-    for (const typed of ["1", "14"]) {
-      type(chapters, typed, false);
+    const readers = field("autopilot.setup.maxReaders");
+    for (const typed of ["1", "2"]) {
+      type(readers, typed, false);
       await advance(100);
     }
     await advance(PREVIEW_PAUSE_MS + 50);
     // The figures have been redrawn, and nothing has been said.
-    expect(headline().dataset.chapters).toBe("14");
     expect(status().textContent).toBe("");
     await advance(ANNOUNCE_PAUSE_MS + 50);
     await act(async () => { await Promise.resolve(); });
     observer.disconnect();
-    expect(status().textContent).toContain("14");
     expect(status().textContent).toContain(new Intl.NumberFormat(language).format(Number(statValue("calls").dataset.shownMax)));
     expect(changes.filter((text) => text !== "")).toHaveLength(1);
   });
@@ -168,7 +164,7 @@ describe.each(LANGUAGES)("what a screen reader is told (%s)", (language) => {
   it("says its words in the language of the page, and not the numbers of the engine in the language of the book", async () => {
     await showFresh(language);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    type(field("autopilot.setup.chapters"), "20", false);
+    type(field("autopilot.setup.maxReaders"), "4", false);
     await advance(PREVIEW_PAUSE_MS + ANNOUNCE_PAUSE_MS + 100);
     expect(status().textContent).toContain(t("autopilot.estimate.announceTitle"));
   });
@@ -187,14 +183,14 @@ describe.each(LANGUAGES)("what a screen reader is told (%s)", (language) => {
   it("is not said again when the figures are the same: a change that moves no figure is no news", async () => {
     await showFresh(language);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    type(field("autopilot.setup.chapters"), "14", false);
+    type(field("autopilot.setup.maxReaders"), "3", false);
     await advance(PREVIEW_PAUSE_MS + ANNOUNCE_PAUSE_MS + 100);
     const first = status().textContent;
     expect(first).not.toBe("");
     const changes: string[] = [];
     const observer = new MutationObserver(() => changes.push(status().textContent ?? ""));
     observer.observe(status(), { childList: true, characterData: true, subtree: true });
-    type(field("autopilot.setup.genre"), "mystery", false);
+    type(field("autopilot.setup.maxReaders"), "3", false);
     await advance(PREVIEW_PAUSE_MS + ANNOUNCE_PAUSE_MS + 100);
     observer.disconnect();
     expect(changes).toEqual([]);

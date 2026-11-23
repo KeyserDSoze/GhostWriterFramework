@@ -18,7 +18,7 @@ const settingsPage = () => import("@/pages/SettingsPage");
 
 export const appPages = {
   AccountSyncPage: () => import("@/pages/AccountSyncPage"),
-  AddBookPage: () => import("@/pages/AddBookPage"),
+  AddBookPage: withAutopilotTranslations(() => import("@/pages/AddBookPage")),
   AppDocsPage: () => import("@/pages/AppDocsPage"),
   AppNotFoundPage: () => import("@/pages/AppNotFoundPage"),
   AssetGalleryPage: () => import("@/pages/AssetGalleryPage"),

@@ -1,4 +1,5 @@
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, CircleHelp, Loader2, Plane, RotateCcw, SlidersHorizontal, XCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -8,13 +9,16 @@ import { DangerZone } from "@/components/autopilot/config/DangerZone";
 import { ProfilesUsed } from "@/components/autopilot/config/ProfilesUsed";
 import { RulesEditor } from "@/components/autopilot/config/RulesEditor";
 import { SetupCard } from "@/components/autopilot/config/SetupCard";
+import { tabOfHash } from "@/components/autopilot/config/ConfigTabs";
 import { useAutopilotRefresh, useBookAutopilotView } from "@/autopilot/hooks";
+import { useOutlineBriefOf } from "@/autopilot/useOutlineBrief";
 import { autopilotLiveHref } from "@/autopilot/pageRoute";
 import { QUICK_CONTROLS_SERVER_VERSION, serverHasQuickControls } from "@/autopilot/quickControls";
 import { serverEditsRules } from "@/autopilot/rules";
 import { useServerConnection } from "@/autopilot/serverConnection";
 import { serverHasFrozenChapters } from "@/autopilot/frozenChapters";
 import { retryWaitOf, serverHasAutoResume, serverHasRetry } from "@/autopilot/retry";
+import { OUTLINE_BRIEF_NOTICE_ID, OUTLINE_BRIEF_SERVER_VERSION, serverHasOutlineBrief } from "@/autopilot/outlineBrief";
 import { questionHeading } from "@/autopilot/format";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
@@ -24,9 +28,9 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
 
 /**
- * The configuration of a book's autopilot: the brief and the settings (the book, the review, publishing), the permanent rules to change and
- * to remove, the profiles it follows with their state, and the reset. The button at the end starts the autopilot and opens the live page,
- * which shows what is happening.
+ * The configuration of a book's autopilot, in tabs: the overview (the state, and what the Scaletta says of the book, read only), the review, the retries,
+ * publishing, the permanent rules, the profiles it follows and the danger zone. The bar at the top saves and resets; the button at the end starts the
+ * autopilot and opens the live page, which shows what is happening.
  */
 export function AutopilotSettingsPage() {
   const { bookId } = useParams<{ bookId: string }>();
@@ -38,18 +42,24 @@ export function AutopilotSettingsPage() {
   const view = useBookAutopilotView(bookId);
   const server = useServerConnection();
   const { busy, run } = useAutopilotActions(bookId);
+  const location = useLocation();
   const host = book?.autopilotHost === "server" ? "server" : "browser";
   const canRefresh = Boolean(book && (host === "server" || (structure && ready)));
   useAutopilotRefresh(bookId, canRefresh, `${host}:${branch}`);
   const { summary, running } = useAutopilotControl(bookId);
+  const outline = useOutlineBriefOf(book, ready ? branch : undefined);
+  const [tab, setTab] = useState(() => tabOfHash(location.hash) ?? "overview");
+  useEffect(() => {
+    const next = tabOfHash(location.hash);
+    if (next) setTab(next);
+  }, [location.hash, location.key]);
 
   const snapshot = view.snapshot;
   const loaded = Boolean(snapshot || view.error);
   const state = snapshot?.state ?? null;
   const noAi = host === "browser" && settings.aiIntegrations.length === 0;
-  const existingChapters = structure?.chapters.filter((chapter) => chapter.paragraphs.length > 0).length ?? 0;
-  // A link to a part of the page (the number of chapters, the rules) is followed once the page is drawn.
-  useScrollToHash(loaded, state ? "state" : "fresh");
+  // A link to a part of the page (the estimate, the rules) is followed once the page is drawn: the tab that holds it is shown by then.
+  useScrollToHash(loaded, tab);
 
   if (error && !structure && host === "browser") return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book || !bookId) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
@@ -66,6 +76,8 @@ export function AutopilotSettingsPage() {
   const retryUnsupported = host === "server" && Boolean(server.info) && !serverHasRetry(server.info);
   // «Resume after a restart» is only for a book that a personal server runs, and only one that announces it is told of it.
   const autoResume = host === "server" && Boolean(server.info) && serverHasAutoResume(server.info);
+  // A personal server older than the length of the book from its Scaletta plans twelve chapters and ignores the outline: nothing is started or saved on it.
+  const outlineBriefUnsupported = host === "server" && Boolean(server.info) && !serverHasOutlineBrief(server.info);
   const waitingLong = Boolean(retryWaitOf(summary)?.long);
   const asking = Boolean(summary?.question);
 
@@ -80,6 +92,13 @@ export function AutopilotSettingsPage() {
       </div>
 
       <div className="space-y-3 empty:hidden">
+        {outlineBriefUnsupported && (
+          <Alert id={OUTLINE_BRIEF_NOTICE_ID} variant="destructive" role="alert">
+            <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+              <span>{t("autopilot.errors.outlineBriefUnsupported", { version: OUTLINE_BRIEF_SERVER_VERSION })}</span>
+            </AlertDescription>
+          </Alert>
+        )}
         {running && (
           <Alert role="note">
             <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
@@ -127,7 +146,6 @@ export function AutopilotSettingsPage() {
           key={bookId}
           book={book}
           state={state}
-          existingChapters={existingChapters}
           running={running}
           busy={busy !== null}
           disabled={state ? false : noAi || !canRefresh}
@@ -136,16 +154,20 @@ export function AutopilotSettingsPage() {
           frozenUnsupported={frozenUnsupported}
           retryUnsupported={retryUnsupported}
           autoResume={autoResume}
+          outlineBriefUnsupported={outlineBriefUnsupported}
           waitingLong={waitingLong}
           run={run}
           onStarted={() => navigate(liveHref)}
+          outline={outline}
+          tab={tab}
+          onTab={setTab}
+          onReset={reset}
+          rules={state ? <RulesEditor bookId={bookId} rules={state.constraints} readOnly={rulesReadOnly} busy={busy !== null} run={run} liveHref={liveHref} /> : undefined}
+          profiles={<ProfilesUsed book={book} branch={branch} structure={structure} summary={summary} />}
+          danger={state && !running ? <DangerZone onReset={reset} disabled={busy !== null} /> : undefined}
           branch={branch}
           structure={structure}
-        >
-          {state && <RulesEditor bookId={bookId} rules={state.constraints} readOnly={rulesReadOnly} busy={busy !== null} run={run} liveHref={liveHref} />}
-          <ProfilesUsed book={book} branch={branch} structure={structure} summary={summary} />
-          {state && !running && <DangerZone onReset={reset} disabled={busy !== null} />}
-        </SetupCard>
+        />
       )}
     </div>
   );

@@ -82,7 +82,7 @@ describe("the doc of the autopilot says what the page does with what the engine 
     expect(page).toContain("### The start form: sizes and the preview of the run");
     const form = page.slice(page.indexOf("### The start form"), page.indexOf("### The page of every book"));
     for (const word of [
-      "AUTOPILOT_PRESETS", "matchAutopilotPreset", "director.md", "DEFAULT_BRIEF", "Save settings",
+      "AUTOPILOT_PRESETS", "autopilotPresetSkeleton", "outline/_brief.md", "readOutlineBrief", "writeOutlineBrief",
       "estimateAutopilotRun", "measuredSpeed", "TWO_CALL_TASKS", "estimateModelsFromConfig", "estimateProgressFromState", "estimateProgressFromChapters", "estimateContextFromState", "isThinDocument", "parseOutline", "ghostwriterPrompt", "directorPrompt", "evaluationStyleBlock",
       "tokensPerWord", "usage.outputTokens", "GET /api/v1/ai", "configFromServerStatus", "pickAiRuntimeConfig", "noModel", "smallWindow", "router-row-", "roundRange", "Intl.NumberFormat", "live region", "lang", "AutopilotTimeline",
     ]) expect(form, word).toContain(word);

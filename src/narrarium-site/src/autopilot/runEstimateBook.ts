@@ -76,11 +76,11 @@ async function readOutline(input: EstimateBookInput): Promise<EstimateBook["outl
     // The entries the autopilot wrote and nobody changed since are its own: they bind nothing, and they are not the author's outline.
     const author = parsed.chapters.filter((entry) => !entry.intact);
     if (author.length === 0) return undefined;
-    const description = parsed.book && !parsed.book.intact ? countWords(parsed.book.body) : 0;
+    // The description of the book is the idea, which the estimate takes from the brief: it is not counted again among the outline's words.
     return {
       entries: author.length,
       lastChapter: author.reduce((last, entry) => Math.max(last, entry.number), 0),
-      words: author.reduce((total, entry) => total + countWords(`${entry.title} ${entry.body}`.trim()), description),
+      words: author.reduce((total, entry) => total + countWords(`${entry.title} ${entry.body}`.trim()), 0),
     };
   } catch {
     return undefined;

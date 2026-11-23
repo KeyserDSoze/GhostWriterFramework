@@ -165,7 +165,7 @@ export function AutopilotPage() {
   if (!book || !bookId) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 
   const settingsHref = autopilotSettingsHref(bookId);
-  if (hash === MOVED_TO_SETTINGS) return <Navigate to={{ pathname: settingsHref, hash: "autopilot-chapters" }} replace />;
+  if (hash === MOVED_TO_SETTINGS) return <Navigate to={{ pathname: settingsHref, hash: "autopilot-overview" }} replace />;
 
   // The engine waits for the author without a question when a profile file has problems; a run that ended with an error has the panel of its own.
   const profileStop = isProfileProblemStop(summary);

@@ -7,11 +7,11 @@ import { presentFeedEvent } from "@/autopilot/format";
 import { isProfileProblemStop, problemLines, profilePagesFor } from "@/autopilot/stopReason";
 
 const AT = "2026-11-21T10:00:00.000Z";
-const START = { brief: { idea: "x", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } };
+const START = { brief: { idea: "x", wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } };
 
 /** What the engine itself says when a profile cannot be read: a run started over a book whose files are damaged. */
 async function stoppedBy(files: Record<string, string>, language = "en", options: Record<string, unknown> = {}): Promise<{ summary: AutopilotStateSummary; events: AutopilotEvent[] }> {
-  const store = new MemoryBookStore({ ...seedBookFiles({ language }), ...files });
+  const store = new MemoryBookStore({ ...seedBookFiles({ language, chapters: 1 }), ...files });
   const session = new AutopilotSession({ bookId: "book-1", store, ai: createFakeAutopilotAi(), host: "browser", hostLabel: "test", retryDelayMs: 0 });
   const events: AutopilotEvent[] = [];
   session.subscribe((event) => events.push(event));

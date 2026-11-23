@@ -5,7 +5,7 @@ import { ChevronDown, CircleHelp, Loader2, Pause, Play, Plus, SkipForward, Squar
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { QUICK_CONTROLS_SERVER_VERSION } from "@/autopilot/quickControls";
-import { autopilotSettingsHref } from "@/autopilot/pageRoute";
+import { scalettaHref } from "@/autopilot/pageRoute";
 import type { RetryWait } from "@/autopilot/retry";
 import type { QuickModel } from "@/components/autopilot/quick/model";
 import { MENU_CONTENT, MENU_ITEM, MenuText, Reason } from "@/components/autopilot/quick/parts";
@@ -143,8 +143,9 @@ function Stopped({ model, profileHintId, runExtra, trailing }: { model: QuickMod
   }
   // A book that is complete has nothing left to run in the live panel; on its page the author adds chapters, in the settings.
   if (completed && variant === "dock") return null;
-  // The settings ask for more chapters than the plan has: resuming extends the plan (the engine does it when the run starts), so the main action is to write them.
-  const extending = completed && Boolean(model.state?.plan && model.state.brief.targetChapters > model.state.plan.chapters.length);
+  // A complete book is extended by the chapter entries the author adds to its Scaletta: this band has no read of the Scaletta, so it offers to add them (the
+  // configuration, which reads the Scaletta, offers to write them).
+  const extending = false;
   // On the page of every book, a book that is complete leads to its result, which its live page shows first.
   if (completed && !extending && variant === "hub") {
     return (
@@ -162,7 +163,7 @@ function Stopped({ model, profileHintId, runExtra, trailing }: { model: QuickMod
     return (
       <div className="flex flex-wrap items-center gap-2">
         <Button asChild size="sm">
-          <Link to={{ pathname: autopilotSettingsHref(model.bookId), hash: "autopilot-chapters" }} aria-label={named(t("autopilot.actions.addChapters"))}>
+          <Link to={scalettaHref(model.bookId)} aria-label={named(t("autopilot.actions.addChapters"))}>
             <Plus className="h-4 w-4" aria-hidden />{t("autopilot.actions.addChapters")}
           </Link>
         </Button>

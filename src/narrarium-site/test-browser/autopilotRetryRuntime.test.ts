@@ -35,7 +35,7 @@ useAuthStore.setState({ user: { provider: "google", providerAccountId: "sub-writ
 const BOOK: BookEntry = { id: "book-1", owner: "local", repo: "book-1", name: "The Glass Harbor", tokenIndex: null, storageMode: "local-only", activeBranch: "main", addedAt: "2026-11-21T00:00:00.000Z" };
 const SERVER_BOOK: BookEntry = { ...BOOK, autopilotHost: "server" };
 const CONNECTION = { url: "http://127.0.0.1:24242", token: "nrs_token", fingerprint: PIN };
-const BRIEF = { idea: "A harbor built on glass hides a lie.", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 };
+const BRIEF = { idea: "A harbor built on glass hides a lie.", wordsPerScene: 300 };
 const OPTIONS = { readers: false, readersOnPlan: false, specialists: false, pauseAfterPlan: false };
 const LATER: AutopilotLongRetry = { everyMinutes: 60, cycles: 3 };
 /** A quick wait of a minute at least, and a long one of hours: nothing ends them but «Retry now», a pause, or turning «Retry later» off. */
@@ -90,7 +90,7 @@ beforeEach(() => {
   localStorage.clear();
   failures = 0;
   server = new FakeBookServer();
-  local = new MemoryBookStore(seedBookFiles());
+  local = new MemoryBookStore(seedBookFiles({ chapters: 1 }));
   mocks.server = server;
   mocks.local = local;
   mocks.ai = overloaded(0);
@@ -126,7 +126,8 @@ describe("«Retry now» in this browser, with a real run", () => {
     expect(summary()?.retry).toBeUndefined();
     expect(insights("retrySkipped")).toHaveLength(4);
     expect(failures).toBe(4);
-    expect(runtime.isRunningHere(BOOK.id)).toBe(true);
+    // The book has one chapter in its Scaletta: once it is written the run is complete, and nothing is left to run.
+    await vi.waitFor(() => expect(summary()?.status).toBe("completed"), { timeout: 5000 });
   });
 
   it("stops a run that waits for «Retry later» when it is turned off, with the failure and the code of the engine", async () => {

@@ -21,7 +21,7 @@ afterEach(async () => {
 
 async function seedWorkingCopy(): Promise<string> {
   const repo = await putLocalRepository({ bookId: book.id, owner: book.owner, repo: book.repo, branch: "main", defaultBranch: "main", remoteHeadSha: "head", clonedAt: "2026-11-21T00:00:00.000Z", cloneComplete: true }, captureRepositoryOperationScope());
-  for (const [path, text] of Object.entries(seedBookFiles())) {
+  for (const [path, text] of Object.entries(seedBookFiles({ chapters: 1 }))) {
     await putCleanLocalFile({ repoId: repo.id, path, kind: "text", text, size: new TextEncoder().encode(text).length });
   }
   repoId = repo.id;
@@ -33,7 +33,7 @@ test("the shared autopilot writes a book into the browser working copy as local 
   const store = createBrowserBookStore(book, "main");
   const ai = createFakeAutopilotAi();
   const session = new AutopilotSession({ bookId: book.id, store, ai, host: "browser", hostLabel: "Browser · test", hostId: "device-test", retryDelayMs: 0 });
-  await session.start({ brief: { idea: "A harbor built on glass hides a lie.", targetChapters: 1, scenesPerChapter: 1, wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });
+  await session.start({ brief: { idea: "A harbor built on glass hides a lie.", wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } });
   await session.waitForIdle();
 
   const snapshot = await session.snapshot();

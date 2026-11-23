@@ -1,13 +1,11 @@
 import {
   ESTIMATE_TYPICAL,
   TWO_CALL_TASKS,
-  autopilotPreset,
   estimateAutopilotRun,
   estimateContextFromState,
   estimateModelsFromConfig,
   estimateProgressFromChapters,
   estimateProgressFromState,
-  matchAutopilotPreset,
   measuredSpeed,
   type AiChatModelConfig,
   type AiIntegrationConfig,
@@ -17,7 +15,6 @@ import {
   type AutopilotActivity,
   type AutopilotBrief,
   type AutopilotOptions,
-  type AutopilotPresetId,
   type AutopilotState,
   type EstimateCapability,
   type EstimateContext,
@@ -28,27 +25,14 @@ import {
 } from "narrarium-engine";
 import type { EstimateBook } from "@/autopilot/runEstimateBook";
 
-/** The brief and the options as the author has them in the form, saved or not. */
+/**
+ * The brief and the options as the author has them in the form, saved or not. The chapters are the Scaletta's (`outline`), and the scenes a chapter has are the
+ * planner's: `scenesPerChapter` is only the hint the estimate takes (its middle when it is missing).
+ */
 export interface SetupFormValues {
   brief: AutopilotBrief;
   options: AutopilotOptions;
-}
-
-// ─── The sizes of the form ───────────────────────────────────────────────────
-
-/**
- * The form with the seven numbers of a preset in it (the chapters, the scenes and the words of the brief; the readers, how many, the readers of the plan and the specialists) and
- * everything else as it was: the idea, the pauses, the budgets and the publishing are not the preset's. The rounds of review it recommends are the director's, never the form's.
- */
-export function applyPreset(form: SetupFormValues, id: AutopilotPresetId): SetupFormValues {
-  const preset = autopilotPreset(id);
-  if (!preset) return form;
-  return { brief: { ...form.brief, ...preset.brief }, options: { ...form.options, ...preset.options } };
-}
-
-/** The preset the numbers of the form are, or `null` when they are the author's own (Custom): the engine's rule, so that the page and the engine cannot disagree. */
-export function presetOfForm(form: SetupFormValues): AutopilotPresetId | null {
-  return matchAutopilotPreset({ brief: form.brief, options: form.options });
+  scenesPerChapter?: number;
 }
 
 // ─── What was measured on the book ───────────────────────────────────────────
@@ -219,6 +203,7 @@ export function estimateRun(sources: EstimateSources, form: SetupFormValues): Ru
   };
   const estimate = estimateAutopilotRun({
     brief: form.brief,
+    ...(form.scenesPerChapter !== undefined ? { scenesPerChapter: form.scenesPerChapter } : {}),
     options: form.options,
     maxReviewRounds: sources.book.directorRounds,
     language: sources.language,
@@ -301,16 +286,14 @@ export function restProblems(warnings: readonly EstimateWarning[]): RestProblem[
 }
 
 /**
- * The brief the rest of a plan is worked out with: the chapters the plan has (not the ones the brief asked for) and, for the chapters that are left, the scenes the plan has planned for
- * them, the brief's number for the ones that have none yet (the scenes of a chapter are planned just before it is written, as many as the brief says). The estimate takes one number of
- * scenes for every chapter, so it is their average. The words of a scene, the idea and the rest are the brief's, as the state saved them.
+ * The scenes a chapter of the rest of a plan is expected to have: the scenes the plan planned for the chapters left (their average, rounded, in the planner's range of
+ * 2 to 4), and the middle of the range for a chapter the plan has not planned yet. `undefined` when the plan has no chapter left to count.
  */
-export function restBrief(state: Pick<AutopilotState, "brief" | "plan">): AutopilotBrief {
-  const chapters = state.plan?.chapters ?? [];
-  if (chapters.length === 0) return state.brief;
-  const left = chapters.filter((entry) => entry.status !== "done");
-  const scenes = left.length === 0 ? state.brief.scenesPerChapter : left.reduce((total, entry) => total + (entry.scenes.length > 0 ? entry.scenes.length : state.brief.scenesPerChapter), 0) / left.length;
-  return { ...state.brief, targetChapters: chapters.length, scenesPerChapter: Math.max(1, Math.round(scenes)) };
+export function restScenesPerChapter(state: Pick<AutopilotState, "plan">): number | undefined {
+  const left = (state.plan?.chapters ?? []).filter((entry) => entry.status !== "done");
+  if (left.length === 0) return undefined;
+  const scenes = left.reduce((total, entry) => total + (entry.scenes.length > 0 ? entry.scenes.length : 3), 0) / left.length;
+  return Math.min(4, Math.max(2, Math.round(scenes)));
 }
 
 /**
@@ -321,8 +304,12 @@ export function restBrief(state: Pick<AutopilotState, "brief" | "plan">): Autopi
 export function estimateRest(sources: EstimateSources, state: AutopilotState): RunEstimate {
   const removed = state.plan?.removedChapters?.length ?? 0;
   const outline = sources.book.outline;
-  const book = removed > 0 && outline ? { ...sources.book, outline: { ...outline, lastChapter: Math.max(0, outline.lastChapter - removed) } } : sources.book;
-  return estimateRun({ ...sources, book, state, chapters: null }, { brief: restBrief(state), options: state.options });
+  // The chapters of the book are the Scaletta's, and the plan's when the Scaletta has fewer (a plan made from a book with no entries): a chapter the author's
+  // outline lost before it was written is taken off, as the engine does for the length of the book.
+  const planned = state.plan?.chapters.length ?? 0;
+  const lastChapter = Math.max(Math.max(0, (outline?.lastChapter ?? 0) - removed), planned);
+  const book = { ...sources.book, outline: { entries: outline?.entries ?? 0, lastChapter, words: outline?.words ?? 0 } };
+  return estimateRun({ ...sources, book, state, chapters: null }, { brief: state.brief, options: state.options, scenesPerChapter: restScenesPerChapter(state) });
 }
 
 // ─── What an author reads ────────────────────────────────────────────────────
@@ -366,13 +353,12 @@ export function callsByRole(estimate: EstimateResult): RoleCalls[] {
 
 /**
  * A warning of the estimate as an author reads it. The notes that repeat for every role of one model (no price, no speed, it reasons) are one line for the model, and every role
- * that has no model is one line; the others (a window, a limit, an outline that is longer than the brief) are the engine's own, with its own words.
+ * that has no model is one line; the others (a window, a limit) are the engine's own, with its own words.
  */
 export type WarningGroup =
   | { code: "noModel"; severity: "error"; capabilities: EstimateCapability[] }
   | { code: "noPrice" | "noSpeed" | "reasoningModel"; severity: EstimateWarning["severity"]; model: string; capabilities: EstimateCapability[] }
   | { code: "smallWindow" | "smallOutput"; severity: EstimateWarning["severity"]; capability: EstimateCapability; model: string; text: string }
-  | { code: "outlineLongerThanBrief"; severity: EstimateWarning["severity"]; text: string; briefChapters: number; outlineChapters: number }
   /** A code this page does not know (an engine newer than the page): its own words, with its own gravity. */
   | { code: "other"; severity: EstimateWarning["severity"]; text: string };
 
@@ -409,9 +395,6 @@ export function groupWarnings(warnings: readonly EstimateWarning[]): WarningGrou
       case "smallWindow":
       case "smallOutput":
         groups.push({ code: warning.code, severity: warning.severity, capability: warning.capability, model: warning.model, text: warning.text });
-        break;
-      case "outlineLongerThanBrief":
-        groups.push({ code: warning.code, severity: warning.severity, text: warning.text, briefChapters: warning.briefChapters, outlineChapters: warning.outlineChapters });
         break;
       default: {
         const unknown = warning as { severity?: EstimateWarning["severity"]; text?: unknown };

@@ -22,6 +22,10 @@ vi.mock("@/autopilot/browserStore", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/autopilot/browserStore")>()),
   createBrowserBookStore: () => mocks.local,
 }));
+vi.mock("@/outline/outlineSource", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/outline/outlineSource")>();
+  return { ...original, browserOutlineSource: () => original.storeOutlineSource(mocks.local as never) };
+});
 
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
@@ -30,12 +34,21 @@ import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
 import { runningStep, seedRun } from "./helpers/autopilotBand";
+import { renderWithScaletta, scalettaFiles } from "./helpers/scaletta";
 import { RETRY_SERVER_INFO } from "./helpers/fakeBookServer";
 import { LOCAL_BOOK, makeRuntime, t } from "./helpers/quickCommands";
 
 // «Resume after a restart» in the «Retries» card of the configuration: a switch, off unless the author turns it on, shown only for a book that a personal
 // server runs when that server announces it, with what it does in one line; saved with the other settings, and alone through the live options while a run
 // goes on, as «Retry later» is.
+
+/** A part of the configuration sits in its tab: the tab is shown before anything is looked for in it. */
+const choose = (tab: string) => fireEvent.click(screen.getByRole("tab", { name: t(`autopilot.config.tabs.${tab}`) }));
+/** The panel of a tab: it is shown by `choose` before it is looked into. */
+const panelOf = (tab: string) => {
+  choose(tab);
+  return document.getElementById(`autopilot-panel-${tab}`) as HTMLElement;
+};
 
 const SETTINGS = "/app/books/book-1/autopilot/settings";
 const SERVER_BOOK: BookEntry = { ...LOCAL_BOOK, autopilotHost: "server" };
@@ -53,7 +66,7 @@ function Page() {
   );
 }
 
-const card = () => within(screen.getByRole("region", { name: t("autopilot.config.sections.retry") }));
+const card = () => within(panelOf("retries"));
 const label = () => t("autopilot.config.autoResume.label");
 const toggle = () => card().getByRole("switch", { name: label() });
 const saveButton = () => screen.getByRole("button", { name: t("autopilot.setup.save") });
@@ -73,7 +86,7 @@ beforeEach(async () => {
   mocks.runtime = { ...makeRuntime(), configure: vi.fn(async () => undefined), reset: vi.fn(async () => undefined) };
   mocks.book = LOCAL_BOOK;
   mocks.structure = { title: "The Glass Harbor", language: "en", owner: "local", repo: "book-1", defaultBranch: "main", loadedBranch: "main", rootFiles: [{ path: "book.md" }], firstClassFiles: [], chapters: [{ slug: "001-one", title: "One", paragraphs: [{}] }], ghostwriters: [], readerPersonas: [] };
-  mocks.local = new MemoryBookStore({ "director.md": "---\nname: Ada\n---\nThe vision.\n" });
+  mocks.local = new MemoryBookStore({ ...scalettaFiles(), "director.md": "---\nname: Ada\n---\nThe vision.\n" });
   mocks.toast.mockReset();
 });
 
@@ -86,9 +99,9 @@ afterEach(async () => {
 });
 
 describe("«Resume after a restart» in the configuration", () => {
-  it("is a real switch in the «Retries» card, off by default, named by its label and described by its line, that the keyboard reaches", () => {
+  it("is a real switch in the «Retries» card, off by default, named by its label and described by its line, that the keyboard reaches", async () => {
     onServer();
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     const control = toggle();
     expect(control.tagName).toBe("BUTTON");
     expect(control).toHaveAttribute("type", "button");
@@ -105,27 +118,27 @@ describe("«Resume after a restart» in the configuration", () => {
     expect(mocks.runtime.updateOptions).not.toHaveBeenCalled();
   });
 
-  it("is not there for a book of this browser, nor for a server that does not announce it", () => {
+  it("is not there for a book of this browser, nor for a server that does not announce it", async () => {
     seedRun({ status: "paused" });
-    const view = render(<Page />);
+    const view = await renderWithScaletta(<Page />);
     expect(card().queryByRole("switch", { name: label() })).toBeNull();
     view.unmount();
     onServer({}, RETRY_SERVER_INFO);
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     expect(card().getByRole("switch", { name: t("autopilot.config.retryLater.label") })).toBeEnabled();
     expect(card().queryByRole("switch", { name: label() })).toBeNull();
   });
 
   it("is saved with the other settings while the autopilot is stopped, true when it is turned on and false when it is turned off", async () => {
     onServer();
-    const view = render(<Page />);
+    const view = await renderWithScaletta(<Page />);
     fireEvent.click(toggle());
     fireEvent.click(saveButton());
     await waitFor(() => expect(mocks.runtime.configure).toHaveBeenCalledWith("book-1", { brief: expect.anything(), options: expect.objectContaining({ resumeAfterRestart: true }) }));
     view.unmount();
     mocks.runtime.configure.mockClear();
     onServer({ options: { resumeAfterRestart: true } });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     expect(toggle()).toBeChecked();
     fireEvent.click(toggle());
     fireEvent.click(saveButton());
@@ -134,7 +147,7 @@ describe("«Resume after a restart» in the configuration", () => {
 
   it("changes while a run goes on through the live options, alone, as «Retry later» does", async () => {
     onServer({ status: "running", running: true, live: { activity: LIVE } });
-    render(<Page />);
+    await renderWithScaletta(<Page />);
     expect(toggle()).toBeEnabled();
     fireEvent.click(toggle());
     fireEvent.click(saveButton());
@@ -145,7 +158,8 @@ describe("«Resume after a restart» in the configuration", () => {
   it("is in Italian when the app is", async () => {
     await i18n.changeLanguage("it");
     onServer();
-    render(<Page />);
+    await renderWithScaletta(<Page />);
+    fireEvent.click(screen.getByRole("tab", { name: "Nuovi tentativi" }));
     const control = screen.getByRole("switch", { name: "Riprendi da solo dopo un riavvio del server" });
     expect(control).toHaveAccessibleDescription(t("autopilot.config.autoResume.hint"));
     expect(t("autopilot.config.autoResume.hint")).toMatch(/tre volte al giorno/);

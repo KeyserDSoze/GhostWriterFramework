@@ -45,7 +45,7 @@ test("a text says the same things in both languages: the same placeholders, and 
 });
 
 test("every size the engine offers has a name and a plain description, and none is described that the engine does not offer", () => {
-  const ids = [...presets.matchAll(/\{ id: "([a-z-]+)", brief:/g)].map((match) => match[1]);
+  const ids = [...presets.matchAll(/\{ id: "([a-z-]+)", chapters:/g)].map((match) => match[1]);
   assert.ok(ids.includes("story") && ids.includes("novella") && ids.includes("novel-draft"), `ids read: ${ids.join(", ")}`);
   const described = Object.keys(autopilotEn.autopilot.presets).filter((key) => autopilotEn.autopilot.presets[key]?.name);
   assert.deepEqual([...described].sort(), [...ids].sort());
@@ -63,9 +63,9 @@ test("every warning the engine can give is said by the page in its own words, or
   const union = /export type EstimateWarning =([\s\S]*?);\n\nexport type EstimateWarningCode/.exec(estimate);
   assert.ok(union, "the engine declares its warnings as a union");
   const codes = [...union[1].matchAll(/code: "([A-Za-z]+)"/g)].map((match) => match[1]);
-  assert.deepEqual([...codes].sort(), ["noModel", "noPrice", "noSpeed", "outlineLongerThanBrief", "reasoningModel", "smallOutput", "smallWindow"]);
+  assert.deepEqual([...codes].sort(), ["noModel", "noPrice", "noSpeed", "reasoningModel", "smallOutput", "smallWindow"]);
   // The page's own words for the notes that repeat for every role of a model; the other codes keep the engine's text, in the language of the book.
-  const ENGINE_WORDS = ["smallWindow", "smallOutput", "outlineLongerThanBrief"];
+  const ENGINE_WORDS = ["smallWindow", "smallOutput"];
   for (const code of codes.filter((entry) => !ENGINE_WORDS.includes(entry))) {
     for (const [language, locale] of Object.entries({ en: autopilotEn, it: autopilotIt })) {
       const text = code === "noModel" ? [locale.autopilot.estimate.warning.noModel, locale.autopilot.estimate.warning.noModelServer] : [locale.autopilot.estimate.warning[code]];

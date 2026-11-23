@@ -17,7 +17,10 @@ const UNREAD: EstimateBook = { read: false, directorFile: false, context: {}, de
  * What the files of the book say for the estimate: read once, when the page opens or the book changes, and never while the author types (nothing in the form is in a file). Until
  * they are read, and for a book whose working copy this browser does not have, the estimate is made with the engine's typical sizes, and says so.
  */
-export function useEstimateBook(book: BookEntry, branch: string, structure: BookStructure | undefined): { book: EstimateBook; reading: boolean } {
+/**
+ * `scaletta` says what the outline of the book is (its entries and the last one): the outline is read again when it changes, as the configuration reads it.
+ */
+export function useEstimateBook(book: BookEntry, branch: string, structure: BookStructure | undefined, scaletta = ""): { book: EstimateBook; reading: boolean } {
   // The settings are replaced whenever they reload, so the `book` object is new each time: the files are read again only for another book or branch.
   const latest = useRef(book);
   latest.current = book;
@@ -25,7 +28,7 @@ export function useEstimateBook(book: BookEntry, branch: string, structure: Book
   const personaPaths = useMemo(() => (structure?.readerPersonas ?? []).map((entry) => entry.path), [structure?.readerPersonas]);
   const language = structure?.language;
   const ghostwriter = structure?.ghostwriter;
-  const key = [book.id, book.owner, book.repo, branch, structure?.loadedBranch ?? "", language ?? "", ghostwriter ?? "", ghostwriterSlugs.join(","), personaPaths.join(",")].join("\n");
+  const key = [book.id, book.owner, book.repo, branch, structure?.loadedBranch ?? "", language ?? "", ghostwriter ?? "", ghostwriterSlugs.join(","), personaPaths.join(","), scaletta].join("\n");
   const [read, setRead] = useState<{ book: EstimateBook; reading: boolean }>({ book: UNREAD, reading: true });
   useEffect(() => {
     let cancelled = false;
@@ -97,12 +100,12 @@ interface RunEstimateArguments {
  * page says so. The speed and the tokens a word come from the log of what the book already ran, the director, the story design, the outline and the profiles from its files, and where the
  * book is from its state, or from its chapters for one the autopilot never planned.
  */
-export function useRunEstimateSources({ book, branch, structure, state, activities }: RunEstimateArguments): RunEstimateInputs {
+export function useRunEstimateSources({ book, branch, structure, state, activities, scaletta }: RunEstimateArguments & { scaletta?: string }): RunEstimateInputs {
   const settings = useSettingsStore((store) => store.settings);
   const host = book.autopilotHost === "server" ? "server" : "browser";
   const browserConfig = useMemo(() => pickAiRuntimeConfig(settings), [settings]);
   const server = useServerAiStatus(host === "server");
-  const files = useEstimateBook(book, branch, structure);
+  const files = useEstimateBook(book, branch, structure, scaletta);
   const chapters = useMemo(() => (structure ? (structure.chapters ?? []).map((chapter) => ({ paragraphs: chapter.paragraphs, summary: chapter.hasResume ? "summary" : undefined })) : null), [structure]);
   const canonEntries = [structure?.characters, structure?.locations, structure?.factions, structure?.items, structure?.timelines].reduce((total, list) => total + (list?.length ?? 0), 0);
   const serverConfig = useMemo(() => (server.status === "ready" ? configFromServerStatus(server.value, browserConfig) : null), [server, browserConfig]);

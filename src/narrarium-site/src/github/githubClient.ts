@@ -240,6 +240,8 @@ export interface CreateNarrariumBookRepositoryInput {
   private: boolean;
   language?: string;
   author?: string;
+  /** Files the book starts with besides the scaffold: the outline of a size chosen at the creation. */
+  files?: Array<{ path: string; content: string }>;
 }
 
 export async function createNarrariumBookRepository(token: string, input: CreateNarrariumBookRepositoryInput): Promise<RepoSummary> {
@@ -257,7 +259,7 @@ export async function createNarrariumBookRepository(token: string, input: Create
   const owner = repoData.owner.login;
   const repo = repoData.name;
   const branch = "main";
-  const files = buildInitialBookFiles({ title: input.title, author: input.author, language: input.language });
+  const files = [...buildInitialBookFiles({ title: input.title, author: input.author, language: input.language }), ...(input.files ?? [])];
   const meter = new RepositoryByteMeter("mutation");
   for (const file of files) meter.add("text", utf8Bytes(file.content));
 

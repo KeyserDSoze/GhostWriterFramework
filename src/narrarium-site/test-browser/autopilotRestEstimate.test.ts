@@ -17,7 +17,7 @@ import {
   type AutopilotState,
   type PlannedChapter,
 } from "narrarium-engine";
-import { REST_WARNING_CODES, estimateRest, groupWarnings, restBrief, restProblems, type EstimateSources } from "@/autopilot/runEstimate";
+import { REST_WARNING_CODES, estimateRest, groupWarnings, restProblems, restScenesPerChapter, type EstimateSources } from "@/autopilot/runEstimate";
 import { activityOf } from "./helpers/autopilotBand";
 import { chapter, planOf, scene } from "./helpers/autopilotFixtures";
 
@@ -56,7 +56,7 @@ function stateOf(chapters: PlannedChapter[], patch: Patch = {}): AutopilotState 
 
 function sourcesOf(patch: Partial<EstimateSources> = {}): EstimateSources {
   return {
-    book: { read: true, directorRounds: 2, directorFile: true, context: {}, designWritten: false },
+    book: { read: true, directorRounds: 2, directorFile: true, context: {}, designWritten: false, outline: { entries: 12, lastChapter: 12, words: 0 } },
     language: "en", currency: "EUR", ai: CONFIG, aiFrom: "browser", activities: [], state: null, chapters: null, canonEntries: 0,
     ...patch,
   };
@@ -67,6 +67,7 @@ function engineSays(sources: EstimateSources, state: AutopilotState, brief: Part
   const speeds = measuredSpeed(sources.activities, { ignoreTasks: TWO_CALL_TASKS });
   return estimateAutopilotRun({
     brief: { ...state.brief, ...brief },
+    outline: sources.book.outline,
     options: state.options,
     maxReviewRounds: sources.book.directorRounds,
     language: sources.language,
@@ -85,65 +86,59 @@ function stepOf(task: AutopilotActivity["task"], at: number): AutopilotActivity 
   return activityOf(task, { model: "writer-1", usage: { inputTokens: 3000, outputTokens: 1000, cachedInputTokens: 0 }, startedAt: new Date(start).toISOString(), endedAt: new Date(start + 10_000).toISOString() });
 }
 
-describe("the brief of the rest of a plan", () => {
-  it("counts the chapters the plan has, and not the ones the brief asked for", () => {
-    expect(restBrief(stateOf(chaptersOf(14))).targetChapters).toBe(14);
-    expect(restBrief(stateOf(chaptersOf(9))).targetChapters).toBe(9);
+describe("the scenes of the rest of a plan", () => {
+  it("counts the scenes the plan has planned for the chapters left, and the middle of the range for the chapters with none yet", () => {
+    expect(restScenesPerChapter(stateOf(chaptersOf(10, 0, 5)))).toBe(4);
+    expect(restScenesPerChapter(stateOf(chaptersOf(10, 0, 3)))).toBe(3);
   });
 
-  it("keeps the rest of the brief as the state has it: the words of a scene, the idea, the genre", () => {
-    const state = stateOf(chaptersOf(14), { brief: { wordsPerScene: 900, genre: "mystery", audience: "adults", synopsis: "One line." } });
-    expect(restBrief(state)).toEqual({ ...state.brief, targetChapters: 14, scenesPerChapter: DEFAULT_BRIEF.scenesPerChapter });
+  it("is the planner's range, 2 to 4, and the middle of it when the plan has none", () => {
+    expect(restScenesPerChapter(stateOf(chaptersOf(12)))).toBe(3);
+    expect(restScenesPerChapter(stateOf(chaptersOf(12, 0, 9)))).toBe(4);
+    expect(restScenesPerChapter(stateOf(chaptersOf(12, 0, 1)))).toBe(2);
   });
 
-  it("asks for the scenes of the brief while the plan has none: the scenes of a chapter are planned just before it is written", () => {
-    expect(restBrief(stateOf(chaptersOf(12), { brief: { scenesPerChapter: 4 } })).scenesPerChapter).toBe(4);
-  });
-
-  it("counts the scenes the plan has planned, and the brief's for the chapters that have none yet", () => {
-    expect(restBrief(stateOf(chaptersOf(10, 0, 5))).scenesPerChapter).toBe(5);
+  it("counts a mix of planned and unplanned chapters, rounding half a scene up", () => {
     const mixed = [...chaptersOf(2, 0, 5), ...chaptersOf(2, 0, 0).map((entry, index) => ({ ...entry, number: index + 3 }))];
-    expect(restBrief(stateOf(mixed, { brief: { scenesPerChapter: 3 } })).scenesPerChapter).toBe(4);
-    // Half a scene is rounded as people round: up.
+    expect(restScenesPerChapter(stateOf(mixed))).toBe(4);
     const odd = [...chaptersOf(1, 0, 4), ...chaptersOf(1, 0, 3).map((entry) => ({ ...entry, number: 2 }))];
-    expect(restBrief(stateOf(odd)).scenesPerChapter).toBe(4);
+    expect(restScenesPerChapter(stateOf(odd))).toBe(4);
   });
 
   it("looks only at the chapters that are left: the scenes of a chapter that is done say nothing of the ones to write", () => {
     const chapters = [...chaptersOf(6, 6, 9), ...chaptersOf(6, 0, 0).map((entry, index) => ({ ...entry, number: index + 7 }))];
-    const state = stateOf(chapters, { brief: { scenesPerChapter: 3 } });
-    expect(restBrief(state).scenesPerChapter).toBe(3);
-    expect(restBrief(state).targetChapters).toBe(12);
+    expect(restScenesPerChapter(stateOf(chapters))).toBe(3);
   });
 
-  it("is the brief itself when the plan has no chapters, and when there is no plan", () => {
-    const empty = stateOf([], { brief: { targetChapters: 8 } });
-    expect(restBrief(empty)).toEqual(empty.brief);
-    const none = { ...empty, plan: null };
-    expect(restBrief(none)).toEqual(none.brief);
+  it("is undefined when the plan has no chapter left, or no plan", () => {
+    expect(restScenesPerChapter(stateOf([]))).toBeUndefined();
+    expect(restScenesPerChapter(stateOf(chaptersOf(4, 4, 3)))).toBeUndefined();
+    expect(restScenesPerChapter({ plan: null })).toBeUndefined();
   });
 
   it("does not change the state it reads", () => {
     const state = stateOf(chaptersOf(10, 2, 5));
     const before = JSON.stringify(state);
-    restBrief(state);
+    restScenesPerChapter(state);
     expect(JSON.stringify(state)).toBe(before);
   });
 });
 
 describe("the estimate of the rest of a plan", () => {
   it("is the engine's estimate, called with the chapters and the scenes of the plan and with the options the state has", () => {
-    const state = stateOf(chaptersOf(14, 0, 4), { brief: { targetChapters: 12 }, options: { maxReaders: 3, specialists: false } });
+    const state = stateOf(chaptersOf(14, 0, 4), { options: { maxReaders: 3, specialists: false } });
     const sources = sourcesOf({ state, book: { read: true, directorRounds: 3, directorFile: true, context: { designWords: 400, ghostwriterWords: 220 }, designWritten: true, readerPanelSize: 6 } });
     const { estimate } = estimateRest(sources, state);
-    expect(estimate).toEqual(engineSays(sources, state, { targetChapters: 14, scenesPerChapter: 4 }));
+    expect(estimate).toEqual(engineSays(sources, state, {}, { scenesPerChapter: 4 }));
     expect(estimate.chapters).toBe(14);
     expect(estimate.words).toBe(14 * 4 * 1400);
   });
 
   it("counts the chapters of the plan and not the brief's, whether the plan is longer or shorter", () => {
-    expect(estimateRest(sourcesOf(), stateOf(chaptersOf(14), { brief: { targetChapters: 12 } })).estimate.chapters).toBe(14);
-    expect(estimateRest(sourcesOf(), stateOf(chaptersOf(8), { brief: { targetChapters: 12 } })).estimate.chapters).toBe(8);
+    // No outline: the chapters are the plan's own.
+    const noOutline = () => sourcesOf({ book: { read: true, directorRounds: 2, directorFile: true, context: {}, designWritten: false } });
+    expect(estimateRest(noOutline(), stateOf(chaptersOf(14), {})).estimate.chapters).toBe(14);
+    expect(estimateRest(noOutline(), stateOf(chaptersOf(8), {})).estimate.chapters).toBe(8);
   });
 
   it("counts only what is left to write: the chapters that are done are not paid for again", () => {
@@ -188,24 +183,23 @@ describe("the estimate of the rest of a plan", () => {
 
   it("counts a call for each chapter the author wrote that has no summary yet", () => {
     const chapters = chaptersOf(10, 2).map((entry) => (entry.number <= 2 ? ({ ...entry, imported: true, summary: "" } as PlannedChapter) : entry));
-    const { estimate } = estimateRest(sourcesOf(), stateOf(chapters));
+    const { estimate } = estimateRest(sourcesOf({ book: { read: true, directorRounds: 2, directorFile: true, context: {}, designWritten: false } }), stateOf(chapters));
     expect(estimate.steps["summarize-imported"].calls.max).toBe(2);
     expect(estimate.chaptersToWrite).toBe(8);
   });
 
   it("takes the chapters that were removed out of the book: a plan of eleven with one removed is eleven, and the outline that still ends at twelve does not extend it", () => {
     const eleven = chaptersOf(12).filter((entry) => entry.number !== 5);
-    const state = stateOf(eleven, { brief: { targetChapters: 12 }, plan: { removedChapters: [5] } });
+    const state = stateOf(eleven, { plan: { removedChapters: [5] } });
     const book = { read: true, directorRounds: 2, directorFile: true, context: {}, designWritten: false, outline: { entries: 11, lastChapter: 12, words: 600 } };
     const { estimate } = estimateRest(sourcesOf({ book }), state);
     expect(estimate.chapters).toBe(11);
     expect(estimate.chaptersToWrite).toBe(11);
     expect(estimate.steps.plan.calls.max).toBe(0);
-    expect(estimate.warnings.map((warning) => warning.code)).not.toContain("outlineLongerThanBrief");
   });
 
   it("still lets the author's outline make the book longer than its plan: the chapters the plan lacks are planned and written", () => {
-    const state = stateOf(chaptersOf(11), { brief: { targetChapters: 11 } });
+    const state = stateOf(chaptersOf(11), {});
     const book = { read: true, directorRounds: 2, directorFile: true, context: {}, designWritten: false, outline: { entries: 12, lastChapter: 12, words: 700 } };
     const { estimate } = estimateRest(sourcesOf({ book }), state);
     expect(estimate.chapters).toBe(12);
@@ -232,7 +226,7 @@ describe("the estimate of the rest of a plan", () => {
   });
 
   it("is made in memory and at once, for a plan of five thousand chapters", () => {
-    const state = stateOf(chaptersOf(5000, 100, 3), { brief: { targetChapters: 12 } });
+    const state = stateOf(chaptersOf(5000, 100, 3), {});
     const sources = sourcesOf({ state });
     const started = performance.now();
     let result = estimateRest(sources, state);

@@ -39,7 +39,7 @@ const scene = (text: string) => `---\ntype: paragraph\nid: paragraph:${SLUG}:001
 
 /** A book whose first chapter the autopilot wrote and approved (it is in the plan, closed). */
 function state(): AutopilotState {
-  const base = createAutopilotState(new Date("2026-11-21T10:00:00.000Z"), { idea: "A harbor of glass.", targetChapters: 1 });
+  const base = createAutopilotState(new Date("2026-11-21T10:00:00.000Z"), { idea: "A harbor of glass." });
   return {
     ...base,
     status: "paused",
@@ -182,7 +182,7 @@ describe("a decision taken in a tab while another tab of this browser runs the b
     } } satisfies AiPort;
     tabA = openTab("A");
     tabB = openTab("B");
-    await tabA.start(BOOK.id, { brief: { idea: "A harbor of glass.", targetChapters: 2, scenesPerChapter: 1, wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, specialists: false, pauseAfterPlan: true } });
+    await tabA.start(BOOK.id, { brief: { idea: "A harbor of glass.", wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, specialists: false, pauseAfterPlan: true } });
   });
 
   afterEach(async () => {

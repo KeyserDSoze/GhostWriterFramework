@@ -61,7 +61,7 @@ const PLANNED = activityOf("plan", { id: "plan", phase: "plan", summary: "1. The
 const APPROVED = activityOf("plan-review", { id: "review-100", phase: "plan", summary: "approve 8/10 — A solid plan.", startedAt: at(100), endedAt: at(120) });
 
 function seedWaiting({ chapters = CHAPTERS, plan = {}, activities = [CONCEPT, PLANNED, APPROVED] }: { chapters?: PlannedChapter[]; plan?: Partial<AutopilotPlan>; activities?: AutopilotActivity[] } = {}) {
-  const base = createAutopilotState(new Date(T0), { idea: IDEA, targetChapters: chapters.length });
+  const base = createAutopilotState(new Date(T0), { idea: IDEA });
   return seedRun({
     status: "paused",
     phase: "plan",
