@@ -162,7 +162,7 @@ describe("the page on a phone (390 px wide)", () => {
   });
 
   it("has the history, and nothing else, in the Timeline tab", async () => {
-    seedRun({ status: "paused" });
+    seedRun({ status: "paused", activities: richHistory().activities });
     render(<Page />);
     fireEvent.mouseDown(tab(TABS[1]));
     fireEvent.click(tab(TABS[1]));
@@ -247,7 +247,8 @@ describe("the page on a phone (390 px wide)", () => {
     seedRun({ status: "paused", chapters: planned, statePatch: { plan: { ...planOf(planned), awaitingAuthor: true } } });
     render(<Page />);
     expect(tab(TABS[2])).toHaveAttribute("aria-selected", "true");
-    expect(within(panel()).getByRole("heading", { name: t("autopilot.plan.title") })).toBeInTheDocument();
+    // Changed on purpose (the approval of the plan): the tab holds the screen that approves the plan, in place of the card of the plan.
+    expect(within(panel()).getByRole("heading", { name: t("autopilot.approval.title") })).toBeInTheDocument();
     fireEvent.mouseDown(tab(TABS[1]));
     fireEvent.click(tab(TABS[1]));
     await waitFor(() => expect(tab(TABS[1])).toHaveAttribute("aria-selected", "true"));

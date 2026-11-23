@@ -14,12 +14,11 @@ export function normalizeDocLang(lang: string | undefined): DocLang {
   return lang?.split("-")[0] === "it" ? "it" : "en";
 }
 
-/** Localized title/summary/markdown for a doc entry, with fallback to the other language. */
+/** Localized title, summary and source of a doc entry, with fallback to the other language. Its text is loaded on demand: see `loadDocMarkdown`. */
 export function localizedDoc(entry: DocEntry, lang: DocLang): DocTranslation {
   return entry.translations[lang] ?? entry.translations[lang === "it" ? "en" : "it"] ?? {
     title: entry.title,
     summary: entry.summary,
-    markdown: entry.markdown,
     sourcePath: entry.sourcePath,
   };
 }

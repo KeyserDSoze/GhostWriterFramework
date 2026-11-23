@@ -60,6 +60,8 @@ const outlineIt = {
       auto_other: "I capitoli {{numbers, list}} sono già scritti: dopo queste modifiche l'autopilot li riscriverà secondo la Scaletta, senza chiedere (come dice la sua Configurazione).",
       notify_one: "Il capitolo {{numbers, list}} è già scritto: dopo questa modifica l'autopilot la segnalerà soltanto, senza riscrivere il capitolo.",
       notify_other: "I capitoli {{numbers, list}} sono già scritti: dopo queste modifiche l'autopilot le segnalerà soltanto, senza riscrivere i capitoli.",
+      later_one: "Il capitolo {{numbers, list}} è nelle mani dell'autopilot (in scrittura o in revisione): dopo questa modifica l'autopilot te ne parlerà una volta sola e, a capitolo chiuso, ti chiederà se riscriverlo, lo riscriverà o lo segnalerà soltanto, come dice la sua Configurazione.",
+      later_other: "I capitoli {{numbers, list}} sono nelle mani dell'autopilot (in scrittura o in revisione): dopo queste modifiche l'autopilot te ne parlerà una volta sola e, a capitoli chiusi, ti chiederà se riscriverli, li riscriverà o li segnalerà soltanto, come dice la sua Configurazione.",
     },
     warning: {
       ghostwriterMissing: "Il ghostwriter «{{slug}}» non esiste: finché non lo crei, questo capitolo lo scrive il ghostwriter del libro.",
@@ -133,6 +135,7 @@ const outlineIt = {
     delete: {
       title: "Eliminare il capitolo {{number}} dalla Scaletta?",
       body: "La sua voce viene eliminata. Quando l'autopilot ci arriva, toglie il capitolo dal suo piano.",
+      bodyStays: "La sua voce viene eliminata. L'autopilot non toglie dal piano un capitolo già scritto: quando ci arriva, ti dice soltanto, una volta sola, che la voce non c'è più.",
       written: "Questo capitolo è già scritto: il suo testo resta nel libro e l'autopilot non lo cancella.",
       unsaved: "Le sue modifiche non salvate vanno perse.",
       renumber: "Rinumera i capitoli successivi",

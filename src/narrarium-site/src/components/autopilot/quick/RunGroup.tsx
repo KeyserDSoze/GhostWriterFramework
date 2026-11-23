@@ -1,17 +1,19 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { ChevronDown, CircleHelp, Loader2, Pause, Play, Plus, SkipForward, Square } from "lucide-react";
+import { ChevronDown, CircleHelp, Loader2, Pause, Play, Plus, SkipForward, Square, Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { QUICK_CONTROLS_SERVER_VERSION } from "@/autopilot/quickControls";
 import { autopilotSettingsHref } from "@/autopilot/pageRoute";
+import type { RetryWait } from "@/autopilot/retry";
 import type { QuickModel } from "@/components/autopilot/quick/model";
 import { MENU_CONTENT, MENU_ITEM, MenuText, Reason } from "@/components/autopilot/quick/parts";
 
 /**
  * The first group of the bar: what runs. A run that goes on has a pause (after the step, which is what a click does, or at the end of the
- * chapter, or taken back) and a stop. One that is stopped has Resume and a menu to run one step, one chapter, or until the author stops it.
+ * chapter, or taken back) and a stop; while it waits to try a failed step again, «Retry now» ends the wait. One that is stopped has Resume and
+ * a menu to run one step, one chapter, or until the author stops it.
  * The one main action is the one with the colour of the main action, and it changes with the state: Pause, Approve the plan and continue,
  * Resume, Answer the question, Retry; for a book that is complete, Add chapters (the configuration is where more chapters are asked for), or
  * Write the new chapters once the settings ask for more than the plan has. `runExtra` is whatever the page puts next to it (Read chapter 4);
@@ -21,9 +23,44 @@ export function RunGroup({ model, profileHintId, runExtra, trailing }: { model: 
   return model.control.running ? <Running model={model} trailing={trailing} /> : <Stopped model={model} profileHintId={profileHintId} runExtra={runExtra} trailing={trailing} />;
 }
 
+/**
+ * «Retry now», while the run waits: it ends the wait (a quick one or one of «Retry later») and the attempt starts at once. It is busy, not disabled, while the
+ * command is on its way, so that the focus stays on it; when the wait is over the button goes, and the focus goes to the pause, where a keyboard goes on.
+ * What it came to is said by the status of the bar.
+ */
+function RetryNow({ model, wait, pause, explained }: { model: QuickModel; wait: RetryWait; pause: RefObject<HTMLButtonElement | null>; explained?: string }) {
+  const { t } = useTranslation();
+  const ref = useRef<HTMLButtonElement>(null);
+  const pending = model.busy === "retry-now";
+  useLayoutEffect(() => {
+    const element = ref.current;
+    return () => {
+      if (!element || element !== document.activeElement) return;
+      const next = pause.current;
+      if (next && !next.disabled) next.focus({ preventScroll: true });
+      else document.querySelector<HTMLElement>("[data-autopilot-band]")?.focus({ preventScroll: true });
+    };
+  }, [pause]);
+  return (
+    <Button
+      ref={ref}
+      size="sm"
+      variant="outline"
+      aria-label={model.named(t("autopilot.retry.now"))}
+      aria-describedby={explained}
+      aria-disabled={pending || undefined}
+      disabled={model.unreachable}
+      onClick={() => { if (!pending) void model.commands.retryNow(wait.at); }}
+    >
+      {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />}{t("autopilot.retry.now")}
+    </Button>
+  );
+}
+
 function Running({ model, trailing }: { model: QuickModel; trailing?: ReactNode }) {
   const { t } = useTranslation();
   const { commands, busy, pausing, unreachable, pausePending, named, ids } = model;
+  const pauseButton = useRef<HTMLButtonElement>(null);
   const explained = unreachable ? ids.remote : undefined;
   // The pause after the step is already asked for: asking again changes nothing, and the button says it waits.
   const waitingForStep = pausePending === "after-step";
@@ -33,6 +70,7 @@ function Running({ model, trailing }: { model: QuickModel; trailing?: ReactNode 
     <div className="flex flex-wrap items-center gap-2">
       <div className="inline-flex">
         <Button
+          ref={pauseButton}
           size="sm"
           className="rounded-r-none"
           aria-label={named(t("autopilot.actions.pause"))}
@@ -70,6 +108,7 @@ function Running({ model, trailing }: { model: QuickModel; trailing?: ReactNode 
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {model.wait && model.serverRetry && <RetryNow model={model} wait={model.wait} pause={pauseButton} explained={explained} />}
       <Button
         size="sm"
         variant="ghost"
@@ -106,6 +145,19 @@ function Stopped({ model, profileHintId, runExtra, trailing }: { model: QuickMod
   if (completed && variant === "dock") return null;
   // The settings ask for more chapters than the plan has: resuming extends the plan (the engine does it when the run starts), so the main action is to write them.
   const extending = completed && Boolean(model.state?.plan && model.state.brief.targetChapters > model.state.plan.chapters.length);
+  // On the page of every book, a book that is complete leads to its result, which its live page shows first.
+  if (completed && !extending && variant === "hub") {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <Button asChild size="sm">
+          <Link to={model.pageHref} aria-label={named(t("autopilot.hub.openResult"))}>
+            <Trophy className="h-4 w-4" aria-hidden />{t("autopilot.hub.openResult")}
+          </Link>
+        </Button>
+        {trailing}
+      </div>
+    );
+  }
   if (completed && !extending) {
     return (
       <div className="flex flex-wrap items-center gap-2">
@@ -122,7 +174,9 @@ function Stopped({ model, profileHintId, runExtra, trailing }: { model: QuickMod
   const old = !model.serverControls;
   const tooOld = t("autopilot.quick.serverTooOld", { version: QUICK_CONTROLS_SERVER_VERSION });
   const blocked = acting || noAi;
-  const main = extending ? t("autopilot.actions.writeNewChapters") : awaitingPlan ? t("autopilot.actions.approvePlan") : summary.status === "error" ? t("autopilot.actions.retry") : t("autopilot.actions.resume");
+  // A run that never started is started, not resumed: the card of the page of every book says it (the page of the book has its own invitation).
+  const starting = variant === "hub" && summary.status === "idle";
+  const main = extending ? t("autopilot.actions.writeNewChapters") : awaitingPlan ? t("autopilot.actions.approvePlan") : summary.status === "error" ? t("autopilot.actions.retry") : starting ? t("autopilot.actions.start") : t("autopilot.actions.resume");
   const described = [model.profileStop ? profileHintId : undefined, noAi ? ids.noAi : undefined].filter(Boolean).join(" ") || undefined;
   return (
     <div className="flex flex-wrap items-center gap-2">

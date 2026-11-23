@@ -5,14 +5,17 @@ import "@/i18n/frozen";
 import "@/i18n/frozenCopilot";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { appDocEntries } from "@/lib/appDocs";
+import { guideText, loadGuides } from "./helpers/guides";
 
 type Language = "en" | "it";
 
 const helpOf = (slug: string, language: Language) => {
   const entry = appDocEntries.find((candidate) => candidate.slug === slug);
   if (!entry) throw new Error(`the help «${slug}» is missing`);
-  return (entry.translations?.[language] ?? entry).markdown;
+  return guideText(slug, language);
 };
+
+beforeAll(loadGuides);
 
 /** What the help of the autopilot names in bold about frozen chapters: the help and the pages must call it the same thing. */
 const LABELS = [

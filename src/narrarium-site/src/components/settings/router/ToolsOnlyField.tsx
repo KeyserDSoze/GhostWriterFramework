@@ -16,8 +16,11 @@ export const TOOLS_ONLY_ID = "tools-only";
  */
 function useFocusOnHash(id: string, ref: RefObject<HTMLElement>): void {
   const location = useLocation();
+  // A link is followed once: coming back to the same entry of the history (after the menu of a phone, for one) does not scroll the page again.
+  const followed = useRef("");
   useEffect(() => {
-    if (decodeURIComponent(location.hash.replace(/^#/, "")) !== id) return undefined;
+    if (decodeURIComponent(location.hash.replace(/^#/, "")) !== id || followed.current === location.key) return undefined;
+    followed.current = location.key;
     let frame = 0;
     const look = (frames: number) => {
       const element = ref.current;
@@ -34,8 +37,8 @@ function useFocusOnHash(id: string, ref: RefObject<HTMLElement>): void {
 }
 
 /**
- * «Tools only» for the autopilot, at the top of the page of the Router: the switch, what it does, and what it means for the models of the tasks of the autopilot that cannot
- * call functions. The warnings are one status that is there from the start and changes only when the settings do, so that a change is said once and nothing talks on its own.
+ * «Tools only», at the top of the page of the Router: the switch (it covers the autopilot and the structured answers of the Copilot), what it does, and what it means for the models of
+ * the tasks of the autopilot that cannot call functions. The warnings are one status that is there from the start and changes only when the settings do, so that a change is said once and nothing talks on its own.
  * What is switched is stored as a flag, so that two devices that merge their settings never lose it.
  */
 export function ToolsOnlyField({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {

@@ -26,8 +26,15 @@ test("the page scrolls its anchors and its focused controls clear of a band that
   const shell = await read("src/components/layout/Shell.tsx");
   const main = /<main className="([^"]*)"/.exec(shell)?.[1] ?? "";
   assert.match(main, /\bscroll-pt-\[var\(--top-reserve,0px\)\]/);
-  // WCAG 2.2, 2.4.11 (focus not obscured): a control reached with the Tab key is scrolled to the edge of the page, which is under the bar of actions of a phone unless the page says so.
-  assert.match(main, /\bscroll-pb-\[var\(--bottom-reserve,0px\)\]/);
+  // WCAG 2.2, 2.4.11 (focus not obscured): a control reached with the Tab key is scrolled to the edge of the page, which is under the bar of actions
+  // of a phone and under the floating buttons unless the page says so. On a phone the floating buttons and the live panel are as tall as the room kept
+  // for them at the end of the page; on a wide screen the launchers are alone.
+  const narrow = /(?<![:\w-])scroll-pb-\[calc\(([\d.]+)rem\+var\(--bottom-reserve,0px\)\+var\(--dock-reserve,0px\)\)\]/.exec(main)?.[1];
+  assert.ok(narrow, "on a phone the scroll padding adds what the page reserves and what the live panel takes");
+  assert.ok(rem(narrow) >= 7.75, `on a phone a focused control stops above the book actions button (5rem + 2.75rem): saw ${narrow}rem`);
+  const wide = /lg:scroll-pb-\[calc\(([\d.]+)rem\+var\(--bottom-reserve,0px\)\)\]/.exec(main)?.[1];
+  assert.ok(wide, "on a wide screen the scroll padding adds what the page reserves");
+  assert.ok(rem(wide) >= 4.25, `on a wide screen a focused control stops above the launchers (1.5rem + 2.75rem): saw ${wide}rem`);
 });
 
 test("the floating layers sit above the bar of actions a page reserves at the bottom", async () => {

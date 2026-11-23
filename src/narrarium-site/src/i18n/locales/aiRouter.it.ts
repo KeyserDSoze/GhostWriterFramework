@@ -177,8 +177,8 @@ const aiRouterIt = {
     },
     undo: "Annulla",
     toolsOnly: {
-      label: "Solo tool per l'autopilot",
-      hint: "Ogni agente (scrittore, direttore, lettori, specialisti, riassunti) risponde chiamando la propria funzione; i modelli senza tool call vengono saltati e una risposta in testo al posto della chiamata viene rifiutata.",
+      label: "Solo tool",
+      hint: "Ogni agente dell'autopilot (scrittore, direttore, lettori, specialisti, riassunti) e ogni risposta strutturata del Copilot risponde chiamando la propria funzione; i modelli senza tool call vengono saltati e una risposta in testo al posto della chiamata viene rifiutata.",
       blocked_one: "{{count}} attività non ha nessun modello che sappia chiamare funzioni, quindi l'autopilot si fermerebbe su di essa con un errore di configurazione: {{tasks}}.",
       blocked_other: "{{count}} attività non hanno nessun modello che sappia chiamare funzioni, quindi l'autopilot si fermerebbe su di esse con un errore di configurazione: {{tasks}}.",
       skipped: "{{task}}: {{models}} (senza tool call) verrà saltato.",

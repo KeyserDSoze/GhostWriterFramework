@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { effectivePublish, type AutopilotLimitsSummary, type AutopilotPausePending, type AutopilotPublishMode, type AutopilotState, type AutopilotStateSummary } from "narrarium-engine";
@@ -7,15 +7,17 @@ import { useBookAutopilotView } from "@/autopilot/hooks";
 import type { HandoverPlan, HandoverSide } from "@/autopilot/handover";
 import type { BookOperation } from "@/autopilot/operations";
 import { serverHasQuickControls } from "@/autopilot/quickControls";
+import { retryWaitOf, serverHasRetry, type RetryWait } from "@/autopilot/retry";
 import { useServerConnection } from "@/autopilot/serverConnection";
 import { useAutopilotStore } from "@/autopilot/store";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
-import { useAutopilotActions, type AutopilotActionName, type AutopilotCommands } from "@/autopilot/useAutopilotActions";
+import { useAutopilotActions, type AutopilotActionName, type AutopilotCommands, type RetryOutcome } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl, type AutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useSettingsStore } from "@/store/settingsStore";
 import { bookStorageMode, resolveGitHubRemoteToken, type BookEntry } from "@/types/settings";
 
-export type QuickVariant = "page" | "dock";
+/** `page`: the band of the book's live page. `dock`: the live panel. `hub`: the card of the book on the page of every book, which keeps only what runs. */
+export type QuickVariant = "page" | "dock" | "hub";
 
 /** Everything the groups of the bar need to know, worked out once from the stores, the settings and the connection to the server. */
 export interface QuickModel {
@@ -56,6 +58,12 @@ export interface QuickModel {
   serverControls: boolean;
   /** The server has the quick controls, which a run limited to some steps needs when it runs there. */
   serverKeepsLimits: boolean;
+  /** «Retry now» can be asked of whoever runs the book: this browser always, a server once it announces it. */
+  serverRetry: boolean;
+  /** The wait before the next attempt of the step that failed, while the run waits. */
+  wait: RetryWait | null;
+  /** What the last «Retry now» of this bar came to, for as long as it is said. */
+  retried: RetryOutcome | null;
   commands: AutopilotCommands;
   save: () => Promise<unknown>;
   /** Open the flow of “Where it runs” on the page of the book, with the side the author wants to pass to. */
@@ -74,7 +82,8 @@ export function useQuickModel(bookId: string, variant: QuickVariant): QuickModel
   const server = useServerConnection();
   const { save } = useSettings();
   const unreachable = control.running && !control.controllable;
-  const { busy, operation, commands } = useAutopilotActions(bookId, { unreachable });
+  const { busy, operation, commands, retried } = useAutopilotActions(bookId, { unreachable });
+  const wait = useMemo(() => retryWaitOf(control.summary), [control.summary]);
   const book = settings.books.find((entry) => entry.id === bookId);
   const summary = control.summary;
   if (!book || !summary) return null;
@@ -119,6 +128,10 @@ export function useQuickModel(bookId: string, variant: QuickVariant): QuickModel
     serverConfigured: server.status !== "disabled",
     serverControls: host === "server" ? controls : true,
     serverKeepsLimits: controls,
+    serverRetry: host === "server" ? (server.info ? serverHasRetry(server.info) : true) : true,
+    wait,
+    // The outcome belongs to the wait it skipped: a later wait has its button again, and says nothing of the one before.
+    retried: retried && (!wait || wait.at === retried.waitAt) ? retried : null,
     commands,
     save,
     openWhere: (side) => {

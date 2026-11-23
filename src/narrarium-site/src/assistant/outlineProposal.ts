@@ -1,19 +1,19 @@
 import { z } from "zod";
-import { clipMiddle, type BookFileChange, type OutlineEdit, type OutlineWarning } from "narrarium-engine";
+import { clipMiddle, composeOutlineEdits, type BookFileChange, type OutlineEdit, type OutlineSeriesStep, type OutlineWarning } from "narrarium-engine";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import type { LlmMessage } from "@/assistant/llm";
 import { sourceRevisionFromFiles } from "@/assistant/actionValidation";
 import type { AssistantActionProvenance, AssistantFileUpdate, AssistantMessage } from "@/assistant/store";
 import { chapterTargetInstruction } from "@/assistant/outlineTarget";
-import { composeEdits, snapshotOf, type OutlineSnapshot } from "@/outline/outlineModel";
+import { composeOptions, composerSource, snapshotOf, type OutlineSnapshot } from "@/outline/outlineModel";
 import { browserOutlineSource, type OutlineSource } from "@/outline/outlineSource";
 import type { BookEntry } from "@/types/settings";
 
 /**
- * How the Copilot turns a request about the outline (the Scaletta) into a proposal: the engine makes every edit (`outlineChanges`, composed
- * into the files of one commit), so every entry it writes is the author's and no frontmatter is written by hand; the author sees what changes
- * and applies it, or not. Nothing here writes. The Copilot loads this module with the first request about the outline, so the app does not
- * carry the outline's code (nor the engine's) until then.
+ * How the Copilot turns a request about the outline (the Scaletta) into a proposal: the engine makes every edit (`composeOutlineEdits`, in a
+ * series, into the files of one commit), so every entry it writes is the author's and no frontmatter is written by hand; the author sees what
+ * changes and applies it, or not. Nothing here writes. The Copilot loads this module with the first request about the outline, so the app does
+ * not carry the outline's code (nor the engine's) until then.
  */
 
 /** Files of the outline a proposal may change: more than that is a work for the Outline page. */
@@ -145,6 +145,8 @@ export function outlineEditMessages(input: { prompt: string; route: { kind: stri
 export interface OutlineProposal {
   summary: string;
   edits: OutlineEdit[];
+  /** What each edit did, in order, as the composer followed the entries through the renumbering. */
+  steps: OutlineSeriesStep[];
   changes: BookFileChange[];
   warnings: OutlineWarning[];
   before: OutlineSnapshot;
@@ -175,34 +177,36 @@ export async function proposeOutlineEdit(input: {
     summary = answer.summary.trim();
     edits = toOutlineEdits(answer.edits);
   }
-  const composed = edits.length ? await composeEdits(before, edits, input.ghostwriters) : { changes: [], warnings: [] };
-  const sourceRevisions = Object.fromEntries(composed.changes.map((change) => [change.path, before.files.get(change.path)?.hash ?? null]));
-  return { summary, edits, changes: composed.changes, warnings: composed.warnings, before, sourceRevisions };
+  const composed = edits.length ? await composeOutlineEdits(composerSource(before), edits, composeOptions(input.ghostwriters)) : null;
+  const changes = composed?.changes ?? [];
+  const sourceRevisions = Object.fromEntries(changes.map((change) => [change.path, before.files.get(change.path)?.hash ?? null]));
+  return { summary, edits, steps: composed?.steps ?? [], changes, warnings: composed?.warnings ?? [], before, sourceRevisions };
 }
 
-/** What a proposal does, one line per edit, in the language of the request. */
-export function describeOutlineEdits(edits: readonly OutlineEdit[], before: OutlineSnapshot, italian: boolean): string[] {
-  const last = before.outline.chapters.reduce((highest, entry) => Math.max(highest, entry.number), 0);
-  const titleOf = (value: number) => before.outline.chapters.find((entry) => entry.number === value)?.title;
-  const named = (value: number) => {
-    const title = titleOf(value);
-    return italian ? `il capitolo ${value}${title ? ` «${title}»` : ""}` : `chapter ${value}${title ? ` «${title}»` : ""}`;
+/**
+ * What a proposal does, one line per edit, in the language of the request. An edit counts the chapters as the edits before it left them, so a chapter is named by
+ * the entry the edit is about (`origin`: the number it had when the series began), not by whatever title the outline has at that number now.
+ */
+export function describeOutlineEdits(steps: readonly OutlineSeriesStep[], before: OutlineSnapshot, italian: boolean): string[] {
+  const named = (number: number, origin: number | undefined) => {
+    const title = origin === undefined ? undefined : before.outline.chapters.find((entry) => entry.number === origin)?.title;
+    return italian ? `il capitolo ${number}${title ? ` «${title}»` : ""}` : `chapter ${number}${title ? ` «${title}»` : ""}`;
   };
-  return edits.map((edit) => {
-    switch (edit.kind) {
+  const fieldName = (field: "title" | "body" | "ghostwriter") => (field === "title" ? (italian ? "titolo" : "title") : field === "body" ? (italian ? "cosa succede" : "what happens") : "ghostwriter");
+  return steps.map((step) => {
+    switch (step.kind) {
       case "update": {
-        const parts = [edit.entry.title !== undefined ? (italian ? "titolo" : "title") : "", edit.entry.body !== undefined ? (italian ? "cosa succede" : "what happens") : "", edit.entry.ghostwriter !== undefined ? "ghostwriter" : ""].filter(Boolean).join(", ");
-        const exists = Boolean(before.outline.chapters.some((entry) => entry.number === edit.number));
-        return exists
-          ? (italian ? `Nella Scaletta cambia ${named(edit.number)}: ${parts}.` : `In the outline, ${named(edit.number)} changes: ${parts}.`)
-          : (italian ? `Nella Scaletta nasce la voce del capitolo ${edit.number}.` : `The outline gets an entry for chapter ${edit.number}.`);
+        const parts = step.fields.map(fieldName).join(", ");
+        return step.created
+          ? (italian ? `Nella Scaletta nasce la voce del capitolo ${step.number}.` : `The outline gets an entry for chapter ${step.number}.`)
+          : (italian ? `Nella Scaletta cambia ${named(step.number, step.origin)}: ${parts}.` : `In the outline, ${named(step.number, step.origin)} changes: ${parts}.`);
       }
-      case "append": return italian ? `Un nuovo capitolo ${last + 1} in fondo alla Scaletta.` : `A new chapter ${last + 1} at the end of the outline.`;
-      case "insert": return italian ? `Un nuovo capitolo ${edit.at} nella Scaletta: i successivi slittano di un posto.` : `A new chapter ${edit.at} in the outline: the following chapters move one number up.`;
-      case "move": return italian ? `Nella Scaletta ${named(edit.from)} diventa il capitolo ${edit.to}.` : `In the outline, ${named(edit.from)} becomes chapter ${edit.to}.`;
+      case "append": return italian ? `Un nuovo capitolo ${step.number} in fondo alla Scaletta.` : `A new chapter ${step.number} at the end of the outline.`;
+      case "insert": return italian ? `Un nuovo capitolo ${step.at} nella Scaletta: i successivi slittano di un posto.` : `A new chapter ${step.at} in the outline: the following chapters move one number up.`;
+      case "move": return italian ? `Nella Scaletta ${named(step.from, step.origin)} diventa il capitolo ${step.to}.` : `In the outline, ${named(step.from, step.origin)} becomes chapter ${step.to}.`;
       case "remove": return italian
-        ? `${named(edit.number).replace(/^il/, "Il")} esce dalla Scaletta${edit.renumber ? ": i successivi risalgono di un posto" : ": i successivi mantengono il loro numero"}.`
-        : `${named(edit.number).replace(/^chapter/, "Chapter")} leaves the outline${edit.renumber ? ": the following chapters move one number down" : ": the following chapters keep their numbers"}.`;
+        ? `${named(step.number, step.origin).replace(/^il/, "Il")} esce dalla Scaletta${step.renumber ? ": i successivi risalgono di un posto" : ": i successivi mantengono il loro numero"}.`
+        : `${named(step.number, step.origin).replace(/^chapter/, "Chapter")} leaves the outline${step.renumber ? ": the following chapters move one number down" : ": the following chapters keep their numbers"}.`;
       default: return italian ? "Cambia la descrizione del libro nella Scaletta." : "The description of the book in the outline changes.";
     }
   });
@@ -244,7 +248,7 @@ export async function outlineEditMessage(input: {
       action: { kind: "navigate", to: `/app/books/${encodeURIComponent(input.book.id)}/outline`, label: italian ? "Scaletta" : "Outline" },
     };
   }
-  const lines = describeOutlineEdits(proposal.edits, proposal.before, italian);
+  const lines = describeOutlineEdits(proposal.steps, proposal.before, italian);
   const warnings = proposal.warnings.filter((warning) => warning.code !== "gap").map((warning) => `- ⚠ ${warning.message}`);
   const updates: AssistantFileUpdate[] = proposal.changes.map((change) => {
     const number = /^outline\/chapters\/(\d+)\.md$/.exec(change.path)?.[1];

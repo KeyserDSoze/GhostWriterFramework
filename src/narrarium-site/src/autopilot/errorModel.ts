@@ -120,8 +120,8 @@ export interface ErrorActions {
   integrations: boolean;
   /** «Open the AI Router», at the «Tools only» switch. */
   router: boolean;
-  /** Which of the two is the main action of the panel. */
-  first: "retry" | "integrations";
+  /** Which is the main action of the panel: resuming, the configuration, or settling a conflict with GitHub (the panel offers that one itself). */
+  first: "retry" | "integrations" | "resolve";
 }
 
 /** The failures that come from the provider or from how it is set up: where a person can change the model, the key, the address or the limits. */
@@ -131,9 +131,11 @@ const CONFIGURATION_FIRST: ReadonlySet<AutopilotErrorKind> = new Set(["auth", "r
 
 /**
  * What can be done about a failure. A configuration error is repeated by the same configuration, so the retry is not offered while the configuration still gives it
- * (`configurationBlocks`, which is assumed when it is not said); once it does not, retrying is the main action.
+ * (`configurationBlocks`, which is assumed when it is not said); once it does not, retrying is the main action. A conflict with GitHub (`githubConflict`) is settled before the
+ * run is resumed: resuming would only meet it again, so resuming comes second.
  */
-export function errorActions(kind: AutopilotErrorKind, { configurationBlocks = true }: { configurationBlocks?: boolean } = {}): ErrorActions {
+export function errorActions(kind: AutopilotErrorKind, { configurationBlocks = true, githubConflict = false }: { configurationBlocks?: boolean; githubConflict?: boolean } = {}): ErrorActions {
+  if (kind === "conflict" && githubConflict) return { retry: "secondary", integrations: false, router: false, first: "resolve" };
   if (kind === "config") return configurationBlocks ? { retry: "hidden", integrations: true, router: true, first: "integrations" } : { retry: "main", integrations: true, router: true, first: "retry" };
   const configurationFirst = CONFIGURATION_FIRST.has(kind);
   return { retry: configurationFirst ? "secondary" : "main", integrations: IN_INTEGRATIONS.has(kind), router: false, first: configurationFirst ? "integrations" : "retry" };
@@ -247,8 +249,12 @@ export function secondsLeft(at: string, now: number): number | null {
   return Number.isFinite(target) ? Math.max(0, Math.ceil((target - now) / 1000)) : null;
 }
 
-/** "12 s", and "1 min 05 s" from a minute on (the runner never waits longer than five). */
-export function formatCountdown(seconds: number): string {
+/** "12 s", "1 min 05 s" from a minute on, "2 h 05 min" from an hour on, and the days in the words of the language from a day on (a wait of «Retry later» can last a week). */
+export function formatCountdown(seconds: number, language?: string): string {
   const total = Math.max(0, Math.floor(seconds));
-  return total < 60 ? `${total} s` : `${Math.floor(total / 60)} min ${String(total % 60).padStart(2, "0")} s`;
+  if (total < 60) return `${total} s`;
+  if (total < 3600) return `${Math.floor(total / 60)} min ${String(total % 60).padStart(2, "0")} s`;
+  if (total < 86_400) return `${Math.floor(total / 3600)} h ${String(Math.floor((total % 3600) / 60)).padStart(2, "0")} min`;
+  const days = new Intl.NumberFormat(language, { style: "unit", unit: "day", unitDisplay: "long" }).format(Math.floor(total / 86_400));
+  return `${days} ${Math.floor((total % 86_400) / 3600)} h`;
 }

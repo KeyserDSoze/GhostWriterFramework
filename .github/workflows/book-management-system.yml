@@ -16,6 +16,7 @@ on:
       - .github/workflows/book-management-system.yml
       - packages/mcp-server/src/index.ts
       - packages/mcp-server/src/public-http-server.ts
+      - packages/server/mcp-tools.json
       - package.json
       - package-lock.json
 

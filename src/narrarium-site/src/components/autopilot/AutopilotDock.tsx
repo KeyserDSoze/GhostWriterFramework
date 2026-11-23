@@ -176,7 +176,7 @@ function MiniPlayer({ bookId, announce, heading }: { bookId: string; announce: b
         {model ? <StatusPill status={model.status} /> : <span className="text-xs text-muted-foreground">{t("autopilot.notStarted")}</span>}
         <FrozenChangesChip count={summary?.frozenChanges} />
       </div>
-      {model && (model.running ? <StepNow bookId={bookId} compact announce={announce} /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null)}
+      {model && (model.running ? <StepNow bookId={bookId} compact announce={announce} wait={model.wait} countdown /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null)}
       {model && <ProgressBars summary={model.summary} scenes={false} context={t("autopilot.dockTitle")} />}
       {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} compact hintId={profileHintId} />}
       {failure && <RunErrorNotice bookId={bookId} message={failure.message} kind={isErrorKind(failure.kind ?? failure.errorKind) ? failure.kind ?? failure.errorKind : undefined} pageHref={pageHref} />}

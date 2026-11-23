@@ -126,7 +126,7 @@ export function AssistantChatsPage() {
           <h1 className="font-serif text-3xl font-semibold tracking-tight">{t("chats.title")}</h1>
           <p className="text-muted-foreground">{t("chats.subtitle")}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <input ref={importInputRef} type="file" accept=".json,application/json" className="hidden" onChange={(event) => void importArchive(event.target.files?.[0])} />
           <Button variant="outline" onClick={() => importInputRef.current?.click()}><Upload className="mr-2 h-4 w-4" />{t("assistant.importChatArchive")}</Button>
           <Button onClick={newChat}><Bot className="mr-2 h-4 w-4" />{t("assistant.new")}</Button>
@@ -166,7 +166,7 @@ export function AssistantChatsPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <p className="text-xs text-muted-foreground">{new Date(session.updatedAt).toLocaleString()}</p>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button size="sm" onClick={() => session.fileId && void openSession(session.fileId)} disabled={!session.fileId}>{t("chats.open")}</Button>
                   <Button size="sm" variant="outline" onClick={() => void deleteSession(session)} disabled={!session.fileId || deleting === session.fileId}>
                     {deleting === session.fileId ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}

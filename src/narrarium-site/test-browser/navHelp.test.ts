@@ -2,14 +2,17 @@ import { beforeAll, describe, expect, it } from "vitest";
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { appDocEntries } from "@/lib/appDocs";
+import { guideText, loadGuides } from "./helpers/guides";
 
 type Language = "en" | "it";
 
 const helpOf = (slug: string, language: Language) => {
   const entry = appDocEntries.find((candidate) => candidate.slug === slug);
   if (!entry) throw new Error(`the help ${slug} is missing`);
-  return (entry.translations?.[language] ?? entry).markdown;
+  return guideText(slug, language);
 };
+
+beforeAll(loadGuides);
 
 /** The names the menu and the configuration give to their parts: the help calls them the same, in bold. */
 const AUTOPILOT_LABELS = [

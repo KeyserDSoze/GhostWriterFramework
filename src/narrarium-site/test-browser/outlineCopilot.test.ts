@@ -168,3 +168,72 @@ describe("«Edit Multiple Files»", () => {
     expect(message.text).toContain("Edit the Outline");
   });
 });
+
+describe("the lines of a proposal", () => {
+  const lines = (message: AssistantMessage) => message.text.split("\n").filter((line) => line.startsWith("- ") && !line.startsWith("- ⚠")).map((line) => line.slice(2));
+  const SERIES = [
+    { kind: "insert", at: 1, title: "Prologue" },
+    { kind: "update", number: 2, body: "Mira reaches the harbor." },
+    { kind: "move", from: 9, to: 3 },
+    { kind: "append", title: "Epilogue" },
+    { kind: "append", title: "Another epilogue" },
+  ];
+
+  it("name each chapter as the series leaves it, though an edit before made the numbers shift (Italian)", async () => {
+    mocks.complete.mockResolvedValue(JSON.stringify({ summary: "Un prologo, e il primo capitolo cambia.", edits: SERIES }));
+    const message = await ask("nella scaletta aggiungi un prologo e riscrivi il capitolo 1", ON.outline);
+    expect(lines(message)).toEqual([
+      "Un nuovo capitolo 1 nella Scaletta: i successivi slittano di un posto.",
+      "Nella Scaletta cambia il capitolo 2 «T1»: cosa succede.",
+      "Nella Scaletta il capitolo 9 «T8» diventa il capitolo 3.",
+      "Un nuovo capitolo 10 in fondo alla Scaletta.",
+      "Un nuovo capitolo 11 in fondo alla Scaletta.",
+    ]);
+  });
+
+  it("name each chapter as the series leaves it, though an edit before made the numbers shift (English)", async () => {
+    mocks.complete.mockResolvedValue(JSON.stringify({ summary: "A prologue, and the first chapter changes.", edits: SERIES }));
+    const message = await ask("in the outline add a prologue and rewrite chapter 1", ON.outline);
+    expect(lines(message)).toEqual([
+      "A new chapter 1 in the outline: the following chapters move one number up.",
+      "In the outline, chapter 2 «T1» changes: what happens.",
+      "In the outline, chapter 9 «T8» becomes chapter 3.",
+      "A new chapter 10 at the end of the outline.",
+      "A new chapter 11 at the end of the outline.",
+    ]);
+  });
+
+  it("name the chapter an edit deletes after another was moved over it", async () => {
+    mocks.complete.mockResolvedValue(JSON.stringify({ summary: "Il capitolo 2 passa in fondo, poi il primo si toglie.", edits: [{ kind: "move", from: 2, to: 8 }, { kind: "remove", number: 8, renumber: true }] }));
+    const message = await ask("nella scaletta sposta in fondo il capitolo 2 e poi eliminalo", ON.outline);
+    expect(lines(message)[1]).toBe("Il capitolo 8 «T2» esce dalla Scaletta: i successivi risalgono di un posto.");
+  });
+
+  it("do not refuse an edit of a chapter that has no entry: it changes nothing, a warning says so, and the other edits are made", async () => {
+    mocks.complete.mockResolvedValue(JSON.stringify({ summary: "Via il 99, titolo nuovo al 2.", edits: [{ kind: "remove", number: 99 }, { kind: "update", number: 2, title: "Due" }] }));
+    const message = await ask("nella scaletta elimina il capitolo 99 e rinomina il capitolo 2", ON.outline);
+    expect(outlinePaths(message)).toEqual(["outline/chapters/002.md"]);
+    expect(message.text).toMatch(/⚠/);
+  });
+});
+
+describe("a change that touches more than 100 entries", () => {
+  it("is not proposed: the Outline page makes it, where it can be undone", async () => {
+    const files: Record<string, string> = {};
+    for (let number = 1; number <= 150; number += 1) files[outlineChapterPath(number)] = serializeOutlineChapter({ number, title: `T${number}`, body: `B${number}`, origin: "author" });
+    mocks.store = new MemoryBookStore(files);
+    const message = await ask("nella scaletta sposta il capitolo 150 prima del capitolo 1", ON.outline);
+    expect(message.text).toContain("Questa modifica tocca 150 voci della Scaletta");
+    expect(message.action).toMatchObject({ kind: "navigate", to: "/app/books/book/outline" });
+    expect(mocks.store.commits).toHaveLength(0);
+  });
+
+  it("is proposed when it touches exactly 100", async () => {
+    const files: Record<string, string> = {};
+    for (let number = 1; number <= 100; number += 1) files[outlineChapterPath(number)] = serializeOutlineChapter({ number, title: `T${number}`, body: `B${number}`, origin: "author" });
+    mocks.store = new MemoryBookStore(files);
+    const message = await ask("nella scaletta sposta il capitolo 100 prima del capitolo 1", ON.outline);
+    expect(message.action).toMatchObject({ kind: "apply-file-updates", toolId: "edit-outline" });
+    expect(outlinePaths(message)).toHaveLength(100);
+  });
+});

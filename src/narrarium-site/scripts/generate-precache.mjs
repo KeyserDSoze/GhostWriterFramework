@@ -19,7 +19,7 @@ async function filesBelow(directory, prefix = "") {
 
 const assets = (await filesBelow(distRoot)).sort();
 const manifest = JSON.parse(await readFile(path.join(distRoot, ".vite", "manifest.json"), "utf8"));
-const sourceKeys = ["index.html", "src/pages/public/PublicBasics.tsx", "src/pages/public/PublicDocs.tsx"];
+const sourceKeys = ["index.html", "src/pages/public/PublicBasics.tsx", "src/pages/public/PublicDocs.tsx", "src/pages/public/McpPage.tsx"];
 const shellModuleAssets = new Set();
 function addManifestEntry(key, target = shellModuleAssets) {
   const entry = manifest[key];
@@ -34,6 +34,11 @@ for (const source of sourceKeys) {
   const key = manifest[source] ? source : Object.keys(manifest).find((candidate) => manifest[candidate].src === source || (source === "index.html" ? manifest[candidate].isEntry : manifest[candidate].name === expectedName));
   if (!key) throw new Error(`Precache manifest entry not found for ${source}.`);
   addManifestEntry(key);
+}
+// The text of each document is a chunk of its own, imported when the document is opened: they are precached with the docs route, so that the
+// documentation works offline as it did when every text was inside the docs chunk.
+for (const [key, entry] of Object.entries(manifest)) {
+  if ((entry.src ?? key).endsWith(".md?raw")) addManifestEntry(key);
 }
 const shellAssets = [
   "index.html",

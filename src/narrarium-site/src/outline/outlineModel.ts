@@ -1,6 +1,7 @@
 import {
   OUTLINE_BOOK_FILE,
-  outlineChanges,
+  changeOfWritten,
+  outlineIndex,
   parseChapterFreeze,
   parseMarkdown,
   parseOutline,
@@ -9,20 +10,22 @@ import {
   readOutlineChapter,
   sha256Hex,
   type BookFileChange,
-  type FrozenEditsMode,
+  type OutlineChangeOutcome,
+  type OutlineChangeState,
   type OutlineChapterEntry,
-  type OutlineEdit,
+  type OutlineComposeOptions,
+  type OutlineSource as ComposerSource,
   type OutlineWarning,
   type ParsedOutline,
-  type PlannedChapter,
 } from "narrarium-engine";
 import { chapterNumberFromSlug } from "@/lib/chapterSlug";
 import { matchKey } from "@/lib/matchText";
 
 /**
  * What the Outline page knows of the outline (the Scaletta, `outline/` of the book) and how its edits become one commit. Everything here works on
- * the engine's own reading of the files (`parseOutline`, `readOutlineChapter`) and on its edits (`outlineChanges`): the page never writes a
- * frontmatter itself, and an entry it writes is the author's (`origin: author`) because the engine makes it so.
+ * the engine's own reading of the files (`parseOutline`, `readOutlineChapter`) and on its edits, which the engine's composer makes in a series
+ * (`composeOutlineEdits`): the page never writes a frontmatter itself, and an entry it writes is the author's (`origin: author`) because the engine
+ * makes it so. What the autopilot does when an entry changes is the engine's rule too (`changeOfWritten`).
  */
 
 /** A file of `outline/` as the book has it: its text and the hash of the text (hex SHA-256, the hash of the local working copy and of the engine). */
@@ -100,38 +103,25 @@ export async function applyToSnapshot(snapshot: OutlineSnapshot, changes: readon
   return { files, outline: { book, chapters: [...byNumber.values()].sort((left, right) => left.number - right.number), warnings } };
 }
 
-export interface ComposedEdits {
-  /** One commit: every file written or deleted once, expecting the version that was read (`null`: it must not exist). */
-  changes: BookFileChange[];
-  warnings: OutlineWarning[];
-  /** The outline once the commit is saved. */
-  next: OutlineSnapshot;
+/**
+ * The outline of a snapshot as the engine's composer reads one: its files by name and hash, and the text of each, which the page already holds (nothing is read
+ * from anywhere). Every path is given, so that an outline with two files for a chapter, or with a file that is named as no entry is, is read whole as the
+ * engine reads it.
+ */
+export function composerSource(snapshot: OutlineSnapshot): ComposerSource {
+  return {
+    index: outlineIndex([...snapshot.files.values()].map((file): [string, string] => [file.path, file.hash])),
+    paths: [...snapshot.files.keys()],
+    read: async (path) => snapshot.files.get(path) ?? null,
+  };
 }
 
 /**
- * Several edits of the author as one commit: each is made by the engine on the outline the previous one left, and the files are then written
- * once, with their final text. A file that comes back to what it was is left alone.
+ * What the page and the Copilot ask of the composer. No limit of edits or files: they say what is too much, where the author can see it and undo it. An edit of
+ * a chapter that has no entry is the engine's own answer, not a refusal of the series: it changes nothing and a warning says so.
  */
-export async function composeEdits(snapshot: OutlineSnapshot, edits: readonly OutlineEdit[], ghostwriters?: readonly string[]): Promise<ComposedEdits> {
-  let current = snapshot;
-  const finalContent = new Map<string, string | null>();
-  const warnings: OutlineWarning[] = [];
-  for (const edit of edits) {
-    const result = outlineChanges({ outline: current.outline, edit, ghostwriters });
-    warnings.push(...result.warnings);
-    for (const change of result.changes) finalContent.set(change.path, change.content);
-    current = await applyToSnapshot(current, result.changes);
-  }
-  const changes: BookFileChange[] = [];
-  for (const [path, content] of finalContent) {
-    const original = snapshot.files.get(path);
-    if ((original?.content ?? null) === content) continue;
-    changes.push({ path, content, expectedHash: original ? original.hash : null });
-  }
-  changes.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
-  // What the files are after the commit, read again from the final texts (the intermediate ones are gone).
-  const next = changes.length ? await applyToSnapshot(snapshot, changes) : snapshot;
-  return { changes, warnings, next };
+export function composeOptions(ghostwriters?: readonly string[]): OutlineComposeOptions {
+  return { ghostwriters, maxEdits: Number.POSITIVE_INFINITY, maxFiles: Number.POSITIVE_INFINITY, missing: "warn" };
 }
 
 /** The changes that put back the files an action changed, each expecting the version the action left. */
@@ -149,6 +139,18 @@ export interface WrittenChapter {
   title: string;
 }
 
+/**
+ * The outcomes of the engine's rule (`changeOfWritten`) that the page tells the author: what the autopilot asks, does or only reports once the chapter is closed
+ * (`ask`, `auto`, `notify`, as `options.frozenEdits` says), and a chapter it has in its hands, where the change is told once and decided once the chapter is closed
+ * (`later`). The others are its own work and have words elsewhere: a chapter not written yet is planned again (the status «changed after the plan»), one that is
+ * deleted leaves the plan or stays in the book (the question that asks before an entry is deleted).
+ */
+export const TOLD_OUTCOMES = ["ask", "auto", "notify", "later"] as const;
+
+export type ToldOutcome = (typeof TOLD_OUTCOMES)[number];
+
+export const isToldOutcome = (outcome: OutlineChangeOutcome): outcome is ToldOutcome => (TOLD_OUTCOMES as readonly OutlineChangeOutcome[]).includes(outcome);
+
 export interface EntryStatus {
   /** `autopilot`: written by the autopilot from its plan and untouched since; every other entry is the author's, and binds. */
   origin: "autopilot" | "author";
@@ -164,19 +166,18 @@ export interface EntryStatus {
   warnings: OutlineWarning[];
   /** The written chapter is frozen: its chapter.md holds a record the engine reads. */
   frozen: boolean;
-  /** What the autopilot does when the entry changes, its chapter being closed (`ask`, `auto`, `notify`); `null` when it does nothing of the kind. */
-  afterChange: FrozenEditsMode | null;
+  /** What the autopilot does when the entry changes (the engine's rule, `changeOfWritten`); `null` when it does nothing of the kind. */
+  afterChange: ToldOutcome | null;
 }
 
 export interface StatusContext {
-  plan: ReadonlyMap<number, PlannedChapter>;
+  /** The state of the book's autopilot as the page read it, `null` when the book has none: its plan says what each chapter followed, and its options and the work it has in its hands say what a change of an entry does. */
+  autopilot: OutlineChangeState | null;
   written: ReadonlyMap<number, WrittenChapter>;
   ghostwriters: ReadonlySet<string>;
   warnings: ReadonlyMap<string, OutlineWarning[]>;
   /** The slugs of the written chapters that are frozen (the page reads those of the entries on the screen). */
   frozen?: ReadonlySet<string>;
-  /** `options.frozenEdits` of the autopilot: `ask` when it has none. */
-  mode?: FrozenEditsMode;
 }
 
 /** The written chapters among these files of chapter.md that are frozen: a record the engine reads, as it reads it (one that cannot be read is no freeze). */
@@ -192,29 +193,6 @@ export function frozenChapterSlugs(files: ReadonlyArray<{ path: string; content:
     }
   }
   return frozen;
-}
-
-/**
- * What the autopilot does when the entry of chapter `number` changes: the engine's rule (`outlineCheck`), for a chapter it closed whose plan
- * remembers the entry it followed; it asks, rewrites the chapter or only reports it, as `options.frozenEdits` says, and never rewrites a chapter
- * of the author for a decision of its own. `null` for any other chapter: one not written yet is planned again, one being written is decided
- * about once it is closed.
- */
-export function changeOfWritten(number: number, context: Pick<StatusContext, "plan" | "mode">): FrozenEditsMode | null {
-  const planned = context.plan.get(number);
-  if (!planned || planned.status !== "done" || !planned.outlineDigest) return null;
-  const mode = context.mode ?? "ask";
-  return mode === "auto" && planned.imported ? "notify" : mode;
-}
-
-/** The chapters among `numbers` whose change the autopilot will ask about, carry out or report, grouped by what it will do, in the order of the book. */
-export function writtenChanges(numbers: readonly number[], context: Pick<StatusContext, "plan" | "mode">): Array<{ mode: FrozenEditsMode; numbers: number[] }> {
-  const groups = new Map<FrozenEditsMode, number[]>();
-  for (const number of [...new Set(numbers)].sort((left, right) => left - right)) {
-    const mode = changeOfWritten(number, context);
-    if (mode) groups.set(mode, [...(groups.get(mode) ?? []), number]);
-  }
-  return (["ask", "auto", "notify"] as const).filter((mode) => groups.has(mode)).map((mode) => ({ mode, numbers: groups.get(mode)! }));
 }
 
 /** The chapters of the book that have text, by number (the number of the folder: `007-the-key`). */
@@ -237,12 +215,13 @@ export function warningsByPath(warnings: readonly OutlineWarning[]): Map<string,
 }
 
 export function entryStatus(entry: OutlineChapterEntry, context: StatusContext): EntryStatus {
-  const plan = context.plan.get(entry.number);
+  const plan = context.autopilot?.plan?.chapters.find((chapter) => chapter.number === entry.number);
   const written = context.written.get(entry.number) ?? null;
   const approved = plan?.status === "done";
   // The rule of the engine (`outlinePlanStatus`): an entry that is not the one the plan followed, unless it is the autopilot's own for a plan that never knew it.
   const replan = Boolean(plan && !written && !approved && !plan.imported && !entry.unreadable && entry.contentDigest !== plan.outlineDigest && !(entry.intact && !plan.outlineDigest));
   const missingGhostwriter = entry.ghostwriter && !context.ghostwriters.has(entry.ghostwriter) ? entry.ghostwriter : null;
+  const outcome = changeOfWritten(context.autopilot, entry.number);
   return {
     origin: entry.intact ? "autopilot" : "author",
     written,
@@ -251,7 +230,7 @@ export function entryStatus(entry: OutlineChapterEntry, context: StatusContext):
     missingGhostwriter,
     warnings: context.warnings.get(entry.path) ?? [],
     frozen: Boolean(written && context.frozen?.has(written.slug)),
-    afterChange: changeOfWritten(entry.number, context),
+    afterChange: isToldOutcome(outcome) ? outcome : null,
   };
 }
 
@@ -277,24 +256,6 @@ export function filterEntries(entries: readonly OutlineChapterEntry[], query: st
   const key = matchKey(text);
   if (!key) return [...entries];
   return entries.filter((entry) => matchKey(`${entry.title} ${entry.body}`).includes(key));
-}
-
-/** Where the entry numbered `number` is after `edit`, as the engine places the files; `null` when the edit deletes it. */
-export function remapNumber(edit: OutlineEdit, number: number): number | null {
-  switch (edit.kind) {
-    case "insert":
-      return number >= edit.at ? number + 1 : number;
-    case "move":
-      if (number === edit.from) return edit.to;
-      if (edit.from < edit.to && number > edit.from && number <= edit.to) return number - 1;
-      if (edit.from > edit.to && number >= edit.to && number < edit.from) return number + 1;
-      return number;
-    case "remove":
-      if (number === edit.number) return null;
-      return edit.renumber && number > edit.number ? number - 1 : number;
-    default:
-      return number;
-  }
 }
 
 // ─── The chapter-by-chapter synopsis of the brief ───────────────────────────

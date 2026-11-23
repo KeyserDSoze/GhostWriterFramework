@@ -138,9 +138,10 @@ describe("one list of everything that happened, in groups", () => {
     expect(groupHeader(new RegExp(t("autopilot.timeline.group.chapter", { chapter: 4, round: 1 })))).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("says there is nothing yet, and shows the loading state while the log is read", () => {
+  it("says there is nothing yet in one line, with no card around it, and shows the loading state while the log is read", () => {
     const empty = show();
-    expect(screen.getByText(t("autopilot.activity.empty"))).toBeInTheDocument();
+    expect(screen.getByText(t("autopilot.activity.idle"))).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: t("autopilot.activity.title") })).not.toBeInTheDocument();
     empty.unmount();
     show({ loading: true });
     expect(screen.getByText(t("common.loading"))).toBeInTheDocument();
@@ -378,9 +379,10 @@ describe("hiding what happened until now", () => {
     expect(line).toHaveTextContent(String(shown));
   });
 
-  it("has nothing to hide when there is nothing", () => {
+  it("has nothing to hide, and so no button, when nothing ever happened: there is no card at all, only the line that says so", () => {
     show();
-    expect(screen.getByRole("button", { name: t("autopilot.timeline.hide") })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: t("autopilot.timeline.hide") })).not.toBeInTheDocument();
+    expect(screen.getByText(t("autopilot.activity.idle"))).toBeInTheDocument();
   });
 });
 

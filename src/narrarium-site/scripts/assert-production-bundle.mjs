@@ -12,6 +12,12 @@ const INITIAL_ENTRY_RAW_BUDGET = 450_000;
 const INITIAL_ENTRY_GZIP_BUDGET = 150_000;
 const INITIAL_GRAPH_RAW_BUDGET = 700_000;
 const INITIAL_GRAPH_GZIP_BUDGET = 240_000;
+// The text of each document is a chunk of its own (its source ends in `.md?raw`), loaded when the document is opened: the largest one has a limit of
+// its own, so that no page of the documentation grows unseen now that the docs route no longer carries the texts.
+// The largest is the engine's README, the contract of the whole engine (183_102/60_198 as a chunk in 0.94.0); the limit leaves it a quarter more to grow, and a document
+// is fetched only when it is opened, so no route's weight depends on it.
+const DOCUMENT_CHUNK_RAW_BUDGET = 230_000;
+const DOCUMENT_CHUNK_GZIP_BUDGET = 76_000;
 const baseline = { entry: { rawBytes: 2_209_160, gzipBytes: 623_927 }, initialGraph: { rawBytes: 3_243_152, gzipBytes: 913_574 } };
 
 async function filesUnder(directory) {
@@ -81,6 +87,7 @@ const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 const routeSources = {
   home: "src/pages/public/PublicBasics.tsx",
   docs: "src/pages/public/PublicDocs.tsx",
+  mcp: "src/pages/public/McpPage.tsx",
   login: "src/components/auth/LoginScreen.tsx",
   appShell: "src/routes/AppShellRoute.tsx",
 };
@@ -104,13 +111,27 @@ for (const [name, source] of Object.entries(routeSources)) {
 report.current.routes = routeGraphs;
 report.budgets.routes = {
   home: { rawBytes: 730_000, gzipBytes: 240_000 },
-  docs: { rawBytes: 1_450_000, gzipBytes: 480_000 },
+  // The index of the documents and the page, not their texts (848_262/274_167 when they were split out; 1_363_407/446_811 with every text inside).
+  docs: { rawBytes: 870_000, gzipBytes: 280_000 },
+  // The page of the MCP: the list of the tools of a book's MCP and the texts of its section load with it and with no other page (801_531/255_638 when it was
+  // split out of the docs route, which it shared: 849_032/274_452 with every tool of the local package and the whole docs page in it).
+  mcp: { rawBytes: 820_000, gzipBytes: 262_000 },
   login: { rawBytes: 960_000, gzipBytes: 295_000 },
   appShell: { rawBytes: 2_850_000, gzipBytes: 850_000 },
 };
 for (const [name, budget] of Object.entries(report.budgets.routes)) {
   const actual = routeGraphs[name];
   if (actual.rawBytes > budget.rawBytes || actual.gzipBytes > budget.gzipBytes) throw new Error(`[production-bundle] ${name} route graph ${actual.rawBytes}/${actual.gzipBytes} exceeds ${budget.rawBytes}/${budget.gzipBytes} raw/gzip bytes.`);
+}
+const documents = await Promise.all(Object.entries(manifest).filter(([key, entry]) => (entry.src ?? key).endsWith(".md?raw")).map(async ([key, entry]) => {
+  const content = await readFile(path.join(distRoot, entry.file));
+  return { file: entry.file, source: entry.src ?? key, rawBytes: content.byteLength, gzipBytes: gzipSync(content).byteLength };
+}));
+documents.sort((left, right) => right.rawBytes - left.rawBytes || left.file.localeCompare(right.file));
+report.current.documents = { count: documents.length, rawBytes: documents.reduce((sum, document) => sum + document.rawBytes, 0), gzipBytes: documents.reduce((sum, document) => sum + document.gzipBytes, 0), largest: documents[0] ?? null };
+report.budgets.document = { rawBytes: DOCUMENT_CHUNK_RAW_BUDGET, gzipBytes: DOCUMENT_CHUNK_GZIP_BUDGET };
+for (const document of documents) {
+  if (document.rawBytes > DOCUMENT_CHUNK_RAW_BUDGET || document.gzipBytes > DOCUMENT_CHUNK_GZIP_BUDGET) throw new Error(`[production-bundle] Document chunk ${document.file} (${document.source}) ${document.rawBytes}/${document.gzipBytes} exceeds ${DOCUMENT_CHUNK_RAW_BUDGET}/${DOCUMENT_CHUNK_GZIP_BUDGET} raw/gzip bytes.`);
 }
 await writeFile(path.join(distRoot, "bundle-report.json"), `${JSON.stringify(report, null, 2)}\n`);
 await rm(path.join(distRoot, ".vite"), { recursive: true, force: true });

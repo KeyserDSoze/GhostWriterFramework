@@ -2,7 +2,9 @@ import { useMemo, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { AutopilotActivity, AutopilotState, AutopilotStateSummary, AutopilotStatus } from "narrarium-engine";
 import { chapterCycle, type ChapterCycle } from "@/autopilot/bandModel";
+import { planReviewMode } from "@/autopilot/planApprovalModel";
 import { useBookAutopilotView } from "@/autopilot/hooks";
+import { retryWaitOf, type RetryWait } from "@/autopilot/retry";
 import { useAutopilotStore } from "@/autopilot/store";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useAutopilotControl, type AutopilotControl } from "@/autopilot/useAutopilotControl";
@@ -31,6 +33,8 @@ export interface BandModel {
   currency: string | undefined;
   /** The message of the autopilot about its state, when it is not said anywhere else: not while a step runs, not when a notice of its own says it. */
   message: string | null;
+  /** The wait before the next attempt of a step that failed, while the run waits: the same object for as long as the summary is. */
+  wait: RetryWait | null;
 }
 
 /** The model of the band of a book, or `null` while its autopilot has no state. */
@@ -43,10 +47,12 @@ export function useBandModel(bookId: string): BandModel | null {
   const summary = control.summary;
   const state = view.snapshot?.state ?? null;
   const cycle = useMemo(() => chapterCycle(state, liveActivity), [state, liveActivity]);
+  const wait = useMemo(() => retryWaitOf(summary), [summary]);
   if (!summary) return null;
 
   const status = summary.status;
-  const awaitingPlan = Boolean(state?.plan?.awaitingAuthor);
+  // A plan that waits for the author, to be approved or made again with the changes asked, has its own screen, which says it.
+  const awaitingPlan = planReviewMode(state, control.running) !== null;
   // The message is said once, and where it is the one that tells it: a step that runs says itself, the plan that waits has its notice, a question has its card,
   // the profile files and the error have theirs, and a book that is complete says so in its status and its result.
   const quiet = control.running || awaitingPlan || Boolean(summary.question) || isProfileProblemStop(summary) || status === "error" || status === "completed";
@@ -65,6 +71,7 @@ export function useBandModel(bookId: string): BandModel | null {
     cycle,
     currency: summary.stats.currency ?? costCurrency,
     message: !quiet && summary.message ? summary.message : null,
+    wait,
   };
 }
 
@@ -128,14 +135,14 @@ export function AutopilotControlBand({ bookId, variant = "full", commands }: Aut
               <FrozenChangesChip count={summary.frozenChanges} />
               {running && <StepElapsed bookId={bookId} className="ml-auto" />}
             </div>
-            {running ? <StepNow bookId={bookId} compact hideElapsed /> : model.message ? <StatusMessage compact>{model.message}</StatusMessage> : null}
+            {running ? <StepNow bookId={bookId} compact hideElapsed wait={model.wait} /> : model.message ? <StatusMessage compact>{model.message}</StatusMessage> : null}
             <ProgressBars summary={summary} scenes={false} bare />
           </div>
         ) : (
           <div className={cn("gap-4 p-3 sm:p-4", full ? "grid grid-cols-[minmax(0,1fr)_auto]" : "space-y-3")}>
             <div className="min-w-0 space-y-3">
               {statusRow}
-              {running ? <StepNow bookId={bookId} showPreview={full} /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null}
+              {running ? <StepNow bookId={bookId} showPreview={full} wait={model.wait} /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null}
               <ProgressBars summary={summary} />
               {full && summary.progress.chapters > 0 && <PhaseList summary={summary} />}
               {full && model.cycle && <CycleList cycle={model.cycle} />}

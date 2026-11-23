@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookConflictError, type AutopilotState, type BookFileChange, type OutlineChapterEntry, type OutlineEdit, type OutlineWarning } from "narrarium-engine";
-import { applyToSnapshot, composeEdits, remapNumber, restoreChanges, snapshotOf, type OutlineFile, type OutlineSnapshot } from "@/outline/outlineModel";
+import { BookConflictError, composeOutlineEdits, remapOutlineNumber, type AutopilotState, type BookFileChange, type OutlineChapterEntry, type OutlineEdit, type OutlineWarning } from "narrarium-engine";
+import { applyToSnapshot, composeOptions, composerSource, restoreChanges, snapshotOf, type OutlineFile, type OutlineSnapshot } from "@/outline/outlineModel";
 import type { OutlineSource } from "@/outline/outlineSource";
 
 /** What the author typed in an entry and has not saved: the version of the file it started from is `baseHash` (none for a new entry). */
@@ -57,7 +57,7 @@ export interface OutlineEditorOptions {
 
 /**
  * The state of the Outline page: the outline as the engine reads it, what the author typed and has not saved, the last action (to undo it) and
- * what the page says of it. Every save goes through the engine (`outlineChanges`, composed into one commit) and through the source's commit,
+ * what the page says of it. Every save goes through the engine (`composeOutlineEdits`: one commit) and through the source's commit,
  * which never overwrites a file that changed since it was read: then the edits are kept and the page says that the outline changed elsewhere.
  */
 export function useOutlineEditor({ source, ghostwriters, describe, afterSave }: OutlineEditorOptions) {
@@ -180,34 +180,36 @@ export function useOutlineEditor({ source, ghostwriters, describe, afterSave }: 
     setBusy(true);
     setFailure(null);
     try {
-      const composed = await composeEdits(before, edits, latest.current.ghostwriters);
+      const composed = await composeOutlineEdits(composerSource(before), edits, composeOptions(latest.current.ghostwriters));
       if (!composed.changes.length) return { ok: true, next: before };
+      // The outline once the commit is saved: the files that changed, read again from their final texts.
+      const saved = await applyToSnapshot(before, composed.changes);
       await from.commit(composed.changes, words.message);
       const restore = await restoreChanges(before, composed.changes);
       const previousNumber = new Map<number, number>();
       for (const entry of before.outline.chapters) {
         let number: number | null = entry.number;
-        for (const edit of edits) number = number === null ? null : remapNumber(edit, number);
+        for (const edit of edits) number = number === null ? null : remapOutlineNumber(edit, number);
         if (number !== null) previousNumber.set(number, entry.number);
       }
       setDrafts((current) => {
         const next = new Map<number, EntryDraft>();
         for (const [number, draft] of current) {
           let moved: number | null = number;
-          for (const edit of edits) moved = moved === null ? null : remapNumber(edit, moved);
+          for (const edit of edits) moved = moved === null ? null : remapOutlineNumber(edit, moved);
           if (moved === null) continue;
           // A draft that followed its entry starts from the file the entry has now, unless the entry had already changed under it.
           const was = before.outline.chapters.find((entry) => entry.number === number);
-          const now = composed.next.outline.chapters.find((entry) => entry.number === moved);
+          const now = saved.outline.chapters.find((entry) => entry.number === moved);
           next.set(moved, moved !== number && was?.hash === draft.baseHash ? { ...draft, baseHash: now?.hash } : draft);
         }
         return next;
       });
-      setSnapshot(composed.next);
+      setSnapshot(saved);
       setUndo({ label: words.undo, restore, previousNumber });
-      after?.(composed.next);
+      after?.(saved);
       announce(words.done);
-      return { ok: true, next: composed.next };
+      return { ok: true, next: saved };
     } catch (error) {
       if (error instanceof BookConflictError) {
         setChangedElsewhere(true);

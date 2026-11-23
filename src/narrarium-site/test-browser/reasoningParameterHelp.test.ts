@@ -1,18 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { AI_REASONING_PARAMETERS } from "narrarium-engine";
 import i18n from "@/i18n";
 import "@/i18n/aiRouter";
 import { appDocEntries } from "@/lib/appDocs";
+import { guideText, loadGuides } from "./helpers/guides";
 
 type Language = "en" | "it";
 const LANGUAGES: Language[] = ["en", "it"];
 const text = (language: Language, key: string) => i18n.t(key, { lng: language }) as string;
 
+beforeAll(loadGuides);
+
 /** The section about thinking of the guide to the AI Router, where an author looks for how a level reaches a model. */
 function thinkingSection(language: Language): string {
   const entry = appDocEntries.find((candidate) => candidate.slug === "ai-router");
   if (!entry) throw new Error("the guide to the AI Router is missing");
-  const help = (entry.translations?.[language] ?? entry).markdown;
+  const help = guideText("ai-router", language);
   const start = help.indexOf("\n## Thinking\n");
   expect(start, "the guide has a section about thinking").toBeGreaterThan(-1);
   const next = help.indexOf("\n## ", start + 4);

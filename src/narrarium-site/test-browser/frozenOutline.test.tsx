@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createAutopilotState, outlineChapterPath, parseOutline, serializeOutlineChapter, type FrozenEditsMode, type PlannedChapter } from "narrarium-engine";
+import { createAutopilotState, outlineChapterPath, parseOutline, serializeOutlineChapter, type AutopilotState, type FrozenEditsMode, type PlannedChapter } from "narrarium-engine";
 import { MemoryBookStore } from "narrarium-engine/testing";
 import { polyfillRadix } from "./helpers/radix";
 
@@ -35,6 +35,13 @@ function planned(number: number, patch: Partial<PlannedChapter> = {}): PlannedCh
   return { number, title: `Chapter ${number}`, slug: slugOf(number), summary: "", goal: "", pov: [], keyEvents: [], reveals: [], status: "done", scenes: [], outlineDigest: "0123456789abcdef", ...patch } as PlannedChapter;
 }
 
+const WRITTEN_SCENE = { number: 1, title: "Scene", goal: "", beats: [], characters: [], status: "written", revisions: 0 } as PlannedChapter["scenes"][number];
+const AT = "2026-11-21T10:00:00.000Z";
+const REVISION = (chapterNumber: number): NonNullable<AutopilotState["revision"]> => ({ id: "revision-1", instruction: "Tighten the ending.", createdAt: AT, targets: [{ chapterNumber, sceneNumber: 1, instruction: "Shorter." }], cursor: 0 });
+const DECISION = (number: number): NonNullable<AutopilotState["pendingReviews"]> => [
+  { id: "review-1", kind: "outline", number, action: "rewrite-to-outline", fingerprint: "abc", at: AT, started: { at: AT, phase: "rewrite", before: { title: `Chapter ${number}`, summary: "", keyEvents: [] } } },
+];
+
 interface BookShape {
   /** The chapters with an entry, all of them written unless `unwritten`. */
   chapters: number;
@@ -42,19 +49,29 @@ interface BookShape {
   plan?: PlannedChapter[];
   mode?: FrozenEditsMode;
   unwritten?: number[];
+  /** The work the autopilot has in its hands besides a chapter being written: a revision in progress, the decision about a change being carried out. */
+  revision?: AutopilotState["revision"];
+  pendingReviews?: AutopilotState["pendingReviews"];
+}
+
+/** The state of an autopilot as the page reads it from `autopilot/state.json`: an approved plan, and what the autopilot has in its hands. */
+function stateOf({ plan = [], mode, revision, pendingReviews }: Pick<BookShape, "plan" | "mode" | "revision" | "pendingReviews">): AutopilotState {
+  const state = createAutopilotState(new Date("2026-11-21T00:00:00.000Z"), { idea: "Glass" });
+  state.plan = { chapters: plan, approved: true, rounds: 0, revisionNotes: [], readerReactions: [], readersDone: true, awaitingAuthor: false };
+  if (mode) state.options = { ...state.options, frozenEdits: mode };
+  if (revision) state.revision = revision;
+  if (pendingReviews) state.pendingReviews = pendingReviews;
+  return state;
 }
 
 /** A book whose outline has an entry for every chapter, the chapters written, some of them frozen, and the autopilot's plan of them. */
-function bookFiles({ chapters, frozen = [], plan = [], mode }: BookShape): Record<string, string> {
+function bookFiles({ chapters, frozen = [], plan = [], mode, revision, pendingReviews }: BookShape): Record<string, string> {
   const files: Record<string, string> = {};
   for (let number = 1; number <= chapters; number += 1) {
     files[outlineChapterPath(number)] = serializeOutlineChapter({ number, title: `Chapter ${number}`, body: `What happens in ${number}.`, origin: "author" });
     files[`chapters/${slugOf(number)}/chapter.md`] = chapterFile(number, frozen.includes(number) ? RECORD : "");
   }
-  const state = createAutopilotState(new Date("2026-11-21T00:00:00.000Z"), { idea: "Glass" });
-  state.plan = { chapters: plan, approved: true, rounds: 0, revisionNotes: [], readerReactions: [], readersDone: true, awaitingAuthor: false };
-  if (mode) state.options = { ...state.options, frozenEdits: mode };
-  files["autopilot/state.json"] = JSON.stringify(state);
+  files["autopilot/state.json"] = JSON.stringify(stateOf({ plan, mode, revision, pendingReviews }));
   return files;
 }
 
@@ -109,20 +126,32 @@ describe("the freeze of a written chapter, as the Outline reads it", () => {
   });
 
   it("goes with the entry of its chapter, with what the autopilot does when the entry changes once the chapter is closed", async () => {
-    const files = [1, 2, 3, 4, 5].map((number) => ({ path: outlineChapterPath(number), content: serializeOutlineChapter({ number, title: `T${number}`, body: "B", origin: "author" }) }));
+    const files = [1, 2, 3, 4, 5, 6].map((number) => ({ path: outlineChapterPath(number), content: serializeOutlineChapter({ number, title: `T${number}`, body: "B", origin: "author" }) }));
     const outline = await parseOutline(files);
     const entry = (number: number) => outline.chapters.find((candidate) => candidate.number === number)!;
     const written = writtenChapters([1, 2, 3, 4].map((number) => ({ slug: slugOf(number), title: `T${number}`, paragraphs: [{}] })));
-    const plan = new Map([[1, planned(1)], [2, planned(2, { imported: true })], [3, planned(3, { status: "writing" })], [4, planned(4, { outlineDigest: undefined })]]);
-    const context = (mode?: FrozenEditsMode) => ({ plan, written, ghostwriters: new Set<string>(), warnings: new Map(), frozen: new Set([slugOf(1)]), ...(mode ? { mode } : {}) });
+    const plan = [planned(1), planned(2, { imported: true }), planned(3, { status: "writing" }), planned(4, { outlineDigest: undefined }), planned(6, { status: "writing", scenes: [WRITTEN_SCENE] })];
+    const context = (mode?: FrozenEditsMode) => ({ autopilot: stateOf({ plan, mode }), written, ghostwriters: new Set<string>(), warnings: new Map(), frozen: new Set([slugOf(1)]) });
     expect(entryStatus(entry(1), context())).toMatchObject({ frozen: true, afterChange: "ask" });
     expect(entryStatus(entry(2), context()), "a written chapter that is not frozen is still asked about").toMatchObject({ frozen: false, afterChange: "ask" });
-    expect(entryStatus(entry(3), context()).afterChange, "a chapter still being written is decided about once it is closed").toBeNull();
+    expect(entryStatus(entry(3), context()).afterChange, "a chapter with no scene written is not written: it is planned again").toBeNull();
+    expect(entryStatus(entry(6), context()).afterChange, "a chapter being written is told once and decided about once it is closed").toBe("later");
     expect(entryStatus(entry(4), context()).afterChange, "a plan that never knew the entry does not follow its changes").toBeNull();
     expect(entryStatus(entry(5), context()), "no chapter, no plan").toMatchObject({ frozen: false, afterChange: null });
+    expect(entryStatus(entry(1), { ...context(), autopilot: null }).afterChange, "no autopilot").toBeNull();
     expect(entryStatus(entry(1), context("auto")).afterChange).toBe("auto");
     expect(entryStatus(entry(2), context("auto")).afterChange, "a chapter of the author is never rewritten for a decision of the autopilot").toBe("notify");
     expect(entryStatus(entry(1), context("notify")).afterChange).toBe("notify");
+    expect(entryStatus(entry(6), context("auto")).afterChange, "being written, it is the same whatever the Configuration says").toBe("later");
+  });
+
+  it("is `later` too for a closed chapter that a revision rewrites or whose decision is being carried out, `ask` for the others", async () => {
+    const files = [1, 2, 3].map((number) => ({ path: outlineChapterPath(number), content: serializeOutlineChapter({ number, title: `T${number}`, body: "B", origin: "author" }) }));
+    const outline = await parseOutline(files);
+    const written = writtenChapters([1, 2, 3].map((number) => ({ slug: slugOf(number), title: `T${number}`, paragraphs: [{}] })));
+    const autopilot = stateOf({ plan: [planned(1), planned(2), planned(3)], revision: REVISION(1), pendingReviews: DECISION(2) });
+    const afterChange = outline.chapters.map((candidate) => entryStatus(candidate, { autopilot, written, ghostwriters: new Set<string>(), warnings: new Map() }).afterChange);
+    expect(afterChange).toEqual(["later", "later", "ask"]);
   });
 });
 
@@ -174,7 +203,7 @@ describe("what the Outline page says once the entry of a written chapter is save
     expect(await screen.findByText(`${t("outline.done.savedAll", { count: 2 })} ${rewritten} ${reported}`)).toBeInTheDocument();
   });
 
-  it("says nothing more for a chapter the autopilot has not closed, or has no plan of", async () => {
+  it("says nothing more for a chapter the autopilot has not started to write, or has no plan of", async () => {
     await open({ chapters: 3, unwritten: [3], plan: [planned(1, { status: "writing" })] });
     for (const number of [1, 2, 3]) edit(number);
     for (const number of [1, 2, 3]) expect(saveButton(number)).not.toHaveAccessibleDescription();
@@ -189,5 +218,80 @@ describe("what the Outline page says once the entry of a written chapter is save
     expect(read.size).toBe(50);
     expect(read.has(`chapters/${slugOf(50)}/chapter.md`)).toBe(true);
     expect(read.has(`chapters/${slugOf(55)}/chapter.md`)).toBe(false);
+  });
+});
+
+describe.each<Language>(["en", "it"])("the entry of a chapter the autopilot has in its hands (%s)", (language) => {
+  beforeEach(async () => {
+    await act(async () => { await i18n.changeLanguage(language); });
+  });
+
+  it("says, by its Save button and again once saved, that a chapter being written is told once and decided when it is closed", async () => {
+    await open({ chapters: 2, plan: [planned(1, { status: "writing", scenes: [WRITTEN_SCENE] }), planned(2)] });
+    edit(1);
+    const note = t("outline.written.later", { count: 1, numbers: ["1"] });
+    expect(saveButton(1)).toHaveAccessibleDescription(note);
+    expect(within(entryOf(1)).getByText(note)).toBeInTheDocument();
+    expect(note).toContain(language === "en" ? "will say so once" : "te ne parlerà una volta sola");
+    fireEvent.click(saveButton(1));
+    expect(await screen.findByText(`${t("outline.done.saved", { number: 1 })} ${note}`)).toHaveAttribute("role", "status");
+  });
+
+  it("says the same of a closed chapter that a revision in progress rewrites, and of one whose decision is being carried out", async () => {
+    await open({ chapters: 3, plan: [planned(1), planned(2), planned(3)], revision: REVISION(1), pendingReviews: DECISION(2) });
+    for (const number of [1, 2, 3]) edit(number);
+    const later = (numbers: string[]) => t("outline.written.later", { count: numbers.length, numbers });
+    expect(saveButton(1)).toHaveAccessibleDescription(later(["1"]));
+    expect(saveButton(2)).toHaveAccessibleDescription(later(["2"]));
+    expect(saveButton(3), "a closed chapter nobody works on is asked about, as it was").toHaveAccessibleDescription(t("outline.written.ask", { count: 1, numbers: ["3"] }));
+    fireEvent.click(screen.getByRole("button", { name: t("outline.actions.saveAll") }));
+    const sentences = [t("outline.written.ask", { count: 1, numbers: ["3"] }), later(["1", "2"])];
+    expect(await screen.findByText(`${t("outline.done.savedAll", { count: 3 })} ${sentences.join(" ")}`)).toHaveAttribute("role", "status");
+  });
+
+  it("says the same whatever the Configuration says: it is decided once the chapter is closed", async () => {
+    await open({ chapters: 2, plan: [planned(1, { status: "review", scenes: [{ ...WRITTEN_SCENE, status: "reviewed" }] }), planned(2, { imported: true })], mode: "auto" });
+    edit(1);
+    edit(2);
+    expect(saveButton(1)).toHaveAccessibleDescription(t("outline.written.later", { count: 1, numbers: ["1"] }));
+    expect(saveButton(2), "a chapter of the author is still only reported under auto").toHaveAccessibleDescription(t("outline.written.notify", { count: 1, numbers: ["2"] }));
+  });
+});
+
+describe.each<Language>(["en", "it"])("what the Outline page says before the entry of a chapter is deleted (%s)", (language) => {
+  beforeEach(async () => {
+    await act(async () => { await i18n.changeLanguage(language); });
+  });
+
+  const askToDelete = async (number: number) => {
+    fireEvent.click(screen.getByRole("button", { name: t("outline.entry.remove", { number }) }));
+    return screen.findByRole("alertdialog");
+  };
+
+  it("says that a written chapter stays, and that the autopilot only tells it once, not that it leaves the plan", async () => {
+    await open({ chapters: 2, plan: [planned(1), planned(2)] });
+    const dialog = await askToDelete(1);
+    expect(within(dialog).queryByText(t("outline.delete.body")), "a written chapter does not leave the plan").toBeNull();
+    expect(within(dialog).getByText(t("outline.delete.bodyStays"))).toBeInTheDocument();
+    expect(within(dialog).getByText(t("outline.delete.written"))).toBeInTheDocument();
+    expect(t("outline.delete.bodyStays")).toContain(language === "en" ? "only tells you, once" : "ti dice soltanto");
+  });
+
+  it("says what it said before for a chapter that is not written (it leaves the plan) and for one whose plan does not remember the entry", async () => {
+    await open({ chapters: 3, unwritten: [2], plan: [planned(1, { outlineDigest: undefined }), planned(2, { status: "planned" }), planned(3)] });
+    for (const number of [1, 2]) {
+      const dialog = await askToDelete(number);
+      expect(within(dialog).getByText(t("outline.delete.body")), `chapter ${number}`).toBeInTheDocument();
+      expect(within(dialog).queryByText(t("outline.delete.bodyStays")), `chapter ${number}`).toBeNull();
+      fireEvent.click(within(dialog).getByRole("button", { name: t("common.cancel") }));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    }
+  });
+
+  it("does not say that a chapter stays when the entry is the last one: deleting the whole outline is not deleting every chapter", async () => {
+    await open({ chapters: 1, plan: [planned(1)] });
+    const dialog = await askToDelete(1);
+    expect(within(dialog).getByText(t("outline.delete.body"))).toBeInTheDocument();
+    expect(within(dialog).queryByText(t("outline.delete.bodyStays"))).toBeNull();
   });
 });

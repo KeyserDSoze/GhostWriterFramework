@@ -4,7 +4,9 @@ import { AlertTriangle, Check, ChevronRight, CheckCircle2, Circle, CircleDot, Ci
 import type { AutopilotActivity, AutopilotOptions, AutopilotStateSummary, AutopilotStatus } from "narrarium-engine";
 import { useElapsed, useNow } from "@/autopilot/hooks";
 import { CYCLE_STAGES, bandPhases, budgetUse, cycleItems, type ChapterCycle } from "@/autopilot/bandModel";
+import { formatCountdown, secondsLeft } from "@/autopilot/errorModel";
 import { STATUS_BADGE, activityTitle, formatAgo, formatBytes, formatCost, formatCount, formatDuration } from "@/autopilot/format";
+import { waitLineText, type RetryWait } from "@/autopilot/retry";
 import { lastSignalAt, useAutopilotStore } from "@/autopilot/store";
 import { cn } from "@/lib/utils";
 
@@ -121,26 +123,46 @@ export function whereOf(t: (key: string, options?: Record<string, unknown>) => s
     : t("autopilot.band.where.chapterScene", { chapter: activity.chapterNumber, scene: activity.sceneNumber });
 }
 
+/** The time left before a quick retry, beside the line of the wait: a timer that is not read out as it ticks (the line says when the wait begins and ends). */
+function WaitLeft({ at }: { at: string }) {
+  const { t, i18n } = useTranslation();
+  const now = useNow(1000, true);
+  const seconds = secondsLeft(at, now);
+  if (seconds === null) return null;
+  return <span role="timer" data-band-wait-left className="shrink-0 text-xs tabular-nums text-muted-foreground">{seconds > 0 ? t("autopilot.failure.countdown.in", { time: formatCountdown(seconds, i18n.resolvedLanguage ?? i18n.language) }) : t("autopilot.failure.countdown.now")}</span>;
+}
+
+/** The line of a wait: drawn again once a minute in a long one, so that its day stays right past midnight (the words change then, and only then). */
+function WaitText({ wait }: { wait: RetryWait }) {
+  const { t, i18n } = useTranslation();
+  useNow(60_000, wait.long);
+  return <>{waitLineText(t, wait, i18n.resolvedLanguage ?? i18n.language)}</>;
+}
+
 /**
  * What the autopilot does now: the title of the step, where in the book it is and how long it has gone on, as the one status of the band that is
- * announced (it changes when the step does). It follows the activity of the store, which stays the same object while the text streams.
+ * announced (it changes when the step does). It follows the activity of the store, which stays the same object while the text streams. While the run
+ * waits to try a failed step again (`wait`) it says so in one line: which retry, or which restart and not before when. `countdown` adds the time left
+ * of a quick wait, in a timer of its own, where nothing else says it (the mini-player: on the page the error panel counts down).
  */
-export const StepNow = memo(function StepNow({ bookId, compact = false, showPreview = true, announce = true, hideElapsed = false }: { bookId: string; compact?: boolean; showPreview?: boolean; announce?: boolean; hideElapsed?: boolean }) {
+export const StepNow = memo(function StepNow({ bookId, compact = false, showPreview = true, announce = true, hideElapsed = false, wait = null, countdown = false }: { bookId: string; compact?: boolean; showPreview?: boolean; announce?: boolean; hideElapsed?: boolean; wait?: RetryWait | null; countdown?: boolean }) {
   const { t } = useTranslation();
   const activity = useAutopilotStore((state) => state.live[bookId]?.activity ?? null);
-  const where = activity ? whereOf(t, activity) : null;
+  const step = wait ? null : activity;
+  const where = step ? whereOf(t, step) : null;
   return (
-    <div data-band-now className="min-w-0 space-y-1">
+    <div data-band-now data-band-waiting={wait ? (wait.long ? "long" : "short") : undefined} className="min-w-0 space-y-1">
       <div className={cn("flex min-w-0 gap-x-2", compact ? "items-center" : "flex-wrap items-baseline")}>
         {!compact && <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-primary">{t("autopilot.band.now")}</span>}
         <p role={announce ? "status" : undefined} className={cn("min-w-0 flex-1 text-sm font-medium leading-snug", compact ? "line-clamp-2 break-words" : "basis-48")}>
-          {activity ? activityTitle(t, activity) : t("autopilot.current.preparing")}
+          {wait ? <WaitText wait={wait} /> : step ? activityTitle(t, step) : t("autopilot.current.preparing")}
         </p>
         {!compact && where && <span data-band-where className="shrink-0 text-xs text-muted-foreground">{where}</span>}
-        {activity && !hideElapsed && <ElapsedTime since={activity.startedAt} />}
+        {step && !hideElapsed && <ElapsedTime since={step.startedAt} />}
+        {wait && countdown && !wait.long && <WaitLeft at={wait.at} />}
       </div>
-      {!compact && showPreview && <PreviewLine bookId={bookId} />}
-      <ModelAnswering bookId={bookId} short={compact} />
+      {!compact && showPreview && !wait && <PreviewLine bookId={bookId} />}
+      {!wait && <ModelAnswering bookId={bookId} short={compact} />}
     </div>
   );
 });

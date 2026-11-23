@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Link, useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ChevronLeft, ChevronRight, CircleHelp, FileInput, ListTree, Loader2, Plus, Rocket, Save, Search, Undo2, X } from "lucide-react";
-import { chapterFilePath, type OutlineEdit, type PlannedChapter } from "narrarium-engine";
+import { changeOfWritten, chapterFilePath, groupOutlineChanges, type AutopilotState, type OutlineChangeGroup, type OutlineEdit } from "narrarium-engine";
 import "@/i18n/outline";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
@@ -22,7 +22,7 @@ import { formatCount } from "@/autopilot/format";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { browserOutlineSource } from "@/outline/outlineSource";
-import { convertSynopsis, entryStatus, filterEntries, frozenChapterSlugs, missingNumbers, warningsByPath, writtenChanges, writtenChapters, type ConvertedSynopsis, type StatusContext } from "@/outline/outlineModel";
+import { convertSynopsis, entryStatus, filterEntries, frozenChapterSlugs, isToldOutcome, missingNumbers, warningsByPath, writtenChapters, type ConvertedSynopsis, type StatusContext, type ToldOutcome } from "@/outline/outlineModel";
 import { useOutlineFocusStore } from "@/store/outlineFocusStore";
 import { useRegisterPageSave } from "@/store/saveStore";
 
@@ -51,10 +51,12 @@ export function OutlinePage() {
   const ghostwriters = useMemo(() => structure?.ghostwriters ?? [], [structure?.ghostwriters]);
   const ghostwriterSlugs = useMemo(() => ghostwriters.map((entry) => entry.slug), [ghostwriters]);
   const describe = useCallback((key: string, options?: Record<string, unknown>) => t(key, options) as string, [t]);
-  // What a save adds when it changes the entry of a chapter the autopilot closed: it asks, rewrites or only reports, as its Configuration says.
-  const planRef = useRef<Pick<StatusContext, "plan" | "mode">>({ plan: new Map() });
-  const afterSave = useCallback((numbers: readonly number[]) => writtenChanges(numbers, planRef.current)
-    .map((group) => t(`outline.written.${group.mode}`, { count: group.numbers.length, numbers: group.numbers.map(formatCount) }))
+  // What a save adds when it changes the entry of a chapter the autopilot closed or has in its hands: the engine's rule says whether it asks, rewrites, only reports
+  // or tells it once and decides when the chapter is closed (`changeOfWritten`, grouped as the engine groups a series of changes).
+  const autopilotRef = useRef<AutopilotState | null>(null);
+  const afterSave = useCallback((numbers: readonly number[]) => groupOutlineChanges(autopilotRef.current, numbers.map((number) => ({ number })))
+    .filter((group): group is OutlineChangeGroup & { outcome: ToldOutcome } => isToldOutcome(group.outcome))
+    .map((group) => t(`outline.written.${group.outcome}`, { count: group.numbers.length, numbers: group.numbers.map(formatCount) }))
     .join(" "), [t]);
   const editor = useOutlineEditor({ source, ghostwriters: ghostwriterSlugs, describe, afterSave });
   const { entries, byNumber, drafts, busy } = editor;
@@ -81,9 +83,7 @@ export function OutlinePage() {
 
   useRegisterPageSave({ dirty: editor.dirty, enabled: Boolean(editor.snapshot), onSave: () => editor.saveAll() });
 
-  const plan = useMemo(() => new Map((editor.autopilot?.plan?.chapters ?? []).map((chapter): [number, PlannedChapter] => [chapter.number, chapter])), [editor.autopilot]);
-  const mode = editor.autopilot?.options.frozenEdits ?? "ask";
-  planRef.current = { plan, mode };
+  autopilotRef.current = editor.autopilot;
   const written = useMemo(() => writtenChapters(structure?.chapters ?? []), [structure?.chapters]);
 
   // ─── The window of entries ─────────────────────────────────────────────────
@@ -115,13 +115,12 @@ export function OutlinePage() {
   }, [source, visibleWritten, finishedSteps, lastSync, structure, focusCount]);
 
   const statusContext = useMemo<StatusContext>(() => ({
-    plan,
+    autopilot: editor.autopilot,
     written,
     ghostwriters: new Set(ghostwriterSlugs),
     warnings: warningsByPath(editor.warnings),
     frozen,
-    mode,
-  }), [plan, written, ghostwriterSlugs, editor.warnings, frozen, mode]);
+  }), [editor.autopilot, written, ghostwriterSlugs, editor.warnings, frozen]);
   // One status for each entry on the screen, made again only when the entries or what they are compared with change: typing in one entry
   // draws only that entry again.
   const statuses = useMemo(() => new Map(visible.map((entry) => [entry.number, entryStatus(entry, statusContext)])), [visible, statusContext]);
@@ -277,7 +276,7 @@ export function OutlinePage() {
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {snapshot && <Badge variant="outline">{t("outline.count", { count: entries.length })}</Badge>}
             <span className="font-mono">outline/</span>
-            <Link to="/app/docs/outline" className="inline-flex items-center gap-1 underline underline-offset-4"><CircleHelp className="h-3.5 w-3.5" aria-hidden="true" />{t("outline.help")}</Link>
+            <Link to="/app/docs/outline" className="inline-flex min-h-6 items-center gap-1 underline underline-offset-4 [@media(pointer:coarse)]:min-h-11"><CircleHelp className="h-3.5 w-3.5" aria-hidden="true" />{t("outline.help")}</Link>
           </div>
           {/* The one place where the page says how an action went: always there, empty until there is something to say. */}
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm empty:hidden">
@@ -397,6 +396,7 @@ export function OutlinePage() {
       <DeleteEntryDialog
         number={deleting}
         written={deleting !== null && statusContext.written.has(deleting)}
+        stays={deleting !== null && changeOfWritten(editor.autopilot, deleting, { entry: "removed", outlineEmpty: entries.length <= 1 }) === "stays"}
         unsaved={deleting !== null && draftChanged(drafts.get(deleting), byNumber.get(deleting))}
         busy={busy}
         onCancel={() => setDeleting(null)}

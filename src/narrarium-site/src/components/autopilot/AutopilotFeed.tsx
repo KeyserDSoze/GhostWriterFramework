@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, Ban, CheckCircle2, Cloud, Flag, Info, Loader2, Play, Sparkles, XCircle } from "lucide-react";
+import { AlertTriangle, Ban, CheckCircle2, Clock, Cloud, Flag, Info, Loader2, Play, Sparkles, XCircle } from "lucide-react";
 import type { AutopilotEvent, AutopilotStatus } from "narrarium-engine";
 import { Badge } from "@/components/ui/badge";
 import { useElapsed } from "@/autopilot/hooks";
@@ -56,6 +56,8 @@ export function EventIcon({ event, className }: { event: AutopilotEvent; classNa
     return <XCircle className={className} />;
   }
   if (event.type === "insight") {
+    // A wait of «Retry later»: the run waits by itself, and the icon says so, not that something is wrong.
+    if (event.code === "longRetryWait") return <Clock className={className} />;
     if (event.tone === "warning" || event.tone === "critical") return <AlertTriangle className={className} />;
     if (event.tone === "ok") return <Sparkles className={className} />;
   }
@@ -86,7 +88,7 @@ export function AutopilotFeed({ bookId, exceptBook, showBook = false, limit = 20
     <div className={cn("space-y-3", className)}>
       {running.map(([id, preview]) => <AutopilotLiveCard key={preview.activity.id} preview={preview} bookTitle={showBook ? titles.get(id) ?? id : undefined} />)}
       {entries.length === 0 && running.length === 0 ? (
-        <p className="rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground">{emptyText ?? t("autopilot.feedEmpty")}</p>
+        <p className="text-sm text-muted-foreground">{emptyText ?? t("autopilot.feedEmpty")}</p>
       ) : (
         <ol className={compact ? "space-y-1" : "space-y-1.5"}>
           {entries.map((entry) => {

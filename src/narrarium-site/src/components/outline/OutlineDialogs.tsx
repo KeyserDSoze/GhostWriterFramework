@@ -5,8 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { ConvertedSynopsis } from "@/outline/outlineModel";
 
-/** Asks before an entry is deleted: what happens to its chapter, whether the following ones close the gap, what is lost. */
-export function DeleteEntryDialog({ number, written, unsaved, busy, onCancel, onConfirm }: { number: number | null; written: boolean; unsaved: boolean; busy: boolean; onCancel: () => void; onConfirm: (renumber: boolean) => void }) {
+/**
+ * Asks before an entry is deleted: what happens to its chapter, whether the following ones close the gap, what is lost. `written`: the chapter has text in the book.
+ * `stays`: the autopilot's plan remembers the entry of a chapter that is written (the engine's rule, `changeOfWritten`): it does not take the chapter out of the plan,
+ * it only says once that the entry is gone.
+ */
+export function DeleteEntryDialog({ number, written, stays, unsaved, busy, onCancel, onConfirm }: { number: number | null; written: boolean; stays: boolean; unsaved: boolean; busy: boolean; onCancel: () => void; onConfirm: (renumber: boolean) => void }) {
   const { t } = useTranslation();
   const [renumber, setRenumber] = useState(false);
   useEffect(() => setRenumber(false), [number]);
@@ -15,7 +19,7 @@ export function DeleteEntryDialog({ number, written, unsaved, busy, onCancel, on
       <DialogContent role="alertdialog" className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("outline.delete.title", { number })}</DialogTitle>
-          <DialogDescription>{t("outline.delete.body")}</DialogDescription>
+          <DialogDescription>{t(stays ? "outline.delete.bodyStays" : "outline.delete.body")}</DialogDescription>
         </DialogHeader>
         {written && <p className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">{t("outline.delete.written")}</p>}
         {unsaved && <p className="text-sm">{t("outline.delete.unsaved")}</p>}

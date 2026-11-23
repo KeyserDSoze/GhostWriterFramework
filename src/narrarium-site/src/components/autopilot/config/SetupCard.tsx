@@ -1,17 +1,22 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { BookOpen, Github, Loader2, Play, Rocket, Save, ScanSearch } from "lucide-react";
-import { DEFAULT_BRIEF, DEFAULT_OPTIONS, FROZEN_EDITS_MODES, effectivePublish, type AutopilotBrief, type AutopilotLiveOptions, type AutopilotOptions, type AutopilotPublishMode, type AutopilotState } from "narrarium-engine";
+import { DEFAULT_BRIEF, DEFAULT_OPTIONS, FROZEN_EDITS_MODES, effectivePublish, type AutopilotBrief, type AutopilotLiveOptions, type AutopilotOptions, type AutopilotPublishMode, type AutopilotState, type StartOptions } from "narrarium-engine";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card } from "@/components/autopilot/Card";
+import { PresetPicker } from "@/components/autopilot/config/PresetPicker";
+import { BookRunPreview } from "@/components/autopilot/config/RunPreview";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
+import { RetryLaterCard, readRetryLater, retryLaterForm, sameLongRetry, type RetryLaterCardHandle, type RetryLaterForm } from "@/components/autopilot/config/RetryLaterCard";
 import type { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { FROZEN_SERVER_VERSION } from "@/autopilot/frozenChapters";
+import { applyPreset, presetOfForm } from "@/autopilot/runEstimate";
+import type { BookStructure } from "@/types/book";
 import { bookStorageMode, type BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
 
@@ -44,7 +49,8 @@ function NumberField({ id, label, value, min, max, step = 1, disabled, described
   useEffect(() => setText(String(value)), [value]);
   const parse = (raw: string) => (raw.trim() === "" ? Number.NaN : Number(raw));
   return (
-    <div className="space-y-1">
+    // The label may take two lines where the field is narrow: the fields of a row stay on one line, whatever their labels do.
+    <div className="flex h-full flex-col justify-between gap-1">
       <Label htmlFor={id} className="text-xs">{label}</Label>
       <Input
         id={id}
@@ -90,21 +96,29 @@ export interface SetupCardProps {
   liveUnsupported?: boolean;
   /** The autopilot runs on a personal server that predates the frozen chapters: what it does with a changed one cannot be chosen. */
   frozenUnsupported?: boolean;
+  /** The autopilot runs on a personal server that predates «Retry later»: it is shown off, and cannot be chosen. */
+  retryUnsupported?: boolean;
+  /** The run waits for a restart of «Retry later» now: turning it off would stop it, and the card says so beforehand. */
+  waitingLong?: boolean;
   run: RunAction;
   /** Once the autopilot has started: the page opens the live page. */
   onStarted?: () => void;
   /** What the page puts between the settings and the button that starts the autopilot (the rules, the profiles, the danger zone). */
   children?: ReactNode;
+  /** The working branch and the structure of the book: what the preview of the run reads the book's files and chapters from. Without the branch there is no preview. */
+  branch?: string;
+  structure?: BookStructure;
 }
 
 /**
- * The brief and the settings of the autopilot, in three parts: the book (the idea, how long it is, the synopsis), the review (the simulated
- * readers, the specialists, the pauses, the sessions and the budgets) and publishing (on GitHub, every step, every chapter or never). They
- * are saved together with `configure` while the autopilot is stopped; while it runs only where it publishes and the pause after every
- * chapter can change, with `updateOptions`, and the rest is locked. The button at the end starts the autopilot (with the form, for a book
- * that never started; after saving what changed, for one that is stopped) and `onStarted` takes the author to the live page.
+ * The brief and the settings of the autopilot, in four parts: the book (the idea, how long it is, the synopsis), the review (the simulated
+ * readers, the specialists, the pauses, the sessions and the budgets), the retries («Retry later») and publishing (on GitHub, every step, every
+ * chapter or never). They are saved together with `configure` while the autopilot is stopped; while it runs only where it publishes, the pause
+ * after every chapter, what it does with a changed frozen chapter and «Retry later» can change, with `updateOptions`, and the rest is locked. The
+ * button at the end starts the autopilot (with the form, for a book that never started; after saving what changed, for one that is stopped) and
+ * `onStarted` takes the author to the live page. Values of «Retry later» it would refuse are never sent: the card says what is wrong instead.
  */
-export function SetupCard({ book, state, existingChapters, running, busy, disabled, asking = false, liveUnsupported = false, frozenUnsupported = false, run, onStarted, children }: SetupCardProps) {
+export function SetupCard({ book, state, existingChapters, running, busy, disabled, asking = false, liveUnsupported = false, frozenUnsupported = false, retryUnsupported = false, waitingLong = false, run, onStarted, children, branch, structure }: SetupCardProps) {
   const { t } = useTranslation();
   const github = bookStorageMode(book) === "github";
   const host = book.autopilotHost === "server" ? "server" : "browser";
@@ -112,13 +126,19 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
     ? { brief: state.brief, options: state.options }
     : { brief: { ...DEFAULT_BRIEF, targetChapters: Math.max(DEFAULT_BRIEF.targetChapters, existingChapters + 1) }, options: { ...DEFAULT_OPTIONS, syncAfterChapter: github } }, [state, existingChapters, github]);
   const [form, setForm] = useState<SetupForm>(initial);
+  const [retry, setRetry] = useState<RetryLaterForm>(() => retryLaterForm(initial.options.longRetry));
   const [dirty, setDirty] = useState(false);
+  const retryCard = useRef<RetryLaterCardHandle>(null);
   useEffect(() => {
-    if (!dirty) setForm(initial);
+    if (dirty) return;
+    setForm(initial);
+    setRetry(retryLaterForm(initial.options.longRetry));
   }, [initial, dirty]);
 
   const brief = (patch: Partial<AutopilotBrief>) => { setForm((current) => ({ ...current, brief: { ...current.brief, ...patch } })); setDirty(true); };
   const options = (patch: Partial<AutopilotOptions>) => { setForm((current) => ({ ...current, options: { ...current.options, ...patch } })); setDirty(true); };
+  const retryChange = (next: RetryLaterForm) => { setRetry(next); setDirty(true); };
+  const choosePreset = (id: Parameters<typeof applyPreset>[1]) => { setForm((current) => applyPreset(current, id)); setDirty(true); };
   const fresh = !state;
   // While a run goes on, only where the book is published and the pause after every chapter can change (not on a server that predates it).
   const locked = running || busy;
@@ -128,15 +148,33 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
   const frozenEdits = form.options.frozenEdits ?? "ask";
   // What the host does when the author has not chosen: a server publishes after every step, this browser as the older switch says.
   const publish = effectivePublish(form.options, host === "server" ? "step" : undefined);
+  const retryReading = readRetryLater(retry);
+  // «Retry later» changed when the policy is not the one the state has; a server without it is never sent it.
+  const retryChanged = !retryUnsupported && !sameLongRetry(retryReading.policy, initial.options.longRetry);
 
   /** The settings that can change during a run, as far as the author changed them. */
   const liveChanges = (): AutopilotLiveOptions => ({
     ...(form.options.publishEvery !== undefined && form.options.publishEvery !== initial.options.publishEvery ? { publishEvery: form.options.publishEvery } : {}),
     ...(form.options.pauseAfterEachChapter !== initial.options.pauseAfterEachChapter ? { pauseAfterEachChapter: form.options.pauseAfterEachChapter } : {}),
     ...(form.options.frozenEdits !== undefined && form.options.frozenEdits !== initial.options.frozenEdits ? { frozenEdits: form.options.frozenEdits } : {}),
+    ...(retryChanged ? { longRetry: retryReading.policy } : {}),
   });
 
+  /** The options of the form with «Retry later» as the card says: the policy, `null` to turn off one the book had (`StartOptions` takes it), and nothing when it stays off. */
+  const sentOptions = (): StartOptions["options"] => {
+    const { longRetry: _saved, ...rest } = form.options;
+    return retryUnsupported ? rest : retryReading.policy ? { ...rest, longRetry: retryReading.policy } : initial.options.longRetry ? { ...rest, longRetry: null } : rest;
+  };
+
+  /** Whether «Retry later» can be sent as it is; when it cannot, the card shows what is wrong and takes the focus there. */
+  const retryReady = (): boolean => {
+    if (retryUnsupported || retryReading.valid) return true;
+    retryCard.current?.showProblems();
+    return false;
+  };
+
   const save = () => {
+    if (!retryReady()) return;
     const changes = liveChanges();
     // During a run only the settings that can change are sent, and nothing when they are as they were (a server refuses an empty change).
     if (running && Object.keys(changes).length === 0) {
@@ -145,7 +183,7 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
     }
     const action = running
       ? run("options", (runtime, id) => runtime.updateOptions(id, changes), t("autopilot.setup.saved"))
-      : run("configure", (runtime, id) => runtime.configure(id, { brief: form.brief, options: form.options }), t("autopilot.setup.saved"));
+      : run("configure", (runtime, id) => runtime.configure(id, { brief: form.brief, options: sentOptions() }), t("autopilot.setup.saved"));
     void action.then((ok) => { if (ok) setDirty(false); });
   };
 
@@ -162,27 +200,31 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
           ? t("autopilot.actions.retry")
           : t("autopilot.actions.resume");
   const canStart = !running && !asking && (fresh || !completed || extending);
-  const start = () => void run("start", async (runtime, id) => {
-    if (fresh) {
-      await runtime.start(id, { brief: form.brief, options: form.options });
-      return;
-    }
-    // What the author changed is saved first: the run starts with it.
-    if (dirty) await runtime.configure(id, { brief: form.brief, options: form.options });
-    await runtime.start(id);
-  }).then((ok) => {
-    if (!ok) return;
-    setDirty(false);
-    onStarted?.();
-  });
+  const start = () => {
+    if (!retryReady()) return;
+    void run("start", async (runtime, id) => {
+      if (fresh) {
+        await runtime.start(id, { brief: form.brief, options: sentOptions() });
+        return;
+      }
+      // What the author changed is saved first: the run starts with it.
+      if (dirty) await runtime.configure(id, { brief: form.brief, options: sentOptions() });
+      await runtime.start(id);
+    }).then((ok) => {
+      if (!ok) return;
+      setDirty(false);
+      onStarted?.();
+    });
+  };
 
   return (
     <div className="space-y-5">
       <Card id="autopilot-book" title={t("autopilot.config.sections.book")} icon={<BookOpen className="h-4 w-4 text-primary" aria-hidden="true" />}>
         {fresh && <p className="text-sm text-muted-foreground">{existingChapters > 0 ? t("autopilot.setup.existingBook") : t("autopilot.setup.description")}</p>}
+        <PresetPicker value={presetOfForm(form)} disabled={locked} onChoose={choosePreset} />
         <div className="space-y-1.5">
           <Label htmlFor="autopilot-idea">{t("autopilot.setup.idea")}</Label>
-          <AutoTextarea id="autopilot-idea" value={form.brief.idea} onChange={(event) => brief({ idea: event.target.value })} minRows={fresh ? 3 : 2} placeholder={t("autopilot.setup.ideaPlaceholder")} className="text-sm" disabled={locked} />
+          <AutoTextarea id="autopilot-idea" value={form.brief.idea} onChange={(event) => brief({ idea: event.target.value })} minRows={fresh ? 3 : 2} placeholder={t("autopilot.setup.ideaPlaceholder")} className="text-sm" disabled={locked} tabIndent={false} />
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <NumberField id="autopilot-chapters" label={t("autopilot.setup.chapters")} value={form.brief.targetChapters} min={1} max={MAX_CHAPTERS} disabled={locked} onChange={(value) => brief({ targetChapters: value })} />
@@ -196,7 +238,7 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="autopilot-synopsis">{t("autopilot.setup.synopsis")}</Label>
-          <AutoTextarea id="autopilot-synopsis" value={form.brief.synopsis} onChange={(event) => brief({ synopsis: event.target.value })} minRows={2} placeholder={t("autopilot.setup.synopsisPlaceholder")} className="text-sm" disabled={locked} aria-describedby="autopilot-synopsis-note" />
+          <AutoTextarea id="autopilot-synopsis" value={form.brief.synopsis} onChange={(event) => brief({ synopsis: event.target.value })} minRows={2} placeholder={t("autopilot.setup.synopsisPlaceholder")} className="text-sm" disabled={locked} tabIndent={false} aria-describedby="autopilot-synopsis-note" />
           <p id="autopilot-synopsis-note" className="text-xs text-muted-foreground">{t("autopilot.setup.synopsisOutline")} <Link className="font-medium text-foreground underline underline-offset-4" to={`/app/books/${encodeURIComponent(book.id)}/outline`}>{t("autopilot.setup.useOutline")}</Link></p>
         </div>
         <label className="flex items-center justify-between gap-3 text-sm">
@@ -241,6 +283,9 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
           <p id="autopilot-frozen-edits-hint" className="text-xs text-muted-foreground">{frozenUnsupported ? t("autopilot.config.frozenEdits.oldServer", { version: FROZEN_SERVER_VERSION }) : t("autopilot.config.frozenEdits.hint")}</p>
         </fieldset>
       </Card>
+
+      <RetryLaterCard ref={retryCard} form={retry} onChange={retryChange} locked={liveLocked} unsupported={retryUnsupported} running={running} waitingLong={waitingLong} />
+      {branch !== undefined && <BookRunPreview book={book} branch={branch} structure={structure} state={state} form={form} dirty={dirty} />}
 
       <Card id="autopilot-publish" title={t("autopilot.config.sections.publish")} icon={<Github className="h-4 w-4 text-primary" aria-hidden="true" />}>
         {github ? (

@@ -107,7 +107,7 @@ export const OutlineEntryCard = memo(function OutlineEntryCard(props: OutlineEnt
           : <StatusItem icon={<PenLine className="h-3.5 w-3.5" aria-hidden="true" />} className="border-primary/40 text-foreground">{t("outline.status.author")}</StatusItem>}
         {status.written && (
           <StatusItem icon={<BookOpen className="h-3.5 w-3.5" aria-hidden="true" />} className="text-foreground">
-            <Link to={`/app/books/${encodeURIComponent(bookId)}/chapters/${encodeURIComponent(status.written.slug)}`} className="underline underline-offset-4">{t("outline.status.written")}</Link>
+            <Link to={`/app/books/${encodeURIComponent(bookId)}/chapters/${encodeURIComponent(status.written.slug)}`} className="inline-flex min-h-6 items-center underline underline-offset-4">{t("outline.status.written")}</Link>
           </StatusItem>
         )}
         {status.frozen && <StatusItem icon={<Lock className="h-3.5 w-3.5" aria-hidden="true" />} className="text-foreground">{t("outline.status.frozen")}</StatusItem>}
@@ -167,7 +167,7 @@ export const OutlineEntryCard = memo(function OutlineEntryCard(props: OutlineEnt
 
       {dirty && (
         <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-3">
-          {/* What saving does to a chapter the autopilot already closed, said before the author saves: it may ask, or rewrite the chapter. */}
+          {/* What saving does to a chapter the autopilot already closed or has in its hands, said before the author saves: it may ask, rewrite the chapter, only report it, or tell it once and decide when the chapter is closed. */}
           {status.afterChange && (
             <p id={`${id}-after-change`} className="flex w-full items-start gap-1.5 text-xs text-foreground">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />

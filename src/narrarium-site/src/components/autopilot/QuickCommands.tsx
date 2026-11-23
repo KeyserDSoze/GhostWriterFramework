@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 
 export interface QuickCommandsProps {
   bookId: string;
-  /** `page`: the band of the autopilot page of the book. `dock`: the compact bar of the live panel. */
+  /** `page`: the band of the autopilot page of the book. `dock`: the compact bar of the live panel. `hub`: the card of the book on the page of every book (only what runs). */
   variant: QuickVariant;
   /** The paragraph that tells what Resume does when a profile file has problems: Resume is described by it. The notice that holds it is the page's or the panel's own. */
   profileHintId?: string;
@@ -45,6 +45,8 @@ export function QuickCommands({ bookId, variant, profileHintId, heading, framed,
   if (!model) return null;
 
   const framedBar = framed ?? variant === "page";
+  // The card of a book on the page of every book keeps what runs: where it is published and where it runs are on the book's own page.
+  const placed = variant !== "hub";
   const title = heading === undefined ? (variant === "dock" ? <p className="min-w-0 break-words text-sm font-semibold">{model.book.name}</p> : null) : heading;
   const own = model.busy && OWN_ACTIONS.has(model.busy) ? model.busy : null;
 
@@ -60,14 +62,14 @@ export function QuickCommands({ bookId, variant, profileHintId, heading, framed,
         model={model}
         profileHintId={profileHintId}
         runExtra={runExtra}
-        trailing={condensed ? (
+        trailing={condensed && placed ? (
           <Button size="sm" variant="ghost" aria-expanded={more} aria-controls={more ? model.ids.more : undefined} aria-label={model.named(t("autopilot.quick.more"))} onClick={() => setMore((open) => !open)}>
             <MoreHorizontal className="h-4 w-4" aria-hidden />{t("autopilot.quick.more")}<ChevronDown className={cn("h-4 w-4 transition-transform", more && "rotate-180")} aria-hidden />
           </Button>
         ) : undefined}
       />
       <StatusChips model={model} />
-      {(!condensed || more) && (
+      {placed && (!condensed || more) && (
         <div id={model.ids.more} className="flex flex-wrap items-start gap-2">
           <PublishGroup model={model} />
           <WhereGroup model={model} />

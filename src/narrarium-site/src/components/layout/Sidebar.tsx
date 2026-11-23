@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { createContext, useContext, useId, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -40,6 +40,9 @@ import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 import { getDocGroups, localizedDoc, normalizeDocLang } from "@/lib/docs";
 import { bookMenuGroupOf, bookMenuGroups, type BookMenuGroupId } from "@/components/layout/bookMenu";
 
+/** Whether the links of the menu replace the current entry of the history (the step of the open drawer on a phone). */
+const ReplaceHistory = createContext(false);
+
 interface NavItem {
   label: string;
   href: string;
@@ -55,13 +58,15 @@ function NavLink({
   active: boolean;
   onNavigate?: () => void;
 }) {
+  const replace = useContext(ReplaceHistory);
   return (
     <Link
       to={item.href}
+      replace={replace}
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
+        "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors [@media(pointer:coarse)]:min-h-11",
         active
           ? "bg-primary text-primary-foreground"
           : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
@@ -87,7 +92,7 @@ function NavSection({ title, open, onToggle, children }: { title: string; open: 
           aria-expanded={open}
           aria-controls={`${id}-list`}
           onClick={onToggle}
-          className="flex w-full items-center gap-1.5 rounded-md px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex w-full items-center gap-1.5 rounded-md px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-h-11"
         >
           <ChevronDown aria-hidden="true" className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", !open && "-rotate-90")} />
           <span className="min-w-0 flex-1 truncate">{title}</span>
@@ -100,8 +105,9 @@ function NavSection({ title, open, onToggle, children }: { title: string; open: 
   );
 }
 
-function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarContent({ onNavigate, headerAction }: { onNavigate?: () => void; headerAction?: ReactNode }) {
   const { t, i18n } = useTranslation();
+  const replaceHistory = useContext(ReplaceHistory);
   const location = useLocation();
   const { settings } = useSettingsStore();
   const { structures } = useBooksStore();
@@ -182,20 +188,23 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <>
-      <div className="flex items-center gap-2 px-4 py-4">
-        <BookOpen className="h-6 w-6 text-primary" />
+      <div className={cn("flex items-center gap-2 px-4", headerAction ? "py-2 pr-2" : "py-4")}>
+        <BookOpen className="h-6 w-6 shrink-0 text-primary" />
         <span className="font-semibold text-base leading-tight">Narrarium</span>
-        <Link to="/app/patch-notes" onClick={onNavigate} title={t("patchNotes.title")} className="ml-auto rounded-full border px-2 py-0.5 font-mono text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground">
+        <Link to="/app/patch-notes" replace={replaceHistory} onClick={onNavigate} title={t("patchNotes.title")} className="ml-auto shrink-0 rounded-full border px-2 py-1 font-mono text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground">
           v{APP_VERSION}
         </Link>
-        <button
-          type="button"
-          onClick={() => useUiStore.getState().setSidebarCollapsed(true)}
-          title={t("nav.collapseSidebar")}
-          className="hidden h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-accent-foreground lg:inline-flex"
-        >
-          <PanelLeftClose className="h-4 w-4" />
-        </button>
+        {headerAction ?? (
+          <button
+            type="button"
+            onClick={() => useUiStore.getState().setSidebarCollapsed(true)}
+            title={t("nav.collapseSidebar")}
+            aria-label={t("nav.collapseSidebar")}
+            className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-accent hover:text-accent-foreground lg:inline-flex"
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </button>
+        )}
       </div>
       <Separator />
 
@@ -327,10 +336,16 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-export function MobileSidebar({ onNavigate }: { onNavigate?: () => void }) {
+/**
+ * The menu in the drawer of a phone. `replaceHistory`: its links take the place of the step the open menu added to the history, so that back
+ * goes to the page before the menu. `headerAction`: what closes the drawer.
+ */
+export function MobileSidebar({ onNavigate, replaceHistory = false, headerAction }: { onNavigate?: () => void; replaceHistory?: boolean; headerAction?: ReactNode }) {
   return (
-    <div className="flex h-full max-h-[100dvh] w-full max-w-[86vw] flex-col bg-card sm:max-w-sm">
-      <SidebarContent onNavigate={onNavigate} />
+    <div className="flex h-full max-h-[100dvh] w-full flex-col bg-card">
+      <ReplaceHistory.Provider value={replaceHistory}>
+        <SidebarContent onNavigate={onNavigate} headerAction={headerAction} />
+      </ReplaceHistory.Provider>
     </div>
   );
 }

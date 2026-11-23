@@ -262,13 +262,18 @@ function withRecord(written: RoundResult | null, entry: ChapterRound | undefined
   };
 }
 
+/** A wait of «Retry later» is a row of its own that says the run waits: a note, not a problem (the failure before it is one already, and so is the end of the restarts). */
+const isRetryWait = (event: AutopilotEvent): boolean => event.type === "insight" && event.code === "longRetryWait";
+
 function toneOfMarker(event: AutopilotEvent): InsightTone {
+  if (isRetryWait(event)) return "info";
   if (event.type === "insight" || event.type === "sync") return event.tone;
   if (event.type === "run-ended") return event.status === "completed" ? "ok" : event.status === "error" ? "critical" : event.status === "waiting-author" ? "warning" : "info";
   return "info";
 }
 
 function isProblemMarker(event: AutopilotEvent): boolean {
+  if (isRetryWait(event)) return false;
   if (event.type === "run-ended") return event.status === "error";
   if (event.type === "insight" || event.type === "sync") return event.tone === "warning" || event.tone === "critical";
   return false;

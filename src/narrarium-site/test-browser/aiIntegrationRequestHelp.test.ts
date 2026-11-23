@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, MAX_IDLE_TIMEOUT_MS, MIN_IDLE_TIMEOUT_MS, MIN_REQUEST_TIMEOUT_MS } from "narrarium-engine";
 import i18n from "@/i18n";
 import { DEFAULT_PROVIDER_TIMEOUT_MS } from "@/assistant/executionLimits";
 import { appDocEntries } from "@/lib/appDocs";
+import { guideText, loadGuides } from "./helpers/guides";
 
 type Language = "en" | "it";
 const LANGUAGES: Language[] = ["en", "it"];
@@ -15,8 +16,10 @@ const CONTROLS = ["settings.requestTimeoutMs", "settings.idleTimeoutMs", "settin
 const guide = (slug: string, language: Language) => {
   const entry = appDocEntries.find((candidate) => candidate.slug === slug);
   if (!entry) throw new Error(`the guide ${slug} is missing`);
-  return (entry.translations?.[language] ?? entry).markdown;
+  return guideText(slug, language);
 };
+
+beforeAll(loadGuides);
 
 describe.each(LANGUAGES)("the texts of the request settings (%s)", (language) => {
   it("has every new text, none of them empty", () => {

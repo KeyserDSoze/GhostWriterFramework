@@ -1,85 +1,125 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { classifyConfirmationRouted, completeTextRouted, completeToolRouted } from "@/assistant/router";
+import type { LlmFinishReport } from "@/assistant/llm";
+import { assertProvidersClean, data, DONE, eventStream, textReply, USAGE } from "./helpers/fakeProvider";
+import { chatModel, compatible, settingsOf, type Fixture } from "./helpers/aiFixtures";
+import { either, failure, MESSAGES, provide, resetStores, routeOf, speakCall, target } from "./helpers/copilotHarness";
 
-const mocks = vi.hoisted(() => ({ create: vi.fn() }));
+const tool = { name: "score", description: "Score", parameters: { type: "object", properties: { score: { type: "number" } }, required: ["score"] } };
+const piece = (content: string) => data({ choices: [{ delta: { content } }] });
+const reasoning = (content: string) => data({ choices: [{ delta: { reasoning_content: content } }] });
+const finish = (reason = "stop") => data({ choices: [{ delta: {}, finish_reason: reason }] });
+const usage = () => data({ choices: [], usage: USAGE });
+const callPiece = (args: string, first = false, name = "score") => data({ choices: [{ delta: { tool_calls: [{ index: 0, ...(first ? { id: "call_1", type: "function" } : {}), function: { ...(first ? { name } : {}), arguments: args } }] } }] });
 
-vi.mock("openai", () => {
-  class MockOpenAI {
-    chat = { completions: { create: mocks.create } };
-  }
-  return { default: MockOpenAI, AzureOpenAI: MockOpenAI };
+const local = () => compatible("local", [chatModel("muse")], { name: "LM Studio" });
+function azure(apiVersion?: string): Fixture {
+  const fixture = compatible("az", [chatModel("dep")], { provider: "azure_openai", endpoint: "https://az.example.test", ...(apiVersion ? { apiVersion } : {}) });
+  return { ...fixture, endpoint: { ...fixture.endpoint, base: "https://az.example.test/openai", auth: "api-key" } };
+}
+const confirmation = (fixture: Fixture, extra = {}) => settingsOf([fixture], { taskRouting: { "simple-tasks": { primary: target(fixture), fallbacks: [] } }, ...extra });
+
+beforeEach(resetStores);
+afterEach(() => {
+  vi.unstubAllGlobals();
+  assertProvidersClean();
 });
 
-import { classifyConfirmationWith, completeText, completeToolWith, type LlmFinishReport } from "@/assistant/llm";
-
-const openai = { id: "local", name: "LM Studio", provider: "openai" as const, apiKey: "", endpoint: "http://localhost:1234/v1" };
-const tool = { name: "score", description: "Score", parameters: { type: "object", properties: { score: { type: "number" } }, required: ["score"] } };
-
-function stream(chunks: unknown[]) {
-  return { async *[Symbol.asyncIterator]() { for (const chunk of chunks) yield chunk; } };
-}
-
 describe("forced tools that local servers honor", () => {
-  beforeEach(() => mocks.create.mockReset());
-
   it("forces the only tool with tool_choice \"required\", keeping the named form for old Azure API versions", async () => {
-    mocks.create.mockResolvedValue({ choices: [{ message: { tool_calls: [{ function: { arguments: "{\"score\":8}" } }] }, finish_reason: "tool_calls" }] });
-    await completeToolWith(openai, "muse", undefined, [{ role: "user", content: "score" }], "review", tool, { accountScope: null });
-    expect(mocks.create.mock.calls[0][0]).toMatchObject({ tool_choice: "required" });
+    const openai = local();
+    const fake = provide([openai], speakCall({ score: 8 }, USAGE, "score"));
+    await completeToolRouted(routeOf("copilot", [openai]), MESSAGES, "copilot", tool, { accountScope: null });
+    expect(fake.calls[0].body).toMatchObject({ tool_choice: "required" });
 
-    const azure = { ...openai, provider: "azure_openai" as const, endpoint: "https://x.openai.azure.com" };
-    await completeToolWith({ ...azure, apiVersion: "2024-02-15-preview" }, "dep", undefined, [{ role: "user", content: "score" }], "review", tool, { accountScope: null });
-    expect(mocks.create.mock.calls[1][0]).toMatchObject({ tool_choice: { type: "function", function: { name: "score" } } });
-    await completeToolWith(azure, "dep", undefined, [{ role: "user", content: "score" }], "review", tool, { accountScope: null });
-    expect(mocks.create.mock.calls[2][0]).toMatchObject({ tool_choice: "required" });
+    const old = azure("2024-02-15-preview");
+    const oldFake = provide([old], speakCall({ score: 8 }, USAGE, "score"));
+    await completeToolRouted(routeOf("copilot", [old]), MESSAGES, "copilot", tool, { accountScope: null });
+    expect(oldFake.calls[0].body).toMatchObject({ tool_choice: { type: "function", function: { name: "score" } } });
 
-    mocks.create.mockResolvedValue({ choices: [{ message: { tool_calls: [{ function: { arguments: "{\"decision\":\"yes\"}" } }] } }] });
-    await expect(classifyConfirmationWith(openai, "muse", undefined, "yes please", { accountScope: null })).resolves.toBe("yes");
-    expect(mocks.create.mock.calls[3][0]).toMatchObject({ tool_choice: "required" });
+    const current = azure();
+    const currentFake = provide([current], speakCall({ score: 8 }, USAGE, "score"));
+    await completeToolRouted(routeOf("copilot", [current]), MESSAGES, "copilot", tool, { accountScope: null });
+    expect(currentFake.calls[0].body).toMatchObject({ tool_choice: "required" });
+
+    const confirmFake = provide([openai], speakCall({ decision: "yes" }, USAGE, "confirm"));
+    await expect(classifyConfirmationRouted(confirmation(openai), "yes please", undefined, null)).resolves.toBe("yes");
+    expect(confirmFake.calls[0].body).toMatchObject({ tool_choice: "required" });
   });
 
-  it("reads the JSON in the content when the model does not call the tool or calls it with {}", async () => {
-    mocks.create.mockResolvedValueOnce({ choices: [{ message: { content: "<think>hmm</think>Here: {\"score\": 7}" }, finish_reason: "stop" }] });
-    await expect(completeToolWith(openai, "muse", undefined, [{ role: "user", content: "score" }], "review", tool, { accountScope: null })).resolves.toMatchObject({ output: { score: 7 } });
+  describe("a model that answers in the text of the reply instead of calling the function", () => {
+    it("is refused while \"Tools only\" is on, the way the run refuses it: the text of a reply is never read as the answer", async () => {
+      const openai = local();
+      provide([openai], () => textReply("<think>hmm</think>Here: {\"score\": 7}"));
 
-    mocks.create.mockResolvedValueOnce({ choices: [{ message: { content: "{\"score\": 6}", tool_calls: [{ function: { arguments: "{}" } }] }, finish_reason: "stop" }] });
-    await expect(completeToolWith(openai, "muse", undefined, [{ role: "user", content: "score" }], "review", tool, { accountScope: null })).resolves.toMatchObject({ output: { score: 6 } });
+      const error = await failure(completeToolRouted(routeOf("copilot", [openai]), MESSAGES, "copilot", tool, { accountScope: null }));
 
-    mocks.create.mockResolvedValueOnce({ choices: [{ message: { content: "I would rather not." }, finish_reason: "stop" }] });
-    await expect(completeToolWith(openai, "muse", undefined, [{ role: "user", content: "score" }], "review", tool, { accountScope: null })).rejects.toThrow(/did not call forced tool score/);
+      expect(error.message).toContain("answered in text instead of calling the function \"score\"");
+      expect(error.message).toContain("turn off \"Tools only\" in the AI Router");
+      provide([openai], () => textReply("{\"decision\": \"no\"}"));
+      await expect(classifyConfirmationRouted(confirmation(openai), "no", undefined, null), "a confirmation is simply unclear").resolves.toBe("unclear");
+    });
 
-    mocks.create.mockResolvedValueOnce({ choices: [{ message: { content: "{\"decision\": \"no\"}" } }] });
-    await expect(classifyConfirmationWith(openai, "muse", undefined, "no", { accountScope: null })).resolves.toBe("no");
+    it("is read by the JSON that it wrote when \"Tools only\" is off, also when it called the tool with {}", async () => {
+      const openai = local();
+      const off = { aiToolsOnly: false };
+      provide([openai], () => textReply("<think>hmm</think>Here: {\"score\": 7}"));
+      await expect(completeToolRouted(routeOf("copilot", [openai], off), MESSAGES, "copilot", tool, { accountScope: null })).resolves.toMatchObject({ output: { score: 7 } });
+
+      provide([openai], () => Response.json({ choices: [{ message: { content: "{\"score\": 6}", tool_calls: [{ id: "c", type: "function", function: { name: "score", arguments: "{}" } }] }, finish_reason: "stop" }] }));
+      await expect(completeToolRouted(routeOf("copilot", [openai], off), MESSAGES, "copilot", tool, { accountScope: null })).resolves.toMatchObject({ output: { score: 6 } });
+
+      provide([openai], () => textReply("I would rather not."));
+      const error = await failure(completeToolRouted(routeOf("copilot", [openai], off), MESSAGES, "copilot", tool, { accountScope: null }));
+      expect(error.message).not.toBe("");
+
+      provide([openai], () => textReply("{\"decision\": \"no\"}"));
+      await expect(classifyConfirmationRouted(confirmation(openai, off), "no", undefined, null)).resolves.toBe("no");
+    });
   });
 
-  it("keeps the old result for callers that do not ask for the finish report", async () => {
-    mocks.create.mockResolvedValueOnce({ choices: [{ message: { tool_calls: [{ function: { arguments: "{}" } }] } }] });
-    await expect(completeToolWith(openai, "muse", undefined, [{ role: "user", content: "x" }], "review", tool, { accountScope: null })).resolves.toMatchObject({ output: {} });
-    mocks.create.mockResolvedValueOnce({ choices: [{ message: { content: "partial" }, finish_reason: "length" }] });
-    await expect(completeText(openai, [{ role: "user", content: "x" }], "writing", { accountScope: null, modelName: "muse" })).resolves.toBe("partial");
+  it("does not take a call with no arguments for an answer: it is a reply that was refused, and the next candidate is asked", async () => {
+    const openai = local();
+    provide([openai], speakCall({}, USAGE, "score"));
+
+    const error = await failure(completeToolRouted(routeOf("copilot", [openai]), MESSAGES, "copilot", tool, { accountScope: null }));
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toMatch(/score/);
+  });
+
+  it("returns what was written of a text that the output limit cut", async () => {
+    const openai = local();
+    provide([openai], either(() => eventStream([piece("partial"), finish("length"), DONE]), () => textReply("partial", USAGE, "length")));
+    await expect(completeTextRouted(routeOf("copilot", [openai]), MESSAGES, "copilot", { accountScope: null })).resolves.toBe("partial");
   });
 
   it("reports how an attempt ended, counting reasoning without keeping it", async () => {
     const reports: LlmFinishReport[] = [];
-    mocks.create.mockResolvedValueOnce(stream([
-      { choices: [{ delta: { reasoning_content: "secret chain of thought" } }] },
-      { choices: [{ delta: { content: "Once" } }] },
-      { choices: [{ delta: {}, finish_reason: "length" }] },
-      { choices: [], usage: { prompt_tokens: 10, completion_tokens: 4000 } },
-    ]));
-    await completeText(openai, [{ role: "user", content: "write" }], "writing", { accountScope: null, modelName: "muse", onText: () => undefined, onFinish: (report) => reports.push(report) });
-    expect(reports[0]).toMatchObject({ finishReason: "length", replyCharacters: 4, reasoningCharacters: 23, outputTokens: 4000, model: "muse" });
+    const openai = local();
+    const onFinish = (report: LlmFinishReport) => reports.push(report);
+
+    provide([openai], either(
+      () => eventStream([reasoning("secret chain of thought"), piece("Once"), finish("length"), usage(), DONE]),
+      () => Response.json({ choices: [{ message: { content: "Once", reasoning_content: "secret chain of thought" }, finish_reason: "length" }], usage: USAGE }),
+    ));
+    await completeTextRouted(routeOf("copilot", [openai]), MESSAGES, "copilot", { accountScope: null, onFinish });
+    expect(reports[0]).toMatchObject({ finishReason: "length", replyCharacters: 4, reasoningCharacters: 23, outputTokens: 30, model: "muse" });
     expect(JSON.stringify(reports)).not.toContain("chain of thought");
 
-    mocks.create.mockResolvedValueOnce({ choices: [{ message: { content: "", reasoning: "thinking" }, finish_reason: "stop" }], usage: { prompt_tokens: 3, completion_tokens: 9 } });
-    await completeText(openai, [{ role: "user", content: "write" }], "writing", { accountScope: null, modelName: "muse", onFinish: (report) => reports.push(report) });
+    provide([openai], either(() => eventStream([reasoning("thinking"), finish("stop"), usage(), DONE]), () => Response.json({ choices: [{ message: { content: "", reasoning: "thinking" }, finish_reason: "stop" }], usage: USAGE })));
+    await failure(completeTextRouted(routeOf("copilot", [openai]), MESSAGES, "copilot", { accountScope: null, onFinish }));
     expect(reports[1]).toMatchObject({ finishReason: "stop", replyCharacters: 0, reasoningCharacters: 8 });
 
-    mocks.create.mockResolvedValueOnce({ choices: [{ message: { content: null, reasoning_content: "long", tool_calls: [{ function: { arguments: "{}" } }] }, finish_reason: "length" }], usage: { prompt_tokens: 3, completion_tokens: 9 } });
-    await expect(completeToolWith(openai, "muse", undefined, [{ role: "user", content: "x" }], "review", tool, { accountScope: null, onFinish: (report) => reports.push(report), validate: (output) => { if (!output || !Object.keys(output as object).length) throw new Error("empty"); return output; } })).rejects.toThrow("empty");
+    provide([openai], either(
+      () => eventStream([reasoning("long"), callPiece("{}", true), finish("length"), usage(), DONE]),
+      () => Response.json({ choices: [{ message: { content: null, reasoning_content: "long", tool_calls: [{ id: "c", type: "function", function: { name: "score", arguments: "{}" } }] }, finish_reason: "length" }], usage: USAGE }),
+    ));
+    await failure(completeToolRouted(routeOf("copilot", [openai]), MESSAGES, "copilot", tool, { accountScope: null, onFinish }));
     expect(reports[2]).toMatchObject({ finishReason: "length", replyCharacters: 0, reasoningCharacters: 4 });
 
-    mocks.create.mockResolvedValueOnce({ choices: [{ message: { content: "<think>cut while reason" }, finish_reason: "length" }] });
-    await expect(completeText(openai, [{ role: "user", content: "write" }], "writing", { accountScope: null, modelName: "muse", onFinish: (report) => reports.push(report) })).resolves.toBe("<think>cut while reason");
+    provide([openai], either(() => eventStream([piece("<think>cut while reason"), finish("length"), DONE]), () => textReply("<think>cut while reason", USAGE, "length")));
+    await expect(failure(completeTextRouted(routeOf("copilot", [openai]), MESSAGES, "copilot", { accountScope: null, onFinish })), "a cut that held only reasoning is no reply").resolves.toBeInstanceOf(Error);
     expect(reports[3]).toMatchObject({ finishReason: "length", replyCharacters: 0, reasoningCharacters: "cut while reason".length });
   });
 });

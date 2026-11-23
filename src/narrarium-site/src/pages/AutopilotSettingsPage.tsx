@@ -14,6 +14,7 @@ import { QUICK_CONTROLS_SERVER_VERSION, serverHasQuickControls } from "@/autopil
 import { serverEditsRules } from "@/autopilot/rules";
 import { useServerConnection } from "@/autopilot/serverConnection";
 import { serverHasFrozenChapters } from "@/autopilot/frozenChapters";
+import { retryWaitOf, serverHasRetry } from "@/autopilot/retry";
 import { questionHeading } from "@/autopilot/format";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
@@ -61,6 +62,9 @@ export function AutopilotSettingsPage() {
   const liveUnsupported = running && host === "server" && Boolean(server.info) && !serverHasQuickControls(server.info);
   // One older than the frozen chapters does not know what to do with a changed one, and refuses the setting.
   const frozenUnsupported = host === "server" && Boolean(server.info) && !serverHasFrozenChapters(server.info);
+  // One older than «Retry later» refuses it: the switch is off, and says why.
+  const retryUnsupported = host === "server" && Boolean(server.info) && !serverHasRetry(server.info);
+  const waitingLong = Boolean(retryWaitOf(summary)?.long);
   const asking = Boolean(summary?.question);
 
   return (
@@ -128,8 +132,12 @@ export function AutopilotSettingsPage() {
           asking={asking}
           liveUnsupported={liveUnsupported}
           frozenUnsupported={frozenUnsupported}
+          retryUnsupported={retryUnsupported}
+          waitingLong={waitingLong}
           run={run}
           onStarted={() => navigate(liveHref)}
+          branch={branch}
+          structure={structure}
         >
           {state && <RulesEditor bookId={bookId} rules={state.constraints} readOnly={rulesReadOnly} busy={busy !== null} run={run} liveHref={liveHref} />}
           <ProfilesUsed book={book} branch={branch} structure={structure} summary={summary} />

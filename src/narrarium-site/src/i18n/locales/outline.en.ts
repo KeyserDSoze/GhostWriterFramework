@@ -60,6 +60,8 @@ const outlineEn = {
       auto_other: "Chapters {{numbers, list}} are already written: after these changes the autopilot will rewrite them to follow the Outline, without asking (as its Configuration says).",
       notify_one: "Chapter {{numbers, list}} is already written: after this change the autopilot will only report it, without rewriting the chapter.",
       notify_other: "Chapters {{numbers, list}} are already written: after these changes the autopilot will only report them, without rewriting the chapters.",
+      later_one: "Chapter {{numbers, list}} is in the autopilot's hands (being written or revised): after this change the autopilot will say so once, and will ask, rewrite or only report it once the chapter is closed, as its Configuration says.",
+      later_other: "Chapters {{numbers, list}} are in the autopilot's hands (being written or revised): after these changes the autopilot will say so once, and will ask, rewrite or only report them once the chapters are closed, as its Configuration says.",
     },
     warning: {
       ghostwriterMissing: "The ghostwriter «{{slug}}» does not exist: the book's ghostwriter will write this chapter until you create it.",
@@ -133,6 +135,7 @@ const outlineEn = {
     delete: {
       title: "Delete chapter {{number}} from the outline?",
       body: "Its entry is deleted. When the autopilot gets there, it takes the chapter out of its plan.",
+      bodyStays: "Its entry is deleted. The autopilot does not take a written chapter out of its plan: when it gets there, it only tells you, once, that the entry is gone.",
       written: "This chapter is already written: its text stays in the book, and the autopilot does not delete it.",
       unsaved: "Its unsaved changes are lost.",
       renumber: "Renumber the following chapters",

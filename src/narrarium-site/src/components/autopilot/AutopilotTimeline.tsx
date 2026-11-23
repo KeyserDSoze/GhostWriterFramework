@@ -55,6 +55,9 @@ export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loadi
   const everything = counts.all;
   const nothing = !loading && everything === 0 && !timeline.groups.some((group) => group.running);
 
+  // A book that never ran has nothing to list: not a card with a title and a button that do nothing, but one line that says what happens once it starts.
+  if (nothing && !prefs.since) return <p className="text-sm text-muted-foreground">{t("autopilot.activity.idle")}</p>;
+
   return (
     <section data-autopilot-timeline aria-labelledby="autopilot-timeline-title" className="space-y-3 rounded-2xl border border-layer bg-card p-4 shadow-sm sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -73,7 +76,6 @@ export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loadi
               <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => change({ since: null })}>{t("autopilot.timeline.showHidden")}</Button>
             </p>
           )}
-          {nothing && !prefs.since && <p className="text-sm text-muted-foreground">{t("autopilot.activity.empty")}</p>}
           {everything > 0 && <TimelineFilters bookId={bookId} value={prefs.filter} counts={counts} onChange={choose} />}
           <TimelineLive bookId={bookId} />
           {shown.groups.length === 0 && everything > 0 ? (

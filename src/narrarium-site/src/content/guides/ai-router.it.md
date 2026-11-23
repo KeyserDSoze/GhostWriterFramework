@@ -1,0 +1,59 @@
+# Integrazioni AI e Router
+
+Narrarium usa le tue integrazioni AI. Aggiungi Azure OpenAI, endpoint compatibili OpenAI o GitHub Models in **Impostazioni → Integrazioni AI**, dove trovi anche chiavi, modelli, prezzi e modelli predefiniti. Poi scegli in **Impostazioni → AI Router** quale modello gestisce ogni task.
+
+## Avvio rapido GitHub Models
+
+Crea un PAT GitHub abilitato a GitHub Models, aggiungi un'integrazione **GitHub Models** in **Integrazioni AI**, carica il catalogo e assegna ai modelli le capability desiderate.
+
+## Leggere i modelli di un endpoint
+
+Nella scheda di un'integrazione **OpenAI / compatibile** due pulsanti accanto alla chiave lavorano con l'indirizzo e la chiave così come li hai scritti. Non ci sono per Azure OpenAI, GitHub Models e Microsoft 365 Copilot, che non hanno un elenco di questo tipo.
+
+**Verifica la connessione** fa all'endpoint una domanda breve, il suo elenco di modelli, e dice in una riga quanto ci ha messo a rispondere e quanti modelli elenca («Risponde in 120 ms · 6 modelli»), o che cosa correggere: l'errore 401 è la chiave, il 404 un indirizzo che non finisce con il percorso della versione (per esempio */v1*), il 429 e i 5xx un endpoint che limita le richieste o è occupato. Quando nessuno risponde, un browser non sa distinguere un server spento da un indirizzo sbagliato o da un server che non ammette questo sito (CORS), e la riga lo dice; le parole del motore sono nei dettagli tecnici. Il pannello d'errore dell'autopilot offre la stessa verifica, con lo stesso risultato e il collegamento alla scheda, sull'integrazione del passo fallito, per gli errori di rete, di autenticazione, di timeout e del provider; se l'esecuzione è sul tuo server personale, la verifica parte comunque dal browser.
+
+**Leggi i modelli dall'endpoint** apre un elenco di ciò che l'endpoint dice di avere, per tipo (testo, immagini, sintesi vocale, trascrizione, embedding, altro), con la finestra di contesto, la risposta massima e ciò che ogni modello sa fare (tool call, streaming, ragionamento, visione), e se l'integrazione lo ha già. Legge */models* (l'elenco, necessario) e, quando il gateway li ha, */models/details* e */modalities* (quelli di LlmProxy: i limiti, le capacità e il tipo di ogni modello). Senza di essi la finestra dice «Solo /models», elenca ogni modello come testo e non ne seleziona nessuno, perché niente dice quali conversano.
+
+Seleziona cosa aggiungere o aggiornare e premi **Aggiungi/aggiorna N modelli**. I modelli di testo nuovi sono selezionati all'inizio. Un modello che hai già viene aggiornato solo dove è vuoto (i limiti e le capacità che l'endpoint dichiara); ciò che hai scritto non viene mai sovrascritto: i tuoi numeri, una capacità che hai impostato (anche un interruttore spento), i ruoli, i nomi, i prezzi e il Parametro del thinking. Una capacità che l'endpoint non dichiara non diventa una restrizione. Un modello nuovo prende ciò che l'endpoint dichiara, e il primo modello di un'integrazione che non ne ha prende i ruoli predefiniti. Per un nome che il motore conosce (oggi Muse Glimmer) la finestra suggerisce il **Parametro del thinking** *chat_template_kwargs.reasoning_strength*, già selezionato, e puoi togliere la spunta prima di confermare. Un modello che non è di chat può essere impostato come modello per le immagini, di sintesi vocale o di trascrizione dell'integrazione finché quel campo è vuoto.
+
+**Carica modelli dall'API**, nell'elenco dei modelli chat, funziona ancora, per gli endpoint che rispondono in modo più semplice.
+
+## Routing dei task
+
+**AI Router** ha una tabella per ogni tipo di attività: **Testo (chat)**, **Sintesi vocale (TTS)**, **Trascrizione (STT)** e **Immagini**. Una tabella elenca endpoint (l'integrazione) e modello di ogni task; la tabella del testo ha anche il **Thinking**, e la sua prima riga, **Predefinito**, vale per ogni task senza una rotta propria. Una riga senza scelte proprie mostra, attenuato, ciò che Narrarium userebbe. La riservatezza dei fallback e i limiti di esecuzione sono nel riquadro **Opzioni di instradamento**.
+
+Le schede sopra una tabella sono il **Primario** e i **fallback**, provati in ordine quando il primario fallisce (limite, rete). Ogni scheda funziona allo stesso modo, con gli stessi filtri e le stesse modifiche di gruppo. **Nuova scheda** aggiunge un livello di fallback, fino al numero massimo di candidati delle *Opzioni di instradamento*. **Scambia con…** scambia le destinazioni di due schede, thinking compreso, per le righe selezionate o, senza selezione, per tutte; dice cosa ha fatto e offre **Annulla**. Il menu **…** sposta una scheda a sinistra o a destra (uno scambio con la vicina) e la elimina, chiedendo prima quante righe la perdono.
+
+**Solo tool** è l'interruttore in cima alla pagina. Acceso (è il predefinito) ogni agente dell'autopilot (scrittore, direttore, lettori, specialisti, riassunti) e ogni risposta strutturata del Copilot (una valutazione, una conferma sì/no) risponde chiamando la propria funzione, e non con un JSON scritto nel messaggio: un modello segnato come senza tool call viene saltato, e una risposta in testo al posto della chiamata viene rifiutata. Quando nessun modello di un'attività sa chiamare funzioni, l'autopilot si ferma con **Configurazione dell'AI da correggere**, e la pagina elenca sotto l'interruttore le attività dell'autopilot che sono in questo caso; il Copilot dice lo stesso nella chat, con le stesse due strade d'uscita. Per usare un modello così attiva **Tool call forzati** per quel modello in **Integrazioni AI**, oppure spegni l'interruttore. La prosa del Copilot non cambia mai.
+
+Il **Thinking** è quanto si chiede a un modello di ragionare. *Low*, *Medium*, *High* ed *Extra high* vengono inviati al provider; *Automatico* non invia nulla; *Eredita dall'integrazione* prende il **Thinking predefinito** impostato nella scheda dell'integrazione in **Integrazioni AI**. Il livello di una rotta vince sempre su quello dell'integrazione. La riga **Predefinito** non ha un livello suo, perché sceglie solo l'endpoint delle attività senza rotta: usano quello dell'endpoint. Un modello che non ragiona può rifiutare un livello (errore 400): per lui scegli *Automatico*.
+
+## Modificare molte attività insieme
+
+Nella tabella del testo filtra per gruppo (Autopilot, Copilot e azioni, Revisione, Ricerca), per nome o con **Solo personalizzate**. Spunta le righe, o **Seleziona tutte le attività visibili**, e usa il pannello che compare: scegli l'**endpoint**, poi il **modello** (solo quelli validi per tutte le attività scelte), poi il **thinking**, e premi **Applica**. Nulla cambia finché non lo fai. Ciò che non scegli resta com'era: puoi cambiare endpoint e modello lasciando il thinking, solo il modello, oppure tutto. Se il nuovo endpoint non ha il modello di una riga, quella riga prende il primo valido e il messaggio lo dice. Un fallback richiede un primario: le righe che non ce l'hanno vengono saltate, e anche questo il messaggio lo dice.
+
+## Thinking
+
+Per i task di chat, il **Thinking** è quanto si chiede al modello di ragionare prima di rispondere (il parametro *reasoning_effort* del provider). **Low** è rapido; **High** ed **Extra high** sono più lenti e usano più token. **Automatico** non invia nulla, e il valore vuoto prende il livello dell'integrazione. Ogni destinazione ha il proprio: il primario e ogni fallback. Il Copilot invia un livello solo quando è esplicito.
+
+Il **Parametro del thinking** è il modo in cui il livello arriva a un modello, e si imposta per modello, nella scheda dell'integrazione in **Integrazioni AI**, accanto a **Tool call forzati**. Di norma il livello va come *reasoning_effort*, il campo di OpenAI. Muse Glimmer su llama.cpp lo prende come *chat_template_kwargs.reasoning_strength* e ignora *reasoning_effort*: per un modello con quel nome la scheda lo suggerisce, e **Usalo** lo applica, mai da sola. *none* non invia nessun livello a quel modello e non spegne il thinking. Vale allo stesso modo per l'autopilot e per il Copilot, e il pannello di debug dice quando un livello è andato come argomento del chat template.
+
+Un modello che non può chiamare tool è segnato **senza tool call**: i passi strutturati dell'autopilot e del Copilot non possono usarlo finché *Solo tool* è attivo.
+
+TTS e STT browser sono integrazioni virtuali del Router e non consumano token AI.
+
+## Timeout e streaming
+
+Ogni integrazione in **Integrazioni AI** ha tre impostazioni che decidono quanto tempo ha un modello lento. Le usano l'autopilot e il Copilot nel browser, e l'autopilot anche sul tuo server personale (viaggiano con la configurazione AI, quindi dopo una modifica inviala di nuovo).
+
+- **Timeout provider (ms)**: quanto tempo può impiegare il provider per cominciare a rispondere (nei messaggi di errore si chiama *Provider timeout*). Il minimo è 30.000 ms (un valore più basso viene portato a quel minimo, e l'impostazione conserva quello che hai scritto) e vuoto significa 600.000 ms (10 minuti). Voce e immagini lo contano invece come tempo dell'intera richiesta, 60.000 ms se è vuoto.
+- **Inattività massima (ms)**: il silenzio più lungo ammesso tra due pezzi di una risposta in streaming (nei messaggi di errore si chiama *Idle timeout*), da 30.000 a 3.600.000 ms; vuoto significa 600.000 ms. Ogni pezzo che arriva fa ripartire il conteggio, quindi un modello che continua a scrivere non viene mai interrotto, per quanto ci metta (una chiamata dura al massimo quattro ore). Non vale quando Streaming è Spento.
+- **Streaming**: con **Automatico (consigliato)** ogni risposta dell'autopilot e del Copilot arriva a pezzi, anche quelle strutturate, così un modello lento non viene interrotto da un proxy o da un tunnel che chiude una connessione rimasta in silenzio. Scegli **Spento** solo se il provider rifiuta le risposte in streaming insieme alle chiamate di funzione: il suo errore è un 400 che parla di stream, e il messaggio ti dice di portare **Streaming** dell'integrazione su off. Con Spento l'intera risposta deve arrivare entro il timeout provider.
+
+Quando un passo fallisce perché la risposta è stata troppo lenta, i dettagli tecnici dell'errore dicono quale attesa è scaduta e quale di queste impostazioni cambiare (il Copilot scrive la stessa frase nella chat). Un server personale più vecchio della 0.1.7 non conosce **Inattività massima (ms)** e **Streaming**: aspetta come ha sempre fatto finché non lo aggiorni (**Versione e aggiornamenti** in **Impostazioni → Server personale**).
+
+**Errori passeggeri.** Quando il provider risponde al Copilot con un errore passeggero (un 429, un 500, 502, 503 o 504, o una connessione che cade, come fanno ogni tanto un nodo instabile o un tunnel) il Copilot non si arrende al primo: interroga di nuovo lo stesso modello, al massimo altre due volte, dopo circa 1 s e poi circa 3 s, mai prima di quando chiede il provider e per niente se il provider chiede più di 10 s, e solo finché il **Tempo totale di routing (ms)** lascia spazio. La chat lo dice con discrezione, una volta per ogni nuovo tentativo («Il provider ha risposto con un errore passeggero: riprovo tra 3 s (2 di 3)…»), e una risposta che aveva cominciato ad arrivare ricomincia da capo. **Stop** chiude subito l'attesa e non viene mai mostrato come errore. Ogni tentativo è una riga a sé nel pannello delle richieste AI e nei costi. Una richiesta scaduta (**Timeout provider (ms)**, **Inattività massima (ms)**), una richiesta rifiutata dal provider (400, 401, 403, 404…), una risposta rifiutata e un prompt che non entra non vengono mai ripetuti. Dopo il terzo tentativo il Copilot prosegue come sempre: col modello successivo della rotta, o con l'errore, con le parole del provider.
+
+## Costi
+
+Quando configuri i prezzi in Integrazioni AI, Narrarium registra token input, input in cache e output, oltre ai costi media. Le valutazioni dei lettori salvano provider, modello, token e costo usando lo stesso motore.

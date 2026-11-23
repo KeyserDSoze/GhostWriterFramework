@@ -141,6 +141,20 @@ export function activityTitle(t: TFunction, activity: Pick<AutopilotActivity, "t
   return activity.title?.trim() ? activity.title : taskLabel(t, activity.task, activity.chapterNumber);
 }
 
+/** `Intl.ListFormat` (ES2021), where the browser has it: the parts of a wait are joined as the language joins them ("1 hour and 30 minutes", «1 ora e 30 minuti»). */
+const ListFormat = (Intl as unknown as { ListFormat?: new (language?: string, options?: { type: "conjunction"; style: "long" }) => { format: (items: string[]) => string } }).ListFormat;
+
+/** A length of time in words, in the units a person reads: "10 minutes", "1 hour and 30 minutes", «1 ora e 30 minuti», "36 seconds". */
+export function waitWords(milliseconds: number, language: string | undefined = locale()): string {
+  const unit = (name: string, value: number) => new Intl.NumberFormat(language, { style: "unit", unit: name, unitDisplay: "long" }).format(value);
+  const ms = Math.max(0, Math.round(milliseconds));
+  if (ms < 59_500) return unit("second", Math.round(ms / 1000));
+  const total = Math.round(ms / 60_000);
+  const parts = [[Math.floor(total / 1440), "day"], [Math.floor((total % 1440) / 60), "hour"], [total % 60, "minute"]] as const;
+  const words = parts.filter(([value]) => value > 0).map(([value, name]) => unit(name, value));
+  return ListFormat ? new ListFormat(language, { type: "conjunction", style: "long" }).format(words) : words.join(" ");
+}
+
 /**
  * The runner's retry notice in the UI language. The engine says which retry this is and how long it waits (`attempt`,
  * `retries`, `waitMs`); a retry that does not wait is the one with a larger output limit. Notices saved in the feed by
@@ -156,11 +170,23 @@ function retryText(t: TFunction, event: Extract<Notice, { type: "insight" }>): s
 }
 
 /**
+ * The notices of «Retry later» with their numbers: the wait in words with the restart and how many (`null`: no limit), and the restarts that were
+ * used up. Without the numbers the engine's own words stay.
+ */
+function retryLaterText(t: TFunction, event: Extract<Notice, { type: "insight" }>): string {
+  const { code, waitMs, cycle, cycles, title } = event;
+  const key = `autopilot.insight.${code}`;
+  if (code === "longRetryExhausted") return typeof cycle === "number" ? t(key, { count: cycle, defaultValue: title }) : t(key, { defaultValue: title });
+  if (typeof waitMs !== "number" || typeof cycle !== "number" || cycles === undefined) return title;
+  return t(key, { wait: waitWords(waitMs), cycle, ...(cycles === null ? { context: "unlimited" } : { cycles }), defaultValue: title });
+}
+
+/**
  * The insights about the outline and the frozen chapters say which chapter they are about: without the number (an older event) the engine's own
  * words stay. A review of a change that found no scene left (a warning) is said apart from one carried out.
  */
 const CHAPTER_CODES = new Set([
-  "outlineGhostwriter", "outlineChanged", "outlineRemoved", "outlineWrittenChanged", "outlineWarnings", "outlineWrittenAuto",
+  "outlineGhostwriter", "outlineChanged", "outlineRemoved", "outlineWrittenChanged", "outlineWarnings", "outlineWrittenAuto", "outlineChangedWhileWriting", "outlineRemovedWritten",
   "frozenChanged", "frozenAuto", "frozenReviewed", "frozenCleared", "frozenInvalid",
 ]);
 
@@ -173,9 +199,13 @@ function chapterText(t: TFunction, event: Extract<Notice, { type: "insight" }>):
 function noticeText(t: TFunction, event: Notice): string {
   if (!event.code) return event.title;
   if (event.type === "insight" && event.code === "failureRetry") return retryText(t, event);
+  if (event.type === "insight" && (event.code === "longRetryWait" || event.code === "longRetryExhausted")) return retryLaterText(t, event);
   if (CHAPTER_CODES.has(event.code)) return event.type === "insight" ? chapterText(t, event) : event.title;
   return t(`autopilot.insight.${event.code}`, { defaultValue: event.title });
 }
+
+/** A wait of «Retry later» is not a failure to look at: the run goes on by itself. It is told as a note. */
+const isRetryWait = (event: AutopilotEvent): boolean => event.type === "insight" && event.code === "longRetryWait";
 
 /** The heading of a question: the director's, or what a question about a change says it is about (a frozen chapter, the outline of a written one). */
 export function questionHeading(t: TFunction, question: Pick<DirectorQuestion, "kind">): string {
@@ -191,7 +221,8 @@ export function presentFeedEvent(t: TFunction, event: AutopilotEvent, currency?:
     case "run-ended":
       return {
         tone: event.status === "completed" ? "ok" : event.status === "error" ? "critical" : event.status === "waiting-author" ? "warning" : "info",
-        text: t("autopilot.feed.runEnded", { status: t(`autopilot.status.${event.status}`) }),
+        // «Retry later» turned off during its wait has no notice of its own: the end of the run says it, in the language of the app.
+        text: event.code === "longRetryOff" ? t("autopilot.insight.longRetryOff") : t("autopilot.feed.runEnded", { status: t(`autopilot.status.${event.status}`) }),
         detail: event.message ?? undefined,
         ...(event.status === "error" ? { full: true } : {}),
       };
@@ -210,7 +241,7 @@ export function presentFeedEvent(t: TFunction, event: AutopilotEvent, currency?:
     }
     case "insight":
     case "sync":
-      return { tone: event.tone, text: noticeText(t, event), detail: event.detail, ...(event.tone === "critical" || event.code === "profileProblems" ? { full: true } : {}) };
+      return { tone: isRetryWait(event) ? "info" : event.tone, text: noticeText(t, event), detail: event.detail, ...(event.tone === "critical" || event.code === "profileProblems" ? { full: true } : {}) };
     default:
       return null;
   }

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plug, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
@@ -29,6 +29,10 @@ import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 import { clearFallbackAcknowledgements } from "@/assistant/fallbackDisclosure";
 import { RouterSections } from "@/components/settings/router/RouterSections";
 import { ToolsOnlyField } from "@/components/settings/router/ToolsOnlyField";
+import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+
+/** How long the bar of the settings says that a save is done before it goes away. */
+const SAVED_NOTICE_MS = 4000;
 
 const PROVIDERS: Array<{ value: AIProviderType; labelKey: string; fallback: string }> = [
   { value: "azure_openai", labelKey: "settings.providers.azure_openai", fallback: "Azure OpenAI" },
@@ -95,12 +99,30 @@ export function SettingsPage() {
     // The app's <main> keeps its scroll offset between pages, and the AI pages link to each other from their bottom.
     document.querySelector("main")?.scrollTo?.({ top: 0 });
   }, [section]);
+
+  // What is saved, to tell the changes from it: the settings as they were last loaded from the disk or saved.
+  const current = useMemo(() => JSON.stringify(settings), [settings]);
+  const [savedSettings, setSavedSettings] = useState(current);
+  const markSaved = useCallback(() => setSavedSettings(JSON.stringify(useSettingsStore.getState().settings)), []);
+  const reload = useCallback(() => Promise.resolve(load()).then(markSaved), [load, markSaved]);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
+  const changed = current !== savedSettings;
+  useEffect(() => { setSaveError(null); }, [current]);
+  useEffect(() => {
+    if (!justSaved) return undefined;
+    const timer = window.setTimeout(() => setJustSaved(false), SAVED_NOTICE_MS);
+    return () => window.clearTimeout(timer);
+  }, [justSaved]);
+  const [column, setColumn] = useState<HTMLDivElement | null>(null);
+
   const didAutoLoad = useRef(false);
   useEffect(() => {
     if (didAutoLoad.current) return;
     didAutoLoad.current = true;
-    void load();
-  }, [load]);
+    void reload();
+  }, [reload]);
 
   const [defaultToken, setDefaultToken] = useState(settings.defaultGitHubToken);
   const [newTokenLabel, setNewTokenLabel] = useState("");
@@ -127,10 +149,18 @@ export function SettingsPage() {
     }
     const azureOpenAI = integrationToAzureCompat(aiIntegrations) ?? settings.azureOpenAI;
     patchSettings({ defaultGitHubToken: defaultToken, azureOpenAI });
+    setSaving(true);
+    setJustSaved(false);
     try {
       await save();
-    } catch {
+      markSaved();
+      setSaveError(null);
+      setJustSaved(true);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : String(error));
       return;
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -169,9 +199,12 @@ export function SettingsPage() {
   }
 
   const sectionMeta = settingsSectionMeta(t, section);
+  const busy = saving || isSaving;
+  const barState = busy ? "saving" : saveError ? "failed" : changed ? "unsaved" : "saved";
+  const showBar = section !== "home" && (changed || busy || Boolean(saveError) || justSaved);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div ref={setColumn} className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -186,7 +219,7 @@ export function SettingsPage() {
           <p className="text-muted-foreground">{sectionMeta.description}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={isLoading}>
+          <Button variant="outline" size="sm" onClick={() => void reload()} disabled={isLoading}>
             {isLoading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Cloud className="mr-1 h-3 w-3" />}
             {t("settings.syncFromDrive")}
           </Button>
@@ -302,6 +335,15 @@ export function SettingsPage() {
         <Section title={t("personalServer.title")} description={t("personalServer.description")} icon={<Server className="h-4 w-4 shrink-0" />} defaultOpen><PersonalServerSettingsBody settings={settings} patchSettings={patchSettings} onSave={handleSave} /></Section>
       ) : (
         <Section title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen><RepositorySettingsBody settings={settings} patchSettings={patchSettings} /></Section>
+      )}
+      {showBar && (
+        <SettingsSaveBar
+          anchor={column}
+          state={barState}
+          reason={saveError ?? undefined}
+          canSave={changed && !busy && brokenRoutes.length === 0 && !offlineConflict}
+          onSave={() => void handleSave()}
+        />
       )}
     </div>
   );
@@ -494,9 +536,12 @@ function IntegrationAccordion({ integration, children }: { integration: AIIntegr
   const modelCount = integration.chatModels?.length ?? 0;
   const anchor = integrationAnchor(integration.id);
   // A link to `#integration-<id>` does not scroll by itself in the app: the card it names opens, comes into view and gives the focus to its title, where a keyboard or a screen reader starts reading.
+  // A link is followed once: coming back to the same entry of the history (after the menu of a phone, for one) does not scroll the page again.
+  const followed = useRef("");
   useEffect(() => {
     const element = card.current;
-    if (!element || hashName(location.hash) !== anchor) return;
+    if (!element || hashName(location.hash) !== anchor || followed.current === location.key) return;
+    followed.current = location.key;
     element.open = true;
     element.scrollIntoView?.({ block: "center" });
     element.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
@@ -613,7 +658,7 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
 
       {usesMedia && (
         <details className="mt-3 rounded-lg border bg-muted/20 p-3">
-          <summary className="cursor-pointer text-sm font-medium">{t("costs.mediaPricingTitle")}</summary>
+          <summary className="cursor-pointer py-1 text-sm font-medium [@media(pointer:coarse)]:py-3">{t("costs.mediaPricingTitle")}</summary>
           <p className="mt-1 text-xs text-muted-foreground">{t("costs.mediaPricingHint")}</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <PriceField label={t("costs.priceTts")} value={integration.pricing?.ttsPerMChar} onChange={(v) => onChange({ pricing: { ...integration.pricing, ttsPerMChar: v } })} />
@@ -726,7 +771,7 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networ
   return (
     <div className="mt-3 rounded-lg border bg-muted/10 p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-[12rem] flex-1">
+        <div className="min-w-[12rem] flex-1 break-words">
           <p className="text-sm font-medium">{t("settings.chatModels")}</p>
           <p className="text-xs text-muted-foreground">{t("settings.chatModelsHint")}</p>
           <p id={`${id}-tools-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.forcedToolCallsHint")}</p>
@@ -819,7 +864,7 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networ
               })}
             </div>
             <details className="mt-2 rounded-md border bg-muted/20 p-2">
-              <summary className="cursor-pointer text-xs font-medium">{t("costs.chatPricingTitle")}</summary>
+              <summary className="cursor-pointer py-1 text-xs font-medium [@media(pointer:coarse)]:py-3">{t("costs.chatPricingTitle")}</summary>
               <div className="mt-2 grid gap-2 sm:grid-cols-3">
                 <PriceField label={t("costs.priceInput")} value={model.pricing?.inputPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, inputPerMTok: v } })} />
                 <PriceField label={t("costs.priceCached")} value={model.pricing?.cachedPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, cachedPerMTok: v } })} />

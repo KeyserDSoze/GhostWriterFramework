@@ -74,12 +74,12 @@ describe("the «Tools only» switch of the AI Router", () => {
 
   it("says in the words of the design what it does, in both languages", async () => {
     await show("it");
-    expect(t("routing.toolsOnly.label")).toBe("Solo tool per l'autopilot");
-    expect(t("routing.toolsOnly.hint")).toBe("Ogni agente (scrittore, direttore, lettori, specialisti, riassunti) risponde chiamando la propria funzione; i modelli senza tool call vengono saltati e una risposta in testo al posto della chiamata viene rifiutata.");
+    expect(t("routing.toolsOnly.label")).toBe("Solo tool");
+    expect(t("routing.toolsOnly.hint")).toBe("Ogni agente dell'autopilot (scrittore, direttore, lettori, specialisti, riassunti) e ogni risposta strutturata del Copilot risponde chiamando la propria funzione; i modelli senza tool call vengono saltati e una risposta in testo al posto della chiamata viene rifiutata.");
     cleanup();
     await show("en");
-    expect(t("routing.toolsOnly.label")).toBe("Tools only for the autopilot");
-    expect(t("routing.toolsOnly.hint")).toMatch(/^Every agent \(writer, director, readers, specialists, summaries\) answers by calling its own function; models without tool calls are skipped, and a reply in text instead of the call is refused\.$/);
+    expect(t("routing.toolsOnly.label")).toBe("Tools only");
+    expect(t("routing.toolsOnly.hint")).toMatch(/^Every agent of the autopilot \(writer, director, readers, specialists, summaries\) and every structured answer of the Copilot answers by calling its own function; models without tool calls are skipped, and a reply in text instead of the call is refused\.$/);
   });
 
   it.each(LANGUAGES)("is described by that hint, so that a screen reader says it with the switch (%s)", async (language) => {
@@ -171,7 +171,7 @@ describe("what it says about the models without tool calls", () => {
     expect(notes.querySelectorAll("[aria-live], [role=alert], [role=status]")).toHaveLength(0);
   });
 
-  it("does not warn about the tasks of the Copilot: the switch is the autopilot's, and the Copilot has its own way of asking", async () => {
+  it("does not warn about the prose task of the Copilot: it never asks for a function, so the switch has nothing to say about it", async () => {
     await show("en", { taskRouting: { ...OK, copilot: route(to("legacy")) } });
     expect(WARNING()).toBeEmptyDOMElement();
     const copilotRow = screen.getByRole("combobox", { name: t("routing.cell.model", { task: taskName("copilot"), tab: t("routing.primary") }) }).closest("tr") as HTMLElement;

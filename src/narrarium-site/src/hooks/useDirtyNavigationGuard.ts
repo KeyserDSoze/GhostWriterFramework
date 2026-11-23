@@ -1,10 +1,13 @@
-import { useEffect } from "react";
-import { useBlocker } from "react-router-dom";
+import { useCallback, useEffect } from "react";
+import { useBlocker, type BlockerFunction } from "react-router-dom";
+import { isNavDrawerMove } from "@/components/layout/navDrawerStep";
 import { useSaveStore } from "@/store/saveStore";
 
 export function useDirtyNavigationGuard(message: string) {
   const dirty = useSaveStore((state) => Boolean(state.current?.dirty));
-  const blocker = useBlocker(dirty);
+  // Opening and closing the menu of a phone takes a step in the history on the same page: it leaves nothing, so it asks nothing.
+  const shouldBlock = useCallback<BlockerFunction>(({ currentLocation, nextLocation }) => dirty && !isNavDrawerMove(currentLocation, nextLocation), [dirty]);
+  const blocker = useBlocker(shouldBlock);
 
   useEffect(() => {
     if (!dirty) return;

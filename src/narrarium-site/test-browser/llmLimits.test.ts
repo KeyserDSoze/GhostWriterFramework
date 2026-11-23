@@ -1,57 +1,70 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { completeTextRouted, completeToolRouted } from "@/assistant/router";
+import { assertProvidersClean } from "./helpers/fakeProvider";
+import { chatModel, compatible, SCHEMA, type Fixture } from "./helpers/aiFixtures";
+import { MESSAGES, provide, resetStores, routeOf, speak, speakCall } from "./helpers/copilotHarness";
 
-const mocks = vi.hoisted(() => ({ create: vi.fn() }));
+/** An Azure OpenAI integration, whose requests go to `/openai/deployments/<name>/…` with the key in the `api-key` header. */
+function azure(models: Parameters<typeof chatModel>[1], apiVersion?: string, name = "private-review-deployment"): Fixture {
+  const fixture = compatible("az", [chatModel(name, models)], { provider: "azure_openai", endpoint: "https://az.example.test", ...(apiVersion ? { apiVersion } : {}) });
+  return { ...fixture, endpoint: { ...fixture.endpoint, base: "https://az.example.test/openai", auth: "api-key" } };
+}
 
-vi.mock("openai", () => {
-  class MockOpenAI {
-    chat = { completions: { create: mocks.create } };
-  }
-  return { default: MockOpenAI, AzureOpenAI: MockOpenAI };
-});
-
-import { completeText, completeToolWith } from "@/assistant/llm";
-
-const integration = { id: "provider", name: "Provider", provider: "openai" as const, apiKey: "key" };
+/** The body the Copilot sends for a text, to the only candidate of a route. */
+async function bodyOfText(fixture: Fixture, options: { fallbackMaxOutputTokens?: number } = {}) {
+  const fake = provide([fixture], speak("done"));
+  await completeTextRouted(routeOf("copilot", [fixture]), MESSAGES, "copilot", { accountScope: null, ...options });
+  return fake.calls[fake.calls.length - 1].body;
+}
 
 describe("provider output limits", () => {
-  beforeEach(() => mocks.create.mockReset());
+  beforeEach(resetStores);
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    assertProvidersClean();
+  });
 
   it("sends the configured output limit for text completions", async () => {
-    mocks.create.mockResolvedValue({ choices: [{ message: { content: "done" }, finish_reason: "stop" }] });
-    await completeText(integration, [{ role: "user", content: "write" }], "writing", { accountScope: null, modelName: "model", maxOutputTokens: 321 });
-    expect(mocks.create.mock.calls[0][0]).toMatchObject({ max_tokens: 321 });
+    expect(await bodyOfText(compatible("provider", [chatModel("model", { maxOutputTokens: 321 })]))).toMatchObject({ max_tokens: 321 });
   });
 
   it("uses max_completion_tokens for modern reasoning models", async () => {
-    mocks.create.mockResolvedValue({ choices: [{ message: { content: "done" }, finish_reason: "stop" }] });
-    await completeText(integration, [{ role: "user", content: "reason" }], "writing", { accountScope: null, modelName: "o3-mini", maxOutputTokens: 222 });
-    expect(mocks.create.mock.calls[0][0]).toMatchObject({ max_completion_tokens: 222 });
-    expect(mocks.create.mock.calls[0][0]).not.toHaveProperty("max_tokens");
+    const reasoning = await bodyOfText(compatible("provider", [chatModel("o3-mini", { maxOutputTokens: 222 })]));
+    expect(reasoning).toMatchObject({ max_completion_tokens: 222 });
+    expect(reasoning).not.toHaveProperty("max_tokens");
 
-    const azure = { ...integration, provider: "azure_openai" as const, endpoint: "https://example.openai.azure.com" };
-    await completeText(azure, [{ role: "user", content: "reason" }], "writing", { accountScope: null, modelName: "private-review-deployment", underlyingModel: "o3-mini", maxOutputTokens: 111 });
-    expect(mocks.create.mock.calls[1][0]).toMatchObject({ max_completion_tokens: 111 });
+    const declared = await bodyOfText(azure({ underlyingModel: "o3-mini", maxOutputTokens: 111 }));
+    expect(declared).toMatchObject({ max_completion_tokens: 111 });
 
     // A deployment that declares no model is recognized by its name when the name says it reasons. One that stays unknown gets
     // max_completion_tokens, which every model accepts from API 2024-09-01 (the default here), and max_tokens before: the rule of
     // the personal server, which uses the same function.
-    await completeText(azure, [{ role: "user", content: "reason" }], "writing", { accountScope: null, modelName: "o3-looking-deployment", maxOutputTokens: 99 });
-    expect(mocks.create.mock.calls[2][0]).toMatchObject({ max_completion_tokens: 99 });
-    expect(mocks.create.mock.calls[2][0]).not.toHaveProperty("max_tokens");
+    const named = await bodyOfText(azure({ maxOutputTokens: 99 }, undefined, "o3-looking-deployment"));
+    expect(named).toMatchObject({ max_completion_tokens: 99 });
+    expect(named).not.toHaveProperty("max_tokens");
 
-    await completeText(azure, [{ role: "user", content: "reason" }], "writing", { accountScope: null, modelName: "private-review-deployment", maxOutputTokens: 98 });
-    expect(mocks.create.mock.calls[3][0]).toMatchObject({ max_completion_tokens: 98 });
-    expect(mocks.create.mock.calls[3][0]).not.toHaveProperty("max_tokens");
+    const unknown = await bodyOfText(azure({ maxOutputTokens: 98 }));
+    expect(unknown).toMatchObject({ max_completion_tokens: 98 });
+    expect(unknown).not.toHaveProperty("max_tokens");
 
-    const older = { ...azure, apiVersion: "2024-06-01" };
-    await completeText(older, [{ role: "user", content: "reason" }], "writing", { accountScope: null, modelName: "private-review-deployment", maxOutputTokens: 97 });
-    expect(mocks.create.mock.calls[4][0]).toMatchObject({ max_tokens: 97 });
-    expect(mocks.create.mock.calls[4][0]).not.toHaveProperty("max_completion_tokens");
+    const older = await bodyOfText(azure({ maxOutputTokens: 97 }, "2024-06-01"));
+    expect(older).toMatchObject({ max_tokens: 97 });
+    expect(older).not.toHaveProperty("max_completion_tokens");
   });
 
-  it("sends the configured output limit for forced-tool completions", async () => {
-    mocks.create.mockResolvedValue({ choices: [{ message: { tool_calls: [{ function: { arguments: "{}" } }] } }] });
-    await completeToolWith(integration, "model", undefined, [{ role: "user", content: "score" }], "review", { name: "score", description: "score", parameters: {} }, { accountScope: null, maxOutputTokens: 123 });
-    expect(mocks.create.mock.calls[0][0]).toMatchObject({ max_tokens: 123 });
+  it("sends the configured output limit for forced-tool completions, which a model cannot be asked to exceed", async () => {
+    const fixture = compatible("provider", [chatModel("model", { maxOutputTokens: 123 })]);
+    const fake = provide([fixture], speakCall({ ok: true }));
+    await completeToolRouted(routeOf("copilot", [fixture]), MESSAGES, "copilot", SCHEMA, { accountScope: null });
+    expect(fake.calls[0].body).toMatchObject({ max_tokens: 123 });
+  });
+
+  it("gives a forced call the floor of the structured replies when the model has no limit of its own, and the reasoning models room to think", async () => {
+    const open = compatible("provider", [chatModel("model")]);
+    const fake = provide([open], speakCall({ ok: true }));
+    await completeToolRouted(routeOf("copilot", [open]), MESSAGES, "copilot", SCHEMA, { accountScope: null, fallbackMaxOutputTokens: 123 });
+    expect(fake.calls[0].body.max_tokens, "a call that is cut is no call at all").toBe(4_096);
+
+    expect(await bodyOfText(compatible("thinker", [chatModel("o3-mini")]))).toMatchObject({ max_completion_tokens: 2_048 + 12_000 });
   });
 });

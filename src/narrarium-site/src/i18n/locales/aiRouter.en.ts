@@ -177,8 +177,8 @@ const aiRouterEn = {
     },
     undo: "Undo",
     toolsOnly: {
-      label: "Tools only for the autopilot",
-      hint: "Every agent (writer, director, readers, specialists, summaries) answers by calling its own function; models without tool calls are skipped, and a reply in text instead of the call is refused.",
+      label: "Tools only",
+      hint: "Every agent of the autopilot (writer, director, readers, specialists, summaries) and every structured answer of the Copilot answers by calling its own function; models without tool calls are skipped, and a reply in text instead of the call is refused.",
       blocked_one: "{{count}} task has no model that can call functions, so the autopilot would stop on it with a configuration error: {{tasks}}.",
       blocked_other: "{{count}} tasks have no model that can call functions, so the autopilot would stop on them with a configuration error: {{tasks}}.",
       skipped: "{{task}}: {{models}} (no tool calls) will be skipped.",

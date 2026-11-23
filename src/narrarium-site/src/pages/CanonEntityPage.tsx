@@ -275,7 +275,7 @@ export function CanonEntityPage() {
               {t("canon.backToSection", { section: sectionLabel })}
             </Link>
         </Button>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" className="font-mono text-xs">{branch}</Badge>
           {isDirty && !saving && <span className="text-xs text-muted-foreground">{t("common.unsaved")}</span>}
           {book && token && path && structure && (
@@ -312,7 +312,7 @@ export function CanonEntityPage() {
             ))}
 
             {editableEntries.map((entry) => (
-              <div key={entry.key} className="flex items-center gap-3">
+              <div key={entry.key} className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="w-[7.5rem] shrink-0 break-all font-mono text-xs">{entry.key}</span>
                 <Input
                   value={Array.isArray(entry.value) ? entry.value.join(", ") : entry.value}
@@ -324,11 +324,11 @@ export function CanonEntityPage() {
                       isArray ? raw.split(",").map((part) => part.trim()).filter(Boolean) : raw,
                     );
                   }}
-                  className="h-8 flex-1 text-xs font-mono"
+                  className="h-8 min-w-[8rem] flex-1 text-xs font-mono"
                 />
                 <button
                   onClick={() => removeEntry(entry.key)}
-                  className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
                   aria-label={t("canon.removeAria", { key: entry.key })}
                 >
                   <X className="h-3 w-3" />
@@ -366,7 +366,7 @@ export function CanonEntityPage() {
             ) : (
               <button
                 onClick={() => setShowAddMeta(true)}
-                className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                className="flex min-h-8 w-fit items-center gap-1 rounded text-xs text-muted-foreground transition-colors hover:text-foreground [@media(pointer:coarse)]:min-h-11"
               >
                 <Plus className="h-3 w-3" />
                 {t("common.addField")}

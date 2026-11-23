@@ -103,6 +103,8 @@ import { createAssistantChatArchive, serializeAssistantChatArchive } from "@/ass
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } from "@/assistant/speech";
 import { classifyConfirmationRouted, completeTextRouted, sttMode } from "@/assistant/router";
+import { describeAiFailure } from "@/assistant/aiFailure";
+import { listenToRetries, retryNoticeText } from "@/assistant/retryNotice";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
 import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation, sha256Text } from "@/repository/safeRepositoryMutation";
@@ -289,6 +291,8 @@ export function AssistantPanel() {
   const [isMobile, setIsMobile] = useState(false);
   const [pendingDiffRevert, setPendingDiffRevert] = useState<PendingDiffRevert | null>(null);
   const [requestStatus, setRequestStatus] = useState("");
+  /** What the chat says while the Copilot waits to ask a model again after a passing error; it takes the place of «Thinking…» until the reply is being written. */
+  const [retryNotice, setRetryNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 1023px)");
@@ -1392,10 +1396,18 @@ export function AssistantPanel() {
       : undefined;
     setBusy(true);
     setRequestStatus(t("assistant.thinking"));
+    // Once for each retry, and only for this request: the status line says it quietly, and the region for the screen readers (polite) is told once.
+    const stopListeningToRetries = listenToRetries(controller.signal, (notice) => {
+      if (!ownsRequest()) return;
+      const text = retryNoticeText(notice, t);
+      setRetryNotice(text);
+      setRequestStatus(text);
+    });
     localAudioHandledRef.current = false;
     let streamedMessageId: string | null = null;
     const updateStreamedReply = (text: string) => {
       if (!ownsRequest()) return;
+      if (text) setRetryNotice(null);
       if (!text && !streamedMessageId) return;
       if (!streamedMessageId) {
         streamedMessageId = crypto.randomUUID();
@@ -1476,13 +1488,16 @@ export function AssistantPanel() {
       return finalReply;
     } catch (err) {
       if (!ownsRequest()) return null;
-      const errorMessage = { id: streamedMessageId ?? crypto.randomUUID(), role: "assistant" as const, text: err instanceof Error ? err.message : t("assistant.requestFailed"), branch };
-      if (streamedMessageId) useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: errorMessage.text, branch });
+      const failure = describeAiFailure(err, t);
+      const errorMessage = { id: streamedMessageId ?? crypto.randomUUID(), role: "assistant" as const, text: failure?.text ?? (err instanceof Error ? err.message : t("assistant.requestFailed")), ...(failure?.action ? { action: failure.action } : {}), branch };
+      if (streamedMessageId) useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: errorMessage.text, branch, ...(failure?.action ? { action: failure.action } : {}) });
       else useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, errorMessage] }));
       setRequestStatus(errorMessage.text);
       return errorMessage;
     } finally {
       options?.signal?.removeEventListener("abort", abortFromCaller);
+      stopListeningToRetries();
+      setRetryNotice(null);
       if (controller.signal.aborted) setRequestStatus("");
       if (activePromptRef.current?.requestId === requestId) {
         activePromptRef.current = null;
@@ -2641,7 +2656,7 @@ export function AssistantPanel() {
           </div>
         </div>
       ))}
-      {busy && <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("assistant.thinking")}</div>}
+      {busy && <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{retryNotice ?? t("assistant.thinking")}</div>}
       <div ref={messagesEndRef} />
     </div>
   );

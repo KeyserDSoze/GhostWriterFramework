@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ complete: vi.fn(), research: vi.fn(), capture: vi.fn(), commit: vi.fn(), resolveHead: vi.fn() }));
 vi.mock("@/assistant/router", () => ({ completeTextRouted: mocks.complete }));
-vi.mock("@/assistant/llm", () => ({ completeText: vi.fn() }));
 vi.mock("@/research/ResearchRouter", () => ({ runResearchRouter: mocks.research }));
 vi.mock("@/assistant/immediateMutation", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/assistant/immediateMutation")>(),

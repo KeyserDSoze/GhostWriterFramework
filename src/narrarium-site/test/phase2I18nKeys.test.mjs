@@ -100,8 +100,8 @@ test("the field names the timeout notice quotes are the ones on the card of the 
 });
 
 test("the words of the design are in the Italian texts as the owner wrote them", () => {
-  assert.equal(lookup(aiRouterIt, "routing.toolsOnly.label"), "Solo tool per l'autopilot");
-  assert.equal(lookup(aiRouterIt, "routing.toolsOnly.hint"), "Ogni agente (scrittore, direttore, lettori, specialisti, riassunti) risponde chiamando la propria funzione; i modelli senza tool call vengono saltati e una risposta in testo al posto della chiamata viene rifiutata.");
+  assert.equal(lookup(aiRouterIt, "routing.toolsOnly.label"), "Solo tool");
+  assert.equal(lookup(aiRouterIt, "routing.toolsOnly.hint"), "Ogni agente dell'autopilot (scrittore, direttore, lettori, specialisti, riassunti) e ogni risposta strutturata del Copilot risponde chiamando la propria funzione; i modelli senza tool call vengono saltati e una risposta in testo al posto della chiamata viene rifiutata.");
   assert.equal(lookup(autopilotIt, "autopilot.failure.kind.config.title"), "Configurazione dell'AI da correggere");
   assert.equal(lookup(autopilotIt, "autopilot.failure.config.openRouter"), "Apri il Router AI");
   assert.equal(lookup(autopilotIt, "autopilot.failure.timeout.what.start"), "attesa dell'inizio della risposta");

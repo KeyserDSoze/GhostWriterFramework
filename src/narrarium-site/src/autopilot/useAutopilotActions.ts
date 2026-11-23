@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AutopilotLiveOptions, AutopilotPublishMode } from "narrarium-engine";
 import { useToast } from "@/components/ui/use-toast";
@@ -10,7 +10,17 @@ import type { AutopilotRuntime } from "@/autopilot/runtime";
 import { useAutopilotStore } from "@/autopilot/store";
 import type { SyncOutcome } from "@/autopilot/store";
 
-export type AutopilotActionName = "start" | "pause" | "stop" | "intervene" | "answer" | "configure" | "reset" | "move" | "sync" | "refresh" | "cancel-pause" | "options" | "publish" | "handover";
+export type AutopilotActionName = "start" | "pause" | "stop" | "intervene" | "answer" | "configure" | "reset" | "move" | "sync" | "refresh" | "cancel-pause" | "options" | "publish" | "handover" | "retry-now" | "conflicts";
+
+/** How long the outcome of «Retry now» stays on the screen, once said. */
+const RETRY_OUTCOME_MS = 10_000;
+
+/** What «Retry now» came to: whether a wait was skipped (`false`: it was already over), and which wait it was. */
+export interface RetryOutcome {
+  skipped: boolean;
+  /** The time of the attempt the wait was for (`summary.retry.at`), so that the outcome is not taken for one of a later wait. */
+  waitAt: string | null;
+}
 
 /** The action a person sees for an operation that holds the book. */
 const ACTION_OF_OPERATION: Record<AutopilotOperationKind, AutopilotActionName> = {
@@ -24,12 +34,16 @@ const ACTION_OF_OPERATION: Record<AutopilotOperationKind, AutopilotActionName> =
   sync: "sync",
   // A decision about a frozen chapter is an answer about it, as the answer to its question would be.
   frozen: "answer",
+  // The author is settling the conflicts with GitHub: nothing else holds the book, and no other button reads as busy for it.
+  githubConflicts: "conflicts",
 };
 
 /** What a person asks of the autopilot with one click: each returns whether it was done (a failure is already said in a toast). */
 export interface AutopilotCommands {
   /** Pause the run (`after-step`, `after-chapter`, `now`), or take back a pause that waits (`cancel`). */
   pause: (mode: PauseCommand) => Promise<boolean>;
+  /** «Retry now»: end the wait before the next attempt of the step that failed; what it came to is `retried`. */
+  retryNow: (waitAt: string | null) => Promise<boolean>;
   /** Stop now: the request in flight is abandoned. */
   stop: () => Promise<boolean>;
   cancelPause: () => Promise<boolean>;
@@ -65,8 +79,15 @@ export function useAutopilotActions(bookId: string | undefined, reach: { unreach
   const { t } = useTranslation();
   const { toast } = useToast();
   const [busy, setBusy] = useState<AutopilotActionName | null>(null);
+  const [retried, setRetried] = useState<RetryOutcome | null>(null);
   const operation: BookOperation | null = useAutopilotStore((state) => (bookId ? state.views[bookId]?.operation ?? null : null));
   const reachable = !reach.unreachable;
+  // The outcome of «Retry now» is said once, and then goes: it is about a moment.
+  useEffect(() => {
+    if (!retried) return undefined;
+    const timer = window.setTimeout(() => setRetried(null), RETRY_OUTCOME_MS);
+    return () => window.clearTimeout(timer);
+  }, [retried]);
 
   const run = useCallback(async (name: AutopilotActionName, action: (runtime: AutopilotRuntime, bookId: string) => Promise<unknown>, success?: string, onError?: (error: unknown) => boolean): Promise<boolean> => {
     if (!bookId) return false;
@@ -95,6 +116,7 @@ export function useAutopilotActions(bookId: string | undefined, reach: { unreach
     const reached = (name: AutopilotActionName, action: (runtime: AutopilotRuntime, id: string) => Promise<unknown>, success?: string, onError?: (error: unknown) => boolean) => (reachable ? run(name, action, success, onError) : Promise.resolve(false));
     return {
       pause: (mode) => reached(mode === "cancel" ? "cancel-pause" : "pause", (runtime, id) => runtime.pause(id, mode)),
+      retryNow: (waitAt) => reached("retry-now", async (runtime, id) => setRetried({ skipped: await runtime.retryNow(id), waitAt })),
       stop: () => reached("stop", (runtime, id) => runtime.pause(id, "now")),
       cancelPause: () => reached("cancel-pause", (runtime, id) => runtime.pause(id, "cancel")),
       resume: () => run("start", (runtime, id) => runtime.start(id)),
@@ -111,5 +133,5 @@ export function useAutopilotActions(bookId: string | undefined, reach: { unreach
     };
   }, [reachable, run, t]);
 
-  return { busy: busy ?? (operation ? ACTION_OF_OPERATION[operation.kind] : null), run, operation, commands };
+  return { busy: busy ?? (operation ? ACTION_OF_OPERATION[operation.kind] : null), run, operation, commands, retried };
 }

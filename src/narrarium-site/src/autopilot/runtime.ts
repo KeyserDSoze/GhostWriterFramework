@@ -14,9 +14,12 @@ import {
   type FrozenAction,
   type FrozenChangeKind,
   type FrozenStatus,
+  type GithubConflictsResponse,
   type InterventionInput,
   type NarrariumServerClient,
   type QuestionAnswer,
+  type ResolveGithubConflictsRequest,
+  type ResolveGithubConflictsResponse,
   type ServerBookStorage,
   type ServerBookSummary,
   type ServerStreamMessage,
@@ -34,6 +37,8 @@ import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
 import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
 import { AutopilotRulesUnsupportedError, serverEditsRules } from "@/autopilot/rules";
 import { AutopilotFrozenUnsupportedError, frozenErrorCode, serverHasFrozenChapters } from "@/autopilot/frozenChapters";
+import { AutopilotRetryUnsupportedError, serverHasRetry } from "@/autopilot/retry";
+import { assertGithubConflicts, githubConflictFiles, isGithubConflict, noteGithubConflict } from "@/autopilot/githubConflictsServer";
 import { RefreshCoordinator } from "@/autopilot/refreshCoordinator";
 import { ServerAddressError, validateServerAddress } from "@/autopilot/serverAddress";
 import { ServerIdentityError, verifiedServer, type VerifiedServer, type VerifiedServerOptions } from "@/autopilot/serverIdentity";
@@ -170,6 +175,8 @@ export function describeAutopilotError(error: unknown): string {
     if (error.code === "book_not_found") return i18n.t("autopilot.where.serverBookMissing");
     if (error.code === "ai_not_configured") return `${error.message} ${i18n.t("personalServer.aiMissing")}`;
     if (error.code === "maintenance") return i18n.t("personalServer.updates.maintenance");
+    const conflicts = githubConflictFiles(error);
+    if (conflicts !== null) return i18n.t("autopilot.errors.githubConflict", { count: conflicts });
   }
   if (error instanceof Error && error.name === "AiUnavailableError") return i18n.t("autopilot.errors.aiMissing");
   return error instanceof Error ? error.message : String(error);
@@ -271,6 +278,8 @@ export interface RuntimeEnvironment {
   connect?: (options: VerifiedServerOptions) => Promise<VerifiedServer>;
   /** How the plans to move the autopilot to the other side keep time (a test shortens them). */
   handover?: HandoverOptions & { pollMs?: number };
+  /** The base delay of the engine before it retries a failed step, which the waits of «Retry later» scale with too (a test makes them long or short). */
+  retryDelayMs?: number;
 }
 
 interface LocalSessionEntry {
@@ -400,6 +409,7 @@ export class BrowserAutopilotRuntime {
       host: "browser",
       hostLabel: browserLabel(),
       hostId: localDeviceId(),
+      ...(this.env.retryDelayMs !== undefined ? { retryDelayMs: this.env.retryDelayMs } : {}),
       ownRunnerAlive: () => this.lockHeldElsewhere(book.id),
       // The engine decides which of the two is called, and when, from where the book is published (after every step, every chapter or never).
       hooks: bookStorageMode(book) === "github" ? {
@@ -579,6 +589,7 @@ export class BrowserAutopilotRuntime {
       const { limits, ...unlimited } = options;
       const limited = hasRunLimit(limits);
       if (limited && !serverHasQuickControls(info)) throw new AutopilotControlsUnsupportedError();
+      if (options.options?.longRetry !== undefined && !serverHasRetry(info)) throw new AutopilotRetryUnsupportedError();
       await this.syncNow(book.id, { push: true, throwOnError: true });
       const { client } = await this.requireServer();
       this.applySnapshot(bookId, await client.startAutopilot(book.id, limited ? options : unlimited));
@@ -634,9 +645,31 @@ export class BrowserAutopilotRuntime {
   }
 
   /**
-   * Change where the book is published, and whether the run pauses after every chapter, also while the run goes on: it takes hold from the
-   * next step, or the next chapter. A book run by the server needs a server that has the quick controls; one run by another tab of this
-   * browser is changed through that tab, which says it to the others.
+   * «Retry now»: end the wait before the next attempt of a failed step (a quick retry, or a restart of «Retry later»), so that the attempt starts
+   * at once. Answers whether a wait was skipped: `false` when nothing waited (the wait was already over, or nothing runs), which is no error. Like a
+   * pause it is never held back by an operation in progress. A run of another tab is asked through that tab; a server that predates the route is
+   * not asked at all.
+   */
+  async retryNow(bookId: string): Promise<boolean> {
+    const book = findBook(bookId);
+    if (autopilotHostOf(book) === "server") {
+      const { client, info } = await this.requireServer();
+      if (!serverHasRetry(info)) throw new AutopilotRetryUnsupportedError();
+      const { skipped, ...snapshot } = await client.retryNow(book.id);
+      this.applySnapshot(bookId, snapshot);
+      return skipped;
+    }
+    const session = this.sessions.get(book.id)?.session;
+    if (session?.running) return session.retryNow();
+    if (!(await this.lockHeldElsewhere(book.id))) return false;
+    return (await this.relay(book.id, { type: "retry-now" })) === true;
+  }
+
+  /**
+   * Change where the book is published, whether the run pauses after every chapter, what to do with a changed frozen chapter and «Retry later»,
+   * also while the run goes on: it takes hold from the next step, or the next chapter (`longRetry` when a step has failed; `null` turns it off, and
+   * stops a run that waits for it). A book run by the server needs a server that has the quick controls, and «Retry later» one that has it too; one
+   * run by another tab of this browser is changed through that tab, which says it to the others.
    */
   updateOptions(bookId: string, options: AutopilotLiveOptions): Promise<void> {
     return this.operations.run(bookId, "configure", async () => {
@@ -646,6 +679,7 @@ export class BrowserAutopilotRuntime {
         if (!serverHasQuickControls(info)) throw new AutopilotControlsUnsupportedError();
         // A server that predates the frozen chapters refuses the whole request for a key it does not know.
         if (options.frozenEdits !== undefined && !serverHasFrozenChapters(info)) throw new AutopilotFrozenUnsupportedError();
+        if (options.longRetry !== undefined && !serverHasRetry(info)) throw new AutopilotRetryUnsupportedError();
         this.applySnapshot(bookId, await client.updateOptions(book.id, options));
         return;
       }
@@ -670,7 +704,7 @@ export class BrowserAutopilotRuntime {
       if (bookStorageMode(book) !== "github") throw new Error(i18n.t("autopilot.errors.notGitHub"));
       if (autopilotHostOf(book) === "server") {
         const { client } = await this.requireServer();
-        await client.syncGitHub(book.id);
+        await this.publishToGithub(book, client);
         return this.syncNow(bookId, { push: true, throwOnError: true });
       }
       const token = resolveGitHubRemoteToken(book, settings());
@@ -715,7 +749,10 @@ export class BrowserAutopilotRuntime {
     return this.operations.run(bookId, "configure", async () => {
       const book = findBook(bookId);
       if (autopilotHostOf(book) === "server") {
-        useAutopilotStore.getState().patchView(bookId, { snapshot: await (await this.requireServer()).client.configureAutopilot(book.id, options) });
+        const { client, info } = await this.requireServer();
+        // «Retry later» goes only to a server that has it (the engine's client would refuse it, in its own words).
+        if (options.options?.longRetry !== undefined && !serverHasRetry(info)) throw new AutopilotRetryUnsupportedError();
+        useAutopilotStore.getState().patchView(bookId, { snapshot: await client.configureAutopilot(book.id, options) });
         return;
       }
       await this.localSession(book, resolveBookBranch(book)).configure(options);
@@ -825,7 +862,7 @@ export class BrowserAutopilotRuntime {
 
   /** What the server wrote (a chapter frozen again, a record taken away) comes back to this browser: a GitHub book through GitHub. */
   private async bringFromServer(book: BookEntry, client: NarrariumServerClient): Promise<void> {
-    if (bookStorageMode(book) === "github") await client.syncGitHub(book.id);
+    if (bookStorageMode(book) === "github") await this.publishToGithub(book, client);
     await this.syncNow(book.id);
   }
 
@@ -888,18 +925,18 @@ export class BrowserAutopilotRuntime {
     return this.connect({ connection });
   }
 
-  /** Send a command to the tab that runs the book's autopilot. */
-  private relay(bookId: string, command: RelayedCommand): Promise<void> {
+  /** Send a command to the tab that runs the book's autopilot: what it answers comes back (whether «Retry now» skipped a wait), or why it failed. */
+  private relay(bookId: string, command: RelayedCommand): Promise<unknown> {
     const channel = this.channel();
     if (!channel) return Promise.reject(new AutopilotSetupError("other-tab"));
     const id = crypto.randomUUID();
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<unknown>((resolve, reject) => {
       const onMessage = (message: MessageEvent<AutopilotChannelMessage>) => {
         const data = message.data;
         if (data?.kind !== "command-result" || data.id !== id) return;
         window.clearTimeout(timer);
         channel.removeEventListener("message", onMessage as EventListener);
-        if (data.ok) resolve();
+        if (data.ok) resolve(data.result);
         else reject(new Error(data.error || i18n.t("autopilot.errors.action")));
       };
       const timer = window.setTimeout(() => {
@@ -915,13 +952,15 @@ export class BrowserAutopilotRuntime {
     const session = this.sessions.get(bookId)?.session;
     if (!session?.running) return;
     try {
+      let result: boolean | undefined;
       if (command.type === "pause") session.pause(command.mode);
       else if (command.type === "cancel-pause") session.cancelPause();
+      else if (command.type === "retry-now") result = session.retryNow();
       else if (command.type === "update-options") await session.updateOptions(command.options);
       else if (command.type === "resolve-frozen") await session.resolveFrozenChange(command.number, command.action, command.options);
       else if (command.type === "set-frozen") await (command.frozen ? session.freezeChapter(command.slug) : session.unfreezeChapter(command.slug));
       else await session.intervene(command.input);
-      this.post({ kind: "command-result", id, ok: true });
+      this.post({ kind: "command-result", id, ok: true, ...(result === undefined ? {} : { result }) });
     } catch (error) {
       this.post({ kind: "command-result", id, ok: false, error: describeAutopilotError(error) });
     }
@@ -998,7 +1037,7 @@ export class BrowserAutopilotRuntime {
     if (bookStorageMode(book) === "github") {
       // The server publishes what it wrote to GitHub, where this browser pulls it from.
       try {
-        await client.syncGitHub(book.id);
+        await this.publishToGithub(book, client);
       } catch (error) {
         throw new AutopilotMoveBackError("server-publish", describeAutopilotError(error));
       }
@@ -1021,6 +1060,41 @@ export class BrowserAutopilotRuntime {
   resolveSyncConflicts(bookId: string, choices: Record<string, "local" | "remote">): Promise<SyncOutcome> {
     const chosen = new Map(Object.entries(choices));
     return this.operations.run(bookId, "sync", () => this.syncNow(bookId, { throwOnError: true, resolve: (path) => chosen.get(path) ?? "skip", message: "Settle conflicts from Narrarium" }));
+  }
+
+  /**
+   * One page of the files that changed both on the server and on GitHub: the server's own list (`GET …/github-conflicts`), made after a fetch and a merge that writes nothing.
+   * Looking changes nothing, so it does not hold the book. A server that does not announce the feature is refused before anything is sent.
+   */
+  async githubConflicts(bookId: string, page: { offset?: number; limit?: number } = {}): Promise<GithubConflictsResponse> {
+    const { client, info } = await this.requireServer();
+    assertGithubConflicts(info);
+    return client.listGithubConflicts(findBook(bookId).id, page);
+  }
+
+  /**
+   * Resolve them with the version the author chose of each file (`POST …/github-conflicts/resolve`): the server makes one merge commit and, when the book is published, pushes it.
+   * One operation of the book, so that nothing else is started on it meanwhile. The run is not started again: the author resumes it. The summary of the book on the server is
+   * read again, so that the notice of the conflicts goes away at once.
+   */
+  resolveGithubConflicts(bookId: string, request: ResolveGithubConflictsRequest): Promise<ResolveGithubConflictsResponse> {
+    return this.operations.run(bookId, "githubConflicts", async () => {
+      const { client, info } = await this.requireServer();
+      assertGithubConflicts(info);
+      const answer = await client.resolveGithubConflicts(findBook(bookId).id, request);
+      await client.listBooks().then((books) => this.applyServerBooks(books)).catch(() => undefined);
+      return answer;
+    });
+  }
+
+  /** Ask the server to pull and push the book now. A conflict with GitHub that it answers is kept in the summary of the book (`lastSync`), where «Where it runs» reads it. */
+  private async publishToGithub(book: BookEntry, client: NarrariumServerClient): Promise<void> {
+    try {
+      await client.syncGitHub(book.id);
+    } catch (error) {
+      noteGithubConflict(book.id, error);
+      throw error;
+    }
   }
 
   /** A sync nobody asked for (after a step of the server): it gives way, doing nothing, to whatever else holds the book. */
@@ -1099,7 +1173,10 @@ export class BrowserAutopilotRuntime {
       if (!request.push) return syncOutcome("local-changes");
       const published = await syncFullRepository(target);
       const { client } = await this.requireServer();
-      await client.syncGitHub(book.id).catch(() => undefined);
+      // Asking the server to pull what was published is best effort, except for a conflict with GitHub: the server cannot bring the two together, and the author is told.
+      await this.publishToGithub(book, client).catch((error: unknown) => {
+        if (isGithubConflict(error)) throw error;
+      });
       return syncOutcome("published", { uploaded: published.committed ?? 0, downloaded: published.pulled ?? 0 });
     }
     const pulled = await pullRemoteChanges({ ...target, mode: "safe" });

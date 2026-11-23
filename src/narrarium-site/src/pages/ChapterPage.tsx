@@ -530,7 +530,7 @@ export function ChapterPage() {
             onDrop={(e) => handleDrop(e, i)}
             onDragEnd={handleDragEnd}
             className={[
-              "flex items-center gap-2 rounded-lg border bg-card px-3 py-2.5 text-sm transition-colors",
+              "flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2.5 text-sm transition-colors",
               draggingIdx === i ? "opacity-40" : "",
               overIdx === i && draggingIdx !== i
                 ? "border-primary bg-accent"
@@ -542,8 +542,8 @@ export function ChapterPage() {
             {/* Drag handle */}
             <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-muted-foreground" />
             <div className="flex shrink-0 flex-col">
-              <Button type="button" variant="ghost" size="icon" className="h-5 w-5" disabled={i === 0} onClick={() => requestKeyboardMove(i, -1)} aria-label={t("chapter.moveParagraphUp", { title: p.title })}><ChevronUp className="h-3 w-3" /></Button>
-              <Button type="button" variant="ghost" size="icon" className="h-5 w-5" disabled={i === localParagraphs.length - 1} onClick={() => requestKeyboardMove(i, 1)} aria-label={t("chapter.moveParagraphDown", { title: p.title })}><ChevronDown className="h-3 w-3" /></Button>
+              <Button type="button" variant="ghost" size="icon" className="h-6 w-6 [@media(pointer:coarse)]:h-8 [@media(pointer:coarse)]:w-8" disabled={i === 0} onClick={() => requestKeyboardMove(i, -1)} aria-label={t("chapter.moveParagraphUp", { title: p.title })}><ChevronUp className="h-3 w-3" /></Button>
+              <Button type="button" variant="ghost" size="icon" className="h-6 w-6 [@media(pointer:coarse)]:h-8 [@media(pointer:coarse)]:w-8" disabled={i === localParagraphs.length - 1} onClick={() => requestKeyboardMove(i, 1)} aria-label={t("chapter.moveParagraphDown", { title: p.title })}><ChevronDown className="h-3 w-3" /></Button>
             </div>
 
             {/* Number badge */}
@@ -554,7 +554,7 @@ export function ChapterPage() {
             {/* Title — clickable, takes full remaining width */}
             <Link
               to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}`}
-              className="flex-1 font-medium hover:underline truncate"
+              className="min-w-[6rem] flex-1 truncate py-2 font-medium hover:underline [@media(pointer:coarse)]:py-3"
               onClick={(e) => {
                 // Don't navigate while dragging
                 if (draggingIdx !== null) e.preventDefault();
@@ -563,7 +563,7 @@ export function ChapterPage() {
               {p.title}
             </Link>
 
-            <div className="flex items-center gap-1">
+            <div className="ml-auto flex items-center gap-1">
               <ParagraphActionChip
                 to={`/app/books/${bookId}/chapters/${chapterId}/paragraphs/${p.number}/workspace/draft`}
                 label={t("chapter.draft")}
@@ -587,7 +587,7 @@ export function ChapterPage() {
               />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={t("assistant.quickActions")}>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9" aria-label={t("assistant.quickActions")}>
                     <MoreHorizontal className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -618,16 +618,16 @@ export function ChapterPage() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            </div>
 
-            {/* Delete */}
-            <button
-              onClick={() => void requestDelete(p)}
-              className="ml-1 shrink-0 rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-              aria-label={t("chapter.deleteParagraphAria", { number: p.number })}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+              {/* Delete: with the menu, so that the two go to the second line together when the row wraps */}
+              <button
+                onClick={() => void requestDelete(p)}
+                className="ml-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9"
+                aria-label={t("chapter.deleteParagraphAria", { number: p.number })}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
         ))}
 

@@ -23,10 +23,12 @@ const PHASE_KEYS: Record<Exclude<HandoverPlan["phase"], "armed" | "running-there
  */
 export function StatusChips({ model }: { model: QuickModel }) {
   const { t } = useTranslation();
-  const { commands, named, pausePending, limits, handover, pausing } = model;
+  const { commands, named, pausePending, limits, handover, pausing, retried } = model;
   const running = model.control.running;
   return (
-    <div role="status" aria-live="polite" aria-atomic="false" className="flex flex-wrap gap-1.5 empty:hidden">
+    // Empty, it is only hidden from the eye: a live region must be in the page before what it says, or it may not be read out.
+    <div role="status" aria-live="polite" aria-atomic="false" className="flex flex-wrap gap-1.5 empty:sr-only">
+      {retried && <Chip tone="ok" icon={<Check className="h-3.5 w-3.5" />}>{t(retried.skipped ? "autopilot.retry.outcome.skipped" : "autopilot.retry.outcome.over")}</Chip>}
       {running && pausePending && !(pausePending === "after-step" && handover?.phase === "armed") && (
         <Chip
           icon={<Hourglass className="h-3.5 w-3.5" />}

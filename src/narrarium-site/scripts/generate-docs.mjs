@@ -5,9 +5,19 @@ import fg from "fast-glob";
 
 const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const siteRoot = fileURLToPath(new URL("..", import.meta.url));
-const outputPath = path.join(siteRoot, "src", "lib", "generated-docs.ts");
-const publicMetaOutputPath = path.join(siteRoot, "src", "lib", "generated-public-meta.ts");
-const publicRoutesOutputPath = path.join(siteRoot, "src", "lib", "public-doc-routes.json");
+/** Where the index lives: the imports of the texts are written relative to it, wherever the files are written. */
+const libRoot = path.join(siteRoot, "src", "lib");
+/** `NARRARIUM_DOCS_OUT` writes the files somewhere else, as they would be in `src/lib` (the tests compare a fresh run with what is committed). */
+const outputRoot = process.env.NARRARIUM_DOCS_OUT ? path.resolve(process.env.NARRARIUM_DOCS_OUT) : libRoot;
+const outputPath = path.join(outputRoot, "generated-docs.ts");
+const publicMetaOutputPath = path.join(outputRoot, "generated-public-meta.ts");
+/** The tools of a book's MCP, in a module of their own: only the public /mcp page loads it, so the index of the documents stays light. */
+const bookToolsOutputPath = path.join(outputRoot, "generated-mcp-book-tools.ts");
+/** The list the personal server writes (`npm run docs:tools -w narrarium-server`) from the tools its MCP endpoint really lists. */
+const bookToolsSourcePath = path.join(workspaceRoot, "packages", "server", "mcp-tools.json");
+const publicRoutesOutputPath = path.join(outputRoot, "public-doc-routes.json");
+/** The texts of the guides of the app (`<slug>.<lang>.md`), from the root of the repository: their titles and summaries are in `src/lib/appDocs.ts`. */
+const guidesRoot = "src/narrarium-site/src/content/guides";
 
 const groupLabels = {
   guides: "Guides",
@@ -17,11 +27,12 @@ const groupLabels = {
 };
 
 async function main() {
-  const [referenceDocs, packageReadmes, guideDocs, appDocsSource] = await Promise.all([
+  const [referenceDocs, packageReadmes, guideDocs, appDocsSource, appGuides] = await Promise.all([
     fg("docs/**/*.md", { cwd: workspaceRoot, onlyFiles: true, ignore: ["docs/guide-*.md"] }),
     fg("packages/*/README.md", { cwd: workspaceRoot, onlyFiles: true }),
     fg("docs/guide-*.md", { cwd: workspaceRoot, onlyFiles: true }),
     readFile(path.join(siteRoot, "src", "lib", "appDocs.ts"), "utf8"),
+    fg(`${guidesRoot}/*.md`, { cwd: workspaceRoot, onlyFiles: true }),
   ]);
 
   // Group localized guides by base slug (guide-x.it.md / guide-x.en.md → guide-x)
@@ -81,7 +92,6 @@ async function main() {
     return {
       title: extractTitle(markdown) ?? fallbackTitle,
       summary: extractSummary(markdown),
-      markdown,
       sourcePath: relPath,
     };
   }
@@ -109,7 +119,6 @@ async function main() {
         groupLabel: groupLabels[source.group],
         sourcePath: primary.sourcePath,
         summary: primary.summary,
-        markdown: primary.markdown,
         translations,
         order: source.order,
       };
@@ -117,36 +126,22 @@ async function main() {
   );
 
   const mcpTools = await loadToolEntries();
-  // A page's Markdown is usually also its English translation: emit each text once, as a constant
-  // referenced from both places, so the docs bundle does not carry every page twice.
-  const markdownTexts = [];
-  const markdownIndex = new Map();
-  const markdownRef = (text) => {
-    let index = markdownIndex.get(text);
-    if (index === undefined) {
-      index = markdownTexts.length;
-      markdownTexts.push(text);
-      markdownIndex.set(text, index);
-    }
-    return `__DOC_MARKDOWN_${index}__`;
-  };
-  const sortedEntries = docs
-    .sort((left, right) => left.order - right.order)
-    .map(({ order: _order, ...entry }) => ({
-      ...entry,
-      markdown: markdownRef(entry.markdown),
-      translations: Object.fromEntries(Object.entries(entry.translations ?? {}).map(([lang, translation]) => [lang, { ...translation, markdown: markdownRef(translation.markdown) }])),
-    }));
-  const entriesSource = JSON.stringify(sortedEntries, null, 2).replace(/"__DOC_MARKDOWN_(\d+)__"/g, (_match, index) => `markdown${index}`);
-  const markdownSource = markdownTexts.map((text, index) => `const markdown${index} = ${JSON.stringify(text)};\n`).join("");
+  const mcpBookTools = await loadBookTools();
+  const sortedEntries = docs.sort((left, right) => left.order - right.order).map(({ order: _order, ...entry }) => entry);
+  // One loader for each text, by its source file: a document written once serves both languages with one chunk. Sorted, one line each, so that a
+  // document added or removed on another branch is one line to merge.
+  const texts = [...new Set([...sortedEntries.flatMap((entry) => Object.values(entry.translations).map((translation) => translation.sourcePath)), ...appGuides])].sort();
+  const loaders = texts
+    .map((sourcePath) => `  ${JSON.stringify(sourcePath)}: () => import(${JSON.stringify(`${path.relative(libRoot, path.join(workspaceRoot, sourcePath)).split(path.sep).join("/")}?raw`)}),\n`)
+    .join("");
   const payload = `/* eslint-disable */\n` +
     `// This file is generated by scripts/generate-docs.mjs. Do not edit it manually.\n\n` +
     `export type DocGroup = "guides" | "overview" | "reference" | "packages";\n\n` +
     `export type DocLang = "it" | "en";\n\n` +
+    `/** A document in one language: its title, its summary and the file its text comes from (loaded when the document is opened: see \`loadDocMarkdown\`). */\n` +
     `export type DocTranslation = {\n` +
     `  title: string;\n` +
     `  summary: string;\n` +
-    `  markdown: string;\n` +
     `  sourcePath: string;\n` +
     `};\n\n` +
     `export type DocEntry = {\n` +
@@ -157,7 +152,6 @@ async function main() {
     `  groupLabel: string;\n` +
     `  sourcePath: string;\n` +
     `  summary: string;\n` +
-    `  markdown: string;\n` +
     `  translations: Partial<Record<DocLang, DocTranslation>>;\n` +
     `};\n\n` +
     `export type ToolEntry = {\n` +
@@ -166,16 +160,74 @@ async function main() {
     `  surface: "local" | "public";\n` +
     `  category: string;\n` +
     `};\n\n` +
-    markdownSource +
-    `\nexport const docEntries: DocEntry[] = ${entriesSource};\n\n` +
+    `/** The documents of the repository: titles and summaries only. The guides of the app are in \`appDocs.ts\`. */\n` +
+    `export const docEntries: DocEntry[] = ${JSON.stringify(sortedEntries, null, 2)};\n\n` +
+    `/**\n` +
+    ` * The text of every document and guide, by its source file from the root of the repository: a chunk each, imported only when a page shows it\n` +
+    ` * (and precached with the docs route by scripts/generate-precache.mjs). Nothing else imports these files: see test/docsLazyImports.test.mjs.\n` +
+    ` */\n` +
+    `export const docMarkdown: Record<string, () => Promise<{ default: string }>> = {\n${loaders}};\n\n` +
     `export const mcpTools: ToolEntry[] = ${JSON.stringify(mcpTools, null, 2)};\n`;
 
-  await mkdir(path.dirname(outputPath), { recursive: true });
+  await mkdir(outputRoot, { recursive: true });
   await writeFile(outputPath, payload, "utf8");
+  await writeFile(bookToolsOutputPath, renderBookTools(mcpBookTools), "utf8");
   await writeFile(publicMetaOutputPath, `// This file is generated by scripts/generate-docs.mjs. Do not edit it manually.\nexport const PUBLIC_MCP_TOOL_COUNTS = ${JSON.stringify({ local: mcpTools.filter((tool) => tool.surface === "local").length, public: mcpTools.filter((tool) => tool.surface === "public").length })} as const;\n`, "utf8");
   const curatedSlugs = [...appDocsSource.matchAll(/entry\("([^"]+)"/g)].map((match) => match[1]);
   const generatedSlugs = docs.map((doc) => doc.slug);
   await writeFile(publicRoutesOutputPath, `${JSON.stringify([...new Set([...curatedSlugs, ...generatedSlugs])], null, 2)}\n`, "utf8");
+}
+
+const BOOK_TOOL_PERMISSIONS = ["read", "write", "run"];
+const regenerateTools = "run `npm run docs:tools -w narrarium-server`";
+
+/** The tools of a book's MCP, as the server wrote them, checked and rebuilt in one fixed shape (a list that is not what the page expects stops the build with the reason). */
+async function loadBookTools() {
+  const text = await readFile(bookToolsSourcePath, "utf8").catch(() => {
+    throw new Error(`packages/server/mcp-tools.json cannot be read: ${regenerateTools}.`);
+  });
+  const list = JSON.parse(text);
+  if (!Array.isArray(list?.tools) || list.tools.length === 0) throw new Error(`packages/server/mcp-tools.json has no tools: ${regenerateTools}.`);
+  const names = new Set();
+  return list.tools.map((tool) => {
+    const fail = (reason) => {
+      throw new Error(`packages/server/mcp-tools.json, ${tool?.name ?? "a tool"}: ${reason}. ${regenerateTools}.`);
+    };
+    if (typeof tool?.name !== "string" || !tool.name) fail("a tool without a name");
+    if (names.has(tool.name)) fail("the tool is listed twice");
+    names.add(tool.name);
+    if (!BOOK_TOOL_PERMISSIONS.includes(tool.permission)) fail(`${JSON.stringify(tool.permission)} is not a permission (${BOOK_TOOL_PERMISSIONS.join(", ")})`);
+    for (const field of ["title", "description"]) if (typeof tool[field] !== "string" || !tool[field].trim()) fail(`no ${field}`);
+    for (const hint of ["readOnlyHint", "destructiveHint", "idempotentHint"]) if (typeof tool.annotations?.[hint] !== "boolean") fail(`${hint} is not true or false`);
+    if (!Array.isArray(tool.parameters) || tool.parameters.some((parameter) => typeof parameter?.name !== "string" || typeof parameter.required !== "boolean")) fail("the parameters are not a list of names with true or false for required");
+    return {
+      name: tool.name,
+      permission: tool.permission,
+      title: tool.title,
+      description: tool.description,
+      annotations: { readOnlyHint: tool.annotations.readOnlyHint, destructiveHint: tool.annotations.destructiveHint, idempotentHint: tool.annotations.idempotentHint },
+      parameters: tool.parameters.map((parameter) => ({ name: parameter.name, required: parameter.required })),
+    };
+  });
+}
+
+function renderBookTools(tools) {
+  return `/* eslint-disable */\n` +
+    `// This file is generated by scripts/generate-docs.mjs from packages/server/mcp-tools.json. Do not edit it manually.\n\n` +
+    `export type BookToolPermission = ${BOOK_TOOL_PERMISSIONS.map((permission) => JSON.stringify(permission)).join(" | ")};\n\n` +
+    `export type BookToolEntry = {\n` +
+    `  name: string;\n` +
+    `  permission: BookToolPermission;\n` +
+    `  title: string;\n` +
+    `  description: string;\n` +
+    `  annotations: { readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean };\n` +
+    `  parameters: Array<{ name: string; required: boolean }>;\n` +
+    `};\n\n` +
+    `/**\n` +
+    ` * The tools of a book's MCP on a personal server, in the order its endpoint lists them. The server writes the list (\`npm run docs:tools -w narrarium-server\`)\n` +
+    ` * and its tests keep it true. Only the public /mcp page imports this module: see test/mcpBookTools.test.mjs.\n` +
+    ` */\n` +
+    `export const mcpBookTools: BookToolEntry[] = ${JSON.stringify(tools, null, 2)};\n`;
 }
 
 async function loadToolEntries() {

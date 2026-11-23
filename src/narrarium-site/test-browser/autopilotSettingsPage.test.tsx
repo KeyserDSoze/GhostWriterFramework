@@ -110,7 +110,7 @@ describe("the configuration of the autopilot", () => {
     expect(screen.getByRole("link", { name: t("nav.autopilotLive") })).toHaveAttribute("href", `${ROOT}/autopilot`);
   });
 
-  it("has its sections, each with its title, in order: the book, the review, publishing, the rules, the profiles, the danger zone", () => {
+  it("has its sections, each with its title, in order: the book, the review, retries, what to expect, publishing, the rules, the profiles, the danger zone", () => {
     mocks.book = GITHUB_BOOK;
     seedRun({ book: GITHUB_BOOK, status: "paused" });
     render(<Page />);
@@ -118,6 +118,8 @@ describe("the configuration of the autopilot", () => {
     expect(titles).toEqual([
       t("autopilot.config.sections.book"),
       t("autopilot.config.sections.review"),
+      t("autopilot.config.sections.retry"),
+      t("autopilot.estimate.title"),
       t("autopilot.config.sections.publish"),
       t("autopilot.config.sections.rules"),
       t("autopilot.config.sections.profiles"),
@@ -456,7 +458,7 @@ describe("the configuration of the autopilot", () => {
     seedRun({ book: GITHUB_BOOK, status: "paused" });
     render(<Page />);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Configurazione dell'autopilot");
-    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent?.trim())).toEqual(["Il libro", "Revisione", "Pubblicazione", "Regole permanenti", "Profili usati", "Zona pericolosa"]);
+    expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent?.trim())).toEqual(["Il libro", "Revisione", "Nuovi tentativi", "Cosa aspettarsi da questa corsa", "Pubblicazione", "Regole permanenti", "Profili usati", "Zona pericolosa"]);
     expect(screen.getByRole("link", { name: "In diretta" })).toBeInTheDocument();
   });
 });

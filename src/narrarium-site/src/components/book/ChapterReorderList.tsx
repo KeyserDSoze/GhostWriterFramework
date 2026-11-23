@@ -123,8 +123,8 @@ export function ChapterReorderList({
           >
             <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-muted-foreground" />
             <div className="flex shrink-0 flex-col">
-              <Button type="button" variant="ghost" size="icon" className="h-5 w-5" disabled={i === 0} onClick={() => requestKeyboardMove(i, -1)} aria-label={t("bookPage.moveChapterUp", { title: ch.title })}><ChevronUp className="h-3 w-3" /></Button>
-              <Button type="button" variant="ghost" size="icon" className="h-5 w-5" disabled={i === localChapters.length - 1} onClick={() => requestKeyboardMove(i, 1)} aria-label={t("bookPage.moveChapterDown", { title: ch.title })}><ChevronDown className="h-3 w-3" /></Button>
+              <Button type="button" variant="ghost" size="icon" className="h-6 w-6 [@media(pointer:coarse)]:h-8 [@media(pointer:coarse)]:w-8" disabled={i === 0} onClick={() => requestKeyboardMove(i, -1)} aria-label={t("bookPage.moveChapterUp", { title: ch.title })}><ChevronUp className="h-3 w-3" /></Button>
+              <Button type="button" variant="ghost" size="icon" className="h-6 w-6 [@media(pointer:coarse)]:h-8 [@media(pointer:coarse)]:w-8" disabled={i === localChapters.length - 1} onClick={() => requestKeyboardMove(i, 1)} aria-label={t("bookPage.moveChapterDown", { title: ch.title })}><ChevronDown className="h-3 w-3" /></Button>
             </div>
             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
             <Link

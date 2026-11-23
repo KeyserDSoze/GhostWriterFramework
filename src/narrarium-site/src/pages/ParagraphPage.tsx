@@ -287,8 +287,11 @@ export function ParagraphPage() {
     setLoading(true);
 
     const controller = new AbortController();
+    let settled = false;
     readFileWithSha(token, book.owner, book.repo, branch, paragraph.path, controller.signal)
       .then(({ content: text, sha: fileSha }) => {
+        if (controller.signal.aborted) return;
+        settled = true;
         const { entries: e, body: b } = parseFrontmatter(text);
         setEntries(e);
         setBody(b);
@@ -298,16 +301,22 @@ export function ParagraphPage() {
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
+        settled = true;
         loadedTargetRef.current = null;
         toast({ title: t("paragraph.loadFailed"), description: String(err), variant: "destructive" });
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      // A load cancelled before it ended (the structure of the book came again while the scene was read) is done again by the next run.
+      if (!settled && loadedTargetRef.current === targetKey) loadedTargetRef.current = null;
+    };
   }, [paragraph, book, token, branch, toast, t]);
 
   useEffect(() => {
     const navigationState = location.state as { auditTextOffset?: number; auditExcerpt?: string } | null;
-    if (!navigationState || loading || !paragraph) return;
+    // Only a link from the audit carries an excerpt to jump to; other state of the history (the step of the menu on a phone) is not one.
+    if (!navigationState || (typeof navigationState.auditTextOffset !== "number" && typeof navigationState.auditExcerpt !== "string") || loading || !paragraph) return;
     const operationKey = `${location.key}:${paragraph.path}:${navigationState.auditTextOffset ?? ""}:${navigationState.auditExcerpt ?? ""}`;
     if (auditNavigationHandledRef.current === operationKey) return;
     auditNavigationHandledRef.current = operationKey;
@@ -634,7 +643,7 @@ export function ParagraphPage() {
             <span className="truncate">{chapter.title}</span>
           </Link>
         </Button>
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
           <Badge variant="outline" className="max-w-[42vw] truncate font-mono text-xs sm:max-w-none">
             {branch}
           </Badge>
@@ -675,7 +684,7 @@ export function ParagraphPage() {
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="icon" variant="outline" className="h-9 w-9 sm:hidden" aria-label={t("assistant.quickActions")}>
+              <Button size="icon" variant="outline" className="h-9 w-9 shrink-0 sm:hidden [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" aria-label={t("assistant.quickActions")}>
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -750,7 +759,7 @@ export function ParagraphPage() {
 
             {/* Other editable fields */}
             {editableEntries.map((e) => (
-              <div key={e.key} className="flex items-center gap-3">
+              <div key={e.key} className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="w-28 shrink-0 break-all font-mono text-xs">{e.key}</span>
                 <Input
                   value={
@@ -766,11 +775,11 @@ export function ParagraphPage() {
                         : raw,
                     );
                   }}
-                  className="h-7 flex-1 text-xs font-mono"
+                  className="h-7 min-w-[8rem] flex-1 text-xs font-mono"
                 />
                 <button
                   onClick={() => removeEntry(e.key)}
-                  className="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11"
                   aria-label={t("canon.removeAria", { key: e.key })}
                 >
                   <X className="h-3 w-3" />
@@ -813,7 +822,7 @@ export function ParagraphPage() {
             ) : (
               <button
                 onClick={() => setShowAddMeta(true)}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                className="flex min-h-8 w-fit items-center gap-1 rounded text-xs text-muted-foreground transition-colors hover:text-foreground [@media(pointer:coarse)]:min-h-11"
               >
                 <Plus className="h-3 w-3" />
                 {t("common.addField")}

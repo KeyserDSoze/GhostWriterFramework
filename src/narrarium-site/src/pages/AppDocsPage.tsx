@@ -1,7 +1,9 @@
+import { useRef } from "react";
 import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { DocsIndexContent } from "@/pages/public/PublicDocs";
-import { getDocBySlug, localizedDoc, normalizeDocLang, withGeneratedDocs } from "@/lib/docs";
+import { DocContent, useDocumentPage } from "@/components/docs/DocContent";
+import { getDocBySlug, localizedDoc, normalizeDocLang, withGeneratedDocs, type DocEntry } from "@/lib/docs";
 import { docEntries } from "@/lib/generated-docs";
 import { renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
 
@@ -22,18 +24,26 @@ export function AppDocsIndexPage() {
 
 export function AppDocPage() {
   const slug = useParams().docSlug;
-  const { i18n, t } = useTranslation();
+  const { t } = useTranslation();
   const doc = getDocBySlug(slug, docs);
   if (!doc) return <div className="rounded-2xl border border-dashed p-6 text-sm text-muted-foreground">{t("public.notFoundText")}</div>;
-  const localized = localizedDoc(doc, normalizeDocLang(i18n.language));
+  return <AppDocArticle doc={doc} />;
+}
+
+function AppDocArticle({ doc }: { doc: DocEntry }) {
+  const { i18n, t } = useTranslation();
+  const lang = normalizeDocLang(i18n.language);
+  const localized = localizedDoc(doc, lang);
+  const title = useRef<HTMLHeadingElement>(null);
+  useDocumentPage(doc.slug, localized.title, title);
   return (
     <article className="mx-auto w-full max-w-4xl rounded-3xl border border-layer bg-card p-5 shadow-sm sm:p-8">
       <div className="mb-8 border-b pb-6">
         <p className="text-xs uppercase tracking-[0.2em] text-primary">{t("docsPage.documentation")}</p>
-        <h1 className="mt-3 font-serif text-3xl font-semibold sm:text-4xl">{localized.title}</h1>
+        <h1 ref={title} tabIndex={-1} className="mt-3 font-serif text-3xl font-semibold outline-none sm:text-4xl">{localized.title}</h1>
         <p className="mt-3 text-muted-foreground">{localized.summary}</p>
       </div>
-      <div className="doc-prose max-w-none" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(localized.markdown) }} />
+      <DocContent entry={doc} lang={lang} render={renderAssistantMarkdownHtml} className="doc-prose max-w-none" />
     </article>
   );
 }

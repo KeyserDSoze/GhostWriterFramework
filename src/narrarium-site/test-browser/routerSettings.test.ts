@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import * as llm from "@/assistant/llm";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_ROUTING_ID,
   CandidateInputBudgetError,
@@ -14,6 +13,10 @@ import {
 import { migrateSettings } from "@/drive/cloudSettingsClient";
 import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings } from "@/types/settings";
 import { setFallbackAcknowledgementAccountScope } from "@/assistant/fallbackDisclosure";
+import { chatDelta } from "@/costs/costsStore";
+import { assertProvidersClean, failReply, hang } from "./helpers/fakeProvider";
+import { chatModel, compatible, PRICE, settingsOf as fixtureSettings, type Fixture } from "./helpers/aiFixtures";
+import { entries, failure, hostsOf, provide, resetStores, speak, speakCall, target as pick } from "./helpers/copilotHarness";
 
 function integration(id: string, models: Array<{ id: string; name: string; capabilities: Array<"default" | "review"> }>): AIIntegration {
   return { id, name: id, provider: "openai", apiKey: "key", chatModels: models };
@@ -88,18 +91,37 @@ describe("task routing settings", () => {
   });
 });
 
+/** A fixture for the routed paths: an OpenAI-compatible integration with the models it serves, and a key and a host of its own. */
+function served(id: string, models: Array<{ name: string; capabilities: Array<"default" | "review">; supportsToolCalls?: boolean; maxInputTokens?: number; maxOutputTokens?: number }>, extra: Partial<Fixture["integration"]> = {}): Fixture {
+  return compatible(id, models.map((model) => chatModel(model.name, { capabilities: model.capabilities, ...(model.supportsToolCalls !== undefined ? { supportsToolCalls: model.supportsToolCalls } : {}), ...(model.maxInputTokens ? { maxInputTokens: model.maxInputTokens } : {}), ...(model.maxOutputTokens ? { maxOutputTokens: model.maxOutputTokens } : {}) })), extra);
+}
+
+function routing(fixtures: Fixture[], tasks: string[], extra: Partial<AppSettings> = {}): AppSettings {
+  const [primary, ...fallbacks] = fixtures;
+  const route = { primary: pick(primary), fallbacks: fallbacks.map((fixture) => pick(fixture)) };
+  return fixtureSettings(fixtures, { taskRouting: Object.fromEntries(tasks.map((task) => [task, route])) as AppSettings["taskRouting"], ...extra });
+}
+
+const MESSAGES = [{ role: "user" as const, content: "score" }];
+const SCORE = { name: "score", description: "score", parameters: {} };
+
 describe("routed tool execution", () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(resetStores);
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    assertProvidersClean();
+  });
 
   it("falls back on invalid structured output and preserves actual usage and cost metadata", async () => {
-    const primary = integration("primary", [{ id: "p", name: "primary", capabilities: ["review"] }]);
-    const fallback = integration("fallback", [{ id: "f", name: "fallback", capabilities: ["review"] }]);
-    const run = vi.spyOn(llm, "completeToolWith")
-      .mockResolvedValueOnce({ output: { score: -1 }, metadata: { requestId: "primary", task: "review", provider: "openai", integrationId: "primary", model: "primary", inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 } })
-      .mockResolvedValueOnce({ output: { score: 8 }, metadata: { requestId: "fallback", task: "review", provider: "openai", integrationId: "fallback", model: "fallback", inputTokens: 12, cachedInputTokens: 2, outputTokens: 4, cost: 0.42, currency: "USD" } });
-    const configured = settings([primary, fallback], { taskRouting: { review: { primary: { integrationId: "primary", model: "primary" }, fallbacks: [{ integrationId: "fallback", model: "fallback" }] } } });
+    const primary = served("primary", [{ name: "primary", capabilities: ["review"] }]);
+    const fallback = served("fallback", [{ name: "fallback", capabilities: ["review"] }]);
+    provide([primary, fallback], (call) => (call.url.includes("primary.example.test")
+      ? speakCall({ score: -1 }, { prompt_tokens: 1, completion_tokens: 1 })(call)
+      : speakCall({ score: 8 }, { prompt_tokens: 12, completion_tokens: 4, prompt_tokens_details: { cached_tokens: 2 } })(call)));
 
-    const result = await completeToolRouted<{ score: number }>(configured, [{ role: "user", content: "score" }], "review", { name: "score", description: "score", parameters: {} }, {
+    const result = await completeToolRouted<{ score: number }>(routing([primary, fallback], ["review"]), MESSAGES, "review", SCORE, {
       accountScope: null,
       validate: (value) => {
         const score = (value as { score?: unknown }).score;
@@ -109,204 +131,200 @@ describe("routed tool execution", () => {
     });
 
     expect(result.output).toEqual({ score: 8 });
-    expect(result.metadata).toMatchObject({ integrationId: "fallback", requestId: "fallback", cost: 0.42, inputTokens: 12, routeCandidateIndex: 1, usedFallback: true });
-    expect(run.mock.calls[0][6]).toMatchObject({ routeCandidateIndex: 0, usedFallback: false });
-    expect(run.mock.calls[1][6]).toMatchObject({ routeCandidateIndex: 1, usedFallback: true });
+    expect(result.metadata).toMatchObject({ integrationId: "fallback", requestId: entries()[0].id, inputTokens: 12, cachedInputTokens: 2, outputTokens: 4, routeCandidateIndex: 1, usedFallback: true, currency: "EUR" });
+    expect(result.metadata.cost).toBeCloseTo(chatDelta({ inputTokens: 12, cachedTokens: 2, outputTokens: 4 }, PRICE).chatCost!, 10);
+    expect(entries().map((entry) => [entry.routeCandidateIndex, entry.usedFallback])).toEqual([[1, true], [0, false]]);
   });
 
   it("falls back when candidate-level text validation rejects malformed structured output", async () => {
-    const primary = integration("primary", [{ id: "p", name: "primary", capabilities: ["default"] }]);
-    const fallback = integration("fallback", [{ id: "f", name: "fallback", capabilities: ["default"] }]);
-    vi.spyOn(llm, "completeText").mockResolvedValueOnce("not json").mockResolvedValueOnce('{"title":"Valid"}');
-    const configured = settings([primary, fallback], { taskRouting: { default: { primary: { integrationId: "primary", model: "primary" }, fallbacks: [{ integrationId: "fallback", model: "fallback" }] } } });
-    await expect(completeTextRouted(configured, [{ role: "user", content: "create" }], "default", { accountScope: null, validateText: (text) => { JSON.parse(text); } })).resolves.toBe('{"title":"Valid"}');
+    const primary = served("primary", [{ name: "primary", capabilities: ["default"] }]);
+    const fallback = served("fallback", [{ name: "fallback", capabilities: ["default"] }]);
+    provide([primary, fallback], (call) => speak(call.url.includes("primary.example.test") ? "not json" : "{\"title\":\"Valid\"}")(call));
+    await expect(completeTextRouted(routing([primary, fallback], ["default"]), [{ role: "user", content: "create" }], "default", { accountScope: null, validateText: (text) => { JSON.parse(text); } })).resolves.toBe("{\"title\":\"Valid\"}");
   });
 
   it("filters forced-tool-incompatible candidates and caps route length", async () => {
-    const integrations = Array.from({ length: 6 }, (_, index) => ({ ...integration(`ai-${index}`, [{ id: `m-${index}`, name: `model-${index}`, capabilities: ["review"] }]), chatModels: [{ id: `m-${index}`, name: `model-${index}`, capabilities: ["review" as const], supportsToolCalls: index !== 0 }] }));
-    const configured = settings(integrations, { routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxCandidates: 3 }, taskRouting: { review: { primary: { integrationId: "ai-0", model: "model-0" }, fallbacks: integrations.slice(1).map((entry, index) => ({ integrationId: entry.id, model: `model-${index + 1}` })) } } });
+    const fixtures = Array.from({ length: 6 }, (_, index) => served(`ai-${index}`, [{ name: `model-${index}`, capabilities: ["review"], supportsToolCalls: index !== 0 }]));
+    const configured = routing(fixtures, ["review"], { routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxCandidates: 3 } });
     expect(resolveTaskCandidates(configured, "review")).toHaveLength(3);
-    const run = vi.spyOn(llm, "completeToolWith").mockResolvedValue({ output: { ok: true }, metadata: { requestId: "ok", task: "review", provider: "openai", integrationId: "ai-1", model: "model-1", inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 } });
+    const fake = provide(fixtures, speakCall({ ok: true }));
+
     await completeToolRouted(configured, [{ role: "user", content: "x" }], "review", { name: "x", description: "x", parameters: {} }, { accountScope: null });
-    expect(run.mock.calls[0][0].id).toBe("ai-1");
+
+    expect(hostsOf(fake)).toEqual(["ai-1"]);
   });
 
   it("falls back on provider AbortError and distinguishes an entirely stale route", async () => {
-    const ai = integration("ai", [{ id: "model", name: "model", capabilities: ["review"] }]);
-    const fallback = integration("fallback", [{ id: "fallback", name: "fallback", capabilities: ["review"] }]);
-    const abort = new DOMException("aborted", "AbortError");
-    const run = vi.spyOn(llm, "completeToolWith").mockRejectedValueOnce(abort).mockResolvedValueOnce({ output: { score: 8 }, metadata: { requestId: "fallback", task: "review", provider: "openai", integrationId: "fallback", model: "fallback", inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 } });
-    const configured = settings([ai, fallback], { taskRouting: { review: { primary: { integrationId: "ai", model: "model" }, fallbacks: [{ integrationId: "fallback", model: "fallback" }] } } });
-    await expect(completeToolRouted(configured, [], "review", { name: "score", description: "score", parameters: {} }, { accountScope: null })).resolves.toMatchObject({ output: { score: 8 } });
-    expect(run).toHaveBeenCalledTimes(2);
+    vi.useFakeTimers();
+    const ai = served("ai", [{ name: "model", capabilities: ["review"] }]);
+    const fallback = served("fallback", [{ name: "fallback", capabilities: ["review"] }]);
+    const fake = provide([ai, fallback], (call) => (call.url.includes("ai.example.test") ? Promise.reject(new DOMException("aborted", "AbortError")) : speakCall({ score: 8 })(call)));
+    const run = completeToolRouted(routing([ai, fallback], ["review"]), [], "review", SCORE, { accountScope: null });
+    const settled = run.then((value) => ({ value }), (error) => ({ error }));
+    // A connection that the provider's side aborted is a passing error: the model is asked three times before the fallback.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await settled).toMatchObject({ value: { output: { score: 8 } } });
+    expect(hostsOf(fake)).toEqual(["ai", "ai", "ai", "fallback"]);
 
-    const stale = settings([ai], { taskRouting: { review: { primary: { integrationId: "ai", model: "removed" }, fallbacks: [] } } });
-    await expect(completeToolRouted(stale, [], "review", { name: "score", description: "score", parameters: {} }, { accountScope: null })).rejects.toBeInstanceOf(StaleRoutingConfigurationError);
+    const stale = fixtureSettings([ai], { taskRouting: { review: { primary: { integrationId: "ai", model: "removed" }, fallbacks: [] } } });
+    await expect(completeToolRouted(stale, [], "review", SCORE, { accountScope: null })).rejects.toBeInstanceOf(StaleRoutingConfigurationError);
   });
 
   it("prepends a selected override while retaining budgeted configured fallback", async () => {
-    const selected = { ...integration("selected", [{ id: "s", name: "selected", capabilities: ["default"] }]), requestTimeoutMs: 5 };
-    selected.chatModels![0].maxInputTokens = 120;
-    selected.chatModels![0].maxOutputTokens = 11;
-    const fallback = integration("fallback", [{ id: "f", name: "fallback", capabilities: ["default"] }]);
-    const run = vi.spyOn(llm, "completeText").mockRejectedValueOnce(new Error("provider failed")).mockResolvedValueOnce("fallback");
-    const configured = settings([selected, fallback], { taskRouting: { default: { primary: { integrationId: "fallback", model: "fallback" }, fallbacks: [] } } });
+    const selected = served("selected", [{ name: "selected", capabilities: ["default"], maxInputTokens: 120, maxOutputTokens: 11 }]);
+    const fallback = served("fallback", [{ name: "fallback", capabilities: ["default"] }]);
+    const fake = provide([selected, fallback], (call) => (call.url.includes("selected.example.test") ? failReply(400, "provider failed") : speak("fallback")(call)));
+    const configured = fixtureSettings([selected, fallback], { taskRouting: { default: { primary: pick(fallback), fallbacks: [] } } });
 
-    await expect(completeTextRouted(configured, [{ role: "user", content: "x".repeat(2_000) }], "default", { accountScope: null, preferred: { integrationId: "selected", model: "selected" } })).resolves.toBe("fallback");
-    expect(run.mock.calls.map((call) => call[0].id)).toEqual(["selected", "fallback"]);
-    expect(JSON.stringify(run.mock.calls[0][1])).toContain("Context truncated");
-    expect(run.mock.calls[0][3]).toMatchObject({ maxOutputTokens: 11, usedFallback: false });
-    expect(run.mock.calls[1][3]).toMatchObject({ usedFallback: true });
+    await expect(completeTextRouted(configured, [{ role: "user", content: "x".repeat(2_000) }], "default", { accountScope: null, preferred: pick(selected) })).resolves.toBe("fallback");
+
+    expect(hostsOf(fake)).toEqual(["selected", "fallback"]);
+    expect(JSON.stringify(fake.calls[0].body.messages)).toContain("Context truncated");
+    expect(fake.calls[0].body.max_tokens).toBe(11);
+    expect(entries().map((entry) => entry.usedFallback)).toEqual([true, false]);
   });
 });
 
 describe("account-scoped routed execution", () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(resetStores);
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    assertProvidersClean();
+  });
 
   it("aborts before fallback when the authenticated account changes between attempts", async () => {
-    const primary = integration("primary", [{ id: "p", name: "primary", capabilities: ["default"] }]);
-    const fallback = integration("fallback", [{ id: "f", name: "fallback", capabilities: ["default"] }]);
-    const configured = settings([primary, fallback], { taskRouting: { default: { primary: { integrationId: "primary", model: "primary" }, fallbacks: [{ integrationId: "fallback", model: "fallback" }] } } });
+    const primary = served("primary", [{ name: "primary", capabilities: ["default"] }]);
+    const fallback = served("fallback", [{ name: "fallback", capabilities: ["default"] }]);
     setFallbackAcknowledgementAccountScope("google:first@example.com");
-    const run = vi.spyOn(llm, "completeText").mockImplementation(async () => {
+    const fake = provide([primary, fallback], (call) => {
       setFallbackAcknowledgementAccountScope("google:second@example.com");
-      throw new Error("primary failed after account switch");
+      return failReply(400, "primary failed after account switch");
     });
 
-    await expect(completeTextRouted(configured, [{ role: "user", content: "request" }], "default", { accountScope: "google:first@example.com" })).rejects.toMatchObject({ name: "AbortError" });
-    expect(run).toHaveBeenCalledOnce();
+    await expect(completeTextRouted(routing([primary, fallback], ["default"]), [{ role: "user", content: "request" }], "default", { accountScope: "google:first@example.com" })).rejects.toMatchObject({ name: "AbortError" });
+    expect(fake.calls).toHaveLength(1);
   });
 });
 
 describe("routed execution limits", () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(resetStores);
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    assertProvidersClean();
+  });
 
   it("uses each candidate's token limits and advances after a provider timeout", async () => {
-    const primary = { ...integration("primary", [{ id: "p", name: "primary", capabilities: ["default"] }]), requestTimeoutMs: 5 };
-    primary.chatModels![0].maxInputTokens = 120;
-    primary.chatModels![0].maxOutputTokens = 17;
-    const fallback = integration("fallback", [{ id: "f", name: "fallback", capabilities: ["default"] }]);
-    fallback.chatModels![0].maxInputTokens = 500;
-    fallback.chatModels![0].maxOutputTokens = 29;
-    const run = vi.spyOn(llm, "completeText")
-      .mockImplementationOnce(async (_integration, _messages, _purpose, options) => {
-        await new Promise((_, reject) => options?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true }));
-        return "unreachable";
-      })
-      .mockResolvedValueOnce("fallback result");
-    const configured = settings([primary, fallback], { taskRouting: { default: { primary: { integrationId: "primary", model: "primary" }, fallbacks: [{ integrationId: "fallback", model: "fallback" }] } } });
+    vi.useFakeTimers();
+    const primary = served("primary", [{ name: "primary", capabilities: ["default"], maxInputTokens: 120, maxOutputTokens: 17 }], { requestTimeoutMs: 30_000 });
+    const fallback = served("fallback", [{ name: "fallback", capabilities: ["default"], maxInputTokens: 500, maxOutputTokens: 29 }]);
+    const fake = provide([primary, fallback], (call) => (call.url.includes("primary.example.test") ? hang(call.signal) : speak("fallback result")(call)));
     const messages = [{ role: "user" as const, content: `Long chapter start\n${"x".repeat(8_000)}\nLong chapter end` }];
+    const run = completeTextRouted(routing([primary, fallback], ["default"]), messages, "default", { accountScope: null });
+    const settled = run.then((value) => ({ value }), (error) => ({ error }));
 
-    await expect(completeTextRouted(configured, messages, "default", { accountScope: null })).resolves.toBe("fallback result");
-    expect(run).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(run.mock.calls[0][1])).toContain("Context truncated");
-    expect(run.mock.calls[0][3]).toMatchObject({ maxOutputTokens: 17, usedFallback: false });
-    expect(run.mock.calls[1][3]).toMatchObject({ maxOutputTokens: 29, usedFallback: true });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await settled).toEqual({ value: "fallback result" });
+
+    expect(hostsOf(fake)).toEqual(["primary", "fallback"]);
+    expect(JSON.stringify(fake.calls[0].body.messages)).toContain("Context truncated");
+    expect(fake.calls[0].body.max_tokens).toBe(17);
+    expect(fake.calls[1].body.max_tokens).toBe(29);
+    expect(entries().map((entry) => entry.usedFallback)).toEqual([true, false]);
   });
 
   it("does not treat user cancellation as a provider timeout", async () => {
     const controller = new AbortController();
-    const ai = integration("ai", [{ id: "m", name: "model", capabilities: ["default"] }]);
-    const run = vi.spyOn(llm, "completeText").mockImplementation(async (_integration, _messages, _purpose, options) => {
+    const ai = served("ai", [{ name: "model", capabilities: ["default"] }]);
+    const fake = provide([ai], (call) => {
       controller.abort(new DOMException("cancelled", "AbortError"));
-      options?.signal?.throwIfAborted();
-      return "unreachable";
+      return hang(call.signal);
     });
 
-    await expect(completeTextRouted(settings([ai]), [{ role: "user", content: "hello" }], "default", { accountScope: null, signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
-    expect(run).toHaveBeenCalledTimes(1);
+    await expect(completeTextRouted(fixtureSettings([ai]), [{ role: "user", content: "hello" }], "default", { accountScope: null, signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect(fake.calls).toHaveLength(1);
+    await vi.waitFor(() => expect(entries()[0]).toMatchObject({ failureKind: "cancelled" }));
   });
 
   it("applies the same timeout fallback semantics to forced-tool execution", async () => {
-    const primary = { ...integration("primary", [{ id: "p", name: "primary", capabilities: ["review"] }]), requestTimeoutMs: 5 };
-    const fallback = integration("fallback", [{ id: "f", name: "fallback", capabilities: ["review"] }]);
-    const run = vi.spyOn(llm, "completeToolWith")
-      .mockImplementationOnce(async (_integration, _model, _pricing, _messages, _capability, _tool, options) => {
-        await new Promise((_, reject) => options?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true }));
-        throw new Error("unreachable");
-      })
-      .mockResolvedValueOnce({ output: { score: 9 }, metadata: { requestId: "fallback", task: "review", provider: "openai", integrationId: "fallback", model: "fallback", inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 } });
-    const configured = settings([primary, fallback], { taskRouting: { review: { primary: { integrationId: "primary", model: "primary" }, fallbacks: [{ integrationId: "fallback", model: "fallback" }] } } });
+    vi.useFakeTimers();
+    const primary = served("primary", [{ name: "primary", capabilities: ["review"] }], { requestTimeoutMs: 30_000 });
+    const fallback = served("fallback", [{ name: "fallback", capabilities: ["review"] }]);
+    provide([primary, fallback], (call) => (call.url.includes("primary.example.test") ? hang(call.signal) : speakCall({ score: 9 })(call)));
+    const settled = completeToolRouted(routing([primary, fallback], ["review"]), [{ role: "user", content: "score" }], "review", SCORE, { accountScope: null }).then((value) => ({ value }), (error) => ({ error }));
 
-    const result = await completeToolRouted(configured, [{ role: "user", content: "score" }], "review", { name: "score", description: "score", parameters: {} }, { accountScope: null });
-    expect(result.metadata).toMatchObject({ integrationId: "fallback", usedFallback: true });
-    expect(run).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const { value } = (await settled) as { value: Awaited<ReturnType<typeof completeToolRouted>> };
+
+    expect(value.metadata).toMatchObject({ integrationId: "fallback", usedFallback: true });
   });
 
   it("bounds confirmation classification candidates too", async () => {
-    const primary = { ...integration("primary", [{ id: "p", name: "primary", capabilities: ["default"] }]), requestTimeoutMs: 5 };
-    const fallback = integration("fallback", [{ id: "f", name: "fallback", capabilities: ["default"] }]);
-    const configured = settings([primary, fallback], { taskRouting: { "simple-tasks": { primary: { integrationId: "primary", model: "primary" }, fallbacks: [{ integrationId: "fallback", model: "fallback" }] } } });
-    const run = vi.spyOn(llm, "classifyConfirmationWith")
-      .mockImplementationOnce(async (_integration, _model, _pricing, _utterance, options) => {
-        await new Promise((_, reject) => options?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true }));
-        return "unclear";
-      })
-      .mockResolvedValueOnce("yes");
+    vi.useFakeTimers();
+    const primary = served("primary", [{ name: "primary", capabilities: ["default"] }], { requestTimeoutMs: 30_000 });
+    const fallback = served("fallback", [{ name: "fallback", capabilities: ["default"] }]);
+    const configured = routing([primary, fallback], ["simple-tasks"]);
+    const fake = provide([primary, fallback], (call) => (call.url.includes("primary.example.test") ? hang(call.signal) : speakCall({ decision: "yes" }, undefined, "confirm")(call)));
+    const settled = classifyConfirmationRouted(configured, "continue?", undefined, null).then((value) => ({ value }), (error) => ({ error }));
 
-    await expect(classifyConfirmationRouted(configured, "continue?", undefined, null)).resolves.toBe("yes");
-    expect(run).toHaveBeenCalledTimes(2);
-    const framed = run.mock.calls[0][3];
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(await settled).toEqual({ value: "yes" });
+    expect(hostsOf(fake)).toEqual(["primary", "fallback"]);
+    const framed = String(fake.calls[0].body.messages[0].content);
     expect(framed.match(/continue\?/g)).toHaveLength(1);
     expect(framed).toContain('<current_request trust="user-instruction">');
   });
 
   it("propagates operation cancellation through confirmation classification", async () => {
     const controller = new AbortController();
-    const ai = integration("ai", [{ id: "m", name: "model", capabilities: ["default"] }]);
-    const run = vi.spyOn(llm, "classifyConfirmationWith").mockImplementation(async (_integration, _model, _pricing, _utterance, options) => {
+    const ai = served("ai", [{ name: "model", capabilities: ["default"] }]);
+    const fake = provide([ai], (call) => {
       controller.abort(new DOMException("operation stopped", "AbortError"));
-      options?.signal?.throwIfAborted();
-      return "unclear";
+      return hang(call.signal);
     });
 
-    await expect(classifyConfirmationRouted(settings([ai]), "perhaps", controller.signal, null)).rejects.toMatchObject({ name: "AbortError" });
-    expect(run).toHaveBeenCalledTimes(1);
+    await expect(classifyConfirmationRouted(fixtureSettings([ai]), "perhaps", controller.signal, null)).rejects.toMatchObject({ name: "AbortError" });
+    expect(fake.calls).toHaveLength(1);
   });
 
   it("skips confirmation candidates whose schema cannot fit and truncates the utterance for fallback", async () => {
-    const primary = integration("primary", [{ id: "p", name: "primary", capabilities: ["default"] }]);
-    primary.chatModels![0].maxInputTokens = 100;
-    const fallback = integration("fallback", [{ id: "f", name: "fallback", capabilities: ["default"] }]);
-    fallback.chatModels![0].maxInputTokens = 1_000;
-    fallback.chatModels![0].maxOutputTokens = 100;
-    const configured = settings([primary, fallback], { taskRouting: { "simple-tasks": { primary: { integrationId: "primary", model: "primary" }, fallbacks: [{ integrationId: "fallback", model: "fallback" }] } } });
-    const run = vi.spyOn(llm, "classifyConfirmationWith").mockResolvedValue("yes");
+    const primary = served("primary", [{ name: "primary", capabilities: ["default"], maxInputTokens: 100 }]);
+    const fallback = served("fallback", [{ name: "fallback", capabilities: ["default"], maxInputTokens: 1_000, maxOutputTokens: 100 }]);
+    const fake = provide([primary, fallback], speakCall({ decision: "yes" }, undefined, "confirm"));
 
-    await expect(classifyConfirmationRouted(configured, `confirm-start ${"private".repeat(1_000)} confirm-end`, undefined, null)).resolves.toBe("yes");
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(run.mock.calls[0][0].id).toBe("fallback");
-    expect(run.mock.calls[0][3]).toContain("Context truncated");
-    expect(run.mock.calls[0][3].length).toBeLessThan(1_000);
+    await expect(classifyConfirmationRouted(routing([primary, fallback], ["simple-tasks"]), `confirm-start ${"private".repeat(1_000)} confirm-end`, undefined, null)).resolves.toBe("yes");
+
+    expect(hostsOf(fake)).toEqual(["fallback"]);
+    const framed = String(fake.calls[0].body.messages[0].content);
+    expect(framed).toContain("Context truncated");
+    expect(framed.length).toBeLessThan(1_000);
   });
 
   it("never dispatches a forced-tool request when the schema alone exhausts every candidate", async () => {
-    const primary = integration("primary", [{ id: "p", name: "primary", capabilities: ["review"] }]);
-    primary.chatModels![0].maxInputTokens = 20;
-    const fallback = integration("fallback", [{ id: "f", name: "fallback", capabilities: ["review"] }]);
-    fallback.chatModels![0].maxInputTokens = 20;
-    const configured = settings([primary, fallback], { taskRouting: { review: { primary: { integrationId: "primary", model: "primary" }, fallbacks: [{ integrationId: "fallback", model: "fallback" }] } } });
-    const run = vi.spyOn(llm, "completeToolWith");
+    const primary = served("primary", [{ name: "primary", capabilities: ["review"], maxInputTokens: 20 }]);
+    const fallback = served("fallback", [{ name: "fallback", capabilities: ["review"], maxInputTokens: 20 }]);
+    const fake = provide([primary, fallback], speakCall({ score: 8 }));
     const sensitivePrompt = "private prompt that must not appear in diagnostics";
 
-    await expect(completeToolRouted(configured, [{ role: "user", content: sensitivePrompt }], "review", { name: "large", description: "x".repeat(100), parameters: {} }, { accountScope: null })).rejects.toSatisfy((error: unknown) => {
-      return error instanceof CandidateInputBudgetError && error.message.includes("budget exhausted") && !error.message.includes(sensitivePrompt);
-    });
-    expect(run).not.toHaveBeenCalled();
+    const error = await failure(completeToolRouted(routing([primary, fallback], ["review"]), [{ role: "user", content: sensitivePrompt }], "review", { name: "large", description: "x".repeat(100), parameters: {} }, { accountScope: null }));
+
+    expect(error).toBeInstanceOf(CandidateInputBudgetError);
+    expect(error.message).toContain("budget exhausted");
+    expect(error.message).not.toContain(sensitivePrompt);
+    expect(fake.calls).toHaveLength(0);
   });
 
   it("skips a schema-overflow forced-tool candidate and dispatches only the fitting fallback", async () => {
-    const primary = integration("primary", [{ id: "p", name: "primary", capabilities: ["review"] }]);
-    primary.chatModels![0].maxInputTokens = 20;
-    const fallback = integration("fallback", [{ id: "f", name: "fallback", capabilities: ["review"] }]);
-    fallback.chatModels![0].maxInputTokens = 1_000;
-    fallback.chatModels![0].maxOutputTokens = 100;
-    const configured = settings([primary, fallback], { taskRouting: { review: { primary: { integrationId: "primary", model: "primary" }, fallbacks: [{ integrationId: "fallback", model: "fallback" }] } } });
-    const run = vi.spyOn(llm, "completeToolWith").mockResolvedValue({ output: { score: 8 }, metadata: { requestId: "fallback", task: "review", provider: "openai", integrationId: "fallback", model: "fallback", inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 } });
+    const primary = served("primary", [{ name: "primary", capabilities: ["review"], maxInputTokens: 20 }]);
+    const fallback = served("fallback", [{ name: "fallback", capabilities: ["review"], maxInputTokens: 1_000, maxOutputTokens: 100 }]);
+    const fake = provide([primary, fallback], speakCall({ score: 8 }));
 
-    await expect(completeToolRouted(configured, [{ role: "user", content: "score this" }], "review", { name: "score", description: "score", parameters: {} }, { accountScope: null })).resolves.toMatchObject({ output: { score: 8 }, metadata: { usedFallback: true } });
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(run.mock.calls[0][0].id).toBe("fallback");
-    expect(run.mock.calls[0][3]).not.toEqual([]);
+    await expect(completeToolRouted(routing([primary, fallback], ["review"]), [{ role: "user", content: "score this" }], "review", SCORE, { accountScope: null })).resolves.toMatchObject({ output: { score: 8 }, metadata: { usedFallback: true } });
+
+    expect(hostsOf(fake)).toEqual(["fallback"]);
+    expect(fake.calls[0].body.messages).not.toEqual([]);
   });
 });

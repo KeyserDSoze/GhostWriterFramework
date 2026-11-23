@@ -3,10 +3,12 @@ import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Search } from "lucide-react";
 import i18n from "@/i18n";
-import { Sidebar, MobileSidebar } from "./Sidebar";
+import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { DossierDock, DossierSearchDialog } from "./DossierDock";
 import { FloatingActions } from "./FloatingActions";
+import { FloatingLayers } from "./FloatingLayers";
+import { MobileNavDrawer, useNavDrawer } from "./MobileNavDrawer";
 import { NotesDialog } from "./NotesDialog";
 import { GlobalContextMenu } from "@/components/editor/GlobalContextMenu";
 import { LlmDebugPanel } from "@/components/debug/LlmDebugPanel";
@@ -54,7 +56,7 @@ export function Shell() {
   const { structures } = useBooksStore();
   const location = useLocation();
   const navigate = useNavigate();
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const navDrawer = useNavDrawer();
   const [quickOpen, setQuickOpen] = useState(false);
   const notesOpen = useUiStore((s) => s.notesOpen);
   const setNotesOpen = useUiStore((s) => s.setNotesOpen);
@@ -153,10 +155,6 @@ export function Shell() {
     }
   }, [cloudLoaded, i18n, settings.ui.language]);
 
-  useEffect(() => {
-    setMobileNavOpen(false);
-  }, [location.pathname]);
-
   if (!cloudLoaded) {
     return (
       <div className="flex h-[100dvh] flex-col items-center justify-center gap-4 bg-background p-6 text-center">
@@ -180,30 +178,28 @@ export function Shell() {
     <div className="flex h-[100dvh] overflow-hidden bg-background">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Topbar onOpenMobileNav={() => setMobileNavOpen(true)} />
+        <Topbar onOpenMobileNav={navDrawer.show} />
         {offlineConflict && <div className="border-b border-destructive/40 bg-destructive/10 px-4 py-3 text-sm"><div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2"><span className="mr-auto">{t("settings.offlineConflict", { fields: offlineConflict.changedKeys.join(", ") })}</span><Button size="sm" variant="destructive" onClick={() => void resolveOfflineConflict("local")}>{t("settings.keepOfflineChanges")}</Button><Button size="sm" variant="outline" onClick={() => void resolveOfflineConflict("cloud")}>{t("settings.useCloudSettings")}</Button></div></div>}
-        <main className="flex-1 scroll-pb-[var(--bottom-reserve,0px)] scroll-pt-[var(--top-reserve,0px)] overflow-y-auto px-4 pb-[calc(9rem+var(--bottom-reserve,0px)+var(--dock-reserve,0px))] pt-4 sm:px-6 sm:pt-6 lg:pb-[calc(6rem+var(--bottom-reserve,0px))]">
+        <main className="flex-1 scroll-pb-[calc(9rem+var(--bottom-reserve,0px)+var(--dock-reserve,0px))] scroll-pt-[var(--top-reserve,0px)] overflow-y-auto px-4 pb-[calc(9rem+var(--bottom-reserve,0px)+var(--dock-reserve,0px))] pt-4 sm:px-6 sm:pt-6 lg:scroll-pb-[calc(4.5rem+var(--bottom-reserve,0px))] lg:pb-[calc(6rem+var(--bottom-reserve,0px))]">
           <Outlet />
         </main>
       </div>
       <DossierDock />
       <DossierSearchDialog />
-      <FloatingActions />
+      <FloatingLayers>
+        <FloatingActions />
+        <AssistantLauncher />
+        {(autopilotDockOpen || autopilotPageDockOpen) && <Suspense fallback={null}><AutopilotDock /></Suspense>}
+      </FloatingLayers>
       <GlobalContextMenu />
       <LlmDebugPanel />
       <GenerateDiffDialog />
       <FeedbackRewriteWorkflowDialog />
       <OnboardingDialog />
-      <AssistantLauncher />
-      {(autopilotDockOpen || autopilotPageDockOpen) && <Suspense fallback={null}><AutopilotDock /></Suspense>}
       {askDirectorOpen && <Suspense fallback={null}><AskDirectorDialog /></Suspense>}
       {assistantOpen && <Suspense fallback={<span className="sr-only" role="status">{t("common.loading")}</span>}><AssistantPanel /></Suspense>}
 
-      <Dialog open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-        <DialogContent className="left-0 top-0 h-[100dvh] max-w-none translate-x-0 translate-y-0 rounded-none border-r p-0 data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:left-0 sm:top-0 sm:max-w-sm sm:translate-x-0 sm:translate-y-0 sm:rounded-none">
-          <MobileSidebar onNavigate={() => setMobileNavOpen(false)} />
-        </DialogContent>
-      </Dialog>
+      <MobileNavDrawer />
       <QuickSwitchDialog open={quickOpen} onOpenChange={setQuickOpen} />
       <NotesDialog open={notesOpen} onOpenChange={setNotesOpen} />
     </div>

@@ -326,16 +326,18 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           <Menu className="h-5 w-5" />
         </Button>
       )}
-      <div className="flex items-center gap-2 lg:hidden">
+      {/* With large text (200%) the bar keeps its buttons on the screen: the name of the app and the status of the repository give up their room first. */}
+      <div className="flex min-w-0 items-center gap-2 lg:hidden">
         <Button
           variant="ghost"
           size="icon"
+          className="shrink-0"
           aria-label={t("shell.openNav")}
           onClick={onOpenMobileNav}
         >
           <Menu className="h-5 w-5" />
         </Button>
-        <span className="hidden font-semibold min-[360px]:inline">Narrarium</span>
+        <span className="hidden min-w-0 truncate font-semibold min-[360px]:block">Narrarium</span>
       </div>
 
       <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2">
@@ -358,18 +360,18 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               <button
                 type="button"
                 className={visibleRepoStatus.tone === "dirty"
-                  ? `inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300${pendingCurrentObject.pending ? " motion-safe:animate-pulse" : ""}`
+                  ? `inline-flex min-w-0 items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300${pendingCurrentObject.pending ? " motion-safe:animate-pulse" : ""}`
                   : visibleRepoStatus.tone === "ahead"
-                    ? "inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-xs text-sky-800 dark:text-sky-300"
+                    ? "inline-flex min-w-0 items-center gap-1 rounded-full border border-sky-500/50 bg-sky-500/10 px-2 py-1 text-xs text-sky-800 dark:text-sky-300"
                     : visibleRepoStatus.tone === "behind"
-                      ? "inline-flex items-center gap-1 rounded-full border border-violet-500/50 bg-violet-500/10 px-2 py-1 text-xs text-violet-700 dark:text-violet-300"
+                      ? "inline-flex min-w-0 items-center gap-1 rounded-full border border-violet-500/50 bg-violet-500/10 px-2 py-1 text-xs text-violet-700 dark:text-violet-300"
                   : visibleRepoStatus.tone === "clean"
-                    ? "inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-800 dark:text-emerald-300"
-                    : "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs text-muted-foreground"}
+                    ? "inline-flex min-w-0 items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-800 dark:text-emerald-300"
+                    : "inline-flex min-w-0 items-center gap-1 rounded-full border px-2 py-1 text-xs text-muted-foreground"}
                 title={visibleRepoStatus.label}
               >
-                <span className="h-2 w-2 rounded-full bg-current" />
-                <span className="max-w-[34vw] truncate sm:max-w-none">{visibleRepoStatus.label}</span>
+                <span className="h-2 w-2 shrink-0 rounded-full bg-current" />
+                <span className="min-w-0 max-w-[34vw] truncate sm:max-w-none">{visibleRepoStatus.label}</span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">
@@ -410,6 +412,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         <Button
           variant="ghost"
           size="icon"
+          className="shrink-0"
           aria-label={t("dossier.title")}
           title={t("dossier.title")}
           onClick={() => {
@@ -423,7 +426,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
 
           <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="relative rounded-full">
+            <Button variant="ghost" size="icon" className="relative shrink-0 rounded-full">
               <Avatar className="h-8 w-8">
                 <AvatarFallback className="text-xs font-medium">
                   {initials(user?.name)}

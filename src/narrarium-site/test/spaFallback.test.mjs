@@ -87,6 +87,7 @@ test("precache generation includes application entry points, chunks, styles, and
       framework: { file: "assets/framework.js" },
       "src/pages/public/PublicBasics.tsx": { file: "assets/home.js", src: "src/pages/public/PublicBasics.tsx", isDynamicEntry: true, imports: ["framework"] },
       "src/pages/public/PublicDocs.tsx": { file: "assets/docs.js", src: "src/pages/public/PublicDocs.tsx", isDynamicEntry: true, imports: ["framework"] },
+      "src/pages/public/McpPage.tsx": { file: "assets/mcp.js", src: "src/pages/public/McpPage.tsx", isDynamicEntry: true, imports: ["framework"] },
       "src/routes/AuthProvidersRoute.tsx": { file: "assets/auth.js", name: "AuthProvidersRoute", src: "src/routes/AuthProvidersRoute.tsx", isDynamicEntry: true, imports: ["framework"] },
       "src/routes/AppShellRoute.tsx": { file: "assets/app-shell.js", name: "AppShellRoute", src: "src/routes/AppShellRoute.tsx", isDynamicEntry: true, imports: ["framework"] },
       "src/pages/BooksPage.tsx": { file: "assets/books.js", name: "BooksPage", src: "src/pages/BooksPage.tsx", isDynamicEntry: true, imports: ["framework"] },
@@ -94,6 +95,7 @@ test("precache generation includes application entry points, chunks, styles, and
     await writeFile(path.join(dist, "assets", "framework.js"), "framework");
     await writeFile(path.join(dist, "assets", "home.js"), "home");
     await writeFile(path.join(dist, "assets", "docs.js"), "docs");
+    await writeFile(path.join(dist, "assets", "mcp.js"), "mcp");
     await writeFile(path.join(dist, "assets", "auth.js"), "auth");
     await writeFile(path.join(dist, "assets", "app-shell.js"), "app-shell");
     await writeFile(path.join(dist, "assets", "books.js"), "books");
@@ -106,7 +108,7 @@ test("precache generation includes application entry points, chunks, styles, and
     const manifest = await readFile(path.join(dist, "precache-manifest.js"), "utf8");
     const precache = JSON.parse(/__NARRARIUM_PRECACHE__=(\[[^;]+\])/.exec(manifest)?.[1] ?? "[]");
     assert.match(manifest, /__NARRARIUM_RELEASE__="1\.2\.3"/);
-    for (const file of ["index.html", "docs/index.html", "docs/reader-password/index.html", "assets/entry.js", "assets/framework.js", "assets/home.js", "assets/docs.js"]) assert.match(manifest, new RegExp(file.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")));
+    for (const file of ["index.html", "docs/index.html", "docs/reader-password/index.html", "assets/entry.js", "assets/framework.js", "assets/home.js", "assets/docs.js", "assets/mcp.js"]) assert.match(manifest, new RegExp(file.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")));
     assert.doesNotMatch(precache.join("\n"), /docx-index/);
     assert.match(manifest, /__NARRARIUM_OPTIONAL_ASSETS__/);
     for (const file of ["assets/auth.js", "assets/app-shell.js", "assets/books.js"]) assert.match(manifest, new RegExp(file.replace(".", "\\.")));
@@ -274,7 +276,7 @@ test("precache generation keeps choosing the application entry when another HTML
     await writeFile(path.join(dist, "index.html"), "index");
     await writeFile(path.join(dist, "msal-popup.html"), "msal");
     await writeFile(path.join(dist, "auth", "microsoft-callback.html"), "callback");
-    for (const asset of ["entry", "framework", "polyfill", "microsoft-callback", "msal-popup", "home", "docs", "auth", "app-shell", "books"]) await writeFile(path.join(dist, "assets", `${asset}.js`), asset);
+    for (const asset of ["entry", "framework", "polyfill", "microsoft-callback", "msal-popup", "home", "docs", "mcp", "auth", "app-shell", "books"]) await writeFile(path.join(dist, "assets", `${asset}.js`), asset);
     // Vite sorts the keys of its manifest, so the callback page's entry comes before "index.html".
     await writeFile(path.join(dist, ".vite", "manifest.json"), JSON.stringify({
       "_modulepreload-polyfill.js": { file: "assets/polyfill.js", name: "modulepreload-polyfill" },
@@ -284,6 +286,7 @@ test("precache generation keeps choosing the application entry when another HTML
       framework: { file: "assets/framework.js" },
       "src/pages/public/PublicBasics.tsx": { file: "assets/home.js", src: "src/pages/public/PublicBasics.tsx", isDynamicEntry: true, imports: ["framework"] },
       "src/pages/public/PublicDocs.tsx": { file: "assets/docs.js", src: "src/pages/public/PublicDocs.tsx", isDynamicEntry: true, imports: ["framework"] },
+      "src/pages/public/McpPage.tsx": { file: "assets/mcp.js", src: "src/pages/public/McpPage.tsx", isDynamicEntry: true, imports: ["framework"] },
       "src/routes/AuthProvidersRoute.tsx": { file: "assets/auth.js", name: "AuthProvidersRoute", src: "src/routes/AuthProvidersRoute.tsx", isDynamicEntry: true, imports: ["framework"] },
       "src/routes/AppShellRoute.tsx": { file: "assets/app-shell.js", name: "AppShellRoute", src: "src/routes/AppShellRoute.tsx", isDynamicEntry: true, imports: ["framework"] },
       "src/pages/BooksPage.tsx": { file: "assets/books.js", name: "BooksPage", src: "src/pages/BooksPage.tsx", isDynamicEntry: true, imports: ["framework"] },

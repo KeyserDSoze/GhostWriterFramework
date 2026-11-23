@@ -362,7 +362,7 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
         </div>
         <p className="text-xs text-muted-foreground">{t("personalServer.adminHint", { url: LOCAL_ADMIN_URL })}</p>
         {isLoopback(url) && (
-          <a className="inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline" href={LOCAL_ADMIN_URL} target="_blank" rel="noreferrer">
+          <a className="inline-flex min-h-6 w-fit items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline [@media(pointer:coarse)]:min-h-11" href={LOCAL_ADMIN_URL} target="_blank" rel="noreferrer">
             <ExternalLink className="h-3.5 w-3.5" />{t("personalServer.openAdmin")}
           </a>
         )}
@@ -411,7 +411,7 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
             </div>
           )}
           <ServerCompatibilityNotice compatibility={pairing?.compatibility} />
-          <button type="button" className="text-xs font-medium text-primary underline-offset-4 hover:underline" onClick={() => setShowManual((value) => !value)} aria-expanded={showManual}>
+          <button type="button" className="min-h-6 text-xs font-medium text-primary underline-offset-4 hover:underline [@media(pointer:coarse)]:min-h-11" onClick={() => setShowManual((value) => !value)} aria-expanded={showManual}>
             {t("personalServer.pair.manual")}
           </button>
         </div>

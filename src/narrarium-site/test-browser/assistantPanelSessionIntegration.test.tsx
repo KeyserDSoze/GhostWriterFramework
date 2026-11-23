@@ -1,6 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
+import { AiProviderError, AiToolsRequiredError } from "narrarium-engine";
+import { announceRetry } from "@/assistant/retryNotice";
 import { AssistantPanel, diffRevertRevisionsMatch, speechRecognitionResultDelta } from "@/components/assistant/AssistantPanel";
 import { createEmptyAssistantSession, useAssistantStore } from "@/assistant/store";
 import { useAuthStore } from "@/store/authStore";
@@ -12,6 +14,11 @@ const context = vi.hoisted(() => ({ load: vi.fn() }));
 const cloud = vi.hoisted(() => ({ list: vi.fn(), save: vi.fn(), load: vi.fn(), remove: vi.fn() }));
 const localChat = vi.hoisted(() => ({ list: vi.fn(), save: vi.fn(), load: vi.fn(), remove: vi.fn() }));
 
+vi.mock("@/assistant/retryNotice", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/assistant/retryNotice")>(),
+  // The texts of the chat are keys here: the sentence is made readable so that each notice can be told from the next.
+  retryNoticeText: (notice: { attempt: number; of: number; waitMs: number }) => `retry ${notice.attempt} of ${notice.of} in ${notice.waitMs}`,
+}));
 vi.mock("@/assistant/service", () => ({
   appendAssistantNote: vi.fn(), applyParagraphRewrite: vi.fn(), compactAssistantSession: vi.fn(async ({ session }) => session),
   runAssistantPrompt: service.run,
@@ -221,5 +228,109 @@ describe("AssistantPanel shared session mutations", () => {
 
     expect(screen.getByTestId("pathname")).toHaveTextContent("/app/settings");
     expect(useAssistantStore.getState().currentSession?.messages.some((message) => message.text.includes("late hidden truth") || message.action)).toBe(false);
+  });
+});
+
+describe("AssistantPanel when a call to the AI fails", () => {
+  const send = async (prompt: string) => {
+    service.run.mockClear();
+    render(<MemoryRouter initialEntries={["/app/settings"]}><AssistantPanel /></MemoryRouter>);
+    fireEvent.change(await screen.findByRole("textbox"), { target: { value: prompt } });
+    fireEvent.submit(screen.getByRole("textbox").closest("form")!);
+    await waitFor(() => expect(service.run).toHaveBeenCalledOnce());
+  };
+
+  it("shows the sentence of the engine's client as it is, which says which deadline ran out and where it is changed", async () => {
+    const sentence = "openai muse-glimmer-30b: the provider did not start answering within 30 s (the \"Provider timeout\" of the integration \"LlmProxy\" was 6 s and was raised to the 30 s minimum)";
+    service.run.mockRejectedValueOnce(new AiProviderError(sentence, undefined, true, { timedOut: true }));
+
+    await send("Write the scene");
+
+    await waitFor(() => expect(useAssistantStore.getState().currentSession?.messages.map((message) => message.text)).toEqual(["Write the scene", sentence]));
+    expect(useAssistantStore.getState().currentSession?.messages[1].action).toBeUndefined();
+  });
+
+  it("tells the author what to do when «Tools only» leaves no model that can call a function: the explanation of the run, the sentence of the engine, and the AI Router one click away", async () => {
+    const sentence = "\"Tools only\" is on, and every model this task can use is marked as without tool calls (\"alpha-model\" in \"Alpha\"), so a structured answer has nowhere to go. Turn on \"Forced tool calls\" for the model in AI Integrations, or turn off \"Tools only\" in the AI Router. Nothing was sent.";
+    service.run.mockRejectedValueOnce(new AiToolsRequiredError(sentence, ["alpha-model"]));
+
+    await send("Score the chapter");
+
+    await waitFor(() => expect(useAssistantStore.getState().currentSession?.messages).toHaveLength(2));
+    const reply = useAssistantStore.getState().currentSession!.messages[1];
+    expect(reply.text).toContain("autopilot.failure.kind.config.title");
+    expect(reply.text).toContain("autopilot.failure.kind.config.explain");
+    expect(reply.text).toContain(sentence);
+    expect(reply.action).toEqual({ kind: "navigate", to: "/app/settings/ai-router#tools-only", label: "autopilot.failure.config.openRouter" });
+    expect(await screen.findByRole("button", { name: "autopilot.failure.config.openRouter" })).toBeInTheDocument();
+  });
+});
+
+describe("AssistantPanel while the Copilot waits to ask a model again", () => {
+  const send = async (prompt: string) => {
+    service.run.mockClear();
+    render(<MemoryRouter initialEntries={["/app/settings"]}><AssistantPanel /></MemoryRouter>);
+    fireEvent.change(await screen.findByRole("textbox"), { target: { value: prompt } });
+    fireEvent.submit(screen.getByRole("textbox").closest("form")!);
+    await waitFor(() => expect(service.run).toHaveBeenCalledOnce());
+  };
+
+  it("says it quietly in the chat, once for each retry, and goes back to the thinking line when the reply is being written", async () => {
+    let secondRetry!: () => void;
+    let writing!: () => void;
+    let finish!: () => void;
+    service.run.mockImplementationOnce((input) => new Promise((resolve) => {
+      announceRetry(input.signal, { attempt: 2, of: 3, waitMs: 1_000 });
+      secondRetry = () => announceRetry(input.signal, { attempt: 3, of: 3, waitMs: 3_000 });
+      writing = () => input.onText?.("A whole line.");
+      finish = () => resolve({ id: "reply", role: "assistant", text: "A whole line." });
+    }));
+    await send("Write the scene");
+
+    const firstNotice = await screen.findAllByText("retry 2 of 3 in 1000");
+    expect(firstNotice, "the line of the chat, and the region that the screen readers are told by").toHaveLength(2);
+    const live = firstNotice.find((element) => element.classList.contains("sr-only"));
+    expect(live?.getAttribute("role")).toBe("status");
+    expect(live?.getAttribute("aria-live")).toBe("polite");
+    expect(screen.queryByText("assistant.thinking"), "the thinking line says the notice in its place").not.toBeInTheDocument();
+
+    act(() => secondRetry());
+    expect(await screen.findAllByText("retry 3 of 3 in 3000")).toHaveLength(2);
+    expect(screen.queryByText("retry 2 of 3 in 1000"), "one notice at a time, and no countdown that ticks").not.toBeInTheDocument();
+
+    act(() => writing());
+    expect(await screen.findByText("assistant.thinking")).toBeInTheDocument();
+    expect(screen.queryAllByText("retry 3 of 3 in 3000").filter((element) => !element.classList.contains("sr-only"))).toHaveLength(0);
+
+    act(() => finish());
+    await waitFor(() => expect(useAssistantStore.getState().busy).toBe(false));
+    expect(screen.queryByText("assistant.thinking")).not.toBeInTheDocument();
+    expect(screen.queryByText(/retry \d of 3/)).not.toBeInTheDocument();
+  });
+
+  it("says nothing to the chat of another request: the notices go to the request that is waiting", async () => {
+    service.run.mockImplementationOnce(() => new Promise(() => undefined));
+    await send("Write the scene");
+    announceRetry(new AbortController().signal, { attempt: 2, of: 3, waitMs: 1_000 });
+    announceRetry(undefined, { attempt: 2, of: 3, waitMs: 1_000 });
+
+    expect(screen.queryByText(/retry \d of 3/)).not.toBeInTheDocument();
+    expect(await screen.findAllByText("assistant.thinking"), "the thinking line, and the region that the screen readers are told by").toHaveLength(2);
+  });
+
+  it("ends with the stop of the author: nothing is said of an error, and the notice goes away with the request", async () => {
+    service.run.mockImplementationOnce((input) => new Promise((_resolve, reject) => {
+      announceRetry(input.signal, { attempt: 2, of: 3, waitMs: 1_000 });
+      input.signal.addEventListener("abort", () => reject(new DOMException("Stopped by the author.", "AbortError")), { once: true });
+    }));
+    await send("Write the scene");
+    expect(await screen.findAllByText("retry 2 of 3 in 1000")).toHaveLength(2);
+
+    fireEvent.click(screen.getByTitle("assistant.newChat"));
+
+    await waitFor(() => expect(screen.queryByText("retry 2 of 3 in 1000")).not.toBeInTheDocument());
+    expect(useAssistantStore.getState().busy).toBe(false);
+    const texts = (useAssistantStore.getState().currentSession?.messages ?? []).map((message) => message.text);
+    expect(texts.some((text) => /Stopped by the author/.test(text)), "a stop is not an error of the chat").toBe(false);
   });
 });

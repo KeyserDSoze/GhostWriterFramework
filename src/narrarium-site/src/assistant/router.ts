@@ -1,13 +1,15 @@
 import type { AIIntegration, AIPricing, AppSettings, ChatCapability, ReasoningParameter, RoutingTarget, RoutingTaskKind, TaskRoute, ThinkingLevel } from "@/types/settings";
+import { AiProviderError, splitReasoningBlock, type FetchAiAttemptEnd } from "narrarium-engine";
 import { effectiveThinking } from "@/router/thinking";
-import { integrationChatModels, modelSupportsCapability, resolveReviewIntegration, resolveWritingIntegration, completeText, completeToolWith, classifyConfirmationWith, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmFinishReport, type LlmMessage, type LlmResult, type LlmUsageReport } from "@/assistant/llm";
+import { integrationChatModels, modelSupportsCapability, resolveReviewIntegration, resolveWritingIntegration, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmFinishReport, type LlmMessage, type LlmResult, type LlmUsageReport } from "@/assistant/llm";
 import { executeCompletionFallback } from "@/assistant/completionFallback";
-import { runWithCandidateTimeout } from "@/assistant/executionLimits";
-import { budgetLlmMessages, likelyMessageTokens, likelyTextTokens, resolveModelTokenBudgets, textTokenUpperBound } from "@/assistant/promptBudget";
+import { budgetLlmMessages, likelyMessageTokens, resolveModelTokenBudgets } from "@/assistant/promptBudget";
+import { announceRetry } from "@/assistant/retryNotice";
+import { engineOutputLimit, jsonInstructionTokens, requestedOutput, runCopilotAttempt, runMetadata, startRoutingClock, toolsOnly, toolsRequiredError, toolTokens, usageReport, type ChatCandidate, type SkippedModels } from "@/assistant/copilotAi";
 import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
 import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
 import { currentRequest } from "@/assistant/promptTrust";
-import { createRoutingExecutionBudget, RoutingExecutionBudgetError } from "@/assistant/routingExecutionBudget";
+import { RoutingExecutionBudgetError } from "@/assistant/routingExecutionBudget";
 
 export { RoutingExecutionBudgetError } from "@/assistant/routingExecutionBudget";
 
@@ -70,15 +72,17 @@ export class PromptBudgetExceededError extends Error {
 /** How routed calls treat a prompt larger than a candidate's input budget. */
 export type PromptOverflow = "truncate" | "fail";
 
-function inputBudget(candidate: TaskCandidate, outputTokens: number | undefined, reservedTokens = 0): number {
+/** The input a candidate has room for once the engine's limit for the reply (not the Copilot's own, which the engine raises) and the reserve are taken out of its window. */
+function inputRoom(candidate: TaskCandidate, outputTokens: number, reservedTokens = 0): number {
   return resolveModelTokenBudgets(candidate.maxInputTokens, outputTokens).inputTokens - reservedTokens;
 }
 
-function budgetForcedToolMessages(messages: LlmMessage[], candidate: TaskCandidate, tool: ForcedToolDefinition): LlmMessage[] {
-  const inputTokens = resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).inputTokens;
-  const toolTokens = textTokenUpperBound(JSON.stringify(tool)) + 8;
-  if (toolTokens > inputTokens) throw new CandidateInputBudgetError();
-  const budgeted = budgetLlmMessages(messages, candidate.maxInputTokens, candidate.maxOutputTokens, toolTokens);
+/** The messages of a forced call, cut to what the window of the candidate holds after the schema: the engine sends it as the only tool of the request. */
+function budgetForcedToolMessages(messages: LlmMessage[], candidate: TaskCandidate, outputTokens: number, tool: ForcedToolDefinition, extraReserve = 0): LlmMessage[] {
+  const inputTokens = resolveModelTokenBudgets(candidate.maxInputTokens, outputTokens).inputTokens;
+  const reserve = toolTokens(tool).atMost + extraReserve;
+  if (reserve > inputTokens) throw new CandidateInputBudgetError();
+  const budgeted = budgetLlmMessages(messages, candidate.maxInputTokens, outputTokens, reserve);
   if (messages.length > 0 && budgeted.length === 0) throw new CandidateInputBudgetError();
   return budgeted;
 }
@@ -332,9 +336,39 @@ function boundedCandidates(settings: AppSettings, candidates: TaskCandidate[], r
   return out;
 }
 
+/** A candidate of a chat task with the place it holds in the route and the name its failures are reported under. */
+type RoutableCandidate = ChatCandidate & { routeCandidateIndex: number; label: string };
+
+/** What a failed candidate is reported as when the client wrote the sentence: it names the provider and the model, so that the label of the Copilot is not put in front of it. */
+function clientSentence(error: unknown): string | undefined {
+  return error instanceof AiProviderError ? error.message : undefined;
+}
+
+/** What a reply that the output limit cut said, when it said something: the text, without the reasoning that came with it. A cut that held only reasoning said nothing. */
+function cutReply(error: unknown, partial: string): string | undefined {
+  if (!(error instanceof AiProviderError) || error.truncated !== true || error.reasoningOnly === true) return undefined;
+  const { reply } = splitReasoningBlock(partial);
+  return reply.trim() ? reply : undefined;
+}
+
+/** The notes that the engine adds to the end of a call that failed, for what it did not ask: the models "Tools only" left out, and the fallbacks the routing time did not allow. */
+function addNotes(error: unknown, skipped: SkippedModels, candidates: ChatCandidate[], stopped: string | undefined): void {
+  if (!(error instanceof AiProviderError)) return;
+  const notes = [
+    ...skipped.map(({ model }) => {
+      const owner = candidates.find((candidate) => candidate.model === model)?.integration.name;
+      return `Skipped "${model}"${owner ? ` in "${owner}"` : ""}: it is marked as without tool calls and "Tools only" is on.`;
+    }),
+    ...(stopped ? [stopped] : []),
+  ];
+  if (notes.length) error.message = `${error.message}${/[.!?]$/.test(error.message) ? "" : "."} ${notes.join(" ")}`;
+}
+
 /**
  * Run a chat completion for a capability using the configured router (primary + fallbacks),
- * then the legacy resolution, trying each candidate in order until one succeeds.
+ * then the legacy resolution, trying each candidate in order until one succeeds. Each attempt is a call of the engine's client to one candidate (see `copilotAi.ts`):
+ * its request, its streaming, its three deadlines and its reading of the reply are the engine's, and what the Copilot decides is the route, the prompt of each candidate and
+ * which replies it accepts.
  */
 export async function completeTextRouted(
   settings: AppSettings,
@@ -351,35 +385,80 @@ export async function completeTextRouted(
     throw new NoCompletionCandidatesError();
   }
   const purpose = capability === "review" ? "review" : "writing";
-  const outputBudget = (candidate: TaskCandidate) => candidate.maxOutputTokens ?? options.fallbackMaxOutputTokens;
-  const routable = candidates.map((candidate, routeCandidateIndex) => ({ ...candidate, routeCandidateIndex })).filter((candidate) => candidate.integration && candidate.model).map((candidate) => ({ ...candidate, integration: candidate.integration!, model: candidate.model!, label: `${candidate.integration!.provider}/${candidate.model!}` }));
+  const routable: RoutableCandidate[] = candidates.map((candidate, routeCandidateIndex) => ({ ...candidate, routeCandidateIndex })).filter((candidate) => candidate.integration && candidate.model).map((candidate) => ({ ...candidate, integration: candidate.integration!, model: candidate.model!, label: `${candidate.integration!.provider}/${candidate.model!}` }));
   if (!routable.length) throw new NoCompletionCandidatesError();
+  const outputLimit = (candidate: RoutableCandidate) => engineOutputLimit(settings, candidate, capability, requestedOutput(candidate, options.fallbackMaxOutputTokens), false);
   const estimated = likelyMessageTokens(messages);
-  const fits = (candidate: (typeof routable)[number]) => !candidate.maxInputTokens || estimated <= inputBudget(candidate, outputBudget(candidate));
+  const room = (candidate: RoutableCandidate) => inputRoom(candidate, outputLimit(candidate));
+  const fits = (candidate: RoutableCandidate) => !candidate.maxInputTokens || estimated <= room(candidate);
   const executable = options.overflow === "fail" ? routable.filter(fits) : routable;
-  if (!executable.length) throw new PromptBudgetExceededError(estimated, Math.max(...routable.map((candidate) => inputBudget(candidate, outputBudget(candidate)))));
-  const total = createRoutingExecutionBudget(settings, operation.signal);
-  try { return await executeCompletionFallback({ candidates: executable, signal: total.signal, timeoutMs: (candidate) => candidate.integration.requestTimeoutMs, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: executable[index - 1], to: candidate, accountScope: operation.accountScope }); options.onAttempt?.(candidate.routeCandidateIndex); }, resetPartial: () => options?.onText?.(""), run: async (candidate, signal) => {
-      const candidateOutput = outputBudget(candidate);
-      const text = await completeText(candidate.integration, options.overflow === "fail" ? messages : budgetLlmMessages(messages, candidate.maxInputTokens, candidateOutput), purpose, {
-        modelName: candidate.model,
-        capability,
-        signal,
-        label: options?.label,
-        onText: options?.onText,
-        onUsage: options?.onUsage,
-        onFinish: options?.onFinish,
-        routeCandidateIndex: candidate.routeCandidateIndex,
-        usedFallback: candidate.routeCandidateIndex > 0,
-        maxOutputTokens: resolveModelTokenBudgets(candidate.maxInputTokens, candidateOutput).outputTokens,
-        underlyingModel: candidate.underlyingModel,
-        thinking: candidate.thinking,
-        reasoningParameter: candidate.reasoningParameter,
-        accountScope: operation.accountScope,
-      });
+  if (!executable.length) throw new PromptBudgetExceededError(estimated, Math.max(...routable.map(room)));
+  const clock = startRoutingClock(settings);
+  /** The last text that arrived of the candidate that is being asked: the engine clears the listener when a candidate fails, and a reply that was cut is still the reply. */
+  let partial = "";
+  let shown: string | undefined;
+  const show = (text: string) => {
+    if (text === "" && shown === "") return;
+    shown = text;
+    options.onText?.(text);
+  };
+  return await executeCompletionFallback({
+    candidates: executable,
+    signal: operation.signal,
+    stopBefore: () => clock.usedUp(),
+    beforeCandidate: (candidate, index) => {
+      if (index > 0) {
+        const asked = Date.now();
+        acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: executable[index - 1], to: candidate, accountScope: operation.accountScope });
+        clock.excuse(Date.now() - asked);
+      }
+      options.onAttempt?.(candidate.routeCandidateIndex);
+    },
+    resetPartial: () => {
+      partial = "";
+      show("");
+    },
+    describe: (_candidate, error) => clientSentence(error),
+    run: async (candidate, signal) => {
+      const prompt = options.overflow === "fail" ? messages : budgetLlmMessages(messages, candidate.maxInputTokens, outputLimit(candidate));
+      let text: string;
+      try {
+        const response = await runCopilotAttempt({
+          settings,
+          accountScope: operation.accountScope,
+          signal,
+          capability,
+          candidate,
+          route: { index: candidate.routeCandidateIndex },
+          label: options.label ?? purpose,
+          messages: prompt,
+          maxOutputTokens: requestedOutput(candidate, options.fallbackMaxOutputTokens),
+          onText: (value) => {
+            if (value) partial = value;
+            show(value);
+          },
+          onEnd: (end) => {
+            if (end.finishReason === undefined) return;
+            const report = usageReport(candidate, end);
+            options.onUsage?.(report);
+            options.onFinish?.({ ...report, finishReason: end.finishReason, replyCharacters: end.replyCharacters ?? 0, reasoningCharacters: end.reasoningCharacters ?? 0 });
+          },
+          clock,
+          onRestart: () => {
+            partial = "";
+          },
+          onRetry: (notice) => announceRetry(options?.signal, notice),
+        });
+        text = response.text;
+      } catch (error) {
+        const cut = cutReply(error, partial);
+        if (cut === undefined) throw error;
+        text = cut;
+      }
       options.validateText?.(text);
       return text;
-    } }); } finally { total.dispose(); }
+    },
+  });
   } finally {
     operation.dispose();
   }
@@ -394,47 +473,86 @@ export async function completeToolRouted<T>(
 ): Promise<LlmResult<T> & { metadata: RoutedLlmRunMetadata }> {
   const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
   try {
-  const candidates = boundedCandidates(settings, applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, capability)), true);
-  if (!candidates.length) {
+  const resolved = applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, capability));
+  if (!resolved.length) {
     if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(capability);
     throw new NoCompletionCandidatesError();
   }
+  // "Tools only" is on unless the author turned it off, as for the run: a model marked as without tool calls is left out, and if none is left the call is refused before anything is sent.
+  const strict = toolsOnly(settings);
+  const candidates = boundedCandidates(settings, resolved, strict);
+  const chatOf = (list: TaskCandidate[]) => list.filter((candidate): candidate is ChatCandidate => Boolean(candidate.integration && candidate.model));
+  if (!candidates.length) {
+    if (strict) throw await toolsRequiredError(settings, capability, chatOf(resolved), tool);
+    throw new NoCompletionCandidatesError();
+  }
+  const skipped: SkippedModels = strict ? chatOf(resolved).filter((candidate) => candidate.supportsToolCalls === false).map((candidate) => ({ model: candidate.model, reason: "no-tool-calls" as const })) : [];
   let lastError: unknown = null;
   let skippedForBudget = false;
   let largestBudget = 0;
+  let stopped: string | undefined;
   const estimated = likelyMessageTokens(messages);
-  const toolTokens = likelyTextTokens(JSON.stringify(tool)) + 8;
-  const total = createRoutingExecutionBudget(settings, operation.signal);
-  try {
-  for (const [candidateIndex, candidate] of candidates.entries()) {
-    total.signal.throwIfAborted();
+  const schema = toolTokens(tool);
+  const clock = startRoutingClock(settings);
+  for (const [listIndex, candidate] of candidates.entries()) {
+    operation.signal.throwIfAborted();
     if (!candidate.integration || !candidate.model) continue;
-    const budgeted = options.fallbackMaxOutputTokens && candidate.maxOutputTokens === undefined ? { ...candidate, maxOutputTokens: options.fallbackMaxOutputTokens } : candidate;
-    if (options.overflow === "fail" && budgeted.maxInputTokens) {
-      const available = inputBudget(budgeted, budgeted.maxOutputTokens, toolTokens);
+    const chat = candidate as ChatCandidate;
+    const requested = requestedOutput(chat, options.fallbackMaxOutputTokens);
+    const limit = engineOutputLimit(settings, chat, capability, requested, true);
+    // With "Tools only" off a model without tool calls is asked for JSON in its message: the instruction takes room of its own.
+    const instruction = strict || chat.supportsToolCalls !== false ? 0 : jsonInstructionTokens(tool);
+    if (options.overflow === "fail" && chat.maxInputTokens) {
+      const available = inputRoom(chat, limit, schema.about + instruction);
       if (estimated > available) {
         skippedForBudget = true;
         largestBudget = Math.max(largestBudget, available);
         continue;
       }
     }
-    if (candidateIndex > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[candidateIndex - 1], to: candidate, accountScope: operation.accountScope });
-    options.onAttempt?.(candidateIndex);
+    stopped = clock.usedUp();
+    if (stopped) break;
+    if (listIndex > 0) {
+      const asked = Date.now();
+      acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[listIndex - 1], to: candidate, accountScope: operation.accountScope });
+      clock.excuse(Date.now() - asked);
+    }
+    const position = resolved.indexOf(candidate);
+    options.onAttempt?.(position);
     try {
-      const budgetedMessages = options.overflow === "fail" ? messages : budgetForcedToolMessages(messages, budgeted, tool);
-      const result = await runWithCandidateTimeout((signal) => completeToolWith<T>(candidate.integration!, candidate.model!, candidate.pricing, budgetedMessages, capability, tool, { accountScope: operation.accountScope, signal, label: options.label, currency: settings.costCurrency, validate: options.validate, onFinish: options.onFinish, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, maxOutputTokens: resolveModelTokenBudgets(budgeted.maxInputTokens, budgeted.maxOutputTokens).outputTokens, underlyingModel: candidate.underlyingModel, thinking: candidate.thinking, reasoningParameter: candidate.reasoningParameter }), total.signal, candidate.integration.requestTimeoutMs);
+      const prompt = options.overflow === "fail" ? messages : budgetForcedToolMessages(messages, chat, limit, tool, instruction);
+      let ended: { end: FetchAiAttemptEnd; debugId: string | undefined } | undefined;
+      const response = await runCopilotAttempt({
+        settings,
+        accountScope: operation.accountScope,
+        signal: operation.signal,
+        capability,
+        candidate: chat,
+        route: { index: position, ...(skipped.length ? { skipped } : {}) },
+        label: options.label ?? capability,
+        messages: prompt,
+        json: tool,
+        maxOutputTokens: requested,
+        onEnd: (end, debugId) => {
+          ended = { end, debugId };
+          if (end.finishReason === undefined) return;
+          options.onFinish?.({ ...usageReport(chat, end), finishReason: end.finishReason, replyCharacters: end.replyCharacters ?? 0, reasoningCharacters: end.reasoningCharacters ?? 0 });
+        },
+        clock,
+        onRetry: (notice) => announceRetry(options?.signal, notice),
+      });
+      const output = options.validate ? options.validate(response.json) : response.json as T;
       return {
-        ...result,
-        output: options?.validate ? options.validate(result.output) : result.output as T,
-        metadata: { ...result.metadata, routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0 },
+        output,
+        metadata: { ...runMetadata({ candidate: chat, capability, end: ended?.end, debugId: ended?.debugId, settings }), routeCandidateIndex: position, usedFallback: position > 0 },
       };
     } catch (err) {
       if (operation.signal.aborted) throw err;
       lastError = err;
     }
   }
+  addNotes(lastError, skipped, chatOf(resolved), stopped);
   throw lastError ?? (skippedForBudget ? new PromptBudgetExceededError(estimated, largestBudget) : new Error("All AI candidates failed for this task."));
-  } finally { total.dispose(); }
   } finally {
     operation.dispose();
   }
@@ -463,33 +581,57 @@ export function sttMode(settings: AppSettings, candidateIndex = 0): "browser" | 
   return first.integration && first.model ? "ai" : "none";
 }
 
-/** Confirmation classification with router (simple-tasks) + fallbacks. Returns "unclear" if all fail. */
+/**
+ * Confirmation classification with router (simple-tasks) + fallbacks. Returns "unclear" if all fail: it is a helper, and the flow that asks it goes on without an answer.
+ * The utterance alone is sent, framed, and the model answers by calling the function of the confirmation.
+ */
 export async function classifyConfirmationRouted(settings: AppSettings, utterance: string, operationSignal: AbortSignal | undefined, accountScope: string | null): Promise<"yes" | "no" | "unclear"> {
   const operation = beginAccountScopedAiOperation(operationSignal, accountScope);
   try {
-  const candidates = boundedCandidates(settings, applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, "simple-tasks")), true);
-  const total = createRoutingExecutionBudget(settings, operation.signal);
-  try {
-  for (const [candidateIndex, candidate] of candidates.entries()) {
-    total.signal.throwIfAborted();
+  const resolved = applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, "simple-tasks"));
+  const strict = toolsOnly(settings);
+  const candidates = boundedCandidates(settings, resolved, strict);
+  const skipped: SkippedModels = strict ? resolved.filter((candidate) => candidate.supportsToolCalls === false && candidate.model).map((candidate) => ({ model: candidate.model!, reason: "no-tool-calls" as const })) : [];
+  const clock = startRoutingClock(settings);
+  for (const [listIndex, candidate] of candidates.entries()) {
+    operation.signal.throwIfAborted();
     if (!candidate.integration || !candidate.model) continue;
-    if (candidateIndex > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[candidateIndex - 1], to: candidate, accountScope: operation.accountScope });
+    const chat = candidate as ChatCandidate;
+    if (clock.usedUp()) break;
+    if (listIndex > 0) {
+      const asked = Date.now();
+      acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: candidates[listIndex - 1], to: candidate, accountScope: operation.accountScope });
+      clock.excuse(Date.now() - asked);
+    }
     try {
-      const budgetedMessages = budgetForcedToolMessages([{ role: "user", content: currentRequest(utterance) }], candidate, CONFIRMATION_TOOL_DEFINITION);
+      const requested = Math.min(32, resolveModelTokenBudgets(chat.maxInputTokens, chat.maxOutputTokens).outputTokens);
+      const limit = engineOutputLimit(settings, chat, "simple-tasks", requested, true);
+      const instruction = strict || chat.supportsToolCalls !== false ? 0 : jsonInstructionTokens(CONFIRMATION_TOOL_DEFINITION);
+      const budgetedMessages = budgetForcedToolMessages([{ role: "user", content: currentRequest(utterance) }], chat, limit, CONFIRMATION_TOOL_DEFINITION, instruction);
       const budgetedUtterance = budgetedMessages[0]?.content;
       if (typeof budgetedUtterance !== "string") throw new CandidateInputBudgetError();
-      return await runWithCandidateTimeout(
-        (signal) => classifyConfirmationWith(candidate.integration!, candidate.model!, candidate.pricing, budgetedUtterance, { accountScope: operation.accountScope, signal, maxOutputTokens: Math.min(32, resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens).outputTokens), routeCandidateIndex: candidateIndex, usedFallback: candidateIndex > 0, underlyingModel: candidate.underlyingModel, thinking: candidate.thinking, reasoningParameter: candidate.reasoningParameter }),
-        total.signal,
-        candidate.integration.requestTimeoutMs,
-      );
+      const response = await runCopilotAttempt({
+        settings,
+        accountScope: operation.accountScope,
+        signal: operation.signal,
+        capability: "simple-tasks",
+        candidate: chat,
+        route: { index: resolved.indexOf(candidate), ...(skipped.length ? { skipped } : {}) },
+        label: "confirm",
+        messages: [{ role: "user", content: budgetedUtterance }],
+        json: CONFIRMATION_TOOL_DEFINITION,
+        maxOutputTokens: requested,
+        clock,
+        onRetry: (notice) => announceRetry(operationSignal, notice),
+      });
+      const decision = (response.json as { decision?: unknown } | undefined)?.decision;
+      return decision === "yes" || decision === "no" ? decision : "unclear";
     } catch (error) {
       if (operation.signal.aborted) throw error;
       // try next fallback
     }
   }
   return "unclear";
-  } finally { total.dispose(); }
   } finally {
     operation.dispose();
   }

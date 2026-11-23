@@ -1,6 +1,7 @@
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { hasOpenFloatingLayer } from "@/lib/floatingLayer";
 
@@ -49,7 +50,9 @@ function shouldIgnoreOutside(target: EventTarget | null): boolean {
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { hideCloseButton?: boolean; bare?: boolean }
->(({ className, children, onInteractOutside, onPointerDownOutside, onFocusOutside, hideCloseButton, bare, ...props }, ref) => (
+>(({ className, children, onInteractOutside, onPointerDownOutside, onFocusOutside, hideCloseButton, bare, ...props }, ref) => {
+  const { t } = useTranslation();
+  return (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -84,14 +87,16 @@ const DialogContent = React.forwardRef<
     >
       {children}
       {!hideCloseButton && (
-        <DialogClose className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
-          <X className="h-4 w-4" />
-          <span className="sr-only">Close</span>
+        // 36 px, and 44 px under a finger (WCAG 2.2, 2.5.8 and 2.5.5), centred where the 16 px icon always was.
+        <DialogClose className="absolute right-1.5 top-1.5 inline-flex size-9 items-center justify-center rounded-md opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground [@media(pointer:coarse)]:right-0.5 [@media(pointer:coarse)]:top-0.5 [@media(pointer:coarse)]:size-11">
+          <X className="h-4 w-4" aria-hidden="true" />
+          <span className="sr-only">{t("common.close")}</span>
         </DialogClose>
       )}
     </DialogPrimitive.Content>
   </DialogPortal>
-));
+  );
+});
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 const DialogHeader = ({

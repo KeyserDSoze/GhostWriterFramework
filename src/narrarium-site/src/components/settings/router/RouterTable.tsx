@@ -1,6 +1,7 @@
 import { AlertTriangle } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { useLocation } from "react-router-dom";
 import { takesThinking, type RouterRow } from "@/router/routerTableModel";
 import type { AIIntegration, RoutingTaskKind, ThinkingLevel } from "@/types/settings";
 import { EndpointCell, EndpointThinkingCell, ModelCell, ThinkingCell } from "./RouterCells";
@@ -41,6 +42,37 @@ function Field({ label, indent, children }: { label: string; /** The text table 
   );
 }
 
+/** The id of the row of a task: a link to `#router-row-<task>` (from the preview of the autopilot's run, for the role that has no model) leads to it. */
+export const routerRowId = (task: RoutingTaskKind): string => `router-row-${task}`;
+
+/**
+ * A link to `#router-row-<task>` does not scroll by itself in the app, so the table does it: the row comes into view and its first control takes the focus, which is where a keyboard or a
+ * screen reader starts reading. The row may be drawn a moment after the page, so it is looked for during a few frames, and a link is followed once.
+ */
+function useFocusRowOnHash(rows: readonly { task: RoutingTaskKind }[]): void {
+  const location = useLocation();
+  const followed = useRef<string | null>(null);
+  const tasks = rows.map((row) => row.task).join(",");
+  useEffect(() => {
+    const id = decodeURIComponent(location.hash.replace(/^#/, ""));
+    const visit = `${location.key}:${id}`;
+    if (!id.startsWith("router-row-") || followed.current === visit || !tasks.split(",").some((task) => routerRowId(task as RoutingTaskKind) === id)) return undefined;
+    let frame = 0;
+    const look = (frames: number) => {
+      const row = document.getElementById(id);
+      if (row) {
+        followed.current = visit;
+        row.scrollIntoView?.({ block: "center" });
+        row.querySelector<HTMLElement>("button[role='combobox']")?.focus({ preventScroll: true });
+      } else if (frames > 0 && typeof requestAnimationFrame === "function") {
+        frame = requestAnimationFrame(() => look(frames - 1));
+      }
+    };
+    look(10);
+    return () => { if (frame) cancelAnimationFrame(frame); };
+  }, [location.hash, location.key, tasks]);
+}
+
 /**
  * One tab of one section, a real table. From 640px up it scrolls sideways inside its own labelled group when it is wider than the page (a table
  * of data may: WCAG 1.4.10); the scroll padding keeps a control that takes the focus out from behind the two columns that stay in view
@@ -51,6 +83,7 @@ export function RouterTable(props: RouterTableProps) {
   const { t } = useTranslation();
   const { rows, multi } = props;
   const columns = multi ? 5 : 3;
+  useFocusRowOnHash(rows);
   return (
     <div role="group" aria-label={props.regionLabel} className="overflow-x-auto rounded-md border border-layer sm:scroll-pl-[16rem]">
       <table role="table" className={`w-full table-fixed border-collapse text-sm max-sm:block ${multi ? "sm:min-w-[55.5rem]" : "sm:min-w-[36rem]"}`}>
@@ -83,6 +116,7 @@ export function RouterTable(props: RouterTableProps) {
             return (
               <tr
                 key={task}
+                id={routerRowId(task)}
                 role="row"
                 className={`border-b border-layer last:border-b-0 ${background} max-sm:grid max-sm:gap-x-2 max-sm:gap-y-2 max-sm:p-3 ${multi ? "max-sm:grid-cols-[1.5rem_minmax(0,1fr)]" : "max-sm:grid-cols-1"}`}
                 onFocusCapture={() => props.onFocusRow(task)}

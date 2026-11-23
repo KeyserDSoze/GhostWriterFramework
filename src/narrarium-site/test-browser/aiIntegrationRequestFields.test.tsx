@@ -316,12 +316,14 @@ describe("the request settings of an AI integration", () => {
     expect(new Set(cards.flatMap((card) => Object.values(controlsOf(card)).map((control) => control.id))).size, "three controls in each of four cards").toBe(12);
   });
 
-  it.each(LANGUAGES)("says what the other AI features do with the provider timeout: they count it as the whole request, 60 000 ms when it is empty (%s)", async (language) => {
+  it.each(LANGUAGES)("says that the autopilot and the Copilot take it as the time to begin answering, and what the other AI features do with it: they count it as the whole request, 60 000 ms when it is empty (%s)", async (language) => {
     await show({ aiIntegrations: [OPENAI] }, language);
     const { timeout } = controlsOf(cardOf("Compat"));
     expect(DEFAULT_PROVIDER_TIMEOUT_MS).toBe(60_000);
     expect(timeout).toHaveAccessibleDescription(expect.stringContaining(number(language, DEFAULT_PROVIDER_TIMEOUT_MS)));
-    expect(timeout).toHaveAccessibleDescription(language === "en" ? /Copilot, voice, images/ : /Copilot, voce, immagini/);
+    expect(timeout).toHaveAccessibleDescription(language === "en" ? /autopilot and the Copilot: how long the provider may take to start answering/ : /autopilot e il Copilot: quanto tempo può impiegare il provider per cominciare a rispondere/);
+    expect(timeout).toHaveAccessibleDescription(language === "en" ? /Voice and images count it as the time of the whole request/ : /Voce e immagini lo contano come tempo dell'intera richiesta/);
+    expect(timeout).not.toHaveAccessibleDescription(language === "en" ? /\(Copilot, voice/ : /\(Copilot, voce/);
   });
 });
 

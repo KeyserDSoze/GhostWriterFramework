@@ -267,6 +267,7 @@ export function latestFeedEntry(feed: FeedEntry[], bookId?: string): FeedEntry |
 export type RelayedCommand =
   | { type: "pause"; mode: "now" | "after-step" | "after-chapter" }
   | { type: "cancel-pause" }
+  | { type: "retry-now" }
   | { type: "update-options"; options: AutopilotLiveOptions }
   | { type: "intervene"; input: InterventionInput }
   | { type: "resolve-frozen"; number: number; action: FrozenAction; options?: { kind?: FrozenChangeKind; note?: string } }
@@ -282,7 +283,8 @@ export type SharedServerState = Pick<ServerConnectionState, "status" | "info" | 
 export type AutopilotChannelMessage =
   | { kind: "event"; event: AutopilotEvent; bookTitle: string }
   | { kind: "command"; id: string; bookId: string; command: RelayedCommand }
-  | { kind: "command-result"; id: string; ok: boolean; error?: string }
+  /** `result` is what the command answers, when it answers something (whether «Retry now» skipped a wait). */
+  | { kind: "command-result"; id: string; ok: boolean; error?: string; result?: boolean }
   | { kind: "server-message"; stream: string; message: ServerStreamMessage }
   | { kind: "server-state"; stream: string; state: SharedServerState }
   | { kind: "server-state-request"; stream: string }

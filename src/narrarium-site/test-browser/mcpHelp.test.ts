@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import i18n from "@/i18n";
 import "@/i18n/mcp";
 import { appDocEntries } from "@/lib/appDocs";
+import { guideText, loadGuides } from "./helpers/guides";
 
 type Language = "en" | "it";
 
@@ -10,7 +11,9 @@ const entryOf = () => {
   if (!entry) throw new Error("the help of the MCP server of a book is missing");
   return entry;
 };
-const helpOf = (language: Language) => (entryOf().translations?.[language] ?? entryOf()).markdown;
+const helpOf = (language: Language) => guideText(entryOf().slug, language);
+
+beforeAll(loadGuides);
 
 /** The controls of the section that the help names in bold: the help and the section must call them the same thing. */
 const LABELS = [

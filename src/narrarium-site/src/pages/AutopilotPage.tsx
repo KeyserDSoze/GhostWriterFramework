@@ -40,15 +40,21 @@ import { AutopilotBandDetails, AutopilotControlBand } from "@/components/autopil
 import { Card } from "@/components/autopilot/Card";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import { PlanChapters, RemovedChapters, useGhostwriterName } from "@/components/autopilot/PlanChapters";
+import { PlanApproval } from "@/components/autopilot/plan/PlanApproval";
+import { ChapterMap } from "@/components/autopilot/map/ChapterMap";
 import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice } from "@/components/autopilot/StopNotices";
 import { QuestionCard } from "@/components/autopilot/QuestionCard";
 import { PendingReviews } from "@/components/autopilot/PendingReviews";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
 import { ErrorPanel } from "@/components/autopilot/ErrorPanel";
+import { GithubConflictsAction } from "@/components/autopilot/GithubConflictsAction";
+import { GithubConflictsWindow } from "@/components/autopilot/GithubConflictsWindow";
 import { SyncConflicts } from "@/components/autopilot/SyncConflicts";
+import { githubConflictsOfSync } from "@/autopilot/githubConflicts";
 import { SyncSkipped } from "@/components/autopilot/SyncSkipped";
 import { closedChapterToRead, finalReviewOf, pageLayout } from "@/autopilot/bandModel";
+import { planReviewMode } from "@/autopilot/planApprovalModel";
 import { useAutopilotRefresh, useBookAutopilotView } from "@/autopilot/hooks";
 import { setAutopilotHost } from "@/autopilot/host";
 import { autopilotSettingsHref } from "@/autopilot/pageRoute";
@@ -139,10 +145,11 @@ export function AutopilotPage() {
   const { width, measured } = useContainerWidth(root);
   const layout = pageLayout(width);
   const tabs: PageTab[] = ["overview", "timeline", "plan", "rules"];
-  // A plan that waits for the author is what the person came to see: until they pick a tab themselves, the Plan is the one that is open.
-  const awaitingPlan = Boolean(state?.plan?.awaitingAuthor);
+  // A plan that waits for the author (to be approved, or to be made again with the changes asked) is what the person came to see: its own screen
+  // takes the place of the history, and until they pick a tab themselves the Plan is the one that is open.
+  const planReview = planReviewMode(state, running);
   const [chosen, setChosen] = useState<PageTab | null>(null);
-  const active = chosen && tabs.includes(chosen) ? chosen : awaitingPlan ? "plan" : tabs[0];
+  const active = chosen && tabs.includes(chosen) ? chosen : planReview ? "plan" : tabs[0];
   const hash = decodeURIComponent(location.hash.replace(/^#/, ""));
   const hashTab = TAB_OF_ID[hash];
   useEffect(() => {
@@ -187,7 +194,6 @@ export function AutopilotPage() {
       <PendingReviews reviews={state?.pendingReviews} running={running} />
       <ErrorPanel bookId={bookId} />
       {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} hintId={PROFILE_HINT_ID} />}
-      {awaitingPlan && <Alert><AlertDescription>{t("autopilot.plan.awaiting")}</AlertDescription></Alert>}
       {noAi && <Alert><AlertTriangle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><span>{t("autopilot.errors.aiMissing")}</span><Button asChild size="sm" variant="outline"><Link to="/app/settings/ai-integrations">{t("settingsSection.aiIntegrationsTitle")}</Link></Button></AlertDescription></Alert>}
       {view.error && <Alert variant="destructive"><AlertDescription>{view.error}</AlertDescription></Alert>}
       {snapshot?.stateError && (
@@ -205,12 +211,16 @@ export function AutopilotPage() {
       {host === "server" && serverStatus === "reconnecting" && <Alert><Cloud className="h-4 w-4" /><AlertDescription>{t("autopilot.serverReconnecting")}</AlertDescription></Alert>}
       {view.busyInAnotherTab && <Alert><AlertDescription>{t("autopilot.anotherTab")}</AlertDescription></Alert>}
       <OperationNotice bookId={bookId} />
+      <GithubConflictsWindow bookId={bookId} />
     </div>
   );
 
   const result = <AutopilotResult bookId={bookId} linkedSlugs={linkedChapters} wide={layout === "wide"} />;
   const timeline = <AutopilotTimeline bookId={bookId} loading={!loaded} activities={activities} chapterTitle={chapterTitle} chapterGhostwriter={chapterGhostwriter} chapterRounds={chapterRounds} finalReview={finalReview} currency={summary?.stats.currency ?? settings.costCurrency} />;
   const plan = state ? <PlanCard bookId={bookId} plan={state.plan} reviewNumber={state.review?.chapterNumber} linkedSlugs={linkedChapters} /> : null;
+  const approval = state && planReview ? <PlanApproval bookId={bookId} mode={planReview} state={state} activities={activities} /> : null;
+  // The map of the chapters goes with the plan, and both give way to the approval while the plan waits for the author.
+  const map = state?.plan?.chapters.length ? <ChapterMap bookId={bookId} state={state} linkedSlugs={linkedChapters} /> : null;
   const rules = state ? <RulesCard state={state} editHref={`${settingsHref}#autopilot-rules`} /> : null;
   const where = <WhereCard book={book} running={running} quiet />;
 
@@ -261,9 +271,9 @@ export function AutopilotPage() {
       {layout === "wide" && result}
       {layout === "wide" ? (
         <div className="grid grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-5">
-          <div data-autopilot-main className="min-w-0 space-y-5">{timeline}</div>
+          <div data-autopilot-main className="min-w-0 space-y-5">{approval ?? timeline}</div>
           <div data-autopilot-side className="min-w-0 space-y-4">
-            {plan}
+            {approval ? null : <>{map}{plan}</>}
             {intervene}
             {rules}
             {where}
@@ -280,7 +290,7 @@ export function AutopilotPage() {
             {intervene}
           </TabsContent>
           <TabsContent value="timeline" className="space-y-5">{timeline}</TabsContent>
-          <TabsContent value="plan" className="space-y-4">{plan}</TabsContent>
+          <TabsContent value="plan" className="space-y-4">{approval ?? <>{map}{plan}</>}</TabsContent>
           <TabsContent value="rules" className="space-y-4">
             {rules}
             {where}
@@ -510,6 +520,8 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
   }, 0));
   const sync = view.sync;
   const syncText = syncStatusText(t, sync);
+  // The server says its sync with GitHub stopped on files that both changed: the way to settle them is here, as it is in the panel of the error.
+  const githubConflicts = host === "server" ? githubConflictsOfSync(serverBook?.lastSync) : null;
 
   return (
     <Card id="autopilot-where" title={t("autopilot.where.title")} icon={<Server className="h-4 w-4 text-primary" />} quiet={quiet}>
@@ -567,6 +579,15 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
               <Button size="sm" variant="ghost" disabled={busy !== null || running} onClick={moveBackWithoutDownloading}>{t("autopilot.where.discardServerWork")}</Button>
             )}
           </div>
+          {githubConflicts !== null && (
+            <div data-github-conflicts-notice className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+              <p className="flex items-start gap-1.5 text-sm">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-600" aria-hidden />
+                <span>{t("githubConflicts.notice.text", { count: githubConflicts })}</span>
+              </p>
+              <GithubConflictsAction bookId={book.id} />
+            </div>
+          )}
         </div>
       )}
       {sync && (

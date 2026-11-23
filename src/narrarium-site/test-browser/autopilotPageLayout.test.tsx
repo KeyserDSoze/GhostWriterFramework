@@ -172,15 +172,18 @@ describe("what used to be on the page twice", () => {
     ["an error", { status: "error", message: "The provider answered 429: rate limit exceeded.", statePatch: { lastError: { message: "The provider answered 429: rate limit exceeded.", at: T0, task: "write" } } }],
     ["an error the engine classified, said four times in a row", classifiedError()],
     ["a failure that the runner is going to try again", { ...classifiedError("rate_limit", 2), status: "running", running: true, statePatch: {}, retry: { at: "2026-11-21T10:00:36.000Z", attempt: 2, retries: 3 } }],
+    ["a wait of «Retry later», between two restarts", { ...classifiedError("rate_limit", 4), status: "running", running: true, statePatch: {}, options: { longRetry: { everyMinutes: 10, cycles: 3 } }, retry: { at: "2026-11-21T10:13:10.000Z", attempt: 3, retries: 3, longTerm: { cycle: 2, cycles: 3 } } }],
     ["a book that is complete", { status: "completed", phase: "completed", chapters: longPlan(12, 12), message: "The book is complete.", statePatch: { finalDone: true }, activities: [activityOf("final", { summary: "approve 8/10 — The arc holds." })] }],
     ["a book that is complete, with everything the engine says of it", { status: "completed", phase: "completed", chapters: judgedPlan(12).map((entry, index) => ({ ...entry, score: [8, 8, 9, 6, 9, 7, 8, 5, 9, 8, 9, 8][index] })), message: "The book is complete.", statePatch: { finalDone: true, finalReview: { verdict: "revise", score: 7, text: "Good, but the middle drags: chapters 8 to 11 repeat the same beat.", at: T0 } }, stats: { workedMs: 13_260_000, cost: 17.62, aiCalls: 366 }, activities: [activityOf("final", { summary: "revise 7/10 — Good, but the middle drags." })] }],
   ];
 
   // The history is one list now, and part of the scan: nothing on the page is said twice, from the band to the last group.
-  it.each(SCENES)("shows no text twice on the screen, the history included: %s", (_name, seed) => {
+  it.each(SCENES)("shows no text twice on the screen, the history included: %s", (name, seed) => {
     seedRun(withHistory(seed));
     render(<Page />);
-    expect(screen.getByRole("heading", { name: t("autopilot.activity.title") })).toBeInTheDocument();
+    // Changed on purpose (the approval of the plan): while the plan waits for the author its own screen takes the place of the history, and is part of the scan.
+    const main = name === "a plan that waits for the author" ? t("autopilot.approval.title") : t("autopilot.activity.title");
+    expect(screen.getByRole("heading", { name: main })).toBeInTheDocument();
     expect(repeatedTexts()).toEqual([]);
   });
 
@@ -255,7 +258,8 @@ describe("the band and the mini-player on the screen together (the author brough
 
 describe("what comes first on the page", () => {
   it("puts the question of the director right under the band, and the history after it", () => {
-    seedRun({ status: "waiting-author", message: "The director has a question for you.", question: { id: "q-1", kind: "director", question: "Keep the ending open?", context: "", options: ["Yes", "No"], askedAt: T0 } });
+    // The history is a card once the book has run a step: a book that never ran has one line in its place (see the tests of the empty cards at rest).
+    seedRun({ status: "waiting-author", message: "The director has a question for you.", question: { id: "q-1", kind: "director", question: "Keep the ending open?", context: "", options: ["Yes", "No"], askedAt: T0 }, activities: [activityOf("consolidate", { chapterNumber: 4 })] });
     render(<Page />);
     const question = screen.getByText("Keep the ending open?").closest("section") as HTMLElement;
     expect(bandOf().compareDocumentPosition(question) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -275,7 +279,7 @@ describe("what comes first on the page", () => {
 
   // Changed on purpose (the menu in groups): the settings moved to the configuration of the autopilot, a page of their own.
   it("keeps the secondary things in a column of their own, after the history: the plan, the rules and where it runs", () => {
-    seedRun({ status: "paused" });
+    seedRun({ status: "paused", activities: [activityOf("consolidate", { chapterNumber: 4 })] });
     render(<Page />);
     const side = document.querySelector<HTMLElement>("[data-autopilot-side]") as HTMLElement;
     expect(side, "a secondary column").not.toBeNull();

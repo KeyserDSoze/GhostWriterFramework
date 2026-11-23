@@ -2,13 +2,9 @@ import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { formatBytes } from "@/autopilot/format";
-import type { ConflictSide, SyncConflict } from "@/autopilot/store";
-
-/** Conflicts are listed this many at a time: a first sync of two books that diverged can have thousands. */
-const PAGE = 50;
-/** The labels are sentences: they wrap instead of running out of the card, whatever the language. */
-const WRAP = "h-auto min-h-9 whitespace-normal py-1.5 text-left";
+import { ConflictFile, WRAP, sideText } from "@/components/autopilot/ConflictFile";
+import { CONFLICTS_PAGE as PAGE } from "@/autopilot/githubConflicts";
+import type { SyncConflict } from "@/autopilot/store";
 
 /**
  * The files that changed differently on this device and on the server, with a way out: keep this device's version or the
@@ -24,7 +20,6 @@ export function SyncConflicts({ conflicts, disabled, onResolve }: { conflicts: S
   const chooseAll = (choice: "local" | "remote") => {
     if (window.confirm(t(choice === "local" ? "autopilot.where.keepLocalAllConfirm" : "autopilot.where.keepRemoteAllConfirm", { count: conflicts.length }))) choose(choice, conflicts);
   };
-  const side = (state: ConflictSide, bytes: number | undefined) => bytes === undefined ? t(`autopilot.where.side.${state}`) : t("autopilot.where.sideSize", { state: t(`autopilot.where.side.${state}`), size: formatBytes(bytes) });
   const shown = conflicts.slice(0, limit);
 
   return (
@@ -42,14 +37,12 @@ export function SyncConflicts({ conflicts, disabled, onResolve }: { conflicts: S
       )}
       <ul aria-labelledby={headingId} className="space-y-2">
         {shown.map((conflict) => (
-          <li key={conflict.path} className="space-y-1.5 rounded-md border bg-background/70 p-2">
-            <code className="block break-all text-xs">{conflict.path}</code>
-            <p className="text-xs text-muted-foreground">{t("autopilot.where.conflictLine", { local: side(conflict.local, conflict.localBytes), remote: side(conflict.remote, conflict.remoteBytes) })}</p>
+          <ConflictFile key={conflict.path} path={conflict.path} line={t("autopilot.where.conflictLine", { local: sideText(t, conflict.local, conflict.localBytes), remote: sideText(t, conflict.remote, conflict.remoteBytes) })}>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" className={WRAP} disabled={disabled} aria-label={t("autopilot.where.keepLocalFor", { path: conflict.path })} onClick={() => choose("local", [conflict])}>{t("autopilot.where.keepLocal")}</Button>
               <Button size="sm" variant="outline" className={WRAP} disabled={disabled} aria-label={t("autopilot.where.keepRemoteFor", { path: conflict.path })} onClick={() => choose("remote", [conflict])}>{t("autopilot.where.keepRemote")}</Button>
             </div>
-          </li>
+          </ConflictFile>
         ))}
       </ul>
       {conflicts.length > limit && (

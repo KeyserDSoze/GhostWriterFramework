@@ -1,12 +1,14 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test } from "vitest";
 import enLocale from "@/i18n/locales/en";
 import itLocale from "@/i18n/locales/it";
 import autopilotEn from "@/i18n/locales/autopilot.en";
 import autopilotIt from "@/i18n/locales/autopilot.it";
 import { appDocEntries } from "@/lib/appDocs";
+import { loadDocMarkdown } from "@/lib/docContent";
 import { docEntries } from "@/lib/generated-docs";
+import { guideText, loadGuides } from "./helpers/guides";
 
 type Tree = { [key: string]: string | Tree };
 type Language = "en" | "it";
@@ -99,13 +101,12 @@ describe("texts of the AI Integrations and AI Router sections", () => {
 });
 
 describe("the in-app documentation of the two settings pages", () => {
-  const guide = appDocEntries.find((entry) => entry.slug === "ai-router")!;
-  const settingsGuide = appDocEntries.find((entry) => entry.slug === "privacy-settings")!;
-  const autopilotGuide = appDocEntries.find((entry) => entry.slug === "autopilot")!;
   const path = (language: Language, page: string) => `${language === "en" ? "Settings" : "Impostazioni"} → ${page}`;
 
+  beforeAll(loadGuides);
+
   test.each(LANGUAGES)("tells the author to add providers in AI Integrations and then to route tasks in AI Router (%s)", (language) => {
-    const markdown = guide.translations[language]!.markdown;
+    const markdown = guideText("ai-router", language);
     const paragraph = markdown.split("\n").find((line) => line.includes("Azure OpenAI"))!;
     const integrations = paragraph.indexOf(path(language, INTEGRATIONS[language]));
     const router = paragraph.indexOf(path(language, ROUTER));
@@ -114,28 +115,30 @@ describe("the in-app documentation of the two settings pages", () => {
   });
 
   test.each(LANGUAGES)("lists both pages in the overview of the settings (%s)", (language) => {
-    const markdown = settingsGuide.translations[language]!.markdown;
+    const markdown = guideText("privacy-settings", language);
     expect(markdown).toContain(`${INTEGRATIONS[language]}, ${ROUTER},`);
   });
 
   test.each(LANGUAGES)("still sends the routing of the Autopilot and Director tasks to AI Router (%s)", (language) => {
-    expect(autopilotGuide.translations[language]!.markdown).toContain(path(language, ROUTER));
+    expect(guideText("autopilot", language)).toContain(path(language, ROUTER));
   });
 
-  test("the getting-started guide is generated from the repository docs and names the new page", () => {
+  test("the getting-started guide is read from the repository docs and names the new page", async () => {
     const guideTwo = docEntries.find((entry) => entry.slug === "guide-2-getting-started")!;
     for (const language of LANGUAGES) {
       const source = readFileSync(resolve(process.cwd(), `../../docs/guide-2-getting-started.${language}.md`), "utf8");
-      expect(guideTwo.translations[language]!.markdown, `generated-docs.ts is stale (${language}): run node scripts/generate-docs.mjs`).toBe(source);
+      expect(guideTwo.translations[language]!.sourcePath).toBe(`docs/guide-2-getting-started.${language}.md`);
+      expect(await loadDocMarkdown(guideTwo, language), `the guide is not the text of docs/guide-2-getting-started.${language}.md`).toBe(source);
       expect(source).toContain(path(language, INTEGRATIONS[language]));
       expect(source).toContain(path(language, ROUTER));
     }
   });
 
-  test("no documentation sends the author to AI Router to add a provider", () => {
+  test("no documentation sends the author to AI Router to add a provider", async () => {
     const sendsToRouter = /(Configure|Add|Connect|Configura|Aggiungi|Collega)[^\n.→]*(Azure OpenAI|GitHub Models|OpenAI)[^\n.→]*(Settings|Impostazioni) → AI Router/;
+    expect(appDocEntries.length + docEntries.length).toBeGreaterThanOrEqual(40);
     for (const entry of [...appDocEntries, ...docEntries]) {
-      for (const language of LANGUAGES) expect(entry.translations[language]?.markdown ?? "", `${entry.slug} (${language})`).not.toMatch(sendsToRouter);
+      for (const language of LANGUAGES) expect(await loadDocMarkdown(entry, language), `${entry.slug} (${language})`).not.toMatch(sendsToRouter);
     }
   });
 });

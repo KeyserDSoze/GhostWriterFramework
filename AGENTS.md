@@ -79,3 +79,5 @@ Narrarium MCP already auto-refreshes `plot.md` and the resume files after final 
   - `narrarium-engine`
   - `narrarium-server`
 - Autopilot, director, simulated readers, and personal-server sync live once in `packages/engine` (`narrarium-engine`). The web app and `narrarium-server` only provide adapters (book store, AI port); never duplicate that logic in either host.
+- Every AI call of the web app, the Copilot included, goes through the engine's client (`createFetchAi`, in the site through `createBrowserAi`): streaming, the three deadlines, thinking and the debug and cost records are the engine's. Never add a second path with its own SDK or timers.
+- A series of edits of the Outline is composed by the engine (`composeOutlineEdits`), and what happens when the entry of a written chapter changes is `changeOfWritten`: the site and the server call them and never copy them.

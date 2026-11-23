@@ -1,12 +1,12 @@
 import { fireEvent, screen } from "@testing-library/react";
 import { vi } from "vitest";
-import { createAutopilotState, summarizeAutopilotState, type AutopilotLimitsSummary, type AutopilotPausePending, type AutopilotPublishMode, type AutopilotRetryInfo, type AutopilotState, type AutopilotStateSummary, type AutopilotStatus, type DirectorQuestion, type ServerInfo } from "narrarium-engine";
+import { createAutopilotState, summarizeAutopilotState, type AutopilotLimitsSummary, type AutopilotPausePending, type AutopilotPublishMode, type AutopilotRetryInfo, type AutopilotState, type AutopilotStateSummary, type AutopilotStatus, type DirectorQuestion, type ServerInfo, type ServerBookSync } from "narrarium-engine";
 import i18n from "@/i18n";
 import type { HandoverPlan } from "@/autopilot/handover";
 import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
-import { OLD_SERVER_INFO, PIN, SERVER_INFO } from "./fakeBookServer";
+import { OLD_SERVER_INFO, PIN, RETRY_SERVER_INFO, SERVER_INFO } from "./fakeBookServer";
 
 export const T0 = "2026-11-21T10:00:00.000Z";
 export const LOCAL_BOOK: BookEntry = { id: "book-1", owner: "local", repo: "book-1", name: "The Glass Harbor", tokenIndex: null, storageMode: "local-only", addedAt: "2026-11-21T00:00:00.000Z" };
@@ -43,20 +43,24 @@ export interface BarSeed {
   /** The retry the run waits for: when the next attempt is, and which one. Not saved, like the pause that waits. */
   retry?: AutopilotRetryInfo;
   question?: DirectorQuestion | null;
-  /** The personal server: none connected, verified (`online`), or unreachable; `old` is a server that predates the quick controls; `connecting` has not said what it can do yet. */
-  server?: "none" | "online" | "old" | "offline" | "connecting";
+  /** The personal server: none connected, verified (`online`), or unreachable; `old` is a server that predates the quick controls; `retry` one that has «Retry later» and «Retry now» too; `connecting` has not said what it can do yet. */
+  server?: "none" | "online" | "old" | "retry" | "offline" | "connecting";
   /** The author has a GitHub token for the book. */
   token?: boolean;
   operation?: { kind: string; since: string } | null;
   handover?: HandoverPlan | null;
   /** What the server says it holds of the book. */
   serverHoldsToken?: boolean;
+  /** How the server says the last sync of the book went (`lastSync` of its summary), when it holds the book. */
+  serverLastSync?: ServerBookSync | null;
+  /** What the server says of itself, when it is not the one of the quick controls (the features it announces). */
+  serverInfo?: ServerInfo;
   dockOpen?: boolean;
 }
 
 export function seedBar(seed: BarSeed = {}): { book: BookEntry; state: AutopilotState | null; summary: AutopilotStateSummary | null } {
   const book = seed.book ?? LOCAL_BOOK;
-  const serverInfo: ServerInfo | null = seed.server === "old" ? OLD_SERVER_INFO : seed.server === "none" || seed.server === undefined ? null : SERVER_INFO;
+  const serverInfo: ServerInfo | null = seed.serverInfo && seed.server !== "none" && seed.server !== undefined ? seed.serverInfo : seed.server === "old" ? OLD_SERVER_INFO : seed.server === "retry" ? RETRY_SERVER_INFO : seed.server === "none" || seed.server === undefined ? null : SERVER_INFO;
   const connected = seed.server !== "none";
   useSettingsStore.setState({
     settings: {
@@ -79,7 +83,7 @@ export function seedBar(seed: BarSeed = {}): { book: BookEntry; state: Autopilot
         ...(seed.retry !== undefined ? { retry: seed.retry } : {}),
       }
     : null;
-  const serverBook = { bookId: book.id, title: book.name, storage: { kind: "local" as const }, hasGithubToken: seed.serverHoldsToken ?? false, ready: true, revision: "r1", autopilot: null, running: false, lastSync: null };
+  const serverBook = { bookId: book.id, title: book.name, storage: { kind: "local" as const }, hasGithubToken: seed.serverHoldsToken ?? false, ready: true, revision: "r1", autopilot: null, running: false, lastSync: seed.serverLastSync ?? null };
   useAutopilotStore.setState({
     dockOpen: seed.dockOpen ?? false,
     dockTab: "book",
@@ -106,6 +110,7 @@ export function makeRuntime() {
   return {
     refresh: vi.fn(async () => null),
     pause: vi.fn(async () => undefined),
+    retryNow: vi.fn(async (): Promise<boolean> => true),
     start: vi.fn(async () => undefined),
     runOne: vi.fn(async () => undefined),
     updateOptions: vi.fn(async () => undefined),

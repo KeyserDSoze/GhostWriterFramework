@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import i18n from "@/i18n";
 import "@/i18n/endpoint";
 import "@/i18n/catalog";
 import { appDocEntries } from "@/lib/appDocs";
+import { guideText, loadGuides } from "./helpers/guides";
 
 type Language = "en" | "it";
 const LANGUAGES: Language[] = ["en", "it"];
@@ -11,10 +12,12 @@ const text = (language: Language, key: string, options: Record<string, unknown> 
 const HEADING: Record<Language, string> = { en: "Reading the models of an endpoint", it: "Leggere i modelli di un endpoint" };
 const NEIGHBOURS: Record<Language, [string, string]> = { en: ["GitHub Models quick start", "Task routing"], it: ["Avvio rapido GitHub Models", "Routing dei task"] };
 
+beforeAll(loadGuides);
+
 function guide(language: Language): string {
   const entry = appDocEntries.find((candidate) => candidate.slug === "ai-router");
   if (!entry) throw new Error("the guide to the AI Router is missing");
-  return (entry.translations?.[language] ?? entry).markdown;
+  return guideText("ai-router", language);
 }
 
 /** The section of the guide to the AI Router about reading the models of an endpoint, where an author looks for how to fill an integration. */

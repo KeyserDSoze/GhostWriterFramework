@@ -512,10 +512,12 @@ describe("what can be done", () => {
     await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledWith("book-1"));
   });
 
-  it("does not offer to retry what the runner is about to retry by itself", () => {
+  it("does not resume what the runner is about to retry by itself: during the wait «Retry now» skips the wait instead", async () => {
     failing({ kind: "rate_limit", count: 2, retry: { at: at(36), attempt: 2, retries: 3 } });
     show();
-    expect(screen.queryByRole("button", { name: quickName(t("autopilot.failure.actions.retry")) })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: quickName(t("autopilot.failure.actions.retry")) }));
+    await waitFor(() => expect(mocks.runtime.retryNow).toHaveBeenCalledWith("book-1"));
+    expect(mocks.runtime.start).not.toHaveBeenCalled();
     expect(screen.getByRole("link", { name: t("autopilot.failure.actions.integrations") })).toBeInTheDocument();
   });
 
