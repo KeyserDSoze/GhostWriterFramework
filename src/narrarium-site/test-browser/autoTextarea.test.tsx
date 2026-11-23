@@ -11,16 +11,9 @@ function area(props: Partial<React.ComponentProps<typeof AutoTextarea>> = {}): H
   return field;
 }
 
-describe("the Tab key in the auto-growing text area", () => {
-  it("indents the line, as in an editor, unless told otherwise", () => {
+describe("the Tab key in every text area", () => {
+  it("moves on to the next control, with or without Shift, and never changes the text (a keyboard has no other way out of a text area)", () => {
     const field = area();
-    // `fireEvent` answers false when the page cancelled the key.
-    expect(fireEvent.keyDown(field, { key: "Tab" })).toBe(false);
-    expect(field.value).toBe("  one");
-  });
-
-  it("moves on to the next control, with or without Shift, when it is a field of a form and not an editor (a keyboard has no other way out)", () => {
-    const field = area({ tabIndent: false });
     expect(fireEvent.keyDown(field, { key: "Tab" })).toBe(true);
     expect(fireEvent.keyDown(field, { key: "Tab", shiftKey: true })).toBe(true);
     expect(field.value).toBe("one");
@@ -28,7 +21,7 @@ describe("the Tab key in the auto-growing text area", () => {
 
   it("still tells the page's own handler about every key", () => {
     const onKeyDown = vi.fn();
-    const field = area({ tabIndent: false, onKeyDown });
+    const field = area({ onKeyDown });
     fireEvent.keyDown(field, { key: "Tab" });
     expect(onKeyDown).toHaveBeenCalledTimes(1);
   });

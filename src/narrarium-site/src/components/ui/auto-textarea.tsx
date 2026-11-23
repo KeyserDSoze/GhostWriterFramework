@@ -1,16 +1,13 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { handleTextIndent } from "@/editor/textIndent";
 
 export interface AutoTextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   minRows?: number;
   maxHeight?: number;
-  /** Tab indents the lines, as an editor does. Off, Tab moves on to the next control, as in any field of a form (a keyboard has no other way out of a text area). */
-  tabIndent?: boolean;
 }
 
 const AutoTextarea = React.forwardRef<HTMLTextAreaElement, AutoTextareaProps>(
-    ({ className, value, minRows = 3, maxHeight, tabIndent = true, onInput, onKeyDown, ...props }, forwardedRef) => {
+    ({ className, value, minRows = 3, maxHeight, onInput, onKeyDown, ...props }, forwardedRef) => {
     const innerRef = React.useRef<HTMLTextAreaElement | null>(null);
 
     const setRef = (node: HTMLTextAreaElement | null) => {
@@ -42,7 +39,6 @@ const AutoTextarea = React.forwardRef<HTMLTextAreaElement, AutoTextareaProps>(
           onInput?.(event);
         }}
         onKeyDown={(event) => {
-          if (tabIndent) handleTextIndent(event);
           onKeyDown?.(event);
         }}
         className={cn(

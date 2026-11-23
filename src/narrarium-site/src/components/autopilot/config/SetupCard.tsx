@@ -235,7 +235,7 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
         <PresetPicker value={presetOfForm(form)} disabled={locked} onChoose={choosePreset} />
         <div className="space-y-1.5">
           <Label htmlFor="autopilot-idea">{t("autopilot.setup.idea")}</Label>
-          <AutoTextarea id="autopilot-idea" value={form.brief.idea} onChange={(event) => brief({ idea: event.target.value })} minRows={fresh ? 3 : 2} placeholder={t("autopilot.setup.ideaPlaceholder")} className="text-sm" disabled={locked} tabIndent={false} />
+          <AutoTextarea id="autopilot-idea" value={form.brief.idea} onChange={(event) => brief({ idea: event.target.value })} minRows={fresh ? 3 : 2} placeholder={t("autopilot.setup.ideaPlaceholder")} className="text-sm" disabled={locked} />
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <NumberField id="autopilot-chapters" label={t("autopilot.setup.chapters")} value={form.brief.targetChapters} min={1} max={MAX_CHAPTERS} disabled={locked} onChange={(value) => brief({ targetChapters: value })} />
@@ -249,7 +249,7 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="autopilot-synopsis">{t("autopilot.setup.synopsis")}</Label>
-          <AutoTextarea id="autopilot-synopsis" value={form.brief.synopsis} onChange={(event) => brief({ synopsis: event.target.value })} minRows={2} placeholder={t("autopilot.setup.synopsisPlaceholder")} className="text-sm" disabled={locked} tabIndent={false} aria-describedby="autopilot-synopsis-note" />
+          <AutoTextarea id="autopilot-synopsis" value={form.brief.synopsis} onChange={(event) => brief({ synopsis: event.target.value })} minRows={2} placeholder={t("autopilot.setup.synopsisPlaceholder")} className="text-sm" disabled={locked} aria-describedby="autopilot-synopsis-note" />
           <p id="autopilot-synopsis-note" className="text-xs text-muted-foreground">{t("autopilot.setup.synopsisOutline")} <Link className="font-medium text-foreground underline underline-offset-4" to={`/app/books/${encodeURIComponent(book.id)}/outline`}>{t("autopilot.setup.useOutline")}</Link></p>
         </div>
         <label className="flex items-center justify-between gap-3 text-sm">
