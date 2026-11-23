@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.95.0",
+    "date": "2026-11-23",
+    "en": {
+      "title": "The autopilot can resume by itself after a server restart, and Tab moves between fields",
+      "summary": "A run that was going when your personal server stopped can now continue by itself once the server is back, if you turn that on. In every text area, Tab moves to the next field.",
+      "changes": [
+        "The autopilot setup has a new switch in the Retries card, «Resume by itself after a server restart». It is off by default, and you can change it while a run goes on.",
+        "With the switch on, a run that was going when the personal server stopped (a restart or an update) resumes by itself when the server starts again. A run you paused yourself stays paused.",
+        "At most three automatic resumes a day for each book; each one is written to the server's admin log, and a resume that the server refuses is logged and leaves the book as it was.",
+        "The server's startup message says what happens to the runs when it stops and starts.",
+        "In every text area, Tab moves to the next field and Shift+Tab goes back, so the keyboard never gets stuck in one. Tab no longer indents the text."
+      ]
+    },
+    "it": {
+      "title": "L'autopilot può riprendere da solo dopo un riavvio del server, e Tab passa tra i campi",
+      "summary": "Una corsa in corso quando il tuo server personale si ferma può ora riprendere da sola, appena il server torna, se lo attivi. In ogni campo di testo, Tab passa al campo successivo.",
+      "changes": [
+        "Il modulo di avvio dell'autopilot ha un nuovo interruttore nella scheda «Tentativi», «Riprendi da solo dopo un riavvio del server». È disattivato di base, e si può cambiare anche durante una corsa.",
+        "Con l'interruttore attivo, una corsa in corso quando il server personale si ferma (un riavvio o un aggiornamento) riprende da sola quando il server torna su. Una corsa che hai messo in pausa tu resta in pausa.",
+        "Al massimo tre riprese automatiche al giorno per ogni libro; ognuna finisce nel registro dell'amministrazione del server, e una ripresa rifiutata dal server viene registrata e lascia il libro com'era.",
+        "Il messaggio di avvio del server dice che cosa succede alle corse quando il server si ferma e riparte.",
+        "In ogni campo di testo, Tab passa al campo successivo e Maiusc+Tab torna indietro, così la tastiera non resta mai bloccata. Tab non indenta più il testo."
+      ]
+    }
+  },
+  {
     "version": "0.94.1",
     "date": "2026-11-23",
     "en": {
