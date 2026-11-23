@@ -1,5 +1,35 @@
 [
   {
+    "version": "0.99.0",
+    "date": "2026-11-24",
+    "en": {
+      "title": "Sign in with GitHub as an app, and see which credential each book uses",
+      "summary": "Account & Sync can connect GitHub as an app, with no token to paste, once the site enables it; until then the personal access token works as before. Each book now says which credential it uses.",
+      "changes": [
+        "The GitHub card of Account & Sync offers «Connect with GitHub» (a GitHub App, no token to paste) and, as the advanced option, a personal access token. Until the site's owner enables the app, the card says so in one line and the token keeps working as it always did.",
+        "A connected GitHub app keeps itself signed in: its short-lived token is renewed in the background, a rejected token is renewed once and the request retried, and a lost sign-in says «Reconnect GitHub». Its tokens stay on this device and are never part of the data that syncs between devices.",
+        "A GitHub app reaches only the repositories it is installed on: after connecting, the card shows where it is installed, names the books that are not among them, and has a button to choose repositories on GitHub, with a note for organizations that must approve it.",
+        "Each book now says which credential it uses (its own token, the default token or your GitHub connection) in Account & Sync and in its settings, and a new setting lets the GitHub connection come before the default token.",
+        "Creating a repository works with a classic token, a fine-grained token or the app, and when a token lacks a permission the page names it («Repository creation», «Workflows») and offers to connect a repository you create yourself.",
+        "For a book your personal server runs, the page warns that an app token lasts 8 hours and suggests a personal access token; while the browser is open the server's copy of the token is renewed with it.",
+        "The sign-in code that carried a secret inside the site has been removed."
+      ]
+    },
+    "it": {
+      "title": "Accedi con GitHub come app, e guarda quale credenziale usa ogni libro",
+      "summary": "Account e sincronizzazione può collegare GitHub come app, senza token da incollare, quando il sito la attiva; fino ad allora il token di accesso personale funziona come prima. Ogni libro ora dice quale credenziale usa.",
+      "changes": [
+        "La scheda GitHub di Account e sincronizzazione offre «Collega con GitHub» (una GitHub App, senza token da incollare) e, come opzione avanzata, un token di accesso personale. Finché il proprietario del sito non attiva l'app, la scheda lo dice in una riga e il token continua a funzionare come sempre.",
+        "Un'app GitHub collegata resta collegata da sola: il suo token di breve durata si rinnova in background, un token rifiutato viene rinnovato una volta e la richiesta ritentata, e un accesso perso dice «Riconnetti GitHub». I suoi token restano su questo dispositivo e non fanno mai parte dei dati che si sincronizzano tra dispositivi.",
+        "Un'app GitHub raggiunge solo i repository su cui è installata: dopo il collegamento la scheda mostra dove è installata, nomina i libri che non ne fanno parte e ha un pulsante per scegliere i repository su GitHub, con una nota per le organizzazioni che devono approvarla.",
+        "Ogni libro ora dice quale credenziale usa (il suo token, il token predefinito o la tua connessione GitHub) in Account e sincronizzazione e nelle sue impostazioni, e una nuova impostazione permette alla connessione GitHub di precedere il token predefinito.",
+        "Creare un repository funziona con un token classico, uno a grana fine o l'app, e quando a un token manca un permesso la pagina lo nomina («Creazione di repository», «Workflows») e offre di collegare un repository creato da te.",
+        "Per un libro che gira sul tuo server personale, la pagina avvisa che un token dell'app dura 8 ore e consiglia un token di accesso personale; finché il browser è aperto, la copia del token sul server si rinnova con lui.",
+        "È stato rimosso il codice di accesso che portava un segreto dentro il sito."
+      ]
+    }
+  },
+  {
     "version": "0.98.0",
     "date": "2026-11-24",
     "en": {
