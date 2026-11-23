@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.96.1",
+    "date": "2026-11-23",
+    "en": {
+      "title": "A streamed answer that stops halfway is retried, and the error says where it stopped",
+      "summary": "When a model's streamed answer is cut after it started, the autopilot now retries the call instead of stopping with a repeated error, and the error shows what was received.",
+      "changes": [
+        "A streamed answer that is cut after it started (the provider, the proxy or a gateway closes the connection) is treated as a failure of the moment: the call is retried, and the run no longer stops with the same error again and again.",
+        "The error panel and the debug panel say how the call ended: the HTTP status, how many bytes and chunks arrived, how long the stream had been silent, how it ended and whether the token count came with it.",
+        "Token counts and prices are read from more formats of OpenAI-compatible servers, and a call whose stream was cut says that its tokens are an estimate.",
+        "A server that refuses the option that asks for the token count in a stream is asked again without it, once.",
+        "Streams from OpenAI-compatible servers are read more tolerantly: any line ending, error events sent as text, and a reasoning field sent under either name.",
+        "The AI Router and Autopilot guides explain how long a silent stream is waited for and which gateways cut a silent connection (Cloudflare does it after 100 seconds)."
+      ]
+    },
+    "it": {
+      "title": "Una risposta in streaming che si ferma a metà viene ritentata, e l'errore dice dove si è fermata",
+      "summary": "Quando la risposta in streaming di un modello viene interrotta dopo l'inizio, l'autopilot ritenta la chiamata invece di fermarsi con un errore ripetuto, e l'errore mostra cosa è arrivato.",
+      "changes": [
+        "Una risposta in streaming interrotta dopo l'inizio (il provider, il proxy o un gateway chiude la connessione) è trattata come un guasto del momento: la chiamata viene ritentata, e la corsa non si ferma più con lo stesso errore ripetuto.",
+        "Il pannello degli errori e quello di debug dicono come è finita la chiamata: lo stato HTTP, quanti byte e quanti pezzi sono arrivati, per quanto tempo il flusso è rimasto in silenzio, come è finito e se il conteggio dei token è arrivato.",
+        "I conteggi dei token e i prezzi si leggono da più formati dei server compatibili con OpenAI, e una chiamata il cui flusso è stato interrotto dice che i suoi token sono una stima.",
+        "Un server che rifiuta l'opzione con cui si chiede il conteggio dei token nello streaming viene interrogato di nuovo senza, una volta.",
+        "Gli streaming dei server compatibili con OpenAI sono letti con più tolleranza: qualunque fine riga, eventi di errore mandati come testo e un campo di ragionamento inviato con l'uno o con l'altro nome.",
+        "Le guide AI Router e Autopilot spiegano quanto si aspetta un flusso silenzioso e quali gateway tagliano una connessione silenziosa (Cloudflare lo fa dopo 100 secondi)."
+      ]
+    }
+  },
+  {
     "version": "0.96.0",
     "date": "2026-11-23",
     "en": {
