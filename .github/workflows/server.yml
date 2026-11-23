@@ -34,7 +34,7 @@ jobs:
           - os: ubuntu-latest
             node: 24
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v7

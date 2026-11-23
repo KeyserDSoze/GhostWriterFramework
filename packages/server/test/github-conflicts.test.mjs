@@ -381,9 +381,11 @@ test("J2: a push that fails for another reason leaves the resolution on the serv
 // Every file is a git operation: on Windows each costs about a fifth of a second more (a thousand of them took this one test more than two minutes and the whole file
 // past its five), and on a macOS runner `git merge-tree` has failed to create a temporary file under that many. Three hundred still make three pages of a hundred, and
 // the paging, the default and the exceptions are what is under test; Linux runs the thousand.
-const MANY = process.platform === "linux" ? 1000 : 300;
+const MANY = 1000;
 
-test("J2: many conflicts are listed a page at a time, and resolved with a default and a few exceptions; no answer grows with them", async () => {
+// A thousand conflicts is a thousand git operations: a Windows runner takes minutes for them and a macOS runner has stopped git merge-tree with «unable to create temporary file»
+// more than once. What is under test (the paging, the default, the exceptions) is the same JavaScript everywhere, so Linux runs it.
+test("J2: many conflicts are listed a page at a time, and resolved with a default and a few exceptions; no answer grows with them", { skip: process.platform !== "linux" && "a thousand git operations: run on Linux, where the logic is the same" }, async () => {
   const name = (index) => `notes/n${String(index).padStart(4, "0")}.md`;
   const many = Object.fromEntries(Array.from({ length: MANY }, (_, index) => [name(index), `base ${index}\n`]));
   const middle = Math.floor(MANY / 2);

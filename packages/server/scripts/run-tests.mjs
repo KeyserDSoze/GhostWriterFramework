@@ -1,12 +1,12 @@
 // Runs the server's tests in two groups. The files that start real child processes through the supervisor harness (a server that is stopped
-// and started again by an update, a failed install, a rollback) are timed by those processes: on a runner with a few cores they were slow
+// and started again by an update, a failed install, a rollback), and the one that makes git merge a book with its remote again and again, are timed by those processes: on a runner with a few cores they were slow
 // whenever three other files ran beside them, and their waits ran out now and then on Windows. They run one at a time, after the others.
 import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const SERIAL = ["rollback.test.mjs", "supervisor.test.mjs", "update-history.test.mjs", "update-verification.test.mjs"];
+const SERIAL = ["github-conflicts.test.mjs", "rollback.test.mjs", "supervisor.test.mjs", "update-history.test.mjs", "update-verification.test.mjs"];
 
 const run = (files, extra = []) => {
   const result = spawnSync(process.execPath, ["--test", "--test-timeout=300000", ...extra, ...files], { cwd: root, stdio: "inherit" });
