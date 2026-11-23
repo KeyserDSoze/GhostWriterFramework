@@ -1,6 +1,6 @@
 # Guida: Cloudflare e accessi (Google, Microsoft, GitHub)
 
-Guida passo passo per il proprietario. Spiega cosa devi fare a mano su Cloudflare, su Google, su Microsoft e su GitHub perché il Worker `models-github-proxy` permetta al sito di restare collegato a Google Drive, OneDrive e (con un rilascio successivo del sito) a GitHub, e cosa **imporre** perché resti sicuro. Versione breve in inglese: [`cloudflare-and-sign-in-setup.en.md`](cloudflare-and-sign-in-setup.en.md). Riferimento tecnico del Worker: [`infra/models-github-proxy/README.md`](../infra/models-github-proxy/README.md).
+Guida passo passo per il proprietario. Spiega cosa devi fare a mano su Cloudflare, su Google, su Microsoft e su GitHub perché il Worker `models-github-proxy` permetta al sito di restare collegato a Google Drive, OneDrive e (con un rilascio successivo del sito) a GitHub, e cosa **imporre** perché resti sicuro. Versione breve in inglese: [`cloudflare-and-sign-in-setup.en.md`](cloudflare-and-sign-in-setup.en.md). Riferimento tecnico del Worker: [`infra/models-github-proxy/README.md`](../README.md).
 
 Come leggerla: ogni passo ha una riga **Verifica** che dice cosa devi vedere. Se non lo vedi, fermati e non andare avanti. I nomi dei menu sono quelli inglesi delle console (le traduzioni italiane cambiano spesso; dove ne conosco una probabile la metto tra parentesi). Le fonti ufficiali, con data di consultazione (23 novembre 2026), sono in fondo, insieme a ciò che **non ho potuto verificare**.
 

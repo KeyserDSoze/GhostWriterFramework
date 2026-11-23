@@ -1,6 +1,6 @@
 # GitHub Models CORS proxy and OAuth token broker (Cloudflare Worker)
 
-> Owner's step-by-step guide (Cloudflare, Google, Microsoft, GitHub App; what to enforce): [`docs/guida-cloudflare-e-accessi.it.md`](../../docs/guida-cloudflare-e-accessi.it.md) (Italian), short English version [`docs/cloudflare-and-sign-in-setup.en.md`](../../docs/cloudflare-and-sign-in-setup.en.md).
+> Owner's step-by-step guide (Cloudflare, Google, Microsoft, GitHub App; what to enforce): [`docs/guida-cloudflare-e-accessi.it.md`](docs/guida-cloudflare-e-accessi.it.md) (Italian), short English version [`docs/cloudflare-and-sign-in-setup.en.md`](docs/cloudflare-and-sign-in-setup.en.md).
 
 The Narrarium web app runs entirely in the browser (GitHub Pages). This Cloudflare
 Worker does two jobs for it:
@@ -280,8 +280,8 @@ di `main`. Finché il sito non usa il broker, per gli utenti non cambia nulla.
 
 La guida completa, con ogni campo da compilare, una riga «Verifica» per passo, il token
 Cloudflare a privilegi minimi, la registrazione della GitHub App e la tabella di «cosa
-imporre», è in [`docs/guida-cloudflare-e-accessi.it.md`](../../docs/guida-cloudflare-e-accessi.it.md)
-(versione inglese breve: [`docs/cloudflare-and-sign-in-setup.en.md`](../../docs/cloudflare-and-sign-in-setup.en.md)).
+imporre», è in [`docs/guida-cloudflare-e-accessi.it.md`](docs/guida-cloudflare-e-accessi.it.md)
+(versione inglese breve: [`docs/cloudflare-and-sign-in-setup.en.md`](docs/cloudflare-and-sign-in-setup.en.md)).
 Qui sotto c'è il riassunto per Google, Microsoft e i segreti.
 
 I nomi dei menu sono quelli delle console in italiano, con l'inglese tra parentesi.

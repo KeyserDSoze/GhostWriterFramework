@@ -1,6 +1,6 @@
 # Cloudflare and sign-in setup (short English version)
 
-What the owner must do by hand so the `models-github-proxy` Worker can keep the site connected to Google Drive, OneDrive and (with a later site release) GitHub, and what to **enforce**. The full step-by-step guide, with every field and a **verify** line per step, is in Italian: [`guida-cloudflare-e-accessi.it.md`](guida-cloudflare-e-accessi.it.md). Technical reference: [`infra/models-github-proxy/README.md`](../infra/models-github-proxy/README.md).
+What the owner must do by hand so the `models-github-proxy` Worker can keep the site connected to Google Drive, OneDrive and (with a later site release) GitHub, and what to **enforce**. The full step-by-step guide, with every field and a **verify** line per step, is in Italian: [`guida-cloudflare-e-accessi.it.md`](guida-cloudflare-e-accessi.it.md). Technical reference: [`infra/models-github-proxy/README.md`](../README.md).
 
 Rule zero: never paste a secret (API token, client secret, refresh token) into an issue, chat, commit or `wrangler.toml`. Secrets go only into GitHub repository secrets (`set-secrets.sh` or `gh secret set`) and from there into Worker secrets.
 

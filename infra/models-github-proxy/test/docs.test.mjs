@@ -7,8 +7,8 @@ import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_ALLOWED_REDIRECT_URIS } from "../src/c
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const FILES = {
-  italian: join(root, "docs", "guida-cloudflare-e-accessi.it.md"),
-  english: join(root, "docs", "cloudflare-and-sign-in-setup.en.md"),
+  italian: join(root, "infra", "models-github-proxy", "docs", "guida-cloudflare-e-accessi.it.md"),
+  english: join(root, "infra", "models-github-proxy", "docs", "cloudflare-and-sign-in-setup.en.md"),
   readme: join(root, "infra", "models-github-proxy", "README.md"),
 };
 const text = Object.fromEntries(Object.entries(FILES).map(([key, file]) => [key, readFileSync(file, "utf8")]));
@@ -96,9 +96,8 @@ describe("the owner's guides", () => {
     }
   });
 
-  it("are not published as public documents by the site's generator", () => {
-    const generator = readFileSync(join(root, "src", "narrarium-site", "scripts", "generate-docs.mjs"), "utf8");
-    assert.ok(generator.includes("docs/guida-cloudflare-e-accessi.it.md"));
-    assert.ok(generator.includes("docs/cloudflare-and-sign-in-setup.en.md"));
+  it("live outside docs/, which the site publishes as its public documents", () => {
+    assert.ok(!existsSync(join(root, "docs", "guida-cloudflare-e-accessi.it.md")));
+    assert.ok(!existsSync(join(root, "docs", "cloudflare-and-sign-in-setup.en.md")));
   });
 });

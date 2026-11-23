@@ -143,7 +143,7 @@ export function renderSummary(rows, baseUrl) {
     "| --- | --- | --- |",
     ...rows.map((row) => `| ${cell(row.provider.label)} | ${ICONS[row.state]} ${cell(row.label)} | ${cell(row.action)} |`),
     "",
-    "Step by step: `docs/cloudflare-and-sign-in-setup.en.md` (Italian: `docs/guida-cloudflare-e-accessi.it.md`).",
+    "Step by step: `infra/models-github-proxy/docs/cloudflare-and-sign-in-setup.en.md` (Italian: `infra/models-github-proxy/docs/guida-cloudflare-e-accessi.it.md`).",
     "",
   ];
   return lines.join("\n");

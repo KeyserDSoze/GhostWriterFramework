@@ -9,7 +9,7 @@ compatibility_date = "2026-07-05"
 # Resulting URL after the first deploy:
 #   https://models-github-proxy.<your-account-subdomain>.workers.dev
 #
-# If narrarium.net is ever moved to Cloudflare (docs/guida-cloudflare-e-accessi.it.md,
+# If narrarium.net is ever moved to Cloudflare (infra/models-github-proxy/docs/guida-cloudflare-e-accessi.it.md,
 # section 1.8), add a custom domain route and keep `workers_dev = true` until the
 # migration is over (adding `routes` without it turns workers.dev off):
 #   [[routes]]
