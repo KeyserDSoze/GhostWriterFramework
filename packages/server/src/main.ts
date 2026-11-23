@@ -65,7 +65,7 @@ if (!valid || !dataRoot) {
         void stop().catch(() => undefined).finally(() => process.exit(1));
       },
       log: (line) => {
-        if (verbose || line.startsWith("Error") || line.startsWith("Admin error") || line.startsWith("Update") || line.startsWith("Spend") || line.startsWith("The data folder")) process.stdout.write(`[${new Date().toISOString()}] ${line}\n`);
+        if (verbose || line.startsWith("Error") || line.startsWith("Admin error") || line.startsWith("Update") || line.startsWith("Spend") || line.startsWith("The data folder") || line.startsWith("Autopilot")) process.stdout.write(`[${new Date().toISOString()}] ${line}\n`);
       },
     });
     restoreNetwork = installOutboundNetwork(server.allowedBases);
@@ -78,7 +78,8 @@ if (!valid || !dataRoot) {
       "",
       `  Admin code:   npx narrarium-server admin-code${rootFlag}   (stored in ${server.auth.adminCodePath})`,
       "  Connect Narrarium: Settings → Personal server → Pair, then approve the request in the admin panel.",
-      "  Press Ctrl+C to stop. Running autopilots pause and resume from their last saved step.",
+      "  Press Ctrl+C to stop. Running autopilots pause when the server stops. Those with \"Resume after a restart\" on resume by themselves",
+      "  when it starts again (at most three times a day); the others wait for Resume, from their last saved step.",
     ];
     process.stdout.write(`${lines.join("\n")}\n`);
   } catch (error) {

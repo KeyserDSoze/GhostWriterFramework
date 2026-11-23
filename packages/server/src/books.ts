@@ -165,15 +165,20 @@ export class BookRegistry {
 
   /**
    * Start or resume the autopilot of a book, in the order that every start has: the AI must be configured, the server may not already run as many
-   * autopilots as the owner allows, and the owner's switch and caps must allow a run. The route that starts a run and the tool of the MCP endpoint
-   * that resumes one both come here, so that no way of starting a run skips one of them.
+   * autopilots as the owner allows, and the owner's switch and caps must allow a run. The route that starts a run, the tool of the MCP endpoint
+   * that resumes one and the server's own resume after a restart (`afterRestart`) all come here, so that no way of starting a run skips one of them.
    */
-  async startRun(runtime: BookRuntime, start: StartOptions & { force?: boolean }): Promise<void> {
+  async startRun(runtime: BookRuntime, start: StartOptions & { force?: boolean; afterRestart?: boolean }): Promise<void> {
+    await this.assertStartAllowed();
+    await runtime.session.start(start);
+  }
+
+  /** What every start asks of the server before the run (see `startRun`); it throws the refusal a start would answer. */
+  async assertStartAllowed(): Promise<void> {
     if (!(await this.aiConfigured())) throw new HttpError(412, "ai_not_configured", "Send your AI router configuration to the server before starting the autopilot.");
     this.assertCanStart();
     // The owner's switch or a cap of the day would stop the run at its first call: it is not started (and leaves nothing in the book).
     this.assertSpendAllowed();
-    await runtime.session.start(start);
   }
 
   /**
@@ -723,8 +728,12 @@ export class BookRegistry {
     return (await this.data.aiConfig()).config.aiIntegrations.length > 0;
   }
 
+  /**
+   * The server is stopping: every run pauses now, and its state says that the server stopped it (`stoppedBy: "server-shutdown"`), so that the
+   * server resumes it when it starts again if its author asked for it (`options.resumeAfterRestart`). A pause the author asked for stays the author's.
+   */
   async close(): Promise<void> {
-    for (const runtime of this.all()) runtime.session.pause("now");
+    for (const runtime of this.all()) runtime.session.stopForShutdown();
     await Promise.all(this.all().map((runtime) => runtime.session.waitForIdle()));
   }
 }

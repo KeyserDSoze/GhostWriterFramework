@@ -20,7 +20,8 @@ const autopilotPause: McpTool = {
     const { session } = context.runtime;
     const when = (asString(args.when) ?? "after-step") as PauseAutopilotMode;
     if (when === "cancel") session.cancelPause();
-    else session.pause(when);
+    // With no run active the pause is the author's all the same: a run the server paused when it stopped is not resumed by itself any more.
+    else if (!session.pause(when)) await session.forgetStopCause();
     return status(context);
   },
 };

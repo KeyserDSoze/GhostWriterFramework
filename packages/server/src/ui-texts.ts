@@ -192,7 +192,7 @@ const en: ViewTexts = {
     "spend.pause": "Paused AI spending", "spend.resume": "Resumed AI spending", "spend.limits": "Changed the AI spending limits",
     "network.change": "Changed the approved network", "network.remote": "Changed remote administration",
     "tunnel.start": "Set up and started the Cloudflare connector", "tunnel.restart": "Restarted the Cloudflare connector", "tunnel.remove": "Removed the Cloudflare connector",
-    "book.register": "A book was added", "book.remove": "A book was removed", "run.start": "Started the autopilot", "run.pause": "Paused the autopilot", "run.reset": "Reset the autopilot",
+    "book.register": "A book was added", "book.remove": "A book was removed", "run.start": "Started the autopilot", "run.pause": "Paused the autopilot", "run.reset": "Reset the autopilot", "run.autoResume": "Resumed the autopilot after a restart",
   },
 };
 
@@ -384,7 +384,7 @@ const it: ViewTexts = {
     "spend.pause": "Spesa AI in pausa", "spend.resume": "Spesa AI riattivata", "spend.limits": "Cambiati i limiti della spesa AI",
     "network.change": "Cambiata la rete approvata", "network.remote": "Cambiata l'amministrazione remota",
     "tunnel.start": "Configurato e avviato il connettore Cloudflare", "tunnel.restart": "Riavviato il connettore Cloudflare", "tunnel.remove": "Rimosso il connettore Cloudflare",
-    "book.register": "Aggiunto un libro", "book.remove": "Rimosso un libro", "run.start": "Avviato l'autopilot", "run.pause": "Autopilot messo in pausa", "run.reset": "Autopilot azzerato",
+    "book.register": "Aggiunto un libro", "book.remove": "Rimosso un libro", "run.start": "Avviato l'autopilot", "run.pause": "Autopilot messo in pausa", "run.reset": "Autopilot azzerato", "run.autoResume": "Autopilot ripreso dopo un riavvio",
   },
 };
 

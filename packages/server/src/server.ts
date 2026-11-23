@@ -14,6 +14,7 @@ import {
   LIVE_AUTOPILOT_OPTIONS,
   PAUSE_AUTOPILOT_MODES,
   SERVER_API_VERSION,
+  SERVER_FEATURE_AUTOPILOT_AUTO_RESUME,
   SERVER_FEATURE_AUTOPILOT_CONTROLS,
   SERVER_FEATURE_AUTOPILOT_RETRY,
   SERVER_FEATURE_AUTOPILOT_RULES,
@@ -48,6 +49,7 @@ import { buildRisks } from "./admin-risks.js";
 import { DEFAULT_STALLED_AFTER_MS, MAX_RUNS_PER_PAGE, RunBoard, runsPage } from "./admin-runs.js";
 import { AiNotApprovedError, approvalCovers, baseIsApproved, normalizeAiBase, unapprovedAiBases } from "./ai-approval.js";
 import { Auth, assertScope, isScope, parseScopes, type ClientRecord } from "./auth.js";
+import { resumeAfterRestart, type AutoResumeOutcome } from "./auto-resume.js";
 import { BookRegistry, type AutopilotTuning, type BookRuntime } from "./books.js";
 import { DEFAULT_ORIGINS, DataDirectory, normalizeOrigin, publicLabel } from "./config.js";
 import { HttpError, retryAfter } from "./errors.js";
@@ -114,6 +116,8 @@ export interface NarrariumServerOptions {
   now?: () => Date;
   /** How the autopilot sessions wait and beat (tests shorten it). */
   autopilot?: AutopilotTuning;
+  /** The wait between two books the server resumes by itself after it started (`options.resumeAfterRestart`), in milliseconds (default 5000; tests shorten it). */
+  autoResumeGapMs?: number;
   /** What the admin panel's own views may be told by a test (how long a run is silent before it looks stalled, the free space of the disk…). */
   admin?: AdminPanelOptions;
   /** Take the lock of the data folder (tests; default: `lockDataRoot`). Its second argument is what to call when the lock is lost. */
@@ -138,6 +142,11 @@ export interface RunningNarrariumServer {
   mcp: { books: McpBooks; audit: McpAudit };
   /** The OAuth server that lets apps (ChatGPT, Claude.ai…) connect to a book's MCP endpoint by themselves, for tests and diagnostics. */
   oauth: OAuthServer;
+  /**
+   * The runs the server resumed by itself after it started (`options.resumeAfterRestart`), book by book, for tests and diagnostics: it settles once every
+   * book was looked at (or the server stopped), and never rejects.
+   */
+  autoResumed: Promise<AutoResumeOutcome[]>;
   /** The two listeners, for tests and diagnostics. */
   servers: { api: http.Server; admin: http.Server };
   /** AI origins the outbound network guard may reach. */
@@ -364,12 +373,12 @@ function asPauseMode(value: unknown): PauseAutopilotMode {
  */
 function asLiveOptions(body: Record<string, unknown>): AutopilotLiveOptions {
   const refuse = (problem: string): never => {
-    throw new HttpError(400, "invalid_request", `${problem} Only these can change here: publishEvery (${[...AUTOPILOT_PUBLISH_MODES, "null"].join(", ")}), pauseAfterEachChapter (true or false), frozenEdits (${FROZEN_EDITS_MODES.join(", ")}) and longRetry ({ "everyMinutes": 1 to 10080, "cycles": 1 to 1000 or "unlimited" }, or null to turn it off).`);
+    throw new HttpError(400, "invalid_request", `${problem} Only these can change here: publishEvery (${[...AUTOPILOT_PUBLISH_MODES, "null"].join(", ")}), pauseAfterEachChapter (true or false), frozenEdits (${FROZEN_EDITS_MODES.join(", ")}), longRetry ({ "everyMinutes": 1 to 10080, "cycles": 1 to 1000 or "unlimited" }, or null to turn it off) and resumeAfterRestart (true or false).`);
   };
   const keys = Object.keys(body);
   if (!keys.length) refuse("There is nothing to change.");
   // What the engine lets change during a run and this server checks: a setting it would not check is refused, never dropped in silence.
-  const checked = ["publishEvery", "pauseAfterEachChapter", "frozenEdits", "longRetry"].filter((key) => (LIVE_AUTOPILOT_OPTIONS as readonly string[]).includes(key));
+  const checked = ["publishEvery", "pauseAfterEachChapter", "frozenEdits", "longRetry", "resumeAfterRestart"].filter((key) => (LIVE_AUTOPILOT_OPTIONS as readonly string[]).includes(key));
   const unknown = keys.filter((key) => !checked.includes(key));
   if (unknown.length) refuse(`${unknown.slice(0, 3).map((key) => key.slice(0, 40)).join(", ")} cannot be changed here.`);
   const options: AutopilotLiveOptions = {};
@@ -391,6 +400,10 @@ function asLiveOptions(body: Record<string, unknown>): AutopilotLiveOptions {
     const problem = longRetryProblem(body.longRetry);
     if (problem) refuse(problem);
     options.longRetry = body.longRetry as AutopilotLongRetry | null;
+  }
+  if (Object.hasOwn(body, "resumeAfterRestart")) {
+    if (typeof body.resumeAfterRestart !== "boolean") refuse("resumeAfterRestart must be true or false.");
+    options.resumeAfterRestart = body.resumeAfterRestart as boolean;
   }
   return options;
 }
@@ -760,7 +773,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_RETRY, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -1126,9 +1139,10 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           const runtime = books.get(params[0]);
           const body = asObject(await readBody(request, SMALL_BODY));
           const mode = asPauseMode(body.mode);
-          // `cancel` takes back a pause that waits and stops nothing; with nothing to pause or to take back the answer is the snapshot all the same.
+          // `cancel` takes back a pause that waits and stops nothing; with nothing to pause or to take back the answer is the snapshot all the same. A pause
+          // with no run active is the author's all the same: a run the server paused when it stopped is not resumed by itself any more.
           if (mode === "cancel") runtime.session.cancelPause();
-          else runtime.session.pause(mode);
+          else if (!runtime.session.pause(mode)) await runtime.session.forgetStopCause();
           return runtime.session.snapshot();
         },
       },
@@ -1888,6 +1902,26 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       await close();
       throw new Error("The data folder lock was lost while the server was starting.");
     }
+    // The runs that were going on when the server stopped, for the books whose author asked for it: resumed one book at a time, in the background, while the
+    // server already answers. A stop of the server ends the pass first (a start in flight is paused with the other runs).
+    const autoResume = new AbortController();
+    const autoResumed = resumeAfterRestart({
+      books,
+      file: data.file("private", "auto-resume.json"),
+      describe: (error) => {
+        const mapped = errorStatus(error);
+        return { code: mapped.code, message: mapped.detail ?? mapped.message };
+      },
+      record: (entry) => adminLog.record({ action: "run.autoResume", actor: { kind: "system" }, ok: entry.ok, object: entry.bookId, detail: entry.detail, ...(entry.code ? { code: entry.code } : {}) }),
+      log,
+      signal: autoResume.signal,
+      gapMs: options.autoResumeGapMs,
+      now: options.now,
+    });
+    closers.push(async () => {
+      autoResume.abort();
+      await autoResumed;
+    });
     return {
       url: `http://127.0.0.1:${apiPort}`,
       port: apiPort,
@@ -1901,6 +1935,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       servers: { api, admin },
       mcp: { books: mcpBooks, audit: mcpAudit },
       oauth,
+      autoResumed,
       allowedBases: () => [...data.config.allowedAiBases],
       close,
     };

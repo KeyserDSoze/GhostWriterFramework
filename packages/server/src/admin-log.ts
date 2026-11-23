@@ -60,6 +60,7 @@ export const ADMIN_ACTIONS = {
   "run.start": "books",
   "run.pause": "books",
   "run.reset": "books",
+  "run.autoResume": "books",
 } as const satisfies Record<string, AdminActionType>;
 export type AdminAction = keyof typeof ADMIN_ACTIONS;
 
