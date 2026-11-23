@@ -378,29 +378,35 @@ test("J2: a push that fails for another reason leaves the resolution on the serv
   assert.ok(!lines.join("\n").includes(TOKEN));
 });
 
-test("J2: a thousand conflicts are listed a page at a time, and resolved with a default and a few exceptions; no answer grows with them", async () => {
-  const many = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => [`notes/n${String(index).padStart(4, "0")}.md`, `base ${index}\n`]));
+// Every file is a git operation: on Windows each costs about a fifth of a second more, and a thousand of them took this one test more than two minutes and the whole
+// file past its five. Three hundred still make three pages of a hundred, and the paging, the default and the exceptions are what is under test.
+const MANY = process.platform === "win32" ? 300 : 1000;
+
+test("J2: many conflicts are listed a page at a time, and resolved with a default and a few exceptions; no answer grows with them", async () => {
+  const name = (index) => `notes/n${String(index).padStart(4, "0")}.md`;
+  const many = Object.fromEntries(Array.from({ length: MANY }, (_, index) => [name(index), `base ${index}\n`]));
+  const middle = Math.floor(MANY / 2);
   await scenario(async ({ server, client, seeded, folder }) => {
     await onServer(folder, Object.fromEntries(Object.keys(many).map((file, index) => [file, `server ${index}\n`])));
     await onGithub(seeded, Object.fromEntries(Object.keys(many).map((file, index) => [file, `github ${index}\n`])));
     const first = await client.listGithubConflicts("gh");
-    assert.deepEqual([first.total, first.conflicts.length, first.limit], [1000, 100, 100]);
+    assert.deepEqual([first.total, first.conflicts.length, first.limit], [MANY, 100, 100]);
     const pages = [];
-    for (let offset = 0; offset < 1000; offset += 250) pages.push(...(await client.listGithubConflicts("gh", { offset, limit: 250 })).conflicts.map((entry) => entry.path));
+    for (let offset = 0; offset < MANY; offset += 250) pages.push(...(await client.listGithubConflicts("gh", { offset, limit: 250 })).conflicts.map((entry) => entry.path));
     assert.deepEqual(pages, Object.keys(many).sort(), "every conflict once, in the order of the paths");
-    assert.equal((await client.listGithubConflicts("gh", { offset: 1000 })).conflicts.length, 0);
-    assert.equal((await client.listGithubConflicts("gh", { limit: 500 })).conflicts.length, 500);
+    assert.equal((await client.listGithubConflicts("gh", { offset: MANY })).conflicts.length, 0);
+    assert.equal((await client.listGithubConflicts("gh", { limit: 500 })).conflicts.length, Math.min(500, MANY));
     for (const query of ["limit=501", "limit=0", "offset=-1", "offset=x", "limit=1.5"]) {
       const api = await rawApi(server);
       assert.equal((await api("GET", `/api/v1/books/gh/github-conflicts?${query}`)).status, 400, query);
     }
-    const exceptions = { "notes/n0000.md": "server", "notes/n0500.md": "server", "notes/n0999.md": "server" };
+    const exceptions = { [name(0)]: "server", [name(middle)]: "server", [name(MANY - 1)]: "server" };
     const answer = await client.resolveGithubConflicts("gh", { default: "github", choices: exceptions, fingerprint: first.fingerprint });
-    assert.deepEqual(answer.counts, { total: 1000, server: 3, github: 997, ignored: 0, unresolvable: 0 });
+    assert.deepEqual(answer.counts, { total: MANY, server: 3, github: MANY - 3, ignored: 0, unresolvable: 0 });
     assert.ok(answer.resolved.length <= 100, `the answer lists the first files only: ${answer.resolved.length}`);
     assert.ok(JSON.stringify(answer).length < 32 * 1024);
-    assert.equal(await readFile(path.join(folder, "notes/n0500.md"), "utf8"), "server 500\n");
-    assert.equal(await readFile(path.join(folder, "notes/n0501.md"), "utf8"), "github 501\n");
+    assert.equal(await readFile(path.join(folder, name(middle)), "utf8"), `server ${middle}\n`);
+    assert.equal(await readFile(path.join(folder, name(middle + 1)), "utf8"), `github ${middle + 1}\n`);
     assert.equal(git(seeded.origin, "rev-parse", "main"), answer.head);
   }, { files: { ...seedBookFiles(), ...many } });
 });
