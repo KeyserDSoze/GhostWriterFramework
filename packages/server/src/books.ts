@@ -9,6 +9,7 @@ import {
   hasAiCandidates,
   redactSecrets,
   type AiPort,
+  type AiCallStore,
   type AiRequest,
   type AiResponse,
   type AutopilotEvent,
@@ -72,6 +73,17 @@ export interface BookRegistryOptions {
   githubRemoteUrl?: (owner: string, repo: string) => string;
   onEvent: (event: AutopilotEvent) => void;
   onBookChanged: (bookId: string) => void;
+  /**
+   * The records of the AI calls (see `FileAiCallStore`): every autopilot session of a book is given it, so that each run records what its calls sent and what came back; a book that is removed
+   * has its records go to the trash with it, and the store lets go of what it held in memory.
+   */
+  calls?: AiCallStore & { forget(bookId: string): Promise<void> };
+  /** Whether the owner has recording switched on, asked when each run starts: a run that starts while it is off records nothing (default: on). */
+  callsEnabled?: () => boolean;
+  /** The secrets this server holds (the keys of its AI integrations, the GitHub tokens of its books), asked when each call starts and kept out of every record: synchronous and from memory, never from a file. */
+  callsSecrets?: () => string[];
+  /** The bytes of records a book keeps, which the runs prune to when a task ends (the engine's own default is the browser's, a tenth of a server's: a server says its own). */
+  callsBudgetBytes?: number;
   log: (line: string) => void;
 }
 
@@ -255,6 +267,7 @@ export class BookRegistry {
     }
     const directory = this.data.bookDirectory(book.bookId);
     const git = this.makeGit(directory, book.storage, () => this.tokenCache.get(book.bookId));
+    const { calls, callsEnabled } = this.options;
     const store = new FileBookStore(directory, {
       afterWrite: async (paths, message) => git && existsSync(path.join(directory, ".git")) ? git.commit(paths, message) : undefined,
     });
@@ -271,6 +284,14 @@ export class BookRegistry {
         hostId: this.data.config.serverId,
         defaultPublish: DEFAULT_PUBLISH,
         ...this.options.autopilot,
+        // The records of the AI calls of its runs. The engine asks for the store when a run starts, so the owner's switch holds for the next run (a run that is going on is stopped by the store itself,
+        // which asks the switch at every write); the secrets come from memory, a server has no accounts, and the budget is the server's, not the browser's.
+        get calls() {
+          return calls && (callsEnabled?.() ?? true) ? calls : undefined;
+        },
+        callsSecrets: () => this.options.callsSecrets?.() ?? [],
+        callsBudgetBytes: this.options.callsBudgetBytes,
+        callsAccountScope: null,
         // Git's own work on the working copy (a pull may rewrite files) takes its turn among the commits and the syncs of the book. The engine decides
         // when to publish (`publishEvery`, read at the end of every step and chapter): `afterCommit` is called after a step when the book is published
         // after every step, `afterChapter` when a chapter is closed and the book is published by chapter or by step, and neither when it is not published.
@@ -603,6 +624,7 @@ export class BookRegistry {
       if (runtime.session.running) throw new HttpError(409, "busy", "Pause the autopilot before removing the book from the server.");
       // No commit or sync of the book is in the middle of its folder while that folder goes to the trash.
       await runtime.store.exclusive(() => this.data.removeBook(bookId));
+      await this.options.calls?.forget(bookId).catch((error) => this.options.log(`The AI call records of ${bookId} could not be let go: ${error instanceof Error ? error.message : String(error)}`));
       runtime.unsubscribe();
       this.runtimes.delete(bookId);
       this.tokenCache.delete(bookId);

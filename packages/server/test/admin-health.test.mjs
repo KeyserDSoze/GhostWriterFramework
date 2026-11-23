@@ -36,6 +36,37 @@ const facts = (extra = {}) => ({
 const checkOf = (report, id) => report.checks.find((check) => check.id === id);
 const statusOf = (extra, id) => checkOf(buildHealth(facts(extra)), id).status;
 
+test("AI calls (health): the disk row tells what the records of the AI calls keep, whether they are held back by the disk, and whether the records of some books stopped in the last day and why", () => {
+  const disk = { free: 50 * GIB, total: 200 * GIB };
+  const row = (aiCalls, extra = {}) => checkOf(buildHealth(facts({ disk, aiCalls, ...extra })), "disk");
+  assert.deepEqual(row(undefined).facts, { freeBytes: 50 * GIB, totalBytes: 200 * GIB, warnBelowBytes: GIB, badBelowBytes: 256 * MIB }, "nothing to tell: nothing said");
+  assert.deepEqual(row({ bytes: 0 }).facts.aiCallBytes, undefined);
+  assert.deepEqual(row({ bytes: 3 * MIB }).facts.aiCallBytes, 3 * MIB);
+  assert.equal(row({ bytes: 3 * MIB }).status, "ok", "what they keep is not a cause");
+
+  const held = row({ bytes: 3 * MIB, hold: { freeBytes: 500 * MIB, minFreeBytes: GIB } });
+  assert.equal(held.facts.aiCallsMinFreeBytes, GIB, "the disk must have this much free before they are kept again");
+  assert.equal(held.status, "warn", "records that are not being kept are a cause to look, also when the free space is not one");
+  assert.equal(checkOf(buildHealth(facts({ disk, aiCalls: { hold: { minFreeBytes: GIB } } })), "disk").status, "warn");
+  assert.equal(row({ hold: { freeBytes: 1 } }).facts.aiCallsMinFreeBytes, undefined, "a floor that is not a number is not told");
+  assert.equal(buildHealth(facts({ disk: { free: 100 * MIB, total: 200 * GIB }, aiCalls: { hold: { minFreeBytes: GIB } } })).checks.find((check) => check.id === "disk").status, "bad", "and it does not make a bad disk better");
+
+  const failed = (kind, books = 2, at = "2026-11-22T09:00:00.000Z") => row({ failed: { books, kind, at } });
+  const disks = failed("disk");
+  assert.deepEqual([disks.facts.aiCallsFailedBooks, disks.facts.aiCallsFailedKind, disks.facts.aiCallsFailedAt, disks.status], [2, "disk", "2026-11-22T09:00:00.000Z", "warn"]);
+  assert.deepEqual([failed("error").facts.aiCallsFailedKind, failed("error").status], ["error", "warn"]);
+  for (const nothing of [failed("other"), failed("disk", 0), failed("disk", -3), failed("disk", Number.NaN), failed(undefined), row({ failed: "yes" }), row({ failed: null })]) {
+    assert.equal(nothing.facts.aiCallsFailedBooks, undefined);
+    assert.equal(nothing.status, "ok", "a failure that is not one said in the words of the closed list is not told");
+  }
+  assert.equal(failed("disk", 1, "yesterday").facts.aiCallsFailedAt, undefined, "a time that is not a time is left out");
+  assert.equal(failed("disk", 1, "yesterday").facts.aiCallsFailedBooks, 1, "and the count is still told");
+  assert.equal(JSON.stringify(failed("error")).includes("EACCES"), false, "only closed words and numbers: never what a failure said");
+
+  const unreadable = checkOf(buildHealth(facts({ disk: undefined, aiCalls: { bytes: 5 * MIB, hold: { minFreeBytes: GIB }, failed: { books: 1, kind: "disk", at: "2026-11-22T09:00:00.000Z" } } })), "disk");
+  assert.deepEqual([unreadable.status, unreadable.facts], ["unknown", {}], "a disk that cannot be read says only that");
+});
+
 test("P12 health: a server in good health says so, and every check is there, in the order a person reads them", () => {
   const report = buildHealth(facts());
   assert.equal(report.overall, "ok");
@@ -151,6 +182,10 @@ test("P12 health: a request is told by its shape: no query, and no book, rule, c
   assert.equal(routeShape("GET", "/api/v1/books/autopilot/autopilot/rules/my-rule"), "GET /api/v1/books/:id/autopilot/rules/:id", "a book that is called like a word of the address is still a book");
   assert.equal(routeShape("DELETE", "/api/v1/books/b/mcp/clients/abc123"), "DELETE /api/v1/books/:id/mcp/clients/:id");
   assert.equal(routeShape("POST", "/api/v1/books/b/chapters/chapter-01/freeze"), "POST /api/v1/books/:id/chapters/:id/freeze");
+  assert.equal(routeShape("GET", "/api/v1/books/b/autopilot/calls?before=2026-11-20T10%3A00%3A00.000Z%7Cactivity_x"), "GET /api/v1/books/:id/autopilot/calls", "the records of the AI calls: no cursor, no task and no call in what the health says");
+  assert.equal(routeShape("GET", "/api/v1/books/b/autopilot/calls/tasks/activity_1f2e3d"), "GET /api/v1/books/:id/autopilot/calls/tasks/:id");
+  assert.equal(routeShape("GET", "/api/v1/books/b/autopilot/calls/activity_1f2e3d-0003/text?field=response&from=40"), "GET /api/v1/books/:id/autopilot/calls/:id/text");
+  assert.equal(routeShape("PUT", "/api/v1/books/b/autopilot/calls/tasks/activity_1f2e3d/keep"), "PUT /api/v1/books/:id/autopilot/calls/tasks/:id/keep");
   assert.equal(routeShape("POST", "/mcp/my-private-slug"), "POST /mcp/:id");
   assert.equal(routeShape("GET", "/.well-known/oauth-protected-resource/mcp/my-private-slug"), "GET /.well-known/oauth-protected-resource/mcp/:id");
   assert.equal(routeShape("POST", "/admin/api/mcp/revoke"), "POST /admin/api/mcp/revoke");

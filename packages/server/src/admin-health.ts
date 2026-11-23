@@ -59,6 +59,12 @@ export interface HealthInput {
   /** What the release check says (`undefined`: it has not answered). */
   update?: { available?: boolean; reason?: string; latestVersion?: string; pending?: boolean };
   disk?: { free?: number; total?: number };
+  /**
+   * What the records of the AI calls keep, all books together (bytes of text, the files are smaller): told with the disk, because it is what they take of it. `hold`: the disk is under the floor the
+   * records keep free, so none is written until it is over it again. `failed`: the records of this many books stopped in the last day, the last of them for this reason (`disk`: no room; `error`: a
+   * write failed) and at this time.
+   */
+  aiCalls?: { bytes?: number; hold?: { freeBytes?: number; minFreeBytes?: number }; failed?: { books?: number; kind?: string; at?: string } };
   git?: { available?: boolean; githubBooks?: number };
   tunnel?: { enabled?: boolean; process?: string; binaryAvailable?: boolean; lastErrorCode?: string; hostname?: string };
   runs?: { running?: unknown; max?: unknown; refused24h?: unknown };
@@ -106,7 +112,25 @@ function diskCheck(input: Facts): HealthCheck {
   const free = size(disk.free);
   const total = size(disk.total);
   if (free === undefined || total === undefined) return check("disk", "unknown");
-  return check("disk", free < DISK_BAD_BELOW ? "bad" : free < DISK_WARN_BELOW ? "warn" : "ok", { freeBytes: free, totalBytes: total, warnBelowBytes: DISK_WARN_BELOW, badBelowBytes: DISK_BAD_BELOW });
+  const calls = record(input.aiCalls);
+  const bytes = size(calls.bytes);
+  const floor = size(record(calls.hold).minFreeBytes);
+  const failed = record(calls.failed);
+  const failedBooks = whole(failed.books);
+  const failedKind = word(failed.kind, /^(?:disk|error)$/);
+  const failedAt = typeof failed.at === "string" && Number.isFinite(Date.parse(failed.at)) ? new Date(failed.at).toISOString() : undefined;
+  const space = free < DISK_BAD_BELOW ? "bad" : free < DISK_WARN_BELOW ? "warn" : "ok";
+  // Records that are not being kept are a cause to look, also when the free space is not (the floor they keep can be higher than the warning).
+  const stopped = floor !== undefined || (failedBooks > 0 && failedKind !== undefined);
+  return check("disk", space === "ok" && stopped ? "warn" : space, {
+    freeBytes: free,
+    totalBytes: total,
+    warnBelowBytes: DISK_WARN_BELOW,
+    badBelowBytes: DISK_BAD_BELOW,
+    ...(bytes ? { aiCallBytes: bytes } : {}),
+    ...(floor !== undefined ? { aiCallsMinFreeBytes: floor } : {}),
+    ...(failedBooks > 0 && failedKind ? { aiCallsFailedBooks: failedBooks, aiCallsFailedKind: failedKind, ...(failedAt ? { aiCallsFailedAt: failedAt } : {}) } : {}),
+  });
 }
 
 function gitCheck(input: Facts): HealthCheck {
@@ -207,7 +231,7 @@ const KNOWN_SEGMENTS = new Set([
   "api", "v1", "books", "session", "ai", "mcp", "clients", "manifest", "files", "read", "commit", "sync", "autopilot", "start", "pause", "options", "rules", "frozen", "chapters", "freeze",
   "intervene", "answer", "configure", "reset", "events", "director", "ask", "updates", "pairings", "info", "admin", "identity", "login", "logout", "status", "admin-code", "rotate", "set",
   "token", "revoke", "pairing", "approve", "cancel", "network", "dismiss", "spend", "tunnel", "restart", "remove", "history", "scopes", "audit", "book", "passkeys", "link", "rename",
-  "runs", "log", "health", "risks", "oauth", "register", "authorize", "challenge", "deny", "add", "assets", "page.js", "page.css", ".well-known", "oauth-authorization-server",
+  "runs", "log", "health", "risks", "calls", "tasks", "text", "keep", "oauth", "register", "authorize", "challenge", "deny", "add", "assets", "page.js", "page.css", ".well-known", "oauth-authorization-server",
   "oauth-protected-resource", "openid-configuration",
 ]);
 /** After one of these comes a name (a book, a rule, a chapter, a client). */

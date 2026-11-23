@@ -62,6 +62,8 @@ export interface RunView {
   lastError: { kind?: string; at?: string; task?: string; status?: number } | null;
   /** What is wrong with the book itself (its repository, or its state file that cannot be read), as the panel has always shown it. */
   error: string | null;
+  /** What the records of the book's AI calls keep on this server, in bytes of text; left out when they keep none. */
+  aiCallBytes?: number;
 }
 
 export interface RunInput {
@@ -73,6 +75,8 @@ export interface RunInput {
   /** What is wrong with the book, when something is: the repository, or a session that could not be read. */
   problem?: string;
   spend?: RunSpend;
+  /** What the records of the book's AI calls keep (see `RunView.aiCallBytes`). */
+  aiCallBytes?: number;
   nowMs: number;
   stalledAfterMs: number;
   /** This server's id: a runner that says it is this server's is this server's. */
@@ -172,6 +176,7 @@ export function describeRun(input: RunInput): RunView {
     spend: input.spend ?? null,
     lastError,
     error: problem,
+    ...(whole(input.aiCallBytes) ? { aiCallBytes: input.aiCallBytes as number } : {}),
   };
 }
 
@@ -199,6 +204,8 @@ export interface RunBoardOptions {
   now: () => Date;
   stalledAfterMs: number;
   serverId: () => string;
+  /** The records of the AI calls: what each book keeps is told with its row (a book whose totals cannot be read is told without). */
+  calls?: { totals(bookId: string): Promise<{ bytes: number }> };
 }
 
 /** Every hosted book as `describeRun` sees it, read from its live session. Readers that come together share one read. */
@@ -243,6 +250,7 @@ export class RunBoard {
         active: this.options.spend.activeRun(bookId) === last.runId,
       }
       : undefined;
-    return describeRun({ bookId, title, storage: storage.kind, snapshot, ...(problem ? { problem } : {}), ...(spend ? { spend } : {}), nowMs, stalledAfterMs: this.options.stalledAfterMs, serverId: this.options.serverId() });
+    const kept = await this.options.calls?.totals(bookId).catch(() => undefined);
+    return describeRun({ bookId, title, storage: storage.kind, snapshot, ...(problem ? { problem } : {}), ...(spend ? { spend } : {}), ...(kept ? { aiCallBytes: kept.bytes } : {}), nowMs, stalledAfterMs: this.options.stalledAfterMs, serverId: this.options.serverId() });
   }
 }

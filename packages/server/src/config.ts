@@ -2,7 +2,8 @@ import { createHash, createPrivateKey, generateKeyPairSync, randomUUID, sign, ty
 import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_ADMIN_PORT, DEFAULT_SERVER_PORT, pickAiRuntimeConfig, serverIdentityMessage, type AiRuntimeConfig, type ServerBookStorage } from "narrarium-engine";
+import { AI_CALL_BUDGETS, DEFAULT_ADMIN_PORT, DEFAULT_SERVER_PORT, pickAiRuntimeConfig, serverIdentityMessage, type AiRuntimeConfig, type ServerBookStorage } from "narrarium-engine";
+import { AI_CALLS_DIRECTORY } from "./ai-calls.js";
 import { HttpError } from "./errors.js";
 import { KeyedMutex } from "./fs-store.js";
 import { atomicJson, ensurePrivateDirectory, readJson, renameReplacing } from "./files.js";
@@ -46,6 +47,37 @@ export interface ServerConfig {
   createdAt: string;
   /** The owner's spending caps and switch (absent: no cap, the switch on). Only the admin panel and the command line change it. */
   spend?: SpendSettings;
+  /** The records of the AI calls (absent: recording on, `AI_CALL_BUDGETS.serverPerBookBytes` a book). Only the admin panel changes the switch. */
+  aiCalls?: AiCallsSettings;
+}
+
+/**
+ * The owner's choice about the records of the AI calls of the autopilot (what was sent to the AI and what came back: the book's text, its secrets and the author's notes). `enabled` is the
+ * switch (a run that starts while it is off records nothing, and the calls that are open when it is turned off are cut there); `budgetBytes` is how much of them a book keeps, for whoever
+ * edits `config.json` by hand (the panel does not offer it). A configuration that never mentions them records, up to the engine's budget for a server.
+ */
+export interface AiCallsSettings {
+  enabled: boolean;
+  budgetBytes?: number;
+}
+
+/** The least and the most bytes of records a book may be given in `config.json`; what is not in between is not believed. */
+export const AI_CALLS_MIN_BUDGET_BYTES = 1024 * 1024;
+export const AI_CALLS_MAX_BUDGET_BYTES = 1024 ** 4;
+
+/** What a stored `aiCalls` says, as far as it can be believed: nothing at all when it says nothing, so that a configuration that never had it stays as it was. */
+export function parseAiCallsSettings(value: unknown): AiCallsSettings | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const enabled = typeof raw.enabled === "boolean" ? raw.enabled : undefined;
+  const budget = typeof raw.budgetBytes === "number" && Number.isSafeInteger(raw.budgetBytes) && raw.budgetBytes >= AI_CALLS_MIN_BUDGET_BYTES && raw.budgetBytes <= AI_CALLS_MAX_BUDGET_BYTES ? raw.budgetBytes : undefined;
+  if (enabled === undefined && budget === undefined) return undefined;
+  return { enabled: enabled ?? true, ...(budget !== undefined ? { budgetBytes: budget } : {}) };
+}
+
+/** The switch and the budget as they are now, with what a configuration that says nothing means. */
+export function aiCallsSettingsOf(config: Pick<ServerConfig, "aiCalls">): { enabled: boolean; budgetBytes: number } {
+  return { enabled: config.aiCalls?.enabled !== false, budgetBytes: config.aiCalls?.budgetBytes ?? AI_CALL_BUDGETS.serverPerBookBytes };
 }
 
 export interface StoredBook {
@@ -59,6 +91,8 @@ export interface StoredBook {
 const BOOK_ID = /^[A-Za-z0-9._-]{1,120}$/;
 /** Where removed and replaced working copies wait, inside `books/`: no book may use this name. */
 const TRASH_DIRECTORY = ".trash";
+/** The AI call records of a removed book wait in the trash beside its working copy, with the same time in their name and this ending. */
+const TRASH_CALLS_SUFFIX = ".ai-calls";
 /** How long a working copy stays in the trash before the server deletes it for good. */
 export const TRASH_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 /** The longest GitHub token accepted (real ones are well under 100 characters): the token file is read with a 1 MiB cap. */
@@ -146,6 +180,7 @@ export function configPath(root: string): string {
 function parseConfig(stored: unknown, existing: boolean): ServerConfig {
   const value = (stored && typeof stored === "object" ? stored : {}) as Partial<ServerConfig> & { port?: unknown };
   const spend = parseSpendSettings(value.spend);
+  const aiCalls = parseAiCallsSettings(value.aiCalls);
   return {
     version: 2,
     serverId: typeof value.serverId === "string" && /^[0-9a-f-]{36}$/i.test(value.serverId) ? value.serverId : randomUUID(),
@@ -161,6 +196,7 @@ function parseConfig(stored: unknown, existing: boolean): ServerConfig {
     maxConcurrentRuns: typeof value.maxConcurrentRuns === "number" && value.maxConcurrentRuns >= 1 && value.maxConcurrentRuns <= 8 ? Math.round(value.maxConcurrentRuns) : 2,
     createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString(),
     ...(hasSpendSettings(spend) ? { spend } : {}),
+    ...(aiCalls ? { aiCalls } : {}),
   };
 }
 
@@ -183,10 +219,43 @@ interface IdentityFile {
   privateKey: EncryptedSecret;
 }
 
+/**
+ * The secrets this process holds, in memory and nowhere else: the keys of the AI integrations and the GitHub tokens of the books. The records of the AI calls are kept clean of them (the
+ * engine's recorder is given them when each call starts, and the store checks again), and a call is no moment to read a file and decrypt it, so they are read once when the data folder is opened
+ * and again whenever the configuration or a token is saved. The fields are private to the class (`#`): nothing that prints, copies or serializes the data folder can show them.
+ */
+class KnownSecrets {
+  #aiKeys: string[] = [];
+  readonly #tokens = new Map<string, string>();
+  #all: string[] = [];
+
+  setAiKeys(keys: readonly string[]): void {
+    this.#aiKeys = keys.map((key) => key.trim()).filter((key) => key.length > 0);
+    this.#rebuild();
+  }
+
+  setToken(bookId: string, token: string | undefined): void {
+    const value = token?.trim();
+    if (value) this.#tokens.set(bookId, value);
+    else this.#tokens.delete(bookId);
+    this.#rebuild();
+  }
+
+  /** A copy: whoever holds it cannot change what the next call is given. */
+  list(): string[] {
+    return [...this.#all];
+  }
+
+  #rebuild(): void {
+    this.#all = [...new Set([...this.#aiKeys, ...this.#tokens.values()])];
+  }
+}
+
 /** Everything the server keeps on disk. Secrets go through the vault. */
 export class DataDirectory {
   /** One writer per file: every update reads the current content inside its turn, and readers wait for a write in progress. */
   private readonly locks = new KeyedMutex();
+  private readonly known = new KnownSecrets();
 
   private constructor(
     readonly root: string,
@@ -217,7 +286,38 @@ export class DataDirectory {
       };
       await atomicJson(identityPath, identity);
     }
-    return new DataDirectory(resolved, vault, config, identity.publicKey, createPrivateKey(vault.decrypt(identity.privateKey)));
+    const data = new DataDirectory(resolved, vault, config, identity.publicKey, createPrivateKey(vault.decrypt(identity.privateKey)));
+    await data.primeSecrets();
+    return data;
+  }
+
+  /**
+   * Every secret this server holds that a record of an AI call must never keep, as the server knows them now: the keys of the AI integrations and the GitHub tokens of the books. Synchronous and
+   * in memory (nothing is read from the disk, so it can be asked at every call), refreshed when the configuration or a token is saved. A copy: the list is the caller's.
+   */
+  knownSecrets(): string[] {
+    return this.known.list();
+  }
+
+  /** Read the keys and the tokens that are saved, once, when the folder is opened: a secret that cannot be read cannot be kept out of a record either, and is not a reason to stop. */
+  private async primeSecrets(): Promise<void> {
+    try {
+      this.known.setAiKeys((await this.aiConfig()).config.aiIntegrations.map((integration) => integration.apiKey));
+    } catch {
+      // A configuration that cannot be read is told where it is used.
+    }
+    try {
+      const tokens = await this.locks.run("book-tokens", () => this.readBookTokens());
+      for (const [bookId, encrypted] of Object.entries(tokens)) {
+        try {
+          this.known.setToken(bookId, this.vault.decrypt(encrypted));
+        } catch {
+          // One damaged token does not hide the others.
+        }
+      }
+    } catch {
+      // Nor does a damaged list.
+    }
   }
 
   get config(): ServerConfig {
@@ -253,6 +353,11 @@ export class DataDirectory {
     return path.join(this.root, "books", assertBookId(bookId), "repo");
   }
 
+  /** The AI call records of a book: beside its working copy, never in it, so that git never sees them (see `FileAiCallStore`). */
+  aiCallsDirectory(bookId: string): string {
+    return path.join(this.root, "books", assertBookId(bookId), AI_CALLS_DIRECTORY);
+  }
+
   aiConfig(): Promise<{ config: AiRuntimeConfig; updatedAt: string | null }> {
     return this.locks.run("ai", async () => {
       const stored = await readJson(this.file("private", "ai.json"), 4 * 1024 * 1024) as { encrypted?: unknown; updatedAt?: unknown } | undefined;
@@ -262,7 +367,11 @@ export class DataDirectory {
   }
 
   async saveAiConfig(config: AiRuntimeConfig): Promise<void> {
-    await this.locks.run("ai", () => atomicJson(this.file("private", "ai.json"), { encrypted: this.vault.encrypt(JSON.stringify(pickAiRuntimeConfig(config))), updatedAt: new Date().toISOString() }));
+    await this.locks.run("ai", async () => {
+      const kept = pickAiRuntimeConfig(config);
+      await atomicJson(this.file("private", "ai.json"), { encrypted: this.vault.encrypt(JSON.stringify(kept)), updatedAt: new Date().toISOString() });
+      this.known.setAiKeys(kept.aiIntegrations.map((integration) => integration.apiKey));
+    });
   }
 
   private async readBooks(): Promise<StoredBook[]> {
@@ -288,7 +397,14 @@ export class DataDirectory {
    */
   async removeBook(bookId: string): Promise<void> {
     assertBookId(bookId);
-    await this.moveToTrash(bookId);
+    const trashed = await this.moveToTrash(bookId);
+    try {
+      // The records of its AI calls go with it, so that what the owner can bring back within the fourteen days is the whole book.
+      await this.moveAiCallsToTrash(bookId, trashed);
+    } catch (error) {
+      if (trashed) await renameReplacing(trashed, this.bookDirectory(bookId)).catch(() => undefined);
+      throw error;
+    }
     await this.forgetBook(bookId);
     await this.setBookToken(bookId, null);
     await fs.rm(path.join(this.root, "books", bookId), { recursive: true, force: true });
@@ -332,6 +448,36 @@ export class DataDirectory {
   }
 
   /**
+   * Move the AI call records of a book to `books/.trash/<bookId>-<time>.ai-calls` (the time of its working copy's entry when it has one, so that the two belong together; mode 0700).
+   * Returns where they went, or `undefined` when there were none.
+   */
+  async moveAiCallsToTrash(bookId: string, workingCopyInTrash?: string): Promise<string | undefined> {
+    const directory = this.aiCallsDirectory(bookId);
+    let entries: string[];
+    try {
+      entries = await fs.readdir(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+    if (!entries.length) {
+      await fs.rmdir(directory);
+      return undefined;
+    }
+    await fs.mkdir(this.trashDirectory, { recursive: true, mode: 0o700 });
+    const taken = (target: string) => fs.lstat(target).then(() => true, () => false);
+    let target = workingCopyInTrash ? `${workingCopyInTrash}${TRASH_CALLS_SUFFIX}` : "";
+    if (!target || (await taken(target))) {
+      let stamp = Date.now();
+      while ((await taken(path.join(this.trashDirectory, `${bookId}-${stamp}${TRASH_CALLS_SUFFIX}`))) || (await taken(path.join(this.trashDirectory, `${bookId}-${stamp}`)))) stamp += 1;
+      target = path.join(this.trashDirectory, `${bookId}-${stamp}${TRASH_CALLS_SUFFIX}`);
+    }
+    await renameReplacing(directory, target);
+    if (process.platform !== "win32") await fs.chmod(target, 0o700).catch(() => undefined);
+    return target;
+  }
+
+  /**
    * Delete the trash entries older than `maxAgeMs`. The age is the time in the name (`<bookId>-<time>`):
    * a moved folder keeps its old modification time, so that time would be wrong for it. Entries without
    * a time in their name are judged by their modification time.
@@ -347,7 +493,7 @@ export class DataDirectory {
     const removed: string[] = [];
     for (const entry of entries) {
       const target = path.join(this.trashDirectory, entry);
-      const stamp = /^.+-(\d{10,16})$/.exec(entry)?.[1];
+      const stamp = /^.+-(\d{10,16})(?:\.ai-calls)?$/.exec(entry)?.[1];
       const since = stamp ? Number(stamp) : await fs.lstat(target).then((info) => info.mtimeMs, () => now);
       if (now - since <= maxAgeMs) continue;
       await fs.rm(target, { recursive: true, force: true });
@@ -377,6 +523,7 @@ export class DataDirectory {
       if (token?.trim()) tokens[assertBookId(bookId)] = this.vault.encrypt(token.trim());
       else delete tokens[bookId];
       await atomicJson(this.file("private", "book-tokens.json"), { tokens });
+      this.known.setToken(bookId, token ?? undefined);
     });
   }
 }

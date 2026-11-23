@@ -2,6 +2,7 @@ import http, { Agent, type IncomingMessage, type ServerResponse } from "node:htt
 import type { AddressInfo } from "node:net";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
+  AI_CALL_BUDGETS,
   AUTOPILOT_PUBLISH_MODES,
   AiProviderError,
   AiUnavailableError,
@@ -15,6 +16,7 @@ import {
   PAUSE_AUTOPILOT_MODES,
   SERVER_API_VERSION,
   SERVER_FEATURE_AUTOPILOT_AUTO_RESUME,
+  SERVER_FEATURE_AUTOPILOT_CALLS,
   SERVER_FEATURE_AUTOPILOT_CONTROLS,
   SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF,
   SERVER_FEATURE_AUTOPILOT_RETRY,
@@ -49,11 +51,13 @@ import { ADMIN_ACTION_TYPES, AdminLog, type AdminActionType, type AdminActor, ty
 import type { AdminPanelOptions } from "./admin-options.js";
 import { buildRisks } from "./admin-risks.js";
 import { DEFAULT_STALLED_AFTER_MS, MAX_RUNS_PER_PAGE, RunBoard, runsPage } from "./admin-runs.js";
+import { asCallId, asCallText, asCallsPage, asKeepBody } from "./ai-calls-routes.js";
+import { FileAiCallStore, type FileAiCallStoreOptions } from "./ai-calls.js";
 import { AiNotApprovedError, approvalCovers, baseIsApproved, normalizeAiBase, unapprovedAiBases } from "./ai-approval.js";
 import { Auth, assertScope, isScope, parseScopes, type ClientRecord } from "./auth.js";
 import { resumeAfterRestart, type AutoResumeOutcome } from "./auto-resume.js";
 import { BookRegistry, type AutopilotTuning, type BookRuntime } from "./books.js";
-import { DEFAULT_ORIGINS, DataDirectory, normalizeOrigin, publicLabel } from "./config.js";
+import { DEFAULT_ORIGINS, DataDirectory, aiCallsSettingsOf, normalizeOrigin, publicLabel } from "./config.js";
 import { HttpError, retryAfter } from "./errors.js";
 import { MAX_COMMIT_CHANGES } from "./fs-store.js";
 import { lockDataRoot, unsafeKeys } from "./files.js";
@@ -124,6 +128,8 @@ export interface NarrariumServerOptions {
   autoResumeGapMs?: number;
   /** What the admin panel's own views may be told by a test (how long a run is silent before it looks stalled, the free space of the disk…). */
   admin?: AdminPanelOptions;
+  /** The budget of the AI call records and the free disk they keep (tests shorten them, and say what the computer would). A budget given here is the one of the store and of the runs, whatever `config.json` says. */
+  aiCalls?: Pick<FileAiCallStoreOptions, "budgetBytes" | "minFreeDiskBytes" | "freeDiskBytes" | "maxCallsPerTask">;
   /** Take the lock of the data folder (tests; default: `lockDataRoot`). Its second argument is what to call when the lock is lost. */
   lock?: typeof lockDataRoot;
   /** Called once a server that lost its data folder lock has stopped (the process should exit: another server may have the folder now). */
@@ -146,6 +152,8 @@ export interface RunningNarrariumServer {
   mcp: { books: McpBooks; audit: McpAudit };
   /** The OAuth server that lets apps (ChatGPT, Claude.ai…) connect to a book's MCP endpoint by themselves, for tests and diagnostics. */
   oauth: OAuthServer;
+  /** The records of the AI calls of the autopilot runs, in each book's `ai-calls` folder (the routes `…/autopilot/calls` serve them), for tests and diagnostics. */
+  calls: FileAiCallStore;
   /**
    * The runs the server resumed by itself after it started (`options.resumeAfterRestart`), book by book, for tests and diagnostics: it settles once every
    * book was looked at (or the server stopped), and never rejects.
@@ -669,6 +677,25 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     /** What the server spends on AI: the owner's caps are checked against it before every call. Flushed after the books are closed. */
     const spend = await SpendLedger.open({ file: data.file("private", "spend.json"), now: options.now, log });
     closers.push(() => spend.flush());
+    /**
+     * The records of the AI calls: what the autopilot sent and what came back, kept beside each book's working copy and never in it. The owner's switch is asked at every write (and by every run when it
+     * starts), the budget is the same for the store and for the runs that prune to it, and what the records must never hold (the keys of the AI integrations and the books' GitHub tokens) is asked from the
+     * data folder's memory: nothing is read from a file for it, ever, so it can be asked at every call.
+     */
+    const callsSettings = () => aiCallsSettingsOf(data.config);
+    const callsBudgetBytes = options.aiCalls?.budgetBytes ?? callsSettings().budgetBytes;
+    const callsMinFreeBytes = options.aiCalls?.minFreeDiskBytes ?? AI_CALL_BUDGETS.minFreeDiskBytes;
+    const calls = new FileAiCallStore({
+      directory: (bookId) => data.aiCallsDirectory(bookId),
+      secrets: () => data.knownSecrets(),
+      enabled: () => callsSettings().enabled,
+      now: options.now,
+      log,
+      ...options.aiCalls,
+      budgetBytes: callsBudgetBytes,
+    });
+    // Closed after the books: a call that ends while the books close is still written.
+    closers.push(() => calls.close());
     const pendingBookUpdates = new Set<string>();
     let bookTimer: NodeJS.Timeout | null = null;
     /** Summaries being built (each asks git for a revision): closing waits for them, so no git process outlives the server. */
@@ -677,10 +704,18 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       gitAvailable,
       ai: options.ai,
       spend,
+      calls,
+      callsEnabled: () => callsSettings().enabled,
+      callsSecrets: () => data.knownSecrets(),
+      callsBudgetBytes,
       autopilot: options.autopilot,
       githubRemoteUrl: options.githubRemoteUrl,
       log,
-      onEvent: (event: AutopilotEvent) => broadcast({ event: "autopilot", data: event }, event.seq),
+      onEvent: (event: AutopilotEvent) => {
+        // The engine says it once for a run: the records stopped (no room, or a write failed) and the run goes on without them. The server says it once too, with what the engine reported (never a secret).
+        if (event.type === "insight" && event.code === "callsStoreFailed") log(`Book ${event.bookId}: the AI call records stopped for this run and it goes on without them${event.detail ? ` (${event.detail.replace(/\s+/g, " ").slice(0, 300)})` : ""}.`);
+        broadcast({ event: "autopilot", data: event }, event.seq);
+      },
       onBookChanged: (bookId) => {
         pendingBookUpdates.add(bookId);
         if (bookTimer) return;
@@ -732,7 +767,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     // The OAuth server that lets ChatGPT, Claude.ai and the like connect to a book's endpoint by themselves: what the owner allowed is kept in private/oauth.json.
     const clock = options.now ?? (() => new Date());
     /** The books as the panel lists them: the state of each autopilot, read from its session (never from the whole book). */
-    const runBoard = new RunBoard({ books, spend, now: clock, stalledAfterMs: options.admin?.stalledAfterMs ?? DEFAULT_STALLED_AFTER_MS, serverId: () => data.config.serverId });
+    const runBoard = new RunBoard({ books, spend, calls, now: clock, stalledAfterMs: options.admin?.stalledAfterMs ?? DEFAULT_STALLED_AFTER_MS, serverId: () => data.config.serverId });
     /** When this server started, by its own clock: the uptime of the health report is counted from here. */
     const startedAt = clock().getTime();
     /** The last error nobody expected (the kind that gets a request id): the health report tells when, which request and where, and never what it said. */
@@ -779,7 +814,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -789,6 +824,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     const spendStatus = (): ServerSpendStatus => spend.status(spendSettingsOf(data.config));
     /** The same status for the owner, with what only the owner is told (a record that was damaged and started again from zero). */
     const adminSpend = () => ({ ...spendStatus(), ...(spend.warning ? { warning: spend.warning } : {}) });
+    /** The owner's switch for the records of the AI calls, and what bounds them: what the panel's section says. */
+    const adminCalls = () => ({ enabled: callsSettings().enabled, budgetBytes: callsBudgetBytes, minFreeBytes: callsMinFreeBytes });
 
     /**
      * What the AI configuration says, without its keys: the endpoints that wait are the bases every integration sends requests to (the providers'
@@ -932,13 +969,19 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     /** The health of the server now: what is true of this computer and of the books, found out at the moment of asking and never kept. */
     const healthReport = async (): Promise<HealthReport> => {
       const now = clock().getTime();
-      const [views, release, disk, refused24h] = await Promise.all([
+      const [views, release, disk, refused24h, callBytes, callsHold] = await Promise.all([
         runBoard.collect().catch(() => undefined),
         within(updateInfo().catch(() => undefined), options.admin?.releaseWaitMs ?? HEALTH_RELEASE_WAIT_MS),
         (options.admin?.disk ?? (() => diskSpace(data.root)))().catch(() => undefined),
         // Starts that were turned away for lack of a place: the log of the clients' calls is where that is written (a log that was cut counts less, never more).
         adminLog.count({ action: "run.start", ok: false, code: "too_many_runs", since: now - ERROR_ATTENTION_MS }).catch(() => 0),
+        // What the records of the AI calls keep, all books together (each book is told from its totals file: no text is read).
+        Promise.all(books.all().map((runtime) => calls.totals(runtime.book.bookId).then((totals) => totals.bytes, () => 0))).then((sizes) => sizes.reduce((total, bytes) => total + bytes, 0)),
+        // Whether the disk is under the floor the records keep free (they are not written until it is over it again): asked of the file system the books are on, as the store asks it.
+        callsSettings().enabled ? calls.diskHold(data.file("books")).catch(() => undefined) : undefined,
       ]);
+      // The books whose records stopped in the last day (no room, or a write failed): the panel says why. Nothing to say when the owner has switched them off.
+      const callsFailed = callsSettings().enabled ? calls.failures().filter((failure) => now - Date.parse(failure.at) < ERROR_ATTENTION_MS).sort((left, right) => Date.parse(right.at) - Date.parse(left.at)) : [];
       const connector = tunnel.status();
       const capReached = dayCapReached();
       return buildHealth({
@@ -948,7 +991,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         serverVersion: SERVER_VERSION,
         engineVersion: ENGINE_VERSION,
         ...(release ? { update: { available: release.available, ...(release.reason ? { reason: release.reason } : {}), ...(release.latestVersion ? { latestVersion: release.latestVersion } : {}), pending: Boolean(release.pending) } } : {}),
-        ...(disk ? { disk } : {}),
+        ...(disk ? { disk, aiCalls: { bytes: callBytes, ...(callsHold ? { hold: callsHold } : {}), ...(callsFailed.length ? { failed: { books: callsFailed.length, kind: callsFailed[0].kind, at: callsFailed[0].at } } : {}) } } : {}),
         git: { available: gitAvailable, githubBooks: books.all().filter(({ book }) => book.storage.kind === "github").length },
         tunnel: { enabled: connector.enabled, process: connector.process, binaryAvailable: connector.binaryAvailable, ...(connector.lastErrorCode ? { lastErrorCode: connector.lastErrorCode } : {}) },
         runs: { running: books.runningCount(), max: data.config.maxConcurrentRuns, refused24h },
@@ -1272,6 +1315,56 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           const runtime = books.get(params[0]);
           const since = Number(url.searchParams.get("since") ?? "0");
           return { events: runtime.session.recentEvents(Number.isFinite(since) ? since : 0), lastSeq: runtime.session.lastSeq };
+        },
+      },
+      // The records of the AI calls of the autopilot (the feature `autopilot-calls`): what was sent to the AI and what came back. They hold the book's text, its notes and the author's words to the
+      // director, so they are for the clients that may read the book (`read`) and, to keep a task or to delete them, the ones that may run its autopilot (`run`); an app that connected through MCP
+      // has no token for this API and no tool that reaches them.
+      {
+        method: "GET", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/calls$/, scope: "read", handler: async ({ params, url }) => {
+          books.get(params[0]);
+          // Said only when the owner has switched recording off (`recording: false`): a list that is empty because the server does not record is not the list of a book that has had no run. Otherwise the
+          // answer is the engine's page and nothing more.
+          return { ...(await calls.listTasks(params[0], asCallsPage(url))), ...(callsSettings().enabled ? {} : { recording: false as const }) };
+        },
+      },
+      {
+        method: "GET", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/calls\/tasks\/([^/]+)$/, scope: "read", handler: async ({ params }) => {
+          books.get(params[0]);
+          const task = await calls.readTask(params[0], asCallId(params[1], "task"));
+          if (!task) throw new HttpError(404, "call_task_not_found", "This server holds no AI call records for this task.");
+          return task;
+        },
+      },
+      {
+        method: "GET", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/calls\/([^/]+)\/text$/, scope: "read", handler: async ({ params, url }) => {
+          books.get(params[0]);
+          const asked = asCallText(url);
+          const piece = await calls.readText(params[0], asCallId(params[1], "call"), asked.field, asked.from, asked.attempt, asked.limit);
+          if (!piece) throw new HttpError(404, "call_not_found", "This server holds no AI call record with this id.");
+          return { text: piece.text, from: piece.from, next: piece.next, size: piece.size, attempt: piece.attempt, done: piece.complete && piece.next >= piece.size };
+        },
+      },
+      {
+        method: "PUT", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/calls\/tasks\/([^/]+)\/keep$/, scope: "run", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          books.get(params[0]);
+          const activityId = asCallId(params[1], "task");
+          const pinned = asKeepBody(asObject(await readBody(request, 4096)));
+          if (!(await calls.readTask(params[0], activityId))) throw new HttpError(404, "call_task_not_found", "This server holds no AI call records for this task.");
+          await calls.keep(params[0], activityId, pinned);
+          const task = await calls.readTask(params[0], activityId);
+          if (!task) throw new HttpError(404, "call_task_not_found", "This server holds no AI call records for this task.");
+          return task.header;
+        },
+      },
+      {
+        method: "DELETE", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/calls$/, scope: "run", handler: async ({ params }) => {
+          books.assertNotInMaintenance();
+          books.get(params[0]);
+          const held = await calls.totals(params[0]);
+          await calls.deleteBook(params[0]);
+          return { deleted: true as const, tasks: held.tasks, calls: held.calls, bytes: held.bytes };
         },
       },
       {
@@ -1629,6 +1722,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
             allowedAiBases: data.config.allowedAiBases,
             pendingAiBases: data.config.pendingAiBases.filter((base) => !baseIsApproved(base, data.config.allowedAiBases)),
             spend: adminSpend(),
+            aiCalls: adminCalls(),
             publicUrl: data.config.publicUrl ?? "",
             adminPublicUrl: data.config.adminPublicUrl ?? "",
             allowRemoteAdmin: data.config.allowRemoteAdmin,
@@ -1753,6 +1847,24 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
             for (const controller of asking) controller.abort(pausedError());
           }
           sendJson(response, 200, adminSpend());
+          return;
+        }
+        // The owner's switch for the records of the AI calls (what each call sent and what came back: the book's text, its secrets and the author's notes). Off: a run that starts records nothing, and the
+        // calls that are open are cut where they are, their text so far kept; what is kept stays readable and deletable until the owner deletes it or the budget drops it.
+        if (path === "/admin/api/ai-calls" && request.method === "GET") {
+          sendJson(response, 200, adminCalls());
+          return;
+        }
+        if (path === "/admin/api/ai-calls" && request.method === "POST") {
+          if (typeof body.enabled !== "boolean") throw new HttpError(400, "invalid_request", "Send `enabled`: true to record the AI calls of the autopilot, false to stop recording them.");
+          const enabled = body.enabled;
+          const was = callsSettings().enabled;
+          await data.updateConfig((next) => {
+            next.aiCalls = { ...(next.aiCalls ?? {}), enabled };
+          });
+          if (was !== enabled) await note("ai-calls.toggle", { detail: enabled ? "on" : "off" });
+          if (!enabled) await calls.interruptOpen();
+          sendJson(response, 200, adminCalls());
           return;
         }
         if (path === "/admin/api/tunnel/configure" && request.method === "POST") {
@@ -1983,6 +2095,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       servers: { api, admin },
       mcp: { books: mcpBooks, audit: mcpAudit },
       oauth,
+      calls,
       autoResumed,
       allowedBases: () => [...data.config.allowedAiBases],
       close,

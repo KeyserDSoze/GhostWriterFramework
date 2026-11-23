@@ -194,6 +194,13 @@ const SECURITY = page("security", `${RISKS_HTML}
 
       ${DEVICES_HTML}
 
+      <section class="panel" id="ai-calls">
+        <h2 id="ai-calls-title" data-i18n="callsTitle">AI call records</h2>
+        <p class="panel-help" data-i18n="callsHelp">While the autopilot runs, the server keeps what each AI call sent and what came back, so that the app can show it. The records hold the book's text, its secrets and your notes; they stay in the book's private folder on this computer, outside git.</p>
+        <dl class="facts" id="ai-calls-facts"></dl>
+        <div class="row"><button type="button" class="ghost" id="ai-calls-toggle"></button></div>
+      </section>
+
       <section class="panel" id="admin-code">
         <h2 id="admin-code-title" data-i18n="codeTitle">Admin code</h2>
         <p class="panel-help" data-i18n="codeDevicesNote">Changing the admin code also revokes every remembered device.</p>

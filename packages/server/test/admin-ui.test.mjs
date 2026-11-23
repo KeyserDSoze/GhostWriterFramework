@@ -47,7 +47,7 @@ const PAGE_SECTIONS = {
   ai: ["ai", "spend"],
   network: ["network", "cloudflare"],
   log: ["log"],
-  security: ["risks", "devices", "admin-code"],
+  security: ["risks", "devices", "ai-calls", "admin-code"],
 };
 
 test("P14 panel: the panel is nine pages, each with its own address, its own heading and the sections that belong together, and every function of the old page is still there", async () => {
@@ -1192,4 +1192,152 @@ test("P12 secrets: the panel's new views, their answers and the files they come 
       slow.release();
     }
   }, { ai: slow.ai });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The records of the AI calls: what they keep, told with the disk and with each book, and their deletion in the log
+// ---------------------------------------------------------------------------------------------
+
+test("AI calls (panel): the disk row says how much the records of the AI calls keep, a book's row says it for the book, and records that keep nothing say nothing, in both languages", async () => {
+  await withServer(async (server) => {
+    const diskFacts = HEALTHY.checks.find((check) => check.id === "disk").facts;
+    const health = withChecks({ disk: { facts: { ...diskFacts, aiCallBytes: 3 * MIB + 200 * 1024 } } }, "ok");
+    const books = board([run({ bookId: "with", title: "With Records", aiCallBytes: 5 * MIB }), run({ bookId: "without", title: "Without Records" })]);
+    const routes = { "/admin/api/health": { body: health }, "/admin/api/runs": { body: books } };
+
+    const panel = await openStub(server, routes);
+    const disk = rowsOfText(panel, "health-rows")[2];
+    assert.match(disk, /38 GiB free of 100 GiB\. The records of the AI calls keep 3\.2 MiB of text\./);
+    const rows = rowsOfText(panel, "runs-rows");
+    assert.match(rows[0], /With Records/);
+    assert.match(rows[0], /AI calls kept: 5 MiB/);
+    assert.doesNotMatch(rows[1], /AI calls kept/, "a book with no records says nothing of them");
+    assert.equal(SECRETS_IN_PAGE.test(drawn(panel, "health") + drawn(panel, "runs")), false);
+
+    const italian = await openStub(server, routes, { language: "it-IT" });
+    assert.match(rowsOfText(italian, "health-rows")[2], /38 GiB liberi su 100 GiB\. I registri delle chiamate AI conservano 3\.2 MiB di testo\./);
+    assert.match(rowsOfText(italian, "runs-rows")[0], /Chiamate AI conservate: 5 MiB/);
+    assert.equal(/AI calls kept|records of the AI calls/.test(drawn(italian, "health") + drawn(italian, "runs")), false, "nothing is left in English");
+
+    const quiet = await openStub(server, { "/admin/api/health": { body: HEALTHY }, "/admin/api/runs": { body: board([run({ aiCallBytes: 0 }), run({ bookId: "c", title: "Other", aiCallBytes: "many" })]) } });
+    assert.doesNotMatch(rowsOfText(quiet, "health-rows")[2], /AI calls/, "records with nothing in them: nothing said");
+    assert.doesNotMatch(quiet.text("runs-rows"), /AI calls kept/, "zero, and what is not a number, are not told");
+    assert.equal(SECRETS_IN_PAGE.test(drawn(quiet, "runs")), false, "and nothing breaks");
+
+    const unknown = withChecks({ disk: { status: "unknown", facts: {} } }, "ok");
+    const blind = await openStub(server, { "/admin/api/health": { body: unknown } });
+    assert.match(rowsOfText(blind, "health-rows")[2], /free space could not be read/);
+    assert.doesNotMatch(rowsOfText(blind, "health-rows")[2], /AI calls/, "a disk that cannot be read says only that");
+  });
+});
+
+test("AI calls (panel): the deletion of a book's records is a line of the log in words in both languages, with the book it was done to and what went", async () => {
+  await withServer(async (server) => {
+    const page = { entries: [entry(9, { action: "ai-calls.delete", type: "books", actor: { kind: "client", id: "k1", label: "Narrarium" }, object: "glass", detail: "3 tasks, 12 calls" }), entry(8, { action: "ai-calls.delete", type: "books", actor: { kind: "client", id: "k2", label: "Reader" }, ok: false, code: "scope", object: "glass" })], nextBefore: null };
+    const panel = await openStub(server, { "/admin/api/log": { body: page } });
+    const rows = rowsOfText(panel, "log-rows");
+    assert.match(rows[0], /Deleted the AI call records of a book/);
+    assert.match(rows[0], /Client Narrarium/);
+    assert.match(rows[0], /glass/);
+    assert.match(rows[0], /3 tasks, 12 calls/);
+    assert.match(rows[1], /Failed: scope/);
+    const italian = await openStub(server, { "/admin/api/log": { body: page } }, { language: "it-IT" });
+    assert.match(italian.text("log-rows"), /Eliminati i registri delle chiamate AI di un libro/);
+    assert.equal(/Deleted the AI/.test(italian.text("log-rows")), false, "nothing is left in English");
+  });
+});
+
+test("AI calls (panel): the Security page has a card for the records of the AI calls: whether recording is on, what bounds it and the owner's privacy sentence, and a button that turns it off after a confirmation, and on without one", async () => {
+  await withServer(async (server) => {
+    let calls = { enabled: true, budgetBytes: 2 * GIB, minFreeBytes: GIB };
+    const routes = {
+      "/admin/api/status": () => ({ body: baseStatus({ aiCalls: calls }) }),
+      "/admin/api/ai-calls": (_query, init) => {
+        calls = { ...calls, enabled: JSON.parse(init.body).enabled };
+        return { body: calls };
+      },
+    };
+    const confirms = [];
+    const panel = await openStub(server, routes, { confirm: (text) => (confirms.push(text), true) });
+    assert.equal(panel.browser.$("ai-calls").classList.contains("hidden"), false);
+    assert.equal(panel.text("ai-calls-title"), "AI call records");
+    assert.equal(panel.text("ai-calls-facts"), "Recordingon" + "Kept for each bookup to 2 GiB" + "Disk space kept free1 GiB: under it nothing is recorded");
+    assert.equal(panel.text("ai-calls-toggle"), "Turn recording off");
+    assert.match(panel.html, /data-i18n="callsHelp">While the autopilot runs, the server keeps what each AI call sent and what came back, so that the app can show it\. The records hold the book's text, its secrets and your notes; they stay in the book's private folder on this computer, outside git\./, "the owner is told what is kept and where");
+
+    await panel.browser.$("ai-calls-toggle").click();
+    await settle(120);
+    assert.equal(confirms.length, 1);
+    assert.match(confirms[0], /Turn the AI call records off\?.*cut where they are.*until you delete it or the budget drops it/, "switching off asks first, and says what happens to what is going on and to what is kept");
+    assert.deepEqual(panel.requests.filter((request) => request.route === "/admin/api/ai-calls").map((request) => [request.method, request.body]), [["POST", { enabled: false }]]);
+    assert.equal(panel.text("ai-calls-toggle"), "Turn recording on", "and the card is drawn again with the switch off");
+    assert.match(panel.text("ai-calls-facts"), /^Recordingoff/);
+
+    await panel.browser.$("ai-calls-toggle").click();
+    await settle(120);
+    assert.equal(confirms.length, 1, "switching on needs no question");
+    assert.deepEqual(panel.requests.filter((request) => request.route === "/admin/api/ai-calls").map((request) => request.body), [{ enabled: false }, { enabled: true }]);
+    assert.equal(panel.text("ai-calls-toggle"), "Turn recording off");
+
+    const declined = await openStub(server, { ...routes, "/admin/api/status": () => ({ body: baseStatus({ aiCalls: { enabled: true, budgetBytes: 2 * GIB, minFreeBytes: GIB } }) }) }, { confirm: () => false });
+    await declined.browser.$("ai-calls-toggle").click();
+    await settle(120);
+    assert.equal(declined.requests.some((request) => request.route === "/admin/api/ai-calls"), false, "a question that is answered no changes nothing");
+
+    assert.doesNotMatch(panel.text("pills"), /AI call records/, "recording is on: nothing to say at the top");
+    const off = await openStub(server, { "/admin/api/status": { body: baseStatus({ aiCalls: { enabled: false, budgetBytes: 2 * GIB, minFreeBytes: GIB } }) } });
+    assert.match(off.text("pills"), /AI call records: off/, "recording is off: the pills at the top of the panel say so");
+    const offItalian = await openStub(server, { "/admin/api/status": { body: baseStatus({ aiCalls: { enabled: false, budgetBytes: 2 * GIB, minFreeBytes: GIB } }) } }, { language: "it-IT" });
+    assert.match(offItalian.text("pills"), /Registri chiamate AI: disattivati/);
+    const older = await openStub(server, { "/admin/api/status": { body: baseStatus() } });
+    assert.equal(older.browser.$("ai-calls").classList.contains("hidden"), true, "a status without it draws nothing, and breaks nothing");
+    assert.equal(SECRETS_IN_PAGE.test(panel.text("ai-calls-facts")), false);
+  });
+});
+
+test("AI calls (panel): the card of the records speaks Italian too, with the same sentence for the owner, and the log and the health speak of them in both languages", async () => {
+  await withServer(async (server) => {
+    const { it, en } = { it: VIEW_TEXTS.it, en: VIEW_TEXTS.en };
+    const routes = { "/admin/api/status": { body: baseStatus({ aiCalls: { enabled: true, budgetBytes: 2 * GIB, minFreeBytes: GIB } }) } };
+    const panel = await openStub(server, routes, { language: "it-IT" });
+    assert.equal(panel.text("ai-calls-title"), "Registri delle chiamate AI");
+    assert.equal(panel.text("ai-calls-facts"), "Registrazioneattiva" + "Conservato per ogni libro" + "fino a 2 GiB" + "Spazio su disco lasciato libero" + "1 GiB: sotto questo valore non si registra nulla");
+    assert.equal(panel.text("ai-calls-toggle"), "Disattiva la registrazione");
+    assert.match(it.callsHelp, /contengono il testo del libro, i suoi segreti e le tue note; restano nella cartella privata del libro su questo computer, fuori da git\./);
+    assert.match(en.callsHelp, /The records hold the book's text, its secrets and your notes; they stay in the book's private folder on this computer, outside git\./);
+    assert.match(it.callsOffConfirm, /interrotte dove sono/);
+    assert.equal(it.logActions["ai-calls.toggle"], "Attivati o disattivati i registri delle chiamate AI");
+    assert.equal(en.logActions["ai-calls.toggle"], "Turned the AI call records on or off");
+    const page = { entries: [entry(9, { action: "ai-calls.toggle", type: "ai", detail: "off" })], nextBefore: null };
+    const log = await openStub(server, { "/admin/api/log": { body: page } });
+    assert.match(log.text("log-rows"), /Turned the AI call records on or off.*off/s);
+    const italianLog = await openStub(server, { "/admin/api/log": { body: page } }, { language: "it-IT" });
+    assert.match(italianLog.text("log-rows"), /Attivati o disattivati i registri delle chiamate AI/);
+  });
+});
+
+test("AI calls (panel): the disk row says why the records of the AI calls are not kept (the disk is under their floor, or their writes failed), for one book and for several, in both languages", async () => {
+  await withServer(async (server) => {
+    const diskFacts = HEALTHY.checks.find((check) => check.id === "disk").facts;
+    const row = async (extra, language = "en-GB", status = "warn") => {
+      const health = withChecks({ disk: { status, facts: { ...diskFacts, ...extra } } });
+      const panel = await openStub(server, { "/admin/api/health": { body: health } }, { language });
+      return rowsOfText(panel, "health-rows")[2];
+    };
+    assert.match(await row({ aiCallsMinFreeBytes: GIB }), /The AI call records are not kept until 1 GiB are free\./);
+    assert.match(await row({ aiCallsFailedBooks: 1, aiCallsFailedKind: "disk", aiCallsFailedAt: "2026-11-22T09:00:00.000Z" }), /The AI call records of a book stopped for lack of room \(.*\)\./);
+    assert.match(await row({ aiCallsFailedBooks: 3, aiCallsFailedKind: "disk", aiCallsFailedAt: "2026-11-22T09:00:00.000Z" }), /The AI call records of 3 books stopped for lack of room \(the last .*\)\./);
+    assert.match(await row({ aiCallsFailedBooks: 1, aiCallsFailedKind: "error", aiCallsFailedAt: "2026-11-22T09:00:00.000Z" }), /The AI call records of a book stopped because a write failed \(.*\): the server's log says why\./);
+    assert.doesNotMatch(await row({ aiCallsFailedBooks: 2, aiCallsFailedKind: "error" }), /undefined|NaN|null/, "a time that is not there is a question mark, as every number that is not there is");
+    const all = await row({ aiCallBytes: 3 * MIB, aiCallsMinFreeBytes: GIB, aiCallsFailedBooks: 1, aiCallsFailedKind: "disk", aiCallsFailedAt: "2026-11-22T09:00:00.000Z" }, "en-GB", "ok");
+    assert.match(all, /38 GiB free of 100 GiB\. The records of the AI calls keep 3 MiB of text\. The AI call records are not kept until 1 GiB are free\. The AI call records of a book stopped for lack of room/, "told in this order: the space, what they keep, what holds them back, and the last time they stopped");
+
+    assert.match(await row({ aiCallsMinFreeBytes: GIB }, "it-IT"), /I registri delle chiamate AI non vengono conservati finché non ci sono 1 GiB liberi\./);
+    assert.match(await row({ aiCallsFailedBooks: 1, aiCallsFailedKind: "disk", aiCallsFailedAt: "2026-11-22T09:00:00.000Z" }, "it-IT"), /I registri delle chiamate AI di un libro si sono fermati per mancanza di spazio \(.*\)\./);
+    assert.match(await row({ aiCallsFailedBooks: 4, aiCallsFailedKind: "error", aiCallsFailedAt: "2026-11-22T09:00:00.000Z" }, "it-IT"), /I registri delle chiamate AI di 4 libri si sono fermati perché una scrittura non è riuscita \(l'ultimo .*\): il log del server dice il perché\./);
+    assert.equal(/\b(?:records|stopped|write failed|are not kept)\b/.test(await row({ aiCallsMinFreeBytes: GIB, aiCallsFailedBooks: 2, aiCallsFailedKind: "error", aiCallsFailedAt: "2026-11-22T09:00:00.000Z" }, "it-IT")), false, "nothing is left in English");
+    assert.doesNotMatch(await row({ aiCallsFailedBooks: 2, aiCallsFailedKind: "other" }), /AI call records of/, "a reason that is not one of the two is not drawn");
+    assert.doesNotMatch(await row({}, "en-GB", "ok"), /AI call records/, "nothing to say: nothing said");
+    assert.equal(SECRETS_IN_PAGE.test(await row({ aiCallsFailedBooks: 1, aiCallsFailedKind: "disk" })), false);
+  });
 });

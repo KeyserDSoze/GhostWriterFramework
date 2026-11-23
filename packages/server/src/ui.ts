@@ -407,13 +407,14 @@ export const ADMIN_JS = String.raw`"use strict";
     pill(t("supervisor") + ": " + (s.supervised ? t("yes") : t("no")), s.supervised ? "ok" : "warn");
     if (s.tunnel && s.tunnel.enabled) pill("Cloudflare: " + (s.tunnel.process === "running" ? t("running") : s.tunnel.process === "failed" ? t("tunnelFailed") : t("stopped")), s.tunnel.process === "running" ? "ok" : s.tunnel.process === "failed" ? "bad" : "warn");
     if (s.maintenance) pill(t("maintenance"), "warn");
+    if (s.aiCalls && !s.aiCalls.enabled) pill(t("callsPillOff"));
     if (s.books.some(function (book) { return book.running; })) pill(t("working"), "ok");
     var facts = $("facts"); facts.textContent = "";
     fact(facts, t("label"), s.label); fact(facts, t("serverId"), s.serverId); fact(facts, t("fingerprint"), s.fingerprint, true, s.fingerprint.replace(/(.{4})(?=.)/g, "$1 "));
     fact(facts, t("version"), s.serverVersion); fact(facts, t("engine"), s.engineVersion); fact(facts, t("api"), s.apiUrl, true);
     fact(facts, t("admin"), location.origin); fact(facts, t("data"), s.dataRoot); fact(facts, t("git"), s.git ? t("available") : t("missing"));
     fact(facts, t("supervisor"), s.supervised ? t("supervisedYes") : t("supervisedNo"));
-    renderPairing(); renderClients(); renderAi(); renderSpend(quiet);
+    renderPairing(); renderClients(); renderAi(); renderSpend(quiet); renderAiCalls();
     if (!quiet || !editing()) renderNetwork();
     renderTunnel(); renderChrome();
   }
@@ -487,6 +488,16 @@ export const ADMIN_JS = String.raw`"use strict";
       $("spend-tokens-day").value = String(limits.maxTokensPerDay || 0); $("spend-cost-day").value = String(limits.maxCostPerDay || 0);
       $("spend-tokens-run").value = String(limits.maxTokensPerRun || 0); $("spend-cost-run").value = String(limits.maxCostPerRun || 0);
     }
+  }
+  function renderAiCalls() {
+    var c = state.aiCalls; var card = $("ai-calls");
+    if (!c) { card.classList.add("hidden"); return; }
+    card.classList.remove("hidden");
+    var facts = $("ai-calls-facts"); facts.textContent = "";
+    fact(facts, t("callsState"), c.enabled ? t("callsOn") : t("callsOff"));
+    fact(facts, t("callsBudget"), t("callsBudgetValue", { size: bytes(c.budgetBytes) }));
+    fact(facts, t("callsFree"), t("callsFreeValue", { size: bytes(c.minFreeBytes) }));
+    $("ai-calls-toggle").textContent = c.enabled ? t("callsTurnOff") : t("callsTurnOn");
   }
   function renderNetwork() {
     if (dirty["network-form"]) return;
@@ -658,6 +669,11 @@ ${DEVICES_JS}
       var pause = !(state && state.spend && state.spend.paused);
       if (pause && !confirm(t("spendPauseConfirm"))) return;
       call("POST", "/admin/api/spend", { paused: pause }).then(function () { refresh(); }, fail);
+    });
+    $("ai-calls-toggle").addEventListener("click", function () {
+      var off = !!(state && state.aiCalls && state.aiCalls.enabled);
+      if (off && !confirm(t("callsOffConfirm"))) return;
+      call("POST", "/admin/api/ai-calls", { enabled: !off }).then(function () { refresh(); }, fail);
     });
     $("tunnel-form").addEventListener("submit", function (event) {
       event.preventDefault();

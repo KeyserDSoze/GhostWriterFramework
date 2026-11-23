@@ -1,6 +1,6 @@
 /** Test entry (bundled to dist/testing.mjs, never published). */
 export { startNarrariumServer, errorStatus, type NarrariumServerOptions, type RunningNarrariumServer } from "./server.js";
-export { DataDirectory, DEFAULT_ORIGINS, loadServerConfig, normalizeOrigin, publicLabel } from "./config.js";
+export { DataDirectory, DEFAULT_ORIGINS, aiCallsSettingsOf, loadServerConfig, normalizeOrigin, parseAiCallsSettings, publicLabel } from "./config.js";
 export { Auth } from "./auth.js";
 export { Vault } from "./vault.js";
 export { FileBookStore, KeyedMutex } from "./fs-store.js";
@@ -30,6 +30,7 @@ export * from "./spend.js";
 export * from "./admin-client.js";
 export * from "./admin-log.js";
 export * from "./admin-devices.js";
+export * from "./ai-calls.js";
 export * from "./admin-actions.js";
 export * from "./admin-runs.js";
 export * from "./admin-health.js";
@@ -40,6 +41,7 @@ export * from "./update-history.js";
 export { main as cliMain, parseCommand, doctorChecks, prepareRuntime, HELP, type CliDependencies } from "./cli-main.js";
 // The engine's own copy of these classes (the one the server's `instanceof` checks see), for tests that must build them.
 export {
+  AiCallDiskFullError,
   AiFallbackBlockedError,
   AiPromptTooLargeError,
   AiProviderError,

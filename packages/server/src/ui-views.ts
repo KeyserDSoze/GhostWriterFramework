@@ -194,7 +194,14 @@ export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, 
         var kind = f.update || "unknown"; if (kind === "pending" && !f.latest) kind = "pending-unknown";
         return pick("healthText", "versions-" + kind, fill({ server: f.server, engine: f.engine, latest: f.latest }));
       case "disk":
-        return status === "unknown" ? pick("healthText", "disk-unknown") : pick("healthText", "disk-" + (status === "bad" ? "bad" : status === "warn" ? "warn" : "ok"), { free: bytes(f.freeBytes), total: bytes(f.totalBytes) });
+        var space = status === "unknown" ? pick("healthText", "disk-unknown") : pick("healthText", "disk-" + (status === "bad" ? "bad" : status === "warn" ? "warn" : "ok"), { free: bytes(f.freeBytes), total: bytes(f.totalBytes) });
+        if (status === "unknown") return space;
+        // What the records of the AI calls take of the disk, and why they are not being kept when they are not (no room now, or the last run in which they stopped).
+        var calls = [];
+        if (typeof f.aiCallBytes === "number" && f.aiCallBytes > 0) calls.push(pick("healthText", "disk-calls", { bytes: bytes(f.aiCallBytes) }));
+        if (typeof f.aiCallsMinFreeBytes === "number") calls.push(pick("healthText", "disk-calls-hold", { min: bytes(f.aiCallsMinFreeBytes) }));
+        if (typeof f.aiCallsFailedBooks === "number" && f.aiCallsFailedBooks > 0 && (f.aiCallsFailedKind === "disk" || f.aiCallsFailedKind === "error")) calls.push(many("healthText", "disk-calls-failed-" + f.aiCallsFailedKind, f.aiCallsFailedBooks, fill({ n: f.aiCallsFailedBooks, when: f.aiCallsFailedAt ? when(f.aiCallsFailedAt) : undefined })));
+        return calls.length ? space + " " + calls.join(" ") : space;
       case "git":
         return many("healthText", "git-" + (status === "ok" ? "ok" : status === "warn" ? "warn" : "info"), f.githubBooks, fill({ githubBooks: f.githubBooks }));
       case "tunnel":
@@ -276,7 +283,9 @@ export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, 
   }
   function runRow(book) {
     var row = trow();
-    var title = rowHead(); title.appendChild(el("div", "", book.title)); title.appendChild(el("div", "muted small", book.storage === "github" ? t("github") : t("local"))); row.appendChild(title);
+    var title = rowHead(); title.appendChild(el("div", "", book.title)); title.appendChild(el("div", "muted small", book.storage === "github" ? t("github") : t("local")));
+    if (typeof book.aiCallBytes === "number" && book.aiCallBytes > 0) title.appendChild(el("div", "muted small", t("runsCalls", { size: bytes(book.aiCallBytes) })));
+    row.appendChild(title);
     var state = tcell("runsState", "state-cell"); var tone = RUN_TONE[book.state] || ["off", "–"];
     state.appendChild(badge(pick("runsStates", book.state) || book.state, tone[0], tone[1]));
     var detail = runDetail(book); if (detail) state.appendChild(el("div", "muted small", detail));

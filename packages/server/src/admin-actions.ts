@@ -81,6 +81,8 @@ export function spendChanges(
   return entries;
 }
 
+const whole = (value: unknown): number => (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0);
+
 const decode = (text: string): string => {
   try {
     return decodeURIComponent(text);
@@ -123,6 +125,11 @@ const RULES: Rule[] = [
       const label = found && found.bookId === bookId ? found.name : undefined;
       return { failure: "oauth.revoke", object: bookId, ...(label ? { label } : {}), done: () => [{ action: "oauth.revoke", object: bookId, ...(label ? { label } : {}) }] };
     },
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/calls$/,
+    build: ([, id]) => ({ failure: "ai-calls.delete", object: decode(id), done: (payload) => [{ action: "ai-calls.delete", object: decode(id), detail: `${whole(record(payload).tasks)} tasks, ${whole(record(payload).calls)} calls` }] }),
   },
   { method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/start$/, build: book("run.start") },
   { method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/pause$/, build: book("run.pause") },
