@@ -1,5 +1,37 @@
 [
   {
+    "version": "0.96.0",
+    "date": "2026-11-23",
+    "en": {
+      "title": "The Scaletta is the brief of the autopilot, and its configuration has tabs",
+      "summary": "The idea, the genre, the audience and the words per scene are now written in the Scaletta, and the autopilot writes the chapters the Scaletta has. Its configuration is split into tabs, with Save and Reset at the top.",
+      "changes": [
+        "The Scaletta starts with one card, «The book»: the working title, «Idea, promise or pitch» (the old rough description), the genre, the audience, the words per scene and an optional synopsis. «Save all» saves them with the chapters.",
+        "The autopilot writes the chapters of the Scaletta: there is no number of chapters or of scenes per chapter to set any more. Each chapter gets two to four scenes, by how much its entry says.",
+        "A book whose Scaletta has no chapters shows a warning in the configuration, with a link to the Scaletta, and the autopilot does not start until you add them.",
+        "The autopilot configuration is split into tabs (Overview, Review, Retries, Publishing, Rules, Profiles, Danger zone). Save and Reset stay in a bar at the top that follows you down the page.",
+        "The Overview of the configuration shows what the Scaletta says (idea, genre, audience, words per scene, chapters, synopsis) and a link to edit it.",
+        "The sizes (Short story, Novella, Novel draft) are chosen when you create a new book: they set the words per scene and the review settings, and create the empty chapters of the Scaletta.",
+        "Books that already started keep running to the end of their plan. A personal server older than 0.1.13 cannot take the length from the Scaletta, so the autopilot is not started on it and the page says to update the server.",
+        "A book that continues from a very high chapter number (more than a thousand) no longer plans chapters without end."
+      ]
+    },
+    "it": {
+      "title": "La Scaletta è il brief dell'autopilot, e la sua configurazione ha le schede",
+      "summary": "L'idea, il genere, il pubblico e le parole per scena si scrivono ora nella Scaletta, e l'autopilot scrive i capitoli che la Scaletta ha. La configurazione è divisa in schede, con Salva e Azzera in alto.",
+      "changes": [
+        "La Scaletta inizia con un solo riquadro, «Il libro»: il titolo di lavoro, «Idea, promessa o pitch» (la vecchia descrizione), il genere, il pubblico, le parole per scena e una sinossi facoltativa. «Salva tutto» li salva insieme ai capitoli.",
+        "L'autopilot scrive i capitoli della Scaletta: non c'è più un numero di capitoli o di scene per capitolo da impostare. Ogni capitolo ha da due a quattro scene, in base a quanto dice la sua voce.",
+        "Un libro con la Scaletta senza capitoli mostra un avviso nella configurazione, con il link alla Scaletta, e l'autopilot non parte finché non li aggiungi.",
+        "La configurazione dell'autopilot è divisa in schede (Panoramica, Revisione, Tentativi, Pubblicazione, Regole, Profili, Zona pericolosa). Salva e Azzera stanno in una barra in alto che ti segue mentre scorri.",
+        "La Panoramica della configurazione mostra ciò che dice la Scaletta (idea, genere, pubblico, parole per scena, capitoli, sinossi) e un link per modificarla.",
+        "Le misure (Racconto, Romanzo breve, Bozza di romanzo) si scelgono quando crei un libro nuovo: impostano le parole per scena e la revisione, e creano i capitoli vuoti della Scaletta.",
+        "I libri già avviati continuano fino alla fine del loro piano. Un server personale più vecchio della 0.1.13 non può prendere la lunghezza dalla Scaletta, quindi l'autopilot non parte e la pagina dice di aggiornare il server.",
+        "Un libro che continua da un numero di capitolo molto alto (oltre mille) non pianifica più capitoli senza fine."
+      ]
+    }
+  },
+  {
     "version": "0.95.0",
     "date": "2026-11-23",
     "en": {
