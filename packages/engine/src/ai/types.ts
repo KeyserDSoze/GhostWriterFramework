@@ -1,3 +1,5 @@
+import type { FetchAiAttempt, FetchAiAttemptEnd } from "./fetch-client.js";
+
 /** Function-calling schema used to request structured output. */
 export interface AiJsonSchema {
   name: string;
@@ -67,6 +69,16 @@ export interface AiRequest {
    * structured reply shows that the model is answering. A listener that throws never breaks the call.
    */
   onProgress?: (progress: AiProgress) => void;
+  /**
+   * Receives the cumulative JSON of a structured reply while it streams: the arguments of the function the model calls, or its text when it answers in
+   * text. It follows the same rule as `onText`: a shorter value, or `""`, starts a new attempt (after a failed candidate). Never called for a plain-text
+   * request, and never part of what is sent. Only the providers whose stream the client reads send it (the OpenAI-compatible ones).
+   */
+  onStructuredText?: (text: string) => void;
+  /** An attempt of this call is about to be sent (the client's `onAttempt`, for this call only). Never part of what is sent. */
+  onAttempt?: (attempt: FetchAiAttempt) => void;
+  /** An attempt of this call ended, worked or not (the client's `onAttemptEnd`, for this call only). Never part of what is sent. */
+  onAttemptEnd?: (end: FetchAiAttemptEnd) => void;
 }
 
 export interface AiResponse {

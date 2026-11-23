@@ -147,7 +147,7 @@ test("a structured step and a prose step say their progress in the same event, t
 
 // ─── Through the real client ────────────────────────────────────────────────
 
-test("through the engine's own client: a streamed function call reaches the run as an event, with the characters it had so far", async () => {
+test("through the engine's own client: a streamed function call reaches the run as its tail, as the JSON grows, and as numbers", async () => {
   const fake = createFakeAutopilotAi();
   const ai = createFetchAi({ aiIntegrations: [integration()] }, {
     fetch: async (_url, init) => {
@@ -171,13 +171,16 @@ test("through the engine's own client: a streamed function call reaches the run 
   await session.waitForIdle();
   assert.equal(parseAutopilotState(store.files.get(STATE)).status, "paused", parseAutopilotState(store.files.get(STATE)).lastError?.message);
   const progress = progressOf(events);
-  assert.ok(progress.length >= 1, "the first piece of the call was said");
-  assert.ok(progress[0].bytes > 0 && progress[0].characters > 0);
-  assert.equal(progress[0].preview, "");
-  assert.equal(JSON.stringify(progress).includes("logline"), false, "none of the reply is in it");
+  const numbers = progress.filter((event) => "bytes" in event);
+  const tails = progress.filter((event) => event.kind === "json");
+  assert.ok(numbers.length >= 1, "the first piece of the call was said");
+  assert.ok(numbers[0].bytes > 0 && numbers[0].characters > 0);
+  assert.ok(tails.length >= 1, "the JSON of the call is said as its tail");
+  assert.ok(tails.every((event) => event.preview.length > 0 && !("bytes" in event)), "a tail is the end of the JSON so far, and says no bytes");
+  assert.ok(tails.every((event) => event.preview.length <= 700), "at most the last 700 characters");
 });
 
-test("a provider that does not stream says nothing in between: streamMode off gives no progress events", async () => {
+test("a provider that does not stream says nothing in between: its reply comes whole, and is said once when it has arrived", async () => {
   const fake = createFakeAutopilotAi();
   const ai = createFetchAi({ aiIntegrations: [integration({ streamMode: "off" })] }, {
     fetch: async (_url, init) => {
@@ -194,7 +197,9 @@ test("a provider that does not stream says nothing in between: streamMode off gi
   await session.start({ ...BOOK, limits: { steps: 1 } });
   await session.waitForIdle();
   assert.equal(parseAutopilotState(store.files.get(STATE)).status, "paused");
-  assert.equal(progressOf(events).length, 0);
+  const progress = progressOf(events);
+  assert.equal(progress.filter((event) => "bytes" in event).length, 0, "no count while it waits");
+  assert.ok(progress.length <= 1 && progress.every((event) => event.kind === "json"), "the whole reply is said once, as a tail");
 });
 
 // ─── The client of the server and what an older reader makes of it ──────────

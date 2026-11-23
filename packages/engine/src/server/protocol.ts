@@ -4,6 +4,7 @@ import type { BookFileChange, BookFileContent, BookFileEntry } from "../book/sto
 import type { DirectorOpinion } from "../director/opinion.js";
 import type { FrozenChapterResult, FrozenStatus } from "../autopilot/frozen.js";
 import type { AutopilotEvent, AutopilotLiveOptions, AutopilotPauseMode, AutopilotSnapshot, AutopilotStateSummary, FrozenAction, FrozenChangeKind, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
+import type { AiCallField } from "../autopilot/calls/types.js";
 
 export const SERVER_API_VERSION = 1;
 /** The oldest and the newest `ServerInfo.apiVersion` a server may speak for this engine to talk to it (see `serverCompatibility`). */
@@ -307,6 +308,58 @@ export const SERVER_FEATURE_GITHUB_CONFLICTS = "github-conflicts";
 export function serverSupportsGithubConflicts(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
   const features = Array.isArray(info) ? info : (info as { features?: unknown } | null | undefined)?.features;
   return Array.isArray(features) && features.includes(SERVER_FEATURE_GITHUB_CONFLICTS);
+}
+
+/**
+ * The `ServerInfo.features` entry of a server that keeps the records of the AI calls of its autopilot runs (what was sent as the system and the user message, and what came back, also
+ * while it streams) and serves them, read-only, to the clients that may read the book: `GET /api/v1/books/:id/autopilot/calls`, `…/calls/tasks/:activityId` and
+ * `…/calls/:callId/text`, and, for the clients that may run its autopilot, `PUT …/calls/tasks/:activityId/keep` and `DELETE …/calls`. The records hold the book's text and its notes:
+ * an app that connected through MCP never reaches them. A server without it answers 404 to these routes: the engine's client refuses before sending (`feature_unavailable`).
+ */
+export const SERVER_FEATURE_AUTOPILOT_CALLS = "autopilot-calls";
+
+/** Whether the server announces that it keeps and serves the records of its AI calls. Takes its info or the list of its features. Never throws: an older server, or an odd answer, says no. */
+export function serverHasCalls(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  const features = Array.isArray(info) ? info : (info as { features?: unknown } | null | undefined)?.features;
+  return Array.isArray(features) && features.includes(SERVER_FEATURE_AUTOPILOT_CALLS);
+}
+
+/** Task headers in one page of `GET …/autopilot/calls` when the request says nothing, and the most it may ask for. */
+export const SERVER_CALLS_PAGE_LIMIT = 20;
+export const SERVER_CALLS_MAX_PAGE_LIMIT = 100;
+
+/** The most bytes of text that one answer of `GET …/calls/:callId/text` holds (the text is read in pieces; the live view asks for what is new once a second). */
+export const SERVER_CALL_TEXT_MAX_BYTES = 256 * 1024;
+
+/** The fields of a call whose text a server keeps, in the order a page shows them. */
+export const SERVER_CALL_FIELDS: readonly AiCallField[] = ["system", "user", "response"];
+
+/**
+ * One piece of the kept text of a call: the bytes from `from` (UTF-8, on a character boundary: it can be lower than the offset that was asked for) to `next`. `size` is how much is kept now,
+ * and `attempt` the response it came from (the last one that has text when the request names none; null for the system and the user message). `done` is true once the call has ended and
+ * `next` has reached `size`: nothing more will come. A reader that follows a call asks again from `next`; if `size` is lower than the `next` it holds, or `attempt` changed, the call began another
+ * answer (a retry, a fallback) and the reader starts over.
+ */
+export interface ServerCallText {
+  text: string;
+  from: number;
+  next: number;
+  size: number;
+  attempt: number | null;
+  done: boolean;
+}
+
+/** The body of `PUT …/calls/tasks/:activityId/keep`: pin a task (it is never dropped to make room, but it counts against the budget) or let it go. */
+export interface KeepCallTaskRequest {
+  pinned: boolean;
+}
+
+/** What `DELETE …/autopilot/calls` removed: every record of the book, the pinned ones too (this is the owner's choice). */
+export interface ServerDeleteCallsResponse {
+  deleted: true;
+  tasks: number;
+  calls: number;
+  bytes: number;
 }
 
 /**

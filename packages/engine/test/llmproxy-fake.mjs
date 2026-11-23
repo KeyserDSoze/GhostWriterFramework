@@ -348,6 +348,16 @@ export const SCENARIOS = {
     await c.emit(toolStart("result"), toolArgs('{"ok":'), toolArgs("true,"), 60);
     c.reset();
   },
+  /** A structured reply that is cut once and then answered whole: the first request is cut after two pieces of its arguments, the next ones are answered. */
+  "tool-call-cut-then-ok": async (c) => {
+    if (c.nth <= 1) {
+      await c.emit(toolStart("result"), toolArgs('{"ok":'), toolArgs("true,"), 60);
+      c.reset();
+      return;
+    }
+    await c.emit(toolStart("result"), toolArgs('{"ok":true,"note":"Il gabbiano è già volato via — 你好 😀"}'), stop("tool_calls"), counts(120, 30), DONE);
+    c.end();
+  },
 
   // ── What LlmProxy answers before the first byte ────────────────────────────
   "rate-limited": async (c) => c.json(429, proxyError("Request rate limit exceeded for model 'muse'. Retry after 7 seconds.", "rate_limit_error", "rate_limit_exceeded"), { "retry-after": "7" }),

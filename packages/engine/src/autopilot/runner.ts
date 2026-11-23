@@ -13,6 +13,9 @@ import { randomId } from "../util/hash.js";
 import { StructuredReplyError } from "../util/json.js";
 import { currentRequest, unescapePromptDataDeep } from "../prompt/trust.js";
 import { isItalian, languageCode, tail, truncate } from "../util/text.js";
+import { RunCalls, schemaHashOf, statusOf, type CallEndInfo } from "./calls/run-calls.js";
+import type { AiCallStore } from "./calls/port.js";
+import type { AiCallStatus, AiCallTaskStatus } from "./calls/types.js";
 import { autopilotErrorFields } from "./errors.js";
 import { readBrief } from "./brief.js";
 import { applyFrozenDecision, frozenAnswerAction, isFrozenQuestion, settleFrozenChanges } from "./frozen.js";
@@ -104,6 +107,11 @@ export interface AutopilotRunConfig {
    * so that another host does not take a long step for a dead run. 0 switches it off. Default 300 000 (5 minutes).
    */
   persistHeartbeatMs?: number;
+  /** Where the AI call records are kept (see `AutopilotSessionConfig.calls`). */
+  calls?: AiCallStore;
+  callsSecrets?: () => string[];
+  callsBudgetBytes?: number;
+  callsAccountScope?: string | null;
 }
 
 /** The longest a step may go without the run writing its state: a quarter of the 20 minutes after which another host takes the run for dead. */
@@ -357,6 +365,12 @@ export function extendPlanIfNeeded(state: AutopilotState, targetChapters = 0): A
 }
 
 /** An error as text for the state, the activity log and the events: never with a credential in it. */
+function callsStoreFailedTitle(italian: boolean, error: unknown): string {
+  const full = error instanceof Error && (error.name === "AiCallDiskFullError" || error.name === "QuotaExceededError");
+  if (full) return italian ? "Non c'è spazio per le registrazioni delle chiamate AI: la registrazione si ferma per questa corsa." : "There is no room to keep the AI call records: recording stops for this run.";
+  return italian ? "Non è stato possibile conservare le registrazioni delle chiamate AI: la registrazione si ferma per questa corsa." : "The AI call records could not be kept: recording stops for this run.";
+}
+
 function describeError(error: unknown): string {
   return redactSecrets(error instanceof Error ? error.message : String(error));
 }
@@ -693,6 +707,8 @@ export class AutopilotRun {
   private readonly outlineCache = new OutlineCache();
   private readonly store: BookStore;
   private readonly now: () => Date;
+  /** The records of the AI calls of this run, when the host keeps them; stopped by the first store failure. */
+  private readonly calls: RunCalls | null;
   /** Steps this run saved, and chapters it closed: what the limits of the run count. A step that failed or was abandoned is not one. */
   private stepsThisRun = 0;
   private chaptersThisRun = 0;
@@ -739,6 +755,18 @@ export class AutopilotRun {
     this.store = transientStore(config.store);
     this.defaultPublish = hostDefaultPublish(config.host, config.defaultPublish);
     this.persistHeartbeatMs = typeof config.persistHeartbeatMs === "number" && Number.isFinite(config.persistHeartbeatMs) ? config.persistHeartbeatMs : DEFAULT_PERSIST_HEARTBEAT_MS;
+    this.calls = config.calls
+      ? new RunCalls({
+          store: config.calls,
+          bookId: config.bookId,
+          accountScope: config.callsAccountScope ?? null,
+          host: config.host,
+          budgetBytes: config.callsBudgetBytes,
+          secrets: () => config.callsSecrets?.() ?? [],
+          now: this.now,
+          onFailure: (error) => this.emit({ type: "insight", tone: "warning", code: "callsStoreFailed", title: callsStoreFailedTitle(isItalian(this.language), error), detail: describeError(error) }),
+        })
+      : null;
   }
 
   get activity(): AutopilotActivity | null {
@@ -1078,6 +1106,9 @@ export class AutopilotRun {
   private async runSteps(initial: AutopilotState): Promise<AutopilotState> {
     const { store } = this;
     let state = initial;
+    /** The attempt of the step that is running (a retry of a step that failed), and the step that failed last. */
+    let stepCount = 0;
+    let stepFailedKey: string | null = null;
     let conflictRetries = 0;
     /** Retries used since the last success: provider failures (up to three) and everything else (one). */
     let transientRetries = 0;
@@ -1191,6 +1222,9 @@ export class AutopilotRun {
         this.inChapter = chapterInProgress(state, task);
         const boostKey = step.task.kind;
         const key = taskKey(task);
+        // A retry of a step is a new activity: its attempt counts from 1 and goes up while the same step fails again.
+        const stepAttempt = stepFailedKey === key ? ++stepCount : (stepCount = 1);
+        stepFailedKey = null;
         if (key === lastSuccessKey && successRepeats >= 2) throw new Error(`The autopilot is not making progress on "${task.title}".`);
         const correction = retry?.key === key ? retry : null;
         retry = null;
@@ -1214,29 +1248,85 @@ export class AutopilotRun {
         };
         this.current = activity;
         this.emit({ type: "task-started", activity });
+        this.recordTask(activity, "running");
         let lastProgress = 0;
         let lastStructuredProgress: number | undefined;
+        let lastJsonTail: number | undefined;
+        let structuredTail = "";
+        let callSeq = 0;
         const ai = async (request: Omit<AiRequest, "signal">): Promise<AiResponse> => {
           lastLabel = request.label;
-          const onText = request.json ? undefined : (text: string) => {
+          const user = correction?.label === request.label ? `${request.user}\n\n${currentRequest(correction.note)}` : request.user;
+          const call = this.calls?.start({
+            runId: this.runId,
+            activityId: activity.id,
+            seq: ++callSeq,
+            stepAttempt,
+            task: activity.task,
+            chapter: activity.chapterNumber ?? null,
+            scene: activity.sceneNumber ?? null,
+            label: request.label,
+            capability: request.capability,
+            system: request.system,
+            user,
+            structured: Boolean(request.json),
+            tool: request.json?.name ?? null,
+            toolSchemaHash: request.json ? schemaHashOf(request.json.parameters) : null,
+            maxOutputTokens: request.maxOutputTokens ?? null,
+            temperature: request.temperature ?? null,
+          }) ?? null;
+          if (call) this.emit({ type: "call-started", activityId: activity.id, callId: call.callId, seq: call.seq, label: request.label, capability: request.capability, structured: Boolean(request.json), systemBytes: call.systemBytes, userBytes: call.userBytes });
+          const callId = call ? { callId: call.callId } : {};
+          const finishCall = (status: Exclude<AiCallStatus, "running">, outcome: { response?: AiResponse; error?: unknown } = {}): void => {
+            if (!call) return;
+            const info: CallEndInfo = call.end(status, outcome);
+            this.emit({ type: "call-ended", activityId: activity.id, callId: info.callId, status: info.status, attempts: info.attempts, characters: info.characters, storedBytes: info.storedBytes, partial: info.partial, durationMs: info.durationMs, dropped: info.dropped });
+          };
+          const onText = (text: string) => {
+            call?.onText(text);
+            if (request.onText) {
+              request.onText(text);
+              return;
+            }
+            if (request.json) return;
             const at = Date.now();
             if (text.length > 0 && at - lastProgress < 350) return;
             lastProgress = at;
-            this.emit({ type: "task-progress", activityId: activity.id, characters: text.length, preview: tail(text, 700) });
+            this.emit({ type: "task-progress", activityId: activity.id, ...callId, characters: text.length, preview: tail(text, 700) });
           };
+          // A structured reply streams its JSON: its tail is said as the text of a prose step is, at most about three times a second, and the
+          // arguments themselves are never kept by the runner (the records keep them when the book keeps records).
+          const onStructuredText = request.json ? (text: string) => {
+            call?.onText(text);
+            request.onStructuredText?.(text);
+            structuredTail = tail(text, 700);
+            const at = Date.now();
+            if (lastJsonTail !== undefined && at - lastJsonTail < 350) return;
+            lastJsonTail = at;
+            this.emit({ type: "task-progress", activityId: activity.id, ...callId, kind: "json", characters: text.length, preview: structuredTail });
+          } : undefined;
           // A structured reply has no text to show: the client reports how much has arrived (up to four times a second), and one report a second is said, as numbers only.
           const onProgress = request.json ? (progress: AiProgress) => {
             const at = this.now().getTime();
             if (lastStructuredProgress !== undefined && at - lastStructuredProgress < STRUCTURED_PROGRESS_INTERVAL_MS) return;
             lastStructuredProgress = at;
-            this.emit({ type: "task-progress", activityId: activity.id, characters: progress.characters, bytes: progress.bytes, preview: "" });
+            this.emit({ type: "task-progress", activityId: activity.id, ...callId, bytes: progress.bytes, characters: progress.characters, preview: structuredTail });
           } : undefined;
-          const user = correction?.label === request.label ? `${request.user}\n\n${currentRequest(correction.note)}` : request.user;
           let response: AiResponse;
           const boost = this.outputBoosts.get(boostKey) ?? 1;
           try {
-            response = await this.config.ai.complete({ ...request, user, signal: stepController.signal, onText: request.onText ?? onText, ...(onProgress ? { onProgress: request.onProgress ?? onProgress } : {}), ...(boost > 1 ? { outputBoost: boost } : {}) });
+            response = await this.config.ai.complete({
+              ...request,
+              user,
+              signal: stepController.signal,
+              onText,
+              ...(onStructuredText ? { onStructuredText } : {}),
+              ...(onProgress ? { onProgress: request.onProgress ?? onProgress } : {}),
+              ...(call ? { onAttempt: call.onAttempt, onAttemptEnd: call.onAttemptEnd } : {}),
+              ...(boost > 1 ? { outputBoost: boost } : {}),
+            });
           } catch (error) {
+            finishCall(statusOf(error, stepController.signal.aborted), { error });
             // A failed attempt may still have been billed: count what the provider reported.
             if (error instanceof AiProviderError && (error.usage || error.cost !== undefined || error.model)) recordSpend(spend, error);
             // A model that spent its whole limit reasoning gets one more try with a larger one, and the same for the steps after it.
@@ -1253,8 +1343,11 @@ export class AutopilotRun {
             this.emit({ type: "insight", activityId: activity.id, tone: "warning", code: "budgetNotApplicable", title: italian ? `Il budget in denaro non è applicabile: il modello ${model} non ha prezzo.` : `The money budget does not apply: the model ${model} has no price.`, detail: italian ? "Imposta un budget in token: vale per ogni modello." : "Set a token budget instead: it works for every model." });
           }
           if (response.truncated) {
-            throw new AiProviderError(`${[response.provider, response.model].filter(Boolean).join(" ") || "The model"}: the reply was cut by the output token limit. Nothing was applied.`, undefined, false, { truncated: true });
+            const failure = new AiProviderError(`${[response.provider, response.model].filter(Boolean).join(" ") || "The model"}: the reply was cut by the output token limit. Nothing was applied.`, undefined, false, { truncated: true });
+            finishCall("failed", { response, error: failure });
+            throw failure;
           }
+          finishCall("ok", { response });
           // The model repeats what it read, and what it read was escaped: the book gets the text as written.
           return response.json === undefined ? response : { ...response, json: unescapePromptDataDeep(response.json) };
         };
@@ -1341,6 +1434,7 @@ export class AutopilotRun {
         if (task.kind === "consolidate") this.chaptersThisRun += 1;
         this.closedChapter = task.kind === "consolidate" ? task.chapterNumber ?? null : null;
         this.emit({ type: "task-finished", activity: done });
+        this.recordTask(done, "done");
         this.emit({ type: "state", state: this.summarize(state) });
         // Where the book is published is read from the state this step saved, which holds what the author changed while it ran: a change takes hold at the end of the step that is running.
         const publish = effectivePublish(state.options, this.defaultPublish);
@@ -1391,6 +1485,8 @@ export class AutopilotRun {
             ...(spent ? { model: spend.model, provider: spend.provider, usage: spend.usage, cost: spend.cost || undefined } : {}),
           };
           this.emit({ type: "task-finished", activity: failed });
+          this.recordTask(failed, failed.status === "cancelled" ? "stopped" : "failed");
+          if (task) stepFailedKey = taskKey(task);
           const saved = await this.persistFailure(failed, spent ? spend : null).catch(() => null);
           if (spent) state = { ...state, stats: saved?.stats ?? withSpend(state.stats, spend) };
         }
@@ -1582,6 +1678,13 @@ export class AutopilotRun {
    * Close the run with a final status, persisted together with any queued intervention and with what the author saved since the run last read the state.
    * `code` is the reason a client can say in its language (`run-ended`'s `code`), when there is one.
    */
+  /** Saves the header of a task in the records (its title, kind, chapter, scene and status); a finished task makes room for the budget. */
+  private recordTask(activity: AutopilotActivity, status: AiCallTaskStatus): void {
+    if (!this.calls) return;
+    this.calls.saveTask({ bookId: this.config.bookId, activityId: activity.id, title: activity.title, kind: activity.task, chapter: activity.chapterNumber ?? null, scene: activity.sceneNumber ?? null, status, startedAt: activity.startedAt, endedAt: activity.endedAt ?? null });
+    if (status !== "running") this.calls.prune();
+  }
+
   private async finish(state: AutopilotState, status: AutopilotState["status"], message: string | null, code?: AutopilotMessageCode): Promise<AutopilotState> {
     const ending = state.question ? "waiting-author" : status;
     // A pause that the server's stop caused (and nothing else: a limit, a budget, the end of a chapter have their own words) says so, so that the

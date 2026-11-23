@@ -1,4 +1,5 @@
 import type { AiStreamEnd, AiTimeoutPhase, AiUsage } from "../ai/types.js";
+import type { AiCallDropReason, AiCallStatus } from "./calls/types.js";
 import type { ChapterFreezeAuthor, FrozenChapterChanges } from "../book/freeze.js";
 
 /** Lifecycle of the autopilot of one book. */
@@ -768,7 +769,8 @@ export type AutopilotMessageCode =
   | "longRetryOff"
   | "retrySkipped"
   | "serverShutdown"
-  | "resumedAfterRestart";
+  | "resumedAfterRestart"
+  | "callsStoreFailed";
 
 /**
  * Live events: everything the autopilot does, as it happens. `run-ended` carries a `code` when the run ended for a
@@ -786,8 +788,12 @@ export type AutopilotMessageCode =
  * that was left, and is followed at once by a `state` event without `retry`.
  * `task-progress` says that the model of the running step is answering. A step that writes prose says it with its text so far (`preview`,
  * the tail of it, and the `characters` so far, at most about three times a second); a step that answers with a structured value says it with
- * numbers only (`bytes` of the reply that arrived, `characters` of its text or arguments, `preview` empty), at most once a second. It is never saved
+ * numbers (`bytes` of the reply that arrived, `characters` of its text or arguments, and the `preview` of the JSON so far, empty until it streams), at most once a second. It is never saved
  * and never replayed to a client that connects later; `snapshot().live` carries the last one.
+ * A structured step that streams its JSON (the arguments of its function, as they arrive) says it with its tail: `task-progress` with `kind: "json"`,
+ * `preview` (the last 700 characters of the JSON so far) and `characters`, and no `bytes`. `callId` says which AI call of the step it is, when the
+ * book keeps AI call records (`call-started` and `call-ended`, see `AutopilotSessionConfig.calls`). Those two events carry ids, sizes and times, never text.
+ * A `callsStoreFailed` insight says that the records of the AI calls could not be kept (the store is full or failed): the run goes on without them.
  * The insights about the outline carry the chapter they are about (`chapterNumber`) and, for a ghostwriter the outline names that does
  * not exist, its slug (`ghostwriter`), so that a client can say them in its language.
  */
@@ -795,7 +801,9 @@ export type AutopilotEventBody =
   | { type: "run-started"; runId: string; host: "browser" | "server" }
   | { type: "run-ended"; runId: string; status: AutopilotStatus; message?: string | null; code?: AutopilotMessageCode }
   | { type: "task-started"; activity: AutopilotActivity }
-  | { type: "task-progress"; activityId: string; characters: number; preview: string; bytes?: number }
+  | { type: "task-progress"; activityId: string; characters: number; preview: string; bytes?: number; callId?: string; kind?: "json" }
+  | { type: "call-started"; activityId: string; callId: string; seq: number; label: string; capability: string; structured: boolean; systemBytes: number; userBytes: number }
+  | { type: "call-ended"; activityId: string; callId: string; status: AiCallStatus; attempts: number; characters: number; storedBytes: number; partial: boolean; durationMs: number; dropped: AiCallDropReason | null }
   | { type: "task-finished"; activity: AutopilotActivity }
   | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode; attempt?: number; retries?: number; waitMs?: number; cycle?: number; cycles?: number | null; chapterNumber?: number; ghostwriter?: string }
   | { type: "state"; state: AutopilotStateSummary }

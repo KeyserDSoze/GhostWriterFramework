@@ -1,3 +1,4 @@
+import type { AiCallStore } from "./calls/port.js";
 import { redactSecrets } from "../ai/redact.js";
 import type { AiPort } from "../ai/types.js";
 import { FrozenChapterError, freezeChapterChanges, markReviewedChanges, parseChapterFreeze, unfreezeChapterChanges } from "../book/freeze.js";
@@ -132,6 +133,17 @@ export interface AutopilotSessionConfig {
    * long step is not taken for a dead run by another host. 0 switches it off. Default 300 000 (5 minutes).
    */
   persistHeartbeatMs?: number;
+  /**
+   * Where the records of the AI calls of the autopilot are kept (see `calls/`): each call of a task with what was sent and what came back as it
+   * streamed, its provider attempts, and the task headers. Without it nothing is recorded: no cost, and no `call-started` or `call-ended` events.
+   */
+  calls?: AiCallStore;
+  /** The known secret values of the host (its keys, its tokens): redacted from every record. Read when each call starts. */
+  callsSecrets?: () => string[];
+  /** The budget of the book's records in bytes: after each task the oldest finished unpinned tasks are dropped to keep it (default 256 MiB). */
+  callsBudgetBytes?: number;
+  /** The account the book belongs to, when the store is fenced by it (a browser); null otherwise. */
+  callsAccountScope?: string | null;
 }
 
 export type AutopilotListener = (event: AutopilotEvent) => void;
@@ -409,6 +421,10 @@ export class AutopilotSession {
       retryDelayMs: this.config.retryDelayMs,
       random: this.config.random,
       persistHeartbeatMs: this.config.persistHeartbeatMs,
+      calls: this.config.calls,
+      callsSecrets: this.config.callsSecrets,
+      callsBudgetBytes: this.config.callsBudgetBytes,
+      callsAccountScope: this.config.callsAccountScope,
       emit: (event) => {
         if (event.type === "run-started" && !didStart) {
           didStart = true;

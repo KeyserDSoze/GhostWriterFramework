@@ -51,6 +51,7 @@ export * from "./autopilot/story-so-far.js";
 export { TASK_EXECUTORS, cleanProse, renderPlanMarkdown, sameCanonEntity, type TaskContext, type TaskResult, type TaskAi } from "./autopilot/tasks.js";
 export * from "./autopilot/runner.js";
 export * from "./autopilot/session.js";
+export * from "./autopilot/calls/index.js";
 
 export * from "./server/protocol.js";
 export * from "./server/client.js";

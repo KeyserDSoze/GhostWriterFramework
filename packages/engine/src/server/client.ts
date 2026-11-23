@@ -1,6 +1,7 @@
 import type { AiRuntimeConfig } from "../ai/config.js";
 import { BookConflictError, type BookCommitResult, type BookFileChange, type BookFileContent, type BookFileEntry, type BookStore } from "../book/store.js";
 import type { FrozenChapterResult, FrozenStatus } from "../autopilot/frozen.js";
+import type { AiCallField, AiCallTask, AiCallTaskHeader, AiCallTaskPage } from "../autopilot/calls/types.js";
 import type { AutopilotSnapshot, FrozenAction, FrozenChangeKind, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
 import { linkedSignal } from "../util/abort.js";
 import {
@@ -9,6 +10,7 @@ import {
   normalizeServerUrl,
   randomNonce,
   serverCompatibility,
+  serverHasCalls,
   serverHasOutlineBrief,
   serverSupportsAutopilotAutoResume,
   serverSupportsAutopilotRetry,
@@ -16,6 +18,7 @@ import {
   verifyServerIdentity,
   type AskDirectorRequest,
   type AskDirectorResponse,
+  type KeepCallTaskRequest,
   type ErrorResponse,
   type EventsResponse,
   type FreezeChapterRequest,
@@ -31,7 +34,9 @@ import {
   type RetryNowResponse,
   type ServerAiStatus,
   type ServerBookSummary,
+  type ServerCallText,
   type ServerCompatibility,
+  type ServerDeleteCallsResponse,
   type ServerIdentityCheck,
   type ServerInfo,
   type ServerManifest,
@@ -323,6 +328,75 @@ export class NarrariumServerClient {
   async resolveGithubConflicts(bookId: string, request: ResolveGithubConflictsRequest): Promise<ResolveGithubConflictsResponse> {
     await this.assertGithubConflicts();
     return this.request("POST", bookRoute(bookId, "/github-conflicts/resolve"), request, { timeoutMs: 300_000 });
+  }
+
+  /** The server announced `SERVER_FEATURE_AUTOPILOT_CALLS`: asked once, and again until it says yes (a server that is updated meanwhile is found). */
+  private callsSupported = false;
+
+  /** The routes of the AI call records go only to a server that announces them: an older one is refused here, before anything is sent. */
+  private async assertCalls(): Promise<void> {
+    if (this.callsSupported) return;
+    if (!serverHasCalls(await this.info())) {
+      throw new ServerRequestError("This personal server does not keep the records of the AI calls of the autopilot (it does not announce the feature autopilot-calls): update the server.", 501, "feature_unavailable");
+    }
+    this.callsSupported = true;
+  }
+
+  /**
+   * The tasks of a book whose AI calls the server kept, newest first, a page at a time: `GET …/autopilot/calls?before=&limit=` (permission `read`; a server that announces
+   * `SERVER_FEATURE_AUTOPILOT_CALLS`, else `feature_unavailable` before anything is sent). Each entry is the task's header (title, kind, chapter, status, times, how many calls, how many
+   * bytes, pinned or not); `next` is the cursor to give as `before` for the following page, or `null` on the last one. `limit` is 1 to `SERVER_CALLS_MAX_PAGE_LIMIT` (default `SERVER_CALLS_PAGE_LIMIT`).
+   */
+  async listCalls(bookId: string, page: { before?: string; limit?: number } = {}): Promise<AiCallTaskPage> {
+    await this.assertCalls();
+    const query = new URLSearchParams();
+    if (page.before !== undefined) query.set("before", page.before);
+    if (page.limit !== undefined) query.set("limit", String(page.limit));
+    const search = query.toString();
+    return this.request("GET", bookRoute(bookId, `/autopilot/calls${search ? `?${search}` : ""}`));
+  }
+
+  /**
+   * One task with its calls in the order they were made, without their texts: `GET …/autopilot/calls/tasks/:activityId` (permission `read`). Each call says what it is, which model answered, how it
+   * ended, how big its texts are and what each provider attempt did. `404 call_task_not_found` when the server holds no such task.
+   */
+  async readCallTask(bookId: string, activityId: string): Promise<AiCallTask> {
+    await this.assertCalls();
+    return this.request("GET", bookRoute(bookId, `/autopilot/calls/tasks/${encodeURIComponent(activityId)}`));
+  }
+
+  /**
+   * The kept text of one call, a piece at a time: `GET …/autopilot/calls/:callId/text?field=&attempt=&from=&limit=` (permission `read`). `field` is `system`, `user` or `response`; `attempt` names the
+   * response of a provider attempt (from 1; the last one that has text when it is left out); `from` is a byte offset (default 0) and `limit` at most `SERVER_CALL_TEXT_MAX_BYTES`. The answer says where it
+   * starts, where the next piece does, how much is kept now and whether the call is over (`ServerCallText`): a view that follows a running call asks again from `next` once a second.
+   * `404 call_not_found` when the server does not hold the call.
+   */
+  async readCallText(bookId: string, callId: string, options: { field: AiCallField; attempt?: number; from?: number; limit?: number }): Promise<ServerCallText> {
+    await this.assertCalls();
+    const query = new URLSearchParams({ field: options.field });
+    if (options.attempt !== undefined) query.set("attempt", String(options.attempt));
+    if (options.from !== undefined) query.set("from", String(options.from));
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    return this.request("GET", bookRoute(bookId, `/autopilot/calls/${encodeURIComponent(callId)}/text?${query.toString()}`));
+  }
+
+  /**
+   * Keep a task (`pinned: true`: it is never dropped to make room, but it counts against the budget) or let it go: `PUT …/autopilot/calls/tasks/:activityId/keep` (permission `run`). Answers the task's header
+   * as it is now. `404 call_task_not_found` when the server holds no such task.
+   */
+  async keepCallTask(bookId: string, activityId: string, pinned: boolean): Promise<AiCallTaskHeader> {
+    await this.assertCalls();
+    const body: KeepCallTaskRequest = { pinned };
+    return this.request("PUT", bookRoute(bookId, `/autopilot/calls/tasks/${encodeURIComponent(activityId)}/keep`), body);
+  }
+
+  /**
+   * Delete every AI call record of the book on the server, the pinned tasks too: `DELETE …/autopilot/calls` (permission `run`). Answers what it removed. What a browser or an account copied stays where
+   * it was copied. Never touches the book itself.
+   */
+  async deleteCalls(bookId: string): Promise<ServerDeleteCallsResponse> {
+    await this.assertCalls();
+    return this.request("DELETE", bookRoute(bookId, "/autopilot/calls"));
   }
 
   /** The short name of `updateAutopilotOptions`. */

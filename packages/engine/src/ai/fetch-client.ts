@@ -276,7 +276,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
         const deadlines = resolveDeadlines(integration, options, tried > 0 && maxTotal !== undefined ? maxTotal - (Date.now() - startedAt) : undefined);
 
         const identity = { attemptId: randomId("attempt"), label: request.label, capability: request.capability, provider: integration.provider, model: candidate.model, integrationId: integration.id, index: attempt.index };
-        notify(options.onAttempt, {
+        const attemptReport: FetchAiAttempt = {
           ...identity,
           // Copies: a listener can never change what is sent.
           messages: reportedMessages(attempt.built, request),
@@ -292,7 +292,9 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           ...(attempt.built?.reasoningParameter ? { reasoningParameter: attempt.built.reasoningParameter } : {}),
           ...(skipped.length ? { skipped: skipped.map((entry) => ({ ...entry })) } : {}),
           ...(attempt.built?.notes?.length ? { notes: [...attempt.built.notes] } : {}),
-        });
+        };
+        notify(options.onAttempt, attemptReport);
+        notify(request.onAttempt, attemptReport);
         const attemptStarted = Date.now();
         const trace: AttemptTrace = { startedAt: attemptStarted, streamed: false, toolSeen: false };
         lastSent = candidate;
@@ -300,7 +302,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
         try {
           if (!attempt.built) throw attempt.buildError;
           const response = await callCandidate(config, attempt, attempt.built, request, options, deadlines, secrets, trace, refusals);
-          notify(options.onAttemptEnd, {
+          const endReport: FetchAiAttemptEnd = {
             ...identity,
             outcome: "ok",
             usage: response.usage,
@@ -312,11 +314,15 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
             ...replyTrace(trace, Boolean(request.json)),
             ...(trace.transport ? { transport: trace.transport } : {}),
             durationMs: Date.now() - attemptStarted,
-          });
+          };
+          notify(options.onAttemptEnd, endReport);
+          notify(request.onAttemptEnd, endReport);
           return withSpent(response, spent);
         } catch (error) {
           const cancelled = Boolean(request.signal?.aborted) && isAbortError(error);
-          notify(options.onAttemptEnd, failedAttempt(identity, error, cancelled, deadlines.startMs, Date.now() - attemptStarted, secrets, replyTrace(trace, Boolean(request.json))));
+          const failedReport = failedAttempt(identity, error, cancelled, deadlines.startMs, Date.now() - attemptStarted, secrets, replyTrace(trace, Boolean(request.json)));
+          notify(options.onAttemptEnd, failedReport);
+          notify(request.onAttemptEnd, failedReport);
           if (cancelled) throw error;
           if (error instanceof AiProviderError && !error.target) {
             const origin = endpointOrigin(effectiveAiBase(integration, options.githubModelsBaseUrl));
@@ -325,6 +331,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           addSpent(spent, error);
           lastError = error;
           notify(request.onText, "");
+          notify(request.onStructuredText, "");
         }
       }
       const notes: string[] = [];
@@ -914,6 +921,15 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
   let stage: "send" | "stream" | "json" | "other" = "send";
 
   const callArguments = (): string => wholeArguments || chosenArguments(calls.values(), wanted);
+  /** The cumulative value of a structured reply for `onStructuredText`: the arguments of the call, else the text. Sent only when it grew. */
+  let structuredSent = 0;
+  const reportStructured = (): void => {
+    if (!request.onStructuredText) return;
+    const value = callArguments() || text;
+    if (value.length <= structuredSent) return;
+    structuredSent = value.length;
+    notify(request.onStructuredText, value);
+  };
   /** The model has written something of the reply (its text, its reasoning or the call of its function): the provider is answering. */
   const started = (): boolean => Boolean(text || reasoningCharacters || calls.size || wholeArguments);
   /** What an attempt used: the provider's count, else an estimate once the model has started to answer. */
@@ -1047,6 +1063,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     }
     const reason = choices.find((choice) => typeof choice?.finish_reason === "string" && choice.finish_reason)?.finish_reason;
     if (reason) finishReason = reason;
+    if (structured) reportStructured();
     // The usage comes in whichever chunk the provider puts it (the last one with no choice, the one that finishes the reply, or every one); a count of zero does not replace one that was read.
     if (chunk.usage) {
       const next = normalizeUsage(chunk.usage);
@@ -1146,6 +1163,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       usage = normalizeUsage(payload?.usage);
       // A plain reply that came whole still reaches the listener of the text, once.
       if (!structured && text) notify(request.onText, text);
+      if (structured) reportStructured();
     }
     stage = "other";
 
