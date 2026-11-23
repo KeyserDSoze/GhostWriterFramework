@@ -1,7 +1,12 @@
 import type { OutlineReader } from "../book/outline.js";
 import { isItalian } from "../util/text.js";
+import { isPlannedChapterWritten } from "./chapter-state.js";
 import type { PlanNote } from "./planner.js";
-import type { AutopilotState, PlannedChapter } from "./types.js";
+import type { AutopilotState } from "./types.js";
+
+// Whether a chapter counts as written is in `chapter-state.ts`, which has no import but types: the rule that tells the author what happens when an entry changes
+// (`outline-change.ts`) needs it too, and must not carry the rest of this module with it. The export stays where it was.
+export { isPlannedChapterWritten } from "./chapter-state.js";
 
 /**
  * The new outline entry of a chapter already closed (`done`), which the author changed since the plan followed it: the author decides
@@ -32,10 +37,6 @@ function text(language: string, en: string, it: string): string {
   return isItalian(language) ? it : en;
 }
 
-function isWritten(chapter: PlannedChapter): boolean {
-  return chapter.imported === true || chapter.status === "done" || chapter.scenes.some((scene) => scene.status !== "planned");
-}
-
 /**
  * The outline against an approved plan, before a step. The chapter about to be started, with nothing written, is planned again
  * when its entry no longer matches the digest the plan kept (`PlannedChapter.outlineDigest`: the author changed it, or wrote one
@@ -55,7 +56,7 @@ export async function outlinePlanStatus(outline: OutlineReader, state: Autopilot
   if (!plan?.approved) return { changed, written, notes };
   const hasEntries = outline.index.chapters.length > 0;
   const current = plan.chapters.find((chapter) => chapter.status !== "done");
-  if (current && !isWritten(current)) {
+  if (current && !isPlannedChapterWritten(current)) {
     const entry = await outline.chapter(current.number);
     if (entry?.unreadable) {
       notes.push({
@@ -73,7 +74,7 @@ export async function outlinePlanStatus(outline: OutlineReader, state: Autopilot
     } else if (!entry && current.outlineDigest && hasEntries) changed.set(current.number, "removed");
   }
   for (const chapter of plan.chapters) {
-    if (!chapter.outlineDigest || !isWritten(chapter)) continue;
+    if (!chapter.outlineDigest || !isPlannedChapterWritten(chapter)) continue;
     const entry = await outline.chapter(chapter.number);
     if (entry?.contentDigest === chapter.outlineDigest || (!entry && !hasEntries)) continue;
     if (entry?.unreadable) {
@@ -94,7 +95,9 @@ export async function outlinePlanStatus(outline: OutlineReader, state: Autopilot
     notes.push({
       key: `outline-written:${chapter.number}:${entry?.contentDigest ?? "removed"}`,
       tone: "info",
-      code: "outlineWrittenChanged",
+      // Two things, each with its code: the entry of a chapter still being written changed (it is decided once the chapter is closed), or the
+      // entry of a written chapter is gone (the chapter stays in the book). A closed chapter whose entry changed is in `written`.
+      code: entry ? "outlineChangedWhileWriting" : "outlineRemovedWritten",
       chapterNumber: chapter.number,
       title: entry
         ? text(language, `The outline of chapter ${chapter.number} changed while the chapter is being written: you will decide what to do once it is closed`, `La Scaletta del capitolo ${chapter.number} è cambiata mentre il capitolo è in scrittura: deciderai cosa fare quando sarà chiuso`)

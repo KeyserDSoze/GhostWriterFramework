@@ -304,7 +304,9 @@ test("a plan saved by an engine that did not know the outline does not plan its 
   assert.ok(!labels(ai).slice(mark).some((label) => label.startsWith("autopilot:replan")), labels(ai).slice(mark).join(", "));
   await editOutline(store, { kind: "update", number: 3, entry: { body: "Changed by the author after all." } });
   const notices = await run(store, ai, { options: { ...FAST } });
-  assert.deepEqual(insights(notices.events, "outlineWrittenChanged").map((event) => event.chapterNumber), [], "a chapter that does not remember its entry is not said to have changed");
+  for (const code of ["outlineWrittenChanged", "outlineChangedWhileWriting", "outlineRemovedWritten"]) {
+    assert.deepEqual(insights(notices.events, code).map((event) => event.chapterNumber), [], `a chapter that does not remember its entry is not said to have changed (${code})`);
+  }
 });
 
 test("deleting the whole outline takes no chapter out of the plan", async () => {
@@ -330,6 +332,29 @@ test("the outline of a chapter already written that changed is said once, and th
   assert.deepEqual(notices.map((event) => event.chapterNumber), [1], "once, for the whole run");
   assert.ok(!labels(ai).slice(mark).some((label) => /replan:1|scenes:1|write:1\./.test(label)), "the written chapter is not planned or written again");
   assert.equal(store.files.get("chapters/001-chapter-title-1/001-scene-1-title.md"), written);
+});
+
+test("an entry that changes while its chapter is being written has a code of its own; once the chapter is closed, the notice of a written chapter has its own", async () => {
+  const store = new MemoryBookStore(seedBookFiles());
+  const ai = createFakeAutopilotAi({ reviewVerdict: () => "approve" });
+  const { session, events } = newSession(store, ai);
+  let paused = false;
+  session.subscribe((event) => {
+    if (paused || event.type !== "task-finished" || event.activity.task !== "write" || event.activity.sceneNumber !== 1) return;
+    paused = true;
+    session.pause("after-step");
+  });
+  await session.start({ brief: { idea: "x", targetChapters: 1, scenesPerChapter: 2, wordsPerScene: 300 }, options: { ...FAST, frozenEdits: "notify" } });
+  await session.waitForIdle();
+  assert.equal(stateOf(store).plan.chapters[0].status, "writing", "(the first scene is written, the second is not)");
+  await editOutline(store, { kind: "update", number: 1, entry: { body: "The author changes the chapter while it is being written." } });
+  await session.start();
+  await session.waitForIdle();
+  assert.equal(stateOf(store).status, "completed", stateOf(store).lastError?.message);
+  assert.deepEqual(insights(events, "outlineChangedWhileWriting").map((event) => event.chapterNumber), [1], "said while the chapter is written");
+  assert.match(insights(events, "outlineChangedWhileWriting")[0].title, /being written/);
+  assert.deepEqual(insights(events, "outlineWrittenChanged").map((event) => event.chapterNumber), [1], "and, once it is closed, as the notice of a written chapter");
+  assert.deepEqual(insights(events, "outlineRemovedWritten"), []);
 });
 
 test("an entry the author adds after the last chapter extends a finished book, following the entry", async () => {

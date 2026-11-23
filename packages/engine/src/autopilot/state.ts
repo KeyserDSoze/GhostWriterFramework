@@ -2,13 +2,15 @@ import { isValidGhostwriterSlug } from "../book/paths.js";
 import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
 import { clipText, countWords } from "../util/text.js";
 import { normalizeErrorDetail, normalizeErrorKind } from "./errors.js";
-import { AUTOPILOT_PUBLISH_MODES, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES } from "./types.js";
+import { AUTOPILOT_PUBLISH_MODES, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES } from "./types.js";
 import type {
   AutopilotActivity,
   AutopilotBrief,
   AutopilotFinalReview,
+  AutopilotLastErrorCode,
   AutopilotLastErrorSummary,
   AutopilotLimitsSummary,
+  AutopilotLongRetry,
   AutopilotOptions,
   AutopilotPausePending,
   AutopilotPhase,
@@ -37,6 +39,7 @@ import type {
   QuestionChoice,
   RevisionRequest,
   RevisionSource,
+  StartOptions,
 } from "./types.js";
 
 export const MAX_ACTIVITIES = 200;
@@ -183,10 +186,43 @@ export function normalizeRunLimits(value: unknown): AutopilotRunLimits | undefin
   return steps || chapters ? { ...(steps ? { steps } : {}), ...(chapters ? { chapters } : {}) } : undefined;
 }
 
+const isWholeIn = (value: unknown, min: number, max: number): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
+
+/**
+ * «Retry later» as the engine reads it (`options.longRetry`): an object with `everyMinutes` (a whole number from 1 to `LONG_RETRY_MAX_MINUTES`)
+ * and `cycles` (a whole number from 1 to `LONG_RETRY_MAX_CYCLES`, or the word `unlimited`, in any case and with spaces around, as every word of the
+ * options is read). Other fields are left out. `undefined` for anything else: a value that is not a policy is never made into one, nor cut to fit.
+ */
+export function readLongRetry(value: unknown): AutopilotLongRetry | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  if (!isWholeIn(source.everyMinutes, 1, LONG_RETRY_MAX_MINUTES)) return undefined;
+  const unlimited = typeof source.cycles === "string" && source.cycles.trim().toLowerCase() === "unlimited";
+  if (!unlimited && !isWholeIn(source.cycles, 1, LONG_RETRY_MAX_CYCLES)) return undefined;
+  return { everyMinutes: source.everyMinutes, cycles: unlimited ? "unlimited" : source.cycles as number };
+}
+
+/**
+ * Why a value a host is about to send is not «Retry later» as it must be written: `null` when it is one (an object with exactly `everyMinutes` and
+ * `cycles`, `cycles` a number or exactly `"unlimited"`), and `null` for `null` too, which turns it off. The words are for the person who sent it.
+ */
+export function longRetryProblem(value: unknown): string | null {
+  if (value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "longRetry must be an object { everyMinutes, cycles }, or null to turn it off.";
+  const source = value as Record<string, unknown>;
+  const extra = Object.keys(source).filter((key) => key !== "everyMinutes" && key !== "cycles");
+  if (extra.length) return `longRetry takes only everyMinutes and cycles, not ${extra.slice(0, 3).map((key) => key.slice(0, 40)).join(", ")}.`;
+  if (!isWholeIn(source.everyMinutes, 1, LONG_RETRY_MAX_MINUTES)) return `longRetry.everyMinutes must be a whole number of minutes from 1 to ${LONG_RETRY_MAX_MINUTES} (a week).`;
+  if (source.cycles !== "unlimited" && !isWholeIn(source.cycles, 1, LONG_RETRY_MAX_CYCLES)) return `longRetry.cycles must be a whole number from 1 to ${LONG_RETRY_MAX_CYCLES}, or "unlimited".`;
+  return null;
+}
+
 export function normalizeOptions(value: unknown, base: AutopilotOptions = DEFAULT_OPTIONS): AutopilotOptions {
   const source = asRecord(value);
   // `null` takes the author's choice back, so that the host decides again; a value nobody knows leaves it as it was.
   const publishEvery = source.publishEvery === null ? undefined : publishModeOf(source.publishEvery) ?? base.publishEvery;
+  // `null` turns «Retry later» off; a value that is not a policy leaves it as it was (off, for a file read on its own).
+  const longRetry = source.longRetry === null ? undefined : readLongRetry(source.longRetry) ?? readLongRetry(base.longRetry);
   return {
     readers: asBoolean(source.readers, base.readers),
     maxReaders: asInteger(source.maxReaders, base.maxReaders, 1, 20),
@@ -201,6 +237,7 @@ export function normalizeOptions(value: unknown, base: AutopilotOptions = DEFAUL
     fillOutline: asBoolean(source.fillOutline, base.fillOutline ?? true),
     frozenEdits: frozenEditsModeOf(source.frozenEdits) ?? base.frozenEdits ?? "ask",
     ...(publishEvery ? { publishEvery } : {}),
+    ...(longRetry ? { longRetry } : {}),
   };
 }
 
@@ -643,7 +680,7 @@ function normalizeInterventions(value: unknown): AuthorIntervention[] {
   }).filter((entry) => entry.id && entry.text).slice(-MAX_INTERVENTIONS);
 }
 
-export function createAutopilotState(now: Date, brief?: Partial<AutopilotBrief>, options?: Partial<AutopilotOptions>): AutopilotState {
+export function createAutopilotState(now: Date, brief?: Partial<AutopilotBrief>, options?: StartOptions["options"]): AutopilotState {
   const at = now.toISOString();
   return {
     schemaVersion: 1,
@@ -672,6 +709,11 @@ export function createAutopilotState(now: Date, brief?: Partial<AutopilotBrief>,
   };
 }
 
+/** The code of a last error as a file says it: one of `LAST_ERROR_CODES`, exactly as written; anything else is no code. */
+function readLastErrorCode(value: unknown): AutopilotLastErrorCode | undefined {
+  return typeof value === "string" ? LAST_ERROR_CODES.find((code) => code === value) : undefined;
+}
+
 /** Tolerant reader for `autopilot/state.json`, including hand edits and older files. */
 export function normalizeAutopilotState(value: unknown, now = new Date()): AutopilotState {
   const source = asRecord(value);
@@ -682,6 +724,7 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
   const workedMs = readDuration(stats.workedMs);
   // The moment the count began means something only next to the count itself.
   const workedMsSince = workedMs === undefined ? undefined : readMoment(stats.workedMsSince);
+  const workedMsPartial = workedMs !== undefined && stats.workedMsPartial === true;
   const finalReview = normalizeFinalReview(source.finalReview);
   const concept = asRecord(source.concept);
   const logline = clipText(asString(concept.logline), CONCEPT_LOGLINE_CHARACTERS);
@@ -689,6 +732,7 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
   const activityId = readActivityId(lastError.activityId);
   const errorKind = normalizeErrorKind(lastError.errorKind);
   const errorDetail = normalizeErrorDetail(lastError.errorDetail);
+  const errorCode = readLastErrorCode(lastError.code);
   const runner = asRecord(source.runner);
   const pendingReviews = normalizePendingReviews(source.pendingReviews);
   const frozenSince = readMoment(source.frozenSince);
@@ -734,6 +778,7 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
       ...(costUnknownCalls ? { costUnknownCalls } : {}),
       ...(workedMs !== undefined ? { workedMs } : {}),
       ...(workedMsSince ? { workedMsSince } : {}),
+      ...(workedMsPartial ? { workedMsPartial: true as const } : {}),
     },
     message: asString(source.message) || null,
     lastError: asString(lastError.message)
@@ -744,6 +789,7 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
         ...(activityId ? { activityId } : {}),
         ...(errorKind ? { errorKind } : {}),
         ...(errorDetail ? { errorDetail } : {}),
+        ...(errorCode ? { code: errorCode } : {}),
       }
       : null,
     createdAt: asString(source.createdAt) || base.createdAt,

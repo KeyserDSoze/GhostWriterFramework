@@ -43,6 +43,8 @@ export * from "./autopilot/errors.js";
 export * from "./autopilot/planner.js";
 export * from "./autopilot/outline.js";
 export * from "./autopilot/outline-check.js";
+export * from "./autopilot/outline-change.js";
+export * from "./autopilot/outline-compose.js";
 export * from "./autopilot/frozen.js";
 export * from "./autopilot/story-so-far.js";
 export { TASK_EXECUTORS, cleanProse, renderPlanMarkdown, sameCanonEntity, type TaskContext, type TaskResult, type TaskAi } from "./autopilot/tasks.js";
@@ -53,3 +55,8 @@ export * from "./server/protocol.js";
 export * from "./server/client.js";
 
 export * from "./sync/files.js";
+
+// What a run will cost before it starts, the books the interface offers first, and how fast a model writes (the estimate of a run).
+export * from "./autopilot/estimate.js";
+export * from "./autopilot/presets.js";
+export * from "./autopilot/speed.js";

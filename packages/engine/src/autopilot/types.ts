@@ -159,20 +159,46 @@ export interface AutopilotOptions {
    * unless the author chose otherwise. Saved with the other options, and it can change while a run goes on.
    */
   frozenEdits?: FrozenEditsMode;
+  /**
+   * «Retry later»: when a step keeps failing with a transient provider failure after the quick retries, wait `everyMinutes` and try it
+   * again with a new group of quick retries, up to `cycles` times (see `AutopilotLongRetry`). Absent: off, the default (also for the books
+   * of older engines). Saved with the other options, and it can change while a run goes on, also while the run waits.
+   */
+  longRetry?: AutopilotLongRetry;
 }
 
-/** The options that can change while a run goes on: the run reads them again at the end of every step and of every chapter. */
-export const LIVE_AUTOPILOT_OPTIONS = ["publishEvery", "pauseAfterEachChapter", "frozenEdits"] as const;
+/** The longest wait of «Retry later», in minutes (a week), and the most cycles that are not "unlimited". */
+export const LONG_RETRY_MAX_MINUTES = 10_080;
+export const LONG_RETRY_MAX_CYCLES = 1000;
 
-/** What the author can change while a run goes on. `publishEvery: null` takes the choice back, so that the host decides again. */
+/**
+ * «Retry later» (`options.longRetry`). After the quick retries of a step that failed with a transient provider failure (rate limit, overload,
+ * a server error, the network, an empty or broken reply) the run waits `everyMinutes` (a whole number from 1 to `LONG_RETRY_MAX_MINUTES`) and
+ * tries the step again, as the book is then, with all its quick retries; `cycles` is how many times (a whole number from 1 to
+ * `LONG_RETRY_MAX_CYCLES`), or `"unlimited"`, said in words: a policy without it is no policy. The cycles start from zero again after
+ * every step that works.
+ */
+export interface AutopilotLongRetry {
+  everyMinutes: number;
+  cycles: number | "unlimited";
+}
+
+/** The options that can change while a run goes on: the run reads them again at the end of every step and of every chapter (and `longRetry` when a step has failed). */
+export const LIVE_AUTOPILOT_OPTIONS = ["publishEvery", "pauseAfterEachChapter", "frozenEdits", "longRetry"] as const;
+
+/**
+ * What the author can change while a run goes on. `publishEvery: null` takes the choice back, so that the host decides again; `longRetry: null`
+ * turns «Retry later» off (a run that is waiting for it stops, with the failure it was waiting to try again).
+ */
 export interface AutopilotLiveOptions {
   publishEvery?: AutopilotPublishMode | null;
   pauseAfterEachChapter?: boolean;
   frozenEdits?: FrozenEditsMode;
+  longRetry?: AutopilotLongRetry | null;
 }
 
 /** What `AutopilotSession.updateOptions` takes: the settings above at any time, and any other option when no run is active. */
-export type AutopilotOptionsUpdate = Partial<Omit<AutopilotOptions, "publishEvery">> & AutopilotLiveOptions;
+export type AutopilotOptionsUpdate = Partial<Omit<AutopilotOptions, "publishEvery" | "longRetry">> & AutopilotLiveOptions;
 
 export type SceneStatus = "planned" | "written" | "reviewed";
 export type ChapterStatus = "planned" | "writing" | "review" | "done";
@@ -456,8 +482,12 @@ export interface AutopilotStats {
    * state whose count began before it was written (a book started with an engine that did not say), and the engine does not make one up.
    */
   workedMsSince?: string;
+  /**
+   * `true` when the count began on a book that had already saved steps (an engine that did not count wrote them): `workedMs` is then the time of
+   * the steps since `workedMsSince`, not of the whole book. Absent when the count was born with the book, and from the states of older engines.
+   */
+  workedMsPartial?: true;
 }
-
 /** The director's judgement of the whole book, as data: what the final step saved. */
 export interface AutopilotFinalReview {
   /** `approve`, or `revise` for anything else (a withheld approval, a rewrite). */
@@ -505,7 +535,20 @@ export interface AutopilotErrorDetail {
    * timeout; `idle`: it went silent for the idle timeout while it answered; `total`: the call took longer than any call may (four hours).
    */
   timeoutPhase?: AiTimeoutPhase;
+  /**
+   * For a conflict with GitHub (kind `conflict`, code `github_conflict` of the personal server): how many files changed both on the server and on
+   * GitHub, so that the author has to choose a version of each (`GET …/github-conflicts` lists them). Absent for any other failure.
+   */
+  githubConflicts?: number;
 }
+
+/**
+ * The codes that say, in the state, why a run ended with an error: the `code` of its `run-ended` event, when that code is one of these. «Retry later»
+ * stopped the run after its last cycle (`longRetryExhausted`), or was turned off while the run waited for it (`longRetryOff`). A closed list: a code
+ * that is not in it is dropped when a file is read.
+ */
+export const LAST_ERROR_CODES = ["longRetryExhausted", "longRetryOff"] as const satisfies readonly AutopilotMessageCode[];
+export type AutopilotLastErrorCode = (typeof LAST_ERROR_CODES)[number];
 
 /** A failure the run could not get past: what it said, when, in which step, and what kind it was. */
 export interface AutopilotLastError {
@@ -516,6 +559,11 @@ export interface AutopilotLastError {
   activityId?: string;
   errorKind?: AutopilotErrorKind;
   errorDetail?: AutopilotErrorDetail;
+  /**
+   * Why the run ended, when «Retry later» did it (see `LAST_ERROR_CODES`): what the `run-ended` event said, kept in the state so that a page opened after the
+   * run, or another device, can say it too. Absent for any other failure, and for an error saved by an engine that did not say it.
+   */
+  code?: AutopilotLastErrorCode;
 }
 
 /** The last error as the summary says it: the state's own fields, and the same kind and detail under their short names. */
@@ -528,8 +576,14 @@ export interface AutopilotLastErrorSummary extends AutopilotLastError {
 export interface AutopilotRetryInfo {
   /** ISO time of the next attempt. */
   at: string;
+  /** The quick retries: the one about to happen (or, in a wait of «Retry later», the last one made) and how many there are. */
   attempt: number;
   retries: number;
+  /**
+   * Only in a wait of «Retry later» (`options.longRetry`): which cycle it is, from 1, and how many there are (`null`: no limit). When it is over
+   * the step is tried again with all its quick retries.
+   */
+  longTerm?: { cycle: number; cycles: number | null };
 }
 
 export interface AutopilotState {
@@ -637,6 +691,8 @@ export type AutopilotMessageCode =
   | "outlineChanged"
   | "outlineRemoved"
   | "outlineWrittenChanged"
+  | "outlineChangedWhileWriting"
+  | "outlineRemovedWritten"
   | "outlineWarnings"
   | "outlineWrittenAuto"
   | "frozenMigrated"
@@ -644,16 +700,24 @@ export type AutopilotMessageCode =
   | "frozenAuto"
   | "frozenInvalid"
   | "frozenReviewed"
-  | "frozenCleared";
+  | "frozenCleared"
+  | "longRetryWait"
+  | "longRetryExhausted"
+  | "longRetryOff"
+  | "retrySkipped";
 
 /**
  * Live events: everything the autopilot does, as it happens. `run-ended` carries a `code` when the run ended for a
  * reason a client can translate (`takenOver`: another runner owns the book now, so this run stopped without saving;
  * `chapterPause`: the author asked to pause at the end of the chapter and the chapter is closed; `stepLimit` and
- * `chapterLimit`: the steps or the chapters the run was limited to are done).
+ * `chapterLimit`: the steps or the chapters the run was limited to are done; `longRetryExhausted`: the step failed again after
+ * every cycle of «Retry later»; `longRetryOff`: «Retry later» was turned off while the run waited for it).
  * A `failureRetry` insight carries `attempt` (the retry about to happen), `retries` (how many this kind of failure
  * allows) and `waitMs` (how long the runner waits first); while it waits, the `state` events carry the same in `summary.retry`
- * (with the time of the next attempt), and one more `state` event says that nothing waits any more.
+ * (with the time of the next attempt), and one more `state` event says that nothing waits any more. A `longRetryWait` insight (a wait of
+ * «Retry later») carries `cycle` (from 1), `cycles` (`null`: no limit) and `waitMs`, and `summary.retry.longTerm` says the same while it
+ * waits; `longRetryExhausted` carries the last `cycle` and `cycles`. A `retrySkipped` insight («Retry now» ended a wait) carries the `waitMs`
+ * that was left, and is followed at once by a `state` event without `retry`.
  * `task-progress` says that the model of the running step is answering. A step that writes prose says it with its text so far (`preview`,
  * the tail of it, and the `characters` so far, at most about three times a second); a step that answers with a structured value says it with
  * numbers only (`bytes` of the reply that arrived, `characters` of its text or arguments, `preview` empty), at most once a second. It is never saved
@@ -667,7 +731,7 @@ export type AutopilotEventBody =
   | { type: "task-started"; activity: AutopilotActivity }
   | { type: "task-progress"; activityId: string; characters: number; preview: string; bytes?: number }
   | { type: "task-finished"; activity: AutopilotActivity }
-  | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode; attempt?: number; retries?: number; waitMs?: number; chapterNumber?: number; ghostwriter?: string }
+  | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode; attempt?: number; retries?: number; waitMs?: number; cycle?: number; cycles?: number | null; chapterNumber?: number; ghostwriter?: string }
   | { type: "state"; state: AutopilotStateSummary }
   | { type: "sync"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode };
 
@@ -738,7 +802,8 @@ export interface AutopilotStateSummary {
   /**
    * Not saved, and absent when nothing waits: while the run waits to try a failed step again, when the next attempt is and which retry it
    * is, so that a client can count down. Every change of it is a `state` event: it appears when the wait begins and goes when the attempt
-   * starts (or the run ends). Absent from a summary made from the state file alone.
+   * starts (or the run ends, or «Retry now» ends the wait). In a wait of «Retry later» it has `longTerm` (the cycle, and how many). Absent
+   * from a summary made from the state file alone.
    */
   retry?: AutopilotRetryInfo;
 }
@@ -785,7 +850,8 @@ export interface QuestionAnswer {
 
 export interface StartOptions {
   brief?: Partial<AutopilotBrief>;
-  options?: Partial<AutopilotOptions>;
+  /** `longRetry: null` turns «Retry later» off, as the engine has always read it (the policy the book had is taken back: `normalizeOptions`). */
+  options?: Partial<Omit<AutopilotOptions, "longRetry">> & { longRetry?: AutopilotLongRetry | null };
   /** Limits of this run only: they are not saved. See `AutopilotRunLimits`. */
   limits?: AutopilotRunLimits;
 }

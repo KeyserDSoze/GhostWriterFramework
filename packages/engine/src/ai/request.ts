@@ -2,7 +2,7 @@ import { DEFAULT_AZURE_API_VERSION, normalizeThinking, type AiIntegrationConfig,
 import type { AiCandidate } from "./router.js";
 import { forcedToolChoice } from "./structured.js";
 import { completionTokenLimit, isReasoningModel, requestOutputLimit } from "./token-limit.js";
-import { AiProviderError, type AiJsonSchema, type AiRequest } from "./types.js";
+import { AiProviderError, type AiContentPart, type AiJsonSchema, type AiMessage, type AiRequest } from "./types.js";
 
 export const GITHUB_MODELS_BASE_URL = "https://models.github.ai";
 const OPENAI_BASE_URL = "https://api.openai.com/v1";
@@ -83,6 +83,35 @@ export function catalogTarget(integration: Pick<AiIntegrationConfig, "provider" 
 
 function jsonInstruction(schema: AiJsonSchema): string {
   return `Reply with ONLY one JSON object, without code fences or commentary, matching this JSON schema (${schema.name}: ${schema.description}):\n${JSON.stringify(schema.parameters)}`;
+}
+
+/** A message as the engine keeps it for a request: a copy, so that nothing built from it can change the one the host gave. */
+function copyMessage(message: AiMessage): AiMessage {
+  return { role: message.role, content: typeof message.content === "string" ? message.content : message.content.map((part): AiContentPart => ({ ...part })) };
+}
+
+/**
+ * What is sent, in the engine's own form: the messages the host gave (the conversation of the Copilot), or, for a host that has none, the system prompt and the user prompt,
+ * as it always was. The JSON instruction of a model without tool calls goes into the first system message (as one more part when its content is parts), or into a system
+ * message of its own placed first when there is none. Always copies.
+ */
+function conversationOf(request: Pick<AiRequest, "system" | "user" | "messages">, instruction: string | undefined): AiMessage[] {
+  if (!request.messages?.length) {
+    return [{ role: "system", content: instruction ? `${request.system}\n\n${instruction}` : request.system }, { role: "user", content: request.user }];
+  }
+  const messages = request.messages.map(copyMessage);
+  if (!instruction) return messages;
+  const at = messages.findIndex((message) => message.role === "system");
+  if (at < 0) return [{ role: "system", content: instruction }, ...messages];
+  const system = messages[at];
+  messages[at] = { role: "system", content: typeof system.content === "string" ? `${system.content}\n\n${instruction}` : [...system.content, { type: "text", text: instruction }] };
+  return messages;
+}
+
+/** The content of a message as the OpenAI API takes it: text as it is, a part of text as a text part and an image as an `image_url` with its data URL. */
+function wireContent(content: AiMessage["content"]): string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> {
+  if (typeof content === "string") return content;
+  return content.map((part) => (part.type === "text" ? { type: "text" as const, text: part.text } : { type: "image_url" as const, image_url: { url: part.dataUrl } }));
 }
 
 /** The thinking levels that travel to the provider (as `reasoning_effort`, or as the chat-template argument the model's `reasoningParameter` says): `automatic` and no level at all send nothing. */
@@ -184,7 +213,7 @@ export interface ChatRequestOptions {
  */
 export function buildChatRequest(
   candidate: Pick<AiCandidate, "integration" | "model"> & Partial<Pick<AiCandidate, "underlyingModel" | "supportsToolCalls" | "supportsStreaming" | "supportsReasoning" | "reasoningParameter" | "maxOutputTokens" | "thinking">>,
-  request: Pick<AiRequest, "system" | "user" | "json" | "maxOutputTokens" | "outputBoost" | "temperature" | "onText">,
+  request: Pick<AiRequest, "system" | "user" | "messages" | "json" | "maxOutputTokens" | "outputBoost" | "temperature" | "onText">,
   options: ChatRequestOptions = {},
 ): ChatRequest {
   const { integration, model } = candidate;
@@ -194,14 +223,11 @@ export function buildChatRequest(
   const stream = integration.streamMode !== "off" && candidate.supportsStreaming !== false;
   const notes: string[] = [];
   if (integration.streamMode !== "off" && !stream) notes.push(`Streaming was not used: "${model}" is declared as not streaming (supportsStreaming is off).`);
-  const system = request.json && !useTools ? `${request.system}\n\n${jsonInstruction(request.json)}` : request.system;
+  const messages = conversationOf(request, request.json && !useTools ? jsonInstruction(request.json) : undefined);
   const outputLimit = requestOutputLimit(request, candidate);
   const body: Record<string, unknown> = {
     model,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: request.user },
-    ],
+    messages: messages.map((message) => ({ role: message.role, content: wireContent(message.content) })),
     ...completionTokenLimit(integration.provider, model, outputLimit, candidate.underlyingModel, azureV1(integration) ? "v1" : integration.apiVersion),
   };
   if (request.temperature !== undefined && !isReasoningModel(integration.provider, model, candidate.underlyingModel)) body.temperature = request.temperature;

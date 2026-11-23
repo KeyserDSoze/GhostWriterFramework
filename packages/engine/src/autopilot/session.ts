@@ -467,6 +467,16 @@ export class AutopilotSession {
     return false;
   }
 
+  /**
+   * «Retry now»: end the wait before the next attempt of a failed step (a quick retry, or a cycle of «Retry later», `options.longRetry`), so that
+   * the attempt starts at once. `true` when the run was waiting; `false` when there is no run or it is not waiting (nothing happens, and it is no
+   * error). It uses up nothing more: the retry, or the cycle, the wait belonged to stays counted. Told with a `retrySkipped` insight and, at once, a
+   * `state` event without `retry`. It is not a pause: a pause asked before or after it works as always.
+   */
+  retryNow(): boolean {
+    return this.run?.retryNow() ?? false;
+  }
+
   /** Resolves when no run is active, and no start is about to create one. */
   async waitForIdle(): Promise<void> {
     if (this.starting) await this.starting.catch(() => undefined);
@@ -690,26 +700,32 @@ export class AutopilotSession {
   }
 
   /**
-   * Change the options, also while a run goes on, for the settings that can: where the book is published (`publishEvery`; `null`
-   * takes the choice back, so that the host decides again) and whether to pause after every chapter (`pauseAfterEachChapter`).
-   * They are saved at once with a compare-and-swap commit, as an intervention is: the step that is running neither fails nor is
-   * repeated, and the run reads the new value at the end of that step (or of the chapter). Any other option is refused while a run is
-   * active, as `configure` refuses it (`AutopilotBusyError`), and nothing of such a request is applied; with no run active any
-   * option can change. A value nobody knows changes nothing, and a request that changes nothing writes nothing. Answers the saved state.
+   * Change the options, also while a run goes on, for the settings that can (`LIVE_AUTOPILOT_OPTIONS`): where the book is published
+   * (`publishEvery`; `null` takes the choice back, so that the host decides again), whether to pause after every chapter
+   * (`pauseAfterEachChapter`), what to do with a change of a frozen chapter (`frozenEdits`) and «Retry later» (`longRetry`; `null` turns it
+   * off). They are saved at once with a compare-and-swap commit, as an intervention is: the step that is running neither fails nor is
+   * repeated, and the run reads the new value at the end of that step (or of the chapter); `longRetry` when a step has failed, and turning it
+   * off while the run waits for it ends the wait (the run stops with the failure it waited to try again), while new minutes or cycles count from
+   * the next cycle. Any other option is refused while a run is active, as `configure` refuses it (`AutopilotBusyError`), and nothing of such a
+   * request is applied; with no run active any option can change. A value nobody knows changes nothing, and a request that changes nothing
+   * writes nothing. Answers the saved state.
    */
   async updateOptions(input: AutopilotOptionsUpdate): Promise<AutopilotState> {
     const source: Record<string, unknown> = input && typeof input === "object" ? { ...input } : {};
     if (this.running) {
       const live = new Set<string>(LIVE_AUTOPILOT_OPTIONS);
-      const options = new Set<string>([...Object.keys(DEFAULT_OPTIONS), "publishEvery"]);
+      const options = new Set<string>([...Object.keys(DEFAULT_OPTIONS), "publishEvery", "longRetry"]);
       if (Object.keys(source).some((key) => options.has(key) && !live.has(key) && source[key] !== undefined)) throw new AutopilotBusyError(this.config.hostLabel);
       for (const key of Object.keys(source)) if (!live.has(key)) delete source[key];
     }
-    return this.mutate("Autopilot: options", (state) => {
+    const saved = await this.mutate("Autopilot: options", (state) => {
       const options = normalizeOptions(source, state.options);
       const keys = new Set<keyof AutopilotOptions>([...Object.keys(state.options), ...Object.keys(options)] as Array<keyof AutopilotOptions>);
-      return [...keys].every((key) => options[key] === state.options[key]) ? state : { ...state, options };
+      // Compared by value: «Retry later» is an object.
+      return [...keys].every((key) => JSON.stringify(options[key]) === JSON.stringify(state.options[key])) ? state : { ...state, options };
     });
+    this.run?.optionsChanged(saved);
+    return saved;
   }
 
   /** Forget the autopilot state (plan, history, rules). The book's chapters are never touched. */

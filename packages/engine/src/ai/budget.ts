@@ -1,8 +1,13 @@
 const MESSAGE_OVERHEAD_TOKENS = 4;
 export const DEFAULT_MAX_INPUT_TOKENS = 32_000;
 export const DEFAULT_MAX_OUTPUT_TOKENS = 2_048;
+/** What an image in a message weighs, whatever its size: the web app has always counted this much for one. */
+export const IMAGE_TOKEN_ESTIMATE = 4_096;
 
 const encoder = new TextEncoder();
+
+/** The content of a message as the estimates read it: text, or parts of text and images, as a host has them or as they go on the wire (`image_url`). */
+type CountedContent = string | ReadonlyArray<{ type: "text"; text: string } | { type: "image"; dataUrl: string } | { type: "image_url"; image_url: { url: string } }>;
 
 /** Byte-level BPE tokenizers cannot emit more tokens than the UTF-8 bytes supplied: a safe upper bound. */
 export function textTokenUpperBound(value: string): number {
@@ -17,12 +22,17 @@ export function likelyTextTokens(value: string): number {
   return Math.ceil((value ?? "").length / 4);
 }
 
-export function likelyMessageTokens(messages: ReadonlyArray<{ content: string }>): number {
-  return messages.reduce((total, message) => total + MESSAGE_OVERHEAD_TOKENS + likelyTextTokens(message.content), 0);
+function contentTokens(content: CountedContent, ofText: (text: string) => number): number {
+  if (typeof content === "string") return ofText(content);
+  return content.reduce((total, part) => total + (part.type === "text" ? ofText(part.text) : IMAGE_TOKEN_ESTIMATE), 0);
 }
 
-export function estimateMessageTokens(messages: ReadonlyArray<{ content: string }>): number {
-  return messages.reduce((total, message) => total + MESSAGE_OVERHEAD_TOKENS + textTokenUpperBound(message.content), 0);
+export function likelyMessageTokens(messages: ReadonlyArray<{ content: CountedContent }>): number {
+  return messages.reduce((total, message) => total + MESSAGE_OVERHEAD_TOKENS + contentTokens(message.content, likelyTextTokens), 0);
+}
+
+export function estimateMessageTokens(messages: ReadonlyArray<{ content: CountedContent }>): number {
+  return messages.reduce((total, message) => total + MESSAGE_OVERHEAD_TOKENS + contentTokens(message.content, textTokenUpperBound), 0);
 }
 
 /**

@@ -144,6 +144,8 @@ export interface ServerBookSync {
   ok: boolean;
   message: string;
   head?: string;
+  /** Set when the last sync failed because the book conflicts with GitHub: how many files the author has to decide about (`GET …/github-conflicts`). */
+  conflicts?: number;
 }
 
 export interface ServerBookSummary {
@@ -246,6 +248,120 @@ export const SERVER_FEATURE_AUTOPILOT_FROZEN = "autopilot-frozen";
 export function serverSupportsFrozenChapters(info: { features?: unknown } | null | undefined): boolean {
   const features = info?.features;
   return Array.isArray(features) && features.includes(SERVER_FEATURE_AUTOPILOT_FROZEN);
+}
+
+/**
+ * The `ServerInfo.features` entry of a server that has «Retry later» and «Retry now»: it takes `options.longRetry` (`AutopilotLongRetry`, or `null`
+ * to turn it off) in `PUT /api/v1/books/:id/autopilot/options`, `configure` and `start`, and answers `POST /api/v1/books/:id/autopilot/retry-now`.
+ * A server without it refuses `longRetry` in the options route (400) and drops it from `configure` and `start` (its engine does not know it), and
+ * answers 404 to `retry-now`: the engine's client never sends `longRetry` to such a server (it refuses with `feature_unavailable`).
+ */
+export const SERVER_FEATURE_AUTOPILOT_RETRY = "autopilot-retry";
+
+/** Whether the server announces «Retry later» and «Retry now». Takes its info or the list of its features. Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsAutopilotRetry(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  const features = Array.isArray(info) ? info : (info as { features?: unknown } | null | undefined)?.features;
+  return Array.isArray(features) && features.includes(SERVER_FEATURE_AUTOPILOT_RETRY);
+}
+
+/** The answer of `POST /api/v1/books/:id/autopilot/retry-now`: the snapshot after it, and whether the run was waiting (`skipped`: the wait was ended). */
+export type RetryNowResponse = AutopilotSnapshot & { skipped: boolean };
+
+/**
+ * The `ServerInfo.features` entry of a server that lists the conflicts of a GitHub book with GitHub and resolves them: `GET /api/v1/books/:id/github-conflicts`
+ * and `POST /api/v1/books/:id/github-conflicts/resolve`. A server without it answers 404 to them: the engine's client refuses before sending
+ * (`feature_unavailable`).
+ */
+export const SERVER_FEATURE_GITHUB_CONFLICTS = "github-conflicts";
+
+/** Whether the server announces that it resolves the conflicts with GitHub. Takes its info or the list of its features. Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsGithubConflicts(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  const features = Array.isArray(info) ? info : (info as { features?: unknown } | null | undefined)?.features;
+  return Array.isArray(features) && features.includes(SERVER_FEATURE_GITHUB_CONFLICTS);
+}
+
+/**
+ * The `code` of a conflict with GitHub: the server's commits and GitHub's changed the same files, and git cannot bring them together by itself. It is the
+ * code of the error a server's run stops with (which the engine classifies as a `conflict` with `errorDetail.githubConflicts`), and of the answer of a
+ * sync that meets one (`409`).
+ */
+export const GITHUB_CONFLICT_CODE = "github_conflict";
+
+/** What happened to a file on one side since the version both sides started from. */
+export type GithubConflictChange = "modified" | "added" | "deleted";
+
+/** The version a resolution keeps of a file: the server's, or GitHub's (for a file deleted on that side, the deletion). */
+export type GithubConflictChoice = "server" | "github";
+
+export const GITHUB_CONFLICT_CHOICES: readonly GithubConflictChoice[] = ["server", "github"];
+
+/** Conflicts in one page of `GET …/github-conflicts` when the request says nothing, and the most it may ask for. */
+export const GITHUB_CONFLICTS_PAGE_LIMIT = 100;
+export const GITHUB_CONFLICTS_MAX_PAGE_LIMIT = 500;
+
+/** One file that changed on both sides. Its name only, and the size of each version: never what it holds. */
+export interface GithubConflict {
+  path: string;
+  server: GithubConflictChange;
+  github: GithubConflictChange;
+  /** Bytes of each version, when the file is there on that side. */
+  serverBytes?: number;
+  githubBytes?: number;
+  /**
+   * `false`: the server cannot choose for this file, and a resolution keeps the server's version of it whatever is asked (`reason`: a name the server does
+   * not read or write, `unsafe-path`, shown cleaned; a file on one side where the other has a folder, `file-directory`; or not a plain file, `not-a-file`).
+   */
+  resolvable: boolean;
+  reason?: "unsafe-path" | "file-directory" | "not-a-file";
+}
+
+/** The answer of `GET /api/v1/books/:id/github-conflicts?offset=&limit=`: one page of the conflicts, in the order of their paths, and the whole picture. */
+export interface GithubConflictsResponse {
+  conflicts: GithubConflict[];
+  /** All the conflicts, this page included. */
+  total: number;
+  offset: number;
+  limit: number;
+  /** Commits of the server that GitHub does not have, and commits of GitHub that the server does not have. */
+  ahead: number;
+  behind: number;
+  branch: string;
+  /** The server's commit and GitHub's, as compared (`githubHead` absent when the branch is not on GitHub yet). */
+  head?: string;
+  githubHead?: string;
+  /** What these conflicts are, file by file and version by version: a resolution sends it back, and is refused (`409 conflicts_changed`) if they changed since. */
+  fingerprint: string;
+  /** Present when both sides changed the autopilot's own files (state, log, plan): the version a resolution keeps of them, never asked (see the server's README). */
+  autopilotFiles?: GithubConflictChoice;
+}
+
+/**
+ * The body of `POST /api/v1/books/:id/github-conflicts/resolve`. `choices` names a version for each file (by the `path` the list gave), `default` the
+ * version of every other one; with neither for a file the answer is `400 choice_missing` and nothing is written. `fingerprint` is the one of the list the
+ * author chose from: without it the server compares with the last list it gave for the book. `message` is the subject of the merge commit.
+ */
+export interface ResolveGithubConflictsRequest {
+  choices?: Record<string, GithubConflictChoice>;
+  default?: GithubConflictChoice;
+  message?: string;
+  fingerprint?: string;
+}
+
+/** The answer of a resolution: the commit the book is at now (a merge of the server's work and GitHub's), whether GitHub has it, and what was decided. */
+export interface ResolveGithubConflictsResponse {
+  head: string;
+  /** `false` when the push failed (the reason in `pushError`, without a token): the book is resolved on the server, and the next publish or sync pushes it. */
+  pushed: boolean;
+  pushError?: string;
+  /** The files resolved, with the version kept (the first ones: `counts` says how many in all). */
+  resolved: Array<{ path: string; choice: GithubConflictChoice }>;
+  /** Choices for files that do not conflict (any more): left aside. */
+  ignored: string[];
+  /** Files the server cannot choose for: kept as the server has them. */
+  unresolvable: string[];
+  counts: { total: number; server: number; github: number; ignored: number; unresolvable: number };
+  /** The version kept of the autopilot's own files, when both sides had changed them. */
+  autopilotFiles?: GithubConflictChoice;
 }
 
 /** The body of `POST /api/v1/books/:id/autopilot/frozen/:number`: what to do with the change of that chapter (`AutopilotSession.resolveFrozenChange`). */
@@ -371,7 +487,7 @@ export type PauseAutopilotMode = AutopilotPauseMode | "cancel";
 
 export type StartAutopilotRequest = StartOptions & { force?: boolean };
 export type PauseAutopilotRequest = { mode: PauseAutopilotMode };
-/** The body of `PUT /api/v1/books/:id/autopilot/options`: at least one of the two settings that can change while a run goes on. */
+/** The body of `PUT /api/v1/books/:id/autopilot/options`: at least one of the settings that can change while a run goes on (`longRetry` only for a server that announces `SERVER_FEATURE_AUTOPILOT_RETRY`). */
 export type UpdateAutopilotOptionsRequest = AutopilotLiveOptions;
 /**
  * The body of `PUT /api/v1/books/:id/autopilot/rules/:index`: the new text of the rule at that index of `state.constraints`, and the text the

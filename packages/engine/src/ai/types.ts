@@ -22,6 +22,17 @@ export interface AiProgress {
   characters: number;
 }
 
+/** A part of the content of a message: text, or an image given as a data URL. */
+export type AiContentPart =
+  | { type: "text"; text: string }
+  | { type: "image"; dataUrl: string };
+
+/** One message of a conversation: its role and its content, which is text or a list of parts (text and images). */
+export interface AiMessage {
+  role: "system" | "user" | "assistant";
+  content: string | AiContentPart[];
+}
+
 export interface AiRequest {
   /** Router capability, e.g. `autopilot`, `director`, `reader-evaluation`, `review`, `simple-tasks`. */
   capability: string;
@@ -29,6 +40,13 @@ export interface AiRequest {
   label: string;
   system: string;
   user: string;
+  /**
+   * The conversation to send, for a host that has one (the web app's Copilot: its history, and the images the author attached). When it is there (and is not empty) it is what
+   * is sent, with its roles and its parts, in place of `system` and `user`, which are then not read (give empty text). A part of text goes out as it is and an image as an
+   * `image_url` with its data URL. With a structured request, the JSON instruction that a model without tool calls receives is added to the first system message (to a
+   * system message of its own when there is none). The engine never changes the messages it is given.
+   */
+  messages?: AiMessage[];
   /**
    * When present the reply must be one JSON object matching this schema, delivered as the forced call of a function. With "Tools only" off
    * (`AiRuntimeConfig.toolsOnly`), a model marked as without tool calls gets the schema in the message instead, and a JSON in the text is read.
@@ -194,12 +212,19 @@ export class AiFallbackBlockedError extends AiProviderError {
   }
 }
 
+/** A model that "Tools only" left out: its name, and the id of the integration it belongs to (two integrations may have models of the same name). */
+export interface AiSkippedModel {
+  integration: string;
+  model: string;
+}
+
 /**
  * "Tools only" is on and no model of the route can call a function, so a structured request has nowhere to go: nothing was sent, and the same
- * configuration would end the same way. `models` are the names of the models that were left out. The message names them and says the two ways out.
+ * configuration would end the same way. `models` are the names of the models that were left out, and `skippedModels` the same with the integration
+ * of each (empty from a host that made the error without them). The message names them and says the two ways out.
  */
 export class AiToolsRequiredError extends AiProviderError {
-  constructor(message: string, readonly models: string[] = []) {
+  constructor(message: string, readonly models: string[] = [], readonly skippedModels: AiSkippedModel[] = []) {
     super(message, undefined, false);
     this.name = "AiToolsRequiredError";
   }

@@ -1,6 +1,7 @@
 import { frozenChanges, FrozenChapterError, type ChapterFreeze, type FrozenChapterChange } from "../book/freeze.js";
 import type { BookSnapshot, ChapterInfo } from "../book/snapshot.js";
-import { isItalian, truncate } from "../util/text.js";
+import { formatBookDate, isItalian, truncate } from "../util/text.js";
+import { inHands, startedReview } from "./chapter-state.js";
 import type { OutlineWrittenChange } from "./outline-check.js";
 import type { PlanNote } from "./planner.js";
 import { MAX_FROZEN_SEEN, MAX_PENDING_REVIEWS, capConstraints, normalizeRuleText } from "./state.js";
@@ -51,26 +52,9 @@ function finishingWork(state: AutopilotState): boolean {
   return Boolean(state.revision) || Boolean(startedReview(state)) || (state.plan?.chapters ?? []).some((chapter) => chapter.skipReaders && chapter.status !== "done");
 }
 
-/** The decision being carried out, when one is: the autopilot works on one change at a time. */
-export function startedReview(state: Pick<AutopilotState, "pendingReviews">): PendingFrozenReview | undefined {
-  return state.pendingReviews?.find((entry) => entry.started);
-}
-
-/**
- * The chapters the autopilot has in its hands: being written or reviewed (not `done`), rewritten by the revision in progress, or the
- * change being carried out. What happens to their files then is the autopilot's own work, never a change of the author's to ask about.
- */
-function inHands(state: AutopilotState, chapter: PlannedChapter): boolean {
-  if (chapter.status !== "done" || inRevision(state, chapter.number)) return true;
-  return startedReview(state)?.number === chapter.number;
-}
-
-/** Whether the revision in progress rewrites this chapter (or rewrote it, and reviews it again at its end). */
-export function inRevision(state: Pick<AutopilotState, "revision">, number: number): boolean {
-  const revision = state.revision;
-  if (!revision) return false;
-  return Boolean(revision.targets?.some((target) => target.chapterNumber === number) || revision.revisedChapters?.includes(number) || revision.onlyChapter === number);
-}
+// What the state says of one chapter (`inRevision`, `startedReview`, and `inHands` here) is in `chapter-state.ts`, which has no import but types: the rule that tells the author what
+// happens when an entry of the outline changes (`outline-change.ts`) needs it too, and must not carry this whole module with it. The two exports stay where they were.
+export { inRevision, startedReview } from "./chapter-state.js";
 
 /** The changes of a book and what is decided about them, in the order of the book (a frozen chapter's text before its outline). */
 export function frozenWork(state: AutopilotState | null, snapshot: BookSnapshot, outlineWritten: ReadonlyMap<number, OutlineWrittenChange> = new Map()): FrozenWorkItem[] {
@@ -164,14 +148,18 @@ function changedLines(item: FrozenWorkItem, language: string): string[] {
   ].filter(Boolean);
 }
 
-const dateOf = (moment: string | undefined) => (moment ?? "").slice(0, 10);
+/** ", frozen on 1 January 2026": the day a chapter was frozen, as the author reads a date in the language of the book (only ", frozen" when the record says no day that can be read). */
+function frozenOn(moment: string | undefined, language: string): string {
+  const day = formatBookDate(moment, language);
+  return day ? text(language, `, frozen on ${day}`, `, congelato il ${day}`) : text(language, ", frozen", ", congelato");
+}
 
 /** The question the run stops with for a change (one at a time, in the order of the book): it says the others that wait after it. */
 export function frozenQuestion(item: FrozenWorkItem, others: FrozenWorkItem[], language: string, now: string): DirectorQuestion {
   const choices = frozenChoices(item.kind, language);
   const n = item.number;
   const question = item.kind === "frozen"
-    ? text(language, `You changed chapter ${n}${quoted(item.title)}, frozen on ${dateOf(item.change?.frozenAt)}. What should I do?`, `Hai modificato il capitolo ${n}${quoted(item.title)}, congelato il ${dateOf(item.change?.frozenAt)}. Cosa faccio?`)
+    ? text(language, `You changed chapter ${n}${quoted(item.title)}${frozenOn(item.change?.frozenAt, language)}. What should I do?`, `Hai modificato il capitolo ${n}${quoted(item.title)}${frozenOn(item.change?.frozenAt, language)}. Cosa faccio?`)
     : text(language, `The outline of chapter ${n}${quoted(item.title)} changed, but the chapter is already written. What should I do?`, `La Scaletta del capitolo ${n}${quoted(item.title)} è cambiata, ma il capitolo è già scritto. Cosa faccio?`);
   const otherNumbers = [...new Set(others.map((other) => other.number).filter((number) => number !== n))];
   const context = [
@@ -207,7 +195,7 @@ export function frozenQuestionMessage(question: DirectorQuestion, language: stri
   const frozen = question.frozen;
   if (!frozen) return question.question;
   return frozen.kind === "frozen"
-    ? text(language, `You changed chapter ${frozen.number}, frozen on ${dateOf(frozen.frozenAt)}: choose what to do with it.`, `Hai modificato il capitolo ${frozen.number}, congelato il ${dateOf(frozen.frozenAt)}: scegli cosa farne.`)
+    ? text(language, `You changed chapter ${frozen.number}${frozenOn(frozen.frozenAt, language)}: choose what to do with it.`, `Hai modificato il capitolo ${frozen.number}${frozenOn(frozen.frozenAt, language)}: scegli cosa farne.`)
     : text(language, `The outline of chapter ${frozen.number} changed after it was written: choose what to do with it.`, `La Scaletta del capitolo ${frozen.number} è cambiata dopo che era scritto: scegli cosa farne.`);
 }
 
@@ -403,7 +391,7 @@ export function settleFrozenChanges(input: AutopilotState, settle: FrozenSettleI
         code: item.kind === "frozen" ? "frozenChanged" : "outlineWrittenChanged",
         chapterNumber: item.number,
         title: item.kind === "frozen"
-          ? text(language, `You changed chapter ${item.number}, frozen on ${dateOf(item.change?.frozenAt)}: it is not reviewed (frozen chapters are only noticed)`, `Hai modificato il capitolo ${item.number}, congelato il ${dateOf(item.change?.frozenAt)}: non viene rivisto (i capitoli congelati sono solo segnalati)`)
+          ? text(language, `You changed chapter ${item.number}${frozenOn(item.change?.frozenAt, language)}: it is not reviewed (frozen chapters are only noticed)`, `Hai modificato il capitolo ${item.number}${frozenOn(item.change?.frozenAt, language)}: non viene rivisto (i capitoli congelati sono solo segnalati)`)
           : text(language, `The outline of chapter ${item.number} changed, but the chapter is already written: it is not rewritten`, `La Scaletta del capitolo ${item.number} è cambiata, ma il capitolo è già scritto: non viene riscritto`),
         ...(item.change ? { detail: changedLines(item, language).join(" ") } : {}),
       });

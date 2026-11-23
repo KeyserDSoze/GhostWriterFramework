@@ -94,7 +94,7 @@ test("a frozen chapter the author changed stops the next run with a question, be
   const question = state.question;
   assert.equal(question.kind, "frozen-change");
   assert.match(question.question, /chapter 1\b/i);
-  assert.match(question.question, /2026-01-01/, "it says when the chapter was frozen");
+  assert.match(question.question, /1 January 2026/, "it says when the chapter was frozen, as the author reads a date");
   assert.deepEqual(question.choices.map((choice) => choice.id), ["review-and-update", "review-only", "mark-reviewed"]);
   assert.deepEqual(question.options, question.choices.map((choice) => choice.label), "an interface that only shows options shows the same choices");
   assert.deepEqual([question.frozen.kind, question.frozen.number, question.frozen.slug], ["frozen", 1, "001-chapter-title-1"]);
@@ -508,5 +508,6 @@ test("the entry of a written chapter that the author deleted is still only said:
   await editOutline(store, { kind: "remove", number: 2 });
   const { state, events } = await run(store, ai);
   assert.equal(state.status, "completed", state.lastError?.message);
-  assert.deepEqual(insights(events, "outlineWrittenChanged").map((event) => event.chapterNumber), [2]);
+  assert.deepEqual(insights(events, "outlineRemovedWritten").map((event) => event.chapterNumber), [2], "the entry of a written chapter that was deleted has a code of its own");
+  assert.deepEqual(insights(events, "outlineWrittenChanged"), []);
 });

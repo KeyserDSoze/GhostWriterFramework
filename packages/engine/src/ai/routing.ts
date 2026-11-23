@@ -99,6 +99,7 @@ export function planAttempts(config: AiRuntimeConfig, request: AiRequest, github
     throw new AiToolsRequiredError(
       redactSecrets(toolsRequiredMessage(skipped), secrets),
       skipped.map((entry) => redactSecrets(entry.candidate.model, secrets)),
+      skipped.map((entry) => ({ integration: entry.candidate.integration.id, model: redactSecrets(entry.candidate.model, secrets) })),
     );
   }
   const planned: PlannedAttempt[] = allowed.map((candidate) => {
@@ -106,7 +107,7 @@ export function planAttempts(config: AiRuntimeConfig, request: AiRequest, github
     try {
       const built = buildChatRequest(candidate, request, { githubModelsBaseUrl });
       const tools = built.useTools ? likelyTextTokens(JSON.stringify(built.body.tools)) + 8 : 0;
-      const inputTokens = likelyMessageTokens(built.body.messages as Array<{ content: string }>) + tools;
+      const inputTokens = likelyMessageTokens(built.body.messages as Parameters<typeof likelyMessageTokens>[0]) + tools;
       return { candidate, index, built, inputTokens, estimate: estimateAttempt(candidate, inputTokens, built.outputLimit) };
     } catch (error) {
       return { candidate, index, built: null, buildError: error instanceof AiProviderError ? error : new AiProviderError(error instanceof Error ? error.message : String(error)), inputTokens: 0, estimate: { tokens: 0, cost: 0 } };

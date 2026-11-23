@@ -3,6 +3,7 @@ import { endpointOrigin } from "../ai/request.js";
 import { AiFallbackBlockedError, AiProviderError, AiPromptTooLargeError, AiReplyRejectedError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, type AiTimeoutPhase } from "../ai/types.js";
 import { isBookConflictError } from "../book/store.js";
 import { FrontmatterError } from "../markdown/frontmatter.js";
+import { GITHUB_CONFLICT_CODE } from "../server/protocol.js";
 import { StructuredReplyError } from "../util/json.js";
 import { clipText } from "../util/text.js";
 import { AUTOPILOT_ERROR_KINDS, type AutopilotErrorDetail, type AutopilotErrorKind } from "./types.js";
@@ -13,6 +14,8 @@ const MAX_DETAIL_CHARACTERS = 160;
 const MAX_RETRY_COUNT = 99;
 /** The longest deadline or wait a detail read from a file can name: a day, far above the four hours and the five minutes the engine allows. */
 const MAX_TIMEOUT_MS = 86_400_000;
+/** The most files a conflict with GitHub is said to have: a book holds far fewer. */
+const MAX_CONFLICT_FILES = 1_000_000;
 const TIMEOUT_PHASES: readonly AiTimeoutPhase[] = ["start", "idle", "total"];
 
 const TIMEOUT_WORDS = /\btime[ds]?[ -]?out\b|deadline exceeded/i;
@@ -48,6 +51,8 @@ function wordsOf(error: unknown): string {
 function kindOf(error: unknown): AutopilotErrorKind {
   if (isBookConflictError(error)) return "conflict";
   const source = record(error);
+  // The server's commits and GitHub's changed the same files: the author chooses, and repeating the step cannot settle it.
+  if (source.code === GITHUB_CONFLICT_CODE) return "conflict";
   if (source.code === "frontmatter_invalid" || isA(error, "FrontmatterError", FrontmatterError)) return "profile";
   if (isA(error, "AiPromptTooLargeError", AiPromptTooLargeError)) return "limit";
   if (isA(error, "AiRoutingBudgetError", AiRoutingBudgetError)) return "budget";
@@ -96,6 +101,11 @@ function timeoutPhase(value: unknown): AiTimeoutPhase | undefined {
   return TIMEOUT_PHASES.find((phase) => phase === value);
 }
 
+/** How many files a conflict with GitHub has: a whole number from one. */
+function conflictFiles(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= MAX_CONFLICT_FILES ? value : undefined;
+}
+
 function detailOf(error: unknown): AutopilotErrorDetail {
   const source = record(error);
   const target = record(source.target);
@@ -111,6 +121,8 @@ function detailOf(error: unknown): AutopilotErrorDetail {
   const timeout = record(source.timeout);
   const timeoutMs = timeoutMilliseconds(timeout.ms);
   const phase = timeoutPhase(timeout.phase);
+  // A conflict with GitHub says how many files the author has to decide about.
+  const githubConflicts = source.code === GITHUB_CONFLICT_CODE ? conflictFiles(source.total) : undefined;
   return {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
@@ -120,6 +132,7 @@ function detailOf(error: unknown): AutopilotErrorDetail {
     ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(phase ? { timeoutPhase: phase } : {}),
+    ...(githubConflicts !== undefined ? { githubConflicts } : {}),
   };
 }
 
@@ -127,7 +140,8 @@ function detailOf(error: unknown): AutopilotErrorDetail {
  * What kind of failure an error is, and where it happened, from what the engine knows of its own errors: a status (401 and 403 are
  * `auth`, 429 `rate_limit`, 408 `timeout`, any other 4xx or 5xx `provider`), the flags of `AiProviderError` (`timedOut`, `truncated`,
  * `transient`), its subclasses (`AiPromptTooLargeError` is `limit`, `AiRoutingBudgetError` `budget`, `AiToolsRequiredError` `config`,
- * `AiFallbackBlockedError` and `AiUnavailableError` `refused`), `FrontmatterError` (`profile`) and a file conflict (`conflict`); an error that says none of these
+ * `AiFallbackBlockedError` and `AiUnavailableError` `refused`), `FrontmatterError` (`profile`), a file conflict and a conflict with GitHub (`conflict`, the second with
+ * `githubConflicts`, the number of files); an error that says none of these
  * is read by its words (a provider that does not say `timedOut` still says "timed out"), and what is still nothing is `unknown`.
  * A class, a status or a flag always decides before the words do. The detail holds the status, the origin of the integration's address
  * (never its path or query), the model, the provider and the integration, with no credential in any of them: whatever the error carries
@@ -184,6 +198,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
   const retries = retryCount(source.retries);
   const timeoutMs = timeoutMilliseconds(source.timeoutMs);
   const phase = timeoutPhase(source.timeoutPhase);
+  const githubConflicts = conflictFiles(source.githubConflicts);
   const detail: AutopilotErrorDetail = {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
@@ -195,6 +210,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
     ...(retries !== undefined ? { retries } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(phase ? { timeoutPhase: phase } : {}),
+    ...(githubConflicts !== undefined ? { githubConflicts } : {}),
   };
   return Object.keys(detail).length ? detail : undefined;
 }

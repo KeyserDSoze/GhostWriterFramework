@@ -9,18 +9,24 @@ import {
   normalizeServerUrl,
   randomNonce,
   serverCompatibility,
+  serverSupportsAutopilotRetry,
+  serverSupportsGithubConflicts,
   verifyServerIdentity,
   type AskDirectorRequest,
   type AskDirectorResponse,
   type ErrorResponse,
   type EventsResponse,
   type FreezeChapterRequest,
+  type GithubConflictsResponse,
   type ResolveFrozenChangeRequest,
   type PairingRequest,
   type PairingResult,
   type PauseAutopilotMode,
   type ReadFilesResponse,
   type RegisterBookRequest,
+  type ResolveGithubConflictsRequest,
+  type ResolveGithubConflictsResponse,
+  type RetryNowResponse,
   type ServerAiStatus,
   type ServerBookSummary,
   type ServerCompatibility,
@@ -40,9 +46,16 @@ import {
 } from "./protocol.js";
 
 export class ServerRequestError extends Error {
-  constructor(message: string, readonly status: number, readonly code: string) {
+  /**
+   * What the server's answer said besides its `code` and its `message`: the files without a choice of a `choice_missing`, the conflicts as they are now
+   * of a `conflicts_changed`, and so on. Empty when it said nothing else, and for a failure that is not an answer of the server.
+   */
+  readonly details: Record<string, unknown>;
+
+  constructor(message: string, readonly status: number, readonly code: string, details: Record<string, unknown> = {}) {
     super(message);
     this.name = "ServerRequestError";
+    this.details = details;
   }
 }
 
@@ -99,8 +112,9 @@ export class NarrariumServerClient {
         }
       }
       if (!response.ok) {
-        const error = (payload ?? {}) as Partial<ErrorResponse>;
-        throw new ServerRequestError(error.message || `The personal server answered HTTP ${response.status}.`, response.status, error.code || "http_error");
+        const error = (payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}) as Partial<ErrorResponse> & Record<string, unknown>;
+        const { code: _code, message: _message, ...details } = error;
+        throw new ServerRequestError(error.message || `The personal server answered HTTP ${response.status}.`, response.status, error.code || "http_error", details);
       }
       return payload as T;
     } finally {
@@ -201,10 +215,24 @@ export class NarrariumServerClient {
   }
 
   /**
-   * Start or resume the autopilot: `POST …/autopilot/start`. `limits` (`{ steps?, chapters? }`: pause after that many steps or chapters
-   * of this run) need a server that announces `SERVER_FEATURE_AUTOPILOT_CONTROLS`: an older one ignores them and runs on.
+   * `options.longRetry` («Retry later») goes only to a server that announces `SERVER_FEATURE_AUTOPILOT_RETRY`: an older one refuses it in the
+   * options route, and drops it from `configure` and `start` without a word. With the setting in a request (`null` included) the client asks the
+   * server's features first, and refuses for a server without it before anything is sent: a `ServerRequestError` with status 501 and code
+   * `feature_unavailable`. A request without it asks nothing more.
    */
-  startAutopilot(bookId: string, options: StartOptions & { force?: boolean } = {}): Promise<AutopilotSnapshot> {
+  private async assertLongRetrySupported(options: unknown): Promise<void> {
+    if (!options || typeof options !== "object" || (options as { longRetry?: unknown }).longRetry === undefined) return;
+    if (serverSupportsAutopilotRetry(await this.info())) return;
+    throw new ServerRequestError(`This personal server does not have "Retry later" (it does not announce the feature autopilot-retry): update the server, or leave longRetry out.`, 501, "feature_unavailable");
+  }
+
+  /**
+   * Start or resume the autopilot: `POST …/autopilot/start`. `limits` (`{ steps?, chapters? }`: pause after that many steps or chapters
+   * of this run) need a server that announces `SERVER_FEATURE_AUTOPILOT_CONTROLS`: an older one ignores them and runs on. `options.longRetry`
+   * needs `SERVER_FEATURE_AUTOPILOT_RETRY` (see `assertLongRetrySupported`).
+   */
+  async startAutopilot(bookId: string, options: StartOptions & { force?: boolean } = {}): Promise<AutopilotSnapshot> {
+    await this.assertLongRetrySupported(options?.options);
     return this.request("POST", bookRoute(bookId, "/autopilot/start"), options, { timeoutMs: 300_000 });
   }
 
@@ -217,12 +245,60 @@ export class NarrariumServerClient {
   }
 
   /**
-   * Change where the book is published and whether the run pauses after every chapter, also while a run goes on:
-   * `PUT …/autopilot/options` (a server that announces `SERVER_FEATURE_AUTOPILOT_CONTROLS`). `publishEvery: null` takes the choice back.
-   * Answers the snapshot, like `configureAutopilot`.
+   * Change where the book is published, whether the run pauses after every chapter, what to do with a change of a frozen chapter and «Retry
+   * later», also while a run goes on: `PUT …/autopilot/options` (a server that announces `SERVER_FEATURE_AUTOPILOT_CONTROLS`; `longRetry` one
+   * that announces `SERVER_FEATURE_AUTOPILOT_RETRY`, see `assertLongRetrySupported`). `publishEvery: null` takes the choice back, `longRetry: null`
+   * turns it off. Answers the snapshot, like `configureAutopilot`.
    */
-  updateAutopilotOptions(bookId: string, input: UpdateAutopilotOptionsRequest): Promise<AutopilotSnapshot> {
+  async updateAutopilotOptions(bookId: string, input: UpdateAutopilotOptionsRequest): Promise<AutopilotSnapshot> {
+    await this.assertLongRetrySupported(input);
     return this.request("PUT", bookRoute(bookId, "/autopilot/options"), input);
+  }
+
+  /**
+   * «Retry now»: end the wait before the next attempt of a failed step (a quick retry, or a cycle of «Retry later»), so that the attempt starts at
+   * once: `POST …/autopilot/retry-now`, with no body (a server that announces `SERVER_FEATURE_AUTOPILOT_RETRY`; an older one answers 404). Answers
+   * the snapshot with `skipped`: `false` when the run was not waiting, and nothing happened.
+   */
+  retryNow(bookId: string): Promise<RetryNowResponse> {
+    return this.request("POST", bookRoute(bookId, "/autopilot/retry-now"));
+  }
+
+  /** The server announced `SERVER_FEATURE_GITHUB_CONFLICTS`: asked once, and again until it says yes (a server that is updated meanwhile is found). */
+  private githubConflictsSupported = false;
+
+  /** The routes of the conflicts with GitHub go only to a server that announces them: an older one is refused here, before anything is sent. */
+  private async assertGithubConflicts(): Promise<void> {
+    if (this.githubConflictsSupported) return;
+    if (!serverSupportsGithubConflicts(await this.info())) {
+      throw new ServerRequestError("This personal server cannot resolve the conflicts with GitHub (it does not announce the feature github-conflicts): update the server.", 501, "feature_unavailable");
+    }
+    this.githubConflictsSupported = true;
+  }
+
+  /**
+   * The files of a GitHub book that changed both on the server and on GitHub since they parted, a page at a time: `GET …/github-conflicts?offset=&limit=`
+   * (permission `read`; a server that announces `SERVER_FEATURE_GITHUB_CONFLICTS`, else `feature_unavailable` before anything is sent). The server
+   * fetches GitHub first and compares without changing anything. `409 no_remote` for a book that is not on GitHub.
+   */
+  async listGithubConflicts(bookId: string, page: { offset?: number; limit?: number } = {}): Promise<GithubConflictsResponse> {
+    await this.assertGithubConflicts();
+    const query = new URLSearchParams();
+    if (page.offset !== undefined) query.set("offset", String(page.offset));
+    if (page.limit !== undefined) query.set("limit", String(page.limit));
+    const search = query.toString();
+    return this.request("GET", bookRoute(bookId, `/github-conflicts${search ? `?${search}` : ""}`));
+  }
+
+  /**
+   * Resolve them: `POST …/github-conflicts/resolve` with the version to keep of each file (permission `write`). The server merges GitHub into its work (one
+   * merge commit) and pushes it. A refusal is a `ServerRequestError` whose `details` carry what the server said with it: `400 choice_missing` (`paths`,
+   * `missing`), `409 conflicts_changed` (the conflicts as they are now, as `listGithubConflicts` gives them), `409 not_conflicted`, `409 no_remote`,
+   * `409 busy` (a run is active), `422 invalid_github_path`, `503 maintenance`.
+   */
+  async resolveGithubConflicts(bookId: string, request: ResolveGithubConflictsRequest): Promise<ResolveGithubConflictsResponse> {
+    await this.assertGithubConflicts();
+    return this.request("POST", bookRoute(bookId, "/github-conflicts/resolve"), request, { timeoutMs: 300_000 });
   }
 
   /** The short name of `updateAutopilotOptions`. */
@@ -279,7 +355,9 @@ export class NarrariumServerClient {
     return this.request("POST", bookRoute(bookId, `/chapters/${encodeURIComponent(slug)}/freeze`), body);
   }
 
-  configureAutopilot(bookId: string, input: StartOptions): Promise<AutopilotSnapshot> {
+  /** Change the brief or the options while the autopilot is not running: `POST …/autopilot/configure`. `options.longRetry` needs `SERVER_FEATURE_AUTOPILOT_RETRY` (see `assertLongRetrySupported`). */
+  async configureAutopilot(bookId: string, input: StartOptions): Promise<AutopilotSnapshot> {
+    await this.assertLongRetrySupported(input?.options);
     return this.request("POST", bookRoute(bookId, "/autopilot/configure"), input);
   }
 

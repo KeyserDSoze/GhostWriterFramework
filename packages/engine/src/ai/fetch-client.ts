@@ -8,8 +8,8 @@ import { redactSecrets } from "./redact.js";
 import { effectiveAiBase, endpointOrigin, type AiReasoningEffort, type ChatRequest } from "./request.js";
 import type { AiCandidate } from "./router.js";
 import { candidateBoundary, planAttempts, type PlannedAttempt } from "./routing.js";
-import { splitReasoningBlock, structuredFromReply } from "./structured.js";
-import { AiFallbackBlockedError, AiProviderError, AiReplyRejectedError, type AiPort, type AiProviderErrorDetails, type AiRequest, type AiResponse, type AiTimeoutPhase, type AiUsage } from "./types.js";
+import { isEmptyToolArguments, splitReasoningBlock, structuredFromReply } from "./structured.js";
+import { AiFallbackBlockedError, AiProviderError, AiReplyRejectedError, type AiMessage, type AiPort, type AiProviderErrorDetails, type AiRequest, type AiResponse, type AiTimeoutPhase, type AiUsage } from "./types.js";
 
 // The deadlines of a call: how long a provider has to begin answering, the least it is given, and the most a call may take.
 export { DEFAULT_REQUEST_TIMEOUT_MS, MIN_REQUEST_TIMEOUT_MS, TOTAL_REQUEST_CAP_MS } from "./deadlines.js";
@@ -25,9 +25,31 @@ export const MAX_STREAM_REASONING_CHARACTERS = 16_000_000;
 const PROGRESS_INTERVAL_MS = 250;
 const MAX_RETRY_AFTER_MS = 300_000;
 
-export interface FetchAiMessage {
-  role: "system" | "user";
-  content: string;
+/** A message of an attempt, as it is reported: its role and its content, which is text or parts (text and images, with their data URLs). */
+export type FetchAiMessage = AiMessage;
+
+/** A message as it goes on the wire: text, or parts of text and `image_url`. */
+interface WireMessage {
+  role: FetchAiMessage["role"];
+  content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
+}
+
+/**
+ * The messages of an attempt for its hook: what the request sends, read back into the engine's form, so that they are always copies (a listener can never change
+ * a word of what is sent). An attempt that could not be built reports what the request would have sent.
+ */
+function reportedMessages(built: ChatRequest | null, request: Pick<AiRequest, "system" | "user" | "messages">): FetchAiMessage[] {
+  const wire = built?.body.messages as WireMessage[] | undefined;
+  if (wire) {
+    return wire.map((message) => ({
+      role: message.role,
+      content: typeof message.content === "string"
+        ? message.content
+        : message.content.map((part) => (part.type === "text" ? { type: "text" as const, text: part.text } : { type: "image" as const, dataUrl: part.image_url.url })),
+    }));
+  }
+  const planned: FetchAiMessage[] = request.messages?.length ? request.messages : [{ role: "system", content: request.system }, { role: "user", content: request.user }];
+  return planned.map((message) => ({ role: message.role, content: typeof message.content === "string" ? message.content : message.content.map((part) => ({ ...part })) }));
 }
 
 /** The three deadlines of an attempt, in milliseconds, as they are applied (the routing time that is left included). */
@@ -52,7 +74,7 @@ export interface FetchAiAttempt {
   index: number;
   /** Identifies this attempt: the `onAttemptEnd` call that closes it carries the same id. */
   attemptId: string;
-  /** The messages actually sent: a model without tools gets the JSON instruction in the system prompt. */
+  /** The messages actually sent, as copies: a model without tools gets the JSON instruction in the system prompt, and a conversation (`AiRequest.messages`) is reported whole, with its roles and parts. */
   messages: FetchAiMessage[];
   /** The output token limit sent, when there is one. */
   maxOutputTokens?: number;
@@ -120,6 +142,15 @@ export interface FetchAiAttemptEnd {
   firstByteMs?: number;
   /** For a structured request: whether the model delivered the result as a function call. Absent for any other request and when nothing arrived. */
   toolCalled?: boolean;
+  /**
+   * How the provider ended the reply that was read, in its own word (`stop`, `length`, `content_filter`...), empty when it said none: also for an attempt that the engine then
+   * refused (a reply that was cut, or filtered). Absent when no reply was read (a refusal, a connection that failed, a deadline that ran out first).
+   */
+  finishReason?: string;
+  /** Characters of the reply that was read: its text without the reasoning, and the arguments of its function (`{}` is none). Present with `finishReason`. */
+  replyCharacters?: number;
+  /** Characters of reasoning that came with it (the reasoning field of the provider, and a `<think>` block in the text). Only the count, never the words. Present with `finishReason`. */
+  reasoningCharacters?: number;
   durationMs: number;
 }
 
@@ -226,11 +257,10 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
         const deadlines = resolveDeadlines(integration, options, tried > 0 && maxTotal !== undefined ? maxTotal - (Date.now() - startedAt) : undefined);
 
         const identity = { attemptId: randomId("attempt"), label: request.label, capability: request.capability, provider: integration.provider, model: candidate.model, integrationId: integration.id, index: attempt.index };
-        const sent = (attempt.built?.body.messages as FetchAiMessage[] | undefined) ?? [{ role: "system", content: request.system }, { role: "user", content: request.user }];
         notify(options.onAttempt, {
           ...identity,
           // Copies: a listener can never change what is sent.
-          messages: sent.map((message) => ({ role: message.role, content: message.content })),
+          messages: reportedMessages(attempt.built, request),
           ...(attempt.built?.outputLimit ? { maxOutputTokens: attempt.built.outputLimit } : {}),
           stream: attempt.built?.stream ?? false,
           tools: attempt.built?.useTools ?? false,
@@ -350,17 +380,24 @@ interface AttemptTrace {
   firstByteMs?: number;
   /** The reply carried a function call. */
   toolSeen: boolean;
+  /** Set once the reply has been read, before it is judged: how the provider ended it and how much of it there was (see `FetchAiAttemptEnd.finishReason`). */
+  finishReason?: string;
+  replyCharacters?: number;
+  reasoningCharacters?: number;
 }
 
-function replyTrace(trace: AttemptTrace, structured: boolean): Pick<FetchAiAttemptEnd, "streamed" | "firstByteMs" | "toolCalled"> {
+type ReplyTrace = Pick<FetchAiAttemptEnd, "streamed" | "firstByteMs" | "toolCalled" | "finishReason" | "replyCharacters" | "reasoningCharacters">;
+
+function replyTrace(trace: AttemptTrace, structured: boolean): ReplyTrace {
   return {
     streamed: trace.streamed,
     ...(trace.firstByteMs !== undefined ? { firstByteMs: trace.firstByteMs } : {}),
     ...(structured && trace.firstByteMs !== undefined ? { toolCalled: trace.toolSeen } : {}),
+    ...(trace.finishReason !== undefined ? { finishReason: trace.finishReason, replyCharacters: trace.replyCharacters ?? 0, reasoningCharacters: trace.reasoningCharacters ?? 0 } : {}),
   };
 }
 
-function failedAttempt(identity: Pick<FetchAiAttemptEnd, "attemptId" | "label" | "capability" | "provider" | "model" | "integrationId" | "index">, error: unknown, cancelled: boolean, timeoutMs: number, durationMs: number, secrets: readonly string[], reply: Pick<FetchAiAttemptEnd, "streamed" | "firstByteMs" | "toolCalled">): FetchAiAttemptEnd {
+function failedAttempt(identity: Pick<FetchAiAttemptEnd, "attemptId" | "label" | "capability" | "provider" | "model" | "integrationId" | "index">, error: unknown, cancelled: boolean, timeoutMs: number, durationMs: number, secrets: readonly string[], reply: ReplyTrace): FetchAiAttemptEnd {
   const provider = error instanceof AiProviderError ? error : undefined;
   const timedOut = provider?.timedOut === true;
   return {
@@ -907,6 +944,12 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
 
     const outcome = classifyFinishReason(finishReason, ended);
     const shown = redact(finishReason).replace(/\s+/g, " ").trim().slice(0, 60);
+    // What the reply is, for the hooks, before it is judged: how the provider ended it and how much of it there is, whether or not the engine then accepts it. Never its words.
+    const read = splitReasoningBlock(text);
+    const readArguments = callArguments();
+    trace.finishReason = shown;
+    trace.replyCharacters = read.reply.trim().length + (isEmptyToolArguments(readArguments) ? 0 : readArguments.trim().length);
+    trace.reasoningCharacters = reasoningCharacters + read.reasoningCharacters;
     if (outcome === "incomplete") throw new AiProviderError(`${label}: the stream ended before the reply was complete.`, undefined, true, details({ transient: true }));
     if (outcome === "unexpected") throw new AiProviderError(`${label}: unexpected finish reason "${shown}" and the stream did not end with [DONE]: the reply may be incomplete.`, undefined, true, details());
     if (outcome === "failed") throw new AiProviderError(`${label}: the provider ended the reply with the finish reason "${shown}".`, undefined, true, details());

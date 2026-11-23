@@ -417,6 +417,28 @@ export function isItalian(value: string | undefined): boolean {
   return languageCode(value) === "it";
 }
 
+/** The shapes of an ISO 8601 moment that read the same anywhere: a date, or a date and time with its zone (a time without one is the machine's). */
+const BOOK_DATE_SHAPE = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
+const bookDateFormats = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * A moment as the author reads it, in the language of the book: «21 novembre 2026» in Italian, "21 November 2026" in every other language (the
+ * words around a date the engine writes are English for them). The day is the day in UTC, and nothing depends on the machine (its time zone, its
+ * language). An empty text for what is not an ISO moment.
+ */
+export function formatBookDate(moment: string | null | undefined, language?: string): string {
+  const text = typeof moment === "string" ? moment.trim() : "";
+  const time = BOOK_DATE_SHAPE.test(text) ? Date.parse(text) : Number.NaN;
+  if (!Number.isFinite(time)) return "";
+  const locale = isItalian(language) ? "it-IT" : "en-GB";
+  let format = bookDateFormats.get(locale);
+  if (!format) {
+    format = new Intl.DateTimeFormat(locale, { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+    bookDateFormats.set(locale, format);
+  }
+  return format.format(time);
+}
+
 /**
  * Tokens a model needs per word of prose in the language of a book, given by code, by name (`Russian`, `русский`) or with
  * a region (`zh-CN`): 2.4 for Italian, English and every language in Latin script the engine knows (`TOKENS_PER_WORD`),
