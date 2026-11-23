@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
@@ -198,7 +198,14 @@ describe("check-microsoft-app.sh", () => {
       assert.equal(failed.status, 1);
       assert.match(failed.stderr, /az login --allow-no-subscriptions/);
 
-      const without = spawnSync("bash", [script], { encoding: "utf8", env: { PATH: "/usr/bin:/bin", HOME: sandbox.directory } });
+      // A PATH with only the tools the script needs before it looks for az: a runner may have az in /usr/bin (GitHub's Ubuntu image does), and a PATH of /usr/bin:/bin would find it.
+      const bare = join(sandbox.directory, "bare");
+      mkdirSync(bare, { recursive: true });
+      for (const tool of ["bash", "sh", "env", "cat", "grep", "sed", "awk", "tr", "cut", "sort", "head", "tail", "dirname", "basename", "mktemp", "rm", "jq", "date", "printf", "tee", "wc"]) {
+        const found = spawnSync("sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
+        if (found.startsWith("/")) symlinkSync(found, join(bare, tool));
+      }
+      const without = spawnSync(join(bare, "bash"), [script], { encoding: "utf8", env: { PATH: bare, HOME: sandbox.directory } });
       assert.equal(without.status, 127);
     }),
   );
