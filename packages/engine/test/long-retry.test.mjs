@@ -338,13 +338,41 @@ test("a host that takes the book over ends a long wait at the next heartbeat: th
   const { session, events } = newSession(store, ai, { retryDelayMs: 40, persistHeartbeatMs: 20 });
   await session.start({ brief: BRIEF, options: { ...FAST, longRetry: { everyMinutes: 60, cycles: 3 } } });
   await waitFor(() => insights(events, "longRetryWait").length === 1, "the long wait");
-  const other = new AutopilotSession({ bookId: "book", store, ai: createFakeAutopilotAi(), host: "browser", hostLabel: "another device", hostId: "device-2", retryDelayMs: 0 });
-  await other.start({ force: true });
+  // The other host keeps the book until the waiting run has seen it: a run that is over within one heartbeat leaves a stored runner of null, and that is no takeover.
+  let release = () => undefined;
+  let reached = () => undefined;
+  const gate = new Promise((resolve) => (release = resolve));
+  const holding = new Promise((resolve) => (reached = resolve));
+  const fake = createFakeAutopilotAi();
+  const held = {
+    calls: fake.calls,
+    async complete(request) {
+      reached();
+      await gate;
+      return fake.complete(request);
+    },
+  };
+  const other = new AutopilotSession({ bookId: "book", store, ai: held, host: "browser", hostLabel: "another device", hostId: "device-2", retryDelayMs: 0 });
+  // A heartbeat of the waiting run can land between the start's read and its commit: a host tries again.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await other.start({ force: true });
+      break;
+    } catch (error) {
+      if (!(error instanceof engine.BookConflictError) || attempt >= 5) throw error;
+    }
+  }
+  await holding;
+  const owned = store.files.get(STATE);
+  const commits = store.commits.length;
   const started = Date.now();
   await session.waitForIdle();
   assert.ok(Date.now() - started < 3_000, "not 36 seconds later");
   assert.equal(runEnded(events).at(-1).code, "takenOver");
   assert.equal(concepts(ai), 2, "no attempt after the wait");
+  assert.equal(store.files.get(STATE), owned, "the new owner's state was left alone");
+  assert.equal(store.commits.length, commits, "and nothing was written");
+  release();
   await other.waitForIdle();
   const state = parseAutopilotState(store.files.get(STATE));
   assert.equal(state.status, "completed", "the other host's run went on undisturbed");
