@@ -921,6 +921,22 @@ test("ai calls (files): closing waits for the writes that are on their way, and 
   }
 });
 
+test("ai calls (files): the totals that cannot be written are not told again after the records that cannot be written", async () => {
+  const lines = [];
+  const made = await fileStore({ log: (line) => lines.push(line) });
+  try {
+    await writeCall(made.store, "activity_t", 1, { pieces: ["a"] });
+    // The folder is broken after a good write: a write of the records fails and says so, and the totals that were waiting to be written fail the same way.
+    await rm(made.dir, { recursive: true, force: true });
+    await writeFile(made.dir, "in the way");
+    await assert.rejects(made.store.begin({ record: recordOf("activity_t2-0001", "activity_t2", 1), system: "s", user: "u" }), (error) => error instanceof testing.AiCallStoreError);
+    await made.store.close();
+    assert.equal(lines.filter((line) => /could not be written/.test(line)).length, 1, "once in a while for the book, whichever write fails first");
+  } finally {
+    await made.cleanup();
+  }
+});
+
 test("ai calls (files): a write that fails is told by its code and never by its path (the run's feed carries it), the cause with the path is in the log once in a while, and the failure is kept for the health", async () => {
   const lines = [];
   const made = await fileStore({ log: (line) => lines.push(line), now: () => new Date("2026-11-21T08:00:00.000Z") });

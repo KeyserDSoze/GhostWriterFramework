@@ -1120,7 +1120,12 @@ export class FileAiCallStore implements AiCallStore {
       await atomicJson(path.join(book.dir, "totals.json"), { version: 1, ...totals, updatedAt: this.now().toISOString() });
       book.written = text;
     } catch (error) {
-      this.options.log?.(`The totals of the AI call records of ${book.bookId} could not be written: ${error instanceof Error ? error.message : String(error)}`);
+      // The same once-in-a-while rule as a failed write of the records: a folder that is broken fails every totals write too.
+      const at = Date.now();
+      if (at - (this.failureLogged.get(book.bookId) ?? 0) > LOW_DISK_LOG_MS) {
+        this.failureLogged.set(book.bookId, at);
+        this.options.log?.(`The totals of the AI call records of ${book.bookId} could not be written: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   }
 
