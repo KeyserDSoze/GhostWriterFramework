@@ -109,7 +109,7 @@ const attributesOf = (text) => {
  * Run `script` in a context that has a `document` made from `html`. `fetch`, `location`, `navigator` and `extra` globals are the test's. Answers `{ $, all, document, window, ready }`;
  * `$(id)` is an element by its id and `all(selector)` finds elements by a tag with an attribute (`input[name="scope"]`, `[data-i18n]`).
  */
-export function fakeBrowser(html, script, { fetch, location = {}, navigator = { language: "en-GB" }, extra = {}, storage = {}, confirm = () => true, filename = "script.js" } = {}) {
+export function fakeBrowser(html, script, { fetch, location = {}, navigator = { language: "en-GB" }, extra = {}, storage = {}, local = {}, confirm = () => true, filename = "script.js" } = {}) {
   const byId = new Map();
   const everything = [];
   for (const match of html.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g)) {
@@ -137,6 +137,8 @@ export function fakeBrowser(html, script, { fetch, location = {}, navigator = { 
     return attribute in element.attributes && (wanted === undefined || element.attributes[attribute] === wanted);
   };
   const listeners = {};
+  const windowListeners = {};
+  const scrolls = [];
   const store = (initial) => {
     const values = new Map(Object.entries(initial));
     return { getItem: (name) => values.get(name) ?? null, setItem: (name, value) => void values.set(name, String(value)), removeItem: (name) => void values.delete(name) };
@@ -158,7 +160,7 @@ export function fakeBrowser(html, script, { fetch, location = {}, navigator = { 
     fetch,
     location,
     navigator,
-    localStorage: store({}),
+    localStorage: store(local),
     sessionStorage: store(storage),
     confirm,
     Date,
@@ -183,12 +185,18 @@ export function fakeBrowser(html, script, { fetch, location = {}, navigator = { 
     clearInterval: () => undefined,
     setTimeout,
     clearTimeout,
+    addEventListener: (type, listener) => void (windowListeners[type] ??= []).push(listener),
+    scrollTo: (...position) => void scrolls.push(position),
     ...extra,
   };
   sandbox.window = sandbox;
   vm.runInNewContext(script, sandbox, { filename });
   const ready = Promise.all((listeners.DOMContentLoaded ?? []).map((listener) => listener()));
-  return { $: (id) => byId.get(id) ?? null, all: (selector) => everything.filter((element) => matches(element, selector)), document, window: sandbox, ready };
+  /** What a browser does when the address changes (`location.hash = "#/books"`, then this): the page's own listeners run, and what they started is awaited. */
+  const fire = async (type, event = {}) => {
+    await Promise.all([...(windowListeners[type] ?? []), ...(type === "DOMContentLoaded" ? [] : listeners[type] ?? [])].map((listener) => listener(event)));
+  };
+  return { $: (id) => byId.get(id) ?? null, all: (selector) => everything.filter((element) => matches(element, selector)), document, window: sandbox, ready, fire, scrolls, location: sandbox.location, localStorage: sandbox.localStorage, sessionStorage: sandbox.sessionStorage };
 }
 
 /** Wait until the work that a click started has settled (requests are answered by a real server, so this is a moment, not a fixed time). */

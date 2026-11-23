@@ -1,88 +1,60 @@
 import { VIEW_TEXTS } from "./ui-texts.js";
 
 /**
- * The admin panel's overview views: the risks of the set-up, the health of the server, the books in progress, the history of the updates and the action log. Their markup, their
- * style and their script are here; `ui.ts` puts them in the page, the style and the script of the panel. Like the rest of the panel they work under the strict CSP (nothing inline,
- * nothing from outside) and everything that comes from the server is put in as text, never as markup.
+ * The admin panel's overview views: the risks of the set-up, the health of the server, the books in progress, the history of the updates and the action log. Their markup and their script
+ * are here; `ui.ts` puts them in the pages, the style (`ui-style.ts`) and the script of the panel. Like the rest of the panel they work under the strict CSP (nothing inline, nothing from
+ * outside) and everything that comes from the server is put in as text, never as markup.
  *
  * Accessibility (WCAG 2.2 AA): a state is always a word (with a glyph that a screen reader skips), never a colour alone; every table has headers with a scope and a name, and a table
  * that scrolls is a focusable region; the one line of risks and the one line of health are polite live regions that are written again only when their words change; the colours are the
  * page's own tokens, whose contrast a test checks.
  */
 
-export const RISKS_HTML = `<section class="card wide risks hidden" id="risks">
-      <h2 id="risks-title" data-i18n="riskTitle">Risks in this server's set-up</h2>
-      <p class="muted small" data-i18n="riskHelp">Each one is true of this server right now, and goes away when you change it.</p>
-      <p class="risk-summary" id="risk-summary" role="status" aria-live="off" aria-atomic="true"></p>
-      <ul class="risk-list" id="risk-list"></ul>
-      <details class="risk-notes hidden" id="risk-notes">
-        <summary id="risk-notes-summary"></summary>
-        <ul class="risk-list" id="risk-note-list"></ul>
-      </details>
-    </section>`;
+export const RISKS_HTML = `<section class="panel risks hidden" id="risks">
+        <h2 id="risks-title" data-i18n="riskTitle">Risks in this server's set-up</h2>
+        <p class="panel-help" data-i18n="riskHelp">Each one is true of this server right now, and goes away when you change it.</p>
+        <p class="risk-summary" id="risk-summary" role="status" aria-live="off" aria-atomic="true"></p>
+        <ul class="risk-list" id="risk-list"></ul>
+        <details class="risk-notes hidden" id="risk-notes">
+          <summary id="risk-notes-summary"></summary>
+          <ul class="risk-list" id="risk-note-list"></ul>
+        </details>
+      </section>`;
 
-export const HEALTH_HTML = `<section class="card wide" id="health">
-      <div class="card-head"><h2 id="health-title" data-i18n="healthTitle">Server health</h2><button type="button" class="ghost small" id="health-refresh" data-i18n="check">Check again</button></div>
-      <p class="health-summary" id="health-summary" role="status" aria-live="off" aria-atomic="true"></p>
-      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="health-title"><table class="stack" role="table" aria-labelledby="health-title"><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" data-i18n="healthCheck">Check</th><th role="columnheader" scope="col" class="c-status" data-i18n="healthStatus">Status</th><th role="columnheader" scope="col" data-i18n="healthDetails">Details</th></tr></thead><tbody role="rowgroup" id="health-rows"></tbody></table></div>
-      <p class="muted small" id="health-note"></p>
-    </section>`;
+export const HEALTH_HTML = `<section class="panel" id="health">
+        <div class="panel-head"><h2 id="health-title" data-i18n="healthTitle">Server health</h2><button type="button" class="ghost small" id="health-refresh" data-i18n="check">Check again</button></div>
+        <p class="health-summary" id="health-summary" role="status" aria-live="off" aria-atomic="true"></p>
+        <div class="table-wrap" tabindex="0" role="region" aria-labelledby="health-title"><table class="stack lines" role="table" aria-labelledby="health-title"><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" data-i18n="healthCheck">Check</th><th role="columnheader" scope="col" class="c-status" data-i18n="healthStatus">Status</th><th role="columnheader" scope="col" data-i18n="healthDetails">Details</th></tr></thead><tbody role="rowgroup" id="health-rows"></tbody></table></div>
+        <p class="muted small" id="health-note"></p>
+      </section>`;
 
-export const RUNS_HTML = `<section class="card wide" id="runs">
-      <h2 id="runs-title" data-i18n="runsTitle">Books in progress</h2>
-      <p class="muted small" data-i18n="runsHelp">What the autopilot is doing for each book: running, waiting, stopped. It is read from the autopilot's own state, so the books themselves are not opened.</p>
-      <p class="runs-summary" id="runs-summary"></p>
-      <p class="muted small" id="runs-today"></p>
-      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="runs-title"><table class="stack" role="table" aria-labelledby="runs-title"><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" class="c-book" data-i18n="runsBook">Book</th><th role="columnheader" scope="col" class="c-state" data-i18n="runsState">State</th><th role="columnheader" scope="col" class="c-progress" data-i18n="runsProgress">Progress</th><th role="columnheader" scope="col" class="c-run" data-i18n="runsRun">Run</th><th role="columnheader" scope="col" class="c-spent" data-i18n="runsSpend">Spent</th></tr></thead><tbody role="rowgroup" id="runs-rows"></tbody></table></div>
-      <p class="muted small" id="runs-note"></p>
-      <div class="row"><button type="button" class="ghost hidden" id="runs-more"></button></div>
-    </section>`;
+export const RUNS_HTML = `<section class="panel" id="runs">
+        <h2 id="runs-title" data-i18n="runsTitle">Books in progress</h2>
+        <p class="runs-summary" id="runs-summary"></p>
+        <p class="muted small" id="runs-today"></p>
+        <div class="table-wrap long" tabindex="0" role="region" aria-labelledby="runs-title"><table class="stack" role="table" aria-labelledby="runs-title"><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" class="c-book" data-i18n="runsBook">Book</th><th role="columnheader" scope="col" class="c-state" data-i18n="runsState">State</th><th role="columnheader" scope="col" class="c-progress" data-i18n="runsProgress">Progress</th><th role="columnheader" scope="col" class="c-run" data-i18n="runsRun">Run</th><th role="columnheader" scope="col" class="c-spent" data-i18n="runsSpend">Spent</th></tr></thead><tbody role="rowgroup" id="runs-rows"></tbody></table></div>
+        <p class="muted small" id="runs-note"></p>
+        <div class="row"><button type="button" class="ghost hidden" id="runs-more"></button></div>
+      </section>`;
 
-/** The history of the updates sits inside the Updates card, under what it says of the current version. */
-export const HISTORY_HTML = `<h3 id="history-title" data-i18n="histTitle">Update history</h3>
-      <p class="muted small" data-i18n="histHelp">The last updates: how each ended, who asked, and what the supervisor checked on the way. A newer release that this server refused to offer is listed too.</p>
-      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="history-title"><table class="stack" role="table" aria-labelledby="history-title"><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" class="c-when" data-i18n="histWhen">When</th><th role="columnheader" scope="col" class="c-version" data-i18n="histVersion">Version</th><th role="columnheader" scope="col" class="c-by" data-i18n="histBy">Asked by</th><th role="columnheader" scope="col" class="c-result" data-i18n="histResult">Result</th><th role="columnheader" scope="col" class="c-checks" data-i18n="histChecks">Checks</th></tr></thead><tbody role="rowgroup" id="history-rows"></tbody></table></div>
-      <p class="muted small" id="history-note"></p>`;
+/** The history of the updates is a panel of its own on the Updates page. */
+export const HISTORY_HTML = `<section class="panel" id="history">
+        <h2 id="history-title" data-i18n="histTitle">Update history</h2>
+        <p class="panel-help" data-i18n="histHelp">The last updates: how each ended, who asked, and what the supervisor checked on the way. A newer release that this server refused to offer is listed too.</p>
+        <div class="table-wrap long" tabindex="0" role="region" aria-labelledby="history-title"><table class="stack" role="table" aria-labelledby="history-title"><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" class="c-when" data-i18n="histWhen">When</th><th role="columnheader" scope="col" class="c-version" data-i18n="histVersion">Version</th><th role="columnheader" scope="col" class="c-by" data-i18n="histBy">Asked by</th><th role="columnheader" scope="col" class="c-result" data-i18n="histResult">Result</th><th role="columnheader" scope="col" class="c-checks" data-i18n="histChecks">Checks</th></tr></thead><tbody role="rowgroup" id="history-rows"></tbody></table></div>
+        <p class="muted small" id="history-note"></p>
+      </section>`;
 
-export const LOG_HTML = `<section class="card wide" id="log">
-      <h2 id="log-title" data-i18n="logTitle">Action log</h2>
-      <p class="muted small" data-i18n="logHelp">What you and your clients changed on this server, newest first. It holds names and ids, never a secret or a text of a book.</p>
-      <div class="filters">
-        <div><label for="log-type" data-i18n="logFilterType">Type</label><select id="log-type"><option value="" data-i18n="logTypeAll">All types</option><option value="access" data-i18n="logTypeAccess">Access</option><option value="clients" data-i18n="logTypeClients">Clients</option><option value="updates" data-i18n="logTypeUpdates">Updates</option><option value="apps" data-i18n="logTypeApps">Apps (MCP)</option><option value="ai" data-i18n="logTypeAi">AI endpoints</option><option value="spend" data-i18n="logTypeSpend">AI spending</option><option value="network" data-i18n="logTypeNetwork">Network</option><option value="books" data-i18n="logTypeBooks">Books and runs</option></select></div>
-        <div><label for="log-result" data-i18n="logFilterResult">Result</label><select id="log-result"><option value="" data-i18n="logResultAll">All results</option><option value="true" data-i18n="logResultWorked">Worked</option><option value="false" data-i18n="logResultFailed">Failed</option></select></div>
-      </div>
-      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="log-title"><table class="stack" role="table" aria-labelledby="log-title"><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" class="c-when" data-i18n="logWhen">When</th><th role="columnheader" scope="col" class="c-who" data-i18n="logWho">Who</th><th role="columnheader" scope="col" class="c-what" data-i18n="logWhat">What</th><th role="columnheader" scope="col" class="c-on" data-i18n="logOn">On</th><th role="columnheader" scope="col" class="c-result" data-i18n="logOutcome">Result</th></tr></thead><tbody role="rowgroup" id="log-rows"></tbody></table></div>
-      <p class="muted small" id="log-note"></p>
-      <div class="row"><button type="button" class="ghost hidden" id="log-more" data-i18n="logMore">Older entries</button></div>
-    </section>`;
-
-/** Only the page's colour tokens (`var(--…)`), so that what a test checks of them holds for everything drawn here. */
-export const VIEWS_CSS = `/* views */
-.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-a{color:var(--accent);text-underline-offset:2px}
-.card.risks{border-left:6px solid var(--accent)}.card.risks.risks-high{border-left-color:var(--bad)}.card.risks.risks-medium{border-left-color:var(--warn)}
-.risk-summary,.health-summary{margin:0 0 10px;font-weight:600}.runs-summary{margin:6px 0}
-.risk-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
-.risk{border:1px solid var(--line);border-left-width:5px;border-radius:10px;padding:10px 12px;background:var(--bg)}.risk.high{border-left-color:var(--bad)}.risk.medium{border-left-color:var(--warn)}.risk.note{border-left-color:var(--accent)}
-.risk-head{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}.risk-title{font-weight:600;overflow-wrap:anywhere}.risk p{margin:4px 0 0;overflow-wrap:anywhere}
-details.risk-notes{margin-top:12px}details.risk-notes>summary{cursor:pointer;font-weight:600;padding:6px 0}
-.badge{display:inline-flex;gap:5px;align-items:baseline;max-width:100%;border:1px solid var(--control);border-radius:6px;padding:0 8px;font-size:12px;font-weight:600}
-.badge.ok{border-color:var(--ok);color:var(--ok)}.badge.info{border-color:var(--accent);color:var(--accent)}.badge.warn{border-color:var(--warn);color:var(--warn)}.badge.bad{border-color:var(--bad);color:var(--bad)}.badge.off{color:var(--muted)}
-.glyph{font-weight:700}
-th[scope=row]{color:var(--fg);font-size:14px;font-weight:600}td,th{overflow-wrap:break-word}td code{overflow-wrap:anywhere}.nowrap{white-space:nowrap}
-th.c-status{min-width:9.5rem}th.c-book{min-width:9.5rem}th.c-state{min-width:11rem}th.c-progress{min-width:9.5rem}th.c-run{min-width:8.5rem}th.c-spent{min-width:9.5rem}td.state-cell{max-width:26rem}
-th.c-when{min-width:9rem}th.c-version{min-width:7rem}th.c-by{min-width:9rem}th.c-result{min-width:10rem}th.c-checks{min-width:14rem}th.c-who{min-width:9rem}th.c-what{min-width:11rem}th.c-on{min-width:9rem}
-progress{display:block;width:100%;max-width:200px;height:8px;margin:2px 0 4px;border:0;border-radius:4px;background:var(--line);accent-color:var(--accent)}
-progress::-webkit-progress-bar{background:var(--line);border-radius:4px}progress::-webkit-progress-value{background:var(--accent);border-radius:4px}progress::-moz-progress-bar{background:var(--accent);border-radius:4px}
-.filters{display:flex;flex-wrap:wrap;gap:12px;margin:10px 0}.filters>div{flex:1;min-width:160px;max-width:260px}
-details.checks>summary{cursor:pointer;margin-top:4px;color:var(--accent)}details.checks ul{margin:4px 0 0;padding-left:18px}
-@media (max-width:640px){table.stack,table.stack tbody{display:block}table.stack thead{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
-table.stack tr{display:block;margin:0 0 10px;padding:6px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
-table.stack th[scope=row],table.stack td{display:block;min-width:0;max-width:none;padding:4px 0;border:0}
-table.stack td::before{content:attr(data-label);display:block;color:var(--muted);font-size:12px;font-weight:600}
-table.stack td.empty{display:none}table.stack td.nowrap{white-space:normal}}
-@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
-`;
+export const LOG_HTML = `<section class="panel" id="log">
+        <h2 class="sr-only" id="log-title" data-i18n="logTitle">Action log</h2>
+        <div class="filters">
+          <div><label for="log-type" data-i18n="logFilterType">Type</label><select id="log-type"><option value="" data-i18n="logTypeAll">All types</option><option value="access" data-i18n="logTypeAccess">Access</option><option value="clients" data-i18n="logTypeClients">Clients</option><option value="updates" data-i18n="logTypeUpdates">Updates</option><option value="apps" data-i18n="logTypeApps">Apps (MCP)</option><option value="ai" data-i18n="logTypeAi">AI endpoints</option><option value="spend" data-i18n="logTypeSpend">AI spending</option><option value="network" data-i18n="logTypeNetwork">Network</option><option value="books" data-i18n="logTypeBooks">Books and runs</option></select></div>
+          <div><label for="log-result" data-i18n="logFilterResult">Result</label><select id="log-result"><option value="" data-i18n="logResultAll">All results</option><option value="true" data-i18n="logResultWorked">Worked</option><option value="false" data-i18n="logResultFailed">Failed</option></select></div>
+        </div>
+        <div class="table-wrap long" tabindex="0" role="region" aria-labelledby="log-title"><table class="stack" role="table" aria-labelledby="log-title"><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" class="c-when" data-i18n="logWhen">When</th><th role="columnheader" scope="col" class="c-who" data-i18n="logWho">Who</th><th role="columnheader" scope="col" class="c-what" data-i18n="logWhat">What</th><th role="columnheader" scope="col" class="c-on" data-i18n="logOn">On</th><th role="columnheader" scope="col" class="c-result" data-i18n="logOutcome">Result</th></tr></thead><tbody role="rowgroup" id="log-rows"></tbody></table></div>
+        <p class="muted small" id="log-note"></p>
+        <div class="row"><button type="button" class="ghost hidden" id="log-more" data-i18n="logMore">Older entries</button></div>
+      </section>`;
 
 /** Runs inside the panel's own function: it uses its `t`, `pick`, `el`, `call`, `when`, `$`, `lang`, `csrf` and `T`. */
 export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, books in progress, update history, action log
@@ -99,7 +71,7 @@ export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, 
   var runsSerial = 0;
   var updatesHistory = null;
   var actionLog = { rows: [], next: null, older: false, type: "", result: "", serial: 0, loaded: false };
-  var RISK_GO = { "remote-admin": ["#network", "networkTitle"], "client-update": ["#clients", "clientsTitle"], "oauth-write": ["#mcp", "mcpTitle"], "spend-unlimited": ["#spend", "spendTitle"], "no-passkey": ["#mcp", "mcpTitle"], "client-run": ["#clients", "clientsTitle"], "ai-remote": ["#ai", "aiTitle"] };
+  var RISK_GO = { "remote-admin": ["#/network", "navNetwork"], "client-update": ["#/clients", "navClients"], "oauth-write": ["#/apps", "navApps"], "spend-unlimited": ["#/ai", "navAi"], "no-passkey": ["#/apps", "navApps"], "client-run": ["#/clients", "navClients"], "ai-remote": ["#/ai", "navAi"], "device-remember": ["#/security", "navSecurity"] };
   var RISK_TONE = { high: ["bad", "✕"], medium: ["warn", "!"], note: ["info", "i"] };
   var HEALTH_TONE = { ok: ["ok", "✓"], info: ["info", "i"], warn: ["warn", "!"], bad: ["bad", "✕"], off: ["off", "–"], unknown: ["off", "?"] };
   var RUN_TONE = { stalled: ["warn", "!"], retrying: ["warn", "↻"], running: ["ok", "▶"], waiting: ["info", "?"], error: ["bad", "✕"], unreadable: ["bad", "✕"], paused: ["off", "‖"], idle: ["off", "–"], completed: ["ok", "✓"], none: ["off", "–"] };
@@ -142,13 +114,22 @@ export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, 
   function tcell(label, cls) { var node = el("td", cls || ""); node.setAttribute("role", "cell"); if (label) node.setAttribute("data-label", t(label)); return node; }
   function dash(node) { node.appendChild(document.createTextNode("—")); node.classList.add("empty"); return node; }
   function emptyRow(body, columns, text) {
-    var row = trow(); var box = tcell("", "muted"); box.textContent = text; box.setAttribute("colspan", String(columns)); row.appendChild(box); body.appendChild(row);
+    var row = trow(); var box = tcell("", "empty-state"); box.textContent = text; box.setAttribute("colspan", String(columns)); row.appendChild(box); body.appendChild(row);
   }
   /** Written only when the words are not the same: a screen reader says it when it changes, and not again at every poll. */
   function setLive(id, text) { var node = $(id); if (node.textContent !== text) node.textContent = text; node.setAttribute("aria-live", "polite"); }
   function setNote(id, text) { var node = $(id); if (node.textContent !== text) node.textContent = text; }
-  function load(path, apply, noteId) {
-    return call("GET", path).then(function (data) { if (csrf) { if (noteId) setNote(noteId, ""); apply(data); } }).catch(function () { if (csrf && noteId) setNote(noteId, t("viewFailed")); });
+  /** A quiet "Loading…" in a table that has nothing yet; whatever draws the table (or fails to) takes it away. */
+  function showLoading(ids) {
+    ids.forEach(function (id) {
+      var body = $(id); if (body.children.length) return;
+      var row = trow(); row.className = "loading-row"; var box = tcell("", "loading"); box.textContent = t("loading"); box.setAttribute("colspan", "6"); row.appendChild(box); body.appendChild(row);
+    });
+  }
+  function clearLoading(id) { var body = $(id); if (body && body.children.length === 1 && body.children[0].className === "loading-row") body.textContent = ""; }
+  function load(path, apply, noteId, bodyId) {
+    var quiet = polling;
+    return call("GET", path).then(function (data) { if (signed) { if (noteId) setNote(noteId, ""); if (!unchanged(path, data, quiet)) apply(data); } }).catch(function () { if (signed) { if (bodyId) clearLoading(bodyId); if (noteId) setNote(noteId, t("viewFailed")); } });
   }
 
   // Risks
@@ -169,15 +150,16 @@ export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, 
   }
   function riskItem(risk, level) {
     var f = risk.facts || {}; var needsName = risk.id === "no-passkey" && f.canAddPasskey === false;
-    var target = needsName ? ["#network", "networkTitle"] : RISK_GO[risk.id]; var values = riskValues(risk); var tone = RISK_TONE[level];
+    var target = needsName ? ["#/network", "navNetwork"] : RISK_GO[risk.id]; var values = riskValues(risk); var tone = RISK_TONE[level];
     var item = el("li", "risk " + level); var head = el("div", "risk-head");
     head.appendChild(badge(pick("riskLevels", level), tone[0], tone[1]));
     head.appendChild(el("span", "risk-title", many("riskTitles", risk.id, typeof f.count === "number" ? f.count : f.books, values)));
     item.appendChild(head);
-    var why = pick("riskWhy", risk.id, values); if (why) item.appendChild(el("p", "muted small", why));
+    var why = pick("riskWhy", risk.id === "device-remember" && f.remote ? "device-remember-remote" : risk.id, values); if (why) item.appendChild(el("p", "muted small", why));
     var action = el("p", "", pick("riskDo", needsName ? "no-passkey-name" : risk.id, values) + " ");
-    var link = el("a", "", t("riskGo", { where: t(target[1]) })); link.setAttribute("href", target[0]);
-    action.appendChild(link); item.appendChild(action);
+    // The devices are on the page where this is read: there is nowhere else to go.
+    if (risk.id !== "device-remember") { var link = el("a", "", t("riskGo", { where: t(target[1]) })); link.setAttribute("href", target[0]); action.appendChild(link); }
+    item.appendChild(action);
     return item;
   }
   function renderRisks() {
@@ -197,6 +179,7 @@ export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, 
     setLive("risk-summary", total ? t("riskSummary", { list: parts.join(", ") }) : t("riskNone"));
     var folded = $("risk-notes");
     if (counts.note) { folded.classList.remove("hidden"); $("risk-notes-summary").textContent = t("riskNotes", { n: counts.note }); } else folded.classList.add("hidden");
+    renderChrome();
   }
   function loadRisks() { return load("/admin/api/risks", function (data) { risks = data; renderRisks(); }); }
 
@@ -256,8 +239,9 @@ export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, 
     (health.checks || []).forEach(function (check) { if (check && check.id) body.appendChild(healthRow(check)); });
     var attention = (health.attention || []).map(function (id) { return pick("healthNames", id) || id; });
     setLive("health-summary", health.overall === "ok" || !attention.length ? t("healthOk") : t("healthAttention", { list: attention.join(", ") }));
+    renderChrome();
   }
-  function loadHealth() { return load("/admin/api/health", function (data) { health = data; renderHealth(); }, "health-note"); }
+  function loadHealth() { return load("/admin/api/health", function (data) { health = data; renderHealth(); }, "health-note", "health-rows"); }
 
   // Books in progress
   function stepName(step) { return pick("runsSteps", step) || step; }
@@ -329,10 +313,11 @@ export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, 
     var button = $("runs-more");
     if (runs.total > RUNS_PAGE) { button.classList.remove("hidden"); button.textContent = runsAll ? t("runsLess") : t("runsMore", { total: runs.total }); } else button.classList.add("hidden");
     setNote("runs-note", runsAll && runs.total > books.length ? t("runsShowing", { n: books.length, total: runs.total }) : "");
+    renderChrome();
   }
   function loadRuns() {
     var serial = ++runsSerial;
-    return load("/admin/api/runs?limit=" + (runsAll ? RUNS_ALL : RUNS_PAGE), function (data) { if (serial === runsSerial) { runs = data; renderRuns(); } }, "runs-note");
+    return load("/admin/api/runs?limit=" + (runsAll ? RUNS_ALL : RUNS_PAGE), function (data) { if (serial === runsSerial) { runs = data; renderRuns(); } }, "runs-note", "runs-rows");
   }
 
   // History of the updates
@@ -368,7 +353,7 @@ export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, 
   }
   function historyRow(entry) {
     var row = trow();
-    var when_ = tcell("histWhen", "nowrap"); when_.textContent = when(entry.at); row.appendChild(when_);
+    var when_ = tcell("histWhen"); when_.textContent = when(entry.at); row.appendChild(when_);
     var version = tcell("histVersion", "nowrap"); version.textContent = entry.from && entry.to ? entry.from + " → " + entry.to : (entry.to || entry.from || "—"); row.appendChild(version);
     var by = tcell("histBy");
     if (entry.by === "admin") by.textContent = pick("histBys", "admin");
@@ -386,7 +371,7 @@ export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, 
     if (!entries.length) emptyRow(body, 5, t("histNone"));
     entries.forEach(function (entry) { body.appendChild(historyRow(entry)); });
   }
-  function loadHistory() { return load("/admin/api/updates/history", function (data) { updatesHistory = data; renderHistory(); }, "history-note"); }
+  function loadHistory() { return load("/admin/api/updates/history", function (data) { updatesHistory = data; renderHistory(); }, "history-note", "history-rows"); }
 
   // Action log
   function logActor(actor) {
@@ -396,15 +381,16 @@ export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, 
   }
   function logRow(entry) {
     var row = trow();
-    var moment = tcell("logWhen", "nowrap"); moment.textContent = when(entry.at); row.appendChild(moment);
+    var moment = tcell("logWhen"); moment.textContent = when(entry.at); row.appendChild(moment);
     var who = tcell("logWho"); who.appendChild(el("div", "", logActor(entry.actor)));
     if (entry.source) who.appendChild(el("div", "muted small", t("logFrom", { source: entry.source === "local" ? t("thisComputer") : entry.source })));
     row.appendChild(who);
     var what = tcell("logWhat"); what.textContent = pick("logActions", entry.action) || String(entry.action); row.appendChild(what);
     var on = tcell("logOn");
-    if (entry.label) on.appendChild(el("div", "", entry.label));
-    if (entry.object) on.appendChild(el("code", "", entry.object));
-    if (entry.detail) on.appendChild(el("div", "muted small", entry.detail));
+    var devices = entry.action === "admin.device.revoke" && (entry.detail === "all" || entry.detail === "code-changed") ? Number(entry.object) : NaN;
+    if (isFinite(devices)) on.appendChild(el("div", "", plural("logDevices", devices, { n: devices })));
+    else { if (entry.label) on.appendChild(el("div", "", entry.label)); if (entry.object) on.appendChild(el("code", "", entry.object)); }
+    if (entry.detail) on.appendChild(el("div", "muted small", pick("logDetails", entry.detail) || entry.detail));
     if (!on.children.length) dash(on);
     row.appendChild(on);
     var result = tcell("logOutcome"); result.appendChild(entry.ok ? badge(t("logDone"), "ok", "✓") : badge(t("logFailed", { code: entry.code || "?" }), "bad", "✕"));
@@ -426,7 +412,7 @@ export const VIEWS_JS = String.raw`  // ---- the overview views: risks, health, 
       if (serial !== actionLog.serial) return;
       actionLog.rows = older ? actionLog.rows.concat(page.entries || []) : (page.entries || []); actionLog.next = page.nextBefore === undefined ? null : page.nextBefore;
       actionLog.older = !!older; actionLog.loaded = true; renderLog();
-    }, "log-note");
+    }, "log-note", "log-rows");
   }
 
   function loadViews() { loadRisks(); loadHealth(); loadRuns(); loadHistory(); if (!actionLog.older) loadLog(false); }

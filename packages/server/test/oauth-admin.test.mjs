@@ -311,7 +311,7 @@ test("S7B admin panel: the section lists the books and their apps, switches a bo
     await mcpBook(client, "moon", "Moon Book");
     await connectApp(server, { slug, name: "Claude", scopes: ["read", "write"] });
     const panel = await openPanel(server);
-    assert.match(panel.html, /<section class="card wide" id="mcp">/);
+    assert.match(panel.html, /<section class="panel" id="mcp">/);
     const rows = await until(() => (panel.browser.$("mcp-books").children.length === 2 ? panel.browser.$("mcp-books").children : null));
     const text = rows.map((row) => row.textContent);
     assert.match(text[0], /The Glass Harbor/);
@@ -424,7 +424,8 @@ test("S7B admin panel: the audit is a table that loads older calls on demand, an
     assert.equal(english.browser.$("audit-more").classList.contains("hidden"), true, "nothing older: the button goes");
     assert.equal(/undefined|null|NaN/.test(english.browser.$("audit-rows").textContent), false);
 
-    const section = /<section class="card wide" id="mcp">[\s\S]*?<\/section>/.exec(english.html)[0];
+    // What was one card is three sections of the Connected apps page: the books, the passkeys and the calls.
+    const section = ["mcp", "passkeys", "audit"].map((id) => new RegExp(`<section class="panel" id="${id}">[\\s\\S]*?<\\/section>`).exec(english.html)[0]).join("\n");
     const keys = [...new Set([...section.matchAll(/data-i18n="([^"]+)"/g)].map((match) => match[1]))];
     assert.ok(keys.length >= 10, `the section has its texts: ${keys.length}`);
     const italian = await openPanel(server, { language: "it-IT" });

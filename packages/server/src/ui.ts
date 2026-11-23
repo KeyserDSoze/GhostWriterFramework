@@ -1,9 +1,17 @@
 /**
  * Admin panel of the personal server, served on the loopback admin port under a strict CSP
  * (no inline scripts or styles). Texts are in English and Italian; data is always set as text.
+ *
+ * It is one document with one page shown at a time, each at an address of its own (`/#/books`, `/#/security`…): the sign-in, the navigation (`ui-pages.ts`), the style (`ui-style.ts`), the
+ * views of the server's state (`ui-views.ts`) and the remembered devices (`ui-devices.ts`) are put together here, with the script that runs them.
  */
 
-import { HEALTH_HTML, HISTORY_HTML, LOG_HTML, RISKS_HTML, RUNS_HTML, VIEWS_CSS, VIEWS_JS } from "./ui-views.js";
+import { DEVICES_JS } from "./ui-devices.js";
+import { LOGIN_HTML, MENU_ICON, NAV_HTML, PAGES, PAGES_HTML } from "./ui-pages.js";
+import { ADMIN_CSS } from "./ui-style.js";
+import { VIEWS_JS } from "./ui-views.js";
+
+export { ADMIN_CSS };
 
 export const ADMIN_HTML = `<!doctype html>
 <html lang="en">
@@ -11,191 +19,39 @@ export const ADMIN_HTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
 <title>Narrarium server</title>
 <link rel="stylesheet" href="/admin.css">
 <script src="/admin.js" defer></script>
 </head>
 <body>
-<header class="top">
-  <div class="brand"><span class="logo" aria-hidden="true">N</span><div><h1 data-i18n="title">Narrarium server</h1><p class="muted" id="subtitle"></p></div></div>
-  <div class="actions">
-    <div class="pills" id="pills"></div>
-    <button type="button" class="ghost" id="lang" aria-label="Language">IT</button>
-    <button type="button" class="ghost hidden" id="logout" data-i18n="logout">Sign out</button>
-  </div>
+<a class="skip" id="skip" href="#main" data-i18n="skip">Skip to content</a>
+<header class="topbar">
+  <button type="button" class="ghost menu-btn hidden" id="menu-button" aria-expanded="false" aria-controls="sidebar">${MENU_ICON}<span data-i18n="menu">Menu</span></button>
+  <div class="brand"><span class="logo" aria-hidden="true">N</span><div class="brand-text"><span class="brand-name" data-i18n="title">Narrarium server</span><span class="brand-sub" id="subtitle"></span></div></div>
+  <button type="button" class="ghost small" id="lang" aria-label="Language">IT</button>
 </header>
-<main>
-  <section class="card login" id="login-view">
-    <h2 data-i18n="loginTitle">Sign in</h2>
-    <p class="muted" data-i18n="loginHelp">Enter the admin code of this server. To see it, run on this computer:</p>
-    <pre class="code"><code>npx narrarium-server admin-code</code></pre>
-    <form id="login-form" autocomplete="off">
-      <label for="code" data-i18n="adminCode">Admin code</label>
-      <input id="code" type="password" required minlength="32" maxlength="200" spellcheck="false">
-      <button type="submit" data-i18n="signIn">Sign in</button>
-    </form>
-    <p class="notice hidden" id="new-code-box"><span data-i18n="newCode">New admin code (shown once):</span> <code id="new-code"></code></p>
-    <p class="error" id="login-error" role="alert"></p>
-  </section>
-
-  <div class="grid hidden" id="main-view">
-    ${RISKS_HTML}
-
-    ${HEALTH_HTML}
-
-    ${RUNS_HTML}
-
-    <section class="card" id="overview">
-      <h2 data-i18n="overview">This server</h2>
-      <dl class="facts" id="facts"></dl>
-    </section>
-
-    <section class="card wide" id="updates">
-      <div class="card-head"><h2 data-i18n="updates">Updates</h2><button type="button" class="ghost small" id="updates-check" data-i18n="check">Check again</button></div>
-      <p id="updates-message"></p>
-      <p class="muted" id="updates-last"></p>
-      <button type="button" class="hidden" id="update-now"></button>
-      ${HISTORY_HTML}
-    </section>
-
-    <section class="card" id="pairing">
-      <h2 data-i18n="pairTitle">Connect a client</h2>
-      <p class="muted" data-i18n="pairHelp">In Narrarium open Settings → Personal server, choose Pair and type this code. Then approve the request here.</p>
-      <div id="pairing-box"></div>
-      <button type="button" id="pairing-start" data-i18n="pairStart">Generate a pairing code</button>
-    </section>
-
-    <section class="card wide" id="clients">
-      <h2 id="clients-title" data-i18n="clientsTitle">Clients</h2>
-      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="clients-title"><table class="stack" role="table" aria-labelledby="clients-title"><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" data-i18n="name">Name</th><th role="columnheader" scope="col" data-i18n="permissions">Permissions</th><th role="columnheader" scope="col" data-i18n="source">Source</th><th role="columnheader" scope="col" data-i18n="verification">Code</th><th role="columnheader" scope="col" data-i18n="created">Created</th><th role="columnheader" scope="col" data-i18n="lastSeen">Last seen</th><th role="columnheader" scope="col"><span class="sr-only" data-i18n="colActions">Actions</span></th></tr></thead><tbody role="rowgroup" id="client-rows"></tbody></table></div>
-      <form id="token-form" class="inline" autocomplete="off">
-        <input id="token-label" maxlength="80" required data-i18n-placeholder="clientName" placeholder="Client name">
-        <label class="check"><input type="checkbox" id="token-update"> <span data-i18n="allowUpdates">Also allow updating the server</span></label>
-        <button type="submit" data-i18n="issueToken">Create token</button>
-      </form>
-      <p class="notice hidden" id="token-box"><span data-i18n="tokenOnce">Token (shown once):</span> <code id="token-value"></code> <button type="button" class="ghost small" id="token-copy" data-i18n="copy">Copy</button></p>
-    </section>
-
-    <section class="card" id="ai">
-      <h2 data-i18n="aiTitle">AI endpoints</h2>
-      <p class="muted" data-i18n="aiHelp">The server calls only the AI endpoints you approve, and only then sends an API key there. The endpoints of a configuration sent by a client wait here, with the address requests start with.</p>
-      <ul class="list" id="ai-pending"></ul>
-      <p class="muted" id="ai-approved"></p>
-    </section>
-
-    <section class="card" id="spend">
-      <h2 id="spend-title" data-i18n="spendTitle">AI spending</h2>
-      <p class="muted" data-i18n="spendHelp">Limits that only you can set, whatever a client asks for. When one is reached no AI call is made: the autopilot stops with a message and resumes later.</p>
-      <dl class="facts" id="spend-facts"></dl>
-      <form id="spend-form" autocomplete="off">
-        <label for="spend-tokens-day" data-i18n="spendTokensDay">Tokens per day, UTC (0 = no limit)</label>
-        <input id="spend-tokens-day" type="number" min="0" step="1">
-        <label for="spend-cost-day" data-i18n="spendCostDay">Cost per day, in the currency of the AI settings (0 = no limit)</label>
-        <input id="spend-cost-day" type="number" min="0" step="any">
-        <label for="spend-tokens-run" data-i18n="spendTokensRun">Tokens per run (0 = no limit)</label>
-        <input id="spend-tokens-run" type="number" min="0" step="1">
-        <label for="spend-cost-run" data-i18n="spendCostRun">Cost per run (0 = no limit)</label>
-        <input id="spend-cost-run" type="number" min="0" step="any">
-        <div class="row"><button type="submit" data-i18n="spendSave">Save limits</button><button type="button" class="ghost" id="spend-toggle"></button></div>
-      </form>
-    </section>
-
-    <section class="card" id="network">
-      <h2 data-i18n="networkTitle">Approved network</h2>
-      <form id="network-form" autocomplete="off">
-        <label for="net-ai" data-i18n="aiBases">Approved AI endpoints (one address per line: an origin, or an origin and a path)</label>
-        <textarea id="net-ai" rows="3" spellcheck="false"></textarea>
-        <label for="net-origins" data-i18n="origins">Extra client origins (one per line)</label>
-        <textarea id="net-origins" rows="2" spellcheck="false"></textarea>
-        <p class="muted small" id="net-default-origins"></p>
-        <label for="net-public" data-i18n="publicUrl">Public API address (https://, for example a Cloudflare hostname)</label>
-        <input id="net-public" spellcheck="false">
-        <label for="net-admin" data-i18n="adminPublicUrl">Public admin address (optional)</label>
-        <input id="net-admin" spellcheck="false">
-        <label class="check"><input type="checkbox" id="net-remote-admin"> <span data-i18n="remoteAdmin">Serve this panel on its public address</span></label>
-        <button type="submit" data-i18n="save">Save</button>
-      </form>
-    </section>
-
-    <section class="card" id="cloudflare">
-      <h2>Cloudflare</h2>
-      <dl class="facts" id="tunnel-facts"></dl>
-      <p class="muted" data-i18n="tunnelHelp">Create a remotely-managed tunnel in the Cloudflare dashboard, route a hostname to http://127.0.0.1 and the API port, install cloudflared 2025.4.0 or newer, then paste the connector token.</p>
-      <form id="tunnel-form" autocomplete="off">
-        <label for="tunnel-token" data-i18n="tunnelToken">Connector token</label>
-        <input id="tunnel-token" type="password" spellcheck="false">
-        <label for="tunnel-host" data-i18n="tunnelHost">Hostname (https://, informational)</label>
-        <input id="tunnel-host" spellcheck="false">
-        <div class="row"><button type="submit" data-i18n="tunnelSave">Save and start</button><button type="button" class="ghost" id="tunnel-restart" data-i18n="restart">Restart</button><button type="button" class="ghost danger" id="tunnel-remove" data-i18n="remove">Remove</button></div>
-      </form>
-    </section>
-
-    <section class="card wide" id="mcp">
-      <h2 data-i18n="mcpTitle">Connected apps (MCP)</h2>
-      <p class="muted" data-i18n="mcpHelp">Every book has its own MCP address. Paste it in ChatGPT or Claude: they send you to a page of this server where you prove it is you with a passkey or the admin code, and choose what the app may do with that book.</p>
-      <p class="notice hidden" id="mcp-public-note" data-i18n="mcpNoPublic">This server has no public address yet: apps on other computers cannot reach it and passkeys cannot be used. Set the public API address in Approved network.</p>
-      <ul class="list" id="mcp-books"></ul>
-      <h3 data-i18n="passkeysTitle">Passkeys</h3>
-      <p class="muted" data-i18n="passkeysHelp">A passkey lets you approve an app on the consent page with your fingerprint, face or screen lock. The admin code always works as well.</p>
-      <ul class="list" id="passkey-rows"></ul>
-      <div class="row"><button type="button" id="passkey-link" data-i18n="passkeyAdd">Add a passkey</button></div>
-      <p class="notice hidden" id="passkey-link-box"><span data-i18n="passkeyLink">Open this address on the device that will keep the passkey (valid ten minutes, works once):</span> <code id="passkey-link-value"></code> <button type="button" class="ghost small" id="passkey-link-copy" data-i18n="copy">Copy</button></p>
-      <h3 id="audit-title" data-i18n="auditTitle">Recent calls</h3>
-      <p class="muted" data-i18n="auditHelp">Who called which tool, on which book, and when. What the book says is never recorded here.</p>
-      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="audit-title"><table class="stack" role="table" aria-labelledby="audit-title"><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" data-i18n="auditWhen">When</th><th role="columnheader" scope="col" data-i18n="auditCaller">Caller</th><th role="columnheader" scope="col" data-i18n="auditBook">Book</th><th role="columnheader" scope="col" data-i18n="auditTool">Tool</th><th role="columnheader" scope="col" data-i18n="auditResult">Result</th></tr></thead><tbody role="rowgroup" id="audit-rows"></tbody></table></div>
-      <div class="row"><button type="button" class="ghost" id="audit-more" data-i18n="auditMore">Older calls</button></div>
-    </section>
-
-    ${LOG_HTML}
-
-    <section class="card" id="admin-code">
-      <h2 data-i18n="codeTitle">Admin code</h2>
-      <form id="code-form" autocomplete="off">
-        <label for="code-1" data-i18n="codeNew">New code (32-200 characters)</label>
-        <input id="code-1" type="password" minlength="32" maxlength="200">
-        <label for="code-2" data-i18n="codeRepeat">Repeat the new code</label>
-        <input id="code-2" type="password" minlength="32" maxlength="200">
-        <div class="row"><button type="submit" data-i18n="codeSet">Set this code</button><button type="button" class="ghost" id="code-rotate" data-i18n="codeRotate">Generate a random code</button></div>
-      </form>
-    </section>
+<div class="layout" id="layout">
+  <div class="sidebar" id="sidebar">
+    ${NAV_HTML}
+    <div class="side-foot">
+      <p class="small muted hidden" id="logout-note" data-i18n="logoutForgets">Signing out also forgets this device.</p>
+      <button type="button" class="ghost hidden" id="logout" aria-describedby="logout-note" data-i18n="logout">Sign out</button>
+    </div>
   </div>
-  <p class="toast hidden" id="toast" role="status"></p>
-</main>
+  <main id="main" tabindex="-1">
+    <p class="muted hidden" id="boot" role="status" data-i18n="signingIn">Signing in…</p>
+    ${LOGIN_HTML}
+
+    <div class="hidden" id="main-view">
+    ${PAGES_HTML}
+    </div>
+    <p class="toast hidden" id="toast" role="status"></p>
+  </main>
+</div>
 </body>
 </html>
 `;
-
-export const ADMIN_CSS = `:root{color-scheme:light dark;--bg:#f6f5f2;--card:#fff;--fg:#1f2328;--muted:#5f6670;--line:#e3e1dc;--accent:#0f766e;--accent-fg:#fff;--warn:#b45309;--bad:#b91c1c;--ok:#15803d;--control:#6b7280;--focus:#1d4ed8;font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-@media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1b1e23;--fg:#e8e6e3;--muted:#9aa1ab;--line:#2c3138;--accent:#2dd4bf;--accent-fg:#06201d;--warn:#f59e0b;--bad:#f87171;--ok:#4ade80;--control:#8b93a0;--focus:#7dd3fc}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg)}
-:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
-.top{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;padding:16px 24px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:2}
-.brand{display:flex;gap:12px;align-items:center}.logo{display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:var(--accent);color:var(--accent-fg);font-weight:700}
-h1{font-size:18px;margin:0}h2{font-size:16px;margin:0 0 10px}.muted{color:var(--muted)}.small{font-size:13px}
-.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.pills{display:flex;flex-wrap:wrap;gap:6px}
-.pill{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:12px}.pill.ok{border-color:var(--ok);color:var(--ok)}.pill.warn{border-color:var(--warn);color:var(--warn)}.pill.bad{border-color:var(--bad);color:var(--bad)}
-main{padding:24px;max-width:1200px;margin:0 auto}.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}.card.wide{grid-column:1/-1}.login{max-width:520px;margin:40px auto}
-.card-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
-label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}label.check{display:flex;gap:8px;align-items:center;color:var(--fg)}
-input,textarea,select{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--control);background:transparent;color:inherit;font:inherit}textarea{font-family:ui-monospace,monospace;font-size:13px}
-input[type=checkbox]{width:18px;height:18px;padding:0;accent-color:var(--accent)}
-button{border:1px solid var(--accent);background:var(--accent);color:var(--accent-fg);border-radius:8px;padding:7px 14px;font:inherit;cursor:pointer;margin-top:10px}
-button.ghost{background:transparent;color:var(--fg);border-color:var(--control)}button.danger{color:var(--bad)}button.small{padding:3px 9px;font-size:13px;margin-top:0}button:disabled{opacity:.5;cursor:not-allowed}
-.row{display:flex;flex-wrap:wrap;gap:8px}.inline{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}.inline > input{flex:1;min-width:180px}.inline button,.inline label{margin-top:0}
-.facts{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:0}.facts dt{color:var(--muted);font-size:13px}.facts dd{margin:0;overflow-wrap:anywhere}
-code,pre{font-family:ui-monospace,monospace;font-size:13px}pre.code{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;overflow:auto}
-.notice{background:var(--bg);border:1px dashed var(--accent);border-radius:8px;padding:8px 10px;word-break:break-all}
-.error{color:var(--bad);min-height:1em}.hidden{display:none!important}
-.pair-code{font-size:30px;letter-spacing:4px;font-family:ui-monospace,monospace;margin:6px 0}
-.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle}th{font-size:12px;color:var(--muted);font-weight:600}
-.chip{display:inline-block;border:1px solid var(--line);border-radius:6px;padding:0 6px;margin:1px 2px;font-size:12px}.chip.update{border-color:var(--warn);color:var(--warn)}
-.list{list-style:none;margin:0;padding:0}.list li{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)}
-.toast{position:fixed;right:16px;bottom:16px;background:var(--fg);color:var(--bg);padding:10px 14px;border-radius:10px;max-width:420px;z-index:5}
-.revoked{opacity:.55}.agent{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-h3{font-size:14px;margin:18px 0 6px}.list li.mcp-book{display:block}.mcp-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}.mcp-book .list{margin:6px 0 4px 8px}.mcp-book .inline{margin-top:6px}
-@media (max-width:640px){main{padding:12px}.top{padding:12px;position:static}.facts{grid-template-columns:1fr}}
-${VIEWS_CSS}`;
 
 export const ADMIN_JS = String.raw`"use strict";
 (function () {
@@ -297,62 +153,242 @@ export const ADMIN_JS = String.raw`"use strict";
       auditTool: "Strumento", auditResult: "Esito", auditMore: "Chiamate precedenti", auditNone: "Nessuna chiamata finora.", auditOk: "eseguita", auditFailed: "non riuscita: {code}"
     }
   };
+  var ROUTES = ${JSON.stringify(PAGES.map((page) => page.id))};
+  var PAGE_TITLES = ${JSON.stringify(Object.fromEntries(PAGES.map((page) => [page.id, page.title])))};
+  var LOADING = ["health-rows", "runs-rows", "history-rows", "log-rows", "client-rows", "audit-rows", "device-rows"];
+  var MAX_DEVICES = 20;
+  var SEEN_KEY = "narrarium-admin-seen:" + location.origin;
   var lang = localStorage.getItem("narrarium-admin-lang") || ((navigator.language || "en").toLowerCase().indexOf("it") === 0 ? "it" : "en");
   var csrf = "";
+  /** Whether the server has accepted this page: a tab that opens with the cookie of a session has no token for changes yet, but it is in. */
+  var signed = false;
   var state = null;
   var timer = null;
   var pairCode = null;
   var mcp = null;
   var audit = { rows: [], next: null, older: false };
+  var updatesInfo = null;
+  var route = "";
+  var polling = false;
+  var memo = {};
+  var dirty = {};
+  var tilesSeen = "";
 
   function t(key, values) {
     var text = (T[lang] && T[lang][key]) || T.en[key] || key;
     if (values) Object.keys(values).forEach(function (name) { text = text.split("{" + name + "}").join(String(values[name])); });
     return text;
   }
+  function pick(group, key, values) {
+    var table = t(group); var text = (table && table[key]) || "";
+    if (values) Object.keys(values).forEach(function (name) { text = text.split("{" + name + "}").join(String(values[name])); });
+    return text;
+  }
   function $(id) { return document.getElementById(id); }
   function el(tag, cls, text) { var node = document.createElement(tag); if (cls) node.className = cls; if (text !== undefined) node.textContent = text; return node; }
   function when(iso) { if (!iso) return "—"; var date = new Date(iso); return isNaN(date.getTime()) ? "—" : date.toLocaleString(lang === "it" ? "it-IT" : "en-GB"); }
-  function toast(text) { var box = $("toast"); box.textContent = text; box.classList.remove("hidden"); clearTimeout(toast.timer); toast.timer = setTimeout(function () { box.classList.add("hidden"); }, 4000); }
+  function toast(text) { var box = $("toast"); box.textContent = text; box.classList.remove("hidden"); clearTimeout(toast.timer); toast.timer = setTimeout(function () { box.classList.add("hidden"); }, 5000); }
+  function fail(error) { toast(error && error.message ? error.message : String(error)); }
+  /** What a poll asks for again and finds unchanged is not drawn again: a keyboard that is on a button of a table does not lose it every twenty seconds. */
+  function unchanged(key, data, quiet) {
+    var text = JSON.stringify(data);
+    if (quiet && memo[key] === text) return true;
+    memo[key] = text; return false;
+  }
+
   function applyTexts() {
     document.documentElement.lang = lang;
     document.querySelectorAll("[data-i18n]").forEach(function (node) { node.textContent = t(node.getAttribute("data-i18n")); });
     document.querySelectorAll("[data-i18n-placeholder]").forEach(function (node) { node.setAttribute("placeholder", t(node.getAttribute("data-i18n-placeholder"))); });
     $("lang").textContent = t("lang");
     $("lang").setAttribute("aria-label", t("langSwitch", { code: t("lang"), language: t("langOther") }));
+    $("nav").setAttribute("aria-label", t("navLabel"));
+    tilesSeen = "";
     if (state) render();
     if (mcp) renderMcp();
     renderAudit();
     renderViews();
+    renderDevices();
+    renderChrome();
+    updateTitle();
   }
-  function call(method, path, body) {
+
+  // ---- talking to the server
+  function send(method, path, body) {
     var headers = { "content-type": "application/json" };
     if (method === "POST") headers["x-csrf-token"] = csrf;
     return fetch(path, { method: method, headers: headers, credentials: "same-origin", body: body === undefined ? undefined : JSON.stringify(body) }).then(function (response) {
       return response.text().then(function (text) {
         var data = {}; try { data = text ? JSON.parse(text) : {}; } catch (error) { data = {}; }
-        if (response.status === 401 && path !== "/admin/api/login") { signOut(t("sessionExpired")); throw new Error(t("sessionExpired")); }
-        if (!response.ok) throw new Error(data.message || ("HTTP " + response.status));
-        return data;
+        return { status: response.status, ok: response.ok, data: data };
       });
     });
   }
-  function fail(error) { toast(error && error.message ? error.message : String(error)); }
+  /** A request that finds the session over signs in again with the device's token, if this device is remembered, and goes on; if not, or if the token is refused, the sign-in is shown. */
+  function recover(method, path, body) {
+    return silentLogin().then(function () { return call(method, path, body, true); }, function (error) { if (error && error.rejected) signOut(error.message); throw error; });
+  }
+  function call(method, path, body, again) {
+    return send(method, path, body).then(function (answer) {
+      if (path === "/admin/api/login") { if (!answer.ok) throw new Error(answer.data.message || ("HTTP " + answer.status)); return answer.data; }
+      if (answer.status === 401 && !again) return recover(method, path, body);
+      if (answer.status === 403 && answer.data.code === "csrf" && !again) {
+        // Another tab signed in since, and the cookie is of that session: ask for the token that goes with it.
+        return send("GET", "/admin/api/session").then(function (fresh) {
+          if (fresh.ok && typeof fresh.data.csrf === "string") { csrf = fresh.data.csrf; sessionStorage.setItem("narrarium-admin-csrf", csrf); return call(method, path, body, true); }
+          if (fresh.status === 401) return recover(method, path, body);
+          throw new Error(answer.data.message || "HTTP 403");
+        });
+      }
+      if (answer.status === 401) { signOut(t("sessionExpired")); throw new Error(t("sessionExpired")); }
+      if (!answer.ok) throw new Error(answer.data.message || ("HTTP " + answer.status));
+      return answer.data;
+    });
+  }
+
+  // ---- signing in and out
+  /** A mark (no secret in it) that this browser has been in: a page that opens asks the server whether the session is still there only if it was. */
+  function markSeen(yes) { try { if (yes) localStorage.setItem(SEEN_KEY, "1"); else localStorage.removeItem(SEEN_KEY); } catch (error) { /* a browser that keeps nothing just asks for the code */ } }
+  function wasSeen() { try { return localStorage.getItem(SEEN_KEY) === "1"; } catch (error) { return false; } }
   function signOut(message) {
-    csrf = ""; state = null; sessionStorage.removeItem("narrarium-admin-csrf");
-    $("main-view").classList.add("hidden"); $("login-view").classList.remove("hidden"); $("logout").classList.add("hidden"); $("pills").textContent = ""; $("subtitle").textContent = "";
+    var wasIn = !$("main-view").classList.contains("hidden");
+    csrf = ""; signed = false; state = null; mcp = null; updatesInfo = null; pairCode = null; audit = { rows: [], next: null, older: false }; route = ""; memo = {}; dirty = {}; tilesSeen = "";
+    sessionStorage.removeItem("narrarium-admin-csrf"); markSeen(false);
+    $("main-view").classList.add("hidden"); $("boot").classList.add("hidden"); $("login-view").classList.remove("hidden");
+    $("logout").classList.add("hidden"); $("logout-note").classList.add("hidden"); $("menu-button").classList.add("hidden");
+    $("layout").classList.remove("signed"); closeMenu();
+    $("pills").textContent = ""; $("subtitle").textContent = ""; $("ov-tiles").textContent = ""; $("ov-books-list").textContent = "";
+    // What was on the pages goes with the session: nothing of the server (not a token that was shown once) stays in a page that asks for the code.
+    ["client-rows", "audit-rows", "mcp-books", "passkey-rows", "ai-pending", "ai-approved", "facts", "spend-facts", "tunnel-facts", "pairing-box", "token-value", "passkey-link-value"].forEach(function (id) { $(id).textContent = ""; });
+    $("token-box").classList.add("hidden"); $("passkey-link-box").classList.add("hidden");
     if (timer) { clearInterval(timer); timer = null; }
-    resetViews();
+    resetViews(); resetDevices(); renderBadges();
     $("login-error").textContent = message || "";
+    updateTitle();
+    if (wasIn && $("login-title").focus) $("login-title").focus();
   }
   function signedIn() {
-    $("login-view").classList.add("hidden"); $("main-view").classList.remove("hidden"); $("logout").classList.remove("hidden"); $("login-error").textContent = "";
-    refresh(); loadUpdates(); loadMcp(); loadAudit(false); loadViews();
-    if (!timer) timer = setInterval(function () { if (document.visibilityState === "visible") { refresh(true); loadMcp(); if (!audit.older) loadAudit(false); loadViews(); } }, 20000);
+    signed = true; markSeen(true);
+    $("login-view").classList.add("hidden"); $("boot").classList.add("hidden"); $("main-view").classList.remove("hidden"); $("login-error").textContent = "";
+    $("layout").classList.add("signed"); $("logout").classList.remove("hidden"); $("menu-button").classList.remove("hidden");
+    showLoading(LOADING);
+    show(routeOf(location.hash) || "overview", false);
+    refresh(); loadUpdates(); loadMcp(); loadAudit(false); loadViews(); loadDevices();
+    renderChrome();
+    if (!timer) timer = setInterval(poll, 20000);
   }
+  function poll() {
+    if (document.visibilityState !== "visible") return;
+    polling = true;
+    try { refresh(true); loadMcp(); if (!audit.older) loadAudit(false); loadViews(); loadDevices(); } finally { polling = false; }
+  }
+
+  // ---- pages: one at a time, each at an address of its own
+  function routeOf(hash) { var match = /^#\/([a-z]+)\/?$/.exec(hash || ""); return match && ROUTES.indexOf(match[1]) >= 0 ? match[1] : ""; }
+  function updateTitle() { document.title = t(route && !$("main-view").classList.contains("hidden") ? PAGE_TITLES[route] : "loginTitle") + " · " + t("title"); }
+  function closeMenu() { $("layout").classList.remove("nav-open"); $("menu-button").setAttribute("aria-expanded", "false"); }
+  /** What a page shows is read again when it is opened, so a page that was left a while ago is not stale. */
+  function visit(id) {
+    if (id === "overview") { refresh(true); loadHealth(); loadRuns(); loadRisks(); }
+    else if (id === "books") loadRuns();
+    else if (id === "updates") { loadUpdates(); loadHistory(); }
+    else if (id === "clients" || id === "ai" || id === "network") refresh(true);
+    else if (id === "apps") { loadMcp(); if (!audit.older) loadAudit(false); }
+    else if (id === "log") { if (!actionLog.older) loadLog(false); }
+    else if (id === "security") { loadRisks(); loadDevices(); }
+  }
+  function show(next, moved) {
+    route = next;
+    // The page that opens with no address in the URL gets its own entry, so that going back from the next one comes back to it.
+    if (!moved && location.hash !== "#/" + next && typeof history !== "undefined" && history.replaceState) history.replaceState(null, "", "#/" + next);
+    ROUTES.forEach(function (id) {
+      var link = $("nav-" + id);
+      if (id === next) { $("page-" + id).classList.remove("hidden"); link.setAttribute("aria-current", "page"); }
+      else { $("page-" + id).classList.add("hidden"); link.removeAttribute("aria-current"); }
+    });
+    closeMenu(); updateTitle();
+    if (typeof window.scrollTo === "function") window.scrollTo(0, 0);
+    if (moved) { var heading = $("title-" + next); if (heading && heading.focus) heading.focus(); visit(next); }
+  }
+  function onHash() {
+    if ($("main-view").classList.contains("hidden")) return;
+    var next = routeOf(location.hash) || (location.hash ? "" : "overview");
+    if (next && next !== route) show(next, true);
+  }
+
+  // ---- what the navigation and the first page say at a glance
+  function setCount(id, count, key, tone) {
+    var node = $("badge-" + id); node.textContent = "";
+    if (!count) { node.className = "count hidden"; return; }
+    node.className = "count " + tone;
+    var number = el("span", "", String(count)); number.setAttribute("aria-hidden", "true");
+    node.appendChild(number); node.appendChild(el("span", "sr-only", plural(key, count, { n: count })));
+  }
+  function updateAvailable(info) { return !!info && (info.available === true || info.canRequest === true); }
+  function renderBadges() {
+    var attention = health && health.attention ? health.attention.length : 0;
+    var running = runs && typeof runs.running === "number" ? runs.running : 0;
+    var review = risks && risks.counts ? (risks.counts.high || 0) + (risks.counts.medium || 0) : 0;
+    var waiting = state && state.pairing && state.pairing.requested && !state.pairing.approved ? 1 : 0;
+    var pending = state && state.pendingAiBases ? state.pendingAiBases.length : 0;
+    setCount("overview", attention, "badgeAttention", "warn");
+    setCount("books", running, "badgeRunning", "ok");
+    setCount("updates", updateAvailable(updatesInfo) ? 1 : 0, "badgeUpdate", "info");
+    setCount("clients", waiting, "badgeClient", "warn");
+    setCount("ai", pending, "badgeAi", "warn");
+    setCount("security", review, "badgeRisks", risks && risks.counts && risks.counts.high ? "bad" : "warn");
+  }
+  function tile(label, value, sub, href) {
+    var node = el(href ? "a" : "div", "tile"); if (href) node.setAttribute("href", href);
+    node.appendChild(el("span", "tile-label", label));
+    var big = el("span", "tile-value"); if (typeof value === "string") big.textContent = value; else big.appendChild(value);
+    node.appendChild(big);
+    if (sub) node.appendChild(el("span", "tile-sub", sub));
+    return node;
+  }
+  function renderTiles() {
+    var box = $("ov-tiles");
+    if (!state) { box.textContent = ""; return; }
+    var made = [];
+    var attention = health && health.attention ? health.attention : null;
+    var healthValue = !health ? t("loading") : attention.length ? badge(plural("badgeAttention", attention.length, { n: attention.length }), "warn", "!") : badge(t("healthOk"), "ok", "✓");
+    made.push(["health", t("tileHealth"), healthValue, attention && attention.length ? attention.map(function (id) { return pick("healthNames", id) || id; }).join(", ") : "", ""]);
+    var total = runs ? runs.total : state.books.length;
+    made.push(["books", t("tileBooks"), runs ? t("tileBooksValue", fill({ running: runs.running, max: runs.maxConcurrentRuns })) : t("loading"), runs ? (total ? plural("tileBooksSub", total, { total: total }) : t("tileBooksNone")) : "", "#/books"]);
+    var news = !updatesInfo ? t("loading") : updateAvailable(updatesInfo) && updatesInfo.latestVersion ? badge(t("tileUpdateAvailable", { v: updatesInfo.latestVersion }), "info", "↑") : updatesInfo.reason === "up_to_date" ? badge(t("tileUpToDate"), "ok", "✓") : badge(t("tileUpdateUnknown"), "off", "?");
+    made.push(["updates", t("tileUpdates"), news, updatesInfo && updatesInfo.installedVersion ? t("tileInstalled", { v: updatesInfo.installedVersion }) : "", "#/updates"]);
+    var counts = risks && risks.counts ? risks.counts : null; var review = counts ? (counts.high || 0) + (counts.medium || 0) : 0;
+    var parts = []; if (counts) ["high", "medium", "note"].forEach(function (level) { if (counts[level]) parts.push(many("riskCounts", level, counts[level], { n: counts[level] })); });
+    var riskValue = !counts ? t("loading") : review ? badge(plural("tileRisksSome", review, { n: review }), counts.high ? "bad" : "warn", counts.high ? "✕" : "!") : badge(t("tileRisksNone"), "ok", "✓");
+    made.push(["security", t("tileSecurity"), riskValue, parts.join(", "), "#/security"]);
+    var signature = JSON.stringify(made.map(function (entry) { return [entry[0], typeof entry[2] === "string" ? entry[2] : entry[2].textContent, entry[3], entry[4]]; })) + lang;
+    if (signature === tilesSeen) return;
+    tilesSeen = signature; box.textContent = "";
+    made.forEach(function (entry) { box.appendChild(tile(entry[1], entry[2], entry[3], entry[4] || "")); });
+  }
+  function renderGlance() {
+    var list = $("ov-books-list"); var note = $("ov-books-note"); list.textContent = ""; note.textContent = "";
+    if (!state) return;
+    if (!runs) { list.appendChild(el("li", "loading", t("loading"))); return; }
+    var books = runs.books || [];
+    if (!books.length) { list.appendChild(el("li", "empty-state", t("noBooks"))); return; }
+    books.slice(0, 5).forEach(function (book) {
+      var item = el("li"); item.appendChild(el("span", "glance-title", book.title));
+      var tone = RUN_TONE[book.state] || ["off", "–"]; item.appendChild(badge(pick("runsStates", book.state) || book.state, tone[0], tone[1]));
+      if (book.chapter) item.appendChild(el("span", "muted small", t("runsChapter", { current: book.chapter.current, total: book.chapter.total })));
+      list.appendChild(item);
+    });
+    if (runs.total > 5) note.textContent = t("ovMore", { n: runs.total - 5 });
+  }
+  function renderChrome() {
+    renderBadges(); renderTiles(); renderGlance();
+    var remembered = !$("main-view").classList.contains("hidden") && !!readDevice();
+    if (remembered) $("logout-note").classList.remove("hidden"); else $("logout-note").classList.add("hidden");
+  }
+
   function editing() { var active = document.activeElement; return active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA") && active.closest("form"); }
   function refresh(quiet) {
-    return call("GET", "/admin/api/status").then(function (data) { state = data; render(quiet); }).catch(function (error) { if (!quiet) fail(error); });
+    return call("GET", "/admin/api/status").then(function (data) { if (unchanged("status", data, quiet)) return; state = data; render(quiet); }).catch(function (error) { if (!quiet) fail(error); });
   }
   function fact(list, label, value, copy, shown) {
     list.appendChild(el("dt", "", label));
@@ -377,7 +413,7 @@ export const ADMIN_JS = String.raw`"use strict";
     fact(facts, t("supervisor"), s.supervised ? t("supervisedYes") : t("supervisedNo"));
     renderPairing(); renderClients(); renderAi(); renderSpend(quiet);
     if (!quiet || !editing()) renderNetwork();
-    renderTunnel();
+    renderTunnel(); renderChrome();
   }
   function sourceName(source) { return !source ? t("unknownSource") : source === "local" ? t("thisComputer") : source; }
   function renderPairing() {
@@ -398,16 +434,17 @@ export const ADMIN_JS = String.raw`"use strict";
   }
   function renderClients() {
     var body = $("client-rows"); body.textContent = "";
+    if (!state.clients.length) emptyRow(body, 7, t("clientsNone"));
     state.clients.slice().reverse().forEach(function (client) {
       var tr = trow(); if (client.revoked) tr.className = "revoked"; var named = rowHead(); named.textContent = client.label; tr.appendChild(named);
-      var scopes = tcell("permissions"); client.scopes.forEach(function (scope) { scopes.appendChild(el("span", "chip" + (scope === "update" ? " update" : ""), scope)); }); tr.appendChild(scopes);
+      var scopes = tcell("permissions", "wide"); client.scopes.forEach(function (scope) { scopes.appendChild(el("span", "chip" + (scope === "update" ? " update" : ""), scope)); }); tr.appendChild(scopes);
       var where = tcell("source"); where.appendChild(el("div", "", sourceName(client.source)));
       if (client.userAgent) { var agent = el("div", "muted small agent", client.userAgent); agent.title = client.userAgent; where.appendChild(agent); }
       tr.appendChild(where);
       var code = tcell("verification"); code.textContent = client.verification ? client.verification : "—"; tr.appendChild(code);
       var made = tcell("created"); made.textContent = when(client.createdAt); tr.appendChild(made);
       var seen = tcell("lastSeen"); seen.textContent = client.revoked ? t("revoked") : when(client.lastSeenAt); tr.appendChild(seen);
-      var actions = tcell("colActions");
+      var actions = tcell("colActions", "wide");
       if (!client.revoked) {
         var regenerate = el("button", "ghost small", t("regenerate")); regenerate.type = "button";
         regenerate.addEventListener("click", function () { if (!confirm(t("regenerateConfirm"))) return; call("POST", "/admin/api/token", { label: client.label, scopes: client.scopes, replaceId: client.id }).then(function (result) { showToken(result.token); refresh(); }, fail); });
@@ -443,13 +480,14 @@ export const ADMIN_JS = String.raw`"use strict";
     fact(facts, t("spendToday", { day: today.day || "" }), used);
     if (s.warning) fact(facts, "!", s.warning);
     $("spend-toggle").textContent = s.paused ? t("spendResume") : t("spendPause");
-    if (!quiet || !editing()) {
+    if (!dirty["spend-form"] && (!quiet || !editing())) {
       var limits = s.limits || {};
       $("spend-tokens-day").value = String(limits.maxTokensPerDay || 0); $("spend-cost-day").value = String(limits.maxCostPerDay || 0);
       $("spend-tokens-run").value = String(limits.maxTokensPerRun || 0); $("spend-cost-run").value = String(limits.maxCostPerRun || 0);
     }
   }
   function renderNetwork() {
+    if (dirty["network-form"]) return;
     $("net-ai").value = state.allowedAiBases.join("\n"); $("net-origins").value = state.origins.join("\n");
     $("net-default-origins").textContent = t("defaults", { list: state.defaultOrigins.join(", ") });
     $("net-public").value = state.publicUrl || ""; $("net-admin").value = state.adminPublicUrl || ""; $("net-remote-admin").checked = !!state.allowRemoteAdmin;
@@ -464,11 +502,14 @@ export const ADMIN_JS = String.raw`"use strict";
     if (tunnel.lastError) fact(facts, "!", tunnel.lastError);
   }
   function loadMcp() {
-    return call("GET", "/admin/api/mcp").then(function (data) { mcp = data; renderMcp(); }, function () {});
+    var quiet = polling;
+    return call("GET", "/admin/api/mcp").then(function (data) { if (unchanged("mcp", data, quiet)) return; mcp = data; renderMcp(); }, function () {});
   }
   function loadAudit(older) {
+    var quiet = polling;
     var query = "?limit=20" + (older && audit.next ? "&before=" + audit.next : "");
     return call("GET", "/admin/api/mcp/audit" + query).then(function (page) {
+      if (!older && unchanged("audit", page, quiet)) return;
       audit.rows = older ? audit.rows.concat(page.entries) : page.entries; audit.next = page.nextBefore; if (older) audit.older = true; renderAudit();
     }, function () {});
   }
@@ -538,14 +579,10 @@ export const ADMIN_JS = String.raw`"use strict";
     });
     if (audit.next === null) $("audit-more").classList.add("hidden"); else $("audit-more").classList.remove("hidden");
   }
-  function pick(group, key, values) {
-    var table = t(group); var text = (table && table[key]) || "";
-    if (values) Object.keys(values).forEach(function (name) { text = text.split("{" + name + "}").join(String(values[name])); });
-    return text;
-  }
   function loadUpdates() {
     $("updates-message").textContent = t("checking"); $("updates-last").textContent = ""; $("update-now").classList.add("hidden");
     return call("GET", "/admin/api/updates").then(function (info) {
+      updatesInfo = info; renderChrome();
       var reason = info.canRequest ? "available" : info.reason;
       var text = (reason && pick("reasons", reason, { v: info.latestVersion || "" })) || info.message;
       $("updates-message").textContent = t("installed") + ": " + info.installedVersion + (info.latestVersion ? " · " + t("latest") + ": " + info.latestVersion : "") + " — " + text;
@@ -557,40 +594,63 @@ export const ADMIN_JS = String.raw`"use strict";
         button.textContent = t("updateTo", { v: info.latestVersion }); button.classList.remove("hidden");
         button.onclick = function () { if (!confirm(t("updateConfirm", { v: info.latestVersion }))) return; call("POST", "/admin/api/updates", { version: info.latestVersion, installedVersion: info.installedVersion }).then(function () { toast(t("updateRequested")); refresh(); loadUpdates(); }, fail); };
       } else button.classList.add("hidden");
-    }).catch(function () { $("updates-message").textContent = t("updatesFailed"); });
+    }).catch(function () { updatesInfo = null; $("updates-message").textContent = t("updatesFailed"); renderChrome(); });
   }
 ${VIEWS_JS}
+${DEVICES_JS}
   function lines(id) { return $(id).value.split(/\r?\n/).map(function (line) { return line.trim(); }).filter(Boolean); }
+  function copyText(id) { navigator.clipboard.writeText($(id).textContent).then(function () { toast(t("copied")); }, fail); }
   document.addEventListener("DOMContentLoaded", function () {
     applyTexts();
     bindViews();
+    bindDevices();
     $("lang").addEventListener("click", function () { lang = lang === "it" ? "en" : "it"; localStorage.setItem("narrarium-admin-lang", lang); applyTexts(); if (state) loadUpdates(); });
+    $("skip").addEventListener("click", function (event) { event.preventDefault(); $("main").focus(); });
+    $("menu-button").addEventListener("click", function () {
+      var open = !$("layout").classList.contains("nav-open");
+      if (open) $("layout").classList.add("nav-open"); else $("layout").classList.remove("nav-open");
+      $("menu-button").setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    ROUTES.forEach(function (id) { $("nav-" + id).addEventListener("click", closeMenu); });
+    document.addEventListener("keydown", function (event) { if (event.key === "Escape" && $("layout").classList.contains("nav-open")) { closeMenu(); $("menu-button").focus(); } });
+    document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible" && signed) poll(); });
+    if (typeof window.addEventListener === "function") window.addEventListener("hashchange", onHash);
     $("login-form").addEventListener("submit", function (event) {
       event.preventDefault();
-      call("POST", "/admin/api/login", { code: $("code").value }).then(function (data) { csrf = data.csrf; sessionStorage.setItem("narrarium-admin-csrf", csrf); $("code").value = ""; $("new-code-box").classList.add("hidden"); signedIn(); }, function (error) { $("login-error").textContent = error.message; });
+      var remember = $("remember").checked;
+      call("POST", "/admin/api/login", { code: $("code").value, remember: remember }).then(function (data) {
+        csrf = data.csrf; sessionStorage.setItem("narrarium-admin-csrf", csrf); $("code").value = ""; $("remember").checked = false; $("new-code-box").classList.add("hidden");
+        if (data.device && data.device.token) { saveDevice(data.device); toast(t("deviceRemembered")); }
+        else if (data.deviceLimit) toast(t("deviceLimit", { n: MAX_DEVICES }));
+        signedIn();
+      }, function (error) { $("login-error").textContent = error.message; });
     });
-    $("logout").addEventListener("click", function () { call("POST", "/admin/api/logout", {}).catch(function () {}).then(function () { signOut(""); }); });
+    $("logout").addEventListener("click", function () {
+      var device = readDevice();
+      call("POST", "/admin/api/logout", device ? { deviceId: device.id } : {}).catch(function () {}).then(function () { forgetDevice(); signOut(""); });
+    });
     $("updates-check").addEventListener("click", function () { loadUpdates(); });
     $("pairing-start").addEventListener("click", function () { call("POST", "/admin/api/pairing", {}).then(function (result) { pairCode = result; refresh(); }, fail); });
     $("passkey-link").addEventListener("click", function () {
       call("POST", "/admin/api/passkeys/link", {}).then(function (result) { $("passkey-link-value").textContent = result.url; $("passkey-link-box").classList.remove("hidden"); }, fail);
     });
-    $("passkey-link-copy").addEventListener("click", function () { navigator.clipboard.writeText($("passkey-link-value").textContent).then(function () { toast(t("copied")); }, fail); });
+    $("passkey-link-copy").addEventListener("click", function () { copyText("passkey-link-value"); });
     $("audit-more").addEventListener("click", function () { loadAudit(true); });
     $("token-form").addEventListener("submit", function (event) {
       event.preventDefault();
       var scopes = ["read", "write", "run"]; if ($("token-update").checked) scopes.push("update");
       call("POST", "/admin/api/token", { label: $("token-label").value, scopes: scopes }).then(function (result) { showToken(result.token); $("token-label").value = ""; $("token-update").checked = false; refresh(); }, fail);
     });
-    $("token-copy").addEventListener("click", function () { navigator.clipboard.writeText($("token-value").textContent).then(function () { toast(t("copied")); }, fail); });
+    $("token-copy").addEventListener("click", function () { copyText("token-value"); });
+    ["network-form", "spend-form"].forEach(function (id) { $(id).addEventListener("input", function () { dirty[id] = true; }); });
     $("network-form").addEventListener("submit", function (event) {
       event.preventDefault();
-      call("POST", "/admin/api/network", { allowedAiBases: lines("net-ai"), origins: lines("net-origins"), publicUrl: $("net-public").value.trim(), adminPublicUrl: $("net-admin").value.trim(), allowRemoteAdmin: $("net-remote-admin").checked }).then(function () { document.activeElement && document.activeElement.blur(); toast(t("saved")); refresh(); }, fail);
+      call("POST", "/admin/api/network", { allowedAiBases: lines("net-ai"), origins: lines("net-origins"), publicUrl: $("net-public").value.trim(), adminPublicUrl: $("net-admin").value.trim(), allowRemoteAdmin: $("net-remote-admin").checked }).then(function () { dirty["network-form"] = false; document.activeElement && document.activeElement.blur && document.activeElement.blur(); toast(t("saved")); refresh(); }, fail);
     });
     $("spend-form").addEventListener("submit", function (event) {
       event.preventDefault();
       function amount(id) { var text = $(id).value.trim(); return text === "" ? 0 : Number(text); }
-      call("POST", "/admin/api/spend", { maxTokensPerDay: amount("spend-tokens-day"), maxCostPerDay: amount("spend-cost-day"), maxTokensPerRun: amount("spend-tokens-run"), maxCostPerRun: amount("spend-cost-run") }).then(function () { document.activeElement && document.activeElement.blur && document.activeElement.blur(); toast(t("saved")); refresh(); }, fail);
+      call("POST", "/admin/api/spend", { maxTokensPerDay: amount("spend-tokens-day"), maxCostPerDay: amount("spend-cost-day"), maxTokensPerRun: amount("spend-tokens-run"), maxCostPerRun: amount("spend-cost-run") }).then(function () { dirty["spend-form"] = false; document.activeElement && document.activeElement.blur && document.activeElement.blur(); toast(t("saved")); refresh(); }, fail);
     });
     $("spend-toggle").addEventListener("click", function () {
       var pause = !(state && state.spend && state.spend.paused);
@@ -606,14 +666,18 @@ ${VIEWS_JS}
     $("code-form").addEventListener("submit", function (event) {
       event.preventDefault();
       if ($("code-1").value !== $("code-2").value) { toast(t("codeMismatch")); return; }
-      call("POST", "/admin/api/admin-code/set", { code: $("code-1").value }).then(function () { $("code-1").value = ""; $("code-2").value = ""; signOut(""); }, fail);
+      call("POST", "/admin/api/admin-code/set", { code: $("code-1").value }).then(function () { $("code-1").value = ""; $("code-2").value = ""; forgetDevice(); signOut(""); }, fail);
     });
     $("code-rotate").addEventListener("click", function () {
       if (!confirm(t("rotateConfirm"))) return;
-      call("POST", "/admin/api/admin-code/rotate", {}).then(function (result) { signOut(""); $("new-code").textContent = result.code; $("new-code-box").classList.remove("hidden"); }, fail);
+      call("POST", "/admin/api/admin-code/rotate", {}).then(function (result) { forgetDevice(); signOut(""); $("new-code").textContent = result.code; $("new-code-box").classList.remove("hidden"); }, fail);
     });
+    // A page that opens finds out whether it is in already: with the token it kept for this tab, with the cookie of a session that another tab made, or with the key of this device.
     csrf = sessionStorage.getItem("narrarium-admin-csrf") || "";
-    if (csrf) call("GET", "/admin/api/status").then(function (data) { state = data; signedIn(); }, function () { signOut(""); });
+    if (!csrf && !readDevice() && !wasSeen()) { signOut(""); return; }
+    $("login-view").classList.add("hidden"); $("boot").classList.remove("hidden");
+    var opening = csrf || readDevice() ? call("GET", "/admin/api/status") : send("GET", "/admin/api/status").then(function (answer) { if (!answer.ok) throw new Error(""); return answer.data; });
+    opening.then(function (data) { state = data; signedIn(); }, function (error) { if (!error || !error.rejected) signOut(""); });
   });
 })();
 `;

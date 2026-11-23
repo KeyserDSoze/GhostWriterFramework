@@ -59,6 +59,12 @@ function fakeBrowser(html, script, routes) {
       return this.attributes[name] ?? null;
     }
 
+    removeAttribute(name) {
+      delete this.attributes[name];
+    }
+
+    focus() {}
+
     closest() {
       return null;
     }
@@ -121,7 +127,7 @@ function fakeBrowser(html, script, routes) {
   const sandbox = {
     document,
     fetch,
-    location: { origin: "http://127.0.0.1:24243" },
+    location: { origin: "http://127.0.0.1:24243", hash: "" },
     localStorage: store(),
     sessionStorage,
     navigator: { language: "en-GB", clipboard: { writeText: async () => undefined } },
@@ -142,6 +148,7 @@ function fakeBrowser(html, script, routes) {
     setTimeout,
     clearTimeout,
   };
+  sandbox.window = sandbox;
   vm.runInNewContext(script, sandbox, { filename: "admin.js" });
   for (const listener of loaded) listener();
   return { $: (id) => byId.get(id), requests, confirms, Element };

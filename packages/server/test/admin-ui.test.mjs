@@ -37,20 +37,50 @@ const sectionOf = (html, id) => {
 // What the page is made of
 // ---------------------------------------------------------------------------------------------
 
-test("P12 panel: the sections are in the order a person reads them: what to know first, then how the server is, the books, and the rest", async () => {
+/** The pages of the panel, in the order of the navigation, with the sections each holds (what a person reads on that page, top to bottom). */
+const PAGE_SECTIONS = {
+  overview: ["health", "ov-books", "overview"],
+  books: ["runs"],
+  updates: ["updates", "history"],
+  clients: ["pairing", "clients"],
+  apps: ["mcp", "passkeys", "audit"],
+  ai: ["ai", "spend"],
+  network: ["network", "cloudflare"],
+  log: ["log"],
+  security: ["risks", "devices", "admin-code"],
+};
+
+test("P14 panel: the panel is nine pages, each with its own address, its own heading and the sections that belong together, and every function of the old page is still there", async () => {
   await withServer(async (server) => {
     const { html } = await pageOf(server);
-    const order = ["risks", "health", "runs", "overview", "updates", "pairing", "clients", "ai", "spend", "network", "cloudflare", "mcp", "log", "admin-code"];
-    const at = order.map((id) => html.indexOf(`id="${id}"`));
-    assert.ok(at.every((index) => index > 0), `every section is there: ${JSON.stringify(Object.fromEntries(order.map((id, i) => [id, at[i]])))}`);
-    assert.deepEqual([...at].sort((left, right) => left - right), at, "in this order");
-    assert.match(html, /<section class="card wide" id="mcp">/, "the MCP section as it was");
-    for (const id of ["risks", "health", "runs", "log"]) assert.match(sectionOf(html, id), /<h2[^>]*data-i18n="[A-Za-z]+"/, `#${id} has a heading that is translated`);
-    // The elements the script draws into.
-    for (const id of ["risk-summary", "risk-list", "risk-notes", "risk-notes-summary", "risk-note-list", "health-summary", "health-rows", "health-refresh", "health-note", "runs-summary", "runs-today", "runs-rows", "runs-more", "runs-note", "history-rows", "history-note", "log-type", "log-result", "log-rows", "log-more", "log-note"]) {
+    const pages = Object.keys(PAGE_SECTIONS);
+    const at = pages.map((id) => html.indexOf(`id="page-${id}"`));
+    assert.ok(at.every((index) => index > 0), `every page is there: ${JSON.stringify(at)}`);
+    assert.deepEqual([...at].sort((left, right) => left - right), at, "in the order of the navigation");
+    for (const [id, sections] of Object.entries(PAGE_SECTIONS)) {
+      const start = html.indexOf(`id="page-${id}"`);
+      const end = at[pages.indexOf(id) + 1] ?? html.indexOf("</main>");
+      const page = html.slice(start, end);
+      assert.equal((page.match(/<h1\b/g) ?? []).length, 1, `${id}: one h1`);
+      assert.match(page, new RegExp(`<h1 id="title-${id}" tabindex="-1" data-i18n="nav[A-Za-z]+"`), `${id}: the heading can take the focus and is translated`);
+      const places = sections.map((section) => page.indexOf(`id="${section}"`));
+      assert.ok(places.every((index) => index > 0), `${id}: its sections are there: ${JSON.stringify(places)}`);
+      assert.deepEqual([...places].sort((left, right) => left - right), places, `${id}: in this order`);
+      assert.match(page, /<section class="panel/, `${id}: a card only where it groups something`);
+    }
+    for (const id of ["health", "runs", "log", "risks", "mcp", "devices"]) assert.match(sectionOf(html, id), /<h2[^>]*data-i18n="[A-Za-z]+"/, `#${id} has a heading that is translated`);
+    // The elements the script draws into, every one of them still in the page.
+    for (const id of ["risk-summary", "risk-list", "risk-notes", "risk-notes-summary", "risk-note-list", "health-summary", "health-rows", "health-refresh", "health-note", "runs-summary", "runs-today", "runs-rows", "runs-more", "runs-note", "history-rows", "history-note", "log-type", "log-result", "log-rows", "log-more", "log-note", "facts", "pills", "client-rows", "token-form", "pairing-box", "ai-pending", "ai-approved", "spend-form", "spend-toggle", "network-form", "net-ai", "tunnel-form", "mcp-books", "passkey-rows", "audit-rows", "audit-more", "code-form", "device-rows", "devices-revoke-all", "ov-tiles", "ov-books-list", "login-form", "code", "remember", "login-error", "lang", "logout", "main-view", "login-view", "toast", "skip", "main", "nav", "menu-button"]) {
       assert.ok(html.includes(`id="${id}"`), `#${id} is in the page`);
     }
     assert.equal(html.includes('id="book-rows"'), false, "the list of books is the table of the books in progress now");
+    assert.equal((html.match(/<main\b/g) ?? []).length, 1, "one main");
+    assert.equal((html.match(/<nav\b/g) ?? []).length, 1, "one navigation");
+    assert.match(html, /<nav class="nav" id="nav" aria-label="[^"]+">/, "which has a name");
+    assert.match(html, /<a class="skip" id="skip" href="#main"/, "and a link to skip it comes first");
+    assert.ok(html.indexOf('class="skip"') < html.indexOf("<header"), "before anything else");
+    const links = [...html.matchAll(/<a href="#\/([a-z]+)" id="nav-([a-z]+)" data-route="([a-z]+)"/g)].map((match) => match[1]);
+    assert.deepEqual(links, pages, "each page is reached from the navigation, at its own address");
   });
 });
 
@@ -58,13 +88,13 @@ test("P12 panel: every table has headers with a scope, and a table that scrolls 
   await withServer(async (server) => {
     const { html } = await pageOf(server);
     const tables = html.match(/<table\b[\s\S]*?<\/table>/g) ?? [];
-    assert.ok(tables.length >= 6, `the tables of the page: ${tables.length}`);
+    assert.equal(tables.length, 7, `the tables of the page: health, books in progress, history of the updates, action log, clients, calls of the MCP and remembered devices`);
     for (const table of tables) {
       assert.match(table, /<table[^>]*aria-labelledby="[a-z-]+"/, "a table is named by its heading");
       for (const header of table.match(/<th\b[^>]*>/g) ?? []) assert.match(header, /scope="col"/, `a header has a scope: ${header}`);
       assert.doesNotMatch(table, /<th\b[^>]*scope="col"[^>]*><\/th>/, "and a header that is empty has no place in a table");
     }
-    const wrappers = html.match(/<div class="table-wrap"[^>]*>/g) ?? [];
+    const wrappers = html.match(/<div class="table-wrap(?: long)?"[^>]*>/g) ?? [];
     assert.equal(wrappers.length, tables.length, "every table is in a wrapper");
     for (const wrapper of wrappers) {
       assert.match(wrapper, /tabindex="0"/, `a scrolling region can be focused: ${wrapper}`);
@@ -79,21 +109,24 @@ test("P12 panel: every table has headers with a scope, and a table that scrolls 
 test("P12 panel: on a phone the tables of the new views become one card for each row; the headers stay for a screen reader, and the table keeps its roles whatever the style does to it", async () => {
   await withServer(async (server) => {
     const { html, css } = await pageOf(server);
-    const stacked = (html.match(/<table\b[^>]*class="stack"[^>]*>[\s\S]*?<\/table>/g) ?? []);
-    assert.equal(stacked.length, 6, "health, books in progress, history of the updates, action log, and the clients and the calls of the MCP that were there before");
-    assert.equal((html.match(/<table\b/g) ?? []).length, 6, "and no table is left that a phone must scroll");
+    const stacked = (html.match(/<table\b[^>]*class="stack(?: [a-z]+)?"[^>]*>[\s\S]*?<\/table>/g) ?? []);
+    assert.equal(stacked.length, 7, "health, books in progress, history of the updates, action log, remembered devices, and the clients and the calls of the MCP that were there before");
+    assert.equal((html.match(/<table\b/g) ?? []).length, 7, "and no table is left that a narrow box must scroll");
     for (const table of stacked) {
       assert.match(table, /<table[^>]*role="table"/, "a table that is made of blocks is still a table");
       assert.match(table, /<thead role="rowgroup"><tr role="row">/);
       assert.match(table, /<tbody role="rowgroup" id="[a-z-]+">/);
       for (const header of table.match(/<th\b[^>]*>/g)) assert.match(header, /role="columnheader"/);
     }
-    const phone = css.slice(css.indexOf("@media (max-width:640px){", css.indexOf("/* views */")));
-    assert.match(phone, /table\.stack tr\{display:block/, "a row is a card");
-    assert.match(phone, /table\.stack td::before\{content:attr\(data-label\)/, "and each value has its label");
-    assert.match(phone, /table\.stack thead\{position:absolute/, "the headers are not drawn...");
+    // A table turns into one block for each row when its own box is narrow (a container query), whatever the size of the window: with the sidebar open a wide window can still be a narrow box.
+    assert.match(css, /\.table-wrap\{[^}]*container-type:inline-size/, "the box of a table is what is measured");
+    const narrow = css.slice(css.indexOf("@container (max-width:42rem){"));
+    assert.match(narrow, /table\.stack tr\{display:block/, "a row is a card");
+    assert.match(narrow, /table\.stack td::before\{content:attr\(data-label\)/, "and each value has its label");
+    assert.match(narrow, /table\.stack thead\{position:absolute/, "the headers are not drawn...");
     assert.doesNotMatch(css, /thead\{[^}]*display:none/, "...but they are not taken away either: a screen reader needs them");
-    assert.match(phone, /td\.empty\{display:none/, "a value that is only a dash takes no line");
+    assert.match(narrow, /td\.empty\{display:none/, "a value that is only a dash takes no line");
+    assert.match(css, /thead th\{position:sticky;top:0/, "and the header of a long table stays in view while it is read");
   });
 });
 
@@ -162,6 +195,11 @@ test("P12 panel: the page, its script and its style stay inside the strict conte
     for (const forbidden of ["innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", "javascript:", "srcdoc"]) {
       assert.equal(script.includes(forbidden), false, `the script never uses ${forbidden}: text is put in as text`);
     }
+    // A style is a class in the style sheet: the script never sets one on an element (the policy would refuse it), and no element of the page carries one.
+    for (const forbidden of [".style.", ".style[", "cssText", 'setAttribute("style"', "setAttribute('style'", "adoptedStyleSheets", "insertRule", "createElement(\"style\")", "createElement(\"script\")"]) {
+      assert.equal(script.includes(forbidden), false, `the script never uses ${forbidden}`);
+    }
+    assert.doesNotMatch(css, /(?<![-\w])behavior:|-moz-binding/i, "and no old way of running a script from a style");
     assert.doesNotThrow(() => new vm.Script(script, { filename: "admin.js" }));
   });
 });
@@ -239,8 +277,9 @@ test("P12 panel: text, controls and the focus ring keep the contrast WCAG 2.2 AA
     const { css } = await pageOf(server);
     for (const scheme of ["light", "dark"]) {
       const token = tokensOf(css, scheme);
-      for (const name of ["bg", "card", "fg", "muted", "line", "accent", "accent-fg", "warn", "bad", "ok", "control", "focus"]) assert.ok(token[name], `${scheme}: the colour --${name} is defined`);
-      for (const ground of ["card", "bg"]) {
+      for (const name of ["bg", "card", "fg", "muted", "line", "accent", "accent-fg", "warn", "bad", "ok", "control", "focus", "soft", "accent-soft"]) assert.ok(token[name], `${scheme}: the colour --${name} is defined`);
+      // The grounds that the panel draws on: the page, a card, the header of a table and the item of the navigation that is open (the last two only carry text).
+      for (const ground of ["card", "bg", "soft", "accent-soft"]) {
         for (const name of ["fg", "muted", "accent", "warn", "bad", "ok"]) assert.ok(contrast(token[name], token[ground]) >= 4.5, `${scheme}: text --${name} on --${ground} is ${contrast(token[name], token[ground]).toFixed(2)}:1, under 4.5:1`);
         for (const name of ["control", "focus"]) assert.ok(contrast(token[name], token[ground]) >= 3, `${scheme}: --${name} on --${ground} is ${contrast(token[name], token[ground]).toFixed(2)}:1, under 3:1`);
       }
@@ -249,11 +288,12 @@ test("P12 panel: text, controls and the focus ring keep the contrast WCAG 2.2 AA
     }
     assert.match(css, /:focus-visible\{[^}]*outline:[^}]*var\(--focus\)/, "a focus ring on what has the focus, in its own colour");
     assert.match(css, /input,textarea,select\{[^}]*border:1px solid var\(--control\)/, "a box of the form has a border that can be seen");
-    assert.match(css, /@media \(max-width:640px\)\{[\s\S]*?\.top\{[^}]*position:static/, "on a phone the header does not cover the page");
+    assert.match(css, /\.topbar\{position:sticky;top:0/, "the bar of the page stays in view...");
+    assert.match(css, /html\{scroll-padding-top:5rem/, "...and what has the focus is never under it");
     assert.match(css, /prefers-reduced-motion/, "and nothing moves for who does not want it");
     const added = css.slice(css.indexOf("/* views */"));
-    assert.ok(added.length > 500, "the style of the new views is marked");
-    assert.doesNotMatch(added, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, "the new views use the page's colours (their contrast is the one that is checked here)");
+    assert.ok(added.length > 5000, "everything after the colours is marked");
+    assert.doesNotMatch(added, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, "nothing after the colours spells a colour of its own: what is drawn uses the colours whose contrast is checked here");
   });
 });
 
@@ -391,15 +431,15 @@ test("P12 panel risks: what matters is on top with its level in words, why and w
     assert.match(remote, /High risk/);
     assert.match(remote, /This panel is reachable from the internet/);
     assert.match(remote, /https:\/\/admin\.example\.test/, "at which address");
-    assert.match(remote, /Approved network/, "and where to change it");
+    assert.match(remote, /Go to Network/, "and where to change it");
     assert.match(update, /Medium risk/);
     assert.match(update, /2 clients may update this server: Phone, Laptop/);
     assert.match(app, /1 connected app can change a book or run the autopilot: Claude \(glass\)/);
     assert.match(passkey, /2 books accept apps from the internet/);
     assert.match(passkey, /Add a passkey/, "a passkey can be added here, so that is what to do");
     const links = items.map((item) => item.find((node) => node.tagName === "A").map((node) => node.getAttribute("href")));
-    assert.deepEqual(links, [["#network"], ["#clients"], ["#mcp"], ["#mcp"]], "each goes to the section where it is changed");
-    assert.equal(items[0].find((node) => node.tagName === "A")[0].textContent, "Go to Approved network");
+    assert.deepEqual(links, [["#/network"], ["#/clients"], ["#/apps"], ["#/apps"]], "each goes to the page where it is changed");
+    assert.equal(items[0].find((node) => node.tagName === "A")[0].textContent, "Go to Network");
     assert.match(panel.text("risk-summary"), /1 high, 3 medium, 2 notes/);
     assert.equal(panel.browser.$("risk-notes").classList.contains("hidden"), false);
     assert.equal(panel.text("risk-notes-summary"), "Notes (2)");
@@ -411,6 +451,26 @@ test("P12 panel risks: what matters is on top with its level in words, why and w
     assert.ok(drawn(panel, "risks").length > 300, "there is text to look through");
     assert.equal(SECRETS_IN_PAGE.test(drawn(panel, "risks")), false, "no undefined, null or NaN");
     assert.equal(panel.browser.$("risks").classList.contains("hidden"), false);
+  });
+});
+
+test("P14 panel risks: a remembered device is a note with its count, a stronger one when the panel is on the internet, and no link to the page it is already on", async () => {
+  await withServer(async (server) => {
+    const risks = (facts, level = "note") => ({ body: { risks: [{ id: "device-remember", level, facts }], counts: { high: 0, medium: 0, note: 1 } } });
+    const panel = await openStub(server, { "/admin/api/risks": risks({ count: 3, remote: false }) });
+    await until(() => rowsOf(panel, "risk-note-list").length === 1);
+    const [note] = rowsOf(panel, "risk-note-list");
+    assert.match(note.textContent, /3 devices are remembered by this panel/);
+    assert.match(note.textContent, /signs in without the admin code until you revoke it/);
+    assert.doesNotMatch(note.textContent, /reachable from the internet/);
+    assert.equal(note.find((node) => node.tagName === "A").length, 0, "nothing to go to: the devices are on this page");
+    const remote = await openStub(server, { "/admin/api/risks": risks({ count: 1, remote: true }) });
+    await until(() => rowsOf(remote, "risk-note-list").length === 1);
+    assert.match(rowsOf(remote, "risk-note-list")[0].textContent, /1 device is remembered by this panel/);
+    assert.match(rowsOf(remote, "risk-note-list")[0].textContent, /reachable from the internet: whoever gets into one of those browsers can change this server from anywhere/);
+    const italian = await openStub(server, { "/admin/api/risks": risks({ count: 2, remote: true }) }, { language: "it-IT" });
+    await until(() => rowsOf(italian, "risk-note-list").length === 1);
+    assert.match(rowsOf(italian, "risk-note-list")[0].textContent, /2 dispositivi sono ricordati da questo pannello.*raggiungibile da internet/);
   });
 });
 
@@ -428,7 +488,7 @@ test("P12 panel risks: the no-passkey risk says what to do when there is nothing
     const passkey = texts.find((text) => /passkey/.test(text));
     assert.match(passkey, /1 book accepts apps from the internet/);
     assert.match(passkey, /public address with a name/, "an address without a name cannot hold a passkey: that is what to do first");
-    assert.deepEqual(rowsOf(panel, "risk-list").find((item) => /public address with a name/.test(item.textContent)).find((node) => node.tagName === "A").map((node) => node.getAttribute("href")), ["#network"]);
+    assert.deepEqual(rowsOf(panel, "risk-list").find((item) => /public address with a name/.test(item.textContent)).find((node) => node.tagName === "A").map((node) => node.getAttribute("href")), ["#/network"]);
     assert.match(texts.find((text) => /may update/.test(text)), /9 clients may update this server: A, B, C, D, E, …/, "five names, and that there are more");
     assert.match(texts.find((text) => /no limit/i.test(text)), /AI spending has no limit/);
     assert.equal(panel.browser.$("risk-notes").classList.contains("hidden"), true, "no notes: nothing is folded");
@@ -445,7 +505,7 @@ test("P12 panel risks: with nothing to flag the banner says so in one calm line;
     const [remote, update] = rowsOf(italian, "risk-list").map((item) => item.textContent);
     assert.match(remote, /Rischio alto/);
     assert.match(remote, /Questo pannello è raggiungibile da internet/);
-    assert.match(remote, /Vai a Rete approvata/);
+    assert.match(remote, /Vai a Rete/);
     assert.match(update, /Rischio medio/);
     assert.match(update, /2 client possono aggiornare questo server: Phone, Laptop/);
     assert.match(italian.text("risk-summary"), /Trovati: 1 rischio alto, 3 rischi medi, 2 note\./);
