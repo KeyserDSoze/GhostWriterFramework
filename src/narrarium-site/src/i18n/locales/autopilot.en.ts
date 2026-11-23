@@ -534,6 +534,8 @@ const autopilotEn = {
       longRetryOff: "“Retry later” was turned off while the step waited: the autopilot stopped.",
       serverShutdown: "Paused because the server stopped.",
       resumedAfterRestart: "Resumed by itself after the server restarted.",
+      callsStoreFailed: "The messages of this run could not be saved ({{reason}}). The run goes on, but they will not be kept.",
+      callsStoreFailed_noReason: "The messages of this run could not be saved. The run goes on, but they will not be kept.",
     },
     task: {
       concept: "Designing the concept",

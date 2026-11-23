@@ -112,7 +112,8 @@ async function saveGoogle<T>(token: string, fileName: string, data: T, id?: stri
   return { id: createdId, revision: (await googleFileState(token, createdId, fileName)).revision };
 }
 
-async function ensureMsFolder(token: string): Promise<void> {
+/** Makes sure `Apps/Narrarium` exists with its ownership marker (also before anything else is written under it). */
+export async function ensureMsFolder(token: string): Promise<void> {
   const parts = ONE_DRIVE_APP_FOLDER.split("/").filter(Boolean);
   let current = "";
   for (const part of parts) {

@@ -93,8 +93,9 @@ function Page({ path = SETTINGS }: { path?: string }) {
   );
 }
 
-const TABS = ["overview", "review", "retries", "publishing", "rules", "profiles", "danger"] as const;
-const tab = (key: string) => screen.getByRole("tab", { name: t(`autopilot.config.tabs.${key}`) });
+const TABS = ["overview", "review", "retries", "publishing", "calls", "rules", "profiles", "danger"] as const;
+const tabLabel = (key: string) => t(key === "calls" ? "autopilot.callsSettings.tab" : `autopilot.config.tabs.${key}`);
+const tab = (key: string) => screen.getByRole("tab", { name: tabLabel(key) });
 const choose = (key: string) => fireEvent.click(tab(key));
 const panel = (key: string) => document.getElementById(`autopilot-panel-${key}`) as HTMLElement;
 const bar = () => document.querySelector<HTMLElement>("[data-autopilot-bar]") as HTMLElement;
@@ -146,7 +147,7 @@ describe("the configuration of the autopilot", () => {
     seedRun({ book: GITHUB_BOOK, status: "paused" });
     render(<Page />);
     const tabs = within(screen.getByRole("tablist")).getAllByRole("tab");
-    expect(tabs.map((element) => element.textContent)).toEqual(TABS.map((key) => t(`autopilot.config.tabs.${key}`)));
+    expect(tabs.map((element) => element.textContent)).toEqual(TABS.map((key) => tabLabel(key)));
     expect(tab("overview")).toHaveAttribute("aria-selected", "true");
     expect(tab("review")).toHaveAttribute("aria-selected", "false");
     expect(screen.getByRole("tabpanel", { name: t("autopilot.config.tabs.overview") })).toBe(panel("overview"));
@@ -189,6 +190,25 @@ describe("the configuration of the autopilot", () => {
     seedRun({ status: "paused", statePatch: { constraints: [...RULES] } });
     render(<Page path={`${SETTINGS}#autopilot-rules`} />);
     expect(tab("rules")).toHaveAttribute("aria-selected", "true");
+  });
+});
+
+describe("the AI calls tab", () => {
+  it("opens from #autopilot-calls, and its card is only drawn once the tab is opened", async () => {
+    seedRun({ status: "paused" });
+    render(<Page path={`${SETTINGS}#autopilot-calls`} />);
+    expect(tab("calls")).toHaveAttribute("aria-selected", "true");
+    expect(await within(panel("calls")).findByRole("group", { name: "Also copy to" })).toBeInTheDocument();
+  });
+
+  it("does not draw the card, nor look at any connection, until the tab is opened", async () => {
+    seedRun({ status: "paused" });
+    render(<Page />);
+    expect(within(panel("calls")).queryByRole("group")).toBeNull();
+    choose("calls");
+    expect(await within(panel("calls")).findByRole("group", { name: "Also copy to" })).toBeInTheDocument();
+    choose("overview");
+    expect(within(panel("calls")).getByRole("group", { name: "Also copy to", hidden: true })).toBeInTheDocument();
   });
 });
 
@@ -642,7 +662,7 @@ it("is in Italian when the app is", async () => {
   seedRun({ book: GITHUB_BOOK, status: "paused" });
   render(<Page />);
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Configurazione dell'autopilot");
-  expect(within(screen.getByRole("tablist")).getAllByRole("tab").map((element) => element.textContent)).toEqual(["Panoramica", "Revisione", "Nuovi tentativi", "Pubblicazione", "Regole", "Profili", "Zona pericolosa"]);
+  expect(within(screen.getByRole("tablist")).getAllByRole("tab").map((element) => element.textContent)).toEqual(["Panoramica", "Revisione", "Nuovi tentativi", "Pubblicazione", "Chiamate AI", "Regole", "Profili", "Zona pericolosa"]);
   expect(screen.getAllByRole("link", { name: "In diretta" })[0]).toBeInTheDocument();
   expect(within(bar()).getByRole("button", { name: "Salva" })).toBeInTheDocument();
   expect(within(bar()).getByRole("button", { name: "Azzera" })).toBeInTheDocument();

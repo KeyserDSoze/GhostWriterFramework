@@ -59,6 +59,7 @@ import { useAutopilotRefresh, useBookAutopilotView } from "@/autopilot/hooks";
 import { setAutopilotHost } from "@/autopilot/host";
 import { autopilotSettingsHref } from "@/autopilot/pageRoute";
 import { STREAM_CHARACTERS, taskIdOfHash } from "@/autopilot/liveText";
+import { callIdOfHash } from "@/components/autopilot/calls/anchors";
 import { useTextDetail } from "@/autopilot/useLiveText";
 import { PREVIEW_CHARACTERS } from "@/components/autopilot/band/parts";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
@@ -90,9 +91,9 @@ type PageTab = "overview" | "timeline" | "plan" | "rules";
 /** The tab that holds what a link to `#its-id` points at, for the page that has tabs. */
 const TAB_OF_ID: Record<string, PageTab> = { "autopilot-where": "rules" };
 
-/** The tab of an anchor: the ones above, and every step of the history (`#task-<id>`, see `taskHref`), which is in the Timeline. */
+/** The tab of an anchor: the ones above, and every step of the history (`#task-<id>`, see `taskHref`) and call of a step (`#call-<id>`), which are in the Timeline. */
 function tabOfId(id: string): PageTab | undefined {
-  return TAB_OF_ID[id] ?? (taskIdOfHash(id) ? "timeline" : undefined);
+  return TAB_OF_ID[id] ?? (taskIdOfHash(id) || callIdOfHash(id) ? "timeline" : undefined);
 }
 
 /** The links that opened the settings on this page before they had a page of their own: they lead there now. */
@@ -163,7 +164,7 @@ export function AutopilotPage() {
   const active = chosenTab && tabs.includes(chosenTab) ? chosenTab : planReview ? "plan" : tabs[0];
   const hash = safeDecode(location.hash.replace(/^#/, ""));
   const hashTab = tabOfId(hash);
-  const taskLink = Boolean(taskIdOfHash(hash));
+  const taskLink = Boolean(taskIdOfHash(hash) || callIdOfHash(hash));
   useEffect(() => {
     if (hashTab) setChosen({ bookId, tab: hashTab });
   }, [hashTab, location.key, bookId]);

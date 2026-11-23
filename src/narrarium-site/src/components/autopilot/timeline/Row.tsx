@@ -8,6 +8,7 @@ import { isErrorKind } from "@/autopilot/errorModel";
 import { TONE_BORDER, TONE_TEXT, activityTitle, formatClock, formatCost, formatCount, formatDateTime, formatDuration, presentFeedEvent } from "@/autopilot/format";
 import type { TimelineMarker, TimelineNote, TimelineRow, TimelineStep } from "@/autopilot/timelineModel";
 import { taskElementId } from "@/autopilot/liveText";
+import { TaskCallsEntry } from "@/components/autopilot/calls/TaskCallsEntry";
 import { cn } from "@/lib/utils";
 
 /** The icon of how a step went: a shape for each outcome, so that colour is never the only thing that tells. */
@@ -112,6 +113,7 @@ function StepBody({ step, currency }: { step: TimelineStep; currency?: string })
           <ul className="mt-0.5 space-y-0.5 font-mono text-xs text-muted-foreground">{last.changedPaths.map((path) => <li key={path} className="break-all">{path}</li>)}</ul>
         </div>
       )}
+      <TaskCallsEntry activityIds={step.attempts.map((attempt) => attempt.activity.id)} />
     </div>
   );
 }

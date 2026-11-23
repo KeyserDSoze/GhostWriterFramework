@@ -79,19 +79,25 @@ export function Shell() {
   useEffect(() => { void hydrateConnections().then(() => scheduleAccountSync(250)); }, [hydrateConnections]);
 
   // Follow the personal server live while it is configured (debounced while the address is typed;
-  // until it runs, the settings screens show the typed connection as not connected yet).
+  // until it runs, the settings screens show the typed connection as not connected yet). A book that has a place to copy its AI call records to
+  // starts the copies too, so that what a closed page left waiting goes on as the app opens.
+  const copyingCalls = settings.books.some((book) => Boolean(book.aiCallsCopy));
   useEffect(() => {
     if (!cloudLoaded) return;
     const configured = Boolean(personalServerUrl.trim() && personalServerToken.trim());
-    if (!configured && useAutopilotStore.getState().server.status === "disabled") return;
+    const follow = configured || useAutopilotStore.getState().server.status !== "disabled";
+    if (!follow && !copyingCalls) return;
     const timer = window.setTimeout(() => {
       void import("@/autopilot/loader")
         .then(({ loadAutopilotRuntime }) => loadAutopilotRuntime())
-        .then((runtime) => runtime.ensureServerStream())
+        .then((runtime) => {
+          if (follow) runtime.ensureServerStream();
+          if (copyingCalls) runtime.ensureCallsHost();
+        })
         .catch(() => undefined);
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [cloudLoaded, personalServerUrl, personalServerToken, personalServerFingerprint]);
+  }, [cloudLoaded, personalServerUrl, personalServerToken, personalServerFingerprint, copyingCalls]);
 
   useEffect(() => {
     const route = parseAppRoute(location.pathname);

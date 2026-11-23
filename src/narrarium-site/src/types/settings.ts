@@ -345,6 +345,8 @@ export interface BookEntry {
   defaultExportProfileId?: string;
   /** Where the autopilot of this book runs: in the browser (default) or on the personal server. */
   autopilotHost?: "browser" | "server";
+  /** Where the records of the autopilot's AI calls are also copied, besides this device: the book's GitHub repository, Google Drive or OneDrive. Absent: nowhere. Saved with the account's settings. */
+  aiCallsCopy?: "github" | "google-drive" | "onedrive";
   addedAt: string; // ISO-8601
 }
 

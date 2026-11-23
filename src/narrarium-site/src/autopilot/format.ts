@@ -196,9 +196,16 @@ function chapterText(t: TFunction, event: Extract<Notice, { type: "insight" }>):
   return t(`autopilot.insight.${event.code}`, { number: event.chapterNumber, ghostwriter: event.ghostwriter ?? "", ...context, defaultValue: event.title });
 }
 
+/** The records of the AI calls could not be kept: the engine says why in its `detail`, and the sentence has it in brackets (a notice without a reason says it without). */
+function callsStoreText(t: TFunction, event: Extract<Notice, { type: "insight" }>): string {
+  const reason = event.detail?.trim();
+  return reason ? t("autopilot.insight.callsStoreFailed", { reason, defaultValue: event.title }) : t("autopilot.insight.callsStoreFailed", { context: "noReason", defaultValue: event.title });
+}
+
 function noticeText(t: TFunction, event: Notice): string {
   if (!event.code) return event.title;
   if (event.type === "insight" && event.code === "failureRetry") return retryText(t, event);
+  if (event.type === "insight" && event.code === "callsStoreFailed") return callsStoreText(t, event);
   if (event.type === "insight" && (event.code === "longRetryWait" || event.code === "longRetryExhausted")) return retryLaterText(t, event);
   if (CHAPTER_CODES.has(event.code)) return event.type === "insight" ? chapterText(t, event) : event.title;
   return t(`autopilot.insight.${event.code}`, { defaultValue: event.title });
@@ -241,7 +248,7 @@ export function presentFeedEvent(t: TFunction, event: AutopilotEvent, currency?:
     }
     case "insight":
     case "sync":
-      return { tone: isRetryWait(event) ? "info" : event.tone, text: noticeText(t, event), detail: event.detail, ...(event.tone === "critical" || event.code === "profileProblems" ? { full: true } : {}) };
+      return { tone: isRetryWait(event) ? "info" : event.tone, text: noticeText(t, event), detail: event.code === "callsStoreFailed" && event.detail?.trim() ? undefined : event.detail, ...(event.tone === "critical" || event.code === "profileProblems" ? { full: true } : {}) };
     default:
       return null;
   }

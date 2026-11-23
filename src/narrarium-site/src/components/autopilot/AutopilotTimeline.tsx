@@ -11,6 +11,9 @@ import { formatClock } from "@/autopilot/format";
 import { useAutopilotStore } from "@/autopilot/store";
 import { buildTimeline, filterCounts, filterTimeline, locateTask, type TimelineFilter } from "@/autopilot/timelineModel";
 import { taskElementId, taskIdOfHash } from "@/autopilot/liveText";
+import { activityOfCallHash } from "@/components/autopilot/calls/anchors";
+import { useCallsView } from "@/components/autopilot/calls/callsView";
+import { CallsTimelineContext } from "@/components/autopilot/calls/TaskCallsEntry";
 import { useTimelinePrefs } from "@/autopilot/timelinePrefs";
 
 export interface AutopilotTimelineProps {
@@ -55,7 +58,8 @@ export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loadi
   // are taken back when they hide it, its group opens, and its row opens (the page then scrolls to it and gives it the focus). Once for each visit of the
   // link; a step the log does not have yet is looked for again when the log changes. The step that runs is the block at the top, always there.
   const location = useLocation();
-  const target = taskIdOfHash(location.hash);
+  // A link to one call of a step (`#call-<id>`) shows its step the same way; the task view then opens the call.
+  const target = taskIdOfHash(location.hash) ?? activityOfCallHash(location.hash);
   const [reveal, setReveal] = useState<{ group: string; row: string; activityId: string } | null>(null);
   const followed = useRef<string | null>(null);
   const showTask = useCallback((activityId: string, visit: string): boolean => {
@@ -76,6 +80,8 @@ export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loadi
     if (followed.current === visit) return;
     if (running?.id === target) {
       followed.current = visit;
+      // The step that runs is the block at the top: a link to one of its calls opens its messages there.
+      if (activityOfCallHash(location.hash)) useCallsView.getState().setLive(target, true);
       return;
     }
     showTask(target, visit);
@@ -85,14 +91,29 @@ export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loadi
   const focusLost = useCallback((activityId: string) => {
     if (showTask(activityId, `refocus:${activityId}`)) setRefocus(activityId);
   }, [showTask]);
+  // The reader had its messages open and the step is over: its row opens on them, where the focus is left alone.
+  const callsLost = useCallback((activityId: string) => {
+    showTask(activityId, `calls:${activityId}`);
+  }, [showTask]);
   useEffect(() => {
     if (!refocus) return;
     setRefocus(null);
     const element = document.getElementById(taskElementId(refocus)) ?? document.getElementById(taskElementId(reveal?.row ?? ""));
     element?.focus({ preventScroll: true });
   }, [refocus, reveal]);
-  // What a screen reader is told when the author changes what is shown, and only then: the list changes under the author's hand with every step.
+  // What a screen reader is told when the author changes what is shown, and only then: the list changes under the author's hand with every step. The task
+  // views say here what the reader's own actions did (a copy); emptied first, so that the same words twice are said twice.
   const [announcement, setAnnouncement] = useState("");
+  const said = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (said.current) clearTimeout(said.current);
+  }, []);
+  const announce = useCallback((text: string) => {
+    setAnnouncement("");
+    if (said.current) clearTimeout(said.current);
+    said.current = setTimeout(() => setAnnouncement(text), 50);
+  }, []);
+  const calls = useMemo(() => ({ bookId, announce }), [bookId, announce]);
   const choose = (filter: TimelineFilter) => {
     change({ filter });
     setAnnouncement(t("autopilot.timeline.announce", { filter: t(`autopilot.timeline.filter.${filter}`), count: counts[filter] }));
@@ -104,38 +125,40 @@ export const AutopilotTimeline = memo(function AutopilotTimeline({ bookId, loadi
   if (nothing && !prefs.since) return <p className="text-sm text-muted-foreground">{t("autopilot.activity.idle")}</p>;
 
   return (
-    <section data-autopilot-timeline aria-labelledby="autopilot-timeline-title" className="space-y-3 rounded-2xl border border-layer bg-card p-4 shadow-sm sm:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="autopilot-timeline-title" className="flex items-center gap-2 text-base font-semibold"><ListChecks className="h-4 w-4 text-primary" aria-hidden="true" />{t("autopilot.activity.title")}</h2>
-        <Button variant="ghost" size="sm" disabled={everything === 0} onClick={() => change({ since: new Date().toISOString() })}>
-          <EyeOff className="h-4 w-4" aria-hidden="true" />{t("autopilot.timeline.hide")}
-        </Button>
-      </div>
-      {loading ? (
-        <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</p>
-      ) : (
-        <>
-          {prefs.since && (
-            <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-              <span>{everything === 0 ? t("autopilot.timeline.nothingNew") : t("autopilot.timeline.hidden", { count: timeline.hidden, time: formatClock(prefs.since) })}</span>
-              <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => change({ since: null })}>{t("autopilot.timeline.showHidden")}</Button>
-            </p>
-          )}
-          {everything > 0 && <TimelineFilters bookId={bookId} value={prefs.filter} counts={counts} onChange={choose} />}
-          <TimelineLive bookId={bookId} shownAbove={shownAbove} onFocusLost={focusLost} />
-          {shown.groups.length === 0 && everything > 0 ? (
-            <div className="space-y-2 rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground">
-              <p>{t("autopilot.timeline.empty")}</p>
-              <Button variant="outline" size="sm" onClick={() => choose("all")}>{t("autopilot.timeline.showAll")}</Button>
-            </div>
-          ) : (
-            <ol className="space-y-2">
-              {shown.groups.map((group) => <TimelineGroupView key={group.key} group={group} open={chosen[group.key] ?? group.key === shown.open} onToggle={toggle} chapterTitle={chapterTitle} chapterGhostwriter={chapterGhostwriter} currency={currency} revealRow={reveal?.group === group.key ? reveal.row : undefined} />)}
-            </ol>
-          )}
-        </>
-      )}
-      <p role="status" className="sr-only">{announcement}</p>
-    </section>
+    <CallsTimelineContext.Provider value={calls}>
+      <section data-autopilot-timeline aria-labelledby="autopilot-timeline-title" className="space-y-3 rounded-2xl border border-layer bg-card p-4 shadow-sm sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id="autopilot-timeline-title" className="flex items-center gap-2 text-base font-semibold"><ListChecks className="h-4 w-4 text-primary" aria-hidden="true" />{t("autopilot.activity.title")}</h2>
+          <Button variant="ghost" size="sm" disabled={everything === 0} onClick={() => change({ since: new Date().toISOString() })}>
+            <EyeOff className="h-4 w-4" aria-hidden="true" />{t("autopilot.timeline.hide")}
+          </Button>
+        </div>
+        {loading ? (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</p>
+        ) : (
+          <>
+            {prefs.since && (
+              <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                <span>{everything === 0 ? t("autopilot.timeline.nothingNew") : t("autopilot.timeline.hidden", { count: timeline.hidden, time: formatClock(prefs.since) })}</span>
+                <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => change({ since: null })}>{t("autopilot.timeline.showHidden")}</Button>
+              </p>
+            )}
+            {everything > 0 && <TimelineFilters bookId={bookId} value={prefs.filter} counts={counts} onChange={choose} />}
+            <TimelineLive bookId={bookId} shownAbove={shownAbove} onFocusLost={focusLost} onCallsLost={callsLost} />
+            {shown.groups.length === 0 && everything > 0 ? (
+              <div className="space-y-2 rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground">
+                <p>{t("autopilot.timeline.empty")}</p>
+                <Button variant="outline" size="sm" onClick={() => choose("all")}>{t("autopilot.timeline.showAll")}</Button>
+              </div>
+            ) : (
+              <ol className="space-y-2">
+                {shown.groups.map((group) => <TimelineGroupView key={group.key} group={group} open={chosen[group.key] ?? group.key === shown.open} onToggle={toggle} chapterTitle={chapterTitle} chapterGhostwriter={chapterGhostwriter} currency={currency} revealRow={reveal?.group === group.key ? reveal.row : undefined} />)}
+              </ol>
+            )}
+          </>
+        )}
+        <p role="status" className="sr-only">{announcement}</p>
+      </section>
+    </CallsTimelineContext.Provider>
   );
 });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Github, Loader2, Play, Rocket, Save, RotateCcw } from "lucide-react";
 import { DEFAULT_BRIEF, DEFAULT_OPTIONS, FROZEN_EDITS_MODES, autopilotPresetSkeleton, effectivePublish, type AutopilotBrief, type AutopilotLiveOptions, type AutopilotOptions, type AutopilotPublishMode, type AutopilotState, type StartOptions } from "narrarium-engine";
@@ -18,6 +18,10 @@ import type { BookStructure } from "@/types/book";
 import { bookStorageMode, type BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
 import { OUTLINE_BRIEF_NOTICE_ID } from "@/autopilot/outlineBrief";
+import "@/i18n/autopilotCallsSettings";
+
+// The tab of the AI calls is a chunk of its own: nothing of it is loaded until the tab is drawn.
+const AiCallsCard = lazy(() => import("@/components/autopilot/config/AiCallsCard"));
 
 type RunAction = ReturnType<typeof useAutopilotActions>["run"];
 
@@ -213,6 +217,8 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
     });
   };
 
+  const [callsOpened, setCallsOpened] = useState(tab === "calls");
+  useEffect(() => { if (tab === "calls") setCallsOpened(true); }, [tab]);
   const previewForm = useMemo(() => ({ brief, options }), [brief, options]);
   const tabs: ConfigTab[] = [
     {
@@ -316,6 +322,8 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
       ),
     },
   ];
+  // It checks the connection of the place it copies to: that is done when the tab is first opened, not on every visit to the settings.
+  tabs.push({ key: "calls", label: t("autopilot.callsSettings.tab"), panel: callsOpened ? <Suspense fallback={<Loader2 className="h-4 w-4 animate-spin" aria-label={t("autopilot.current.loading")} />}><AiCallsCard book={book} /></Suspense> : null });
   if (rules) tabs.push({ key: "rules", label: t("autopilot.config.tabs.rules"), panel: rules });
   tabs.push({ key: "profiles", label: t("autopilot.config.tabs.profiles"), panel: profiles });
   if (danger) tabs.push({ key: "danger", label: t("autopilot.config.tabs.danger"), panel: danger });

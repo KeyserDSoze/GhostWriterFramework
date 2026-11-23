@@ -5,6 +5,7 @@ import {
   pickAiRuntimeConfig,
   remoteBookStore,
   runnerActivity,
+  serverHasCalls,
   syncBookStores,
   type AskDirectorResult,
   type AutopilotEvent,
@@ -18,6 +19,7 @@ import {
   type InterventionInput,
   type NarrariumServerClient,
   type QuestionAnswer,
+  type ServerInfo,
   type ResolveGithubConflictsRequest,
   type ResolveGithubConflictsResponse,
   type ServerBookStorage,
@@ -33,6 +35,9 @@ import { selectAutopilotControl } from "@/autopilot/control";
 import { HandoverCoordinator, HandoverConsentError, type HandoverOptions, type HandoverPorts, type HandoverRequest, type HandoverSide, type RunInspection, type RunOutcome } from "@/autopilot/handover";
 import { setAutopilotHost } from "@/autopilot/host";
 import { AutopilotOperationBusyError, BookOperations, type AutopilotOperationKind } from "@/autopilot/operations";
+import { copyServerCalls, ensureCallsHost } from "@/autopilot/calls/host";
+import { isRecording } from "@/autopilot/calls/recording";
+import { wireBrowserCalls } from "@/autopilot/calls/wire";
 import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
 import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
 import { AutopilotRulesUnsupportedError, serverEditsRules } from "@/autopilot/rules";
@@ -398,7 +403,9 @@ export class BrowserAutopilotRuntime {
   }
 
   private localSession(book: BookEntry, branch: string): AutopilotSession {
-    const key = `${book.id}:${branch}`;
+    // The recording of the book's messages is chosen on this device, and the store the session records into is for the account the page is in: both are read when the session is made. A session
+    // that is idle is made again when either changes; one that runs keeps them until its run ends.
+    const key = `${book.id}:${branch}:${currentRepositoryScopeIdentity()}:${isRecording(book.id) ? "recording" : "not-recording"}`;
     const existing = this.sessions.get(book.id);
     if (existing && (existing.key === key || existing.session.running)) return existing.session;
     existing?.unsubscribe();
@@ -416,7 +423,12 @@ export class BrowserAutopilotRuntime {
         afterCommit: () => this.publishFromBrowser(book, branch),
         afterChapter: () => this.publishFromBrowser(book, branch),
       } : undefined,
+      // The messages and the response of every AI call of this book's tasks, kept on this device (`autopilot/calls/wire.ts`): the engine's `calls`, `callsSecrets` and `callsAccountScope`,
+      // none of them when the author turned the recording off for this book on this device or this browser keeps no IndexedDB (the run is the same either way).
+      ...wireBrowserCalls({ bookId: book.id }),
     });
+    // The store, and the copies to the place the author chose, are made ready with the session: a task that ends is queued for them by the store itself.
+    void ensureCallsHost();
     const unsubscribe = session.subscribe((event) => {
       const title = bookTitle(book.id);
       useAutopilotStore.getState().ingest(event, title);
@@ -1310,6 +1322,32 @@ export class BrowserAutopilotRuntime {
     }
   }
 
+  /**
+   * The finished tasks of the books that run on the personal server are copied to this device (it keeps the messages of every book, whoever ran it), when the server announces
+   * the records: once the server is attached, to catch up with what ran while this browser was away, and when a run ends. Only the tab that follows the server does it. A copy that
+   * fails is the next one's to finish; a book whose recording is off on this device is left alone.
+   */
+  private copyHostedCalls(api: NarrariumServerClient, info: Pick<ServerInfo, "features">, reason: "open" | "run-ended", only?: string): void {
+    if (!serverHasCalls(info)) return;
+    const hosted = settings().books.filter((book) => autopilotHostOf(book) === "server" && (only === undefined || book.id === only));
+    for (const book of hosted) void copyServerCalls(book.id, api, reason).catch(() => undefined);
+  }
+
+  /** A run of a book on the server ended: its tasks are copied once the server has saved them. */
+  private async copyCallsAfterRun(bookId: string): Promise<void> {
+    try {
+      const { client, info } = await this.connect({});
+      this.copyHostedCalls(client, info, "run-ended", bookId);
+    } catch {
+      // The next time the server is attached it catches up.
+    }
+  }
+
+  /** Makes ready the store of the AI call records and the copies of the books that have a place to copy to (the app opened with such a book). */
+  ensureCallsHost(): void {
+    void ensureCallsHost();
+  }
+
   private async followServer(stream: FollowedStream): Promise<void> {
     const { connection } = stream;
     const signal = stream.controller.signal;
@@ -1329,6 +1367,7 @@ export class BrowserAutopilotRuntime {
           if (!signal.aborted) this.publish(stream, { updates });
         }).catch(() => undefined);
         this.applyServerBooks(books);
+        this.copyHostedCalls(client, info, "open");
         if (connectedBefore) this.afterReconnect(stream);
         connectedBefore = true;
         lost = false;
@@ -1367,6 +1406,7 @@ export class BrowserAutopilotRuntime {
       if (!relayed && ((event.type === "task-finished" && event.activity.status === "succeeded") || event.type === "run-ended")) {
         this.debounce(`server-sync:${event.bookId}`, 4000, () => void this.syncInBackground(event.bookId));
       }
+      if (!relayed && event.type === "run-ended") this.debounce(`server-calls:${event.bookId}`, 1500, () => void this.copyCallsAfterRun(event.bookId));
     } else if (message.event === "book") {
       const summary = message.data;
       const server = useAutopilotStore.getState().server;

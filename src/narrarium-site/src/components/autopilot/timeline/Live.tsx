@@ -4,6 +4,8 @@ import { Loader2 } from "lucide-react";
 import { ModelAnswering } from "@/components/autopilot/band/parts";
 import { cutAtTop } from "@/components/autopilot/live/StreamLines";
 import { taskElementId } from "@/autopilot/liveText";
+import { useCallsView } from "@/components/autopilot/calls/callsView";
+import { LiveCallsToggle } from "@/components/autopilot/calls/TaskCallsEntry";
 import { useAutopilotStore } from "@/autopilot/store";
 import { cn } from "@/lib/utils";
 
@@ -14,9 +16,10 @@ import { cn } from "@/lib/utils";
  *
  * It is there for as long as a step runs, with the anchor of the step (`#task-<id>`): the lines of the mini-player, of the band and of the page of every
  * book lead here, and it takes the focus they send. The text is in it when there is more of it than the band above it shows (`shownAbove`). When the step it holds is over while it has the focus, `onFocusLost` says so, and the timeline gives
- * the focus to the step's row, which takes its place.
+ * the focus to the step's row, which takes its place. Under it, the messages the step exchanges with the AI, behind a button; when the step is over
+ * with them open, `onCallsLost` says so, and the row opens on them.
  */
-export const TimelineLive = memo(function TimelineLive({ bookId, shownAbove = 0, onFocusLost }: { bookId: string; shownAbove?: number; onFocusLost?: (activityId: string) => void }) {
+export const TimelineLive = memo(function TimelineLive({ bookId, shownAbove = 0, onFocusLost, onCallsLost }: { bookId: string; shownAbove?: number; onFocusLost?: (activityId: string) => void; onCallsLost?: (activityId: string) => void }) {
   const { t } = useTranslation();
   const live = useAutopilotStore((state) => state.live[bookId] ?? null);
   const block = useRef<HTMLDivElement>(null);
@@ -25,6 +28,8 @@ export const TimelineLive = memo(function TimelineLive({ bookId, shownAbove = 0,
   const focused = useRef(false);
   const lost = useRef(onFocusLost);
   lost.current = onFocusLost;
+  const callsLost = useRef(onCallsLost);
+  callsLost.current = onCallsLost;
   const activityId = live?.activity.id;
   // The focus is somewhere else as soon as something else takes it.
   useEffect(() => {
@@ -38,6 +43,7 @@ export const TimelineLive = memo(function TimelineLive({ bookId, shownAbove = 0,
     // The step is over (or another began) with the focus still here: the block it was in is gone, and the focus with it.
     const nowhere = !document.activeElement || document.activeElement === document.body;
     if (activityId && focused.current && nowhere) lost.current?.(activityId);
+    else if (activityId && useCallsView.getState().live[activityId]) callsLost.current?.(activityId);
     focused.current = false;
   }, [activityId]);
   const answering = live?.bytes !== undefined;
@@ -70,6 +76,7 @@ export const TimelineLive = memo(function TimelineLive({ bookId, shownAbove = 0,
       )}
       {text && characters > 0 && <p className="text-xs tabular-nums text-muted-foreground">{t("autopilot.characters", { count: characters })}</p>}
       <ModelAnswering bookId={bookId} />
+      <LiveCallsToggle activityId={activity.id} />
     </div>
   );
 });

@@ -7,6 +7,7 @@ const HASH_TABS: Record<string, string> = {
   "autopilot-rules": "rules",
   "autopilot-profiles": "profiles",
   "autopilot-danger": "danger",
+  "autopilot-calls": "calls",
 };
 
 /** The tab a link to `#autopilot-…` selects, or `undefined` for a hash that is no part of the configuration. */

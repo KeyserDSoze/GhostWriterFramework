@@ -94,6 +94,25 @@ export function streamTail(preview: string, characters = preview.length, max = S
 /** How important an announcement is: a failure goes before the end of a step, which goes before «answering». */
 export type AnnouncementPriority = 1 | 2 | 3;
 
+type VoiceListener = (bookId: string, text: string, priority: AnnouncementPriority) => void;
+const voiceListeners = new Set<VoiceListener>();
+
+/**
+ * Says `text` about a book in the polite voice of the surfaces that follow it (the band of its Autopilot page): another part of the page (the task view,
+ * for the calls it follows) speaks with the same voice and at the same pace, so that a screen reader hears one line, not two that say the same.
+ */
+export function sayInLiveVoice(bookId: string, text: string, priority: AnnouncementPriority): void {
+  for (const listener of voiceListeners) listener(bookId, text, priority);
+}
+
+/** Listens to what other parts of the page say through `sayInLiveVoice`; returns the way to stop. */
+export function listenToLiveVoice(listener: VoiceListener): () => void {
+  voiceListeners.add(listener);
+  return () => {
+    voiceListeners.delete(listener);
+  };
+}
+
 /**
  * One polite voice for a screen reader, which never says more than one thing every `interval` milliseconds: what comes while it waits is kept
  * (the most important, and among equals the newest) and said when the time comes. `say` receives the text; the caller puts it in a status region.

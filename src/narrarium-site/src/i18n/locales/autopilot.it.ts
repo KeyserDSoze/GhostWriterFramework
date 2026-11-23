@@ -534,6 +534,8 @@ const autopilotIt = {
       longRetryOff: "«Riprova più tardi» è stato spento mentre il passo aspettava: l'autopilot si è fermato.",
       serverShutdown: "In pausa perché il server si è fermato.",
       resumedAfterRestart: "Ripreso da solo dopo il riavvio del server.",
+      callsStoreFailed: "Non è stato possibile salvare i messaggi di questa esecuzione ({{reason}}). L'esecuzione prosegue, ma i messaggi non verranno conservati.",
+      callsStoreFailed_noReason: "Non è stato possibile salvare i messaggi di questa esecuzione. L'esecuzione prosegue, ma i messaggi non verranno conservati.",
     },
     task: {
       concept: "Progettazione del concept",

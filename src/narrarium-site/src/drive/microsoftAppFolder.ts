@@ -5,7 +5,7 @@ const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
 const GRAPH_ME_API = "https://graph.microsoft.com/v1.0/me?$select=id";
 export const ONE_DRIVE_APP_FOLDER = "Apps/Narrarium";
 export const MICROSOFT_APP_MARKER = ".narrarium-app-folder-v1.json";
-const ALLOWED_CHILDREN = new Set([MICROSOFT_APP_MARKER, "manifest.json", "account-data.json", "settings.json", "costs.json", "clipboard.json", "chats", "chat-segments", "Exports"]);
+const ALLOWED_CHILDREN = new Set([MICROSOFT_APP_MARKER, "manifest.json", "account-data.json", "settings.json", "costs.json", "clipboard.json", "chats", "chat-segments", "Exports", "ai-calls"]);
 
 function headers(token: string) { return { Authorization: `Bearer ${token}` }; }
 export function graphPath(path: string): string { return path.split("/").filter(Boolean).map(encodeURIComponent).join("/"); }
@@ -51,7 +51,7 @@ export interface MicrosoftChild { id: string; name: string; eTag?: string; file?
 function validateKnownChildren(children: MicrosoftChild[]): void {
   for (const child of children) {
     if (!ALLOWED_CHILDREN.has(child.name)) throw new Error("The OneDrive Apps/Narrarium folder contains unrelated data and will not be deleted or adopted.");
-    const expectedFolder = child.name === "chats" || child.name === "chat-segments" || child.name === "Exports";
+    const expectedFolder = child.name === "chats" || child.name === "chat-segments" || child.name === "Exports" || child.name === "ai-calls";
     if (expectedFolder ? !child.folder || child.file : !child.file || child.folder) throw new Error(`The OneDrive child ${child.name} has the wrong item type.`);
   }
 }

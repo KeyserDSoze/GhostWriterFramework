@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AutopilotActivity } from "narrarium-engine";
 import { activityTitle } from "@/autopilot/format";
-import { LAST_DONE, PoliteAnnouncer, STREAM_THROTTLE_MS, latestFinished } from "@/autopilot/liveText";
+import { LAST_DONE, PoliteAnnouncer, STREAM_THROTTLE_MS, latestFinished, listenToLiveVoice } from "@/autopilot/liveText";
 import { useAutopilotStore, type LivePreview } from "@/autopilot/store";
 import { useUiStore, type AutopilotTextDetail } from "@/store/uiStore";
 
@@ -135,8 +135,13 @@ export function useStreamAnnouncements(bookIds: readonly string[], nameOf?: (boo
         }
       }
     });
+    // What the rest of the page says about these books (the calls the task view follows) goes through the same voice, at the same pace.
+    const stopListening = listenToLiveVoice((bookId, text, priority) => {
+      if (ids.has(bookId)) announcer.push(say(bookId, text), priority);
+    });
     return () => {
       unsubscribe();
+      stopListening();
       announcer.dispose();
       if (reset) clearTimeout(reset);
     };
