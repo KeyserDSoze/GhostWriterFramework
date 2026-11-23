@@ -25,6 +25,21 @@ const autopilotPause: McpTool = {
   },
 };
 
+const autopilotRetryNow: McpTool = {
+  name: "autopilot_retry_now",
+  title: "Retry the failed step now",
+  description: "When the autopilot waits to try a failed step again (a quick retry, or a wait of \"Retry later\" after a provider failure that lasted), ends the wait so that it tries at once, as the app's Retry now does. It uses up nothing: the retries and the cycles already made stay counted. Answers the autopilot's status with `skipped`: false when it was not waiting, and nothing happened.",
+  scope: "run",
+  annotations: steer(false),
+  inputSchema: shape({}),
+  async run(context) {
+    context.books.assertNotInMaintenance();
+    const { session } = context.runtime;
+    const skipped = session.retryNow();
+    return json({ ...describeAutopilot(await session.snapshot(), true), skipped });
+  },
+};
+
 const autopilotResume: McpTool = {
   name: "autopilot_resume",
   title: "Resume the autopilot",
@@ -94,4 +109,4 @@ const autopilotAnswer: McpTool = {
   },
 };
 
-export const RUN_TOOLS: McpTool[] = [autopilotPause, autopilotResume, autopilotNote, autopilotAnswer];
+export const RUN_TOOLS: McpTool[] = [autopilotPause, autopilotRetryNow, autopilotResume, autopilotNote, autopilotAnswer];

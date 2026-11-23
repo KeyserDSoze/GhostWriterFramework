@@ -16,7 +16,10 @@ import {
   type AutopilotSessionConfig,
   type BookCommitResult,
   type BookFileChange,
+  type GithubConflictsResponse,
   type RegisterBookRequest,
+  type ResolveGithubConflictsRequest,
+  type ResolveGithubConflictsResponse,
   type ServerBookSummary,
   type ServerBookSync,
   type StartOptions,
@@ -27,6 +30,7 @@ import { HttpError } from "./errors.js";
 import { renameReplacing } from "./files.js";
 import { FileBookStore, KeyedMutex } from "./fs-store.js";
 import { GitRepository } from "./git.js";
+import { GithubConflictError } from "./github-conflicts.js";
 import { spendSettingsOf, type SpendLedger, type SpendScope, type SpendSettings } from "./spend.js";
 
 export { HttpError };
@@ -111,6 +115,8 @@ export class BookRegistry {
   private readonly locks = new KeyedMutex();
   /** Set once an update is accepted: the server only finishes what it is doing and then restarts. */
   private maintenance = false;
+  /** The fingerprint of the conflicts with GitHub that the list last gave for each book: what a resolution that sends none was chosen from. */
+  private readonly listedConflicts = new Map<string, string>();
 
   constructor(private readonly data: DataDirectory, private readonly options: BookRegistryOptions) {}
 
@@ -218,7 +224,9 @@ export class BookRegistry {
     );
     for (const book of await this.data.books()) {
       try {
-        this.instantiate(book);
+        const runtime = this.instantiate(book);
+        // A server that stopped in the middle of a change of the copy (a merge, a rebase, git's lock) finds it as it was before that change.
+        if (runtime.git && existsSync(path.join(runtime.store.root, ".git")) && await runtime.git.recover()) this.options.log(`Book ${book.bookId}: an interrupted git operation was undone.`);
       } catch (error) {
         this.options.log(`Book ${book.bookId} could not be loaded: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -264,8 +272,18 @@ export class BookRegistry {
         hooks: book.storage.kind === "github" && git ? {
           beforeStep: async () => {
             await this.refreshToken(book.bookId);
-            const result = await store.exclusive(() => git.pull());
-            if (result.changed) this.options.onBookChanged(book.bookId);
+            try {
+              // The run is active: the autopilot's own files are its own, whatever GitHub holds.
+              const result = await store.exclusive(() => git.pull({ runActive: true }));
+              if (result.changed) this.options.onBookChanged(book.bookId);
+            } catch (error) {
+              // A conflict stops the run (the author chooses); the book says it too, with how many files, until it is resolved.
+              if (error instanceof GithubConflictError) {
+                runtime.lastSync = { at: new Date().toISOString(), ok: false, message: error.message, conflicts: error.total };
+                this.options.onBookChanged(book.bookId);
+              }
+              throw error;
+            }
           },
           afterCommit: () => this.publish(runtime, git),
           afterChapter: () => this.publish(runtime, git),
@@ -299,11 +317,11 @@ export class BookRegistry {
     const { bookId } = runtime.book;
     try {
       await this.refreshToken(bookId);
-      await runtime.store.exclusive(() => git.push());
+      await runtime.store.exclusive(() => git.push({ runActive: runtime.session.running }));
       runtime.lastSync = { at: new Date().toISOString(), ok: true, message: "Pushed to GitHub.", head: await git.head() };
     } catch (error) {
       const message = redactSecrets(error instanceof Error ? error.message : String(error), [this.tokenCache.get(bookId) ?? ""]).slice(0, PUBLISH_MESSAGE_CHARACTERS);
-      runtime.lastSync = { at: new Date().toISOString(), ok: false, message };
+      runtime.lastSync = { at: new Date().toISOString(), ok: false, message, ...(error instanceof GithubConflictError ? { conflicts: error.total } : {}) };
       throw new Error(message);
     } finally {
       this.options.onBookChanged(bookId);
@@ -481,7 +499,10 @@ export class BookRegistry {
     const directory = this.data.bookDirectory(book.bookId);
     if (book.storage.kind === "github" && git) {
       if (existsSync(path.join(directory, ".git"))) {
-        await this.syncGitHub(book.bookId);
+        // A copy that conflicts with GitHub is still a book: `lastSync` says it, and the author resolves it.
+        await this.syncGitHub(book.bookId).catch((error) => {
+          if (!(error instanceof HttpError && error.code === "github_conflict")) throw error;
+        });
         return;
       }
       const staged = await this.stage(book.bookId, book.storage, () => this.tokenCache.get(book.bookId));
@@ -592,17 +613,85 @@ export class BookRegistry {
     try {
       // One at a time per book, and never during a commit: a pull rewrites files, two pulls fight over git's index lock.
       await runtime.store.exclusive(async () => {
-        const pulled = await git.pull();
-        await git.push();
+        const policy = { runActive: runtime.session.running };
+        const pulled = await git.pull(policy);
+        await git.push(policy);
         runtime.lastSync = { at: new Date().toISOString(), ok: true, message: pulled.changed ? "Pulled and pushed." : "Up to date.", head: await git.head() };
       });
     } catch (error) {
+      if (error instanceof GithubConflictError) {
+        runtime.lastSync = { at: new Date().toISOString(), ok: false, message: error.message, conflicts: error.total };
+        throw new HttpError(409, "github_conflict", error.message, {}, { conflicts: error.total });
+      }
       runtime.lastSync = { at: new Date().toISOString(), ok: false, message: error instanceof Error ? error.message : String(error) };
       throw new HttpError(409, "sync_failed", runtime.lastSync.message);
     } finally {
       this.options.onBookChanged(bookId);
     }
     return this.summary(runtime);
+  }
+
+  /** The working copy of a book on GitHub: `409 no_remote` for any other. */
+  private githubOf(runtime: BookRuntime): GitRepository {
+    if (runtime.book.storage.kind !== "github" || !runtime.git) throw new HttpError(409, "no_remote", "This book is not on GitHub: it has no conflicts with GitHub to resolve.");
+    return runtime.git;
+  }
+
+  /** A failure of git that is not a refusal of the request: what it said, without the token, as a `502`. */
+  private gitFailure(bookId: string, error: unknown): unknown {
+    if (error instanceof HttpError) return error;
+    const message = redactSecrets(error instanceof Error ? error.message : String(error), [this.tokenCache.get(bookId) ?? ""]).slice(0, PUBLISH_MESSAGE_CHARACTERS);
+    return new HttpError(502, "git_failed", message);
+  }
+
+  /**
+   * The conflicts of a GitHub book with GitHub, a page at a time (`GET …/github-conflicts`): GitHub is fetched, and the two are compared by a merge that
+   * writes nothing, one operation of the book at a time. The list it gives is the one a resolution without a fingerprint is checked against.
+   */
+  async githubConflicts(bookId: string, page: { offset: number; limit: number }): Promise<GithubConflictsResponse> {
+    const runtime = this.get(bookId);
+    const git = this.githubOf(runtime);
+    await this.refreshToken(bookId);
+    try {
+      const listing = await runtime.store.exclusive(() => git.githubConflicts(page, { runActive: runtime.session.running }));
+      this.listedConflicts.set(bookId, listing.fingerprint);
+      return listing;
+    } catch (error) {
+      throw this.gitFailure(bookId, error);
+    }
+  }
+
+  /**
+   * Resolve them (`POST …/github-conflicts/resolve`): one merge commit with the version the author chose of every file, pushed when the book is
+   * published (`publishEvery` other than `off`), with the run stopped (`409 busy` otherwise: the run's files must not change under it). The run is
+   * not started again: the author resumes it. `lastSync` says how it went; the log says that it happened, with the counts and never a file.
+   */
+  async resolveGithubConflicts(bookId: string, request: ResolveGithubConflictsRequest): Promise<ResolveGithubConflictsResponse> {
+    this.assertNotInMaintenance();
+    const runtime = this.get(bookId);
+    const git = this.githubOf(runtime);
+    if (runtime.session.running) throw new HttpError(409, "busy", "Pause the autopilot before resolving the conflicts with GitHub.");
+    await this.refreshToken(bookId);
+    const publish = (await runtime.session.snapshot()).summary?.publish ?? DEFAULT_PUBLISH;
+    const fingerprint = request.fingerprint ?? this.listedConflicts.get(bookId);
+    try {
+      const result = await runtime.store.exclusive(() => git.resolveGithubConflicts({ ...request, ...(fingerprint ? { fingerprint } : {}) }, { runActive: false, push: publish !== "off" }));
+      const { counts } = result;
+      const files = (count: number) => `${count} ${count === 1 ? "file" : "files"}`;
+      runtime.lastSync = {
+        at: new Date().toISOString(),
+        ok: result.pushed || publish === "off",
+        message: result.pushed ? "The conflicts with GitHub were resolved and pushed." : result.pushError ? `The conflicts with GitHub were resolved on the server; the push failed: ${redactSecrets(result.pushError, [this.tokenCache.get(bookId) ?? ""])}` : "The conflicts with GitHub were resolved on the server (the book is not published).",
+        head: result.head,
+      };
+      this.listedConflicts.delete(bookId);
+      this.options.log(`Book ${bookId}: the conflicts with GitHub were resolved (${files(counts.total)}: ${counts.server} kept from the server, ${counts.github} taken from GitHub, ${counts.unresolvable} kept because they cannot be chosen for here)${result.pushed ? "" : ", not pushed"}.`);
+      return result;
+    } catch (error) {
+      throw this.gitFailure(bookId, error);
+    } finally {
+      this.options.onBookChanged(bookId);
+    }
   }
 
   async summary(runtime: BookRuntime): Promise<ServerBookSummary> {

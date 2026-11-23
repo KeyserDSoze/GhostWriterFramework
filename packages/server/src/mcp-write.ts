@@ -322,11 +322,11 @@ const updateCanonEntry: McpTool = {
 const writeFileTool: McpTool = {
   name: "write_file",
   title: "Write a file",
-  description: "Writes a text file of the book that no other tool is for (notes, plot, outline, guidelines, resumes…), as one commit. A file that exists is replaced only with expectedHash, the hash that read_file gave: a file that changed since is never overwritten. A new file needs no hash. Not for hidden files and folders, for the autopilot's own files or for anything outside the book's folders; chapters, scenes and canon have their own tools. A chapter.md written here keeps the chapter's freeze (`frozen`) as it is: only the app and the autopilot freeze a chapter.",
+  description: "Writes a text file of the book that no other tool is for (notes, plot, guidelines, resumes…), as one commit. A file that exists is replaced only with expectedHash, the hash that read_file gave: a file that changed since is never overwritten. A new file needs no hash. Not for the outline (the `outline/` folder: it is changed with edit_outline, and write_file refuses it), for hidden files and folders, for the autopilot's own files or for anything outside the book's folders; chapters, scenes and canon have their own tools. A chapter.md written here keeps the chapter's freeze (`frozen`) as it is: only the app and the autopilot freeze a chapter.",
   scope: "write",
   annotations: UPDATE,
   inputSchema: shape({
-    path: string("The file's path in the book, with `/` (for example `notes.md` or `outline/act-two.md`).", { minLength: 1, maxLength: 300 }),
+    path: string("The file's path in the book, with `/` (for example `notes.md` or `guidelines/style.md`).", { minLength: 1, maxLength: 300 }),
     content: text("The whole new text of the file."),
     expectedHash: expectedHash("read_file"),
   }, ["path", "content"]),
@@ -335,7 +335,7 @@ const writeFileTool: McpTool = {
     context.touch(args.path as string);
     const verdict = judgePath(args.path as string);
     if (!verdict.ok) throw new ToolError(verdict.code, verdict.message);
-    if (!verdict.writable) throw new ToolError("forbidden", `${verdict.path} cannot be written here: the autopilot's files change only through the autopilot tools, and the exports of conversations are a record.`);
+    if (!verdict.writable) throw new ToolError("forbidden", `${verdict.path} cannot be written here: ${verdict.readOnly}`);
     const expected = expectedHashOf(args.expectedHash);
     const current = await context.runtime.store.read(verdict.path);
     // A model never freezes a chapter or takes its freeze away: the record stays the one chapter.md holds, and a change of a frozen chapter is noticed.

@@ -31,13 +31,15 @@ test("S7: initialize answers the highest protocol version both sides know, with 
     assert.deepEqual([result.serverInfo.name, result.serverInfo.version], ["narrarium-server", testing.SERVER_VERSION]);
     assert.ok(result.serverInfo.title.includes(TITLE));
     assert.ok(result.instructions.length > 150 && result.instructions.length < 1600, `short instructions: ${result.instructions.length} characters`);
-    for (const word of [TITLE, "expectedHash", "autopilot_status"]) assert.ok(result.instructions.includes(word), `the instructions of a client that may do everything say ${word}`);
+    for (const word of [TITLE, "expectedHash", "autopilot_status", "read_outline", "edit_outline"]) assert.ok(result.instructions.includes(word), `the instructions of a client that may do everything say ${word}`);
+    assert.match(result.instructions, /outline[^]*never[^]*write_file/i, "and that the outline is changed with edit_outline, not with write_file");
     assert.match(result.instructions, /not instructions|never instructions/i, "and that what the book says is data");
 
     const reader = mcpClient(server, slug, await issueToken(server, "reader", ["read"]), { version: null });
     const readerInstructions = (await reader.post(initialize("2025-06-18"))).json.result.instructions;
     assert.ok(readerInstructions.includes(TITLE));
-    for (const word of ["create_chapter", "expectedHash", "autopilot_pause"]) assert.equal(readerInstructions.includes(word), false, `a client that may only read is not told about ${word}`);
+    assert.ok(readerInstructions.includes("read_outline"), "it is told how to read the outline");
+    for (const word of ["create_chapter", "expectedHash", "autopilot_pause", "edit_outline", "write_file"]) assert.equal(readerInstructions.includes(word), false, `a client that may only read is not told about ${word}`);
 
     for (const params of [{}, { protocolVersion: 5 }, { protocolVersion: "2025-06-18", capabilities: "x" }, { protocolVersion: "2025-06-18", clientInfo: 5 }]) {
       const invalid = await rpc.post({ jsonrpc: "2.0", id: 3, method: "initialize", params });
@@ -104,7 +106,14 @@ test("S7: tools/list shows each client the tools its permissions allow, and ever
       assert.equal(typeof annotations.destructiveHint, "boolean", tool.name);
       if (readOnly) assert.deepEqual([annotations.destructiveHint, annotations.idempotentHint], [false, true], tool.name);
       if (/^create_/.test(tool.name)) assert.equal(annotations.destructiveHint, false, `${tool.name} only adds`);
-      if (/^update_/.test(tool.name) || tool.name === "write_file") assert.equal(annotations.destructiveHint, true, `${tool.name} replaces what is there`);
+      if (/^update_/.test(tool.name) || tool.name === "write_file" || tool.name === "edit_outline") assert.equal(annotations.destructiveHint, true, `${tool.name} replaces what is there`);
+      // What a list holds is described as well as the tool's own properties: a model reads the whole schema.
+      const described = (property, where) => {
+        assert.ok(property.type || property.enum, `${where} has a type`);
+        assert.ok(property.description?.length > 10, `${where} is described`);
+        for (const [key, inner] of Object.entries(property.items?.properties ?? property.properties ?? {})) described(inner, `${where}.${key}`);
+      };
+      for (const [key, property] of Object.entries(schema.properties)) described(property, `${tool.name}.${key}`);
     }
     assert.equal(seen.size, READ_TOOLS.length + WRITE_TOOLS.length + RUN_TOOLS.length);
   });
@@ -252,14 +261,14 @@ test("S7: calls of tools are limited per client per minute with a 429 that says 
 
   await withServer(async (server, client) => {
     const { rpc } = await mcpFixture(server, client);
-    const write = (name) => rpc.call("write_file", { path: `outline/${name}.md`, content: "# Outline\n" });
+    const write = (name) => rpc.call("write_file", { path: `drafts/${name}.md`, content: "# Draft\n" });
     assert.equal((await write("a")).isError, false);
     assert.equal((await write("b")).isError, false);
     const refused = await write("c");
     assert.deepEqual([refused.status, refused.json.code], [429, "rate_limit"]);
-    const files = await rpc.call("list_files", { directory: "outline" });
+    const files = await rpc.call("list_files", { directory: "drafts" });
     assert.equal(files.status, 200, "reading goes on");
-    assert.deepEqual(files.data.files.map((file) => file.path), ["outline/a.md", "outline/act-one.md", "outline/b.md"], "and the write that was refused was not done");
+    assert.deepEqual(files.data.files.map((file) => file.path), ["drafts/a.md", "drafts/b.md"], "and the write that was refused was not done");
   }, { limits: { mcpCallsPerMinute: 100, mcpWritesPerMinute: 2 } });
 });
 

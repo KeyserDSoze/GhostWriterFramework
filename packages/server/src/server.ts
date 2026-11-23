@@ -15,16 +15,20 @@ import {
   PAUSE_AUTOPILOT_MODES,
   SERVER_API_VERSION,
   SERVER_FEATURE_AUTOPILOT_CONTROLS,
+  SERVER_FEATURE_AUTOPILOT_RETRY,
   SERVER_FEATURE_AUTOPILOT_RULES,
+  SERVER_FEATURE_GITHUB_CONFLICTS,
   SERVER_PACKAGE_NAME,
   encodeServerSentEvent,
   isBookConflictError,
+  longRetryProblem,
   normalizeRuleText,
   pickAiRuntimeConfig,
   redactAiRuntimeConfig,
   type AiPort,
   type AutopilotEvent,
   type AutopilotLiveOptions,
+  type AutopilotLongRetry,
   type AutopilotRunLimits,
   type BookFileContent,
   type EvaluationTarget,
@@ -36,6 +40,12 @@ import {
   type ServerUpdateInfo,
   type ServerUpdateResult,
 } from "narrarium-engine";
+import { clientAction, approvedBases, mcpChanges, networkChanges, refusalIsLogged, spendChanges } from "./admin-actions.js";
+import { ERROR_ATTENTION_MS, buildHealth, diskSpace, errorKind, routeShape, type HealthReport, type LastServerError } from "./admin-health.js";
+import { ADMIN_ACTION_TYPES, AdminLog, type AdminActionType, type AdminActor, type AdminLogInput } from "./admin-log.js";
+import type { AdminPanelOptions } from "./admin-options.js";
+import { buildRisks } from "./admin-risks.js";
+import { DEFAULT_STALLED_AFTER_MS, MAX_RUNS_PER_PAGE, RunBoard, runsPage } from "./admin-runs.js";
 import { AiNotApprovedError, approvalCovers, baseIsApproved, normalizeAiBase, unapprovedAiBases } from "./ai-approval.js";
 import { Auth, assertScope, isScope, parseScopes, type ClientRecord } from "./auth.js";
 import { BookRegistry, type AutopilotTuning, type BookRuntime } from "./books.js";
@@ -45,6 +55,7 @@ import { MAX_COMMIT_CHANGES } from "./fs-store.js";
 import { lockDataRoot, unsafeKeys } from "./files.js";
 import { bridgeToApi } from "./gateway.js";
 import { gitVersion } from "./git.js";
+import { asConflictPage, asResolveRequest } from "./github-conflicts.js";
 import { ConcurrencyLimiter, WindowLimiter, sourceOf, type LimitVerdict } from "./limits.js";
 import { authenticateMcp, challenge, clientTokenAuthenticator, type McpAuthenticator, type McpPrincipal } from "./mcp-access.js";
 import { McpAudit } from "./mcp-audit.js";
@@ -54,6 +65,7 @@ import { OAuthServer, assertPasskeyLabel, isOAuthPath } from "./oauth.js";
 import { OAuthStore } from "./oauth-store.js";
 import { checkNpmServerRelease, isExactSemver, type NpmReleaseCheck } from "./npm-release.js";
 import { RuntimeInstaller, SUPERVISED_ENV, type UpdateResult } from "./runtime-install.js";
+import { UPDATE_HISTORY_MAX, UpdateHistory } from "./update-history.js";
 import { SpendLedger, SpendLimitError, applySpendChanges, pausedError, spendSettingsOf, type ServerSpendStatus } from "./spend.js";
 import { CloudflareTunnelManager, type CloudflareTunnelManagerOptions } from "./tunnel.js";
 import { ADMIN_CSS, ADMIN_HTML, ADMIN_JS } from "./ui.js";
@@ -102,6 +114,8 @@ export interface NarrariumServerOptions {
   now?: () => Date;
   /** How the autopilot sessions wait and beat (tests shorten it). */
   autopilot?: AutopilotTuning;
+  /** What the admin panel's own views may be told by a test (how long a run is silent before it looks stalled, the free space of the disk…). */
+  admin?: AdminPanelOptions;
   /** Take the lock of the data folder (tests; default: `lockDataRoot`). Its second argument is what to call when the lock is lost. */
   lock?: typeof lockDataRoot;
   /** Called once a server that lost its data folder lock has stopped (the process should exit: another server may have the folder now). */
@@ -155,6 +169,8 @@ const AUTHENTICATED_PER_MINUTE = 6000;
 const RELEASE_CACHE_MS = 10 * MINUTE_MS;
 /** An npm that could not be reached is asked again sooner. */
 const RELEASE_UNREACHABLE_CACHE_MS = MINUTE_MS;
+/** The health report waits this long for the release check (the first one after a start asks the registry); a slow npm is told as "no answer yet". */
+const HEALTH_RELEASE_WAIT_MS = 4000;
 
 function readJsonBody(request: IncomingMessage, limit: number, idleMs: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -232,6 +248,8 @@ export interface MappedError {
   message: string;
   /** Headers of the answer (for example `Retry-After`). */
   headers?: Readonly<Record<string, string>>;
+  /** What the answer says besides its code and its message (`HttpError.data`). */
+  data?: Readonly<Record<string, unknown>>;
   /** Set for the errors that are not understood: the short id that links the answer to the log line. */
   requestId?: string;
   /** What the log says about an error that is not understood; never sent to the client. */
@@ -264,7 +282,7 @@ const FROZEN_ERROR_STATUS: Record<string, number> = { chapter_not_found: 404, no
  * the client gets a generic message and a short id, and the id is what the log line carries together with the real error.
  */
 export function errorStatus(error: unknown): MappedError {
-  if (error instanceof HttpError) return { status: error.status, code: error.code, message: error.message, headers: error.headers };
+  if (error instanceof HttpError) return { status: error.status, code: error.code, message: error.message, headers: error.headers, ...(error.data ? { data: error.data } : {}) };
   if (error instanceof AiUnavailableError) return { status: 412, code: "ai_not_configured", message: error.message };
   // What the owner decided (a cap, the switch, an endpoint not approved) is a refusal to say as it is, not a failure of the AI provider.
   if (error instanceof SpendLimitError) return { status: 429, code: "spend_limit", message: error.message };
@@ -289,7 +307,7 @@ function sendError(response: ServerResponse, mapped: MappedError): void {
   sendJson(
     response,
     mapped.status,
-    { code: mapped.code, message: mapped.message, ...(mapped.requestId ? { requestId: mapped.requestId } : {}) },
+    { ...mapped.data, code: mapped.code, message: mapped.message, ...(mapped.requestId ? { requestId: mapped.requestId } : {}) },
     { ...mapped.headers, ...(mapped.requestId ? { "x-request-id": mapped.requestId } : {}) },
   );
 }
@@ -306,6 +324,24 @@ function lockLostError(): HttpError {
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "invalid_request", "Expected a JSON object.");
   return value as Record<string, unknown>;
+}
+
+/** What a promise says, or `undefined` when it has not said it within `ms`: a slow registry must not hold up a report that is mostly about this computer. */
+function within<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ms);
+    timer.unref();
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+/** A whole number (from 1, or from `from`) in the address of a request (`?limit=20`): the fallback when it is not there, a refusal when it is not one. */
+function wholeNumber(query: URLSearchParams, name: string, fallback: number | undefined, from = 1): number | undefined {
+  const text = query.get(name);
+  if (text === null) return fallback;
+  if (!/^\d{1,12}$/.test(text) || Number(text) < from) throw new HttpError(400, "invalid_request", `\`${name}\` must be a whole number from ${from}.`);
+  return Number(text);
 }
 
 /** What a start may carry to bound its run: an object (`{ steps?, chapters? }`) or nothing. The engine reads the numbers: only a whole number above zero is a limit. */
@@ -328,12 +364,12 @@ function asPauseMode(value: unknown): PauseAutopilotMode {
  */
 function asLiveOptions(body: Record<string, unknown>): AutopilotLiveOptions {
   const refuse = (problem: string): never => {
-    throw new HttpError(400, "invalid_request", `${problem} Only these can change here: publishEvery (${[...AUTOPILOT_PUBLISH_MODES, "null"].join(", ")}), pauseAfterEachChapter (true or false) and frozenEdits (${FROZEN_EDITS_MODES.join(", ")}).`);
+    throw new HttpError(400, "invalid_request", `${problem} Only these can change here: publishEvery (${[...AUTOPILOT_PUBLISH_MODES, "null"].join(", ")}), pauseAfterEachChapter (true or false), frozenEdits (${FROZEN_EDITS_MODES.join(", ")}) and longRetry ({ "everyMinutes": 1 to 10080, "cycles": 1 to 1000 or "unlimited" }, or null to turn it off).`);
   };
   const keys = Object.keys(body);
   if (!keys.length) refuse("There is nothing to change.");
   // What the engine lets change during a run and this server checks: a setting it would not check is refused, never dropped in silence.
-  const checked = ["publishEvery", "pauseAfterEachChapter", "frozenEdits"].filter((key) => (LIVE_AUTOPILOT_OPTIONS as readonly string[]).includes(key));
+  const checked = ["publishEvery", "pauseAfterEachChapter", "frozenEdits", "longRetry"].filter((key) => (LIVE_AUTOPILOT_OPTIONS as readonly string[]).includes(key));
   const unknown = keys.filter((key) => !checked.includes(key));
   if (unknown.length) refuse(`${unknown.slice(0, 3).map((key) => key.slice(0, 40)).join(", ")} cannot be changed here.`);
   const options: AutopilotLiveOptions = {};
@@ -349,6 +385,12 @@ function asLiveOptions(body: Record<string, unknown>): AutopilotLiveOptions {
   if (Object.hasOwn(body, "frozenEdits")) {
     if (!(typeof body.frozenEdits === "string" && (FROZEN_EDITS_MODES as readonly string[]).includes(body.frozenEdits))) refuse("frozenEdits is not one of the ways to handle a change of a frozen chapter.");
     options.frozenEdits = body.frozenEdits as FrozenEditsMode;
+  }
+  if (Object.hasOwn(body, "longRetry")) {
+    // «Retry later» as the engine writes it, and nothing it would have to guess: a whole number of minutes, a whole number of cycles or the word "unlimited", and no other field.
+    const problem = longRetryProblem(body.longRetry);
+    if (problem) refuse(problem);
+    options.longRetry = body.longRetry as AutopilotLongRetry | null;
   }
   return options;
 }
@@ -642,6 +684,21 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     const mcpBooks = await McpBooks.open(data.file("mcp.json"), log);
     const mcpAudit = new McpAudit(data.file("mcp-audit.jsonl"), log);
     closers.push(() => mcpAudit.flush());
+    // What the owner and the clients change (the admin panel's action log): one line each, never a secret or a text of a book.
+    const adminLog = new AdminLog(data.file("admin-log.jsonl"), { now: options.now, log });
+    closers.push(() => adminLog.flush());
+    // The updates that were asked for and how each went: what the supervisor answered, joined with who asked and what it verified (a small, bounded file, written by this server alone).
+    const updateHistory = await UpdateHistory.open({
+      file: data.file("update-history.json"),
+      installer,
+      currentVersion: SERVER_VERSION,
+      now: options.now,
+      max: options.admin?.historyMax,
+      log: (line) => log(line),
+      onFinished: (entry) => adminLog.record({ action: "update.finish", actor: { kind: "system" }, ok: entry.state === "completed", ...(entry.state === "completed" ? {} : { code: entry.state }), object: entry.to, detail: entry.from }),
+    });
+    // An update that finished while the server was down (the one that is starting is the result of it) is told now.
+    await updateHistory.sync();
     const mcp = new McpEndpoint({
       books,
       state: mcpBooks,
@@ -655,12 +712,23 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
 
     // The OAuth server that lets ChatGPT, Claude.ai and the like connect to a book's endpoint by themselves: what the owner allowed is kept in private/oauth.json.
     const clock = options.now ?? (() => new Date());
+    /** The books as the panel lists them: the state of each autopilot, read from its session (never from the whole book). */
+    const runBoard = new RunBoard({ books, spend, now: clock, stalledAfterMs: options.admin?.stalledAfterMs ?? DEFAULT_STALLED_AFTER_MS, serverId: () => data.config.serverId });
+    /** When this server started, by its own clock: the uptime of the health report is counted from here. */
+    const startedAt = clock().getTime();
+    /** The last error nobody expected (the kind that gets a request id): the health report tells when, which request and where, and never what it said. */
+    let lastServerError: LastServerError | undefined;
+    const noteServerError = (where: LastServerError["where"], request: IncomingMessage, mapped: MappedError, error: unknown) => {
+      if (!mapped.requestId) return;
+      lastServerError = { at: clock().toISOString(), requestId: mapped.requestId, where, route: routeShape(request.method, request.url), name: errorKind(error) };
+    };
     const oauthStore = await OAuthStore.open(data.file("private", "oauth.json"), { now: clock, log });
     const oauth = new OAuthServer({
       store: oauthStore,
       books: mcpBooks,
       hasBook: (bookId) => books.has(bookId),
       verifyAdminCode: (code, source) => auth.verifyAdminCode(code, source),
+      onAction: (event) => adminLog.record({ action: event.action, actor: { kind: event.actor }, ok: event.ok, object: event.object, label: event.label, detail: event.detail, code: event.code, source: event.source }),
       publicUrl: () => data.config.publicUrl,
       localUrl: () => `http://127.0.0.1:${apiPort}`,
       readJson: (request, limit) => readBody(request, limit),
@@ -692,7 +760,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, "mcp", "mcp-oauth", ...(gitAvailable ? ["github"] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_RETRY, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -747,6 +815,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       maintenanceRequestId = requestId;
       if (maintenanceTimer) return;
       maintenanceTimer = setInterval(() => {
+        // The supervisor may have answered (a refusal that leaves this server running): the history and the owner's log say so.
+        void updateHistory.sync();
         void installer.readUpdateResult().then((result) => {
           if (!maintenanceRequestId || result?.requestId !== maintenanceRequestId || result.state !== "failed") return;
           maintenanceRequestId = undefined;
@@ -774,6 +844,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           entry.expiresAt = Date.now() + (result.reason === "unavailable" ? RELEASE_UNREACHABLE_CACHE_MS : RELEASE_CACHE_MS);
           // A release npm announces and the server refuses to offer is worth a line in the log: it is either a mistake or an attack.
           if (result.reason === "no_trusted_release") log(`Update not offered: ${result.message}`);
+          void updateHistory.noteOffer(result);
         },
         () => {
           if (cachedRelease === entry) cachedRelease = undefined;
@@ -808,7 +879,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       return base;
     };
 
-    const requestUpdate = async (body: Record<string, unknown>, source: "client" | "admin") => {
+    const requestUpdate = async (body: Record<string, unknown>, source: "client" | "admin", actor?: string) => {
       if (!supervised) throw new HttpError(409, "no_supervisor", "Remote updates need the supervisor: start the server with `npx narrarium-server start`.");
       const version = body.version;
       if (!isExactSemver(version) || body.confirmed !== true) throw new HttpError(400, "invalid_request", "Send the exact version to install and confirm it.");
@@ -819,11 +890,70 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         const previous = await pendingRequest();
         if (previous && previous.version !== version) throw new HttpError(409, "update_pending", "A different update is already waiting for the supervisor.");
         const requestId = previous?.requestId ?? randomUUID();
-        if (!previous) await installer.writeUpdateRequest({ schemaVersion: 1, packageName: SERVER_PACKAGE_NAME, version, requestedAt: new Date().toISOString(), requestId, source });
+        if (!previous) {
+          await installer.writeUpdateRequest({ schemaVersion: 1, packageName: SERVER_PACKAGE_NAME, version, requestedAt: new Date().toISOString(), requestId, source });
+          await updateHistory.noteRequest({ id: requestId, version, by: source, actor });
+        }
         watchMaintenance(requestId);
       });
       log(`Update to ${version} requested by ${source}.`);
       return { accepted: true as const, version, message: "Update requested: the supervisor stops the server cleanly, verifies the npm package and restarts the server only after a valid installation." };
+    };
+
+    /** The day's caps, as the server itself would refuse a call over them (the switch is not a cap: it is told on its own). */
+    const dayCapReached = (): "tokens-per-day" | "cost-per-day" | undefined => {
+      try {
+        spend.assertAllowed({ ...spendSettingsOf(data.config), paused: false });
+      } catch (error) {
+        if (error instanceof SpendLimitError && (error.reason === "tokens-per-day" || error.reason === "cost-per-day")) return error.reason;
+      }
+      return undefined;
+    };
+
+    /** The health of the server now: what is true of this computer and of the books, found out at the moment of asking and never kept. */
+    const healthReport = async (): Promise<HealthReport> => {
+      const now = clock().getTime();
+      const [views, release, disk, refused24h] = await Promise.all([
+        runBoard.collect().catch(() => undefined),
+        within(updateInfo().catch(() => undefined), options.admin?.releaseWaitMs ?? HEALTH_RELEASE_WAIT_MS),
+        (options.admin?.disk ?? (() => diskSpace(data.root)))().catch(() => undefined),
+        // Starts that were turned away for lack of a place: the log of the clients' calls is where that is written (a log that was cut counts less, never more).
+        adminLog.count({ action: "run.start", ok: false, code: "too_many_runs", since: now - ERROR_ATTENTION_MS }).catch(() => 0),
+      ]);
+      const connector = tunnel.status();
+      const capReached = dayCapReached();
+      return buildHealth({
+        now,
+        startedAt,
+        maintenance: books.inMaintenance,
+        serverVersion: SERVER_VERSION,
+        engineVersion: ENGINE_VERSION,
+        ...(release ? { update: { available: release.available, ...(release.reason ? { reason: release.reason } : {}), ...(release.latestVersion ? { latestVersion: release.latestVersion } : {}), pending: Boolean(release.pending) } } : {}),
+        ...(disk ? { disk } : {}),
+        git: { available: gitAvailable, githubBooks: books.all().filter(({ book }) => book.storage.kind === "github").length },
+        tunnel: { enabled: connector.enabled, process: connector.process, binaryAvailable: connector.binaryAvailable, ...(connector.lastErrorCode ? { lastErrorCode: connector.lastErrorCode } : {}) },
+        runs: { running: books.runningCount(), max: data.config.maxConcurrentRuns, refused24h },
+        spend: { paused: spendSettingsOf(data.config).paused, damaged: Boolean(spend.warning), ...(capReached ? { capReached } : {}) },
+        ...(views ? { books: { total: views.length, unreadable: views.filter((view) => view.state === "unreadable").length, error: views.filter((view) => view.state === "error").length, stalled: views.filter((view) => view.state === "stalled").length } } : {}),
+        ...(lastServerError ? { lastError: lastServerError } : {}),
+      });
+    };
+
+    /** The risks of this server's set-up now: each is a fact of it, so one goes when its fact does. */
+    const riskReport = async () => {
+      const hosted = books.all();
+      const settings = spendSettingsOf(data.config);
+      const adminAddress = data.config.allowRemoteAdmin ? (data.config.adminPublicUrl ?? data.config.publicUrl) : undefined;
+      const aiConfigured = options.ai ? true : (await data.aiConfig()).config.aiIntegrations.length > 0;
+      return buildRisks({
+        remoteAdmin: { on: data.config.allowRemoteAdmin, ...(adminAddress ? { address: adminAddress } : {}) },
+        clients: auth.list().clients.filter((client) => !client.revoked).map((client) => ({ label: client.label, scopes: client.scopes })),
+        apps: hosted.flatMap(({ book }) => oauth.grantsOf(book.bookId).map((grant) => ({ name: grant.name, bookId: book.bookId, scopes: grant.scopes }))),
+        mcp: { booksOn: hosted.filter(({ book }) => mcpBooks.peek(book.bookId)?.enabled === true).length, passkeys: oauth.passkeyViews().filter((key) => key.usable).length, publicUrl: data.config.publicUrl, canAddPasskey: oauth.canAddPasskey },
+        aiBases: data.config.allowedAiBases,
+        spend: { unlimited: settings.maxTokensPerDay === 0 && settings.maxCostPerDay === 0 && settings.maxTokensPerRun === 0 && settings.maxCostPerRun === 0, paused: settings.paused },
+        aiConfigured,
+      });
     };
 
     /** Where a book's MCP address is: the public address of the API when the owner set one, else this computer's own. */
@@ -831,6 +961,9 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
 
     /** What the status of a book's MCP says: its address (see `describeMcp`), how many apps are connected through OAuth, and where the OAuth server is. */
     const mcpStatus = (state: McpBookState) => ({ ...describeMcp(state, mcpAddresses()), connections: oauth.countGrants(state.bookId), oauth: oauth.describe(state.slug) });
+
+    /** What the admin log reads of the server before a call changes it. */
+    const loggedWorld = { mcpState: (bookId: string) => mcpBooks.peek(bookId), grant: (grantId: string) => oauth.grantInfo(grantId) };
 
     /**
      * Switch a book's MCP on or off or give it another address: the one way it is done, for the API and the admin panel. What the owner allowed to apps on that address ends with it:
@@ -967,6 +1100,16 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           return books.syncGitHub(params[0]);
         },
       },
+      // The conflicts of a GitHub book with GitHub: the list (a fetch, and a merge that writes nothing) and their resolution (one merge commit, pushed).
+      { method: "GET", pattern: /^\/api\/v1\/books\/([^/]+)\/github-conflicts$/, scope: "read", handler: async ({ params, url }) => books.githubConflicts(params[0], asConflictPage(url)) },
+      {
+        method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/github-conflicts\/resolve$/, scope: "write", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          books.get(params[0]);
+          const resolution = asResolveRequest(asObject(await readBody(request, SMALL_BODY)));
+          return books.resolveGithubConflicts(params[0], resolution);
+        },
+      },
       { method: "GET", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot$/, scope: "read", handler: async ({ params }) => books.get(params[0]).session.snapshot() },
       {
         method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/start$/, scope: "run", handler: async ({ request, params }) => {
@@ -987,6 +1130,18 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           if (mode === "cancel") runtime.session.cancelPause();
           else runtime.session.pause(mode);
           return runtime.session.snapshot();
+        },
+      },
+      {
+        method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/retry-now$/, scope: "run", handler: async ({ request, params }) => {
+          // It sets the run going again at once: while an update is about to start it is refused, like every command that makes the autopilot work (a pause is not).
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          const body = asObject(await readBody(request, SMALL_BODY));
+          if (Object.keys(body).length) throw new HttpError(400, "invalid_request", "\"Retry now\" takes no body: send nothing, or {}.");
+          // With nothing waiting it changes nothing, and the answer is the snapshot all the same.
+          const skipped = runtime.session.retryNow();
+          return { ...(await runtime.session.snapshot()), skipped };
         },
       },
       {
@@ -1115,7 +1270,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         },
       },
       { method: "GET", pattern: /^\/api\/v1\/updates$/, scope: "read", handler: async ({ client }) => updateInfo(client) },
-      { method: "POST", pattern: /^\/api\/v1\/updates$/, scope: "update", handler: async ({ request }) => requestUpdate(asObject(await readBody(request, 4096)), "client") },
+      { method: "POST", pattern: /^\/api\/v1\/updates$/, scope: "update", handler: async ({ request, client }) => requestUpdate(asObject(await readBody(request, 4096)), "client", client.label) },
     ];
 
     const common = (response: ServerResponse) => {
@@ -1175,13 +1330,23 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           return;
         }
         if (request.method === "POST" && url.pathname === "/api/v1/pairings") {
-          auth.admitPairingAttempt(source);
-          const body = asObject(await readBody(request, 4096));
-          const code = typeof body.code === "string" ? body.code : "";
-          const nonce = typeof body.nonce === "string" ? body.nonce : "";
-          const label = typeof body.label === "string" ? body.label.trim() : "";
-          if (!/^\d{9}$/.test(code) || !/^[a-f0-9]{64}$/.test(nonce) || !label || label.length > 80) throw new HttpError(400, "invalid_request", "Send the nine-digit code, a nonce and a client name.");
-          sendJson(response, 200, await auth.requestPairing(code, nonce, label, source, header(request, "user-agent")));
+          try {
+            auth.admitPairingAttempt(source);
+            const body = asObject(await readBody(request, 4096));
+            const code = typeof body.code === "string" ? body.code : "";
+            const nonce = typeof body.nonce === "string" ? body.nonce : "";
+            const label = typeof body.label === "string" ? body.label.trim() : "";
+            if (!/^\d{9}$/.test(code) || !/^[a-f0-9]{64}$/.test(nonce) || !label || label.length > 80) throw new HttpError(400, "invalid_request", "Send the nine-digit code, a nonce and a client name.");
+            const requested = await auth.requestPairing(code, nonce, label, source, header(request, "user-agent"));
+            // Nobody waits for the file: the entry is queued before the answer goes (so it is there when the log is asked for) and written while it travels.
+            const written = adminLog.record({ action: "pairing.request", actor: { kind: "device", label }, source });
+            sendJson(response, 200, requested);
+            await written;
+          } catch (error) {
+            // A code that is wrong, or too many tries: the owner is told (a run of them from anywhere is one entry). A request that is wrong in itself is not an event.
+            if (error instanceof HttpError && (error.status === 401 || error.status === 429)) void adminLog.record({ action: "pairing.attempt", actor: { kind: "anonymous" }, ok: false, code: error.code, source });
+            throw error;
+          }
           return;
         }
         const pairing = /^\/api\/v1\/pairings\/([0-9a-f-]{36})\/result$/.exec(url.pathname);
@@ -1237,7 +1402,9 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         if (request.method === "DELETE" && url.pathname === "/api/v1/session") {
           const revoked = await auth.revokeOwn(client);
           dropStaleStreams();
+          const written = revoked ? adminLog.record({ action: "client.disconnect", actor: { kind: "client", id: client.id, label: client.label }, source }) : undefined;
           sendJson(response, 200, { revoked });
+          await written;
           return;
         }
         if (request.method === "GET" && url.pathname === "/api/v1/events") {
@@ -1263,23 +1430,38 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           if (route.method !== request.method) continue;
           const match = route.pattern.exec(url.pathname);
           if (!match) continue;
-          assertScope(client, route.scope);
-          const params = match.slice(1).map((value) => {
-            try {
-              return decodeURIComponent(value);
-            } catch {
-              throw new HttpError(400, "invalid_path", "The address contains an invalid escape sequence.");
-            }
-          });
-          const payload = await route.handler({ request, response, params, url, client });
+          // What this call is in the admin log, if it is an event at all, read before the call changes it.
+          const logged = clientAction(request.method, url.pathname, loggedWorld);
+          const doer: AdminActor = { kind: "client", id: client.id, label: client.label };
+          let payload: unknown;
+          try {
+            assertScope(client, route.scope);
+            const params = match.slice(1).map((value) => {
+              try {
+                return decodeURIComponent(value);
+              } catch {
+                throw new HttpError(400, "invalid_path", "The address contains an invalid escape sequence.");
+              }
+            });
+            payload = await route.handler({ request, response, params, url, client });
+          } catch (error) {
+            // A client that was let in and told no (a permission it does not have, a limit, a state of the server) leaves a line; a request that is wrong in itself does not.
+            const mapped = logged ? errorStatus(error) : undefined;
+            if (logged && mapped && refusalIsLogged(mapped.status)) void adminLog.record({ action: logged.failure, actor: doer, ok: false, code: mapped.code, object: logged.object, label: logged.label, source });
+            throw error;
+          }
+          // Nobody waits for the file: the entries are queued before the answer goes (so they are there when the log is asked for) and written while it travels.
+          const written = logged ? logged.done(payload).map((entry) => adminLog.record({ ...entry, actor: doer, source })) : [];
           if (!auth.isCurrent(client)) throw new HttpError(401, "revoked", "This client token was revoked.");
           sendJson(response, url.pathname === "/api/v1/updates" && request.method === "POST" ? 202 : 200, payload);
+          await Promise.all(written);
           return;
         }
         throw new HttpError(404, "not_found", "Unknown endpoint.");
       })().catch((error) => {
         const mapped = errorStatus(error);
         if (isFailure(mapped)) log(`Error${mapped.requestId ? ` ${mapped.requestId}` : ""} on ${request.method} ${loggable(request.url)}: ${mapped.detail ?? mapped.message}`);
+        noteServerError("api", request, mapped, error);
         if (!response.headersSent) {
           response.setHeader("connection", "close");
           sendError(response, mapped);
@@ -1339,15 +1521,27 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           if (!releaseAnonymous) throw anonymousRefusal();
           response.once("close", releaseAnonymous);
           const body = asObject(await readBody(request, 4096));
-          const session = await auth.login(typeof body.code === "string" ? body.code.trim() : "", source);
+          let session: Awaited<ReturnType<typeof auth.login>>;
+          try {
+            session = await auth.login(typeof body.code === "string" ? body.code.trim() : "", source);
+          } catch (error) {
+            // Wrong codes in a run are counted in one entry; the code that was typed is never written.
+            void adminLog.record({ action: "admin.login", actor: { kind: "anonymous" }, ok: false, code: errorStatus(error).code, source });
+            throw error;
+          }
+          const written = adminLog.record({ action: "admin.login", actor: { kind: "admin" }, source });
           const secure = header(request, "origin")?.startsWith("https://") ? "; Secure" : "";
           response.setHeader("set-cookie", `${cookieName}=${session.cookie}; HttpOnly; SameSite=Strict; Path=/admin/; Max-Age=1800${secure}`);
           sendJson(response, 200, { csrf: session.csrf });
+          await written;
           return;
         }
         const cookie = new RegExp(`(?:^|;\\s*)${cookieName}=([A-Za-z0-9_-]+)`).exec(header(request, "cookie") ?? "")?.[1];
         auth.adminSession(cookie, request.method === "POST" ? header(request, "x-csrf-token") ?? "" : undefined);
         const body = request.method === "POST" ? asObject(await readBody(request, 16_384)) : {};
+        // What the owner does here is logged under his name, with where he came from.
+        const ownerSource = sourceOf(request, tunnelTrusted());
+        const note = (action: AdminLogInput["action"], fields: Omit<AdminLogInput, "action" | "actor" | "source"> = {}) => adminLog.record({ action, actor: { kind: "admin" }, source: ownerSource, ...fields });
         if (path === "/admin/api/logout" && request.method === "POST") {
           auth.logout(cookie);
           response.setHeader("set-cookie", `${cookieName}=; HttpOnly; SameSite=Strict; Path=/admin/; Max-Age=0`);
@@ -1355,7 +1549,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           return;
         }
         if (path === "/admin/api/status" && request.method === "GET") {
-          const summaries = await books.summaries().catch(() => []);
+          // The books come from the autopilot's own state, never from reading the whole book (what `books.summaries()` does when git is not there to say a revision).
+          const hosted = await runBoard.collect().catch(() => []);
           sendJson(response, 200, {
             serverId: data.config.serverId,
             label: data.config.label,
@@ -1378,45 +1573,62 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
             adminPublicUrl: data.config.adminPublicUrl ?? "",
             allowRemoteAdmin: data.config.allowRemoteAdmin,
             tunnel: tunnel.status(),
-            books: summaries.map((book) => ({ bookId: book.bookId, title: book.title, storage: book.storage.kind, running: book.running, status: book.autopilot?.status ?? null, phase: book.autopilot?.phase ?? null, error: book.error ?? null })),
+            books: hosted.map((book) => ({ bookId: book.bookId, title: book.title, storage: book.storage, running: book.live, status: book.status, phase: book.phase, error: book.error })),
             ...auth.list(),
           });
           return;
         }
         if (path === "/admin/api/admin-code/rotate" && request.method === "POST") {
-          sendJson(response, 200, { code: await auth.rotateAdminCode() });
+          const code = await auth.rotateAdminCode();
+          await note("admin.code.rotate");
+          sendJson(response, 200, { code });
           return;
         }
         if (path === "/admin/api/admin-code/set" && request.method === "POST") {
           await auth.replaceAdminCode(typeof body.code === "string" ? body.code : "");
+          await note("admin.code.set");
           sendJson(response, 200, { changed: true });
           return;
         }
         if (path === "/admin/api/token" && request.method === "POST") {
           const replaceId = typeof body.replaceId === "string" ? body.replaceId : undefined;
           const origin = { source: sourceOf(request, tunnelTrusted()), userAgent: header(request, "user-agent") };
-          sendJson(response, 200, await auth.issue(typeof body.label === "string" ? body.label : "", parseScopes(body.scopes), replaceId, origin));
+          const label = typeof body.label === "string" ? body.label : "";
+          const scopes = parseScopes(body.scopes);
+          const issued = await auth.issue(label, scopes, replaceId, origin);
+          await note(replaceId ? "token.replace" : "token.issue", { object: issued.clientId, label, detail: scopes.join(",") });
+          sendJson(response, 200, issued);
           if (replaceId) dropStaleStreams();
           return;
         }
         if (path === "/admin/api/revoke" && request.method === "POST") {
           if (typeof body.id !== "string") throw new HttpError(400, "invalid_request", "Which client?");
-          sendJson(response, 200, { revoked: await auth.revoke(body.id) });
+          const label = auth.list().clients.find((entry) => entry.id === body.id)?.label;
+          const revoked = await auth.revoke(body.id);
+          if (revoked) await note("token.revoke", { object: body.id, label });
+          sendJson(response, 200, { revoked });
           dropStaleStreams();
           return;
         }
         if (path === "/admin/api/pairing" && request.method === "POST") {
-          sendJson(response, 200, await auth.startPairing());
+          const started = await auth.startPairing();
+          await note("pairing.start");
+          sendJson(response, 200, started);
           return;
         }
         if (path === "/admin/api/pairing/approve" && request.method === "POST") {
           if (typeof body.id !== "string") throw new HttpError(400, "invalid_request", "Which pairing?");
+          const known = new Set(auth.list().clients.map((entry) => entry.id));
           await auth.approvePairing(body.id, { allowUpdate: body.allowUpdate === true });
+          const added = auth.list().clients.find((entry) => !known.has(entry.id));
+          await note("pairing.approve", { object: added?.id, label: added?.label, detail: added?.scopes.join(",") });
           sendJson(response, 200, { approved: true });
           return;
         }
         if (path === "/admin/api/pairing/cancel" && request.method === "POST") {
+          const open = auth.list().pairing !== null;
           await auth.cancelPairing();
+          if (open) await note("pairing.reject");
           sendJson(response, 200, { cancelled: true });
           return;
         }
@@ -1426,6 +1638,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           const allowedAiBases = list(body.allowedAiBases, 50).map((base) => normalizeAiBase(base));
           const publicUrl = typeof body.publicUrl === "string" && body.publicUrl.trim() ? normalizeOrigin(body.publicUrl, false) : undefined;
           const adminPublicUrl = typeof body.adminPublicUrl === "string" && body.adminPublicUrl.trim() ? normalizeOrigin(body.adminPublicUrl, false) : undefined;
+          const before = data.config;
           await data.updateConfig((next) => {
             next.origins = [...new Set(origins)];
             next.allowedAiBases = [...new Set(allowedAiBases)];
@@ -1436,6 +1649,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
             else delete next.adminPublicUrl;
             if (typeof body.allowRemoteAdmin === "boolean") next.allowRemoteAdmin = body.allowRemoteAdmin;
           });
+          // What the form changed, not what it said: a form saved as it was leaves no line.
+          for (const entry of networkChanges(before, data.config)) await note(entry.action, entry);
           // An approval that was taken out leaves what it covered waiting again: the next run would stop on it.
           await listPendingAiBases().catch(() => undefined);
           sendJson(response, 200, { saved: true });
@@ -1444,6 +1659,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         if ((path === "/admin/api/ai/approve" || path === "/admin/api/ai/dismiss") && request.method === "POST") {
           // The owner approves what the panel shows: an origin or an origin and a path, kept as it is (in a canonical spelling).
           const bases = (Array.isArray(body.bases) ? body.bases : []).filter((entry): entry is string => typeof entry === "string").slice(0, 50).map((base) => normalizeAiBase(base));
+          const before = data.config;
           await data.updateConfig((next) => {
             if (path.endsWith("approve")) {
               next.allowedAiBases = [...new Set([...next.allowedAiBases, ...bases])].slice(0, 50);
@@ -1452,6 +1668,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
               next.pendingAiBases = next.pendingAiBases.filter((base) => !bases.some((dismissed) => approvalCovers(dismissed, base) && approvalCovers(base, dismissed)));
             }
           });
+          if (path.endsWith("approve")) for (const entry of approvedBases(before.allowedAiBases, bases)) await note(entry.action, entry);
+          else for (const base of before.pendingAiBases.filter((pending) => !data.config.pendingAiBases.includes(pending)).slice(0, 10)) await note("ai.dismiss", { object: base });
           sendJson(response, 200, { saved: true });
           return;
         }
@@ -1461,9 +1679,11 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           return;
         }
         if (path === "/admin/api/spend" && request.method === "POST") {
+          const before = spendSettingsOf(data.config);
           await data.updateConfig((next) => {
             next.spend = applySpendChanges(spendSettingsOf(next), body);
           });
+          for (const entry of spendChanges(before, spendSettingsOf(data.config))) await note(entry.action, entry);
           // Switched off: every autopilot stops at once, the call in flight included, and is paused (not failed); a director question in
           // flight is abandoned and answered with the switch's refusal.
           if (body.paused === true) {
@@ -1479,23 +1699,44 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           } catch (error) {
             throw new HttpError(422, "tunnel", error instanceof Error ? error.message : String(error));
           }
-          sendJson(response, 200, await tunnel.start());
+          const started = await tunnel.start();
+          await note("tunnel.start");
+          sendJson(response, 200, started);
           return;
         }
         if (path === "/admin/api/tunnel/restart" && request.method === "POST") {
-          sendJson(response, 200, await tunnel.restart());
+          const restarted = await tunnel.restart();
+          await note("tunnel.restart");
+          sendJson(response, 200, restarted);
           return;
         }
         if (path === "/admin/api/tunnel/remove" && request.method === "POST") {
-          sendJson(response, 200, await tunnel.remove());
+          const removed = await tunnel.remove();
+          await note("tunnel.remove");
+          sendJson(response, 200, removed);
           return;
         }
         if (path === "/admin/api/updates" && request.method === "GET") {
           sendJson(response, 200, await updateInfo());
           return;
         }
+        // The last updates: how each ended, what the supervisor verified, and why one was refused.
+        if (path === "/admin/api/updates/history" && request.method === "GET") {
+          sendJson(response, 200, { max: UPDATE_HISTORY_MAX, entries: await updateHistory.list() });
+          return;
+        }
         if (path === "/admin/api/updates" && request.method === "POST") {
-          sendJson(response, 202, await requestUpdate({ ...body, confirmed: true }, "admin"));
+          const wanted = typeof body.version === "string" ? body.version : undefined;
+          let accepted: Awaited<ReturnType<typeof requestUpdate>>;
+          try {
+            accepted = await requestUpdate({ ...body, confirmed: true }, "admin");
+          } catch (error) {
+            const mapped = errorStatus(error);
+            if (refusalIsLogged(mapped.status)) await note("update.request", { ok: false, code: mapped.code, object: wanted, detail: SERVER_VERSION });
+            throw error;
+          }
+          await note("update.request", { object: accepted.version, detail: SERVER_VERSION });
+          sendJson(response, 202, accepted);
           return;
         }
         if (path === "/admin/api/scopes" && request.method === "GET") {
@@ -1519,38 +1760,79 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         }
         if (adminPath === "/admin/api/mcp/audit" && request.method === "GET") {
           const query = new URL(path, "http://127.0.0.1").searchParams;
-          const whole = (name: string, fallback: number | undefined): number | undefined => {
-            const text = query.get(name);
-            if (text === null) return fallback;
-            if (!/^\d{1,12}$/.test(text) || Number(text) < 1) throw new HttpError(400, "invalid_request", `\`${name}\` must be a whole number from 1.`);
-            return Number(text);
-          };
+          const whole = (name: string, fallback: number | undefined) => wholeNumber(query, name, fallback);
           const wanted = query.get("book");
           sendJson(response, 200, await mcpAudit.page({ limit: Math.min(whole("limit", 20) as number, 200), before: whole("before", undefined), ...(wanted ? { bookId: wanted.slice(0, 120) } : {}) }));
+          return;
+        }
+        // The books in progress: the state of each autopilot, a page at a time (what is going on first), with the totals of all the books.
+        if (adminPath === "/admin/api/runs" && request.method === "GET") {
+          const query = new URL(path, "http://127.0.0.1").searchParams;
+          const limit = Math.min(wholeNumber(query, "limit", 10) as number, MAX_RUNS_PER_PAGE);
+          const offset = wholeNumber(query, "offset", 0, 0) as number;
+          const views = await runBoard.collect();
+          sendJson(response, 200, {
+            now: clock().toISOString(),
+            maxConcurrentRuns: data.config.maxConcurrentRuns,
+            running: views.filter((view) => view.live).length,
+            spendToday: spendStatus().today,
+            ...runsPage(views, { limit, offset }),
+          });
+          return;
+        }
+        // How the server is (one line, and the checks it is made of) and what its set-up risks: each from a fact of the server, found out when asked.
+        if (adminPath === "/admin/api/health" && request.method === "GET") {
+          sendJson(response, 200, await healthReport());
+          return;
+        }
+        if (adminPath === "/admin/api/risks" && request.method === "GET") {
+          sendJson(response, 200, await riskReport());
+          return;
+        }
+        // What the owner and the clients changed, a page at a time, newest first; `type` limits it to one kind of action and `ok` to what worked or what failed.
+        if (adminPath === "/admin/api/log" && request.method === "GET") {
+          const query = new URL(path, "http://127.0.0.1").searchParams;
+          const type = query.get("type");
+          if (type !== null && !(ADMIN_ACTION_TYPES as readonly string[]).includes(type)) throw new HttpError(400, "invalid_request", `\`type\` must be one of: ${ADMIN_ACTION_TYPES.join(", ")}.`);
+          const ok = query.get("ok");
+          if (ok !== null && ok !== "true" && ok !== "false") throw new HttpError(400, "invalid_request", "`ok` must be true or false.");
+          sendJson(response, 200, await adminLog.page({ limit: Math.min(wholeNumber(query, "limit", 20) as number, 200), before: wholeNumber(query, "before", undefined), ...(type ? { type: type as AdminActionType } : {}), ...(ok !== null ? { ok: ok === "true" } : {}) }));
           return;
         }
         if (adminPath === "/admin/api/mcp/book" && request.method === "POST") {
           if (typeof body.bookId !== "string" || !body.bookId) throw new HttpError(400, "invalid_request", "Which book?");
           const runtime = books.get(body.bookId);
-          sendJson(response, 200, mcpStatus(await setMcp(runtime, asMcpChange(body))));
+          const before = mcpBooks.peek(runtime.book.bookId);
+          const state = await setMcp(runtime, asMcpChange(body));
+          for (const entry of mcpChanges(runtime.book.bookId, before, state)) await note(entry.action, entry);
+          sendJson(response, 200, mcpStatus(state));
           return;
         }
         if (adminPath === "/admin/api/mcp/revoke" && request.method === "POST") {
           if (typeof body.id !== "string" || !body.id) throw new HttpError(400, "invalid_request", "Which app?");
-          sendJson(response, 200, { revoked: await oauth.revokeGrant(body.id) });
+          const grant = oauth.grantInfo(body.id);
+          const revoked = await oauth.revokeGrant(body.id);
+          if (revoked) await note("oauth.revoke", { object: grant?.bookId, label: grant?.name });
+          sendJson(response, 200, { revoked });
           return;
         }
         if (adminPath === "/admin/api/passkeys/link" && request.method === "POST") {
-          sendJson(response, 200, oauth.passkeyLink());
+          const link = oauth.passkeyLink();
+          await note("passkey.link");
+          sendJson(response, 200, link);
           return;
         }
         if (adminPath === "/admin/api/passkeys/rename" && request.method === "POST") {
           await oauth.renamePasskey(body.id, body.label);
+          await note("passkey.rename", { object: typeof body.id === "string" ? body.id : undefined, label: typeof body.label === "string" ? body.label : undefined });
           sendJson(response, 200, { renamed: true });
           return;
         }
         if (adminPath === "/admin/api/passkeys/remove" && request.method === "POST") {
+          const passkeys = oauth.passkeyViews();
+          const target = passkeys.find((key) => key.id === body.id);
           await oauth.removePasskey(body.id, body.confirmLast === true);
+          await note("passkey.remove", { object: typeof body.id === "string" ? body.id : undefined, label: target?.label, ...(passkeys.length === 1 ? { detail: "last" } : {}) });
           sendJson(response, 200, { removed: true });
           return;
         }
@@ -1558,6 +1840,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       })().catch((error) => {
         const mapped = errorStatus(error);
         if (isFailure(mapped)) log(`Admin error${mapped.requestId ? ` ${mapped.requestId}` : ""} on ${request.method} ${request.url}: ${mapped.detail ?? mapped.message}`);
+        noteServerError("admin", request, mapped, error);
         if (!response.headersSent) {
           response.setHeader("connection", "close");
           sendError(response, mapped);

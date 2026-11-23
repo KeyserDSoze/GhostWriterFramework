@@ -7,6 +7,9 @@ import path from "node:path";
 import {
   NPM_SERVER_PACKAGE,
   NpmRegistryKeyring,
+  RegistrySignatureError,
+  RegistryUnreadableError,
+  ReleaseUnreadableError,
   ReleaseVerificationError,
   compareSemver,
   fetchNpmAttestations,
@@ -18,6 +21,7 @@ import {
   verifyNpmRegistrySignatures,
   type NpmReleaseMetadata,
 } from "./npm-release.js";
+import { UPDATE_VERIFICATION_FILE, parseUpdateVerification, reasonText, type UpdateCheckName, type UpdateCheckRecord, type UpdateVerification } from "./update-verification.js";
 
 export const PACKAGE_NAME = NPM_SERVER_PACKAGE;
 export const MINIMUM_NODE: readonly [number, number, number] = [22, 14, 0];
@@ -155,6 +159,11 @@ export interface InstallOptions {
   bootstrapRegistryRelease?: boolean;
   /** Where a warning goes: a release accepted although `npm audit signatures` could not finish (see `failedOnlyForMissingAttestationKeys`). One line each; never required. */
   log?: (line: string) => void;
+  /**
+   * Told what each check found, in the order the checks are made (the admin panel's history shows it). It only observes: what is checked, and what is decided, is the same with it and
+   * without it, and one that throws changes nothing.
+   */
+  report?: (check: UpdateCheckRecord) => void;
 }
 
 /** A log that is closed or broken never undoes an install that was accepted. */
@@ -164,6 +173,44 @@ function tell(log: ((line: string) => void) | undefined, line: string): void {
   } catch {
     // Nothing else to tell it to.
   }
+}
+
+/** Tell what a check found. An observer that is closed or broken never changes the install it watches. */
+function noteCheck(report: ((check: UpdateCheckRecord) => void) | undefined, record: UpdateCheckRecord): void {
+  try {
+    report?.(record);
+  } catch {
+    // Nothing else to tell it to.
+  }
+}
+
+/** The code npm gave for a command that failed (`npm error code EMISSINGSIGNATUREKEY`), and nothing else of what it printed. */
+function npmErrorCode(result: CommandResult): string | undefined {
+  for (const stream of [result.stdout, result.stderr]) {
+    for (const raw of String(stream ?? "").replace(ANSI_ESCAPE, "").split(/\r?\n/)) {
+      const match = /^npm (?:error|ERR!) code (E[A-Z0-9_]{2,38})\s*$/.exec(raw.trim());
+      if (match) return match[1];
+    }
+  }
+  return undefined;
+}
+
+/**
+ * How a check that did not pass says it: `refused` (it looked and said no), `unreadable` (what it checks against could not be read), or `failed` (something went wrong that is not a verdict).
+ * The server's own words are kept for a refused signature or provenance, a version that is too old and a registry that could not be read; for npm only the code it gave. Never what npm
+ * printed, a path, or what a registry said.
+ */
+export function failedCheck(check: UpdateCheckName, error: unknown): UpdateCheckRecord {
+  if (error instanceof ReleaseUnreadableError || error instanceof RegistryUnreadableError) return { check, result: "unreadable", reason: reasonText(error.message) };
+  if (error instanceof ReleaseVerificationError || error instanceof RegistrySignatureError || error instanceof RollbackRefusedError) return { check, result: "refused", reason: reasonText(error.message) };
+  if (error instanceof NpmCommandError) {
+    if (check !== "audit-signatures") return { check, result: "failed" };
+    const code = npmErrorCode(error.result);
+    return { check, result: "refused", ...(code ? { code } : {}) };
+  }
+  // The installer's own fixed refusals (metadata that is not valid, a tarball that is not the one announced, a copy that differs); a failure of the file system is not a verdict.
+  const system = typeof (error as { code?: unknown } | null)?.code === "string";
+  return !system && (check === "metadata" || check === "integrity" || check === "package") ? { check, result: "refused" } : { check, result: "failed" };
 }
 
 const auditToleratedWarning = (version: string): string => `Warning: npm audit signatures could not finish for ${PACKAGE_NAME}@${version}: this npm refuses a release that has an SLSA provenance but no npm publish attestation (a newer npm accepts it). The release was accepted because the server verified its npm registry signature and its SLSA provenance itself.`;
@@ -589,52 +636,78 @@ export class RuntimeInstaller {
     await ensureDataRoot(this.dataRoot);
     const version = requested === "latest" ? await this.latestVersion() : requested;
     assertExactSemver(version);
-    await this.assertNotRollback(version);
-    const release = await this.assertTrustedRelease(version, options.bootstrapRegistryRelease === true);
+    // What each check finds is told to `options.report`; that changes nothing about what is checked or decided.
+    const check = async <T>(name: UpdateCheckName, action: () => Promise<T>): Promise<T> => {
+      try {
+        const value = await action();
+        noteCheck(options.report, { check: name, result: "passed" });
+        return value;
+      } catch (error) {
+        noteCheck(options.report, failedCheck(name, error));
+        throw error;
+      }
+    };
+    await check("rollback", () => this.assertNotRollback(version));
+    const release = await check("metadata", () => this.assertTrustedRelease(version, options.bootstrapRegistryRelease === true));
     // The registry's keys (and, only for a key that has expired, its dates) are read once for the whole run.
     const keyring = new NpmRegistryKeyring(this.fetchImpl);
     const registrySignature = (integrity: string) => verifyNpmRegistrySignatures(version, integrity, this.fetchImpl, { keyring, now: this.now });
     // Who signed it is read from the attestation (not from the metadata) before anything is downloaded ...
-    const identityBefore = release.attested ? await this.verifiedAttestations(version, release.integrity) : undefined;
+    const identityBefore = release.attested ? await check("provenance", () => this.verifiedAttestations(version, release.integrity)) : undefined;
     // ... and so is the registry's own signature of the tarball that was announced: the server checks it itself, the same way whatever npm this machine has.
-    await registrySignature(release.integrity);
+    await check("registry-signature", () => registrySignature(release.integrity));
     await fs.mkdir(path.join(this.runtimeRoot, "versions"), { recursive: true, mode: 0o700 });
     const staging = path.join(this.runtimeRoot, `staging-${this.uuid()}`);
     const destination = path.join(this.runtimeRoot, "versions", version);
     await fs.mkdir(staging, { recursive: true, mode: 0o700 });
     try {
-      await this.runNpm(["install", "--prefix", staging, "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact", "--package-lock=true", `${PACKAGE_NAME}@${version}`]);
+      await check("install", () => this.runNpm(["install", "--prefix", staging, "--ignore-scripts", "--no-audit", "--no-fund", "--save-exact", "--package-lock=true", `${PACKAGE_NAME}@${version}`]));
       // What was installed is what was judged: the metadata and the installation are two reads of the registry.
-      const installed = await this.stagedIntegrity(staging, version);
-      if (integrityHex(installed) !== integrityHex(release.integrity)) throw new Error("The package npm installed is not the one it announced: its integrity differs from the one reported before the download. Nothing was installed.");
+      const installed = await check("integrity", async () => {
+        const recorded = await this.stagedIntegrity(staging, version);
+        if (integrityHex(recorded) !== integrityHex(release.integrity)) throw new Error("The package npm installed is not the one it announced: its integrity differs from the one reported before the download. Nothing was installed.");
+        return recorded;
+      });
       // npm still audits what it installed. One failure of it is not a verdict on the release: an npm that expects a keyed npm publish attestation from every attested
       // package refuses one that has only the keyless SLSA provenance (narrarium-server@0.1.8 was published like that). It is accepted only for such a release, when
       // npm printed nothing else, and as long as the server's own checks all pass: the provenance and the registry signature before the download and again below.
       let auditTolerated = false;
       try {
         await this.runNpm(["audit", "signatures", "--prefix", staging]);
+        noteCheck(options.report, { check: "audit-signatures", result: "passed" });
       } catch (error) {
         const keyless = identityBefore !== undefined && !identityBefore.publishAttestation;
-        if (!(keyless && error instanceof NpmCommandError && failedOnlyForMissingAttestationKeys(error.result, PACKAGE_NAME, version))) throw error;
+        if (!(keyless && error instanceof NpmCommandError && failedOnlyForMissingAttestationKeys(error.result, PACKAGE_NAME, version))) {
+          noteCheck(options.report, failedCheck("audit-signatures", error));
+          throw error;
+        }
         auditTolerated = true;
+        noteCheck(options.report, { check: "audit-signatures", result: "tolerated", code: "EMISSINGSIGNATUREKEY" });
       }
       // ... and again, against what was really installed, now that npm has verified that the bundle is validly signed and about it (or has not been able to).
-      const identityAfter = release.attested ? await this.verifiedAttestations(version, installed) : undefined;
-      if (auditTolerated && identityAfter?.publishAttestation) {
-        throw new ReleaseVerificationError(version, "the registry now serves an npm publish attestation that it did not serve before npm audit signatures failed: its answers differ between reads, so the release is not trusted");
+      if (release.attested) {
+        await check("provenance", async () => {
+          const identityAfter = await this.verifiedAttestations(version, installed);
+          if (auditTolerated && identityAfter.publishAttestation) {
+            throw new ReleaseVerificationError(version, "the registry now serves an npm publish attestation that it did not serve before npm audit signatures failed: its answers differ between reads, so the release is not trusted");
+          }
+        });
       }
-      await registrySignature(installed);
-      const stagedPackage = path.join(staging, "node_modules", PACKAGE_NAME);
-      await this.validateInstalledPackage(stagedPackage, version);
-      if (await regularFile(path.join(destination, "package.json"))) {
-        await this.validateInstalledPackage(destination, version);
-        if (await this.packageDigest(destination) !== await this.packageDigest(stagedPackage)) throw new Error("A different copy of this version is already installed: it was not replaced.");
-      } else {
-        await renameWithRetry(stagedPackage, destination);
-      }
-      await this.activate(version);
-      const active = await this.activeRuntime();
-      if (!active) throw new Error("The activated runtime cannot be read.");
+      await check("registry-signature", () => registrySignature(installed));
+      const active = await check("package", async () => {
+        const stagedPackage = path.join(staging, "node_modules", PACKAGE_NAME);
+        await this.validateInstalledPackage(stagedPackage, version);
+        if (await regularFile(path.join(destination, "package.json"))) {
+          await this.validateInstalledPackage(destination, version);
+          if (await this.packageDigest(destination) !== await this.packageDigest(stagedPackage)) throw new Error("A different copy of this version is already installed: it was not replaced.");
+        } else {
+          await renameWithRetry(stagedPackage, destination);
+        }
+        await this.activate(version);
+        const runtime = await this.activeRuntime();
+        if (!runtime) throw new Error("The activated runtime cannot be read.");
+        return runtime;
+      });
       if (auditTolerated) tell(options.log, auditToleratedWarning(version));
       return active;
     } finally {
@@ -761,6 +834,16 @@ export class RuntimeInstaller {
     return value === undefined ? undefined : parseUpdateResult(value);
   }
 
+  /** What the supervisor verified for an update, to be read with its result (the admin panel's history). Strict: what is not that is no verification. */
+  async writeUpdateVerification(record: UpdateVerification): Promise<void> {
+    await writeControlJson(path.join(this.dataRoot, UPDATE_VERIFICATION_FILE), parseUpdateVerification(record));
+  }
+
+  async readUpdateVerification(): Promise<UpdateVerification | undefined> {
+    const value = await readBoundedJson(path.join(this.dataRoot, UPDATE_VERIFICATION_FILE));
+    return value === undefined ? undefined : parseUpdateVerification(value);
+  }
+
   async deleteMatchingUpdateRequest(expected: UpdateRequest): Promise<boolean> {
     const current = await this.readUpdateRequest();
     if (!current || JSON.stringify(current) !== JSON.stringify(expected)) return false;
@@ -839,6 +922,15 @@ async function writeUpdateFailure(installer: RuntimeInstaller, request: UpdateRe
 }
 
 /**
+ * Write down what an update verified, before its result is written (whoever reads the result then finds it). Never allowed to fail an update: a record that cannot be written
+ * leaves the update as it is, and the history says only how it ended.
+ */
+async function recordVerification(installer: RuntimeInstaller, request: UpdateRequest, fromVersion: string, checks: readonly UpdateCheckRecord[]): Promise<void> {
+  if (!checks.length) return;
+  await installer.writeUpdateVerification({ schemaVersion: 1, requestId: request.requestId, version: request.version, fromVersion, at: new Date().toISOString(), checks: checks.slice(0, 24) }).catch(() => undefined);
+}
+
+/**
  * Supervises the one server process owned by this CLI. A valid, bounded update request file is the
  * only trigger that can replace the active runtime; the supervisor never runs arbitrary commands
  * and never stops another process. At most three update restarts per hour.
@@ -904,6 +996,7 @@ export async function superviseServer(options: SupervisorOptions): Promise<Child
           } catch (error) {
             // Never stop a running server for a request that cannot be honoured.
             log(`Update to ${request.version} refused: ${error instanceof Error ? error.message : String(error)}`);
+            await recordVerification(installer, request, active.version, [failedCheck("rollback", error)]);
             await writeUpdateFailure(installer, request, active.version, "failed").catch(() => undefined);
             ignoredRequests.add(request.requestId);
             continue;
@@ -929,15 +1022,18 @@ export async function superviseServer(options: SupervisorOptions): Promise<Child
         return await spawnChild(active.serverPath, installer.dataRoot).exited;
       }
       let installed: ActiveRuntime | undefined;
+      const checks: UpdateCheckRecord[] = [];
       try {
-        installed = await installer.installVersion(updateRequest.version, { log });
+        installed = await installer.installVersion(updateRequest.version, { log, report: (record) => void checks.push(record) });
       } catch (error) {
         log(`Update to ${updateRequest.version} failed: ${error instanceof Error ? error.message : String(error)}`);
+        await recordVerification(installer, updateRequest, active.version, checks);
         await writeUpdateFailure(installer, updateRequest, active.version, "failed").catch(() => undefined);
         ignoredRequests.add(updateRequest.requestId);
       }
       if (installed) {
         log(`Updated from ${active.version} to ${installed.version}.`);
+        await recordVerification(installer, updateRequest, active.version, checks);
         await installer.writeUpdateResult({ schemaVersion: 1, requestId: updateRequest.requestId, state: "completed", outcome: "completed", version: updateRequest.version, fromVersion: active.version, at: new Date().toISOString(), message: UPDATE_MESSAGES.completed }).catch(() => undefined);
         await installer.deleteMatchingUpdateRequest(updateRequest).catch(() => false);
         updateRestarts.push(Date.now());

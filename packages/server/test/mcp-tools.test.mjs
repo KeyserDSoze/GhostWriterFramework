@@ -209,7 +209,7 @@ test("S7: list_files lists what a client may read and says what it may write; re
     const byPath = Object.fromEntries(listing.files.map((file) => [file.path, file]));
     for (const file of ["book.md", "notes.md", "plot.md", "chapters/001-arrival/chapter.md", "characters/mira.md", "secrets/the-keeper.md", "outline/act-one.md", "autopilot/plan.md"]) assert.ok(byPath[file], `${file} is listed`);
     assert.equal(listing.files.some((file) => file.path.startsWith(".")), false, "hidden files and folders (.github, .vscode…) are not the book's");
-    assert.deepEqual([byPath["notes.md"].writable, byPath["outline/act-one.md"].writable, byPath["autopilot/plan.md"].writable], [true, true, false]);
+    assert.deepEqual([byPath["notes.md"].writable, byPath["outline/act-one.md"].writable, byPath["autopilot/plan.md"].writable], [true, false, false], "the outline is changed with edit_outline, not as a file");
     assert.equal(byPath["notes.md"].hash, sha(await onDisk(server, "notes.md")));
     assert.equal(listing.total, listing.files.length);
     const page = done(await rpc.call("list_files", { limit: 5, offset: 2 }));
@@ -478,15 +478,15 @@ test("S7: write_file writes a text file of the book that no other tool is for: a
     refused(await rpc.call("write_file", { path: "notes.md", content: "# Old\n", expectedHash: notes.hash }), "conflict");
     assert.equal(await onDisk(server, "notes.md"), "# New notes\n");
 
-    const created = done(await rpc.call("write_file", { path: "outline/act-two.md", content: "# Act two\n" }));
+    const created = done(await rpc.call("write_file", { path: "drafts/act-two.md", content: "# Act two\n" }));
     assert.deepEqual([created.written, created.created], [true, true]);
-    assert.equal(await onDisk(server, "outline/act-two.md"), "# Act two\n");
-    refused(await rpc.call("write_file", { path: "outline/act-two.md", content: "x" }), "expected_hash_required", /exists/);
-    refused(await rpc.call("write_file", { path: "outline/ghost.md", content: "x", expectedHash: "a".repeat(64) }), "conflict");
+    assert.equal(await onDisk(server, "drafts/act-two.md"), "# Act two\n");
+    refused(await rpc.call("write_file", { path: "drafts/act-two.md", content: "x" }), "expected_hash_required", /exists/);
+    refused(await rpc.call("write_file", { path: "drafts/ghost.md", content: "x", expectedHash: "a".repeat(64) }), "conflict");
     assert.equal(commitCount(server), before + 2, "two writes, two commits");
 
     const kept = commitCount(server);
-    for (const path_ of ["autopilot/state.json", "autopilot/activity.json", "autopilot/plan.md", "conversations/chat.md", ".github/workflows/ci.yml", ".github/workflows/new.yml", ".vscode/tasks.json", ".opencode/plugins/x.json", ".claude/agents/x.md", ".gitignore", ".hidden/notes.md", "README.md", "package.json", "src/x.md", "node_modules/x.md"]) {
+    for (const path_ of ["autopilot/state.json", "autopilot/activity.json", "autopilot/plan.md", "outline/act-one.md", "outline/chapters/001.md", "conversations/chat.md", ".github/workflows/ci.yml", ".github/workflows/new.yml", ".vscode/tasks.json", ".opencode/plugins/x.json", ".claude/agents/x.md", ".gitignore", ".hidden/notes.md", "README.md", "package.json", "src/x.md", "node_modules/x.md"]) {
       refused(await rpc.call("write_file", { path: path_, content: "x" }), "forbidden");
     }
     for (const unsafe of ["../outside.md", "/etc/cron.d/job.md", "C:/x.md", "chapters//x.md", ".git/config", ".GIT/hooks/post-commit.md", "chapters/.git/x.md", "con.md", "a:b.md", "chapters/001-arrival/cover.png"]) {
@@ -599,7 +599,7 @@ test("S7: while the server waits to restart for an update, the tools that change
       server.books.leaveMaintenance();
     }
     assert.equal(commitCount(server), before, "nothing was written");
-    done(await rpc.call("write_file", { path: "outline/after.md", content: "x" }));
+    done(await rpc.call("write_file", { path: "drafts/after.md", content: "x" }));
   });
 });
 

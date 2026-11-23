@@ -8,9 +8,9 @@ import { rawApi } from "./api-helpers.mjs";
 export const VERSION = "2025-06-18";
 export const TITLE = "The Glass Harbor";
 /** The tools of each permission, in the order the endpoint lists them. */
-export const READ_TOOLS = ["book_info", "list_chapters", "read_chapter", "read_paragraph", "search_book", "list_canon", "read_canon_entry", "list_files", "read_file", "autopilot_status"];
-export const WRITE_TOOLS = ["create_chapter", "update_chapter", "create_paragraph", "update_paragraph", "create_canon_entry", "update_canon_entry", "write_file"];
-export const RUN_TOOLS = ["autopilot_pause", "autopilot_resume", "autopilot_note", "autopilot_answer"];
+export const READ_TOOLS = ["book_info", "list_chapters", "read_chapter", "read_paragraph", "search_book", "list_canon", "read_canon_entry", "list_files", "read_file", "autopilot_status", "read_outline", "read_outline_entry"];
+export const WRITE_TOOLS = ["create_chapter", "update_chapter", "create_paragraph", "update_paragraph", "create_canon_entry", "update_canon_entry", "write_file", "edit_outline"];
+export const RUN_TOOLS = ["autopilot_pause", "autopilot_retry_now", "autopilot_resume", "autopilot_note", "autopilot_answer"];
 
 const document = (fields, body) => `---\n${Object.entries(fields).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n")}\n---\n\n${body}\n`;
 

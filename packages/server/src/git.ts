@@ -3,10 +3,45 @@ import { rmSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { GithubConflictsResponse, ResolveGithubConflictsRequest, ResolveGithubConflictsResponse } from "narrarium-engine";
+import { HttpError } from "./errors.js";
+import {
+  GithubConflictError,
+  autopilotSide,
+  commitMerge,
+  conflictPage,
+  conflictsChanged,
+  fingerprintOf,
+  markOperation,
+  planResolution,
+  recoverOperation,
+  resolutionMessage,
+  resolutionTree,
+  trialMerge,
+  unmarkOperation,
+  type GitExecOptions,
+  type GitRun,
+  type GitRunner,
+  type TrialMerge,
+} from "./github-conflicts.js";
 
 export interface GitResult {
   stdout: string;
   stderr: string;
+  /** The exit code: 0, or one the caller said is an answer (`okCodes`). */
+  code?: number;
+}
+
+/** How one git process runs: where, with which token (only for GitHub), how long, and what it reads and writes besides its arguments. */
+interface GitProcessOptions {
+  cwd?: string;
+  token?: string;
+  timeoutMs?: number;
+  /** Variables added to the private environment (a temporary index). */
+  env?: Record<string, string>;
+  input?: string | Buffer;
+  okCodes?: readonly number[];
+  encoding?: "utf8" | "latin1";
 }
 
 export class GitError extends Error {
@@ -102,6 +137,7 @@ function hardening(sandbox: GitSandbox): string[] {
     "-c", "credential.helper=",
     "-c", "core.askPass=",
     "-c", "submodule.recurse=false",
+    "-c", "fetch.recurseSubmodules=false",
     "-c", "protocol.ext.allow=never",
   ];
 }
@@ -119,17 +155,23 @@ function subcommand(args: string[]): string {
   return "";
 }
 
-function execGit(args: string[], env: NodeJS.ProcessEnv, options: { cwd?: string; token?: string; timeoutMs?: number }): Promise<GitResult> {
+function execGit(args: string[], env: NodeJS.ProcessEnv, options: GitProcessOptions): Promise<GitResult & { code: number }> {
   return new Promise((resolve, reject) => {
-    execFile("git", args, { cwd: options.cwd, env, timeout: options.timeoutMs ?? 300_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error: ExecFileException | null, stdout, stderr) => {
-      if (error) {
+    const child = execFile("git", args, { cwd: options.cwd, env, timeout: options.timeoutMs ?? 300_000, maxBuffer: 64 * 1024 * 1024, windowsHide: true, encoding: options.encoding ?? "utf8" }, (error: ExecFileException | null, stdout, stderr) => {
+      const code = error ? (typeof error.code === "number" ? error.code : -1) : 0;
+      if (error && (error.killed === true || !options.okCodes?.includes(code))) {
         const detail = redact(String(stderr || error.message).trim(), options.token);
         const timedOut = error.killed === true;
         reject(new GitError(`git ${subcommand(args)} failed: ${detail.split("\n").slice(-3).join(" ")}`, detail, timedOut || TRANSIENT_GIT_FAILURE.test(detail)));
         return;
       }
-      resolve({ stdout: String(stdout), stderr: String(stderr) });
+      resolve({ stdout: String(stdout), stderr: String(stderr), code });
     });
+    if (options.input !== undefined) {
+      // A git that stops reading early (an error) closes the pipe: that is its answer, not a failure of the server.
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(options.input);
+    }
   });
 }
 
@@ -137,10 +179,26 @@ function execGit(args: string[], env: NodeJS.ProcessEnv, options: { cwd?: string
  * Run git in a private environment: `home` (or a private folder of this process) replaces the owner's home,
  * so their global configuration, hooks, URL rewrites and credential helpers never apply.
  */
-export async function runGit(args: string[], options: { cwd?: string; token?: string; timeoutMs?: number; home?: string } = {}): Promise<GitResult> {
+export async function runGit(args: string[], options: GitProcessOptions & { home?: string } = {}): Promise<GitResult & { code: number }> {
   const sandbox = await prepareSandbox(options.home ?? await defaultHome());
-  return execGit([...hardening(sandbox), ...args], gitEnvironment(sandbox, options.token), options);
+  return execGit([...hardening(sandbox), ...args], { ...gitEnvironment(sandbox, options.token), ...options.env }, options);
 }
+
+let mergeTreeSupport: Promise<boolean> | undefined;
+
+/** Whether this git has `merge-tree --write-tree` (git 2.38 and later): a merge that writes objects only. Asked once per process. */
+function mergeTreeSupported(): Promise<boolean> {
+  mergeTreeSupport ??= gitVersion().then((version) => {
+    const match = /(\d+)\.(\d+)/.exec(version ?? "");
+    return Boolean(match) && (Number(match![1]) > 2 || (Number(match![1]) === 2 && Number(match![2]) >= 38));
+  });
+  return mergeTreeSupport;
+}
+
+/** What a push that GitHub refused because it moved meanwhile says. */
+const REJECTED_PUSH = /rejected|fetch first|non-fast-forward/i;
+/** Characters of a failed push that an answer repeats. */
+const PUSH_ERROR_CHARACTERS = 500;
 
 export async function gitVersion(): Promise<string | null> {
   try {
@@ -173,23 +231,44 @@ function batches(paths: string[], limit = MAX_ARGUMENT_CHARACTERS): string[][] {
 /** The longest a revision is believed without looking again, whatever the files say (a file system with coarse time stamps may hide a change). */
 const HEAD_CACHE_MAX_AGE_MS = 30_000;
 
+/** What decides who keeps the autopilot's own files when both sides changed them (see `autopilotSide`): whether a run of the server is active. */
+export interface GithubPolicy {
+  runActive?: boolean;
+}
+
 /** A working tree used by the server: commits every autopilot step, optionally synced with GitHub. */
-export class GitRepository {
+export class GitRepository implements GitRunner {
   /** `git rev-parse HEAD`, kept while the files it is read from have not changed (see `headKey`). */
   private headCache: { key: string; head: string | undefined; at: number } | undefined;
 
+  /**
+   * `mergeTree` says whether git's `merge-tree --write-tree` is used to find the conflicts with GitHub (by default: when git has it, from 2.38); without
+   * it a merge in the working copy is made and always undone.
+   */
   constructor(
     readonly dir: string,
     private readonly remote?: { owner: string; repo: string; branch: string; token: () => string | undefined; url?: string },
-    private readonly options: { home?: string } = {},
+    private readonly options: { home?: string; mergeTree?: boolean } = {},
   ) {}
 
   get remoteUrl(): string | undefined {
     return this.remote ? this.remote.url ?? `https://github.com/${this.remote.owner}/${this.remote.repo}.git` : undefined;
   }
 
-  private run(args: string[], options: { cwd?: string; token?: string; timeoutMs?: number } = {}): Promise<GitResult> {
+  private run(args: string[], options: GitProcessOptions = {}): Promise<GitResult & { code: number }> {
     return runGit(args, { ...options, home: this.options.home });
+  }
+
+  /** Git in the working tree, for the code that finds and resolves the conflicts with GitHub (`GitRunner`). The token goes only to a command that talks to GitHub. */
+  exec(args: string[], options: GitExecOptions = {}): Promise<GitRun> {
+    return this.run([...(options.author ? AUTHOR : []), ...args], {
+      cwd: this.dir,
+      token: options.network ? this.remote?.token() : undefined,
+      env: options.env,
+      input: options.input,
+      okCodes: options.okCodes,
+      encoding: options.encoding,
+    });
   }
 
   /** Run in the working tree. The GitHub token goes only to the commands that talk to GitHub. */
@@ -276,38 +355,192 @@ export class GitRepository {
     for (const batch of batches(paths)) await this.git(["reset", "--quiet", "--", ...batch]).catch(() => undefined);
   }
 
-  /** Bring in the author's changes: fast-forward when possible, otherwise rebase local commits. */
-  async pull(): Promise<{ changed: boolean }> {
-    if (!this.remote) return { changed: false };
-    const before = await this.head();
+  /**
+   * Undo what a process that stopped in the middle of a change of the copy left behind: git's lock, a temporary index, and a merge or a rebase that the
+   * server's mark says was going on. Called when the server starts, and before every change of the copy with GitHub (the caller holds the book, so no
+   * git of this server works on it meanwhile). Answers whether there was anything to undo.
+   */
+  async recover(): Promise<boolean> {
+    const recovered = await recoverOperation(this);
+    if (recovered) this.headCache = undefined;
+    return recovered;
+  }
+
+  /** GitHub's branch, fetched now: its commit, or `undefined` when the branch is not on GitHub yet. */
+  private async fetchBranch(): Promise<string | undefined> {
+    const remote = this.remote!;
     try {
-      await this.git(["fetch", "--quiet", "--", "origin", this.remote.branch], true);
+      await this.git(["fetch", "--quiet", "--", "origin", remote.branch], true);
     } catch (error) {
-      if (error instanceof GitError && /couldn't find remote ref/i.test(error.stderr)) return { changed: false };
+      if (error instanceof GitError && /couldn't find remote ref/i.test(error.stderr)) return undefined;
       throw error;
     }
+    return (await this.git(["rev-parse", "FETCH_HEAD"])).stdout.trim();
+  }
+
+  private async revision(name: string): Promise<string> {
+    return (await this.git(["rev-parse", "--verify", "--quiet", `${name}^{commit}`])).stdout.trim();
+  }
+
+  private async mergeTree(): Promise<boolean> {
+    return this.options.mergeTree ?? mergeTreeSupported();
+  }
+
+  /** Put local commits on top of GitHub's, as the server always did; `false` (and nothing changed) when git cannot. A mark says it is going on. */
+  private async rebaseOnto(github: string): Promise<boolean> {
+    await markOperation(this, "rebase");
     try {
-      await this.git(["merge", "--ff-only", "--quiet", "FETCH_HEAD"]);
+      await this.git([...AUTHOR, "rebase", "--quiet", github]);
+      return true;
     } catch {
-      try {
-        await this.git([...AUTHOR, "rebase", "--quiet", "FETCH_HEAD"]);
-      } catch (error) {
-        await this.git(["rebase", "--abort"]).catch(() => undefined);
-        throw new GitError("The book changed on GitHub in a way that conflicts with the server's work. Resolve it from the web app, then resume.", error instanceof GitError ? error.stderr : "");
+      await this.git(["rebase", "--abort"]).catch(() => undefined);
+      return false;
+    } finally {
+      await unmarkOperation(this);
+      this.headCache = undefined;
+    }
+  }
+
+  /** Move the branch and the working copy to a commit that descends from where they are. */
+  private async fastForward(commit: string): Promise<void> {
+    try {
+      await this.git(["merge", "--ff-only", "--quiet", commit]);
+    } finally {
+      this.headCache = undefined;
+    }
+  }
+
+  /** Push one commit to GitHub's branch (a resolution is pushed before the copy moves to it). */
+  async pushCommit(commit: string): Promise<void> {
+    await this.git(["push", "--quiet", "origin", `${commit}:refs/heads/${this.remote!.branch}`], true);
+  }
+
+  /**
+   * Bring in the author's changes: fast-forward when possible; otherwise put the local commits on top of GitHub's, as the server always did, when the
+   * two sides changed different files. When they changed the same ones it throws `GithubConflictError` and changes nothing: the author chooses
+   * (`githubConflicts`, `resolveGithubConflicts`). The autopilot's own files are never asked about: when both sides changed them, the two sides are merged
+   * (one merge commit) with those three files taken whole from one side (`autopilotSide`), and so they are also when git could not put the commits on
+   * top of GitHub's although no file conflicts as a whole.
+   */
+  async pull(policy: GithubPolicy = {}): Promise<{ changed: boolean }> {
+    if (!this.remote) return { changed: false };
+    await this.recover();
+    const before = await this.head();
+    const github = await this.fetchBranch();
+    if (!github) return { changed: false };
+    try {
+      await this.git(["merge", "--ff-only", "--quiet", github]);
+    } catch (refused) {
+      const server = before ?? await this.revision("HEAD");
+      const trial = await trialMerge(this, server, github, { mergeTree: await this.mergeTree() });
+      // One side holds the other, and still git could not move: what it said is the answer (a name it cannot write, a file in the way).
+      if (!trial.tree) throw refused;
+      if (trial.conflicts.length) throw new GithubConflictError(trial.conflicts.length);
+      if (trial.autopilotBoth || !(await this.rebaseOnto(github))) {
+        const side = trial.autopilotBoth ? await autopilotSide(this, server, github, policy.runActive === true) : undefined;
+        const tree = await resolutionTree(this, trial, () => "server", side);
+        const body = side ? `The autopilot's files changed on both sides: ${side === "server" ? "the server's" : "GitHub's"} are kept.` : "";
+        await this.fastForward(await commitMerge(this, tree, trial, "Merge GitHub into the server's work", body));
       }
     }
     this.headCache = undefined;
     return { changed: (await this.head()) !== before };
   }
 
-  async push(): Promise<void> {
+  async push(policy: GithubPolicy = {}): Promise<void> {
     if (!this.remote) return;
     try {
       await this.git(["push", "--quiet", "origin", `HEAD:refs/heads/${this.remote.branch}`], true);
     } catch (error) {
-      if (!(error instanceof GitError) || !/rejected|fetch first|non-fast-forward/i.test(error.stderr)) throw error;
-      await this.pull();
+      if (!(error instanceof GitError) || !REJECTED_PUSH.test(error.stderr)) throw error;
+      await this.pull(policy);
       await this.git(["push", "--quiet", "origin", `HEAD:refs/heads/${this.remote.branch}`], true);
     }
+  }
+
+  private requireRemote(): NonNullable<GitRepository["remote"]> {
+    if (!this.remote) throw new HttpError(409, "no_remote", "This book is not on GitHub: it has no conflicts with GitHub to resolve.");
+    return this.remote;
+  }
+
+  /** What GitHub's branch and the server's copy are now: the trial merge of the two, after a fetch (`github` is empty when the branch is not on GitHub yet). */
+  private async compare(): Promise<TrialMerge> {
+    const server = await this.revision("HEAD");
+    const github = await this.fetchBranch();
+    if (!github) {
+      const ahead = Number((await this.git(["rev-list", "--count", server])).stdout.trim()) || 0;
+      return { server, github: "", conflicts: [], autopilotBoth: false, ahead, behind: 0 };
+    }
+    return trialMerge(this, server, github, { mergeTree: await this.mergeTree() });
+  }
+
+  /**
+   * The files that changed on both sides since the server's copy and GitHub parted, a page at a time: fetched now, compared by a merge that writes
+   * nothing, in the order of their paths. The autopilot's own files are not among them (`autopilotFiles` says who would keep them).
+   */
+  async githubConflicts(page: { offset: number; limit: number }, policy: GithubPolicy = {}): Promise<GithubConflictsResponse> {
+    const remote = this.requireRemote();
+    await this.recover();
+    const trial = await this.compare();
+    const side = trial.autopilotBoth ? await autopilotSide(this, trial.server, trial.github, policy.runActive === true) : undefined;
+    return conflictPage(this, trial, page, remote.branch, side);
+  }
+
+  /**
+   * Resolve the conflicts with GitHub: one merge commit of the server's work and GitHub's, in which every file that conflicts is the version chosen,
+   * built without touching the working copy, pushed (`policy.push`), and only then the copy moves to it. Refused, with nothing written: nothing to
+   * resolve (`409 not_conflicted`), conflicts that are not the ones the author chose from (`409 conflicts_changed`, with the list as it is now; also
+   * when GitHub moves onto them while the resolution is pushed), a file without a choice (`400 choice_missing`), a name git cannot write
+   * (`422 invalid_github_path`). A push that GitHub refuses because it moved elsewhere is made once more on the new GitHub; one that fails for another
+   * reason leaves the resolution on the server, and says why.
+   */
+  async resolveGithubConflicts(request: ResolveGithubConflictsRequest, policy: GithubPolicy & { push: boolean }): Promise<ResolveGithubConflictsResponse> {
+    const remote = this.requireRemote();
+    await this.recover();
+    let trial = await this.compare();
+    if (!trial.github || !trial.conflicts.length) throw new HttpError(409, "not_conflicted", "Nothing conflicts with GitHub: there is nothing to resolve. A sync brings the two together.");
+    const sideOf = (current: TrialMerge) => (current.autopilotBoth ? autopilotSide(this, current.server, current.github, policy.runActive === true) : Promise.resolve(undefined));
+    let side = await sideOf(trial);
+    const fingerprint = fingerprintOf(trial);
+    if (request.fingerprint !== fingerprint) throw await conflictsChanged(this, trial, remote.branch, side);
+    const plan = planResolution(trial, request);
+    const merge = async (current: TrialMerge, kept: typeof side) => {
+      const tree = await resolutionTree(this, current, plan.decide, kept);
+      const { subject, body } = resolutionMessage(request, plan, kept);
+      return commitMerge(this, tree, current, subject, body);
+    };
+    let commit = await merge(trial, side);
+    let pushed = false;
+    let pushError: string | undefined;
+    const failed = (error: unknown) => {
+      const token = remote.token();
+      const text = error instanceof Error ? error.message : String(error);
+      return (token ? text.split(token).join("***") : text).slice(0, PUSH_ERROR_CHARACTERS);
+    };
+    if (policy.push) {
+      try {
+        await this.pushCommit(commit);
+        pushed = true;
+      } catch (error) {
+        const stderr = error instanceof GitError ? error.stderr : error instanceof Error ? error.message : "";
+        if (!REJECTED_PUSH.test(stderr)) pushError = failed(error);
+        else {
+          // GitHub moved while the resolution was on its way: once more on GitHub as it is now, if the conflicts are still the ones the author chose for.
+          const again = await this.compare();
+          if (!again.github || fingerprintOf(again) !== fingerprint) throw await conflictsChanged(this, again, remote.branch, again.github ? await sideOf(again) : undefined);
+          trial = again;
+          side = await sideOf(trial);
+          commit = await merge(trial, side);
+          try {
+            await this.pushCommit(commit);
+            pushed = true;
+          } catch (retry) {
+            pushError = failed(retry);
+          }
+        }
+      }
+    }
+    await this.fastForward(commit);
+    return { head: commit, pushed, ...(pushError ? { pushError } : {}), ...plan.answer, ...(side ? { autopilotFiles: side } : {}) };
   }
 }

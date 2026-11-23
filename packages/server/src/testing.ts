@@ -5,6 +5,7 @@ export { Auth } from "./auth.js";
 export { Vault } from "./vault.js";
 export { FileBookStore, KeyedMutex } from "./fs-store.js";
 export { GitRepository, GitError, gitVersion, runGit } from "./git.js";
+export { GIT_OPERATION_MARKER, GithubConflictError } from "./github-conflicts.js";
 export { BookRegistry } from "./books.js";
 export { HttpError } from "./errors.js";
 export { SERVER_VERSION } from "./version.js";
@@ -12,6 +13,11 @@ export { lockDataRoot, atomicJson, readJson } from "./files.js";
 export * from "./limits.js";
 export { bridgeToApi, forwardedHeaders } from "./gateway.js";
 export * from "./npm-release.js";
+export * from "./mcp-outline-edit.js";
+export { OUTLINE_SCAN_MAX_ENTRIES } from "./mcp-outline.js";
+export { ToolError } from "./mcp-kit.js";
+/** The registry that `tools/list` shows: `npm run docs:tools` writes `mcp-tools.json` from it. */
+export { TOOLS } from "./mcp-tools.js";
 export * from "./der.js";
 export * from "./runtime-install.js";
 export * from "./data-root.js";
@@ -22,6 +28,14 @@ export * from "./network.js";
 export * from "./ai-approval.js";
 export * from "./spend.js";
 export * from "./admin-client.js";
+export * from "./admin-log.js";
+export * from "./admin-actions.js";
+export * from "./admin-runs.js";
+export * from "./admin-health.js";
+export * from "./admin-risks.js";
+export * from "./ui-texts.js";
+export * from "./update-verification.js";
+export * from "./update-history.js";
 export { main as cliMain, parseCommand, doctorChecks, prepareRuntime, HELP, type CliDependencies } from "./cli-main.js";
 // The engine's own copy of these classes (the one the server's `instanceof` checks see), for tests that must build them.
 export {

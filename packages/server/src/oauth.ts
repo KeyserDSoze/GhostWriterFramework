@@ -56,6 +56,23 @@ export interface OAuthLimits {
   maxClients?: number;
 }
 
+/** What the owner's consent page and passkey page do that the admin log keeps (never a code, a token or a credential). */
+export interface OAuthAction {
+  action: "oauth.approve" | "oauth.deny" | "passkey.add";
+  ok: boolean;
+  /** `admin`: the owner proved who he is (a passkey, the admin code); `anonymous`: nobody did. */
+  actor: "admin" | "anonymous";
+  /** The book (for an approval) or the passkey's id. */
+  object?: string;
+  /** The app's name, or the passkey's. */
+  label?: string;
+  /** What proved it and what was allowed: `admin-code read,write`. */
+  detail?: string;
+  /** Why it did not work. */
+  code?: string;
+  source?: string;
+}
+
 export interface OAuthServerOptions {
   store: OAuthStore;
   books: McpBooks;
@@ -69,6 +86,8 @@ export interface OAuthServerOptions {
   now(): Date;
   log(line: string): void;
   limits?: OAuthLimits;
+  /** Told of what the owner decided on the pages of this server. Awaited, and never allowed to fail what it is told about. */
+  onAction?(action: OAuthAction): void | Promise<void>;
 }
 
 interface Decision {
@@ -710,14 +729,21 @@ export class OAuthServer {
     const pending = this.pendingFor(request, body, base);
     const proof = body.proof;
     if (!isObject(proof)) throw new HttpError(400, "invalid_request", "Send the proof that it is you: a passkey or the admin code.");
+    const app = this.options.store.client(pending.clientId)?.name;
     let decision: Decision;
     let byCode = false;
-    if (proof.type === "admin-code") {
-      decision = this.decisionOf(pending, body);
-      await this.options.verifyAdminCode(typeof proof.code === "string" ? proof.code.trim() : "", source);
-      byCode = true;
-    } else if (proof.type === "passkey") decision = await this.verifyPasskey(pending, proof.credential, base);
-    else throw new HttpError(400, "invalid_request", "The proof is a passkey or the admin code.");
+    try {
+      if (proof.type === "admin-code") {
+        decision = this.decisionOf(pending, body);
+        await this.options.verifyAdminCode(typeof proof.code === "string" ? proof.code.trim() : "", source);
+        byCode = true;
+      } else if (proof.type === "passkey") decision = await this.verifyPasskey(pending, proof.credential, base);
+      else throw new HttpError(400, "invalid_request", "The proof is a passkey or the admin code.");
+    } catch (error) {
+      // Somebody who could not prove who they are, or who tried too often: the owner is told. A request that is wrong in itself is not an event.
+      if (error instanceof HttpError && (error.status === 401 || error.status === 429)) await this.tell({ action: "oauth.approve", ok: false, actor: "anonymous", label: app, code: error.code, source });
+      throw error;
+    }
 
     // Who it is is known now: only now is the book looked at, so that nobody who has not proved it learns which books are on.
     const book = this.openBook(pending, decision, base);
@@ -728,6 +754,7 @@ export class OAuthServer {
       if (!oldest.done) this.codes.delete(oldest.value);
     }
     this.pending.delete(pending.id);
+    await this.tell({ action: "oauth.approve", ok: true, actor: "admin", object: book.bookId, label: app, detail: `${byCode ? "admin-code" : "passkey"} ${decision.scopes.join(",")}`, source });
     const offer = byCode && this.rpIdOf(base) ? { passkeyOffer: { ticket: this.newTicket() } } : {};
     writeJson(response, 200, { redirect: this.redirectTo(pending.redirectUri, { code, state: pending.state, iss: base }), ...offer });
   }
@@ -736,7 +763,17 @@ export class OAuthServer {
     const body = this.asObject(await this.options.readJson(request, PAGE_BODY));
     const pending = this.pendingFor(request, body, base);
     this.pending.delete(pending.id);
+    await this.tell({ action: "oauth.deny", ok: true, actor: "anonymous", label: this.options.store.client(pending.clientId)?.name });
     writeJson(response, 200, { redirect: this.redirectTo(pending.redirectUri, { error: "access_denied", error_description: "The owner did not allow it.", state: pending.state, iss: base }) });
+  }
+
+  /** Tell the admin log what the owner decided. A log that fails never fails the flow it records. */
+  private async tell(action: OAuthAction): Promise<void> {
+    try {
+      await this.options.onAction?.(action);
+    } catch {
+      // Nothing else to tell it to.
+    }
   }
 
   private asObject(value: unknown): Record<string, unknown> {
@@ -931,6 +968,7 @@ export class OAuthServer {
     const label = cleanLabel(body.label);
     await this.options.store.addPasskey({ id: registered.credentialId, label, publicKey: registered.publicKey, alg: registered.alg, counter: registered.counter, transports: registered.transports, rpId });
     this.tickets.delete(digest);
+    await this.tell({ action: "passkey.add", ok: true, actor: "admin", object: registered.credentialId, label });
     writeJson(response, 200, { id: registered.credentialId, label });
   }
 
@@ -980,6 +1018,13 @@ export class OAuthServer {
       this.options.store.touchGrant(grant.id);
       return { id: `oauth:${grant.id}`, label: this.options.store.client(grant.clientId)?.name ?? "OAuth app", scopes: found.scopes, bookId: grant.bookId, current: () => this.options.store.hasGrant(grant.id) };
     };
+  }
+
+  /** The book and the app of a grant, for the admin log; `undefined` when there is no such grant. */
+  grantInfo(id: string): { bookId: string; name: string } | undefined {
+    const grant = this.options.store.grant(id);
+    if (!grant) return undefined;
+    return { bookId: grant.bookId, name: this.options.store.client(grant.clientId)?.name ?? "OAuth app" };
   }
 
   grantsOf(bookId?: string): GrantView[] {

@@ -5,7 +5,8 @@ import { assertSafeBookPath, isTextBookPath } from "narrarium-engine";
  * what tools and CI run (`.github/workflows`, `.vscode/tasks.json`, `.opencode/plugins`…), and a model that was talked into writing there would
  * be running code on the author's computer or in their GitHub account. Everything that starts with a dot is out, in every folder.
  *
- * Where the tools of the Scaletta (`outline/`) will be added later: `outline` is already here, so `read_file` and `write_file` reach it today.
+ * The outline (the Scaletta, `outline/`) is a folder that can be read as files and is written by its own tool, `edit_outline` (`mcp-outline.ts`): the engine makes
+ * every entry as the author's, with the numbering and the checks it owns, which a file written by hand would bypass (it could even name the autopilot as its author).
  */
 const ROOT_FILES: ReadonlySet<string> = new Set([
   "book.md", "context.md", "ideas.md", "notes.md", "plot.md", "promoted.md", "story-design.md", "director.md", "evaluation-guidelines.md",
@@ -18,13 +19,18 @@ const FOLDERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Folders that can be read and not written: the autopilot's own files (its state and activity are changed only through the autopilot, and its plan
- * is generated from them) and the exports of conversations (a record of what was said).
+ * Folders that can be read and not written as files, each with why and what to use instead (the sentence that follows `cannot be written here:`): the
+ * autopilot's own files (its state and activity are changed only through the autopilot, and its plan is generated from them), the exports of
+ * conversations (a record of what was said) and the outline, which has a tool of its own.
  */
-const READ_ONLY_FOLDERS: ReadonlySet<string> = new Set(["autopilot", "conversations"]);
+const READ_ONLY_FOLDERS: Readonly<Record<string, string>> = {
+  autopilot: "the autopilot's files change only through the autopilot tools.",
+  conversations: "the exports of conversations are a record.",
+  outline: "the outline (the Scaletta) is changed with edit_outline, which makes every change as the author's, with the numbering and the checks of the engine: a file written by hand could break them, or name the autopilot as its author. read_outline and read_outline_entry read it, and give the hash that edit_outline needs.",
+};
 
 export type PathVerdict =
-  | { ok: true; path: string; writable: boolean }
+  | { ok: true; path: string; writable: boolean; /** When it is not writable: why, and what to use instead. */ readOnly?: string }
   | { ok: false; code: "invalid_path" | "forbidden"; message: string };
 
 const forbid = (message: string): PathVerdict => ({ ok: false, code: "forbidden", message });
@@ -44,7 +50,8 @@ export function judgePath(requested: string): PathVerdict {
     return forbid(`\`${segments[0]}\` is not one of the book's own files. They are: ${[...ROOT_FILES].join(", ")}, and the folders ${[...FOLDERS].join(", ")}.`);
   }
   if (!isTextBookPath(path)) return { ok: false, code: "invalid_path", message: "Only text files of a book (.md, .markdown, .txt, .json, .yaml, .yml) can be read or written." };
-  return { ok: true, path, writable: segments.length === 1 || !READ_ONLY_FOLDERS.has(segments[0]) };
+  const readOnly = segments.length > 1 && Object.hasOwn(READ_ONLY_FOLDERS, segments[0]) ? READ_ONLY_FOLDERS[segments[0]] : undefined;
+  return { ok: true, path, writable: readOnly === undefined, ...(readOnly ? { readOnly } : {}) };
 }
 
 /** A folder to list: the same rules, for a folder (a trailing slash is fine, and so is no folder at all: the whole book). */

@@ -354,10 +354,12 @@ test("S4-2: with `off`, a change on GitHub to a file the server also changed sto
     await client.updateAutopilotOptions("gh", { publishEvery: "off" });
     await client.startAutopilot("gh", startOf(1));
     await held(ai);
-    await mkdir(path.join(seeded.seed, "autopilot"), { recursive: true });
-    await writeFile(path.join(seeded.seed, "autopilot", "state.json"), '{"written":"by another device"}\n');
+    // The concept rewrote story-design.md on the server (not published); the author rewrites it on GitHub. (J: the autopilot's own files would not
+    // stop the run: the server's win while it runs. See github-conflicts.test.mjs.)
+    const original = await readFile(path.join(seeded.seed, "story-design.md"), "utf8");
+    await writeFile(path.join(seeded.seed, "story-design.md"), "# Story Design\n\nWritten by the author on another device.\n");
     git(seeded.seed, "add", "-A");
-    git(seeded.seed, "commit", "--quiet", "-m", "another device: state");
+    git(seeded.seed, "commit", "--quiet", "-m", "another device: the design");
     git(seeded.seed, "push", "--quiet", seeded.origin, "main");
     const conflicting = git(seeded.seed, "rev-parse", "HEAD");
     const before = commitsOf(folder, "HEAD");
@@ -367,7 +369,10 @@ test("S4-2: with `off`, a change on GitHub to a file the server also changed sto
     const message = stopped.state.lastError?.message ?? stopped.state.message ?? "";
     assert.equal(stopped.state.status, "error", "the run cannot go on without choosing between two versions of the same file");
     assert.match(message, /changed on GitHub in a way that conflicts with the server's work/);
-    assert.match(message, /Resolve it from the web app, then resume/);
+    assert.match(message, /Resolve it in the app/);
+    assert.match(message, /then resume/);
+    assert.equal(stopped.state.lastError.errorKind, "conflict");
+    assert.deepEqual(stopped.state.lastError.errorDetail, { githubConflicts: 1 });
     assert.ok(commitsOf(folder, "HEAD") >= before, "no commit of the server was lost");
     assert.doesNotThrow(() => git(folder, "merge-base", "--is-ancestor", serverHead, "HEAD"), "the commits the server had are still the history of its copy");
     assert.equal(git(folder, "status", "--porcelain"), "", "the working copy is clean: the failed rebase was undone");
@@ -375,15 +380,18 @@ test("S4-2: with `off`, a change on GitHub to a file the server also changed sto
     assert.equal(git(seeded.origin, "rev-parse", "main"), conflicting, "GitHub is as the author left it");
     const synced = await client.syncGitHub("gh").then(() => null, (error) => error);
     assert.equal(synced.status, 409, "a sync says the same");
-    assert.equal(synced.code, "sync_failed");
+    assert.equal(synced.code, "github_conflict");
+    assert.equal(synced.details.conflicts, 1);
     assert.match(synced.message, /changed on GitHub/);
     assert.equal((await client.listBooks())[0].lastSync.ok, false);
 
-    // The author settles it on GitHub (here: the file that conflicts is taken out again), and the run resumes where it stopped.
-    git(seeded.seed, "rm", "--quiet", "autopilot/state.json");
+    // The author settles it on GitHub (here: the design is put back as it was), the conflict is gone by itself, and the run resumes where it stopped.
+    await writeFile(path.join(seeded.seed, "story-design.md"), original);
+    git(seeded.seed, "add", "-A");
     git(seeded.seed, "commit", "--quiet", "-m", "settled");
     git(seeded.seed, "push", "--quiet", seeded.origin, "main");
     const settledHead = git(seeded.seed, "rev-parse", "HEAD");
+    assert.deepEqual((await client.listGithubConflicts("gh")).conflicts, [], "the list says that nothing is in conflict any more");
     await client.startAutopilot("gh");
     const resumed = await settled(client);
     assert.equal(resumed.state.status, "completed", resumed.state.message ?? "");

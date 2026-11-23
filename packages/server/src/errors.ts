@@ -1,6 +1,9 @@
-/** An error with an HTTP status and a stable code, returned to clients as `{ code, message }` (plus these headers). */
+/**
+ * An error with an HTTP status and a stable code, returned to clients as `{ code, message }` (plus these headers). `data` is what the answer says
+ * besides them (the files of a refusal, a list as it is now): its fields go into the answer, never in place of `code` and `message`.
+ */
 export class HttpError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string, readonly headers: Readonly<Record<string, string>> = {}) {
+  constructor(readonly status: number, readonly code: string, message: string, readonly headers: Readonly<Record<string, string>> = {}, readonly data?: Readonly<Record<string, unknown>>) {
     super(message);
     this.name = "HttpError";
   }

@@ -1,9 +1,12 @@
+export type JsonType = "object" | "string" | "integer" | "number" | "boolean" | "array" | "null";
+
 /**
  * The part of JSON Schema that the tools of the MCP endpoint use. One object is both what `tools/list` publishes to a model and what a call's
  * arguments are checked against, so what a tool says it takes and what it takes cannot drift apart.
  */
 export interface JsonSchema {
-  type?: "object" | "string" | "integer" | "number" | "boolean" | "array";
+  /** One type, or a type and `"null"` (`["string", "null"]`: a value that may be taken away by sending null), as JSON Schema writes it. */
+  type?: JsonType | readonly JsonType[];
   description?: string;
   enum?: readonly string[];
   minLength?: number;
@@ -25,6 +28,8 @@ export const boolean = (description: string): JsonSchema => ({ type: "boolean", 
 export const choice = (description: string, values: readonly string[]): JsonSchema => ({ type: "string", description, enum: values });
 export const list = (description: string, items: JsonSchema, maxItems: number): JsonSchema => ({ type: "array", description, items, maxItems });
 export const free = (description: string): JsonSchema => ({ type: "object", description, additionalProperties: true });
+/** A property that may also be `null` (a way to take its value away). */
+export const nullable = (schema: JsonSchema): JsonSchema => ({ ...schema, type: [(Array.isArray(schema.type) ? schema.type[0] : schema.type) as JsonType, "null"] });
 
 /** An object that takes the properties it names and nothing else. */
 export function shape(properties: Record<string, JsonSchema>, required: readonly string[] = [], description?: string): JsonSchema {
@@ -36,7 +41,12 @@ const quoted = (path: string) => `\`${path}\``;
 
 /** What is wrong with `value` as seen by `schema`, in a sentence that names the property (`path`), or `undefined` when it is fine. */
 export function problemWith(schema: JsonSchema, value: unknown, path = "arguments"): string | undefined {
-  switch (schema.type) {
+  if (Array.isArray(schema.type)) {
+    const types = schema.type as readonly JsonType[];
+    if (value === null) return types.includes("null") ? undefined : `${quoted(path)} must not be null.`;
+    return problemWith({ ...schema, type: types.find((type) => type !== "null") }, value, path);
+  }
+  switch (schema.type as JsonType | undefined) {
     case "object": {
       if (!isObject(value)) return `${quoted(path)} must be an object.`;
       const properties = schema.properties ?? {};

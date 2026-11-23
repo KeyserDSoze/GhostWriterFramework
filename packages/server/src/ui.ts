@@ -3,6 +3,8 @@
  * (no inline scripts or styles). Texts are in English and Italian; data is always set as text.
  */
 
+import { HEALTH_HTML, HISTORY_HTML, LOG_HTML, RISKS_HTML, RUNS_HTML, VIEWS_CSS, VIEWS_JS } from "./ui-views.js";
+
 export const ADMIN_HTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -37,16 +39,23 @@ export const ADMIN_HTML = `<!doctype html>
   </section>
 
   <div class="grid hidden" id="main-view">
+    ${RISKS_HTML}
+
+    ${HEALTH_HTML}
+
+    ${RUNS_HTML}
+
     <section class="card" id="overview">
       <h2 data-i18n="overview">This server</h2>
       <dl class="facts" id="facts"></dl>
     </section>
 
-    <section class="card" id="updates">
+    <section class="card wide" id="updates">
       <div class="card-head"><h2 data-i18n="updates">Updates</h2><button type="button" class="ghost small" id="updates-check" data-i18n="check">Check again</button></div>
       <p id="updates-message"></p>
       <p class="muted" id="updates-last"></p>
       <button type="button" class="hidden" id="update-now"></button>
+      ${HISTORY_HTML}
     </section>
 
     <section class="card" id="pairing">
@@ -57,8 +66,8 @@ export const ADMIN_HTML = `<!doctype html>
     </section>
 
     <section class="card wide" id="clients">
-      <h2 data-i18n="clientsTitle">Clients</h2>
-      <div class="table-wrap"><table><thead><tr><th data-i18n="name">Name</th><th data-i18n="permissions">Permissions</th><th data-i18n="source">Source</th><th data-i18n="verification">Code</th><th data-i18n="created">Created</th><th data-i18n="lastSeen">Last seen</th><th></th></tr></thead><tbody id="client-rows"></tbody></table></div>
+      <h2 id="clients-title" data-i18n="clientsTitle">Clients</h2>
+      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="clients-title"><table class="stack" role="table" aria-labelledby="clients-title"><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" data-i18n="name">Name</th><th role="columnheader" scope="col" data-i18n="permissions">Permissions</th><th role="columnheader" scope="col" data-i18n="source">Source</th><th role="columnheader" scope="col" data-i18n="verification">Code</th><th role="columnheader" scope="col" data-i18n="created">Created</th><th role="columnheader" scope="col" data-i18n="lastSeen">Last seen</th><th role="columnheader" scope="col"><span class="sr-only" data-i18n="colActions">Actions</span></th></tr></thead><tbody role="rowgroup" id="client-rows"></tbody></table></div>
       <form id="token-form" class="inline" autocomplete="off">
         <input id="token-label" maxlength="80" required data-i18n-placeholder="clientName" placeholder="Client name">
         <label class="check"><input type="checkbox" id="token-update"> <span data-i18n="allowUpdates">Also allow updating the server</span></label>
@@ -121,11 +130,6 @@ export const ADMIN_HTML = `<!doctype html>
       </form>
     </section>
 
-    <section class="card" id="books">
-      <h2 data-i18n="booksTitle">Books on this server</h2>
-      <ul class="list" id="book-rows"></ul>
-    </section>
-
     <section class="card wide" id="mcp">
       <h2 data-i18n="mcpTitle">Connected apps (MCP)</h2>
       <p class="muted" data-i18n="mcpHelp">Every book has its own MCP address. Paste it in ChatGPT or Claude: they send you to a page of this server where you prove it is you with a passkey or the admin code, and choose what the app may do with that book.</p>
@@ -136,11 +140,13 @@ export const ADMIN_HTML = `<!doctype html>
       <ul class="list" id="passkey-rows"></ul>
       <div class="row"><button type="button" id="passkey-link" data-i18n="passkeyAdd">Add a passkey</button></div>
       <p class="notice hidden" id="passkey-link-box"><span data-i18n="passkeyLink">Open this address on the device that will keep the passkey (valid ten minutes, works once):</span> <code id="passkey-link-value"></code> <button type="button" class="ghost small" id="passkey-link-copy" data-i18n="copy">Copy</button></p>
-      <h3 data-i18n="auditTitle">Recent calls</h3>
+      <h3 id="audit-title" data-i18n="auditTitle">Recent calls</h3>
       <p class="muted" data-i18n="auditHelp">Who called which tool, on which book, and when. What the book says is never recorded here.</p>
-      <div class="table-wrap"><table><thead><tr><th data-i18n="auditWhen">When</th><th data-i18n="auditCaller">Caller</th><th data-i18n="auditBook">Book</th><th data-i18n="auditTool">Tool</th><th data-i18n="auditResult">Result</th></tr></thead><tbody id="audit-rows"></tbody></table></div>
+      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="audit-title"><table class="stack" role="table" aria-labelledby="audit-title"><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col" data-i18n="auditWhen">When</th><th role="columnheader" scope="col" data-i18n="auditCaller">Caller</th><th role="columnheader" scope="col" data-i18n="auditBook">Book</th><th role="columnheader" scope="col" data-i18n="auditTool">Tool</th><th role="columnheader" scope="col" data-i18n="auditResult">Result</th></tr></thead><tbody role="rowgroup" id="audit-rows"></tbody></table></div>
       <div class="row"><button type="button" class="ghost" id="audit-more" data-i18n="auditMore">Older calls</button></div>
     </section>
+
+    ${LOG_HTML}
 
     <section class="card" id="admin-code">
       <h2 data-i18n="codeTitle">Admin code</h2>
@@ -159,9 +165,10 @@ export const ADMIN_HTML = `<!doctype html>
 </html>
 `;
 
-export const ADMIN_CSS = `:root{color-scheme:light dark;--bg:#f6f5f2;--card:#fff;--fg:#1f2328;--muted:#5f6670;--line:#e3e1dc;--accent:#0f766e;--accent-fg:#fff;--warn:#b45309;--bad:#b91c1c;--ok:#15803d;font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-@media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1b1e23;--fg:#e8e6e3;--muted:#9aa1ab;--line:#2c3138;--accent:#2dd4bf;--accent-fg:#06201d;--warn:#f59e0b;--bad:#f87171;--ok:#4ade80}}
+export const ADMIN_CSS = `:root{color-scheme:light dark;--bg:#f6f5f2;--card:#fff;--fg:#1f2328;--muted:#5f6670;--line:#e3e1dc;--accent:#0f766e;--accent-fg:#fff;--warn:#b45309;--bad:#b91c1c;--ok:#15803d;--control:#6b7280;--focus:#1d4ed8;font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+@media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1b1e23;--fg:#e8e6e3;--muted:#9aa1ab;--line:#2c3138;--accent:#2dd4bf;--accent-fg:#06201d;--warn:#f59e0b;--bad:#f87171;--ok:#4ade80;--control:#8b93a0;--focus:#7dd3fc}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg)}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .top{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;padding:16px 24px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:2}
 .brand{display:flex;gap:12px;align-items:center}.logo{display:grid;place-items:center;width:36px;height:36px;border-radius:10px;background:var(--accent);color:var(--accent-fg);font-weight:700}
 h1{font-size:18px;margin:0}h2{font-size:16px;margin:0 0 10px}.muted{color:var(--muted)}.small{font-size:13px}
@@ -171,10 +178,10 @@ main{padding:24px;max-width:1200px;margin:0 auto}.grid{display:grid;gap:16px;gri
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px}.card.wide{grid-column:1/-1}.login{max-width:520px;margin:40px auto}
 .card-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
 label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}label.check{display:flex;gap:8px;align-items:center;color:var(--fg)}
-input,textarea{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;font:inherit}textarea{font-family:ui-monospace,monospace;font-size:13px}
-input[type=checkbox]{width:auto}
+input,textarea,select{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--control);background:transparent;color:inherit;font:inherit}textarea{font-family:ui-monospace,monospace;font-size:13px}
+input[type=checkbox]{width:18px;height:18px;padding:0;accent-color:var(--accent)}
 button{border:1px solid var(--accent);background:var(--accent);color:var(--accent-fg);border-radius:8px;padding:7px 14px;font:inherit;cursor:pointer;margin-top:10px}
-button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}button.danger{color:var(--bad)}button.small{padding:3px 9px;font-size:13px;margin-top:0}button:disabled{opacity:.5;cursor:not-allowed}
+button.ghost{background:transparent;color:var(--fg);border-color:var(--control)}button.danger{color:var(--bad)}button.small{padding:3px 9px;font-size:13px;margin-top:0}button:disabled{opacity:.5;cursor:not-allowed}
 .row{display:flex;flex-wrap:wrap;gap:8px}.inline{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}.inline > input{flex:1;min-width:180px}.inline button,.inline label{margin-top:0}
 .facts{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:0}.facts dt{color:var(--muted);font-size:13px}.facts dd{margin:0;overflow-wrap:anywhere}
 code,pre{font-family:ui-monospace,monospace;font-size:13px}pre.code{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;overflow:auto}
@@ -187,8 +194,8 @@ code,pre{font-family:ui-monospace,monospace;font-size:13px}pre.code{background:v
 .toast{position:fixed;right:16px;bottom:16px;background:var(--fg);color:var(--bg);padding:10px 14px;border-radius:10px;max-width:420px;z-index:5}
 .revoked{opacity:.55}.agent{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 h3{font-size:14px;margin:18px 0 6px}.list li.mcp-book{display:block}.mcp-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}.mcp-book .list{margin:6px 0 4px 8px}.mcp-book .inline{margin-top:6px}
-@media (max-width:640px){main{padding:12px}.top{padding:12px}.facts{grid-template-columns:1fr}}
-`;
+@media (max-width:640px){main{padding:12px}.top{padding:12px;position:static}.facts{grid-template-columns:1fr}}
+${VIEWS_CSS}`;
 
 export const ADMIN_JS = String.raw`"use strict";
 (function () {
@@ -312,9 +319,11 @@ export const ADMIN_JS = String.raw`"use strict";
     document.querySelectorAll("[data-i18n]").forEach(function (node) { node.textContent = t(node.getAttribute("data-i18n")); });
     document.querySelectorAll("[data-i18n-placeholder]").forEach(function (node) { node.setAttribute("placeholder", t(node.getAttribute("data-i18n-placeholder"))); });
     $("lang").textContent = t("lang");
+    $("lang").setAttribute("aria-label", t("langSwitch", { code: t("lang"), language: t("langOther") }));
     if (state) render();
     if (mcp) renderMcp();
     renderAudit();
+    renderViews();
   }
   function call(method, path, body) {
     var headers = { "content-type": "application/json" };
@@ -333,12 +342,13 @@ export const ADMIN_JS = String.raw`"use strict";
     csrf = ""; state = null; sessionStorage.removeItem("narrarium-admin-csrf");
     $("main-view").classList.add("hidden"); $("login-view").classList.remove("hidden"); $("logout").classList.add("hidden"); $("pills").textContent = ""; $("subtitle").textContent = "";
     if (timer) { clearInterval(timer); timer = null; }
+    resetViews();
     $("login-error").textContent = message || "";
   }
   function signedIn() {
     $("login-view").classList.add("hidden"); $("main-view").classList.remove("hidden"); $("logout").classList.remove("hidden"); $("login-error").textContent = "";
-    refresh(); loadUpdates(); loadMcp(); loadAudit(false);
-    if (!timer) timer = setInterval(function () { if (document.visibilityState === "visible") { refresh(true); loadMcp(); if (!audit.older) loadAudit(false); } }, 20000);
+    refresh(); loadUpdates(); loadMcp(); loadAudit(false); loadViews();
+    if (!timer) timer = setInterval(function () { if (document.visibilityState === "visible") { refresh(true); loadMcp(); if (!audit.older) loadAudit(false); loadViews(); } }, 20000);
   }
   function editing() { var active = document.activeElement; return active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA") && active.closest("form"); }
   function refresh(quiet) {
@@ -367,7 +377,7 @@ export const ADMIN_JS = String.raw`"use strict";
     fact(facts, t("supervisor"), s.supervised ? t("supervisedYes") : t("supervisedNo"));
     renderPairing(); renderClients(); renderAi(); renderSpend(quiet);
     if (!quiet || !editing()) renderNetwork();
-    renderTunnel(); renderBooks();
+    renderTunnel();
   }
   function sourceName(source) { return !source ? t("unknownSource") : source === "local" ? t("thisComputer") : source; }
   function renderPairing() {
@@ -389,14 +399,15 @@ export const ADMIN_JS = String.raw`"use strict";
   function renderClients() {
     var body = $("client-rows"); body.textContent = "";
     state.clients.slice().reverse().forEach(function (client) {
-      var tr = el("tr", client.revoked ? "revoked" : ""); tr.appendChild(el("td", "", client.label));
-      var scopes = el("td"); client.scopes.forEach(function (scope) { scopes.appendChild(el("span", "chip" + (scope === "update" ? " update" : ""), scope)); }); tr.appendChild(scopes);
-      var where = el("td"); where.appendChild(el("div", "", sourceName(client.source)));
+      var tr = trow(); if (client.revoked) tr.className = "revoked"; var named = rowHead(); named.textContent = client.label; tr.appendChild(named);
+      var scopes = tcell("permissions"); client.scopes.forEach(function (scope) { scopes.appendChild(el("span", "chip" + (scope === "update" ? " update" : ""), scope)); }); tr.appendChild(scopes);
+      var where = tcell("source"); where.appendChild(el("div", "", sourceName(client.source)));
       if (client.userAgent) { var agent = el("div", "muted small agent", client.userAgent); agent.title = client.userAgent; where.appendChild(agent); }
       tr.appendChild(where);
-      tr.appendChild(el("td", "", client.verification ? client.verification : "—"));
-      tr.appendChild(el("td", "", when(client.createdAt))); tr.appendChild(el("td", "", client.revoked ? t("revoked") : when(client.lastSeenAt)));
-      var actions = el("td");
+      var code = tcell("verification"); code.textContent = client.verification ? client.verification : "—"; tr.appendChild(code);
+      var made = tcell("created"); made.textContent = when(client.createdAt); tr.appendChild(made);
+      var seen = tcell("lastSeen"); seen.textContent = client.revoked ? t("revoked") : when(client.lastSeenAt); tr.appendChild(seen);
+      var actions = tcell("colActions");
       if (!client.revoked) {
         var regenerate = el("button", "ghost small", t("regenerate")); regenerate.type = "button";
         regenerate.addEventListener("click", function () { if (!confirm(t("regenerateConfirm"))) return; call("POST", "/admin/api/token", { label: client.label, scopes: client.scopes, replaceId: client.id }).then(function (result) { showToken(result.token); refresh(); }, fail); });
@@ -451,16 +462,6 @@ export const ADMIN_JS = String.raw`"use strict";
     if (tunnel.otherConnectorDetected) fact(facts, t("tunnelOther"), t("detected"));
     if (tunnel.hostname) fact(facts, t("tunnelHostLabel"), tunnel.hostname);
     if (tunnel.lastError) fact(facts, "!", tunnel.lastError);
-  }
-  function renderBooks() {
-    var list = $("book-rows"); list.textContent = "";
-    if (!state.books.length) list.appendChild(el("li", "muted", t("noBooks")));
-    state.books.forEach(function (book) {
-      var li = el("li"); li.appendChild(el("span", "", book.title));
-      var statuses = t("status"); var status = book.status ? (statuses[book.status] || book.status) : "—";
-      li.appendChild(el("span", "muted small", (book.storage === "github" ? t("github") : t("local")) + " · " + status + (book.error ? " · " + book.error : "")));
-      list.appendChild(li);
-    });
   }
   function loadMcp() {
     return call("GET", "/admin/api/mcp").then(function (data) { mcp = data; renderMcp(); }, function () {});
@@ -529,10 +530,11 @@ export const ADMIN_JS = String.raw`"use strict";
   }
   function renderAudit() {
     var body = $("audit-rows"); body.textContent = "";
-    if (!audit.rows.length) { var empty = el("tr"); var cell = el("td", "muted", t("auditNone")); cell.setAttribute("colspan", "5"); empty.appendChild(cell); body.appendChild(empty); }
+    if (!audit.rows.length) emptyRow(body, 5, t("auditNone"));
     audit.rows.forEach(function (entry) {
-      var tr = el("tr"); tr.appendChild(el("td", "", when(entry.at))); tr.appendChild(el("td", "", entry.client)); tr.appendChild(el("td", "", entry.bookId)); tr.appendChild(el("td", "", entry.tool));
-      tr.appendChild(el("td", "", entry.ok ? t("auditOk") : t("auditFailed", { code: entry.code || "?" }))); body.appendChild(tr);
+      var tr = trow(); var moment = rowHead(); moment.textContent = when(entry.at); tr.appendChild(moment);
+      [["auditCaller", entry.client], ["auditBook", entry.bookId], ["auditTool", entry.tool], ["auditResult", entry.ok ? t("auditOk") : t("auditFailed", { code: entry.code || "?" })]].forEach(function (pair) { var value = tcell(pair[0]); value.textContent = pair[1]; tr.appendChild(value); });
+      body.appendChild(tr);
     });
     if (audit.next === null) $("audit-more").classList.add("hidden"); else $("audit-more").classList.remove("hidden");
   }
@@ -557,9 +559,11 @@ export const ADMIN_JS = String.raw`"use strict";
       } else button.classList.add("hidden");
     }).catch(function () { $("updates-message").textContent = t("updatesFailed"); });
   }
+${VIEWS_JS}
   function lines(id) { return $(id).value.split(/\r?\n/).map(function (line) { return line.trim(); }).filter(Boolean); }
   document.addEventListener("DOMContentLoaded", function () {
     applyTexts();
+    bindViews();
     $("lang").addEventListener("click", function () { lang = lang === "it" ? "en" : "it"; localStorage.setItem("narrarium-admin-lang", lang); applyTexts(); if (state) loadUpdates(); });
     $("login-form").addEventListener("submit", function (event) {
       event.preventDefault();

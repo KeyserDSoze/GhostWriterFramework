@@ -5,6 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import * as testing from "../dist/testing.mjs";
 import { withServer } from "./helpers.mjs";
 import { READ_TOOLS, RUN_TOOLS, TITLE, WRITE_TOOLS, issueToken, mcpFixture, mcpRoute } from "./mcp-helpers.mjs";
+import { outlineFixture } from "./mcp-outline-helpers.mjs";
 
 // Interoperability (S7): the official MCP client (`@modelcontextprotocol/sdk`, a dependency of narrarium-mcp-server, used here by the tests only) connects to a
 // book's endpoint the way a real MCP client does, lists the tools and calls them. The server itself does not use the SDK.
@@ -68,5 +69,38 @@ test("S7: the official client sees only what its token allows, and is refused wi
     await assert.rejects(connect(server, slug, "nrs_not-a-token"), (error) => error.code === 401);
     assert.equal((await (await mcpRoute(server)).put({ enabled: false })).status, 200);
     await assert.rejects(connect(server, slug, await issueToken(server)), (error) => error.code === 404);
+  });
+});
+
+test("S9: the official MCP client reads and edits the outline: the schema of edit_outline is one it can use, an entry is read and replaced with the hash it gave, and a stale hash is a conflict", async () => {
+  await withServer(async (server, client) => {
+    const { slug, token } = await outlineFixture(server, client);
+    const official = await connect(server, slug, token);
+    try {
+      const tools = (await official.listTools()).tools;
+      const edit = tools.find((tool) => tool.name === "edit_outline");
+      assert.deepEqual(edit.inputSchema.properties.edits.items.properties.ghostwriter.type, ["string", "null"]);
+      assert.equal(tools.find((tool) => tool.name === "read_outline").annotations.readOnlyHint, true);
+      assert.equal(edit.annotations.destructiveHint, true);
+
+      const page = await official.callTool({ name: "read_outline", arguments: { limit: 2 } });
+      assert.equal(page.isError ?? false, false, page.content[0].text);
+      assert.deepEqual(JSON.parse(page.content[0].text).entries.map((entry) => entry.title), ["Arrival", "The Storm"]);
+      assert.match(page.content[1].text, /^A glassmaker's daughter comes home/, "the description of the book is a block of its own");
+      const entry = await official.callTool({ name: "read_outline_entry", arguments: { number: 1 } });
+      const { hash } = JSON.parse(entry.content[0].text);
+      assert.match(entry.content[1].text, /^Mira reaches the harbor/);
+
+      const edited = await official.callTool({ name: "edit_outline", arguments: { edits: [{ kind: "update", number: 1, body: "Mira reaches the harbor at night.", expectedHash: hash }, { kind: "append", title: "Seven", ghostwriter: null }] } });
+      assert.equal(edited.isError ?? false, false, edited.content[0].text);
+      assert.deepEqual([JSON.parse(edited.content[0].text).updated, JSON.parse(edited.content[0].text).created], [[1], [7]]);
+      const stale = await official.callTool({ name: "edit_outline", arguments: { edits: [{ kind: "update", number: 1, body: "x", expectedHash: hash }] } });
+      assert.equal(stale.isError, true);
+      assert.match(stale.content[0].text, /^\[conflict\]/);
+      await assert.rejects(official.callTool({ name: "edit_outline", arguments: { edits: [] } }), (error) => error.code === -32602 && /edits/.test(error.message));
+      await assert.rejects(official.callTool({ name: "edit_outline", arguments: { edits: [{ kind: "append", colour: "red" }] } }), (error) => error.code === -32602 && /colour/.test(error.message));
+    } finally {
+      await official.close();
+    }
   });
 });
