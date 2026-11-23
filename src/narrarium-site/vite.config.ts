@@ -61,6 +61,9 @@ export default defineConfig({
         "microsoft-callback": path.resolve(__dirname, "auth/microsoft-callback.html"),
       },
       output: {
+        // The text of a document is a chunk of its own (its source ends in `.md?raw`) named after the document: `doc-` says so, so that `github-sync` or
+        // `repository-spec` is not taken for the feature chunks the public shell must not precache.
+        chunkFileNames: (chunk) => (chunk.facadeModuleId?.endsWith(".md?raw") ? "assets/doc-[name]-[hash].js" : "assets/[name]-[hash].js"),
         manualChunks(id) {
           if (!id.includes("node_modules")) return undefined;
           if (/node_modules\/(?:react|react-dom|react-router|react-router-dom|scheduler|@remix-run)\//.test(id)) return "framework-vendor";
