@@ -91,6 +91,7 @@ test("precache generation includes application entry points, chunks, styles, and
       "src/routes/AuthProvidersRoute.tsx": { file: "assets/auth.js", name: "AuthProvidersRoute", src: "src/routes/AuthProvidersRoute.tsx", isDynamicEntry: true, imports: ["framework"] },
       "src/routes/AppShellRoute.tsx": { file: "assets/app-shell.js", name: "AppShellRoute", src: "src/routes/AppShellRoute.tsx", isDynamicEntry: true, imports: ["framework"] },
       "src/pages/BooksPage.tsx": { file: "assets/books.js", name: "BooksPage", src: "src/pages/BooksPage.tsx", isDynamicEntry: true, imports: ["framework"] },
+      "src/routes/appPages.ts": { file: "assets/app-pages.js", name: "appPages", src: "src/routes/appPages.ts", isDynamicEntry: true, imports: ["framework"] },
     }));
     await writeFile(path.join(dist, "assets", "framework.js"), "framework");
     await writeFile(path.join(dist, "assets", "home.js"), "home");
@@ -99,6 +100,7 @@ test("precache generation includes application entry points, chunks, styles, and
     await writeFile(path.join(dist, "assets", "auth.js"), "auth");
     await writeFile(path.join(dist, "assets", "app-shell.js"), "app-shell");
     await writeFile(path.join(dist, "assets", "books.js"), "books");
+    await writeFile(path.join(dist, "assets", "app-pages.js"), "app-pages");
     const source = new URL("../scripts/generate-precache.mjs", import.meta.url);
     const script = path.join(scripts, "generate-precache.mjs");
     await writeFile(script, await readFile(source));
@@ -276,7 +278,7 @@ test("precache generation keeps choosing the application entry when another HTML
     await writeFile(path.join(dist, "index.html"), "index");
     await writeFile(path.join(dist, "msal-popup.html"), "msal");
     await writeFile(path.join(dist, "auth", "microsoft-callback.html"), "callback");
-    for (const asset of ["entry", "framework", "polyfill", "microsoft-callback", "msal-popup", "home", "docs", "mcp", "auth", "app-shell", "books"]) await writeFile(path.join(dist, "assets", `${asset}.js`), asset);
+    for (const asset of ["entry", "framework", "polyfill", "microsoft-callback", "msal-popup", "home", "docs", "mcp", "auth", "app-shell", "books", "app-pages"]) await writeFile(path.join(dist, "assets", `${asset}.js`), asset);
     // Vite sorts the keys of its manifest, so the callback page's entry comes before "index.html".
     await writeFile(path.join(dist, ".vite", "manifest.json"), JSON.stringify({
       "_modulepreload-polyfill.js": { file: "assets/polyfill.js", name: "modulepreload-polyfill" },
@@ -290,6 +292,7 @@ test("precache generation keeps choosing the application entry when another HTML
       "src/routes/AuthProvidersRoute.tsx": { file: "assets/auth.js", name: "AuthProvidersRoute", src: "src/routes/AuthProvidersRoute.tsx", isDynamicEntry: true, imports: ["framework"] },
       "src/routes/AppShellRoute.tsx": { file: "assets/app-shell.js", name: "AppShellRoute", src: "src/routes/AppShellRoute.tsx", isDynamicEntry: true, imports: ["framework"] },
       "src/pages/BooksPage.tsx": { file: "assets/books.js", name: "BooksPage", src: "src/pages/BooksPage.tsx", isDynamicEntry: true, imports: ["framework"] },
+      "src/routes/appPages.ts": { file: "assets/app-pages.js", name: "appPages", src: "src/routes/appPages.ts", isDynamicEntry: true, imports: ["framework"] },
     }));
     const script = path.join(scripts, "generate-precache.mjs");
     await writeFile(script, await readFile(new URL("../scripts/generate-precache.mjs", import.meta.url)));

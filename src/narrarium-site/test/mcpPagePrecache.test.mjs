@@ -33,6 +33,7 @@ test("the service worker precaches the page of the MCP with what it imports, as 
       "src/routes/AuthProvidersRoute.tsx": { file: "assets/auth.js", src: "src/routes/AuthProvidersRoute.tsx", isDynamicEntry: true },
       "src/routes/AppShellRoute.tsx": { file: "assets/app-shell.js", src: "src/routes/AppShellRoute.tsx", isDynamicEntry: true },
       "src/pages/BooksPage.tsx": { file: "assets/books.js", src: "src/pages/BooksPage.tsx", isDynamicEntry: true },
+      "src/routes/appPages.ts": { file: "assets/app-pages.js", src: "src/routes/appPages.ts", isDynamicEntry: true },
       "../../node_modules/docx/dist/index.mjs": { file: "assets/docx-index.js", name: "index", src: "../../node_modules/docx/dist/index.mjs", isDynamicEntry: true },
     };
     await writeFile(path.join(dist, ".vite", "manifest.json"), JSON.stringify(files));

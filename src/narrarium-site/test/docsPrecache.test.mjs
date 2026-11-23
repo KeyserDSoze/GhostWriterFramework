@@ -30,6 +30,7 @@ test("the service worker precaches the text of every document, as it did when th
       "src/routes/AuthProvidersRoute.tsx": { file: "assets/auth.js", src: "src/routes/AuthProvidersRoute.tsx", isDynamicEntry: true },
       "src/routes/AppShellRoute.tsx": { file: "assets/app-shell.js", src: "src/routes/AppShellRoute.tsx", isDynamicEntry: true },
       "src/pages/BooksPage.tsx": { file: "assets/books.js", src: "src/pages/BooksPage.tsx", isDynamicEntry: true },
+      "src/routes/appPages.ts": { file: "assets/app-pages.js", src: "src/routes/appPages.ts", isDynamicEntry: true },
       // A document written in the repository, and a guide of the app: one chunk each.
       "../../packages/server/README.md?raw": { file: "assets/README-server.js", name: "README", src: "../../packages/server/README.md?raw", isDynamicEntry: true },
       "src/content/guides/autopilot.it.md?raw": { file: "assets/autopilot.it.js", name: "autopilot.it", src: "src/content/guides/autopilot.it.md?raw", isDynamicEntry: true },

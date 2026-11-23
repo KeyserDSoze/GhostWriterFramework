@@ -25,7 +25,9 @@ describe("non-Copilot page safety contracts", () => {
   });
 
   it("has an authenticated child catch-all route", () => {
-    expect(source("src/router.tsx")).toContain('{ path: "*", lazy: component(() => import("@/pages/AppNotFoundPage"), "AppNotFoundPage") },');
+    // Changed on purpose (the pages of the app moved out of the entry): the route names its page, which is loaded through its own module.
+    expect(source("src/router.tsx")).toContain('{ path: "*", lazy: appPage("AppNotFoundPage") },');
+    expect(source("src/routes/appPages.ts")).toContain('AppNotFoundPage: () => import("@/pages/AppNotFoundPage"),');
   });
 
   it("gates Reader resources, EPUB Markdown, and CSP at their shared boundaries", () => {

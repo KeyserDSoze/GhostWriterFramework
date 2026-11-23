@@ -2,7 +2,7 @@ import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
 import type { ComponentType } from "react";
 import { RouteErrorFallback } from "@/components/layout/RouteErrorFallback";
 import { RouteLoadingFallback } from "@/components/layout/RouteLoadingFallback";
-import { withAutopilotTranslations } from "@/i18n/autopilot";
+import type { AppPageName, AppPages } from "@/routes/appPages";
 
 function routerBasename(): string {
   const base = import.meta.env.BASE_URL;
@@ -24,7 +24,28 @@ const sharedRoute = <T,>(load: () => Promise<T>) => {
   let pending: Promise<T> | undefined;
   return () => (pending ??= load().catch((error: unknown) => { pending = undefined; throw error; }));
 };
-const aiSettingsPage = sharedRoute(component(() => import("@/pages/SettingsPage"), "SettingsPage"));
+
+/**
+ * The router imports by itself only the routes of a first visit, each once: Vite writes the list of the files an imported chunk needs (it preloads
+ * them together) in the chunk of the `import()`, and the router is in the entry, which every route loads. The other pages of the app are loaded
+ * through `routes/appPages`, which carries their lists (see there), and which is asked for together with the shell of the app.
+ */
+const publicBasics = () => import("@/pages/public/PublicBasics");
+const publicDocs = () => import("@/pages/public/PublicDocs");
+let appPagesLoad: Promise<{ appPages: AppPages }> | undefined;
+/** Asked for once and kept: an `import()` of a module already loaded still waits for a task of the browser, a frame after a click. */
+const loadAppPages = () => (appPagesLoad ??= import("@/routes/appPages").catch((error: unknown) => { appPagesLoad = undefined; throw error; }));
+type AppPageModule<N extends AppPageName> = Awaited<ReturnType<AppPages[N]>>;
+/** The component of a page of the app: the export named like the page, or another export of its module, which must then be named. */
+type AppPageExport<N extends AppPageName> = N extends keyof AppPageModule<N> ? [exportName?: keyof AppPageModule<N> & string] : [exportName: keyof AppPageModule<N> & string];
+const appPage = <N extends AppPageName>(name: N, ...[exportName]: AppPageExport<N>) =>
+  component(() => loadAppPages().then((pages) => pages.appPages[name]() as Promise<Record<string, unknown>>), exportName ?? name);
+const appShellRoute = component(() => import("@/routes/AppShellRoute"), "AppShellRoute");
+const appShell = () => {
+  void loadAppPages().catch(() => undefined);
+  return appShellRoute();
+};
+const aiSettingsPage = sharedRoute(appPage("SettingsPage"));
 
 function RootRoute() {
   return <Outlet />;
@@ -32,71 +53,71 @@ function RootRoute() {
 
 export const router = createBrowserRouter([
   { Component: RootRoute, HydrateFallback: RouteLoadingFallback, children: [
-  { path: "/", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicBasics"), "HomePage") },
-  { path: "/docs", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicDocs"), "DocsIndexPage") },
-  { path: "/docs/:docSlug", errorElement: routeError, lazy: component(() => import("@/pages/public/PublicDocs"), "DocPage") },
+  { path: "/", errorElement: routeError, lazy: component(publicBasics, "HomePage") },
+  { path: "/docs", errorElement: routeError, lazy: component(publicDocs, "DocsIndexPage") },
+  { path: "/docs/:docSlug", errorElement: routeError, lazy: component(publicDocs, "DocPage") },
   { path: "/mcp", errorElement: routeError, lazy: component(() => import("@/pages/public/McpPage"), "McpPage") },
-  { path: "/privacy", lazy: component(() => import("@/pages/public/PublicBasics"), "PrivacyPage") },
-  { path: "/terms", lazy: component(() => import("@/pages/public/PublicBasics"), "TermsPage") },
+  { path: "/privacy", lazy: component(publicBasics, "PrivacyPage") },
+  { path: "/terms", lazy: component(publicBasics, "TermsPage") },
   { errorElement: routeError, lazy: component(() => import("@/routes/AuthProvidersRoute"), "AuthProvidersRoute"), children: [
     { path: "/login", lazy: component(() => import("@/components/auth/LoginScreen"), "LoginScreen") },
     { path: "/auth/github/callback", lazy: component(() => import("@/pages/GitHubOAuthCallbackPage"), "GitHubOAuthCallbackPage") },
-    { path: "/app", lazy: component(() => import("@/routes/AppShellRoute"), "AppShellRoute"), children: [
+    { path: "/app", lazy: appShell, children: [
       { index: true, element: <Navigate to="books" replace /> },
       { path: "books", lazy: component(() => import("@/pages/BooksPage"), "BooksPage") },
-      { path: "books/add", lazy: component(() => import("@/pages/AddBookPage"), "AddBookPage") },
-      { path: "chats", lazy: component(() => import("@/pages/AssistantChatsPage"), "AssistantChatsPage") },
-      { path: "patch-notes", lazy: component(() => import("@/pages/PatchNotesPage"), "PatchNotesPage") },
-      { path: "autopilot", lazy: component(withAutopilotTranslations(() => import("@/pages/AutopilotHubPage")), "AutopilotHubPage") },
-      { path: "books/:bookId", lazy: component(() => import("@/pages/BookPage"), "BookPage") },
-      { path: "books/:bookId/dashboard", lazy: component(() => import("@/pages/BookDashboardPage"), "BookDashboardPage") },
-      { path: "books/:bookId/outline", lazy: component(() => import("@/pages/OutlinePage"), "OutlinePage") },
-      { path: "books/:bookId/autopilot", lazy: component(withAutopilotTranslations(() => import("@/pages/AutopilotPage")), "AutopilotPage") },
-      { path: "books/:bookId/autopilot/settings", lazy: component(withAutopilotTranslations(() => import("@/pages/AutopilotSettingsPage")), "AutopilotSettingsPage") },
-      { path: "books/:bookId/director", lazy: component(withAutopilotTranslations(() => import("@/pages/DirectorPage")), "DirectorPage") },
-      { path: "books/:bookId/assets", lazy: component(() => import("@/pages/AssetGalleryPage"), "AssetGalleryPage") },
-      { path: "books/:bookId/reader", lazy: component(() => import("@/pages/ReaderPreviewPage"), "ReaderPreviewPage") },
-      { path: "books/:bookId/export", lazy: component(() => import("@/pages/BookExportPage"), "BookExportPage") },
-      { path: "books/:bookId/research", lazy: component(() => import("@/pages/DeepResearchPage"), "DeepResearchPage") },
-      { path: "books/:bookId/research/:researchSlug", lazy: component(() => import("@/pages/DeepResearchPage"), "DeepResearchPage") },
-      { path: "books/:bookId/ghostwriters", lazy: component(() => import("@/pages/GhostwritersPage"), "GhostwritersPage") },
-      { path: "books/:bookId/evaluation-style", lazy: component(() => import("@/pages/EvaluationStylePage"), "EvaluationStylePage") },
-      { path: "books/:bookId/simulated-readers", lazy: component(() => import("@/pages/ReaderPersonasPage"), "ReaderPersonasPage") },
-      { path: "books/:bookId/settings", lazy: component(() => import("@/pages/BookSettingsPage"), "BookSettingsPage") },
-      { path: "books/:bookId/audit", lazy: component(() => import("@/pages/AuditPage"), "AuditPage") },
-      { path: "books/:bookId/canon/:section/:slug", lazy: component(() => import("@/pages/CanonEntityPage"), "CanonEntityPage") },
-      { path: "books/:bookId/chapters/:chapterId/workspace/:workspaceKind", lazy: component(() => import("@/pages/WorkspaceDocPage"), "WorkspaceDocPage") },
-      { path: "books/:bookId/chapters/:chapterId/drafts", lazy: component(() => import("@/routes/StageRoutes"), "DraftStageRoute") },
-      { path: "books/:bookId/chapters/:chapterId/scripts", lazy: component(() => import("@/routes/StageRoutes"), "ScriptStageRoute") },
-      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/workspace/:workspaceKind", lazy: component(() => import("@/pages/WorkspaceDocPage"), "WorkspaceDocPage") },
-      { path: "books/:bookId/chapters/:chapterId/reader-evaluations", lazy: component(() => import("@/pages/ReaderEvaluationsPage"), "ReaderEvaluationsPage") },
-      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/reader-evaluations", lazy: component(() => import("@/pages/ReaderEvaluationsPage"), "ReaderEvaluationsPage") },
-      { path: "books/:bookId/chapters/:chapterId/audit", lazy: component(() => import("@/pages/AuditPage"), "AuditPage") },
-      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/audit", lazy: component(() => import("@/pages/AuditPage"), "AuditPage") },
-      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/split", lazy: component(() => import("@/pages/ParagraphSplitPage"), "ParagraphSplitPage") },
-      { path: "books/:bookId/chapters/:chapterId", lazy: component(() => import("@/pages/ChapterPage"), "ChapterPage") },
-      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum", lazy: component(() => import("@/pages/ParagraphPage"), "ParagraphPage") },
-      { path: "settings", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
+      { path: "books/add", lazy: appPage("AddBookPage") },
+      { path: "chats", lazy: appPage("AssistantChatsPage") },
+      { path: "patch-notes", lazy: appPage("PatchNotesPage") },
+      { path: "autopilot", lazy: appPage("AutopilotHubPage") },
+      { path: "books/:bookId", lazy: appPage("BookPage") },
+      { path: "books/:bookId/dashboard", lazy: appPage("BookDashboardPage") },
+      { path: "books/:bookId/outline", lazy: appPage("OutlinePage") },
+      { path: "books/:bookId/autopilot", lazy: appPage("AutopilotPage") },
+      { path: "books/:bookId/autopilot/settings", lazy: appPage("AutopilotSettingsPage") },
+      { path: "books/:bookId/director", lazy: appPage("DirectorPage") },
+      { path: "books/:bookId/assets", lazy: appPage("AssetGalleryPage") },
+      { path: "books/:bookId/reader", lazy: appPage("ReaderPreviewPage") },
+      { path: "books/:bookId/export", lazy: appPage("BookExportPage") },
+      { path: "books/:bookId/research", lazy: appPage("DeepResearchPage") },
+      { path: "books/:bookId/research/:researchSlug", lazy: appPage("DeepResearchPage") },
+      { path: "books/:bookId/ghostwriters", lazy: appPage("GhostwritersPage") },
+      { path: "books/:bookId/evaluation-style", lazy: appPage("EvaluationStylePage") },
+      { path: "books/:bookId/simulated-readers", lazy: appPage("ReaderPersonasPage") },
+      { path: "books/:bookId/settings", lazy: appPage("BookSettingsPage") },
+      { path: "books/:bookId/audit", lazy: appPage("AuditPage") },
+      { path: "books/:bookId/canon/:section/:slug", lazy: appPage("CanonEntityPage") },
+      { path: "books/:bookId/chapters/:chapterId/workspace/:workspaceKind", lazy: appPage("WorkspaceDocPage") },
+      { path: "books/:bookId/chapters/:chapterId/drafts", lazy: appPage("StageRoutes", "DraftStageRoute") },
+      { path: "books/:bookId/chapters/:chapterId/scripts", lazy: appPage("StageRoutes", "ScriptStageRoute") },
+      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/workspace/:workspaceKind", lazy: appPage("WorkspaceDocPage") },
+      { path: "books/:bookId/chapters/:chapterId/reader-evaluations", lazy: appPage("ReaderEvaluationsPage") },
+      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/reader-evaluations", lazy: appPage("ReaderEvaluationsPage") },
+      { path: "books/:bookId/chapters/:chapterId/audit", lazy: appPage("AuditPage") },
+      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/audit", lazy: appPage("AuditPage") },
+      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/split", lazy: appPage("ParagraphSplitPage") },
+      { path: "books/:bookId/chapters/:chapterId", lazy: appPage("ChapterPage") },
+      { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum", lazy: appPage("ParagraphPage") },
+      { path: "settings", lazy: appPage("SettingsPage") },
       { path: "settings/ai-integrations", lazy: aiSettingsPage },
       { path: "settings/ai-router", lazy: aiSettingsPage },
-      { path: "settings/deep-search", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
-      { path: "settings/tools", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
-      { path: "settings/github", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
-      { path: "settings/speech", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
-      { path: "settings/repository", lazy: component(() => import("@/pages/SettingsPage"), "SettingsPage") },
-      { path: "settings/server", lazy: component(withAutopilotTranslations(() => import("@/pages/SettingsPage")), "SettingsPage") },
-      { path: "account-sync", lazy: component(() => import("@/pages/AccountSyncPage"), "AccountSyncPage") },
-      { path: "reader-settings", lazy: component(() => import("@/pages/ReaderSettingsPage"), "ReaderSettingsPage") },
-      { path: "custom-actions", lazy: component(() => import("@/pages/CustomActionsPage"), "CustomActionsPage") },
-      { path: "migrate", lazy: component(() => import("@/pages/MigratePage"), "MigratePage") },
-      { path: "costs", lazy: component(() => import("@/pages/CostsPage"), "CostsPage") },
-      { path: "docs", lazy: component(() => import("@/pages/AppDocsPage"), "AppDocsIndexPage") },
-      { path: "docs/:docSlug", lazy: component(() => import("@/pages/AppDocsPage"), "AppDocPage") },
-      { path: "*", lazy: component(() => import("@/pages/AppNotFoundPage"), "AppNotFoundPage") },
+      { path: "settings/deep-search", lazy: appPage("SettingsPage") },
+      { path: "settings/tools", lazy: appPage("SettingsPage") },
+      { path: "settings/github", lazy: appPage("SettingsPage") },
+      { path: "settings/speech", lazy: appPage("SettingsPage") },
+      { path: "settings/repository", lazy: appPage("SettingsPage") },
+      { path: "settings/server", lazy: appPage("SettingsPageWithAutopilotTexts", "SettingsPage") },
+      { path: "account-sync", lazy: appPage("AccountSyncPage") },
+      { path: "reader-settings", lazy: appPage("ReaderSettingsPage") },
+      { path: "custom-actions", lazy: appPage("CustomActionsPage") },
+      { path: "migrate", lazy: appPage("MigratePage") },
+      { path: "costs", lazy: appPage("CostsPage") },
+      { path: "docs", lazy: appPage("AppDocsPage", "AppDocsIndexPage") },
+      { path: "docs/:docSlug", lazy: appPage("AppDocsPage", "AppDocPage") },
+      { path: "*", lazy: appPage("AppNotFoundPage") },
     ] },
   ] },
   { path: "/bms", element: <Navigate to="/app" replace /> },
   { path: "/bms/*", element: <Navigate to="/app" replace /> },
-  { path: "*", lazy: component(() => import("@/pages/public/PublicBasics"), "NotFoundPage") },
+  { path: "*", lazy: component(publicBasics, "NotFoundPage") },
   ] },
 ], { basename: routerBasename() });

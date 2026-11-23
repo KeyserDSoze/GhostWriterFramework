@@ -32,6 +32,8 @@ describe("the Outline in the menu of a book", () => {
   it("is a page of its own, loaded only when it is opened", () => {
     expect(parseAppRoute("/app/books/book-1/outline")).toEqual({ kind: "book-outline", bookId: "book-1" });
     const router = readFileSync(resolve(process.cwd(), "src/router.tsx"), "utf8");
-    expect(router).toMatch(/path: "books\/:bookId\/outline", lazy: component\(\(\) => import\("@\/pages\/OutlinePage"\), "OutlinePage"\)/);
+    // Changed on purpose (the pages of the app moved out of the entry): the route names its page, which is loaded through its own module.
+    expect(router).toMatch(/path: "books\/:bookId\/outline", lazy: appPage\("OutlinePage"\)/);
+    expect(readFileSync(resolve(process.cwd(), "src/routes/appPages.ts"), "utf8")).toMatch(/OutlinePage: \(\) => import\("@\/pages\/OutlinePage"\)/);
   });
 });

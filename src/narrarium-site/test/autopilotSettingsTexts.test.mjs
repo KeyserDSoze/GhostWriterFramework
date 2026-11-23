@@ -7,6 +7,8 @@ import autopilotEn from "../src/i18n/locales/autopilot.en.ts";
 import autopilotIt from "../src/i18n/locales/autopilot.it.ts";
 
 const router = await readFile(new URL("../src/router.tsx", import.meta.url), "utf8");
+// The pages of the app beyond its first page are loaded through their own module, which carries what Vite preloads with each (see src/routes/appPages.ts).
+const appPages = await readFile(new URL("../src/routes/appPages.ts", import.meta.url), "utf8");
 
 function get(tree, path) {
   return path.split(".").reduce((node, key) => (node && typeof node === "object" ? node[key] : undefined), tree);
@@ -17,9 +19,12 @@ function keys(value, prefix = "") {
 }
 
 test("the configuration of the autopilot is a route of its own, loaded only when it is opened, with the texts of the autopilot", () => {
-  assert.match(router, /\{ path: "books\/:bookId\/autopilot\/settings", lazy: component\(withAutopilotTranslations\(\(\) => import\("@\/pages\/AutopilotSettingsPage"\)\), "AutopilotSettingsPage"\) \}/);
+  // Changed on purpose (the pages of the app moved out of the entry): the route names its page, and the page is loaded with the texts of the autopilot.
+  assert.match(router, /\{ path: "books\/:bookId\/autopilot\/settings", lazy: appPage\("AutopilotSettingsPage"\) \}/);
+  assert.match(appPages, /AutopilotSettingsPage: withAutopilotTranslations\(\(\) => import\("@\/pages\/AutopilotSettingsPage"\)\),/);
   // The live page keeps its address.
-  assert.match(router, /\{ path: "books\/:bookId\/autopilot", lazy: component\(withAutopilotTranslations\(\(\) => import\("@\/pages\/AutopilotPage"\)\), "AutopilotPage"\) \}/);
+  assert.match(router, /\{ path: "books\/:bookId\/autopilot", lazy: appPage\("AutopilotPage"\) \}/);
+  assert.match(appPages, /AutopilotPage: withAutopilotTranslations\(\(\) => import\("@\/pages\/AutopilotPage"\)\),/);
 });
 
 /** The menu is drawn before the texts of the autopilot are loaded: its few labels are in the always-loaded catalogue. */

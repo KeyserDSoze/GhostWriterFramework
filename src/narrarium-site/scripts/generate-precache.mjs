@@ -57,7 +57,9 @@ const shellAssets = [
   ...shellModuleAssets,
 ].filter((asset, index, list) => assets.includes(asset) && list.indexOf(asset) === index);
 const appShellAssets = new Set();
-for (const source of ["src/routes/AuthProvidersRoute.tsx", "src/routes/AppShellRoute.tsx", "src/pages/BooksPage.tsx"]) {
+// With the shell, the loaders of the other pages of the app (src/routes/appPages.ts), which the router asks for together with it: every page beyond
+// the first one is opened through them, so the installed app keeps them where the runtime cache cannot push them out.
+for (const source of ["src/routes/AuthProvidersRoute.tsx", "src/routes/AppShellRoute.tsx", "src/pages/BooksPage.tsx", "src/routes/appPages.ts"]) {
   const expectedName = path.basename(source, path.extname(source));
   const key = Object.keys(manifest).find((candidate) => candidate === source || manifest[candidate].src === source || manifest[candidate].name === expectedName);
   if (!key) throw new Error(`App-shell manifest entry not found for ${source}.`);

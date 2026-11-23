@@ -126,5 +126,8 @@ test("only the section imports its texts, and only the settings page of the book
   assert.deepEqual(await importersOf(/["']@\/i18n\/mcp["']|locales\/mcp\./), [SECTION, "src/i18n/mcp.ts"]);
   assert.deepEqual(await importersOf(/["']@\/components\/book\/McpServerSection["']/), ["src/pages/BookSettingsPage.tsx"]);
   const router = await readFile(new URL("src/router.tsx", SITE), "utf8");
-  assert.match(router, /path: "books\/:bookId\/settings", lazy: component\(\(\) => import\("@\/pages\/BookSettingsPage"\)/);
+  // Changed on purpose (the pages of the app moved out of the entry): the route names its page, which is loaded through its own module.
+  assert.match(router, /path: "books\/:bookId\/settings", lazy: appPage\("BookSettingsPage"\)/);
+  const appPages = await readFile(new URL("src/routes/appPages.ts", SITE), "utf8");
+  assert.match(appPages, /BookSettingsPage: \(\) => import\("@\/pages\/BookSettingsPage"\)/);
 });
