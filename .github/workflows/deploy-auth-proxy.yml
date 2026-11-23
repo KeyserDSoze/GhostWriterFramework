@@ -1,4 +1,4 @@
-name: Deploy Cloudflare Worker
+name: Deploy auth proxy
 
 on:
   workflow_dispatch:
@@ -7,9 +7,8 @@ on:
       - main
       - master
     paths:
-      - infra/**
-      - infra/models-github-proxy/**
-      - .github/workflows/deploy-worker.yml
+      - src/auth-proxy/**
+      - .github/workflows/deploy-auth-proxy.yml
 
 # Least privilege: the job only reads the repository. The Cloudflare token and the OAuth client
 # secrets are repository secrets passed to single steps, not workflow permissions.
@@ -17,12 +16,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-worker
+  group: deploy-auth-proxy
   cancel-in-progress: true
 
 jobs:
   deploy:
-    name: Deploy Worker
+    name: Deploy auth proxy
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -36,7 +35,7 @@ jobs:
           node-version: 22
 
       - name: Test the Worker
-        working-directory: infra/models-github-proxy
+        working-directory: src/auth-proxy
         run: npm test
 
       - name: Select the OAuth client secrets to upload
@@ -46,16 +45,17 @@ jobs:
           MICROSOFT_CLIENT_SECRET: ${{ secrets.MICROSOFT_OAUTH_CLIENT_SECRET }}
           # GitHub forbids repository secret names that start with GITHUB_, hence GH_APP_CLIENT_SECRET.
           GITHUB_APP_CLIENT_SECRET: ${{ secrets.GH_APP_CLIENT_SECRET }}
-        run: node infra/models-github-proxy/scripts/list-oauth-secrets.mjs
+        run: node src/auth-proxy/scripts/list-oauth-secrets.mjs
 
       - name: Deploy to Cloudflare
+        id: deploy
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           # The Workers Rate Limiting binding of wrangler.toml needs Wrangler 4.36.0 or later.
           wranglerVersion: "4"
-          workingDirectory: infra/models-github-proxy
+          workingDirectory: src/auth-proxy
           command: deploy
           secrets: ${{ steps.oauth_secrets.outputs.names }}
         env:
@@ -64,11 +64,13 @@ jobs:
           GITHUB_APP_CLIENT_SECRET: ${{ secrets.GH_APP_CLIENT_SECRET }}
 
       # Fails soft: the deploy already succeeded, this only reports which sign-in providers the live
-      # Worker has (GET /oauth/status, booleans only) in the job summary.
+      # Worker has (GET /oauth/status, booleans only) in the job summary. The URL is the one wrangler-action
+      # reports for this deploy (output deployment-url); the repository variable VITE_GITHUB_MODELS_BASE
+      # is only the fallback, because it still points to the OLD Worker until the owner switches it.
       - name: Check which sign-in providers are configured
         if: success()
         continue-on-error: true
         env:
-          WORKER_BASE_URL: ${{ vars.VITE_GITHUB_MODELS_BASE }}
+          WORKER_BASE_URL: ${{ steps.deploy.outputs.deployment-url || vars.VITE_GITHUB_MODELS_BASE }}
           UPLOADED_SECRETS: ${{ steps.oauth_secrets.outputs.names }}
-        run: node infra/models-github-proxy/scripts/summarize-oauth-status.mjs
+        run: node src/auth-proxy/scripts/summarize-oauth-status.mjs

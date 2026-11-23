@@ -55,7 +55,7 @@ describe("the owner's guides", () => {
         "GITHUB_APP_CLIENT_ID",
         "set-secrets.sh",
         "check-status.mjs",
-        "gh workflow run deploy-worker.yml",
+        "gh workflow run deploy-auth-proxy.yml",
         "/oauth/status",
         "Expire user authorization tokens",
         "Repository creation",

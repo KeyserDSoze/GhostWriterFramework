@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Sets the OAuth client secrets of the sign-in broker as GitHub repository secrets, one at a time.
 #
-#   infra/models-github-proxy/scripts/set-secrets.sh [--repo owner/repo] [--dry-run]
+#   src/auth-proxy/scripts/set-secrets.sh [--repo owner/repo] [--dry-run]
 #
 # For each of the three secrets it asks for the value with HIDDEN input (read -rs): nothing is shown
 # on screen, nothing is written to the shell history, and the value goes to `gh secret set NAME`
 # through standard input, so it never appears in the process list or on a command line either.
 # Pressing Enter skips a secret (a secret that is already set is left as it is).
-# Afterwards it can start the "Deploy Cloudflare Worker" workflow, wait for it, and print which
+# Afterwards it can start the "Deploy auth proxy" workflow, wait for it, and print which
 # sign-in providers the live Worker has configured (check-status.mjs).
 #
 # Works with bash on Linux, macOS (bash 3.2) and Git Bash on Windows. Needs the GitHub CLI (gh),
@@ -17,6 +17,10 @@
 #   --repo owner/repo   the repository (default: the one `gh repo view` finds from the current folder)
 #   --dry-run           print what would be done; ask nothing, run nothing
 #   --deploy|--no-deploy  answer the "run the deploy now?" question (default: ask)
+#   --worker-name NAME  the Worker whose status the final check reads (default: auth-proxy); it keeps
+#                       the account subdomain of the repository variable VITE_GITHUB_MODELS_BASE,
+#                       which still points to the OLD Worker until you switch it
+#   --url URL           the Worker's URL, used as given for the final check (overrides --worker-name)
 #   --no-check          do not run check-status.mjs at the end
 #   --stdin             read the three values from standard input, one per line, instead of asking
 #                       (a blank line skips one); for scripts and password managers, with a pipe.
@@ -28,7 +32,7 @@
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-workflow_file="deploy-worker.yml"
+workflow_file="deploy-auth-proxy.yml"
 poll_seconds=${SET_SECRETS_POLL_SECONDS:-3}
 
 dry_run=0
@@ -36,6 +40,8 @@ from_stdin=0
 run_check=1
 deploy_choice="ask"
 repo=""
+worker_name="auth-proxy"
+worker_url=""
 
 # The three repository secrets, in the order they are asked. GitHub forbids secret names that start
 # with GITHUB_, so the GitHub App's secret is GH_APP_CLIENT_SECRET; the deploy uploads it to the
@@ -65,6 +71,18 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --repo=*) repo=${1#--repo=} ;;
+    --worker-name)
+      [ $# -ge 2 ] || die "--worker-name vuole un nome" 64
+      worker_name=$2
+      shift
+      ;;
+    --worker-name=*) worker_name=${1#--worker-name=} ;;
+    --url)
+      [ $# -ge 2 ] || die "--url vuole un indirizzo" 64
+      worker_url=$2
+      shift
+      ;;
+    --url=*) worker_url=${1#--url=} ;;
     -h | --help)
       usage
       exit 0
@@ -78,6 +96,9 @@ if [ -n "$repo" ]; then
   repo_re='^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'
   [[ $repo =~ $repo_re ]] || die "--repo deve essere nella forma owner/repo" 64
 fi
+
+name_re='^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$'
+[[ $worker_name =~ $name_re ]] || die "--worker-name non e' un nome valido di Worker" 64
 
 # --- dry run: describe, never ask, never call gh -------------------------------------------------
 if [ "$dry_run" -eq 1 ]; then
@@ -106,7 +127,11 @@ if [ "$dry_run" -eq 1 ]; then
       ;;
   esac
   if [ "$run_check" -eq 1 ]; then
-    echo "Infine: node $script_dir/check-status.mjs   (stato di Google, Microsoft e GitHub sul Worker)"
+    if [ -n "$worker_url" ]; then
+      echo "Infine: node $script_dir/check-status.mjs $worker_url   (stato di Google, Microsoft e GitHub sul Worker)"
+    else
+      echo "Infine: node $script_dir/check-status.mjs --worker-name $worker_name   (stato di Google, Microsoft e GitHub sul Worker)"
+    fi
   fi
   exit 0
 fi
@@ -222,7 +247,11 @@ fi
 # --- check -------------------------------------------------------------------------------------------
 if [ "$run_check" -eq 1 ]; then
   if command -v node >/dev/null 2>&1; then
-    node "$script_dir/check-status.mjs" || true
+    if [ -n "$worker_url" ]; then
+      node "$script_dir/check-status.mjs" "$worker_url" || true
+    else
+      node "$script_dir/check-status.mjs" --worker-name "$worker_name" || true
+    fi
   else
     echo "node non e' installato: salto il controllo finale (curl <worker>/oauth/status)." >&2
   fi

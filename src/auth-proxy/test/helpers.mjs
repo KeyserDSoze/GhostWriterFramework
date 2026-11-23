@@ -3,7 +3,7 @@ import { afterEach, beforeEach } from "node:test";
 import { inspect } from "node:util";
 import worker from "../src/index.js";
 
-export const WORKER_URL = "https://models-github-proxy.example.workers.dev";
+export const WORKER_URL = "https://auth-proxy.example.workers.dev";
 export const ALLOWED_ORIGIN = "https://narrarium.net";
 
 export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";

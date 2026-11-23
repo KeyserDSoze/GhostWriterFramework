@@ -6,12 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { OAUTH_PROVIDERS, describeStatus, fetchOAuthStatus, normalizeBaseUrl, renderSummary } from "../scripts/oauth-status.mjs";
+import { OAUTH_PROVIDERS, describeStatus, fetchOAuthStatus, normalizeBaseUrl, renderSummary, retargetWorkerName } from "../scripts/oauth-status.mjs";
 
 const summarizeScript = fileURLToPath(new URL("../scripts/summarize-oauth-status.mjs", import.meta.url));
 const checkScript = fileURLToPath(new URL("../scripts/check-status.mjs", import.meta.url));
 
-const BASE = "https://models-github-proxy.example.workers.dev";
+const BASE = "https://auth-proxy.example.workers.dev";
 const FAKE_SECRET = "FAKE-secret-that-must-never-be-printed-0123456789";
 
 function answer(payload, status = 200) {
@@ -31,6 +31,20 @@ describe("normalizeBaseUrl", () => {
     }
     assert.equal(normalizeBaseUrl("http://127.0.0.1:8787/x"), "http://127.0.0.1:8787");
     assert.equal(normalizeBaseUrl("http://localhost:8787"), "http://localhost:8787");
+  });
+});
+
+describe("retargetWorkerName", () => {
+  it("points a *.workers.dev URL at another Worker of the same account", () => {
+    assert.equal(retargetWorkerName("https://models-github-proxy.example-acct.workers.dev", "auth-proxy"), "https://auth-proxy.example-acct.workers.dev");
+    assert.equal(retargetWorkerName("https://models-github-proxy.example-acct.workers.dev/inference/", "auth-proxy"), "https://auth-proxy.example-acct.workers.dev");
+  });
+
+  it("leaves other URLs alone (custom domain, loopback) and refuses an invalid name", () => {
+    assert.equal(retargetWorkerName("https://auth.narrarium.net/", "auth-proxy"), "https://auth.narrarium.net");
+    assert.equal(retargetWorkerName("http://127.0.0.1:8787", "auth-proxy"), "http://127.0.0.1:8787");
+    for (const name of ["", "bad name", "-x", "x-", "a.b", "a/b", undefined, 5]) assert.equal(retargetWorkerName("https://a.b.workers.dev", name), null, String(name));
+    assert.equal(retargetWorkerName("not a url", "auth-proxy"), null);
   });
 });
 
@@ -290,6 +304,16 @@ describe("summarize-oauth-status.mjs (the workflow step)", () => {
       assert.equal(result.status, 0);
       assert.match(result.stdout, /GitHub: configured/);
       assert.match(result.stdout, /Everything is configured\./);
+    });
+
+    it("takes the URL argument before the repository variable, and validates --worker-name", async () => {
+      behaviour = () => ({ body: { google: true, microsoft: true, github: true } });
+      // The argument wins over the environment (the variable still points to the old Worker).
+      const argument = await run(checkScript, { VITE_GITHUB_MODELS_BASE: "https://old-worker.acct.workers.dev" }, [baseUrl, "--worker-name", "auth-proxy"]);
+      assert.equal(argument.status, 0, argument.stderr);
+      assert.ok(argument.stdout.includes(`Controllo ${baseUrl}/oauth/status`), argument.stdout);
+      // (The fallback retargeting is covered by retargetWorkerName above: a test must not reach a real workers.dev host.)
+      assert.equal((await run(checkScript, {}, [baseUrl, "--worker-name", "bad name"])).status, 64);
     });
 
     it("exits 2 with --strict while a provider is missing, 0 once everything is configured", async () => {

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const workflowPath = fileURLToPath(new URL("../../../.github/workflows/deploy-worker.yml", import.meta.url));
+const workflowPath = fileURLToPath(new URL("../../../.github/workflows/deploy-auth-proxy.yml", import.meta.url));
 const scriptPath = fileURLToPath(new URL("../scripts/list-oauth-secrets.mjs", import.meta.url));
 
 const readWorkflow = () => readFileSync(workflowPath, "utf8");
@@ -18,12 +18,13 @@ function stepsOf(workflow) {
     .map((step) => step.trim());
 }
 
-describe("deploy-worker.yml", () => {
-  it("also starts on changes anywhere under infra/ and on its own file", () => {
+describe("deploy-auth-proxy.yml", () => {
+  it("is named \"Deploy auth proxy\" and starts on changes under src/auth-proxy/ and on its own file", () => {
     const workflow = readWorkflow();
-    assert.match(workflow, /^\s+- infra\/\*\*\s*$/m);
-    assert.match(workflow, /^\s+- infra\/models-github-proxy\/\*\*\s*$/m);
-    assert.match(workflow, /^\s+- \.github\/workflows\/deploy-worker\.yml\s*$/m);
+    assert.match(workflow, /^name: Deploy auth proxy$/m);
+    assert.match(workflow, /^\s+- src\/auth-proxy\/\*\*\s*$/m);
+    assert.match(workflow, /^\s+- \.github\/workflows\/deploy-auth-proxy\.yml\s*$/m);
+    assert.doesNotMatch(workflow, /infra\/|models-github-proxy/);
   });
 
   it("runs with least privilege, on demand with no inputs, never twice at once, with a timeout", () => {
@@ -32,7 +33,7 @@ describe("deploy-worker.yml", () => {
     assert.doesNotMatch(workflow, /^ +(?:contents|actions|packages|deployments|id-token|pull-requests|issues|checks|statuses):\s*write/m);
     assert.match(workflow, /^ {2}workflow_dispatch:\s*$/m);
     assert.doesNotMatch(workflow, /workflow_dispatch:\s*\r?\n\s+inputs:/);
-    assert.match(workflow, /^concurrency:\r?\n {2}group: deploy-worker\r?\n {2}cancel-in-progress: true/m);
+    assert.match(workflow, /^concurrency:\r?\n {2}group: deploy-auth-proxy\r?\n {2}cancel-in-progress: true/m);
     assert.match(workflow, /^ {4}timeout-minutes: \d+\s*$/m);
   });
 
@@ -49,7 +50,7 @@ describe("deploy-worker.yml", () => {
     assert.ok(testIndex >= 0, "a step runs npm test");
     assert.ok(deployIndex >= 0, "a step deploys with wrangler-action");
     assert.ok(testIndex < deployIndex, "the tests run before the deploy");
-    assert.match(steps[testIndex], /working-directory:\s*infra\/models-github-proxy/);
+    assert.match(steps[testIndex], /working-directory:\s*src\/auth-proxy/);
     assert.doesNotMatch(steps[testIndex], /npm (?:ci|install)/);
   });
 
@@ -58,7 +59,7 @@ describe("deploy-worker.yml", () => {
     const selectIndex = steps.findIndex((step) => /id:\s*oauth_secrets/.test(step));
     const deployIndex = steps.findIndex((step) => step.includes("cloudflare/wrangler-action"));
     assert.ok(selectIndex >= 0 && selectIndex < deployIndex);
-    assert.match(steps[selectIndex], /run:\s*node infra\/models-github-proxy\/scripts\/list-oauth-secrets\.mjs/);
+    assert.match(steps[selectIndex], /run:\s*node src\/auth-proxy\/scripts\/list-oauth-secrets\.mjs/);
     assert.match(steps[selectIndex], /GOOGLE_CLIENT_SECRET:\s*\$\{\{\s*secrets\.GOOGLE_OAUTH_CLIENT_SECRET\s*\}\}/);
     assert.match(steps[selectIndex], /MICROSOFT_CLIENT_SECRET:\s*\$\{\{\s*secrets\.MICROSOFT_OAUTH_CLIENT_SECRET\s*\}\}/);
     assert.match(steps[selectIndex], /GITHUB_APP_CLIENT_SECRET:\s*\$\{\{\s*secrets\.GH_APP_CLIENT_SECRET\s*\}\}/);
@@ -71,7 +72,7 @@ describe("deploy-worker.yml", () => {
     assert.match(deploy, /^\s+GOOGLE_CLIENT_SECRET:\s*\$\{\{\s*secrets\.GOOGLE_OAUTH_CLIENT_SECRET\s*\}\}\s*$/m);
     assert.match(deploy, /^\s+MICROSOFT_CLIENT_SECRET:\s*\$\{\{\s*secrets\.MICROSOFT_OAUTH_CLIENT_SECRET\s*\}\}\s*$/m);
     assert.match(deploy, /^\s+GITHUB_APP_CLIENT_SECRET:\s*\$\{\{\s*secrets\.GH_APP_CLIENT_SECRET\s*\}\}\s*$/m);
-    assert.match(deploy, /workingDirectory:\s*infra\/models-github-proxy/);
+    assert.match(deploy, /workingDirectory:\s*src\/auth-proxy/);
     assert.match(deploy, /command:\s*deploy/);
   });
 
@@ -96,7 +97,9 @@ describe("deploy-worker.yml", () => {
     assert.ok(checkIndex > deployIndex, "the check runs after the deploy");
     const check = steps[checkIndex];
     assert.match(check, /continue-on-error:\s*true/);
-    assert.match(check, /WORKER_BASE_URL:\s*\$\{\{\s*vars\.VITE_GITHUB_MODELS_BASE\s*\}\}/);
+    // The URL comes from the deploy step; the repository variable (still the OLD Worker until it is switched) is only the fallback.
+    assert.match(check, /WORKER_BASE_URL:\s*\$\{\{\s*steps\.deploy\.outputs\.deployment-url\s*\|\|\s*vars\.VITE_GITHUB_MODELS_BASE\s*\}\}/);
+    assert.match(steps[deployIndex], /^\s+id:\s*deploy\s*$/m);
     assert.match(check, /UPLOADED_SECRETS:\s*\$\{\{\s*steps\.oauth_secrets\.outputs\.names\s*\}\}/);
     assert.doesNotMatch(check, /\$\{\{\s*secrets\./, "the check step receives no secret");
   });

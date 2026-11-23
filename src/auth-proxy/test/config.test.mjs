@@ -45,7 +45,7 @@ describe("wrangler.toml", () => {
   const vars = readVars(toml);
 
   it("keeps the existing Worker settings", () => {
-    assert.match(toml, /^name = "models-github-proxy"$/m);
+    assert.match(toml, /^name = "auth-proxy"$/m);
     assert.match(toml, /^main = "src\/index\.js"$/m);
     assert.match(toml, /^workers_dev = true$/m);
   });
@@ -109,12 +109,12 @@ describe("package.json", () => {
     assert.equal(manifest.scripts.test, "node --test test/*.test.mjs");
     assert.equal(manifest.type, "module");
     assert.equal(manifest.dependencies, undefined);
-    assert.deepEqual(Object.keys(manifest.devDependencies), ["wrangler"]);
+    assert.equal(manifest.devDependencies, undefined, "wrangler is not a dependency: the workflow's wrangler-action brings its own");
   });
 
   it("keeps the dev and deploy scripts", () => {
-    assert.equal(manifest.scripts.dev, "wrangler dev");
-    assert.equal(manifest.scripts.deploy, "wrangler deploy");
+    assert.equal(manifest.scripts.dev, "npx wrangler dev");
+    assert.equal(manifest.scripts.deploy, "npx wrangler deploy");
   });
 });
 
@@ -157,7 +157,7 @@ describe("README.md", () => {
       "MICROSOFT_CLIENT_SECRET",
       "gh secret set GOOGLE_OAUTH_CLIENT_SECRET",
       "gh secret set MICROSOFT_OAUTH_CLIENT_SECRET",
-      "gh workflow run deploy-worker.yml",
+      "gh workflow run deploy-auth-proxy.yml",
       "wrangler secret delete",
       "/oauth/github/token",
       "/oauth/github/revoke",

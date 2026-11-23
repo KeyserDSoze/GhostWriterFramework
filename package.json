@@ -9,7 +9,7 @@
   },
   "workspaces": [
     "packages/*",
-    "src/*"
+    "src/narrarium-site"
   ],
   "scripts": {
     "build": "npm run build -w narrarium && npm run build -w narrarium-engine && npm run build -w narrarium-sdk && npm run build -w narrarium-mcp-server && npm run build -w create-narrarium-book && npm run build -w narrarium-astro-reader && npm run build -w narrarium-server && npm run build -w narrarium-site",

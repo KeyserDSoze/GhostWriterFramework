@@ -1,4 +1,6 @@
-name = "models-github-proxy"
+# Renamed from "models-github-proxy": this is a NEW Worker. The old one keeps running, untouched,
+# until the owner deletes it (src/auth-proxy/docs/guida-auth-proxy.it.md, section 2).
+name = "auth-proxy"
 main = "src/index.js"
 compatibility_date = "2026-07-05"
 
@@ -7,10 +9,10 @@ compatibility_date = "2026-07-05"
 # custom_domain route cannot be provisioned here.
 #
 # Resulting URL after the first deploy:
-#   https://models-github-proxy.<your-account-subdomain>.workers.dev
+#   https://auth-proxy.<your-account-subdomain>.workers.dev
 #
-# If narrarium.net is ever moved to Cloudflare (infra/models-github-proxy/docs/guida-cloudflare-e-accessi.it.md,
-# section 1.8), add a custom domain route and keep `workers_dev = true` until the
+# If narrarium.net is ever moved to Cloudflare (src/auth-proxy/docs/guida-auth-proxy.it.md,
+# section 5.7), add a custom domain route and keep `workers_dev = true` until the
 # migration is over (adding `routes` without it turns workers.dev off):
 #   [[routes]]
 #   pattern = "auth.narrarium.net"

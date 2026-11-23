@@ -1,0 +1,12 @@
+{
+  "name": "auth-proxy",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cloudflare Worker of the Narrarium web app: stateless OAuth token broker for Google Drive, OneDrive and GitHub, plus the CORS proxy for the GitHub Models API (being retired). Not an npm workspace: deployed by .github/workflows/deploy-auth-proxy.yml.",
+  "type": "module",
+  "scripts": {
+    "dev": "npx wrangler dev",
+    "deploy": "npx wrangler deploy",
+    "test": "node --test test/*.test.mjs"
+  }
+}

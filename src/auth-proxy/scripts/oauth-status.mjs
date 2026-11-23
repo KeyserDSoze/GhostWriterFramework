@@ -31,6 +31,21 @@ export function normalizeBaseUrl(value) {
   return safe && url.username === "" && url.password === "" ? url.origin : null;
 }
 
+const WORKER_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
+
+/**
+ * Points a `https://<worker>.<account-subdomain>.workers.dev` URL at another Worker of the same
+ * account (the account subdomain is shared). Any other URL (a custom domain, loopback) and an
+ * invalid name leave the URL as it is: returns null for an invalid name, the origin otherwise.
+ */
+export function retargetWorkerName(baseUrl, name) {
+  if (typeof name !== "string" || !WORKER_NAME.test(name)) return null;
+  const origin = normalizeBaseUrl(baseUrl);
+  if (!origin) return null;
+  const match = /^https:\/\/[^./]+\.([^./]+\.workers\.dev)$/.exec(origin);
+  return match ? `https://${name}.${match[1]}` : origin;
+}
+
 function readFlags(text) {
   let data;
   try {
@@ -94,9 +109,9 @@ const TEXT = {
     unknownAction: "The Worker answered without this provider: wait a minute and run the workflow again, and check that the deploy step succeeded.",
     notUploaded: (p) =>
       p.key === "github"
-        ? `Register the GitHub App, put its Client ID in ${p.clientIdVariable} in infra/models-github-proxy/wrangler.toml, set the repository secret ${p.repositorySecret}, then run this workflow again.`
+        ? `Register the GitHub App, put its Client ID in ${p.clientIdVariable} in src/auth-proxy/wrangler.toml, set the repository secret ${p.repositorySecret}, then run this workflow again.`
         : `Set the repository secret ${p.repositorySecret} (the ${p.label} OAuth client secret), then run this workflow again.`,
-    uploadedButOff: (p) => `The secret ${p.workerSecret} was uploaded in this run, so ${p.clientIdVariable} in infra/models-github-proxy/wrangler.toml is empty or missing: set it and deploy again.`,
+    uploadedButOff: (p) => `The secret ${p.workerSecret} was uploaded in this run, so ${p.clientIdVariable} in src/auth-proxy/wrangler.toml is empty or missing: set it and deploy again.`,
   },
   it: {
     configured: "configurato",
@@ -106,9 +121,9 @@ const TEXT = {
     unknownAction: "Il Worker ha risposto senza questo provider: attendi un minuto e riprova, e controlla che il deploy sia andato a buon fine.",
     notUploaded: (p) =>
       p.key === "github"
-        ? `Registra la GitHub App, scrivi il suo Client ID in ${p.clientIdVariable} in infra/models-github-proxy/wrangler.toml, imposta il secret ${p.repositorySecret} e rilancia il deploy.`
+        ? `Registra la GitHub App, scrivi il suo Client ID in ${p.clientIdVariable} in src/auth-proxy/wrangler.toml, imposta il secret ${p.repositorySecret} e rilancia il deploy.`
         : `Imposta il secret ${p.repositorySecret} (il client secret OAuth di ${p.label}) e rilancia il deploy.`,
-    uploadedButOff: (p) => `Il secret ${p.workerSecret} e' stato caricato, quindi manca ${p.clientIdVariable} in infra/models-github-proxy/wrangler.toml: scrivilo e rifai il deploy.`,
+    uploadedButOff: (p) => `Il secret ${p.workerSecret} e' stato caricato, quindi manca ${p.clientIdVariable} in src/auth-proxy/wrangler.toml: scrivilo e rifai il deploy.`,
   },
 };
 
@@ -143,7 +158,7 @@ export function renderSummary(rows, baseUrl) {
     "| --- | --- | --- |",
     ...rows.map((row) => `| ${cell(row.provider.label)} | ${ICONS[row.state]} ${cell(row.label)} | ${cell(row.action)} |`),
     "",
-    "Step by step: `infra/models-github-proxy/docs/cloudflare-and-sign-in-setup.en.md` (Italian: `infra/models-github-proxy/docs/guida-cloudflare-e-accessi.it.md`).",
+    "Step by step: `src/auth-proxy/docs/auth-proxy-setup.en.md` (Italian: `src/auth-proxy/docs/guida-auth-proxy.it.md`).",
     "",
   ];
   return lines.join("\n");

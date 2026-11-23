@@ -87,7 +87,7 @@ describe("set-secrets.sh --dry-run", () => {
       for (const name of ["GOOGLE_OAUTH_CLIENT_SECRET", "MICROSOFT_OAUTH_CLIENT_SECRET", "GH_APP_CLIENT_SECRET"]) {
         assert.ok(result.stdout.includes(`gh secret set ${name} --repo me/book`), name);
       }
-      assert.match(result.stdout, /gh workflow run deploy-worker\.yml --repo me\/book/);
+      assert.match(result.stdout, /gh workflow run deploy-auth-proxy\.yml --repo me\/book/);
       assert.match(result.stdout, /gh run watch .* --exit-status/);
       assert.match(result.stdout, /check-status\.mjs/);
       assert.equal(sandbox.log(), "", "gh was not called");
@@ -187,7 +187,7 @@ describe("set-secrets.sh (with a fake gh)", () => {
       const result = run(["--stdin", "--repo", "me/book", "--deploy", "--no-check"], { input: `${GOOGLE}\n\n\n`, sandbox });
       assert.equal(result.status, 0, result.stderr);
       const log = sandbox.log();
-      assert.match(log, /^workflow run deploy-worker\.yml --repo me\/book$/m);
+      assert.match(log, /^workflow run deploy-auth-proxy\.yml --repo me\/book$/m);
       assert.match(log, /^run watch 101 --repo me\/book --exit-status$/m);
       assert.ok(log.indexOf("secret set") < log.indexOf("workflow run"), "the secrets are set before the deploy");
     }),

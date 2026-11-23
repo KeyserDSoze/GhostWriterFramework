@@ -1,20 +1,25 @@
-# GitHub Models CORS proxy and OAuth token broker (Cloudflare Worker)
+# auth-proxy: OAuth token broker and GitHub Models CORS proxy (Cloudflare Worker)
 
-> Owner's step-by-step guide (Cloudflare, Google, Microsoft, GitHub App; what to enforce): [`docs/guida-cloudflare-e-accessi.it.md`](docs/guida-cloudflare-e-accessi.it.md) (Italian), short English version [`docs/cloudflare-and-sign-in-setup.en.md`](docs/cloudflare-and-sign-in-setup.en.md).
+> Owner's step-by-step guide, **CLI first** (install and sign in, move to this Worker, Microsoft with `az`, Google checklist, Cloudflare hardening, GitHub App, what to enforce): [`docs/guida-auth-proxy.it.md`](docs/guida-auth-proxy.it.md) (Italian), short English version [`docs/auth-proxy-setup.en.md`](docs/auth-proxy-setup.en.md).
 
 The Narrarium web app runs entirely in the browser (GitHub Pages). This Cloudflare
-Worker does two jobs for it:
+Worker, named **`auth-proxy`** (it was `models-github-proxy`, when GitHub Models were its only
+job; the old Worker keeps running until the owner deletes it, see the guide, section 2), does
+two jobs for it:
 
-1. **CORS proxy for GitHub Models.** The GitHub Models API at
-   `https://models.github.ai/*` does not return CORS headers, so browser calls are
-   blocked. The Worker transparently forwards every request to `models.github.ai` and
-   adds CORS headers scoped to the Narrarium origins.
-2. **Stateless OAuth token broker** (everything under `/oauth/`, see
+1. **Stateless OAuth token broker** (everything under `/oauth/`, see
    [Broker OAuth](#broker-oauth)). It keeps the Google, Microsoft and GitHub App client
    secrets so that the site can stay connected to Google Drive, OneDrive and GitHub
-   without asking the user to sign in again every hour.
+   without asking the user to sign in again every hour. This is what the Worker is for now.
+2. **CORS proxy for GitHub Models** (everything outside `/oauth/`). **Being retired**: GitHub
+   Models are being shut down, so this part may no longer be needed. It stays here, unchanged
+   and tested (`test/proxy.test.mjs`), and can be deleted (`src/index.js` forwarding code and
+   its tests) when GitHub Models are gone. The GitHub Models API at
+   `https://models.github.ai/*` does not return CORS headers, so browser calls are blocked;
+   the Worker transparently forwards every request to `models.github.ai` and adds CORS
+   headers scoped to the Narrarium origins.
 
-## What it proxies
+## What it proxies (GitHub Models, being retired)
 
 Every path outside `/oauth/`:
 
@@ -65,7 +70,7 @@ nothing to any log.
 
 ### API contract
 
-Base URL: the Worker's own URL (`https://models-github-proxy.<account>.workers.dev`).
+Base URL: the Worker's own URL (`https://auth-proxy.<account>.workers.dev`).
 The contract is stable: the site uses it as written here.
 
 Every response has `Cache-Control: no-store`, `Content-Type: application/json` and
@@ -274,147 +279,22 @@ two variables to match; `GITHUB_APP_CLIENT_ID` is the Client ID of the GitHub Ap
 
 ## Passi per il proprietario
 
-Si fanno una volta sola e non richiedono altro aiuto. Prima di cominciare unisci
-(merge) in `main` la modifica che introduce il broker: il workflow che parte è quello
-di `main`. Finché il sito non usa il broker, per gli utenti non cambia nulla.
+Si fanno una volta sola. La procedura completa, **da riga di comando**, con una riga
+«Verifica» per passo, è in [`docs/guida-auth-proxy.it.md`](docs/guida-auth-proxy.it.md)
+(versione inglese breve: [`docs/auth-proxy-setup.en.md`](docs/auth-proxy-setup.en.md)). In
+breve, nell'ordine: (a) unisci in `main` la modifica che crea il Worker `auth-proxy` (il
+workflow che parte è quello di `main`); (b) `gh workflow run deploy-auth-proxy.yml` pubblica
+il Worker **nuovo** (il vecchio `models-github-proxy` non viene toccato); (c)
+`src/auth-proxy/scripts/set-secrets.sh` carica i client secret con input nascosto; (d)
+`node src/auth-proxy/scripts/check-status.mjs <url del nuovo Worker>`; (e) sposta la
+variabile `VITE_GITHUB_MODELS_BASE` sul nuovo indirizzo e ripubblica il sito; (f) prova un
+collegamento vero a Google Drive e OneDrive; (g) solo allora elimina il vecchio Worker.
 
-La guida completa, con ogni campo da compilare, una riga «Verifica» per passo, il token
-Cloudflare a privilegi minimi, la registrazione della GitHub App e la tabella di «cosa
-imporre», è in [`docs/guida-cloudflare-e-accessi.it.md`](docs/guida-cloudflare-e-accessi.it.md)
-(versione inglese breve: [`docs/cloudflare-and-sign-in-setup.en.md`](docs/cloudflare-and-sign-in-setup.en.md)).
-Qui sotto c'è il riassunto per Google, Microsoft e i segreti.
+Per Microsoft c'è lo script di sola lettura `scripts/check-microsoft-app.sh` (usa `az`): dice
+quali dei quattro URI di ritorno mancano. Per Google non esiste una CLI per il client OAuth:
+la guida ha la lista dei controlli sulla console.
 
-I nomi dei menu sono quelli delle console in italiano, con l'inglese tra parentesi.
-
-### 1. Google Cloud Console
-
-1. Apri la [Google Cloud Console](https://console.cloud.google.com/) nel progetto che
-   contiene il client OAuth, poi **API e servizi** → **Credenziali** (*APIs & Services →
-   Credentials*).
-2. In "ID client OAuth 2.0" apri il client di tipo **Applicazione web** (*Web
-   application*) il cui ID inizia con `91477716497-`.
-3. Copia il **Client secret**. Se la console mostra solo un segreto mascherato, premi
-   **Aggiungi secret** (*Add secret*) e copia subito quello nuovo: Google lo mostra una
-   volta sola. Il segreto vecchio resta valido finché non lo disattivi.
-4. In **Origini JavaScript autorizzate** (*Authorized JavaScript origins*) devono
-   esserci `https://narrarium.net` e `https://www.narrarium.net`, più
-   `http://localhost:5173` e `http://localhost:4173` per lo sviluppo (e
-   `https://<utente>.github.io` se il sito è anche su GitHub Pages). Salva: la modifica
-   può richiedere qualche minuto. Gli "URI di reindirizzamento autorizzati" non servono: il
-   flusso a popup non fa nessun reindirizzamento e il Worker scambia il codice con il
-   valore speciale `postmessage`. Attenzione: la documentazione di Google (aggiornata il
-   29 ottobre 2026) dice che nello scambio del codice del popup il `redirect_uri` è
-   l'origine della pagina; `postmessage` è il valore non documentato che gli sviluppatori
-   riportano funzionante. Non è mai stato provato dal vivo con questo Worker: se il primo
-   collegamento di Google dà `redirect_uri_mismatch`, la correzione è nel Worker.
-5. Apri la **Schermata consenso OAuth** (*OAuth consent screen*; nella console più
-   recente: **Google Auth Platform** → **Pubblico**) e premi **Pubblica l'app**
-   (*Publish app*) finché lo stato è **In produzione**. In stato "Testing" i refresh
-   token scadono dopo 7 giorni. Gli ambiti usati sono `drive.appdata`, `drive`, `openid`,
-   `profile`, `email`. Poiché `drive` è un ambito riservato, finché l'app non è
-   verificata da Google gli utenti vedono l'avviso "app non verificata" e (regola di
-   Google, da controllare) l'app è limitata a 100 utenti; non incide sulla durata dei
-   refresh token.
-
-### 2. Microsoft Entra ID (Azure)
-
-1. Apri [Microsoft Entra](https://entra.microsoft.com/) (o il portale Azure) →
-   **Registrazioni app** (*App registrations*) → l'app con ID applicazione (client)
-   `a80b2024-b9e3-4cb1-8480-aac7f164a6eb`.
-2. **Autenticazione** (*Authentication*) → **Aggiungi una piattaforma** (*Add a
-   platform*) → **Web**. Negli **URI di reindirizzamento** inserisci
-   `https://narrarium.net/auth/microsoft-callback.html` e, se servono,
-   `https://www.narrarium.net/auth/microsoft-callback.html`,
-   `http://localhost:5173/auth/microsoft-callback.html`,
-   `http://localhost:4173/auth/microsoft-callback.html`. Se il sito è su GitHub Pages
-   aggiungi anche
-   `https://<utente>.github.io/<repo>/auth/microsoft-callback.html`, e lo stesso URL in
-   `ALLOWED_REDIRECT_URIS` di `wrangler.toml`.
-   - La piattaforma deve essere **Web**, non "Applicazione a pagina singola" (*Single-page
-     application*): con quest'ultima il refresh token dura al massimo 24 ore e Microsoft
-     rifiuta lo scambio del codice con il segreto (errore `AADSTS9002327`).
-   - Non toccare gli URI già registrati per MSAL (`.../msal-popup.html`, di solito sotto
-     la piattaforma a pagina singola): servono al collegamento attuale.
-   - In **Impostazioni avanzate** "Consenti flussi client pubblici" (*Allow public client
-     flows*) deve restare **No**.
-3. **Certificati e segreti** (*Certificates & secrets*) → **Segreti client** → **Nuovo
-   segreto client** (*New client secret*): dagli un nome (per esempio `narrarium-worker`)
-   e una scadenza, premi **Aggiungi** e copia subito il **Valore** (non l'"ID segreto"): non
-   sarà più visibile. Annota la data di scadenza (massimo 24 mesi): a quella data va
-   ruotato (vedi il passo 5).
-4. **Autorizzazioni API** (*API permissions*): devono esserci, come autorizzazioni
-   delegate di Microsoft Graph, `User.Read`, `Files.ReadWrite` e `offline_access`. Il tipo
-   di account supportato deve includere gli account Microsoft personali (il broker usa
-   l'authority `common`).
-
-### 3. Segreti del repository GitHub
-
-Dalla cartella del repository:
-
-Il modo più comodo è lo script, che chiede i tre segreti uno alla volta con **input
-nascosto**, li passa a `gh secret set` da stdin (non compaiono né nella riga di comando né
-nella cronologia) e può anche lanciare il deploy e mostrare lo stato (`--dry-run` stampa
-cosa farebbe, senza chiedere nulla):
-
-```bash
-infra/models-github-proxy/scripts/set-secrets.sh --dry-run
-infra/models-github-proxy/scripts/set-secrets.sh
-```
-
-A mano è equivalente a:
-
-```bash
-gh secret set GOOGLE_OAUTH_CLIENT_SECRET
-gh secret set MICROSOFT_OAUTH_CLIENT_SECRET
-gh secret set GH_APP_CLIENT_SECRET            # client secret della GitHub App (vedi la guida)
-```
-
-`gh` chiede il valore: incollalo al prompt, **mai nella riga di comando** (finirebbe nella
-cronologia della shell). Il segreto della GitHub App si chiama `GH_APP_CLIENT_SECRET`
-perché GitHub vieta i nomi che iniziano con `GITHUB_`; il deploy lo carica nel Worker come
-`GITHUB_APP_CLIENT_SECRET`. `gh secret list` mostra i nomi, mai i valori. Poi rilancia il
-workflow "Deploy Cloudflare Worker":
-
-```bash
-gh workflow run deploy-worker.yml
-gh run watch            # scegli l'esecuzione appena avviata
-```
-
-Il workflow esegue prima i test del Worker, poi carica nel Worker i segreti che esistono
-(il passo "Select the OAuth client secrets to upload" segnala, solo per nome, quali
-segreti GitHub mancano, con un'annotazione nella pagina dell'esecuzione), pubblica e
-infine, nel riepilogo dell'esecuzione, scrive la tabella dei provider
-configurati/non configurati con la prossima azione per ciascuno. Se manca un segreto non
-fallisce: quel provider risponde `501 not_configured`. Servono anche i segreti
-`CLOUDFLARE_API_TOKEN` (con il permesso di modificare il Worker: è lui a caricare i
-segreti; per il minimo dei privilegi vedi la guida) e `CLOUDFLARE_ACCOUNT_ID`, già usati dal
-deploy.
-
-### 4. Verifica
-
-L'indirizzo del Worker è `https://models-github-proxy.<sottodominio-account>.workers.dev`,
-lo stesso valore della variabile `VITE_GITHUB_MODELS_BASE` (`gh variable get
-VITE_GITHUB_MODELS_BASE`).
-
-```bash
-curl https://<worker>.workers.dev/oauth/status
-# {"google":true,"microsoft":true,"github":true}
-node infra/models-github-proxy/scripts/check-status.mjs     # lo stesso, a parole
-```
-
-Per controllare anche id e segreto di Google senza usare token veri:
-
-```bash
-curl -s -X POST https://<worker>.workers.dev/oauth/google/refresh \
-  -H 'Content-Type: application/json' -d '{"refreshToken":"prova"}'
-```
-
-La risposta attesa è `{"error":"invalid_grant",...}`: Google ha accettato id e segreto e
-ha rifiutato il token inventato. Se invece dice `upstream_error` con `invalid_client`,
-il segreto o l'id sono sbagliati. Per Microsoft la prova vera è collegare un account dal
-sito.
-
-### 5. Rotazione e disattivazione
+### Rotazione e disattivazione
 
 **Rotazione di un segreto**, senza interruzioni (i refresh token già emessi restano
 validi: non dipendono dal segreto):
@@ -422,7 +302,8 @@ validi: non dipendono dal segreto):
 1. Crea il segreto nuovo dal provider (Google: **Aggiungi secret**; Microsoft: **Nuovo
    segreto client**) e lascia il vecchio.
 2. `gh secret set GOOGLE_OAUTH_CLIENT_SECRET` (o `MICROSOFT_OAUTH_CLIENT_SECRET`),
-   incollando il valore nuovo, poi `gh workflow run deploy-worker.yml`.
+   incollando il valore nuovo (meglio con `scripts/set-secrets.sh`), poi `gh workflow run
+   deploy-auth-proxy.yml`.
 3. Controlla `/oauth/status` e collega un account di prova.
 4. Solo ora elimina o disattiva il segreto vecchio dal provider.
 
@@ -431,13 +312,13 @@ solo quello di GitHub non basta, perché un deploy non cancella i segreti già p
 Worker:
 
 ```bash
-cd infra/models-github-proxy
+cd src/auth-proxy
 npx wrangler login                              # una volta, interattivo
 npx wrangler secret delete GOOGLE_CLIENT_SECRET
 npx wrangler secret delete MICROSOFT_CLIENT_SECRET
 ```
 
-In alternativa dal dashboard Cloudflare: **Workers & Pages** → `models-github-proxy` →
+In alternativa dal dashboard Cloudflare: **Workers & Pages** → `auth-proxy` →
 **Settings** → **Variables and Secrets**. Poi rimuovi anche i segreti GitHub
 (`gh secret remove GOOGLE_OAUTH_CLIENT_SECRET`, `gh secret remove
 MICROSOFT_OAUTH_CLIENT_SECRET`), altrimenti il deploy successivo li rimette. Da quel
@@ -462,8 +343,8 @@ revoca dalla propria pagina account.
 | `/oauth/status` dà `false`, o `501 not_configured` | il Worker non ha il segreto del provider (per GitHub: anche `GITHUB_APP_CLIENT_ID` vuoto in `wrangler.toml`, o GitHub dice che id/segreto sono sbagliati) | `gh secret list`, controlla il riepilogo del workflow e rilancialo |
 | `/oauth/status` senza la chiave `github` | il Worker in linea è ancora la versione precedente | attendi la propagazione e rilancia il workflow |
 | `400 invalid_grant` da GitHub | codice o refresh token respinti (GitHub li ruota a ogni uso) | il sito deve chiedere di ricollegare l'account |
-| `502 upstream_error` con `invalid_client` | segreto sbagliato o scaduto, id diverso da quello del sito; per Microsoft di solito si è copiato l'"ID segreto" invece del "Valore" | rifai il passo 1.3 o 2.3 e il passo 3 |
-| `502 upstream_error` per Microsoft dopo un collegamento | URI di reindirizzamento ancora sotto "Applicazione a pagina singola" (`AADSTS9002327`) | registralo sotto **Web** (passo 2.2) |
+| `502 upstream_error` con `invalid_client` | segreto sbagliato o scaduto, id diverso da quello del sito; per Microsoft di solito si è copiato l'"ID segreto" invece del "Valore" | rifai il passo del segreto (guida, sezioni 3 e 4) e carica il valore con `set-secrets.sh` |
+| `502 upstream_error` per Microsoft dopo un collegamento | URI di reindirizzamento ancora sotto "Applicazione a pagina singola" (`AADSTS9002327`) | registralo sotto **Web** (guida, sezione 3: `check-microsoft-app.sh` lo mostra) |
 | `400 invalid_request`, "redirectUri is not on the list" | l'URL di callback non è in `ALLOWED_REDIRECT_URIS` | aggiungilo in `wrangler.toml` e fai il deploy |
 | `403 forbidden_origin` | l'origine del sito non è consentita | aggiungila in `ALLOWED_ORIGINS_EXTRA` e fai il deploy |
 | `400 invalid_grant` al rinnovo | refresh token scaduto o revocato | il sito deve chiedere di ricollegare l'account |
@@ -472,9 +353,9 @@ revoca dalla propria pagina account.
 
 ## Deploy
 
-Deployment is automated by `.github/workflows/deploy-worker.yml`, which runs on every
-push to `main` that changes `infra/**` (and on demand with `gh workflow run
-deploy-worker.yml`). It:
+Deployment is automated by `.github/workflows/deploy-auth-proxy.yml` ("Deploy auth proxy"),
+which runs on every push to `main` that changes `src/auth-proxy/**` (and on demand with
+`gh workflow run deploy-auth-proxy.yml`). It:
 
 1. runs the Worker tests (`npm test`; no dependency to install);
 2. lists which of the OAuth client secrets exist in the repository
@@ -482,15 +363,16 @@ deploy-worker.yml`). It:
    `cloudflare/wrangler-action` through its `secrets:` input, with one notice per missing
    one. A missing repository secret never fails the deploy: that provider answers
    `501 not_configured` and `GET /oauth/status` says so;
-3. runs `wrangler deploy` (Wrangler 4);
-4. calls `GET /oauth/status` on the live Worker (the origin of the repository variable
-   `VITE_GITHUB_MODELS_BASE`, a few retries because a new deploy takes seconds to
-   propagate) and writes a table to the job summary: for each of Google, Microsoft and
+3. runs `wrangler deploy` (Wrangler 4; the step has the id `deploy`);
+4. calls `GET /oauth/status` on the live Worker: the URL is the output `deployment-url` of
+   the deploy step, and the repository variable `VITE_GITHUB_MODELS_BASE` is only the
+   fallback when that output is empty (the variable still points to the OLD Worker until the
+   owner switches it); a few retries because a new deploy takes seconds to propagate, and writes a table to the job summary: for each of Google, Microsoft and
    GitHub "configured" or "not configured" and, when not, the one next action
    (`scripts/summarize-oauth-status.mjs`). It never fails the run and never prints a value.
 
 The workflow has `permissions: contents: read`, never runs twice at once and times out
-after 10 minutes. It also starts on demand (`gh workflow run deploy-worker.yml`, no inputs).
+after 10 minutes. It also starts on demand (`gh workflow run deploy-auth-proxy.yml`, no inputs).
 
 It needs these GitHub repository secrets:
 
@@ -503,9 +385,18 @@ It needs these GitHub repository secrets:
 
 Helper scripts in `scripts/`: `set-secrets.sh` (asks for the three secrets with hidden
 input and sets them with `gh secret set`, value through stdin; `--dry-run`; optionally runs
-the deploy and the check), `check-status.mjs` (prints the `/oauth/status` answer in words,
-Italian by default, `--lang en`, `--strict` exits 2 while a provider is missing) and
-`list-oauth-secrets.mjs` / `summarize-oauth-status.mjs` (used by the workflow).
+the deploy and the check), `check-status.mjs` (prints the `/oauth/status` answer in words;
+takes the Worker URL as an argument and reads `VITE_GITHUB_MODELS_BASE` only as a fallback;
+Italian by default, `--lang en`, `--strict` exits 2 while a provider is missing,
+`--worker-name NAME` points a `*.workers.dev` URL at another Worker of the same account),
+`check-microsoft-app.sh` (read-only: with `az` signed in, prints the Microsoft app
+registration's audience, redirect URIs and delegated permissions, and which of the four
+callback URLs are missing) and `list-oauth-secrets.mjs` / `summarize-oauth-status.mjs`
+(used by the workflow).
+
+The Worker is **not an npm workspace** (the root `package.json` lists `packages/*` and
+`src/narrarium-site`) and has no dependency: Wrangler comes from `wrangler-action` in the
+workflow, or from `npx wrangler` on your machine.
 
 A deploy never deletes a secret already stored in the Worker; see
 [Passi per il proprietario](#passi-per-il-proprietario) for how to remove one.
@@ -513,8 +404,7 @@ A deploy never deletes a secret already stored in the Worker; see
 ### Manual deploy
 
 ```bash
-cd infra/models-github-proxy
-npm install
+cd src/auth-proxy
 npx wrangler login      # interactive, local only
 npx wrangler deploy
 npx wrangler secret put GOOGLE_CLIENT_SECRET      # optional, prompts for the value
@@ -527,11 +417,22 @@ DNS is hosted on GoDaddy, not Cloudflare. After the first deploy the URL looks
 like:
 
 ```
-https://models-github-proxy.<account-subdomain>.workers.dev
+https://auth-proxy.<account-subdomain>.workers.dev
 ```
 
-The Narrarium app reads that base URL from the `VITE_GITHUB_MODELS_BASE`
-environment variable at build time (see `src/narrarium-site/src/config/githubModels.ts`).
+The Narrarium app reads that base URL from the `VITE_GITHUB_MODELS_BASE` environment
+variable at build time (see `src/narrarium-site/src/config/githubModels.ts` and
+`authBroker.ts`); the name is a leftover from when the Worker only proxied GitHub Models and
+stays for now.
+
+### Optional later: `cf migrate`
+
+Cloudflare's new CLI `cf` (1.0 release candidate) can replace Wrangler, but not in a project
+that still has `wrangler.toml`: `cf dev`, `cf build` and `cf deploy` must not be run in an
+unmigrated Wrangler project (they write their own configuration or fail). Deploys stay with
+Wrangler through the workflow; `cf migrate` (preview with `cf migrate --dry-run`) is an
+optional later step, described in the guide. `cf` is meanwhile useful for read and
+administrative commands (`cf workers list`, `cf workers secrets list`, `cf observability tail`).
 
 ### Custom domain (optional, future)
 
@@ -547,7 +448,7 @@ custom_domain = true
 ## Tests
 
 ```bash
-cd infra/models-github-proxy
+cd src/auth-proxy
 npm test
 ```
 
