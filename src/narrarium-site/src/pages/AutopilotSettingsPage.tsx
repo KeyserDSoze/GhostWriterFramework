@@ -14,7 +14,7 @@ import { QUICK_CONTROLS_SERVER_VERSION, serverHasQuickControls } from "@/autopil
 import { serverEditsRules } from "@/autopilot/rules";
 import { useServerConnection } from "@/autopilot/serverConnection";
 import { serverHasFrozenChapters } from "@/autopilot/frozenChapters";
-import { retryWaitOf, serverHasRetry } from "@/autopilot/retry";
+import { retryWaitOf, serverHasAutoResume, serverHasRetry } from "@/autopilot/retry";
 import { questionHeading } from "@/autopilot/format";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
@@ -64,6 +64,8 @@ export function AutopilotSettingsPage() {
   const frozenUnsupported = host === "server" && Boolean(server.info) && !serverHasFrozenChapters(server.info);
   // One older than «Retry later» refuses it: the switch is off, and says why.
   const retryUnsupported = host === "server" && Boolean(server.info) && !serverHasRetry(server.info);
+  // «Resume after a restart» is only for a book that a personal server runs, and only one that announces it is told of it.
+  const autoResume = host === "server" && Boolean(server.info) && serverHasAutoResume(server.info);
   const waitingLong = Boolean(retryWaitOf(summary)?.long);
   const asking = Boolean(summary?.question);
 
@@ -133,6 +135,7 @@ export function AutopilotSettingsPage() {
           liveUnsupported={liveUnsupported}
           frozenUnsupported={frozenUnsupported}
           retryUnsupported={retryUnsupported}
+          autoResume={autoResume}
           waitingLong={waitingLong}
           run={run}
           onStarted={() => navigate(liveHref)}

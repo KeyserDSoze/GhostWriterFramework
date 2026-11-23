@@ -67,6 +67,11 @@ export interface RetryLaterCardProps {
   running: boolean;
   /** The run waits for a restart of «Retry later» now: turning it off would stop it. */
   waitingLong: boolean;
+  /**
+   * «Resume after a restart», for a personal server that has it (none: the switch is not shown): whether it is on, and what turning it on or off does.
+   * It is locked when the card is, and it can change while a run goes on.
+   */
+  autoResume?: { on: boolean; onChange: (on: boolean) => void };
 }
 
 const ID = "autopilot-retry";
@@ -76,8 +81,9 @@ const ID = "autopilot-retry";
  * switch); the minutes between two restarts and how many restarts, or the choice in words to go on until it works; and «Use recommended values». The numbers are
  * checked as they are typed and before anything is saved: a problem is said under its field, and nothing is rounded or cut to fit. It can change while a run goes
  * on, and the page says beforehand what turning it off does to a run that waits for it. A personal server that does not have it shows it off, and says why.
+ * Last, for a personal server that has it, «Resume after a restart»: a switch, off unless the author turns it on, with what it does in one line next to it.
  */
-export const RetryLaterCard = forwardRef<RetryLaterCardHandle, RetryLaterCardProps>(function RetryLaterCard({ form, onChange, locked, unsupported, running, waitingLong }, ref) {
+export const RetryLaterCard = forwardRef<RetryLaterCardHandle, RetryLaterCardProps>(function RetryLaterCard({ form, onChange, locked, unsupported, running, waitingLong, autoResume }, ref) {
   const { t } = useTranslation();
   const minutesRef = useRef<HTMLInputElement>(null);
   const cyclesRef = useRef<HTMLInputElement>(null);
@@ -202,6 +208,22 @@ export const RetryLaterCard = forwardRef<RetryLaterCardHandle, RetryLaterCardPro
             </Button>
             <p id={`${ID}-recommended`} className="text-xs text-muted-foreground">{t("autopilot.config.retryLater.recommendedHint")}</p>
           </div>
+        </div>
+      )}
+      {autoResume && (
+        <div className="flex items-start justify-between gap-3 border-t pt-3">
+          <div className="min-w-0 space-y-1">
+            <Label htmlFor={`${ID}-restart`} className="text-sm font-medium">{t("autopilot.config.autoResume.label")}</Label>
+            <p id={`${ID}-restart-hint`} className="text-xs text-muted-foreground">{t("autopilot.config.autoResume.hint")}</p>
+          </div>
+          <Switch
+            id={`${ID}-restart`}
+            className="mt-0.5"
+            checked={autoResume.on}
+            disabled={locked}
+            aria-describedby={`${ID}-restart-hint`}
+            onCheckedChange={autoResume.onChange}
+          />
         </div>
       )}
     </Card>

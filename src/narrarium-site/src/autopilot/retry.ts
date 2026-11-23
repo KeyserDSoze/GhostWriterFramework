@@ -1,4 +1,4 @@
-import { serverSupportsAutopilotRetry, type AutopilotErrorDetail, type AutopilotErrorKind, type AutopilotEvent, type AutopilotLongRetry, type AutopilotStateSummary, type ServerInfo } from "narrarium-engine";
+import { serverSupportsAutopilotAutoResume, serverSupportsAutopilotRetry, type AutopilotErrorDetail, type AutopilotErrorKind, type AutopilotEvent, type AutopilotLongRetry, type AutopilotStateSummary, type ServerInfo } from "narrarium-engine";
 import i18n from "@/i18n";
 
 export { waitWords } from "@/autopilot/format";
@@ -17,6 +17,14 @@ export const RECOMMENDED_LONG_RETRY: AutopilotLongRetry = { everyMinutes: 10, cy
 /** Whether the personal server announces «Retry later» and «Retry now» (`autopilot-retry`). An older one answers 404 to the route and refuses `longRetry`. */
 export function serverHasRetry(info: Pick<ServerInfo, "features"> | null | undefined): boolean {
   return serverSupportsAutopilotRetry(info);
+}
+
+/**
+ * Whether the personal server resumes a run by itself after it restarts, for a book whose author asked for it (`autopilot-auto-resume`): only for such a
+ * server is the switch shown, and `resumeAfterRestart` sent.
+ */
+export function serverHasAutoResume(info: Pick<ServerInfo, "features"> | null | undefined): boolean {
+  return serverSupportsAutopilotAutoResume(info);
 }
 
 /** The personal server that runs the book predates «Retry later» and «Retry now»: nothing is sent to it, and the author is told to update it. */

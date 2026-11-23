@@ -98,6 +98,8 @@ export interface SetupCardProps {
   frozenUnsupported?: boolean;
   /** The autopilot runs on a personal server that predates «Retry later»: it is shown off, and cannot be chosen. */
   retryUnsupported?: boolean;
+  /** The autopilot runs on a personal server that resumes a run by itself after it restarts: the switch «Resume after a restart» is shown, and sent. */
+  autoResume?: boolean;
   /** The run waits for a restart of «Retry later» now: turning it off would stop it, and the card says so beforehand. */
   waitingLong?: boolean;
   run: RunAction;
@@ -112,13 +114,14 @@ export interface SetupCardProps {
 
 /**
  * The brief and the settings of the autopilot, in four parts: the book (the idea, how long it is, the synopsis), the review (the simulated
- * readers, the specialists, the pauses, the sessions and the budgets), the retries («Retry later») and publishing (on GitHub, every step, every
- * chapter or never). They are saved together with `configure` while the autopilot is stopped; while it runs only where it publishes, the pause
- * after every chapter, what it does with a changed frozen chapter and «Retry later» can change, with `updateOptions`, and the rest is locked. The
+ * readers, the specialists, the pauses, the sessions and the budgets), the retries («Retry later», and «Resume after a restart» for a server that
+ * has it) and publishing (on GitHub, every step, every chapter or never). They are saved together with `configure` while the autopilot is stopped;
+ * while it runs only where it publishes, the pause after every chapter, what it does with a changed frozen chapter, «Retry later» and «Resume after
+ * a restart» can change, with `updateOptions`, and the rest is locked. The
  * button at the end starts the autopilot (with the form, for a book that never started; after saving what changed, for one that is stopped) and
  * `onStarted` takes the author to the live page. Values of «Retry later» it would refuse are never sent: the card says what is wrong instead.
  */
-export function SetupCard({ book, state, existingChapters, running, busy, disabled, asking = false, liveUnsupported = false, frozenUnsupported = false, retryUnsupported = false, waitingLong = false, run, onStarted, children, branch, structure }: SetupCardProps) {
+export function SetupCard({ book, state, existingChapters, running, busy, disabled, asking = false, liveUnsupported = false, frozenUnsupported = false, retryUnsupported = false, autoResume = false, waitingLong = false, run, onStarted, children, branch, structure }: SetupCardProps) {
   const { t } = useTranslation();
   const github = bookStorageMode(book) === "github";
   const host = book.autopilotHost === "server" ? "server" : "browser";
@@ -151,6 +154,9 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
   const retryReading = readRetryLater(retry);
   // «Retry later» changed when the policy is not the one the state has; a server without it is never sent it.
   const retryChanged = !retryUnsupported && !sameLongRetry(retryReading.policy, initial.options.longRetry);
+  // «Resume after a restart»: off unless the author turned it on, and only a server that has it is sent it.
+  const resumeOn = form.options.resumeAfterRestart === true;
+  const resumeChanged = autoResume && resumeOn !== (initial.options.resumeAfterRestart === true);
 
   /** The settings that can change during a run, as far as the author changed them. */
   const liveChanges = (): AutopilotLiveOptions => ({
@@ -158,11 +164,16 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
     ...(form.options.pauseAfterEachChapter !== initial.options.pauseAfterEachChapter ? { pauseAfterEachChapter: form.options.pauseAfterEachChapter } : {}),
     ...(form.options.frozenEdits !== undefined && form.options.frozenEdits !== initial.options.frozenEdits ? { frozenEdits: form.options.frozenEdits } : {}),
     ...(retryChanged ? { longRetry: retryReading.policy } : {}),
+    ...(resumeChanged ? { resumeAfterRestart: resumeOn } : {}),
   });
 
-  /** The options of the form with «Retry later» as the card says: the policy, `null` to turn off one the book had (`StartOptions` takes it), and nothing when it stays off. */
+  /**
+   * The options of the form with «Retry later» as the card says (the policy, `null` to turn off one the book had, as `StartOptions` takes it, and nothing
+   * when it stays off) and «Resume after a restart» as the switch says, `true` or `false`, for a server that has it and for no other host.
+   */
   const sentOptions = (): StartOptions["options"] => {
-    const { longRetry: _saved, ...rest } = form.options;
+    const { longRetry: _saved, resumeAfterRestart: _resume, ...plain } = form.options;
+    const rest = autoResume ? { ...plain, resumeAfterRestart: resumeOn } : plain;
     return retryUnsupported ? rest : retryReading.policy ? { ...rest, longRetry: retryReading.policy } : initial.options.longRetry ? { ...rest, longRetry: null } : rest;
   };
 
@@ -284,7 +295,16 @@ export function SetupCard({ book, state, existingChapters, running, busy, disabl
         </fieldset>
       </Card>
 
-      <RetryLaterCard ref={retryCard} form={retry} onChange={retryChange} locked={liveLocked} unsupported={retryUnsupported} running={running} waitingLong={waitingLong} />
+      <RetryLaterCard
+        ref={retryCard}
+        form={retry}
+        onChange={retryChange}
+        locked={liveLocked}
+        unsupported={retryUnsupported}
+        running={running}
+        waitingLong={waitingLong}
+        autoResume={autoResume ? { on: resumeOn, onChange: (on) => options({ resumeAfterRestart: on }) } : undefined}
+      />
       {branch !== undefined && <BookRunPreview book={book} branch={branch} structure={structure} state={state} form={form} dirty={dirty} />}
 
       <Card id="autopilot-publish" title={t("autopilot.config.sections.publish")} icon={<Github className="h-4 w-4 text-primary" aria-hidden="true" />}>

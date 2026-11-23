@@ -496,6 +496,8 @@ const autopilotIt = {
       longRetryExhausted_one: "Il passo non è riuscito nemmeno dopo {{count}} ripartenza: l'autopilot si è fermato.",
       longRetryExhausted_other: "Il passo non è riuscito nemmeno dopo {{count}} ripartenze: l'autopilot si è fermato.",
       longRetryOff: "«Riprova più tardi» è stato spento mentre il passo aspettava: l'autopilot si è fermato.",
+      serverShutdown: "In pausa perché il server si è fermato.",
+      resumedAfterRestart: "Ripreso da solo dopo il riavvio del server.",
     },
     task: {
       concept: "Progettazione del concept",
@@ -678,6 +680,10 @@ const autopilotIt = {
         running: "Si può cambiare anche mentre l'autopilot lavora: i nuovi valori contano dalla prossima ripartenza. Spegnerlo mentre l'autopilot aspetta di riprovare lo ferma con l'errore.",
         waitingNow: "L'autopilot sta aspettando di riprovare: se spegni «Riprova più tardi» e salvi, si ferma con l'errore.",
         oldServer: "Il tuo server personale è più vecchio della {{version}} e non ha «Riprova più tardi»: aggiornalo per sceglierlo.",
+      },
+      autoResume: {
+        label: "Riprendi da solo dopo un riavvio del server",
+        hint: "Solo se era in esecuzione quando il server si è fermato, al massimo tre volte al giorno. Un autopilot che hai messo in pausa non riparte mai da solo.",
       },
       frozenEdits: {
         title: "Quando modifichi un capitolo congelato",

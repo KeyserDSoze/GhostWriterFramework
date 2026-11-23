@@ -496,6 +496,8 @@ const autopilotEn = {
       longRetryExhausted_one: "The step failed again after {{count}} restart: the autopilot stopped.",
       longRetryExhausted_other: "The step failed again after {{count}} restarts: the autopilot stopped.",
       longRetryOff: "“Retry later” was turned off while the step waited: the autopilot stopped.",
+      serverShutdown: "Paused because the server stopped.",
+      resumedAfterRestart: "Resumed by itself after the server restarted.",
     },
     task: {
       concept: "Designing the concept",
@@ -678,6 +680,10 @@ const autopilotEn = {
         running: "It can change while the autopilot runs: new values count from the next restart. Turning it off while the autopilot waits to retry stops it with the error.",
         waitingNow: "The autopilot is waiting to retry now: if you turn “Retry later” off and save, it stops with the error.",
         oldServer: "Your personal server is older than {{version}} and does not have “Retry later”: update it to choose this.",
+      },
+      autoResume: {
+        label: "Resume by itself after a server restart",
+        hint: "Only if it was running when the server stopped, at most three times a day. A run you paused is never resumed.",
       },
       frozenEdits: {
         title: "When you change a frozen chapter",
