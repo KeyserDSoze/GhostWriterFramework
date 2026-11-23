@@ -1,5 +1,37 @@
 [
   {
+    "version": "0.97.0",
+    "date": "2026-11-23",
+    "en": {
+      "title": "The autopilot shows the text as it arrives, and OneDrive asks to reconnect instead of failing",
+      "summary": "The autopilot's mini-player, status band and book cards show the last lines of the text being written and the last things done, with a link to each step. OneDrive and Google Drive ask to be reconnected when a sign-in expires.",
+      "changes": [
+        "The mini-player, the status band and the cards of the books show the last lines of the text the model is writing (two on a phone) and «Last done», the three latest finished steps.",
+        "Clicking a finished step opens the Live page on that step, with its tab and its row open; clicking the arriving text opens the step that is running.",
+        "«Show the text» turns the lines and the list off on this device, so the autopilot stays compact.",
+        "A screen reader hears one short status at most every ten seconds, and never the streaming text.",
+        "The page no longer rises by hundreds of pixels when you follow a link to a step or scroll to its end.",
+        "OneDrive: the silent renewal of a Microsoft sign-in is no longer blocked by the site's security policy, which made the sync end with «timed_out».",
+        "When a OneDrive or Google Drive sign-in has to be renewed, the sync says «Reconnect OneDrive» (or Google Drive) with a button, and goes on once you do, with no data lost, instead of saying «unknown».",
+        "The connection card says that a connection lasts about an hour (Google) or a day (Microsoft) when long-lived sign-in is not enabled on this site yet."
+      ]
+    },
+    "it": {
+      "title": "L'autopilot mostra il testo mentre arriva, e OneDrive chiede di riconnettersi invece di fallire",
+      "summary": "Il mini-player, la barra di stato e le schede dei libri dell'autopilot mostrano le ultime righe del testo che si sta scrivendo e le ultime cose fatte, con un link a ogni passo. OneDrive e Google Drive chiedono di riconnettersi quando un accesso scade.",
+      "changes": [
+        "Il mini-player, la barra di stato e le schede dei libri mostrano le ultime righe del testo che il modello sta scrivendo (due su telefono) e «Ultime cose fatte», gli ultimi tre passi finiti.",
+        "Cliccando un passo finito si apre la pagina In diretta su quel passo, con la sua scheda e la sua riga aperte; cliccando il testo in arrivo si apre il passo in corso.",
+        "«Mostra il testo» spegne le righe e l'elenco su questo dispositivo, così l'autopilot resta compatto.",
+        "Un lettore di schermo sente un solo breve stato al massimo ogni dieci secondi, e mai il testo in streaming.",
+        "La pagina non si solleva più di centinaia di pixel quando segui un link a un passo o scorri fino in fondo.",
+        "OneDrive: il rinnovo silenzioso dell'accesso Microsoft non è più bloccato dalla politica di sicurezza del sito, che faceva finire la sincronizzazione con «timed_out».",
+        "Quando un accesso a OneDrive o Google Drive va rinnovato, la sincronizzazione dice «Riconnetti OneDrive» (o Google Drive) con un pulsante e prosegue appena lo fai, senza perdere dati, invece di dire «sconosciuto».",
+        "La scheda della connessione dice che una connessione dura circa un'ora (Google) o un giorno (Microsoft) quando l'accesso di lunga durata non è ancora attivo su questo sito."
+      ]
+    }
+  },
+  {
     "version": "0.96.1",
     "date": "2026-11-23",
     "en": {
