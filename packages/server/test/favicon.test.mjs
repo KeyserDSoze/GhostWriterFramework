@@ -12,7 +12,8 @@ test("the admin panel links its icon and serves the site's own icon, byte for by
     const svg = await fetch(`${server.adminUrl}/favicon.svg`);
     assert.equal(svg.status, 200);
     assert.equal(svg.headers.get("content-type"), "image/svg+xml; charset=utf-8");
-    assert.equal(await svg.text(), readFileSync(new URL("favicon.svg", site), "utf8"));
+    // A checkout on Windows may turn the line endings of the text file into CRLF: the text is the same.
+    assert.equal(await svg.text(), readFileSync(new URL("favicon.svg", site), "utf8").replace(/\r\n/g, "\n"));
     const ico = await fetch(`${server.adminUrl}/favicon.ico`);
     assert.equal(ico.status, 200);
     assert.equal(ico.headers.get("content-type"), "image/x-icon");
