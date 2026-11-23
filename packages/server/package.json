@@ -1,6 +1,6 @@
 {
   "name": "narrarium-server",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "type": "module",
   "description": "Personal Narrarium server: runs the autopilot and the director for your books even with the browser closed, syncs them with the web app, and updates itself from npm. Start it with `npx narrarium-server`.",
   "license": "MIT",
@@ -44,6 +44,7 @@
     "start": "node dist/cli.mjs start --direct",
     "test": "npm run build && node --test --test-timeout=300000 test/*.test.mjs",
     "validate": "tsc -p tsconfig.json --noEmit",
+    "docs:tools": "npm run build && node scripts/docs-tools.mjs",
     "prepack": "npm run build"
   },
   "devDependencies": {
