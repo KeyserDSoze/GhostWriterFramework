@@ -1,134 +1,84 @@
-import { Suspense, lazy, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { GitBranch, Github, KeyRound, Loader2, Plus, Save } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, useLocation, useParams } from "react-router-dom";
+import { Loader2, RotateCcw, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import "@/i18n/bookGithub";
 import "@/i18n/githubCreateBook";
 import "@/i18n/localFirst";
+import "@/i18n/bookSettingsTabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
+import { ConfigTabs, type ConfigTab } from "@/components/autopilot/config/ConfigTabs";
+import { AuditTab } from "@/components/book/settings/AuditTab";
+import { ExportTab } from "@/components/book/settings/ExportTab";
+import { GeneralTab } from "@/components/book/settings/GeneralTab";
+import { GitHubTab } from "@/components/book/settings/GitHubTab";
+import { OnlineReaderTab } from "@/components/book/settings/OnlineReaderTab";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
-import { bookStorageMode, DEFAULT_AUDIT_SETTINGS, DEFAULT_BOOK_EXPORT_SETTINGS, resolveBookAuditSettings, resolveBookExportSettings, resolveBookToken, resolveGitHubCredential, resolveGitHubRemoteToken, type AuditSettings, type BookEntry, type BookExportSettings, type ParagraphSeparator } from "@/types/settings";
-import { createBranchFromBase, getDefaultBranch, listBranches } from "@/github/githubClient";
-import { attachLocalBookToGitHub, checkRepositoryTokenHealth } from "@/repository/repositoryService";
-import { BookRepositoryError, deleteEmptyBookRepository, isBookRepositoryError, type BookRepositoryProgress, type CreateCompleteBookRepositoryResult } from "@/github/bookRepository";
-import { defaultGitHubRepositoryChoices, ownerOf, useGitHubPreflight, type GitHubRepositoryChoices } from "@/components/book/GitHubRepositoryPanel";
-import { GitHubRepositoryPicker } from "@/components/book/GitHubRepositoryPicker";
-import { credentialCacheKey, decisionAction, type RepositoryDecision } from "@/github/repositoryPickerModel";
-import { useConnectionStore } from "@/account/connectionStore";
-import { GitHubCreateFailure, GitHubCreateProgress, GitHubCreateResult } from "@/components/book/GitHubRepositoryOutcome";
+import { useRegisterPageSave } from "@/store/saveStore";
+import { bookStorageMode, type BookEntry } from "@/types/settings";
+import { applyDraft, draftOfBook, isDraftDirty, type BookSettingsDraft } from "@/bookSettings/draft";
+import { DEFAULT_BOOK_SETTINGS_TAB, bookSettingsHash, bookSettingsTabOfHash, bookSettingsTabState, type BookSettingsTab } from "@/bookSettings/tabs";
 
-// Which token the book uses, and whether the GitHub app reaches it, is a chunk of its own.
-const BookGitHubAccess = lazy(() => import("@/components/book/BookGitHubAccess").then((module) => ({ default: module.BookGitHubAccess })));
-// The passwords and GitHub Pages of the reader, and the sealed-box code they need, load only with this card.
-const ReaderAccessCard = lazy(() => import("@/components/book/readerAccess/ReaderAccessCard").then((module) => ({ default: module.ReaderAccessCard })));
-import { repositoryErrorDescription } from "@/repository/repositoryError";
-import { readTokenHealth, tokenExpirationWarning, type TokenHealth } from "@/repository/tokenHealth";
-import { localWorkspaceScope } from "@/account/deviceIdentity";
-import { defaultPublishRepositoryName } from "@/narrarium/bookScaffold";
-import { McpServerSection } from "@/components/book/McpServerSection";
+interface Session { base: BookEntry; draft: BookSettingsDraft }
 
-type TokenMode = "default" | "custom" | string;
-
-function initialMode(book: BookEntry): TokenMode {
-  if (book.bookToken) return "custom";
-  if (book.tokenIndex != null) return String(book.tokenIndex);
-  return "default";
-}
-
+/**
+ * The settings of a book, in tabs: General (the name, the metadata the reader and exported files show, the MCP server), GitHub (the repository, the token the book
+ * uses and its state, the working branch), Online reader (GitHub Pages and its passwords), Export (the export presets) and Audit. The bar at the top saves or
+ * discards what was edited; all the tabs edit one draft, and a tab that is not shown is kept (hidden, not drawn again), so that nothing typed is lost by looking
+ * at another one. A link can point at a tab (`#github`, `#reader`, …).
+ */
 export function BookSettingsPage() {
   const { t } = useTranslation();
   const { bookId } = useParams<{ bookId: string }>();
-  const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const { settings, patchSettings } = useSettingsStore();
   const { save, syncStatus } = useSettings();
-  const offline = typeof navigator !== "undefined" && !navigator.onLine;
-  const { clearBook, structures, workingBranches } = useBooksStore();
-
+  const { clearBook } = useBooksStore();
   const book = settings.books.find((entry) => entry.id === bookId);
-  const structure = bookId ? structures[bookId] : undefined;
+  const [session, setSession] = useState<Session | null>(() => (book ? { base: book, draft: draftOfBook(book) } : null));
+  const [tab, setTab] = useState<BookSettingsTab>(() => bookSettingsTabOfHash(location.hash) ?? DEFAULT_BOOK_SETTINGS_TAB);
+  const [readerOpened, setReaderOpened] = useState(() => tab === "reader");
 
-  const [name, setName] = useState(book?.name ?? "");
-  const [mode, setMode] = useState<TokenMode>(book ? initialMode(book) : "default");
-  const [customToken, setCustomToken] = useState(book?.bookToken ?? "");
-  const [customTokenLabel, setCustomTokenLabel] = useState(book?.bookTokenLabel ?? "");
-  const [branches, setBranches] = useState<string[]>([]);
-  const [activeBranch, setActiveBranch] = useState(book?.activeBranch ?? "__auto__");
-  const [newBranchName, setNewBranchName] = useState("");
-  const [baseBranch, setBaseBranch] = useState(structure?.defaultBranch ?? "main");
-  const [loadingBranches, setLoadingBranches] = useState(false);
-  const [creatingBranch, setCreatingBranch] = useState(false);
-  const [presentation, setPresentation] = useState<BookExportSettings>(() => book ? resolveBookExportSettings(book) : DEFAULT_BOOK_EXPORT_SETTINGS);
-  const [auditSettings, setAuditSettings] = useState<AuditSettings>(() => book ? resolveBookAuditSettings(book) : DEFAULT_AUDIT_SETTINGS);
-  const [tokenHealth, setTokenHealth] = useState<TokenHealth | null>(null);
-  const [checkingToken, setCheckingToken] = useState(false);
-  const [attachChoices, setAttachChoices] = useState<GitHubRepositoryChoices>(defaultGitHubRepositoryChoices);
-  const [attachProgress, setAttachProgress] = useState<BookRepositoryProgress | null>(null);
-  const [attachFailure, setAttachFailure] = useState<BookRepositoryError | null>(null);
-  const [attachedResult, setAttachedResult] = useState<CreateCompleteBookRepositoryResult | null>(null);
-  const [attachDecision, setAttachDecision] = useState<RepositoryDecision | null>(null);
-  const [attaching, setAttaching] = useState(false);
-  const [attachError, setAttachError] = useState<string | null>(null);
-  const attachToken = book ? resolveGitHubRemoteToken(book, settings) : "";
-  const attachPreflight = useGitHubPreflight(book && bookStorageMode(book) === "local-only" ? attachToken || undefined : undefined);
-  const connection = useConnectionStore((state) => state.configuration.github);
-  const attachCredential = book ? resolveGitHubCredential(book, settings) : null;
-  const attachApp = attachCredential?.source === "app";
-  const attachCacheKey = credentialCacheKey({ app: attachApp, login: attachApp ? connection?.identity?.username : undefined, token: attachToken });
-
+  // A link to a tab selects it.
   useEffect(() => {
-    if (book) {
-      setPresentation(resolveBookExportSettings(book));
-      setAuditSettings(resolveBookAuditSettings(book));
-    }
-  }, [book?.id]);
+    const next = bookSettingsTabOfHash(location.hash);
+    if (next) setTab(next);
+  }, [location.hash, location.key]);
+  useEffect(() => { if (tab === "reader") setReaderOpened(true); }, [tab]);
 
+  const dirty = Boolean(session && isDraftDirty(session.draft, session.base));
+  // The draft follows the book when nothing has been edited (the book changed elsewhere: a repository connected, the connection chosen for it); edits are never replaced.
   useEffect(() => {
-    let cancelled = false;
-    const identity = localWorkspaceScope();
-    const token = book ? resolveBookToken(book, settings) : "";
-    const branch = activeBranch === "__auto__" ? workingBranches[book?.id ?? ""] ?? structure?.defaultBranch ?? "main" : activeBranch;
-    setTokenHealth(null);
-    if (book && bookStorageMode(book) === "github" && token) void readTokenHealth({ accountIdentity: identity, token, owner: book.owner, repo: book.repo, branch }).then((health) => { if (!cancelled) setTokenHealth(health); });
-    return () => { cancelled = true; };
-  }, [book, settings, activeBranch, workingBranches, structure?.defaultBranch]);
+    if (!book) { setSession(null); return; }
+    setSession((current) => {
+      if (!current || current.base.id !== book.id || current.base.storageMode !== book.storageMode || current.base.owner !== book.owner || current.base.repo !== book.repo) return { base: book, draft: draftOfBook(book) };
+      return isDraftDirty(current.draft, current.base) ? current : { base: book, draft: draftOfBook(book) };
+    });
+  }, [book]);
 
-  async function loadRemoteBranches() {
-    if (!book || bookStorageMode(book) === "local-only") return;
-    const token = resolveBookToken(book, settings);
-    if (!token) return;
-    setLoadingBranches(true);
-    await Promise.all([
-      listBranches(token, book.owner, book.repo),
-      getDefaultBranch(token, book.owner, book.repo),
-    ])
-      .then(([items, defaultBranch]) => {
-        setBranches(items.map((entry) => entry.name));
-        setBaseBranch(defaultBranch);
-      })
-      .catch((err) => {
-        toast({ title: t("bookSettings.loadBranchesFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
-      })
-      .finally(() => setLoadingBranches(false));
+  const saving = syncStatus === "saving";
+
+  async function handleSave(): Promise<boolean> {
+    const latest = useSettingsStore.getState().settings.books.find((entry) => entry.id === bookId);
+    if (!latest || !session) return false;
+    const updated = applyDraft(latest, session.draft);
+    patchSettings({ books: useSettingsStore.getState().settings.books.map((entry) => (entry.id === latest.id ? updated : entry)) });
+    try { await save(); } catch { return false; }
+    clearBook(latest.id);
+    toast({ title: t("bookSettings.settingsSaved") });
+    const saved = useSettingsStore.getState().settings.books.find((entry) => entry.id === latest.id) ?? updated;
+    setSession({ base: saved, draft: draftOfBook(saved) });
+    return true;
   }
 
-  if (!book) {
+  useRegisterPageSave({ dirty, enabled: Boolean(book), onSave: handleSave });
+
+  if (!book || !session) {
     return (
       <Alert variant="destructive">
         <AlertDescription>
@@ -138,394 +88,44 @@ export function BookSettingsPage() {
     );
   }
 
-  const currentBook = book;
-  const isSaving = syncStatus === "saving";
-  const currentToken = resolveBookToken(currentBook, settings);
-  const currentAccountIdentity = localWorkspaceScope();
-  const currentAutoBranch = workingBranches[currentBook.id] ?? (structure?.defaultBranch ?? "main");
+  const draft = session.draft;
+  const patch = (change: Partial<BookSettingsDraft>) => setSession((current) => (current ? { ...current, draft: { ...current.draft, ...change } } : current));
+  const selectTab = (key: string) => {
+    const next = key as BookSettingsTab;
+    setTab(next);
+    // The address follows the tab, without a navigation of the router: a link to the tab opens it, and a page with unsaved changes does not ask whether to leave.
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}${bookSettingsHash(next)}`);
+  };
+  const availability = new Map(bookSettingsTabState(book).map((entry) => [entry.tab, entry]));
 
-  function patchAuditSettings(patch: Partial<AuditSettings>) {
-    setAuditSettings((current) => ({ ...current, ...patch }));
-  }
-
-  async function handleAttachToGitHub() {
-    const token = resolveGitHubRemoteToken(currentBook, settings);
-    if (!token) { setAttachError(t("bookSettings.connectGithub.noToken")); return; }
-    if (!attachDecision?.ready) return;
-    setAttaching(true);
-    setAttachError(null);
-    setAttachFailure(null);
-    setAttachProgress({ step: "repository" });
-    try {
-      // A repository that is a Narrarium book already is added as a book of its own: the book of this device stays as it is, and nothing is written to it.
-      if (attachDecision.outcome?.kind === "connect-book" && attachDecision.repository) {
-        const repository = attachDecision.repository;
-        const entry: BookEntry = { id: crypto.randomUUID(), owner: repository.owner, repo: repository.name, name: repository.name, tokenIndex: currentBook.tokenIndex ?? null, bookToken: currentBook.bookToken, bookTokenLabel: currentBook.bookTokenLabel, useGitHubConnection: currentBook.useGitHubConnection, addedAt: new Date().toISOString() };
-        patchSettings({ books: [...settings.books, entry] });
-        await save();
-        navigate(`/app/books/${entry.id}`);
-        return;
-      }
-      const existing = attachDecision.mode === "existing";
-      const attached = await attachLocalBookToGitHub({ book: currentBook, token, owner: attachDecision.owner ?? ownerOf(attachChoices) ?? "", repo: attachDecision.name, createRepository: !existing, overwriteExisting: attachDecision.outcome?.kind === "publish-overwrite", visibility: attachChoices.visibility, pages: !existing && attachChoices.pages ? "enable" : "skip", onProgress: setAttachProgress });
-      const updated: BookEntry = { ...currentBook, storageMode: "github", owner: attached.owner, repo: attached.repo, activeBranch: attached.branch };
-      // The result stays on the screen (this card goes away once the book is on GitHub): the book is opened from its button.
-      setAttachedResult(attached.creation);
-      patchSettings({ books: settings.books.map((entry) => entry.id === currentBook.id ? updated : entry) });
-      await save();
-      clearBook(currentBook.id);
-    } catch (error) {
-      if (isBookRepositoryError(error)) setAttachFailure(error);
-      else if (error instanceof TypeError) setAttachFailure(new BookRepositoryError("network", { cause: error }));
-      else setAttachError(String(error));
-    }
-    finally { setAttaching(false); setAttachProgress(null); }
-  }
-
-  async function handleDeleteEmptyAttachRepository() {
-    const empty = attachFailure?.repository;
-    const token = resolveGitHubRemoteToken(currentBook, settings);
-    if (!empty || !token) return;
-    await deleteEmptyBookRepository({ token, owner: empty.owner, repo: empty.repo, defaultBranch: empty.defaultBranch });
-  }
-
-  async function handleSave() {
-    const usingCustom = mode === "custom";
-    const updated: BookEntry = {
-      ...currentBook,
-      name: name.trim() || currentBook.name || currentBook.repo,
-      tokenIndex: mode === "default" || usingCustom ? null : Number(mode),
-      bookToken: usingCustom ? customToken.trim() || undefined : undefined,
-      bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${currentBook.repo} PAT` : undefined,
-      // Picking another token for the book ends the move to the GitHub connection; saving the page without touching the token keeps it.
-      useGitHubConnection: mode === initialMode(currentBook) ? currentBook.useGitHubConnection : undefined,
-      activeBranch: activeBranch === "__auto__" ? undefined : activeBranch,
-      exportSettings: {
-        ...currentBook.exportSettings,
-        ...presentation,
-      },
-      auditSettings: resolveBookAuditSettings({ ...currentBook, auditSettings }),
-    };
-
-    patchSettings({ books: settings.books.map((entry) => (entry.id === currentBook.id ? updated : entry)) });
-    try {
-      await save();
-    } catch {
-      return;
-    }
-    clearBook(currentBook.id);
-    toast({ title: t("bookSettings.settingsSaved") });
-    navigate(`/app/books/${currentBook.id}`);
-  }
-
-  async function handleCreateBranch() {
-    if (!newBranchName.trim()) return;
-    const token = resolveBookToken(currentBook, settings);
-    if (!token) {
-      toast({ title: t("bookSettings.missingToken"), description: t("bookSettings.configureTokenFirst"), variant: "destructive" });
-      return;
-    }
-    setCreatingBranch(true);
-    try {
-      const nextBranch = newBranchName.trim();
-      await createBranchFromBase(token, currentBook.owner, currentBook.repo, baseBranch, nextBranch);
-      setBranches((prev) => [...prev, nextBranch].sort());
-      setActiveBranch(nextBranch);
-      setNewBranchName("");
-      toast({ title: t("bookSettings.branchCreated", { branch: nextBranch }) });
-    } catch (err) {
-      toast({ title: t("bookSettings.branchCreateFailed"), description: String(err), variant: "destructive" });
-    } finally {
-      setCreatingBranch(false);
-    }
-  }
-
-  async function handleTokenHealth() {
-    if (!currentToken || !currentAccountIdentity) return;
-    setCheckingToken(true);
-    try {
-      const health = await checkRepositoryTokenHealth({ owner: currentBook.owner, repo: currentBook.repo, branch: activeBranch === "__auto__" ? currentAutoBranch : activeBranch, accountIdentity: currentAccountIdentity, token: currentToken });
-      setTokenHealth(health);
-      toast({ title: t("repoStatus.tokenHealthy") });
-    } catch (error) {
-      setTokenHealth(await readTokenHealth({ accountIdentity: currentAccountIdentity, token: currentToken, owner: currentBook.owner, repo: currentBook.repo, branch: activeBranch === "__auto__" ? currentAutoBranch : activeBranch }));
-      toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(error, t), variant: "destructive" });
-    } finally { setCheckingToken(false); }
-  }
+  const tabs: ConfigTab[] = [
+    { key: "general", label: t("bookSettings.tabs.general"), panel: <GeneralTab book={book} name={draft.name} onName={(name) => patch({ name })} presentation={draft.presentation} onPresentation={(change) => setSession((current) => (current ? { ...current, draft: { ...current.draft, presentation: change(current.draft.presentation) } } : current))} /> },
+    { key: "github", label: t("bookSettings.tabs.github"), panel: <GitHubTab book={book} draft={draft} patch={patch} /> },
+    { key: "reader", label: t("bookSettings.tabs.reader"), panel: <OnlineReaderTab book={book} opened={readerOpened && availability.get("reader")?.available !== false} onGoToGitHub={() => selectTab("github")} /> },
+    { key: "export", label: t("bookSettings.tabs.export"), panel: <ExportTab book={book} draft={draft.exportDraft} presentation={draft.presentation} onChange={(exportDraft) => patch({ exportDraft })} /> },
+    { key: "audit", label: t("bookSettings.tabs.audit"), panel: <AuditTab audit={draft.audit} onChange={(audit) => patch({ audit })} /> },
+  ];
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-5">
       <div>
         <h1 className="font-serif text-3xl font-semibold tracking-tight">{t("bookSettings.title")}</h1>
-        <p className="text-muted-foreground">{bookStorageMode(currentBook) === "local-only" ? t("bookSettings.deviceOnly") : `${currentBook.owner}/${currentBook.repo}`}</p>
+        <p className="text-muted-foreground">{bookStorageMode(book) === "local-only" ? t("bookSettings.deviceOnly") : `${book.owner}/${book.repo}`}</p>
       </div>
 
-      {bookStorageMode(currentBook) === "github" && <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><KeyRound className="h-4 w-4" />{t("repoStatus.tokenHealth")}</CardTitle>
-          <CardDescription>{tokenHealth?.expiresAt ? t(`repoStatus.expiration.${tokenExpirationWarning(tokenHealth.expiresAt)}`, { date: new Date(tokenHealth.expiresAt).toLocaleDateString() }) : t("repoStatus.expiration.unknown")}</CardDescription>
-          {tokenHealth && <CardDescription>{t(`repoStatus.tokenPermission.${tokenHealth.permissionStatus}`)}</CardDescription>}
-        </CardHeader>
-        <CardContent>
-          <Button type="button" variant="outline" disabled={!currentToken || !currentAccountIdentity || offline || checkingToken} onClick={() => void handleTokenHealth()}>{checkingToken ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <KeyRound className="mr-1 h-4 w-4" />}{t("repoStatus.checkToken")}</Button>
-        </CardContent>
-      </Card>}
-
-      {bookStorageMode(currentBook) === "github" && <Suspense fallback={null}><BookGitHubAccess book={currentBook} /></Suspense>}
-
-      {bookStorageMode(currentBook) === "github" && <Suspense fallback={null}><ReaderAccessCard book={currentBook} /></Suspense>}
-
-      {attachedResult && <GitHubCreateResult result={attachedResult} onOpenBook={() => navigate(`/app/books/${currentBook.id}`)} />}
-      {!attachedResult && bookStorageMode(currentBook) === "local-only" && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Github className="h-4 w-4" />{t("bookSettings.connectGithub.title")}</CardTitle>
-            <CardDescription>{t("bookSettings.connectGithub.description")}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <GitHubRepositoryPicker
-              context="attach"
-              token={attachToken}
-              app={attachApp}
-              login={attachApp ? connection?.identity?.username : undefined}
-              cacheKey={attachCacheKey}
-              defaultName={defaultPublishRepositoryName(currentBook.name)}
-              choices={attachChoices}
-              onChoicesChange={setAttachChoices}
-              preflight={attachPreflight}
-              books={settings.books}
-              disabled={attaching}
-              onDecision={setAttachDecision}
-            />
-            {attachError && <Alert variant="destructive"><AlertDescription>{attachError}</AlertDescription></Alert>}
-            <GitHubCreateProgress progress={attachProgress} busy={attaching} />
-            {attachFailure && <GitHubCreateFailure error={attachFailure} owner={attachDecision?.owner ?? ownerOf(attachChoices) ?? ""} repo={attachDecision?.name ?? ""} busy={attaching} onRetry={() => void handleAttachToGitHub()} onDelete={handleDeleteEmptyAttachRepository} />}
-            <Button className="h-auto min-h-10 whitespace-normal text-left [@media(pointer:coarse)]:min-h-11" onClick={() => void handleAttachToGitHub()} disabled={attaching || !attachDecision?.ready}>{attaching ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Github className="mr-1 h-4 w-4" />}{attachDecision && decisionAction(attachDecision) !== "create" ? t(`github.picker.action.${decisionAction(attachDecision)}`) : t("bookSettings.connectGithub.submit")}</Button>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("bookSettings.general")}</CardTitle>
-          <CardDescription>{t("bookSettings.generalDescription")}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-2">
-            <Label htmlFor="book-name">{t("bookSettings.name")}</Label>
-            <Input id="book-name" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("bookSettings.auditSettings")}</CardTitle>
-          <CardDescription>{t("bookSettings.auditSettingsDescription")}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <AuditSwitch label={t("bookSettings.auditEnabled")} checked={auditSettings.enabled} onChange={(enabled) => patchAuditSettings({ enabled })} />
-
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="grid gap-2">
-              <Label>{t("bookSettings.auditReportLanguage")}</Label>
-              <Select value={auditSettings.reportLanguage} onValueChange={(reportLanguage) => patchAuditSettings({ reportLanguage: reportLanguage as AuditSettings["reportLanguage"] })} disabled={!auditSettings.enabled}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="book">{t("bookSettings.auditLanguageBook")}</SelectItem>
-                  <SelectItem value="en">{t("bookSettings.auditLanguageEnglish")}</SelectItem>
-                  <SelectItem value="it">{t("bookSettings.auditLanguageItalian")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label>{t("bookSettings.auditDefaultDepth")}</Label>
-              <Select value={auditSettings.defaultDepth} onValueChange={(defaultDepth) => patchAuditSettings({ defaultDepth: defaultDepth as AuditSettings["defaultDepth"] })} disabled={!auditSettings.enabled}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="quick">{t("bookSettings.auditDepthQuick")}</SelectItem>
-                  <SelectItem value="standard">{t("bookSettings.auditDepthStandard")}</SelectItem>
-                  <SelectItem value="deep">{t("bookSettings.auditDepthDeep")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label>{t("bookSettings.auditSeverityThreshold")}</Label>
-              <Select value={auditSettings.severityThreshold} onValueChange={(severityThreshold) => patchAuditSettings({ severityThreshold: severityThreshold as AuditSettings["severityThreshold"] })} disabled={!auditSettings.enabled}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="critical">{t("bookSettings.auditSeverityCritical")}</SelectItem>
-                  <SelectItem value="high">{t("bookSettings.auditSeverityHigh")}</SelectItem>
-                  <SelectItem value="medium">{t("bookSettings.auditSeverityMedium")}</SelectItem>
-                  <SelectItem value="low">{t("bookSettings.auditSeverityLow")}</SelectItem>
-                  <SelectItem value="informational">{t("bookSettings.auditSeverityInformational")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="grid gap-2 sm:grid-cols-2">
-            <AuditSwitch label={t("bookSettings.auditIncludeTimeline")} checked={auditSettings.includeTimeline} onChange={(includeTimeline) => patchAuditSettings({ includeTimeline })} disabled={!auditSettings.enabled} />
-            <AuditSwitch label={t("bookSettings.auditIncludeSecrets")} checked={auditSettings.includeSecrets} onChange={(includeSecrets) => patchAuditSettings({ includeSecrets })} disabled={!auditSettings.enabled} />
-            <AuditSwitch label={t("bookSettings.auditIncludeCharacters")} checked={auditSettings.includeCharacters} onChange={(includeCharacters) => patchAuditSettings({ includeCharacters })} disabled={!auditSettings.enabled} />
-            <AuditSwitch label={t("bookSettings.auditIncludeLocations")} checked={auditSettings.includeLocations} onChange={(includeLocations) => patchAuditSettings({ includeLocations })} disabled={!auditSettings.enabled} />
-            <AuditSwitch label={t("bookSettings.auditIncludeItems")} checked={auditSettings.includeItems} onChange={(includeItems) => patchAuditSettings({ includeItems })} disabled={!auditSettings.enabled} />
-            <AuditSwitch label={t("bookSettings.auditIncludeFactions")} checked={auditSettings.includeFactions} onChange={(includeFactions) => patchAuditSettings({ includeFactions })} disabled={!auditSettings.enabled} />
-            <AuditSwitch label={t("bookSettings.auditIncludeGhostwriter")} checked={auditSettings.includeGhostwriter} onChange={(includeGhostwriter) => patchAuditSettings({ includeGhostwriter })} disabled={!auditSettings.enabled} />
-            <AuditSwitch label={t("bookSettings.auditIncludeSummary")} checked={auditSettings.includeSummary} onChange={(includeSummary) => patchAuditSettings({ includeSummary })} disabled={!auditSettings.enabled} />
-            <AuditSwitch label={t("bookSettings.auditIncludePreviousContext")} checked={auditSettings.includePreviousContext} onChange={(includePreviousContext) => patchAuditSettings({ includePreviousContext })} disabled={!auditSettings.enabled} />
-            <AuditSwitch label={t("bookSettings.auditIncludeNextContext")} checked={auditSettings.includeNextContext} onChange={(includeNextContext) => patchAuditSettings({ includeNextContext })} disabled={!auditSettings.enabled} />
-            <AuditSwitch label={t("bookSettings.auditGenerateFixSuggestions")} checked={auditSettings.generateFixSuggestions} onChange={(generateFixSuggestions) => patchAuditSettings({ generateFixSuggestions })} disabled={!auditSettings.enabled} />
-          </div>
-
-          <div className="grid gap-2 sm:max-w-xs">
-            <Label htmlFor="audit-max-findings">{t("bookSettings.auditMaxFindings")}</Label>
-            <Input id="audit-max-findings" type="number" min={1} max={500} value={auditSettings.maxFindings} onChange={(event) => {
-              const maxFindings = Number(event.target.value);
-              if (Number.isFinite(maxFindings)) patchAuditSettings({ maxFindings: Math.max(1, Math.min(500, Math.round(maxFindings))) });
-            }} disabled={!auditSettings.enabled} />
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="audit-custom-prompt">{t("bookSettings.auditCustomPrompt")}</Label>
-            <AutoTextarea id="audit-custom-prompt" value={auditSettings.customPrompt} onChange={(event) => patchAuditSettings({ customPrompt: event.target.value })} placeholder={t("bookSettings.auditCustomPromptPlaceholder")} className="min-h-24" disabled={!auditSettings.enabled} />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("bookSettings.metadataPresentation")}</CardTitle>
-          <CardDescription>{t("bookSettings.metadataPresentationDescription")}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <MetadataFieldInput label={t("bookSettings.bookMetadataFields")} value={presentation.metadataVisibility.book} onChange={(value) => setPresentation((current) => ({ ...current, metadataVisibility: { ...current.metadataVisibility, book: value } }))} placeholder="title, author, date" />
-          <MetadataFieldInput label={t("bookSettings.chapterMetadataFields")} value={presentation.metadataVisibility.chapter} onChange={(value) => setPresentation((current) => ({ ...current, metadataVisibility: { ...current.metadataVisibility, chapter: value } }))} placeholder="title, date, summary" />
-          <MetadataFieldInput label={t("bookSettings.paragraphMetadataFields")} value={presentation.metadataVisibility.paragraph} onChange={(value) => setPresentation((current) => ({ ...current, metadataVisibility: { ...current.metadataVisibility, paragraph: value } }))} placeholder="title, date" />
-          <div className="grid gap-2 sm:max-w-sm">
-            <Label>{t("bookSettings.paragraphSeparator")}</Label>
-            <Select value={presentation.paragraphSeparator} onValueChange={(value) => setPresentation((current) => ({ ...current, paragraphSeparator: value as ParagraphSeparator }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">{t("bookSettings.separatorNone")}</SelectItem>
-                <SelectItem value="star">{t("bookSettings.separatorStar")}</SelectItem>
-                <SelectItem value="asterisks">{t("bookSettings.separatorAsterisks")}</SelectItem>
-                <SelectItem value="custom">{t("bookSettings.separatorCustom")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {presentation.paragraphSeparator === "custom" && <Input value={presentation.customParagraphSeparator} onChange={(event) => setPresentation((current) => ({ ...current, customParagraphSeparator: event.target.value }))} placeholder={t("bookSettings.customSeparatorPlaceholder")} className="sm:max-w-sm" />}
-          <p className="text-xs text-muted-foreground">{t("bookSettings.metadataPresentationHint")}</p>
-        </CardContent>
-      </Card>
-
-      {bookStorageMode(currentBook) === "local-only" ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><GitBranch className="h-4 w-4" />{t("bookSettings.branchWorkspace")}</CardTitle>
-            <CardDescription>{t("localFirst.branchesLocal")}</CardDescription>
-          </CardHeader>
-        </Card>
-      ) : <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><GitBranch className="h-4 w-4" />{t("bookSettings.branchWorkspace")}</CardTitle>
-          <CardDescription>
-            {t("bookSettings.branchDescription")}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {offline && <p className="text-xs text-muted-foreground">{t("localFirst.branchesOffline")}</p>}
-          <div className="grid gap-2">
-            <Label>{t("bookSettings.activeBranch")}</Label>
-            <Select value={activeBranch} onValueChange={setActiveBranch} disabled={loadingBranches}>
-              <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__auto__">{t("bookSettings.autoDevBranch", { branch: currentAutoBranch })}</SelectItem>
-                {branches.map((branch) => (
-                  <SelectItem key={branch} value={branch}>{branch}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">{t("bookSettings.defaultBranch")} {baseBranch}</p>
-            <Button type="button" variant="outline" className="w-fit" onClick={() => void loadRemoteBranches()} disabled={loadingBranches || offline}>{loadingBranches ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <GitBranch className="mr-1 h-4 w-4" />}{t("bookSettings.loadRemoteBranches")}</Button>
-          </div>
-
-          <div className="grid gap-2 rounded-lg border border-dashed p-3">
-            <p className="text-xs text-muted-foreground">{t("bookSettings.createBranchHint", { base: baseBranch })}</p>
-            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-              <Input placeholder="feature/new-arc" value={newBranchName} onChange={(e) => setNewBranchName(e.target.value)} />
-              <Button onClick={() => void handleCreateBranch()} disabled={creatingBranch || !newBranchName.trim() || offline}>
-                {creatingBranch ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Plus className="mr-1 h-4 w-4" />}
-                {t("bookSettings.createBranch")}
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>}
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><KeyRound className="h-4 w-4" />{t("bookSettings.githubAccess")}</CardTitle>
-          <CardDescription>
-            {t("bookSettings.githubAccessDescription")}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-2">
-            <Label>{t("bookSettings.token")}</Label>
-            <Select value={mode} onValueChange={setMode}>
-              <SelectTrigger className="w-full max-w-sm"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="default">{t("bookSettings.defaultTokenOption")}{settings.defaultGitHubToken ? ` (…${settings.defaultGitHubToken.slice(-4)})` : t("bookSettings.notSet")}</SelectItem>
-                {settings.extraGitHubTokens.map((token, i) => <SelectItem key={i} value={String(i)}>{token.label} (…{token.token.slice(-4)})</SelectItem>)}
-                <SelectItem value="custom">{t("bookSettings.dedicatedPat")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {mode === "custom" && (
-            <div className="grid gap-2 rounded-lg border border-dashed p-3">
-              <p className="text-xs text-muted-foreground">{t("bookSettings.dedicatedHint")}</p>
-              <div className="grid gap-2 sm:grid-cols-[1fr_2fr]">
-                <Input placeholder={t("bookSettings.labelOptional")} value={customTokenLabel} onChange={(e) => setCustomTokenLabel(e.target.value)} />
-                <Input type="password" placeholder="github_pat_…" value={customToken} onChange={(e) => setCustomToken(e.target.value)} autoComplete="off" />
-              </div>
-              <p className="text-xs text-muted-foreground">{t("bookSettings.createOneAt")} <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener noreferrer" className="underline">github.com/settings/tokens</a> {t("bookSettings.withPermissions")}</p>
-            </div>
-          )}
-
-          {!currentToken && mode !== "custom" && (
-            <Alert variant="destructive"><AlertDescription>{t("bookSettings.noTokenWarning")}</AlertDescription></Alert>
-          )}
-        </CardContent>
-      </Card>
-
-      <div className="flex justify-end">
-        <Button onClick={() => void handleSave()} disabled={isSaving}>
-          {isSaving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}
-          {t("settings.save")}
-        </Button>
+      <div data-book-settings-bar className="sticky top-0 z-20 -mx-1 flex flex-wrap items-center justify-between gap-2 border-b bg-background/95 px-1 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button disabled={saving || !dirty} onClick={() => void handleSave()}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}{t("settings.save")}
+          </Button>
+          <Button variant="outline" disabled={saving || !dirty} onClick={() => setSession({ base: book, draft: draftOfBook(book) })}>
+            <RotateCcw className="h-4 w-4" aria-hidden="true" />{t("bookSettings.tabs.discard")}
+          </Button>
+        </div>
+        <span role="status" className="text-xs font-medium text-muted-foreground">{dirty ? t("bookSettings.tabs.unsaved") : ""}</span>
       </div>
 
-      <McpServerSection book={currentBook} />
-    </div>
-  );
-}
-
-function MetadataFieldInput({ label, value, onChange, placeholder }: { label: string; value: string[]; onChange: (value: string[]) => void; placeholder: string }) {
-  return (
-    <div className="grid gap-2">
-      <Label>{label}</Label>
-      <Input value={value.join(", ")} onChange={(event) => onChange(event.target.value.split(",").map((entry) => entry.trim()).filter(Boolean))} placeholder={placeholder} />
-    </div>
-  );
-}
-
-function AuditSwitch({ label, checked, onChange, disabled }: { label: string; checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
-      <span className="text-sm font-medium">{label}</span>
-      <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
+      <ConfigTabs label={t("bookSettings.tabs.label")} tabs={tabs} selected={tab} onSelect={selectTab} idPrefix="book-settings" />
     </div>
   );
 }

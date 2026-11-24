@@ -613,7 +613,7 @@ test("a linked book offline works from its working copy, saves on this device an
     [`app/books/${BOOK_ID}/chapters/001-the-arrival/audit`, "AuditPage", "No audit report yet"],
     [`app/books/${BOOK_ID}/reader`, "ReaderPreviewPage", "E2E edit: the gate remembered every name."],
     [`app/books/${BOOK_ID}/export`, "BookExportPage"],
-    [`app/books/${BOOK_ID}/settings`, "BookSettingsPage", "You are offline: branches need GitHub."],
+    [`app/books/${BOOK_ID}/settings#github`, "BookSettingsPage", "You are offline: branches need GitHub."],
     [`app/books/${BOOK_ID}/chapters/001-the-arrival`, "ChapterPage"],
     [`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001/workspace/draft`, "WorkspaceDocPage"],
   ] as Array<[string, string, string?]>) {

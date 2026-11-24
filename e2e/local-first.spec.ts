@@ -107,7 +107,7 @@ test("a book kept on this device works on every page without GitHub", async ({ p
     [`${book}/ghostwriters`, "GhostwritersPage"],
     [`${book}/evaluation-style`, "EvaluationStylePage"],
     [`${book}/simulated-readers`, "ReaderPersonasPage"],
-    [`${book}/settings`, "BookSettingsPage", "Branches live on GitHub. Connect this book to GitHub to use them."],
+    [`${book}/settings#github`, "BookSettingsPage", "Branches live on GitHub. Connect this book to GitHub to use them."],
     [`${book}/audit`, "AuditPage", "No audit report yet"],
     [`${book}/canon/characters/mara`, "CanonEntityPage", "The gatekeeper."],
     [chapter, "ChapterPage", "Opening"],
@@ -140,10 +140,11 @@ test("a book kept on this device works on every page without GitHub", async ({ p
     expect(await shownProblems(page), route).toEqual([]);
   }
 
-  // The settings of a book kept on this device: its name and its audits are its own to change, and only the branches need GitHub.
+  // The settings of a book kept on this device: its name and its audits are its own to change, and only the branches need GitHub (in the GitHub tab).
   await page.goto(`${book}/settings`);
   await expect(page.locator('[data-route-ready="BookSettingsPage"]')).toBeAttached({ timeout: 15_000 });
   await expect(page.locator("#book-name")).toHaveValue("The Glass Gate");
+  await page.getByRole("tab", { name: "Audit" }).click();
   await expect(page.getByText("Audit settings", { exact: true })).toBeVisible();
 
   // The actions of the book (the floating panel of a phone): the commit history and the pull requests need GitHub, and the panel says so instead of offering them.

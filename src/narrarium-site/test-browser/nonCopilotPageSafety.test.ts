@@ -64,6 +64,6 @@ describe("non-Copilot page safety contracts", () => {
     expect(source("src/components/settings/router/RouterSection.tsx")).toContain('window.confirm(t("routing.tabs.deleteConfirm"');
     expect(settings).toContain("credentialsDisabled={false}");
     expect(source("src/pages/AddBookPage.tsx")).toContain('value="local-only"');
-    expect(source("src/pages/BookSettingsPage.tsx")).toContain("attachLocalBookToGitHub");
+    expect(source("src/components/book/settings/useAttachToGitHub.ts")).toContain("attachLocalBookToGitHub");
   });
 });

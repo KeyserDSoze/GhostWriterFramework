@@ -32,7 +32,7 @@ function Where() {
 
 function page() {
   return render(
-    <MemoryRouter initialEntries={["/app/books/book-1/settings"]}>
+    <MemoryRouter initialEntries={["/app/books/book-1/settings#github"]}>
       <Routes><Route path="/app/books/:bookId/settings" element={<BookSettingsPage />} /><Route path="/app/books/:bookId" element={<p>The book</p>} /></Routes>
       <Where />
     </MemoryRouter>,

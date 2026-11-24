@@ -1,0 +1,118 @@
+import { useState } from "react";
+import { GitBranch, Loader2, Plus } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/components/ui/use-toast";
+import { createBranchFromBase, getDefaultBranch, listBranches } from "@/github/githubClient";
+import { useBooksStore } from "@/store/booksStore";
+import { repositoryErrorDescription } from "@/repository/repositoryError";
+import { useSettingsStore } from "@/store/settingsStore";
+import { bookStorageMode, resolveBookToken, type BookEntry } from "@/types/settings";
+import "@/i18n/localFirst";
+import { AUTO_BRANCH } from "@/bookSettings/draft";
+import { workingBranchState } from "@/bookSettings/branchState";
+
+interface Props {
+  book: BookEntry;
+  activeBranch: string;
+  onActiveBranch: (branch: string) => void;
+}
+
+/**
+ * The working branch of the book. A book on this device has a local working branch, only here; the card says so. Once the book is on GitHub the branch is a
+ * GitHub branch («published as …»): the book reads and writes it there, and the card lists the repository's branches, and makes a new one from the default.
+ */
+export function WorkingBranchCard({ book, activeBranch, onActiveBranch }: Props) {
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const settings = useSettingsStore((state) => state.settings);
+  const { structures, workingBranches } = useBooksStore();
+  const structure = structures[book.id];
+  const offline = typeof navigator !== "undefined" && !navigator.onLine;
+  const [branches, setBranches] = useState<string[]>([]);
+  const [baseBranch, setBaseBranch] = useState(structure?.defaultBranch ?? "main");
+  const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newBranchName, setNewBranchName] = useState("");
+  const autoBranch = workingBranches[book.id] ?? structure?.defaultBranch ?? "main";
+  const state = workingBranchState({ storageMode: book.storageMode, activeBranch: activeBranch === AUTO_BRANCH ? undefined : activeBranch }, autoBranch);
+
+  async function loadRemoteBranches() {
+    const token = resolveBookToken(book, settings);
+    if (!token) return;
+    setLoading(true);
+    await Promise.all([listBranches(token, book.owner, book.repo), getDefaultBranch(token, book.owner, book.repo)])
+      .then(([items, defaultBranch]) => { setBranches(items.map((entry) => entry.name)); setBaseBranch(defaultBranch); })
+      .catch((error) => { toast({ title: t("bookSettings.loadBranchesFailed"), description: repositoryErrorDescription(error, t), variant: "destructive" }); })
+      .finally(() => setLoading(false));
+  }
+
+  async function createBranch() {
+    if (!newBranchName.trim()) return;
+    const token = resolveBookToken(book, settings);
+    if (!token) {
+      toast({ title: t("bookSettings.missingToken"), description: t("bookSettings.configureTokenFirst"), variant: "destructive" });
+      return;
+    }
+    setCreating(true);
+    try {
+      const next = newBranchName.trim();
+      await createBranchFromBase(token, book.owner, book.repo, baseBranch, next);
+      setBranches((previous) => [...previous, next].sort());
+      onActiveBranch(next);
+      setNewBranchName("");
+      toast({ title: t("bookSettings.branchCreated", { branch: next }) });
+    } catch (error) {
+      toast({ title: t("bookSettings.branchCreateFailed"), description: String(error), variant: "destructive" });
+    } finally { setCreating(false); }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><GitBranch className="h-4 w-4" />{t("bookSettings.branchWorkspace")}</CardTitle>
+        <CardDescription>{t(bookStorageMode(book) === "github" ? "bookSettings.branchDescription" : "localFirst.branchesLocal")}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p role="status" className="rounded-md border bg-muted/30 p-3 text-sm" data-testid="working-branch-state">
+          {state.kind === "device"
+            ? <><strong>{t("bookSettings.tabs.localBranch")}</strong> — {t("bookSettings.tabs.onlyOnDevice")}</>
+            : <><strong>{state.branch}</strong> — {t("bookSettings.tabs.publishedAs", { branch: state.branch })}</>}
+        </p>
+        {state.kind === "device" && <p className="text-xs text-muted-foreground">{t("bookSettings.tabs.branchOnConnect")}</p>}
+        {bookStorageMode(book) === "github" && (
+          <>
+            {offline && <p className="text-xs text-muted-foreground">{t("localFirst.branchesOffline")}</p>}
+            <div className="grid gap-2">
+              <Label htmlFor="book-active-branch">{t("bookSettings.activeBranch")}</Label>
+              <Select value={activeBranch} onValueChange={onActiveBranch} disabled={loading}>
+                <SelectTrigger id="book-active-branch" className="w-full max-w-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={AUTO_BRANCH}>{t("bookSettings.autoDevBranch", { branch: autoBranch })}</SelectItem>
+                  {branches.map((branch) => <SelectItem key={branch} value={branch}>{branch}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t("bookSettings.defaultBranch")} {baseBranch}</p>
+              <Button type="button" variant="outline" className="w-fit" onClick={() => void loadRemoteBranches()} disabled={loading || offline}>{loading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <GitBranch className="mr-1 h-4 w-4" />}{t("bookSettings.loadRemoteBranches")}</Button>
+            </div>
+
+            <div className="grid gap-2 rounded-lg border border-dashed p-3">
+              <p className="text-xs text-muted-foreground">{t("bookSettings.createBranchHint", { base: baseBranch })}</p>
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <Input aria-label={t("bookSettings.createBranch")} placeholder="feature/new-arc" value={newBranchName} onChange={(event) => setNewBranchName(event.target.value)} />
+                <Button onClick={() => void createBranch()} disabled={creating || !newBranchName.trim() || offline}>
+                  {creating ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Plus className="mr-1 h-4 w-4" />}
+                  {t("bookSettings.createBranch")}
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
