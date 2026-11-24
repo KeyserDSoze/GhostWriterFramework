@@ -22,6 +22,7 @@ import { GitHubRepositoryPicker } from "@/components/book/GitHubRepositoryPicker
 import { credentialCacheKey, decisionAction, type RepositoryDecision } from "@/github/repositoryPickerModel";
 import { useConnectionStore } from "@/account/connectionStore";
 import { GitHubCreateFailure, GitHubCreateProgress, GitHubCreateResult } from "@/components/book/GitHubRepositoryOutcome";
+import { useProtectedReaderSetup } from "@/components/book/useProtectedReaderSetup";
 import "@/i18n/githubCreateBook";
 import { type BookEntry } from "@/types/settings";
 import { createLocalOnlyBookRepository } from "@/repository/repositoryService";
@@ -69,6 +70,7 @@ export function AddBookPage() {
         : selectedToken === "custom"
           ? customToken.trim()
           : settings.extraGitHubTokens[Number(selectedToken)]?.token ?? "";
+  const readerSetup = useProtectedReaderSetup(activeToken);
   const activeApp = selectedToken === "connection" ? connection?.credentialKind === "app" : classifyTokenKind(activeToken) === "app";
   const cacheKey = credentialCacheKey({ app: activeApp, login: selectedToken === "connection" ? connection?.identity?.username : undefined, token: activeToken });
 
@@ -158,8 +160,11 @@ export function AddBookPage() {
         files,
         existing: existingTarget ? (existingTarget.overwrite ? "overwrite" : "empty") : retry ? "empty" : "error",
         pages: !existingTarget && repoChoices.pages ? "enable" : "skip",
+        // A protected reader: the first password is put in place before the workflow lands, so that the first publication already asks for it.
+        beforeWorkflow: !existingTarget && repoChoices.pages ? readerSetup.step(repoChoices) : undefined,
         onProgress: setProgress,
       });
+      readerSetup.settle(result);
       const entry = bookEntry({ owner: result.owner, repo: result.repo, name: title, activeBranch: result.defaultBranch, startPreset: startSize ?? undefined });
       patchSettings({ books: [...settings.books, entry] });
       setCreated({ result, bookId: entry.id });
@@ -261,7 +266,7 @@ export function AddBookPage() {
         )}
       </div>}
 
-      {created ? <GitHubCreateResult result={created.result} onOpenBook={() => navigate(`/app/books/${created.bookId}`)} /> : <Card>
+      {created ? <GitHubCreateResult result={created.result} onOpenBook={() => navigate(`/app/books/${created.bookId}`)} reader={readerSetup.view(created.result, (next) => setCreated({ ...created, result: next }))} /> : <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><Plus className="h-5 w-5" />{t("addBook.createNew")}</CardTitle>
           <CardDescription>{t("addBook.createNewDescription")}</CardDescription>

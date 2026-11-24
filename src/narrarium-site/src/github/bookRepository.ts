@@ -54,7 +54,7 @@ export const TREE_CHUNK_MAX_ENTRIES = 150;
 /** Blobs for binary files are the only request that grows with the number of files; they run a few at a time. */
 const BLOB_CONCURRENCY = 3;
 
-export type BookRepositoryStep = "preflight" | "repository" | "first-commit" | "pages" | "workflow" | "done";
+export type BookRepositoryStep = "preflight" | "repository" | "first-commit" | "pages" | "protection" | "workflow" | "done";
 export interface BookRepositoryProgress { step: BookRepositoryStep; chunk?: number; chunks?: number }
 
 export type BookRepositoryWarningCode =
@@ -77,8 +77,11 @@ export interface CreateCompleteBookRepositoryResult {
   htmlUrl: string;
   private: boolean;
   committed: { files: number; bytes: number };
-  workflow: "done" | "not-allowed" | "skipped";
+  /** `held`: the step before the workflow (`beforeWorkflow`) failed, so the workflow was NOT committed (see `CreateCompleteBookRepositoryInput.beforeWorkflow`). */
+  workflow: "done" | "not-allowed" | "skipped" | "held";
   pages: "enabled" | "manual" | "skipped";
+  /** The outcome of `beforeWorkflow`: `skipped` (or absent) when there was none, `failed` with whatever it threw. */
+  beforeWorkflow?: { status: "skipped" | "done" } | { status: "failed"; error: unknown };
   warnings: BookRepositoryWarning[];
   /** The commit the branch is at, and the sha of every file that landed (a git blob hash, worked out here, not asked of GitHub). */
   headSha: string;
@@ -327,6 +330,13 @@ export interface CreateCompleteBookRepositoryInput {
   createIfMissing?: boolean;
   /** Turn GitHub Pages on for the repository (a refusal, or a private repository on a plan without Pages, leaves `pages: "manual"`). */
   pages?: "enable" | "skip";
+  /**
+   * Something that has to be in place before the workflow lands, run once the repository and Pages exist (the passwords of a protected reader: their secrets and
+   * the variable that lists them, so that the very first publication already uses them). If it throws, the workflow is NOT committed (`workflow: "held"`,
+   * the files stay in `pendingWorkflow`) and the error is in `beforeWorkflow`: landing the workflow without it would publish what the owner meant to protect.
+   * It is not run when the book has no workflow file.
+   */
+  beforeWorkflow?: (context: { octokit: Octokit; owner: string; repo: string; branch: string }) => Promise<void>;
   commitMessage?: string;
   signal?: AbortSignal;
   onProgress?: (progress: BookRepositoryProgress) => void;
@@ -477,10 +487,25 @@ export async function createCompleteBookRepository(input: CreateCompleteBookRepo
     }
   }
 
+  // What has to be there before the workflow: if it cannot be, the workflow is held back (a workflow that lands without it publishes the reader without its passwords).
+  let beforeWorkflow: CreateCompleteBookRepositoryResult["beforeWorkflow"] = { status: "skipped" };
+  if (input.beforeWorkflow && workflowFiles.length) {
+    progress({ step: "protection" });
+    try {
+      await input.beforeWorkflow({ octokit, owner: target.owner, repo: target.repo, branch });
+      beforeWorkflow = { status: "done" };
+    } catch (error) {
+      beforeWorkflow = { status: "failed", error };
+    }
+  }
+
   // Second commit: the workflows alone.
   let workflow: CreateCompleteBookRepositoryResult["workflow"] = "skipped";
   let pendingWorkflow: Array<{ path: string; content: string }> = [];
-  if (workflowFiles.length) {
+  if (workflowFiles.length && beforeWorkflow.status === "failed") {
+    workflow = "held";
+    pendingWorkflow = workflowFiles.filter((file): file is { path: string; content: string } => "content" in file);
+  } else if (workflowFiles.length) {
     progress({ step: "workflow" });
     try {
       const built = await buildCommit(target, workflowFiles, { message: "Add the GitHub Pages workflow", parents: [headSha], baseTree: treeSha });
@@ -523,6 +548,7 @@ export async function createCompleteBookRepository(input: CreateCompleteBookRepo
     committed: { files: committedFiles, bytes: committedBytes },
     workflow,
     pages,
+    beforeWorkflow,
     warnings,
     headSha,
     shas: landed,
@@ -531,6 +557,21 @@ export async function createCompleteBookRepository(input: CreateCompleteBookRepo
     pendingWorkflow,
     tokenKind,
   };
+}
+
+/**
+ * Commits files on top of a branch of a repository that exists: what finishes a creation whose workflow was held back (`workflow: "held"`). One commit on
+ * the head of the branch, no force; a branch that moved meanwhile is a refusal (409/422), never an overwrite. A token without the permission to write workflows
+ * is refused here, as at the creation.
+ */
+export async function commitFilesToBranch(input: { token?: string; octokit?: Octokit; owner: string; repo: string; branch: string; files: BookRepositoryFile[]; message: string; signal?: AbortSignal }): Promise<{ commitSha: string }> {
+  const octokit = input.octokit ?? createTrackedGitHubClient(input.token ?? "");
+  const target: Target = { octokit, owner: input.owner, repo: input.repo, signal: input.signal };
+  const head = (await octokit.rest.git.getRef({ owner: input.owner, repo: input.repo, ref: `heads/${input.branch}`, ...request(target) })).data.object.sha;
+  const commit = (await octokit.rest.git.getCommit({ owner: input.owner, repo: input.repo, commit_sha: head, ...request(target) })).data;
+  const built = await buildCommit(target, input.files, { message: input.message, parents: [head], baseTree: commit.tree.sha });
+  await octokit.rest.git.updateRef({ owner: input.owner, repo: input.repo, ref: `heads/${input.branch}`, sha: built.commitSha, force: false, ...request(target) });
+  return { commitSha: built.commitSha };
 }
 
 export type BookRepositoryPreflightIssue = "no-repo-scope" | "public-only" | "no-workflow-scope" | "fine-grained" | "app-token" | "unknown-token";

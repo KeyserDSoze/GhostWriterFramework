@@ -64,6 +64,8 @@ In **Impostazioni del libro**, un libro su GitHub ha la scheda **Accesso al lett
 - **Disattiva Pages** chiede conferma. Di default il workflow e le password restano, così riattivando Pages si pubblica con le stesse. Una seconda scelta, separata, elimina anche i secret delle password e la variabile su GitHub, e una terza, ancora separata, dimentica le password conservate in Narrarium.
 - Il sito Pages di un repository privato resta raggiungibile dal suo indirizzo sui piani GitHub senza controllo degli accessi per Pages: la cifratura è l'unica protezione. Revocare una password ferma tutto ciò che viene pubblicato dopo, non ciò che è già stato letto.
 
+- **Fin dall'inizio.** Quando crei un libro su GitHub (o colleghi uno che vive su questo dispositivo) con **Attiva anche GitHub Pages**, scegli **Protetto da password** (predefinito) o **Lettore pubblico**. Un lettore protetto riceve una prima password robusta creata per te, mostrata con **Mostra** e **Copia** e conservata nel tuo account Narrarium. Viene messa su GitHub subito dopo che il repository e Pages esistono e prima che venga aggiunto il workflow di Pages, così la primissima pubblicazione la chiede già. Se non è possibile, il workflow viene trattenuto: non è pubblicato nulla, nulla è pubblico, e il risultato dice perché e offre di riprovare. La scelta compare solo quando il lettore che il libro riceve sa leggere le password.
+
 ### Permessi necessari
 
 Il token che un libro usa (la GitHub App o un token di accesso personale) ha bisogno di questi permessi del repository, tutti **Read and write** (Metadata: Read c'è sempre):

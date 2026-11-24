@@ -10,6 +10,7 @@ import { attachLocalBookToGitHub } from "@/repository/repositoryService";
 import { BookRepositoryError, deleteEmptyBookRepository, isBookRepositoryError, type BookRepositoryProgress, type CreateCompleteBookRepositoryResult } from "@/github/bookRepository";
 import { defaultGitHubRepositoryChoices, ownerOf, useGitHubPreflight, type GitHubRepositoryChoices } from "@/components/book/GitHubRepositoryPanel";
 import { credentialCacheKey, type RepositoryDecision } from "@/github/repositoryPickerModel";
+import { useProtectedReaderSetup } from "@/components/book/useProtectedReaderSetup";
 
 /** Connecting a book that lives on this device to GitHub: what the repository picker decided, the progress, the failure or the result, and the two actions (connect, delete the empty repository that a failed attempt left). */
 export function useAttachToGitHub(book: BookEntry) {
@@ -32,6 +33,7 @@ export function useAttachToGitHub(book: BookEntry) {
   const app = credential?.source === "app";
   const cacheKey = credentialCacheKey({ app, login: app ? connection?.identity?.username : undefined, token });
   const login = app ? connection?.identity?.username : undefined;
+  const readerSetup = useProtectedReaderSetup(token);
 
   async function attach() {
     if (!token) { setError(t("bookSettings.connectGithub.noToken")); return; }
@@ -51,7 +53,8 @@ export function useAttachToGitHub(book: BookEntry) {
         return;
       }
       const existing = decision.mode === "existing";
-      const attached = await attachLocalBookToGitHub({ book, token, owner: decision.owner ?? ownerOf(choices) ?? "", repo: decision.name, createRepository: !existing, overwriteExisting: decision.outcome?.kind === "publish-overwrite", visibility: choices.visibility, pages: !existing && choices.pages ? "enable" : "skip", onProgress: setProgress });
+      const attached = await attachLocalBookToGitHub({ book, token, owner: decision.owner ?? ownerOf(choices) ?? "", repo: decision.name, createRepository: !existing, overwriteExisting: decision.outcome?.kind === "publish-overwrite", visibility: choices.visibility, pages: !existing && choices.pages ? "enable" : "skip", beforeWorkflow: !existing && choices.pages ? readerSetup.step(choices) : undefined, onProgress: setProgress });
+      readerSetup.settle(attached.creation);
       const updated: BookEntry = { ...book, storageMode: "github", owner: attached.owner, repo: attached.repo, activeBranch: attached.branch };
       // The result stays on the screen (the card goes away once the book is on GitHub): the book is opened from its button.
       setResult(attached.creation);
@@ -71,5 +74,5 @@ export function useAttachToGitHub(book: BookEntry) {
     await deleteEmptyBookRepository({ token, owner: empty.owner, repo: empty.repo, defaultBranch: empty.defaultBranch });
   }
 
-  return { choices, setChoices, progress, failure, result, decision, setDecision, attaching, error, token, preflight, app, login, cacheKey, attach, deleteEmptyRepository, owner: decision?.owner ?? ownerOf(choices) ?? "", books: settings.books };
+  return { readerSetup, setResult, choices, setChoices, progress, failure, result, decision, setDecision, attaching, error, token, preflight, app, login, cacheKey, attach, deleteEmptyRepository, owner: decision?.owner ?? ownerOf(choices) ?? "", books: settings.books };
 }

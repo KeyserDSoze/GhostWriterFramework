@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { installFakeGitHubApi, type FakeApiOptions } from "./helpers/fakeGitHubApi";
 import { clearRepositoryListingCache } from "@/github/useRepositoryListing";
@@ -7,6 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast: () => undefined }), toast: () => undefined }));
 vi.mock("@/drive/useSettings", () => ({ useSettings: () => ({ save: vi.fn(async () => undefined), syncStatus: "idle" }) }));
 vi.mock("@/repository/repositoryService", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/repository/repositoryService")>()), attachLocalBookToGitHub: vi.fn() }));
+// What the reader of a new repository can do with passwords is read from the template: here it can.
+vi.mock("@/narrarium/bookTemplate", () => ({
+  loadBookTemplate: vi.fn(async () => ({ format: 1, placeholders: { package: "", readerPackage: "" }, files: { ".github/workflows/deploy-reader-pages.yml": { text: "env:\n  P: ${{ vars.READER_PASSWORD_SECRETS }}\n" } } })),
+}));
 vi.mock("@/github/bookRepository", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/github/bookRepository")>()),
   preflightBookRepository: vi.fn(async () => ({ login: "ada", tokenKind: "classic", scopes: ["repo"], organizations: ["acme"], canCreate: "yes", canWriteWorkflows: "no", issues: ["no-workflow-scope"] })),
@@ -94,6 +98,24 @@ describe("connecting the book", () => {
     await waitFor(() => expect(attachLocalBookToGitHub).toHaveBeenCalledOnce());
     expect(vi.mocked(attachLocalBookToGitHub).mock.calls[0][0]).toMatchObject({ token: "ghp_test", owner: "acme", repo: "the-glass-harbor", visibility: "public", pages: "enable", overwriteExisting: false });
   });
+
+  it("with Pages on offers a protected reader with a first password, gives the service the step that puts it in place before the workflow, and says plainly when it could not be", async () => {
+    const failure = { kind: "permission" as const, status: 403, permissions: ["secrets"], fromHeader: true };
+    const { ReaderProtectionFailed } = await import("@/readerAccess/creation");
+    vi.mocked(attachLocalBookToGitHub).mockResolvedValue({ owner: "ada", repo: "the-glass-harbor", branch: "main", remoteHeadSha: "a".repeat(40), repoId: "r", creation: { ...RESULT, workflow: "held", pages: "enabled", beforeWorkflow: { status: "failed", error: new ReaderProtectionFailed({ ok: false, done: ["save"], failed: { step: "secret", failure }, dispatched: false }) } } });
+    arrange();
+    fireEvent.change(await screen.findByLabelText("Name of the new repository"), { target: { value: "the-glass-harbor" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Public" }));
+    const choice = await screen.findByTestId("reader-choice", undefined, { timeout: 5000 });
+    expect(within(choice).getByRole("radio", { name: /Protected by a password/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Create or connect the repository" }));
+    await waitFor(() => expect(attachLocalBookToGitHub).toHaveBeenCalledOnce());
+    expect(vi.mocked(attachLocalBookToGitHub).mock.calls[0][0]).toMatchObject({ pages: "enable", beforeWorkflow: expect.any(Function) });
+    const section = await screen.findByTestId("reader-setup");
+    expect(within(section).getByRole("alert")).toHaveTextContent(/Nothing is published, and nothing is public/);
+    expect(within(section).getByRole("alert")).toHaveTextContent(/«Secrets»/);
+    expect(within(section).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  }, 20_000);
 
   it("shows the result when the book is on GitHub, with the focus on it and the manual steps, and opens the book from its button", async () => {
     vi.mocked(attachLocalBookToGitHub).mockResolvedValue({ owner: "ada", repo: "the-glass-harbor", branch: "main", remoteHeadSha: "a".repeat(40), repoId: "r", creation: RESULT });

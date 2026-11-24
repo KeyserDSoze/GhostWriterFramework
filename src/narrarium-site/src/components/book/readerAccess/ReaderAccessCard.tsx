@@ -40,6 +40,8 @@ export function ReaderAccessCard({ book }: { book: BookEntry }) {
   const pages = snapshot.pages;
   const busy = access.busy !== null;
   const workflow = snapshot.workflow ? inspectReaderWorkflow(snapshot.workflow.present ? snapshot.workflow.content ?? "" : null) : null;
+  // Passwords are only added to a repository whose workflow reads them: otherwise the reader would stay public while the owner believes it is protected.
+  const addBlockedReason = snapshot.loadedAt === null ? undefined : workflow === "current" ? undefined : workflow === "missing" ? t("readerAccess.workflow.blockedMissing") : workflow === "outdated" ? t("readerAccess.workflow.blockedOutdated") : t("readerAccess.workflow.blockedUnknown");
   const protectingElsewhere = (row: ReaderPasswordRow) => rows.some((other) => other.secretName !== row.secretName && (other.state === "active" || other.state === "legacy" || other.state === "unknown-value"));
   const failureLines = (Object.entries(snapshot.failures) as Array<[string, NonNullable<(typeof snapshot.failures)[keyof typeof snapshot.failures]>]>)
     .map(([part, failure]) => ({ part, text: describeReaderFailure(failure, access.tokenKind) }));
@@ -77,6 +79,13 @@ export function ReaderAccessCard({ book }: { book: BookEntry }) {
           </ul>
         )}
 
+        {workflow === "outdated" && (
+          <div className="space-y-2 rounded-md border p-2 text-xs" data-testid="reader-workflow-outdated">
+            <p>{t("readerAccess.workflow.outdated")}</p>
+            {updateReaderWorkflow && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void updateReaderWorkflow?.({ token: "", owner: book.owner, repo: book.repo, branch: snapshot.repository?.defaultBranch ?? "main" })}>{t("readerAccess.workflow.update")}</Button>}
+          </div>
+        )}
+
         {workflow === "missing" && (
           <div className="space-y-2 rounded-md border p-2 text-xs" data-testid="reader-workflow-missing">
             <p>{t("readerAccess.workflow.missing")}</p>
@@ -93,7 +102,7 @@ export function ReaderAccessCard({ book }: { book: BookEntry }) {
               {rows.map((row) => <PasswordRow key={row.secretName} row={row} busy={busy} onRemove={() => setRemoving(row)} onRetry={() => void access.resume(row.secretName)} />)}
             </ul>
           )}
-          <AddPasswordForm busy={access.busy === "add"} onAdd={(input) => { lastAction.current = () => void access.add(input); return access.add(input); }} />
+          <AddPasswordForm busy={access.busy === "add"} blockedReason={addBlockedReason} onAdd={(input) => { lastAction.current = () => void access.add(input); return access.add(input); }} />
         </section>
 
         {run && (

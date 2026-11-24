@@ -311,6 +311,44 @@ describe.each(["en", "it"] as const)("Reader access in %s", (language) => {
   });
 });
 
+describe.each(["en", "it"] as const)("passwords are only added to a workflow that reads them, in %s", (language) => {
+  const text = language === "en"
+    ? { outdated: /does not read passwords yet, so a password added here would not protect the published reader/, blockedOutdated: /the reader workflow of this repository does not read them, so the reader would stay public/, blockedMissing: /it has no reader workflow/, blockedUnknown: /the reader workflow of this repository could not be read/, add: "Add password", password: "Password" }
+    : { outdated: /non legge ancora le password, quindi una password aggiunta qui non proteggerebbe il lettore pubblicato/, blockedOutdated: /non le legge, quindi il lettore resterebbe pubblico/, blockedMissing: /non ha il workflow del lettore/, blockedUnknown: /non è stato possibile leggere il workflow del lettore/, add: "Aggiungi password", password: "Password" };
+
+  it("blocks the form, and says why, when the repository's workflow does not name the passwords", async () => {
+    github.workflowText.value = "name: Deploy reader\nenv:\n  P: ${{ secrets.NARRARIUM_READER_PASSWORD }}\n";
+    await open(language);
+    expect(await screen.findByTestId("reader-workflow-outdated")).toHaveTextContent(text.outdated);
+    expect(screen.getByTestId("reader-add-blocked")).toHaveTextContent(text.blockedOutdated);
+    expect(screen.getByLabelText(text.password)).toBeDisabled();
+    expect(screen.getByRole("button", { name: text.add })).toBeDisabled();
+    expect(github.order()).toEqual([]);
+  });
+
+  it("blocks it when there is no workflow, and when the workflow could not be read", async () => {
+    github.workflowPresent.value = false;
+    await open(language);
+    expect(await screen.findByTestId("reader-add-blocked")).toHaveTextContent(text.blockedMissing);
+    cleanup();
+    reset();
+    github.fail("getContent", { status: 403 });
+    await open(language);
+    expect(await screen.findByTestId("reader-add-blocked")).toHaveTextContent(text.blockedUnknown);
+    expect(screen.getByRole("button", { name: text.add })).toBeDisabled();
+  });
+
+  it("still lets a stored password be removed while adding is blocked", async () => {
+    reset([record(1)]);
+    github.variable.value = name(1);
+    github.secrets.set(name(1), "x");
+    github.workflowText.value = "name: old\n";
+    await open(language);
+    const row = within(await waitFor(() => rowOf("Reader 1")));
+    expect(row.getByRole("button", { name: language === "en" ? "Remove password «Reader 1»" : "Rimuovi la password «Reader 1»" })).toBeEnabled();
+  });
+});
+
 describe("the status of a publication", () => {
   it("follows the run after it starts, until it ends, and stops asking GitHub then", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });

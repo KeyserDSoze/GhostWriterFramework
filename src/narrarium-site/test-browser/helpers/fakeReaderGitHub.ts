@@ -8,6 +8,7 @@ export interface FakeReaderGitHub {
   variable: { value: string | null };
   pages: { enabled: boolean; htmlUrl: string; plan?: boolean };
   workflowPresent: { value: boolean };
+  workflowText: { value: string };
   runs: Array<{ id: number; status: string; conclusion: string | null; html_url: string; created_at: string; head_branch: string }>;
   calls: Array<{ method: string; args: Record<string, unknown> }>;
   /** Makes the next calls of a method fail (the number of times given, or for ever). */
@@ -32,6 +33,8 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     variable: { value: null as string | null },
     pages: { enabled: false, htmlUrl: "https://me.github.io/book/" } as FakeReaderGitHub["pages"],
     workflowPresent: { value: true },
+    /** The text of the workflow file: by default one that reads the passwords. */
+    workflowText: { value: "name: Deploy reader\nenv:\n  PASSWORDS: ${{ vars.READER_PASSWORD_SECRETS }}\n" },
     runs: [] as FakeReaderGitHub["runs"],
     calls: [] as FakeReaderGitHub["calls"],
   };
@@ -50,7 +53,7 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     listWorkflowRuns: () => ({ data: { workflow_runs: state.runs } }),
     getContent: () => {
       if (!state.workflowPresent.value) throw requestError({ status: 404 });
-      return { data: { type: "file", content: btoa("name: Deploy reader\n") } };
+      return { data: { type: "file", content: btoa(state.workflowText.value) } };
     },
     getPages: () => { if (!state.pages.enabled) throw requestError({ status: 404 }); return { data: { html_url: state.pages.htmlUrl, build_type: "workflow" } }; },
     createPagesSite: () => {

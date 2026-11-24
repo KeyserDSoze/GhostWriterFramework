@@ -122,13 +122,30 @@ export async function addReaderPassword(deps: ReaderOperationDeps, input: { labe
   return stopped ?? startWorkflow(deps, run, record.secretName);
 }
 
-/** Finishes an add that stopped (a `pending` record), or publishes again a record that GitHub no longer has (out of sync). */
-export async function resumeReaderPassword(deps: ReaderOperationDeps, secretName: string): Promise<ReaderOperationResult> {
+/**
+ * Finishes an add that stopped (a `pending` record), or publishes again a record that GitHub no longer has (out of sync). `dispatch: false` leaves the
+ * workflow alone (a repository whose workflow has not been committed yet has nothing to start).
+ */
+export async function resumeReaderPassword(deps: ReaderOperationDeps, secretName: string, options: { dispatch?: boolean } = {}): Promise<ReaderOperationResult> {
   const run = new Run(deps);
   const record = deps.records.get().find((entry) => entry.secretName === secretName && entry.status !== "removing");
   if (!record) return run.fail("check", new ReaderFlowError("repository", { kind: "other" }), secretName);
   const stopped = await publish(deps, run, record);
-  return stopped ?? startWorkflow(deps, run, secretName);
+  if (stopped) return stopped;
+  return options.dispatch === false ? run.ok(secretName) : startWorkflow(deps, run, secretName);
+}
+
+/**
+ * The first password of a repository that has just been made: nothing exists there, so nothing is read first. It is kept in Narrarium, its secret is
+ * written and the variable lists it; the workflow is not started (it is not committed yet, and its commit is the first publication).
+ */
+export async function setFirstReaderPassword(deps: ReaderOperationDeps, input: { label: string; value: string }): Promise<ReaderOperationResult> {
+  const run = new Run(deps);
+  const record: ReaderPasswordRecord = { id: deps.newId?.() ?? crypto.randomUUID(), label: input.label, value: input.value, createdAt: (deps.now?.() ?? new Date()).toISOString(), secretName: allocateReaderSecretName(takenReaderNames(deps.records.get(), { secrets: [], listed: [] })), status: "pending" };
+  try { await run.step("save", () => deps.records.set([...deps.records.get(), record])); }
+  catch (error) { return run.fail("save", error); }
+  const stopped = await publish(deps, run, record);
+  return stopped ?? run.ok(record.secretName);
 }
 
 /**

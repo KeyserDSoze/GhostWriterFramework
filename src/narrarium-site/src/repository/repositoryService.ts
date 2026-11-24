@@ -507,6 +507,8 @@ export async function attachLocalBookToGitHub(input: {
   overwriteExisting?: boolean;
   visibility?: "private" | "public";
   pages?: "enable" | "skip";
+  /** Runs before the workflow lands (see `createCompleteBookRepository`): the first password of a protected reader. */
+  beforeWorkflow?: import("@/github/bookRepository").CreateCompleteBookRepositoryInput["beforeWorkflow"];
   signal?: AbortSignal;
   onProgress?: (progress: import("@/github/bookRepository").BookRepositoryProgress) => void;
   /** Tests give a fake client. */
@@ -538,6 +540,7 @@ export async function attachLocalBookToGitHub(input: {
     existing: input.overwriteExisting ? "overwrite" : "empty",
     createIfMissing: input.createRepository !== false,
     pages: input.pages,
+    beforeWorkflow: input.beforeWorkflow,
     commitMessage: "Initialize Narrarium book from local workspace",
     signal: input.signal,
     onProgress: input.onProgress,

@@ -5,6 +5,7 @@ import "@/i18n/githubApp";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { ReaderChoice, useReaderPasswordSupport } from "@/components/book/ReaderChoice";
 import type { BookRepositoryPreflight, BookRepositoryPreflightIssue } from "@/github/bookRepository";
 
 /** The choices of the owner and the visibility of a repository, and of GitHub Pages: the same on the page that adds a book and in the card that connects one. */
@@ -16,11 +17,15 @@ export interface GitHubRepositoryChoices {
   pages: boolean;
   /** Set once the user touches the Pages box: from then on the visibility no longer decides it. */
   pagesChosen: boolean;
+  /** The published reader: protected by a password (the default, when the reader workflow can honour passwords) or public. Only meaningful with Pages. */
+  reader: "public" | "protected";
+  /** The first password of a protected reader, made when «protected» is chosen. It is in memory only until the repository is made. */
+  readerPassword: string;
 }
 
 export const OTHER_OWNER = "__other__";
 
-export const defaultGitHubRepositoryChoices = (): GitHubRepositoryChoices => ({ owner: "", otherOwner: "", visibility: "private", pages: false, pagesChosen: false });
+export const defaultGitHubRepositoryChoices = (): GitHubRepositoryChoices => ({ owner: "", otherOwner: "", visibility: "private", pages: false, pagesChosen: false, reader: "protected", readerPassword: "" });
 
 /** The login the repository is made for, or `undefined` for the account of the token. */
 export function ownerOf(choices: GitHubRepositoryChoices): string | undefined {
@@ -80,6 +85,8 @@ export function GitHubRepositoryPanel({ choices, onChange, preflight, disabled, 
   const setVisibility = (visibility: "private" | "public") => set({ visibility, ...(choices.pagesChosen ? {} : { pages: visibility === "public" }) });
   const issues = ready?.issues ?? [];
   const isApp = Boolean(app) || ready?.tokenKind === "app";
+  // Nothing that protects is offered until the workflow the repository gets can honour passwords.
+  const readerSupport = useReaderPasswordSupport(choices.pages);
 
   return (
     <div className="space-y-4">
@@ -122,6 +129,8 @@ export function GitHubRepositoryPanel({ choices, onChange, preflight, disabled, 
           <span id={`${base}-pages-hint`} className="block text-xs text-muted-foreground">{t(choices.visibility === "public" ? "github.createBook.panel.pages.hintPublic" : "github.createBook.panel.pages.hintPrivate")}</span>
         </span>
       </label>
+
+      {choices.pages && readerSupport === "yes" && <ReaderChoice reader={choices.reader} password={choices.readerPassword} disabled={disabled} onChange={(change) => set({ ...(change.reader ? { reader: change.reader } : {}), ...(change.password !== undefined ? { readerPassword: change.password } : {}) })} />}
 
       <section aria-labelledby={`${base}-checklist`} className="rounded-lg border bg-muted/20 p-3">
         <h3 id={`${base}-checklist`} className="text-sm font-medium">{t("github.createBook.panel.checklist.title")}</h3>

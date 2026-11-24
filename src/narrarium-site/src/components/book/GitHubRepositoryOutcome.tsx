@@ -10,6 +10,10 @@ import { Button } from "@/components/ui/button";
 import { PAGES_WORKFLOW_PATH, type BookRepositoryError, type BookRepositoryProgress, type CreateCompleteBookRepositoryResult } from "@/github/bookRepository";
 import { bookRepositoryErrorText } from "@/github/bookRepositoryTexts";
 import { formatRepositoryBytes } from "@/repository/repositoryLimits";
+import { RevealablePassword } from "@/components/book/readerAccess/RevealablePassword";
+import { describeReaderFailure } from "@/readerAccess/messages";
+import type { ReaderSetupView } from "@/components/book/useProtectedReaderSetup";
+import "@/i18n/readerAccess";
 
 const TARGET = "h-auto min-h-9 whitespace-normal text-left [@media(pointer:coarse)]:min-h-11";
 const SUMMARY = "cursor-pointer py-2 text-sm font-semibold [@media(pointer:coarse)]:py-3";
@@ -96,10 +100,12 @@ export function GitHubCreateFailure({ error, owner, repo, busy, onRetry, onDelet
 export interface GitHubCreateResultProps {
   result: CreateCompleteBookRepositoryResult;
   onOpenBook: () => void;
+  /** The first password of a protected reader: shown with the state of putting it on GitHub, and the retry when it could not be. */
+  reader?: ReaderSetupView;
 }
 
 /** What was made and what was not, with the manual steps for what was not. It takes the focus when it appears, so that a keyboard or screen reader user lands on it. */
-export function GitHubCreateResult({ result, onOpenBook }: GitHubCreateResultProps) {
+export function GitHubCreateResult({ result, onOpenBook, reader }: GitHubCreateResultProps) {
   const { t, i18n } = useTranslation();
   const base = useId();
   const ref = useRef<HTMLElement>(null);
@@ -110,11 +116,12 @@ export function GitHubCreateResult({ result, onOpenBook }: GitHubCreateResultPro
   const workflowFile = result.pendingWorkflow.find((file) => file.path === PAGES_WORKFLOW_PATH);
   const rateLimit = result.warnings.find((warning) => warning.code === "workflow-rate-limit");
   const reset = rateLimit?.resetAt ? new Date(rateLimit.resetAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) : undefined;
-  const workflowKey = result.workflow === "done" ? "done" : result.workflow === "not-allowed" ? "notAllowed" : rateLimit ? "rateLimit" : workflowFile ? "skipped" : "none";
+  const workflowKey = result.workflow === "done" ? "done" : result.workflow === "held" ? "held" : result.workflow === "not-allowed" ? "notAllowed" : rateLimit ? "rateLimit" : workflowFile ? "skipped" : "none";
   const branch = result.warnings.some((warning) => warning.code === "branch-not-main");
   const planHint = result.pages === "manual" && result.private;
   const showPagesSteps = result.pages !== "enabled";
   const needsWorkflowPermission = result.workflow === "not-allowed" || (result.workflow === "skipped" && Boolean(workflowFile));
+  const held = result.workflow === "held";
   const copyWorkflow = async () => {
     try { await navigator.clipboard.writeText(workflowFile?.content ?? ""); setCopy("copied"); } catch { setCopy("failed"); }
   };
@@ -136,7 +143,28 @@ export function GitHubCreateResult({ result, onOpenBook }: GitHubCreateResultPro
         </Button>
       </div>
 
-      {needsWorkflowPermission && workflowFile && (
+      {reader && (
+        <section aria-labelledby={`${base}-reader`} className={`space-y-3 rounded-md border p-3 ${reader.status === "failed" ? "border-destructive/60" : ""}`} data-testid="reader-setup">
+          <h3 id={`${base}-reader`} className="text-sm font-semibold">{t("github.createBook.result.reader.title")}</h3>
+          <RevealablePassword value={reader.password.value} label={reader.password.label} />
+          {reader.status !== "failed" && <p className="text-sm">{t("github.createBook.result.reader.setBody")} {t("github.createBook.result.reader.keep")}</p>}
+          {reader.status === "failed" && reader.failure && (
+            <div role="alert" className="space-y-2 text-sm">
+              <p className="font-medium">{t("github.createBook.result.reader.notPublicTitle")}</p>
+              <p>{t(reader.stage === "workflow" ? "github.createBook.result.reader.failedWorkflow" : "github.createBook.result.reader.failedPassword")}</p>
+              <p><span className="font-medium">{t("github.createBook.result.reader.reason")}:</span> {(() => { const reason = describeReaderFailure(reader.failure, result.tokenKind); return t(reason.key, reason.params); })()}</p>
+            </div>
+          )}
+          {held && (
+            <div className="flex flex-wrap items-center gap-3">
+              <Button type="button" className={TARGET} disabled={reader.status === "retrying"} onClick={reader.onRetry}>{reader.status === "retrying" ? t("github.createBook.result.reader.retrying") : t("github.createBook.result.reader.retry")}</Button>
+              <span className="text-xs text-muted-foreground">{t("github.createBook.result.reader.retryHelp")}</span>
+            </div>
+          )}
+        </section>
+      )}
+
+      {needsWorkflowPermission && !held && workflowFile && (
         <details open className="rounded-md border p-3">
           <summary className={SUMMARY}>{t("github.createBook.manual.workflow.title")}</summary>
           <div className="mt-2 space-y-3 text-sm">

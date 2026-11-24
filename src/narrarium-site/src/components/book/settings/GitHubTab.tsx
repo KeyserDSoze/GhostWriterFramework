@@ -40,7 +40,7 @@ export function GitHubTab({ book, draft, patch }: Props) {
   const token = resolveBookToken(book, settings);
 
   // The result of connecting stays on the screen after the book has become a GitHub book (the card that made it goes away): the book is opened from its button.
-  const result = attach.result ? <GitHubCreateResult result={attach.result} onOpenBook={() => navigate(`/app/books/${book.id}`)} /> : null;
+  const result = attach.result ? <GitHubCreateResult result={attach.result} onOpenBook={() => navigate(`/app/books/${book.id}`)} reader={attach.readerSetup.view(attach.result, attach.setResult)} /> : null;
 
   if (!github) {
     return (
