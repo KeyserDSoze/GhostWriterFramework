@@ -1,5 +1,35 @@
 [
   {
+    "version": "0.108.0",
+    "date": "2026-11-24",
+    "en": {
+      "title": "A GitHub book without a credential works on this device, like a book offline",
+      "summary": "A book linked to GitHub that has no credential on this device (no token, no connection, or one GitHub refused) now reads, writes, runs audits, the Copilot and the autopilot, exports and switches between the branches it has here, and saves as local commits that the next sync publishes once GitHub is connected. Only fetch, pull, push, sync, the branches and pull requests of GitHub and its commit history ask you to connect GitHub, in English and in Italian.",
+      "changes": [
+        "Every page of a GitHub book without a credential opens and saves from the copy on this device: chapters, scenes, drafts, scripts, canon, notes, audits, director, ghostwriters, simulated readers, the reader, assets and export no longer stop with «No GitHub token configured for this book». What you save waits as local commits.",
+        "The Copilot offers every tool that works on the book (search, writing, audits, evaluations, edits) without a token; only the branches, commits and pull requests of GitHub say «This needs GitHub: connect GitHub to use it». It switches to a branch that is on this device, and says when a branch has to be downloaded from GitHub first.",
+        "The autopilot runs such a book in the browser and keeps its commits here: publishing waits for GitHub instead of failing at every step. A credential GitHub refuses (revoked or expired) counts as none from its first refusal: a change the Copilot applies stays on this device instead of being undone, and nothing more is sent with that credential until it changes.",
+        "«Full sync» of such a book saves on this device and says «Saved on this device. Connect GitHub to sync it.»; the repository menu, the repository status and the actions panel explain what needs GitHub and offer «Connect GitHub», which opens the GitHub settings. The first sync after you connect publishes everything saved in the meantime.",
+        "A book whose personal branch cannot be created without GitHub keeps working on the copy this device has. A GitHub book never downloaded on this device says plainly «This book is not on this device yet: connect GitHub to download it», with a «Connect GitHub» button, and no request is sent to GitHub without a credential.",
+        "In the book settings, the GitHub tab offers the branches this device has and, instead of a «Load remote branches» that did nothing or a «Create branch» that asked for a token, says «This needs GitHub: connect GitHub to use it.» with a «Connect GitHub» link. The Online reader tab and the offer to update the reader treat a credential GitHub refused as none: the reader is not managed from here, and an update of the reader waits on this device for the next sync.",
+        "The repository status window loads when you open it, so the pages of the app start a little lighter."
+      ]
+    },
+    "it": {
+      "title": "Un libro su GitHub senza credenziale funziona su questo dispositivo, come un libro offline",
+      "summary": "Un libro collegato a GitHub che su questo dispositivo non ha una credenziale (nessun token, nessuna connessione, o una che GitHub ha rifiutato) ora si legge, si scrive, esegue audit, Copilot e autopilot, si esporta e passa tra i branch che ha qui, e salva come commit locali che la sincronizzazione successiva pubblica appena colleghi GitHub. Solo fetch, pull, push, sincronizzazione, i branch e le pull request di GitHub e la sua cronologia dei commit ti chiedono di collegare GitHub, in italiano e in inglese.",
+      "changes": [
+        "Ogni pagina di un libro su GitHub senza credenziale si apre e salva dalla copia su questo dispositivo: capitoli, scene, bozze, scalette, canone, note, audit, direttore, ghostwriter, lettori simulati, il lettore, le immagini e l'esportazione non si fermano più con «Nessun token GitHub configurato per questo libro». Ciò che salvi aspetta come commit locali.",
+        "Il Copilot offre senza token ogni strumento che lavora sul libro (ricerca, scrittura, audit, valutazioni, modifiche); solo i branch, i commit e le pull request di GitHub dicono «Serve GitHub: collega GitHub per usare questa funzione». Passa a un branch che è su questo dispositivo, e dice quando un branch va prima scaricato da GitHub.",
+        "L'autopilot esegue un libro così nel browser e tiene qui i suoi commit: la pubblicazione aspetta GitHub invece di fallire a ogni passo. Una credenziale che GitHub rifiuta (revocata o scaduta) vale come nessuna dal primo rifiuto: una modifica applicata dal Copilot resta su questo dispositivo invece di essere annullata, e con quella credenziale non si invia più nulla finché non cambia.",
+        "«Sync completo» di un libro così salva su questo dispositivo e dice «Salvato su questo dispositivo. Collega GitHub per sincronizzarlo.»; il menu del repository, lo stato del repository e il pannello delle azioni spiegano ciò che richiede GitHub e offrono «Collega GitHub», che apre le impostazioni di GitHub. La prima sincronizzazione dopo il collegamento pubblica tutto ciò che hai salvato nel frattempo.",
+        "Un libro il cui branch personale non si può creare senza GitHub continua a funzionare sulla copia che questo dispositivo ha. Un libro su GitHub mai scaricato su questo dispositivo dice chiaramente «Questo libro non è ancora su questo dispositivo: collega GitHub per scaricarlo», con un pulsante «Collega GitHub», e senza credenziale nessuna richiesta parte verso GitHub.",
+        "Nelle impostazioni del libro, la scheda GitHub offre i branch che questo dispositivo ha e, invece di un «Carica branch remoti» che non faceva nulla o di un «Crea branch» che chiedeva un token, dice «Serve GitHub: collega GitHub per usare questa funzione.» con un collegamento «Collega GitHub». La scheda Lettore online e l'offerta di aggiornare il lettore trattano una credenziale rifiutata da GitHub come nessuna: il lettore non si gestisce da qui, e un aggiornamento del lettore aspetta su questo dispositivo la sincronizzazione successiva.",
+        "La finestra dello stato del repository si carica quando la apri, così le pagine dell'app partono un po' più leggere."
+      ]
+    }
+  },
+  {
     "version": "0.107.0",
     "date": "2026-11-24",
     "en": {
