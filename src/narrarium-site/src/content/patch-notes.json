@@ -1,5 +1,25 @@
 [
   {
+    "version": "0.99.2",
+    "date": "2026-11-24",
+    "en": {
+      "title": "Installing the GitHub app no longer ends on an error page",
+      "summary": "After you install the Narrarium GitHub app, GitHub sends you back to the site; that return used to show «GitHub did not send everything needed» even though the installation had worked.",
+      "changes": [
+        "Coming back from installing (or changing the repositories of) the GitHub app now takes you straight to Account & Sync, which reads where the app is installed, instead of showing a failed-connection page.",
+        "A sign-in that GitHub refuses, or that comes back incomplete, still says so; only the return from an installation is treated differently."
+      ]
+    },
+    "it": {
+      "title": "Installare la GitHub app non finisce più in una pagina di errore",
+      "summary": "Dopo aver installato la GitHub app di Narrarium, GitHub ti rimanda al sito; quel ritorno mostrava «GitHub non ha inviato tutto ciò che serve» anche se l'installazione era riuscita.",
+      "changes": [
+        "Tornando dall'installazione della GitHub app (o dalla modifica dei suoi repository) si arriva ora direttamente ad Account e sincronizzazione, che legge dove l'app è installata, invece di una pagina di connessione fallita.",
+        "Un accesso che GitHub rifiuta, o che torna incompleto, continua a dirlo; solo il ritorno da un'installazione è trattato in modo diverso."
+      ]
+    }
+  },
+  {
     "version": "0.99.1",
     "date": "2026-11-24",
     "en": {

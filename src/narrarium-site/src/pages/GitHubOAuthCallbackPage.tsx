@@ -8,6 +8,7 @@ import { completeGitHubBrokerConnection } from "@/account/brokerConnect";
 import { ConnectFlowError } from "@/account/connectErrors";
 import { BrokerError } from "@/account/credentialBroker";
 import { clearGitHubOAuthAttempt } from "@/github/githubOAuth";
+import { classifyGitHubCallback } from "@/github/githubCallbackParams";
 
 /** The words for a connection that did not complete: fixed texts, never the provider's own, never a code or a token. */
 function failureKey(error: unknown): string {
@@ -26,8 +27,11 @@ export function GitHubOAuthCallbackPage() {
     const providerError = params.get("error");
     const code = params.get("code");
     const state = params.get("state");
-    if (providerError) { clearGitHubOAuthAttempt(); setError(providerError === "access_denied" ? "cancelled" : "incomplete"); return; }
-    if (!code || !state) { setError("incomplete"); return; }
+    const kind = classifyGitHubCallback(params);
+    if (kind === "refused") { clearGitHubOAuthAttempt(); setError(providerError === "access_denied" ? "cancelled" : "incomplete"); return; }
+    // The app was just installed: Account & Sync reads where it is installed as soon as it opens.
+    if (kind === "installation-return") { navigate("/app/account-sync", { replace: true }); return; }
+    if (kind !== "authorization" || !code || !state) { setError("incomplete"); return; }
     let cancelled = false;
     void completeGitHubBrokerConnection({ code, state })
       .then((result) => { if (!cancelled) navigate(result.returnTo, { replace: true }); })
