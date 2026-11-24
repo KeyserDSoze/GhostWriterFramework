@@ -51,10 +51,14 @@ export interface AccountSyncPlan {
 
 export function planAccountSync(local: LocalAccountSnapshot, remotes: AccountRemoteSnapshot[], missingCount = 0): AccountSyncPlan {
   const comparisons = remotes.map((remote) => ({ backend: remote.backend, comparison: compareAccountManifests(local.manifest, remote.manifest) }));
-  const distinct = new Set(remotes.map((remote) => `${JSON.stringify(Object.entries(remote.manifest.vectorClock).sort(([left], [right]) => left.localeCompare(right)))}:${remote.manifest.contentHash ?? remote.manifest.snapshotId}`));
-  if (comparisons.some(({ comparison }) => comparison === "diverged") || distinct.size > 1) return { action: "reconcile", comparisons };
-  const newer = comparisons.find(({ comparison }) => comparison === "behind");
-  if (newer) return { action: "pull-remote", comparisons, authoritativeRemote: newer.backend };
+  // A decision is needed only when copies really conflict: a replica that changed on its own since this device (or since another replica that is
+  // newer than this device). Replicas that merely lag behind a newer copy, this device's included, are brought up to date without asking; asking
+  // about them put the dialog back after every choice, because the lagging replicas were never written.
+  const newer = remotes.filter((remote) => compareAccountManifests(local.manifest, remote.manifest) === "behind");
+  const newerConflict = newer.some((left, index) => newer.slice(index + 1).some((right) => compareAccountManifests(left.manifest, right.manifest) === "diverged"));
+  if (comparisons.some(({ comparison }) => comparison === "diverged") || newerConflict) return { action: "reconcile", comparisons };
+  const newest = newer.find((candidate) => newer.every((other) => other === candidate || compareAccountManifests(candidate.manifest, other.manifest) !== "behind"));
+  if (newest) return { action: "pull-remote", comparisons, authoritativeRemote: newest.backend };
   if (missingCount > 0 || comparisons.some(({ comparison }) => comparison === "ahead")) return { action: "push-local", comparisons };
   return { action: "noop", comparisons };
 }
@@ -227,7 +231,7 @@ async function syncAccountReplicas(activeKinds: AccountSyncBackendKind[]): Promi
       return { synced, reconciliation: true, failures };
     }
 
-    const newer = comparisons.find(({ comparison }) => comparison === "behind")?.remote;
+    const newer = plan.action === "pull-remote" ? remotes.find((remote) => remote.backend === plan.authoritativeRemote) : undefined;
     if (newer) {
       const data = { ...newer.data, settings: mergeLocalDeviceSettings(local.data.settings, newer.data.settings) };
       local = await adoptRemoteAccountSnapshot(data, newer.manifest, `Pulled account data from ${backendLabel(newer.backend)}`, local.manifest.snapshotId);

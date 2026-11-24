@@ -127,6 +127,37 @@ describe("account synchronization races", () => {
     expect(drives.google.push).not.toHaveBeenCalled();
   });
 
+  it("brings lagging replicas up to date without asking again when this device is ahead of replicas that differ from each other", async () => {
+    await useConnectionStore.getState().connectGoogle({
+      identity: { provider: "google", providerAccountId: "google-1", displayName: "Google Writer" },
+      accessToken: "google-token",
+      accessTokenExpiry: Date.now() + 60_000,
+      rememberMe: true,
+    });
+    await saveLocalAccountClipboard([{ id: "two", text: "two", at: "2026-08-31T12:02:00.000Z" }]);
+    await saveLocalAccountClipboard([{ id: "three", text: "three", at: "2026-08-31T12:03:00.000Z" }]);
+    const local = (await loadLocalAccountSnapshot())!;
+    const [device] = Object.keys(local.manifest.vectorClock);
+    const lagging = (backend: AccountRemoteSnapshot["backend"], counter: number, snapshotId: string): AccountRemoteSnapshot => ({
+      backend,
+      data: local.data,
+      manifest: { ...local.manifest, snapshotId, contentHash: undefined, vectorClock: counter ? { [device]: counter } : {} },
+      revision: snapshotId,
+    });
+    github.pull.mockResolvedValue(lagging("github", 1, "github-old"));
+    drives.google.pull.mockResolvedValue(lagging("google-drive", 0, "drive-older"));
+    github.push.mockResolvedValue({ revision: "github-new" });
+    drives.google.push.mockResolvedValue({ revision: "drive-new" });
+
+    const result = await syncAllAccountReplicas();
+
+    expect(result.reconciliation).toBe(false);
+    expect(useAccountSyncStore.getState().reconciliation).toBeNull();
+    expect(github.push).toHaveBeenCalledOnce();
+    expect(drives.google.push).toHaveBeenCalledOnce();
+    expect(result.synced.sort()).toEqual(["github", "google-drive"]);
+  });
+
   it("classifies an HTTP 304 reported in an untyped provider error", () => {
     expect(classifyAccountSyncError(new Error("OneDrive folder lookup: 304"))).toBe("cache-revalidation");
   });

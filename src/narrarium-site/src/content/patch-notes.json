@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.102.1",
+    "date": "2026-11-24",
+    "en": {
+      "title": "The «different account copies» dialog no longer comes back after you choose",
+      "summary": "Choosing the newest copy used to open the same dialog again, and the other services were never brought up to date. Now the services that are behind are updated, and the dialog appears only when two copies really conflict.",
+      "changes": [
+        "After you choose a copy, Narrarium now writes it to every connected service that is behind (GitHub, Google Drive, OneDrive) instead of asking again because those services differed from each other.",
+        "When one service is newer than this device and the others are older, the newest one is adopted and the others are brought up to date, without a dialog.",
+        "The dialog still appears when two copies changed independently of each other (for example, a service changed on another device while this device changed too), and nothing is overwritten until you choose."
+      ]
+    },
+    "it": {
+      "title": "La finestra «copie dell'account diverse» non torna più dopo la tua scelta",
+      "summary": "Scegliere la copia più recente riapriva la stessa finestra e gli altri servizi non venivano mai aggiornati. Ora i servizi rimasti indietro vengono aggiornati e la finestra compare solo quando due copie sono davvero in conflitto.",
+      "changes": [
+        "Dopo che scegli una copia, Narrarium la scrive in ogni servizio collegato che è rimasto indietro (GitHub, Google Drive, OneDrive) invece di chiedere di nuovo perché quei servizi erano diversi tra loro.",
+        "Quando un servizio è più recente di questo dispositivo e gli altri sono più vecchi, viene adottato il più recente e gli altri si aggiornano, senza finestra.",
+        "La finestra compare ancora quando due copie sono cambiate in modo indipendente (per esempio un servizio modificato da un altro dispositivo mentre anche questo è cambiato) e nulla viene sovrascritto finché non scegli."
+      ]
+    }
+  },
+  {
     "version": "0.102.0",
     "date": "2026-11-24",
     "en": {

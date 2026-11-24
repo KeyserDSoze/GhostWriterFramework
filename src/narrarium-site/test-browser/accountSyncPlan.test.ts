@@ -19,17 +19,38 @@ describe("multi-replica account sync planning", () => {
     expect(plan).toMatchObject({ action: "pull-remote", authoritativeRemote: "google-drive" });
   });
 
-  it("requires a decision when enabled providers hold different snapshots", () => {
+  it("adopts the newest replica and updates the others, without asking, when only some replicas lag", () => {
     const plan = planAccountSync(local({ a: 2 }), [
-      remote("google-drive", { a: 3 }, "new"),
       remote("onedrive", { a: 2 }, "old"),
+      remote("google-drive", { a: 3 }, "new"),
       remote("github", { a: 2 }, "old"),
     ]);
+    expect(plan).toMatchObject({ action: "pull-remote", authoritativeRemote: "google-drive" });
+  });
+
+  it("pushes, and does not ask again, when this device is ahead of replicas that differ from each other", () => {
+    // What is left after choosing «the newest copy»: this device dominates both replicas, which are still different from one another.
+    const plan = planAccountSync(local({ a: 3, b: 1 }), [
+      remote("github", { a: 2 }, "github-old"),
+      remote("google-drive", { a: 1 }, "drive-older"),
+    ]);
+    expect(plan.action).toBe("push-local");
+  });
+
+  it("takes the newest of several replicas that are newer than this device, whatever their order", () => {
+    const behind = remote("github", { a: 3 }, "mid");
+    const newest = remote("google-drive", { a: 4 }, "top");
+    expect(planAccountSync(local({ a: 2 }), [behind, newest])).toMatchObject({ action: "pull-remote", authoritativeRemote: "google-drive" });
+    expect(planAccountSync(local({ a: 2 }), [newest, behind])).toMatchObject({ action: "pull-remote", authoritativeRemote: "google-drive" });
+  });
+
+  it("still requires a decision when two replicas newer than this device conflict with each other", () => {
+    const plan = planAccountSync(local({ a: 2 }), [remote("google-drive", { a: 3 }, "left"), remote("github", { a: 2, b: 1 }, "right")]);
     expect(plan.action).toBe("reconcile");
-    expect(plan.comparisons).toEqual(expect.arrayContaining([
-      { backend: "google-drive", comparison: "behind" },
-      { backend: "onedrive", comparison: "same" },
-    ]));
+  });
+
+  it("still requires a decision when a replica changed on its own since this device", () => {
+    expect(planAccountSync(local({ a: 3 }), [remote("github", { a: 2, b: 1 })]).action).toBe("reconcile");
   });
 
   it("never chooses between concurrent vector clocks using wall-clock time", () => {
