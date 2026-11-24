@@ -22,11 +22,14 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
-import { bookStorageMode, DEFAULT_AUDIT_SETTINGS, DEFAULT_BOOK_EXPORT_SETTINGS, resolveBookAuditSettings, resolveBookExportSettings, resolveBookToken, resolveGitHubRemoteToken, type AuditSettings, type BookEntry, type BookExportSettings, type ParagraphSeparator } from "@/types/settings";
+import { bookStorageMode, DEFAULT_AUDIT_SETTINGS, DEFAULT_BOOK_EXPORT_SETTINGS, resolveBookAuditSettings, resolveBookExportSettings, resolveBookToken, resolveGitHubCredential, resolveGitHubRemoteToken, type AuditSettings, type BookEntry, type BookExportSettings, type ParagraphSeparator } from "@/types/settings";
 import { createBranchFromBase, getDefaultBranch, listBranches } from "@/github/githubClient";
 import { attachLocalBookToGitHub, checkRepositoryTokenHealth } from "@/repository/repositoryService";
-import { BookRepositoryError, deleteEmptyBookRepository, isBookRepositoryError, repositoryNameProblem, type BookRepositoryProgress, type CreateCompleteBookRepositoryResult } from "@/github/bookRepository";
-import { GitHubRepositoryPanel, defaultGitHubRepositoryChoices, ownerOf, useGitHubPreflight, type GitHubRepositoryChoices } from "@/components/book/GitHubRepositoryPanel";
+import { BookRepositoryError, deleteEmptyBookRepository, isBookRepositoryError, type BookRepositoryProgress, type CreateCompleteBookRepositoryResult } from "@/github/bookRepository";
+import { defaultGitHubRepositoryChoices, ownerOf, useGitHubPreflight, type GitHubRepositoryChoices } from "@/components/book/GitHubRepositoryPanel";
+import { GitHubRepositoryPicker } from "@/components/book/GitHubRepositoryPicker";
+import { credentialCacheKey, decisionAction, type RepositoryDecision } from "@/github/repositoryPickerModel";
+import { useConnectionStore } from "@/account/connectionStore";
 import { GitHubCreateFailure, GitHubCreateProgress, GitHubCreateResult } from "@/components/book/GitHubRepositoryOutcome";
 
 // Which token the book uses, and whether the GitHub app reaches it, is a chunk of its own.
@@ -76,13 +79,15 @@ export function BookSettingsPage() {
   const [attachProgress, setAttachProgress] = useState<BookRepositoryProgress | null>(null);
   const [attachFailure, setAttachFailure] = useState<BookRepositoryError | null>(null);
   const [attachedResult, setAttachedResult] = useState<CreateCompleteBookRepositoryResult | null>(null);
-  const [attachRepo, setAttachRepo] = useState(book ? defaultPublishRepositoryName(book.name) : "");
+  const [attachDecision, setAttachDecision] = useState<RepositoryDecision | null>(null);
   const [attaching, setAttaching] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
-  const [overwriteExisting, setOverwriteExisting] = useState(false);
   const attachToken = book ? resolveGitHubRemoteToken(book, settings) : "";
   const attachPreflight = useGitHubPreflight(book && bookStorageMode(book) === "local-only" ? attachToken || undefined : undefined);
-  const attachNameProblem = attachRepo.trim() ? repositoryNameProblem(attachRepo) : null;
+  const connection = useConnectionStore((state) => state.configuration.github);
+  const attachCredential = book ? resolveGitHubCredential(book, settings) : null;
+  const attachApp = attachCredential?.source === "app";
+  const attachCacheKey = credentialCacheKey({ app: attachApp, login: attachApp ? connection?.identity?.username : undefined, token: attachToken });
 
   useEffect(() => {
     if (book) {
@@ -143,13 +148,23 @@ export function BookSettingsPage() {
   async function handleAttachToGitHub() {
     const token = resolveGitHubRemoteToken(currentBook, settings);
     if (!token) { setAttachError(t("bookSettings.connectGithub.noToken")); return; }
-    if (!attachRepo.trim() || repositoryNameProblem(attachRepo)) return;
+    if (!attachDecision?.ready) return;
     setAttaching(true);
     setAttachError(null);
     setAttachFailure(null);
     setAttachProgress({ step: "repository" });
     try {
-      const attached = await attachLocalBookToGitHub({ book: currentBook, token, owner: ownerOf(attachChoices) ?? "", repo: attachRepo.trim(), createRepository: true, overwriteExisting, visibility: attachChoices.visibility, pages: attachChoices.pages ? "enable" : "skip", onProgress: setAttachProgress });
+      // A repository that is a Narrarium book already is added as a book of its own: the book of this device stays as it is, and nothing is written to it.
+      if (attachDecision.outcome?.kind === "connect-book" && attachDecision.repository) {
+        const repository = attachDecision.repository;
+        const entry: BookEntry = { id: crypto.randomUUID(), owner: repository.owner, repo: repository.name, name: repository.name, tokenIndex: currentBook.tokenIndex ?? null, bookToken: currentBook.bookToken, bookTokenLabel: currentBook.bookTokenLabel, useGitHubConnection: currentBook.useGitHubConnection, addedAt: new Date().toISOString() };
+        patchSettings({ books: [...settings.books, entry] });
+        await save();
+        navigate(`/app/books/${entry.id}`);
+        return;
+      }
+      const existing = attachDecision.mode === "existing";
+      const attached = await attachLocalBookToGitHub({ book: currentBook, token, owner: attachDecision.owner ?? ownerOf(attachChoices) ?? "", repo: attachDecision.name, createRepository: !existing, overwriteExisting: attachDecision.outcome?.kind === "publish-overwrite", visibility: attachChoices.visibility, pages: !existing && attachChoices.pages ? "enable" : "skip", onProgress: setAttachProgress });
       const updated: BookEntry = { ...currentBook, storageMode: "github", owner: attached.owner, repo: attached.repo, activeBranch: attached.branch };
       // The result stays on the screen (this card goes away once the book is on GitHub): the book is opened from its button.
       setAttachedResult(attached.creation);
@@ -263,17 +278,24 @@ export function BookSettingsPage() {
             <CardDescription>{t("bookSettings.connectGithub.description")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <GitHubRepositoryPanel choices={attachChoices} onChange={setAttachChoices} preflight={attachPreflight} disabled={attaching} hasToken={Boolean(attachToken)} />
-            <div className="grid gap-2 sm:max-w-md">
-              <Label htmlFor="attach-repo">{t("bookSettings.connectGithub.repository")}</Label>
-              <Input id="attach-repo" className="[@media(pointer:coarse)]:h-11" value={attachRepo} aria-invalid={attachNameProblem ? true : undefined} aria-describedby={attachNameProblem ? "attach-repo-problem" : undefined} disabled={attaching} onChange={(event) => setAttachRepo(event.target.value)} />
-              {attachNameProblem && <p id="attach-repo-problem" className="text-xs text-destructive">{t(`github.createBook.panel.nameProblem.${attachNameProblem}`)}</p>}
-            </div>
-            <div className="flex items-start gap-3 rounded-md border p-3"><Switch id="attach-overwrite" checked={overwriteExisting} disabled={attaching} onCheckedChange={setOverwriteExisting} /><div><Label htmlFor="attach-overwrite">{t("bookSettings.connectGithub.overwrite")}</Label><p className="text-xs text-muted-foreground">{t("bookSettings.connectGithub.overwriteHint")}</p></div></div>
+            <GitHubRepositoryPicker
+              context="attach"
+              token={attachToken}
+              app={attachApp}
+              login={attachApp ? connection?.identity?.username : undefined}
+              cacheKey={attachCacheKey}
+              defaultName={defaultPublishRepositoryName(currentBook.name)}
+              choices={attachChoices}
+              onChoicesChange={setAttachChoices}
+              preflight={attachPreflight}
+              books={settings.books}
+              disabled={attaching}
+              onDecision={setAttachDecision}
+            />
             {attachError && <Alert variant="destructive"><AlertDescription>{attachError}</AlertDescription></Alert>}
             <GitHubCreateProgress progress={attachProgress} busy={attaching} />
-            {attachFailure && <GitHubCreateFailure error={attachFailure} owner={ownerOf(attachChoices) ?? ""} repo={attachRepo.trim()} busy={attaching} onRetry={() => void handleAttachToGitHub()} onDelete={handleDeleteEmptyAttachRepository} />}
-            <Button className="h-auto min-h-10 whitespace-normal text-left [@media(pointer:coarse)]:min-h-11" onClick={() => void handleAttachToGitHub()} disabled={attaching || !attachRepo.trim() || Boolean(attachNameProblem)}>{attaching ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Github className="mr-1 h-4 w-4" />}{t("bookSettings.connectGithub.submit")}</Button>
+            {attachFailure && <GitHubCreateFailure error={attachFailure} owner={attachDecision?.owner ?? ownerOf(attachChoices) ?? ""} repo={attachDecision?.name ?? ""} busy={attaching} onRetry={() => void handleAttachToGitHub()} onDelete={handleDeleteEmptyAttachRepository} />}
+            <Button className="h-auto min-h-10 whitespace-normal text-left [@media(pointer:coarse)]:min-h-11" onClick={() => void handleAttachToGitHub()} disabled={attaching || !attachDecision?.ready}>{attaching ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Github className="mr-1 h-4 w-4" />}{attachDecision && decisionAction(attachDecision) !== "create" ? t(`github.picker.action.${decisionAction(attachDecision)}`) : t("bookSettings.connectGithub.submit")}</Button>
           </CardContent>
         </Card>
       )}

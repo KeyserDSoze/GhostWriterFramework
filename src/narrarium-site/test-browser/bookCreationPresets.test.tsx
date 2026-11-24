@@ -5,6 +5,8 @@ import { AUTOPILOT_PRESETS, parseMarkdown, parseOutlineChapterPath, type Autopil
 import { createCompleteBookRepository, type BookRepositoryFile } from "@/github/bookRepository";
 import { parseOutlineBrief } from "@/autopilot/outlineBrief";
 import { chooseOption, polyfillRadix } from "./helpers/radix";
+import { installFakeGitHubApi } from "./helpers/fakeGitHubApi";
+import { clearRepositoryListingCache } from "@/github/useRepositoryListing";
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { AddBookPage } from "@/pages/AddBookPage";
@@ -33,7 +35,6 @@ vi.mock("@/github/bookRepository", async (importOriginal) => ({
   }),
   preflightBookRepository: vi.fn(async () => ({ login: "acme", tokenKind: "classic", scopes: ["repo", "workflow"], organizations: [], canCreate: "yes", canWriteWorkflows: "yes", issues: [] })),
 }));
-vi.mock("@/github/useRepositories", () => ({ useRepositories: () => ({ repos: [], loading: false, error: null }) }));
 vi.mock("@/drive/useSettings", () => ({ useSettings: () => ({ save: vi.fn(async () => true) }) }));
 
 const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options) as string;
@@ -67,6 +68,9 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  // GitHub reaches no repository of this person: the picker starts on the creation of a new one, which is what these tests are about.
+  installFakeGitHubApi({ repositories: [] });
+  clearRepositoryListingCache();
   await i18n.changeLanguage("en");
   mocks.created.length = 0;
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
@@ -74,6 +78,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
   await i18n.changeLanguage("en");
 });
@@ -132,6 +137,7 @@ describe("the sizes of a new book", () => {
     chooseOption(screen.getAllByRole("combobox")[0], "GitHub");
     fireEvent.click(size(t("autopilot.presets.story.name")));
     title("The Glass Harbor");
+    await waitFor(() => expect(screen.getByRole("radio", { name: t("github.picker.mode.create") })).toBeChecked());
     fireEvent.click(screen.getByRole("button", { name: t("addBook.createRepo") }));
     await waitFor(() => expect(mocks.created).toHaveLength(1));
     expect(created().kind).toBe("github");

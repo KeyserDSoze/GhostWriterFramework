@@ -16,10 +16,13 @@ test("the page has no text of its own written in the code for one language or th
   assert.doesNotMatch(page, /language === "it" \?/, "no inline Italian/English pair");
   assert.doesNotMatch(page, /<Label htmlFor="attach-(owner|repo)">(Owner|Repository)<\/Label>/, "the labels of the fields are translated");
   // The owner is chosen in the panel that the page shares with the page that adds a book (its texts are `github.createBook.*`), no longer typed in a field of the card.
-  assert.match(page, /<GitHubRepositoryPanel /, "the owner, the visibility and Pages are chosen in the shared panel");
-  for (const key of ["title", "description", "repository", "overwrite", "overwriteHint", "submit", "noToken"]) {
+  assert.match(page, /<GitHubRepositoryPicker\s/, "the repository (one that is there, or a new one with its owner, visibility and Pages) is chosen in the shared picker");
+  for (const key of ["title", "description", "submit", "noToken"]) {
     assert.ok(page.includes(`t("bookSettings.connectGithub.${key}")`), `${key} comes from the catalogue`);
   }
+  // The switch that replaces what is in a repository that is there lives in the picker now (the same one where a book is added), with the same words.
+  const picker = await read("src/components/book/GitHubRepositoryPicker.tsx");
+  for (const key of ["overwrite", "overwriteHint", "noToken"]) assert.ok(picker.includes(`t("bookSettings.connectGithub.${key}")`), `${key} comes from the catalogue, in the picker`);
   assert.ok(page.includes('t("bookSettings.deviceOnly")'), "and the line that says the book is on this device only");
   assert.match(page, /import "@\/i18n\/bookGithub";/, "the page loads its catalogue");
 });

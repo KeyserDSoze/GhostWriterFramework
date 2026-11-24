@@ -2,6 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { chooseOption, polyfillRadix } from "./helpers/radix";
+import { installFakeGitHubApi, type FakeApiOptions } from "./helpers/fakeGitHubApi";
+import { clearRepositoryListingCache } from "@/github/useRepositoryListing";
 import i18n from "@/i18n";
 import { AddBookPage } from "@/pages/AddBookPage";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -12,7 +14,6 @@ import { BookRepositoryError, PAGES_WORKFLOW_PATH, createCompleteBookRepository,
 // is made, half made or refused. The service is replaced (see bookRepository.test.ts for it); the files it is given are the real ones of the template.
 
 vi.mock("@/repository/repositoryService", () => ({ createLocalOnlyBookRepository: vi.fn() }));
-vi.mock("@/github/useRepositories", () => ({ useRepositories: () => ({ repos: [], loading: false, error: null }) }));
 vi.mock("@/drive/useSettings", () => ({ useSettings: () => ({ save: vi.fn(async () => true) }) }));
 vi.mock("@/github/bookRepository", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/github/bookRepository")>()),
@@ -47,15 +48,26 @@ async function fill(title = "The Glass Harbor") {
   await screen.findByRole("option", { name: "acme (organization)" });
 }
 const submit = () => fireEvent.click(screen.getByRole("button", { name: t("addBook.createRepo") }));
+const pickRepository = async (name: string) => {
+  const input = await screen.findByRole("combobox", { name: t("github.picker.list.label") });
+  fireEvent.change(input, { target: { value: name } });
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  fireEvent.keyDown(input, { key: "Enter" });
+};
 
 beforeAll(() => polyfillRadix());
+/** GitHub, for the picker: by default it reaches no repository of this person, so the page starts on the creation of a new one. */
+const github = (options: FakeApiOptions = {}) => installFakeGitHubApi({ repositories: [], ...options });
+
 beforeEach(async () => {
+  github();
+  clearRepositoryListingCache();
   await i18n.changeLanguage("en");
   create.mockReset();
   vi.mocked(deleteEmptyBookRepository).mockClear();
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, defaultGitHubToken: "ghp_test" } });
 });
-afterEach(async () => { cleanup(); await i18n.changeLanguage("en"); });
+afterEach(async () => { cleanup(); vi.unstubAllGlobals(); await i18n.changeLanguage("en"); });
 
 describe("creating a book on GitHub from the page that adds one", () => {
   it("asks for the owner, the visibility and Pages, with the checklist, and gives the service what was chosen and the files of a complete book", async () => {
@@ -128,9 +140,10 @@ describe("creating a book on GitHub from the page that adds one", () => {
     await fill();
     submit();
     expect(await screen.findByRole("alert")).toHaveTextContent("A repository named «book-the-glass-harbor» already exists in");
-    fireEvent.change(screen.getByPlaceholderText("book-my-story"), { target: { value: "my book" } });
+    const name = screen.getByLabelText(t("github.picker.create.nameLabel"));
+    fireEvent.change(name, { target: { value: "my book" } });
     expect(screen.getByText(t("github.createBook.panel.nameProblem.characters"))).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("book-my-story")).toHaveAttribute("aria-invalid", "true");
+    expect(name).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByRole("button", { name: t("addBook.createRepo") })).toBeDisabled();
   });
 
@@ -186,5 +199,102 @@ describe("creating a book on GitHub from the page that adds one", () => {
     expect(within(region).getByText(/questo token non può scrivere i file dei workflow/)).toBeInTheDocument();
     expect(within(region).getByRole("button", { name: "Copia il workflow" })).toBeInTheDocument();
     expect(create.mock.calls[0][0].files.find((file) => file.path === "book.md")).toMatchObject({ content: expect.stringContaining("language: it") });
+  });
+});
+
+describe("starting from a repository that is there", () => {
+  const listed = (holds: "book" | "empty" | "other", extra: Record<string, unknown> = {}) => github({ repositories: [{ owner: "ada", name: "giungla", holds, ...extra }] });
+
+  it("lists the repositories first, asks nothing about a title or a size for a book that is there, and adds it as it is (nothing is written)", async () => {
+    listed("book");
+    renderPage();
+    chooseOption(screen.getAllByRole("combobox")[0], "GitHub");
+    await pickRepository("giungla");
+    expect(await screen.findByText(/already a Narrarium book: it is added as it is/)).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: t("autopilot.presets.legend") })).not.toBeInTheDocument();
+    const button = await screen.findByRole("button", { name: t("github.picker.action.connectBook") });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toMatch(/^\/app\/books\/[0-9a-f-]{36}$/));
+    expect(create).not.toHaveBeenCalled();
+    const books = useSettingsStore.getState().settings.books;
+    expect(books[books.length - 1]).toMatchObject({ owner: "ada", repo: "giungla", name: "giungla" });
+    expect(books[books.length - 1].bookToken).toBeUndefined();
+  });
+
+  it("writes the new book into an empty repository, with the title, and does not make a new one", async () => {
+    listed("empty");
+    create.mockResolvedValue(made({ repo: "giungla", createdRepository: false }));
+    renderPage();
+    chooseOption(screen.getAllByRole("combobox")[0], "GitHub");
+    fireEvent.change(screen.getByPlaceholderText(t("addBook.bookTitlePlaceholder")), { target: { value: "Il libro della giungla" } });
+    await pickRepository("giungla");
+    expect(await screen.findByText("ada/giungla is empty: the new book is written into it.")).toBeInTheDocument();
+    const button = await screen.findByRole("button", { name: t("github.picker.action.publish") });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create.mock.calls[0][0]).toMatchObject({ owner: "ada", name: "giungla", existing: "empty", pages: "skip", description: "Narrarium book: Il libro della giungla" });
+    expect(await screen.findByRole("region", { name: t("github.createBook.result.title") })).toBeInTheDocument();
+  });
+
+  it("needs a title to write a book into a repository", async () => {
+    listed("empty");
+    renderPage();
+    chooseOption(screen.getAllByRole("combobox")[0], "GitHub");
+    await pickRepository("giungla");
+    expect(await screen.findByRole("button", { name: t("github.picker.action.publish") })).toBeDisabled();
+  });
+
+  it("replaces what is in a repository with other files only when the person turned the replacement on, and the button says so", async () => {
+    listed("other");
+    create.mockResolvedValue(made({ repo: "giungla", createdRepository: false }));
+    renderPage();
+    chooseOption(screen.getAllByRole("combobox")[0], "GitHub");
+    fireEvent.change(screen.getByPlaceholderText(t("addBook.bookTitlePlaceholder")), { target: { value: "Il libro della giungla" } });
+    await pickRepository("giungla");
+    const toggle = await screen.findByRole("switch", { name: t("github.picker.overwrite.add") });
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByRole("button", { name: t("github.picker.action.publish") })).toBeDisabled();
+    fireEvent.click(toggle);
+    const button = await screen.findByRole("button", { name: t("github.picker.action.publishOverwrite") });
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create.mock.calls[0][0]).toMatchObject({ owner: "ada", name: "giungla", existing: "overwrite" });
+  });
+
+  it("starts on the list for a person with repositories and on the creation for a person with none, and lets either switch", async () => {
+    listed("book");
+    renderPage();
+    chooseOption(screen.getAllByRole("combobox")[0], "GitHub");
+    expect(await screen.findByRole("radio", { name: t("github.picker.mode.existing") })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: t("github.picker.mode.create") }));
+    expect(await screen.findByLabelText(t("github.picker.create.nameLabel"))).toHaveValue("");
+    fireEvent.change(screen.getByPlaceholderText(t("addBook.bookTitlePlaceholder")), { target: { value: "Il libro della giungla" } });
+    expect(screen.getByLabelText(t("github.picker.create.nameLabel"))).toHaveValue("book-il-libro-della-giungla");
+  });
+
+  it("uses the GitHub connection when there is no token of its own, and marks the book as one that uses it", async () => {
+    const { useConnectionStore } = await import("@/account/connectionStore");
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, defaultGitHubToken: "" } });
+    useConnectionStore.setState({ configuration: { github: { backend: "github", method: "github-app", credentialKind: "app", token: "ghu_app", identity: { provider: "github", providerAccountId: "1", displayName: "Ada", username: "ada" }, rememberMe: false, accountSyncEnabled: false, repositoryName: "narrarium.settings", replica: { enabled: false } } } } as never);
+    try {
+      const api = installFakeGitHubApi({ repositories: [{ owner: "ada", name: "giungla" }], installations: [{ id: 7, account: "ada" }] });
+      renderPage();
+      chooseOption(screen.getAllByRole("combobox")[0], "GitHub");
+      await pickRepository("giungla");
+      expect(await screen.findByText(t("github.picker.app.only"))).toBeInTheDocument();
+      expect(api.calls.some((call) => call.path.startsWith("/user/installations/7/repositories") && call.auth === "Bearer ghu_app")).toBe(true);
+      const button = await screen.findByRole("button", { name: t("github.picker.action.connectBook") });
+      await waitFor(() => expect(button).toBeEnabled());
+      fireEvent.click(button);
+      await waitFor(() => expect(useSettingsStore.getState().settings.books.some((book) => book.repo === "giungla")).toBe(true));
+      const books = useSettingsStore.getState().settings.books;
+      expect(books[books.length - 1]).toMatchObject({ owner: "ada", repo: "giungla", useGitHubConnection: true });
+      expect(books[books.length - 1].bookToken).toBeUndefined();
+    } finally {
+      useConnectionStore.setState({ configuration: {} } as never);
+    }
   });
 });

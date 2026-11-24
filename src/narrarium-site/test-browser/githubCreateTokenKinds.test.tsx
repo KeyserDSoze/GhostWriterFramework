@@ -139,6 +139,11 @@ describe.each(["en", "it"] as const)("the refusals, in words that name what the 
     const fake = createFakeGitHub();
     const preflight = await preflightBookRepository({ token: APP, octokit: fake.octokit });
     render(<GitHubRepositoryPanel choices={defaultGitHubRepositoryChoices()} onChange={() => undefined} preflight={{ status: "ready", preflight }} hasToken />);
-    expect(screen.getByText(language === "it" ? /Una connessione GitHub \(l'app\)/ : /A GitHub connection \(the app\)/, { exact: false })).toBeInTheDocument();
+    // It speaks of the app, not of a token: where it works, and the three permissions it needs.
+    const note = screen.getByText(language === "it" ? /Questa è la connessione GitHub \(l'app\)/ : /This is the GitHub connection \(the app\)/, { exact: false });
+    expect(note).toBeInTheDocument();
+    for (const permission of ["Repository creation", "Contents", "Workflows"]) expect(note).toHaveTextContent(permission);
+    expect(screen.getByRole("heading", { name: language === "it" ? "Sulla connessione GitHub (l'app)" : "About the GitHub connection (the app)" })).toBeInTheDocument();
+    expect(screen.queryByText(/grana fine|fine-grained/)).not.toBeInTheDocument();
   });
 });

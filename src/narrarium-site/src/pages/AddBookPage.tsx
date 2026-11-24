@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Search, Loader2, Github, Lock, Globe, Plus, HardDrive } from "lucide-react";
+import { Loader2, Plus, HardDrive } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Select,
@@ -17,10 +16,11 @@ import {
 } from "@/components/ui/select";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useSettings } from "@/drive/useSettings";
-import { useRepositories } from "@/github/useRepositories";
-import type { RepoSummary } from "@/github/githubClient";
-import { BookRepositoryError, createCompleteBookRepository, deleteEmptyBookRepository, isBookRepositoryError, repositoryNameProblem, type BookRepositoryProgress, type CreateCompleteBookRepositoryResult } from "@/github/bookRepository";
-import { GitHubRepositoryPanel, defaultGitHubRepositoryChoices, ownerOf, useGitHubPreflight, type GitHubRepositoryChoices } from "@/components/book/GitHubRepositoryPanel";
+import { BookRepositoryError, classifyTokenKind, createCompleteBookRepository, deleteEmptyBookRepository, isBookRepositoryError, type BookRepositoryProgress, type CreateCompleteBookRepositoryResult } from "@/github/bookRepository";
+import { defaultGitHubRepositoryChoices, ownerOf, useGitHubPreflight, type GitHubRepositoryChoices } from "@/components/book/GitHubRepositoryPanel";
+import { GitHubRepositoryPicker } from "@/components/book/GitHubRepositoryPicker";
+import { credentialCacheKey, decisionAction, type RepositoryDecision } from "@/github/repositoryPickerModel";
+import { useConnectionStore } from "@/account/connectionStore";
 import { GitHubCreateFailure, GitHubCreateProgress, GitHubCreateResult } from "@/components/book/GitHubRepositoryOutcome";
 import "@/i18n/githubCreateBook";
 import { type BookEntry } from "@/types/settings";
@@ -43,8 +43,7 @@ export function AddBookPage() {
   const [customToken, setCustomToken] = useState("");
   const [customTokenLabel, setCustomTokenLabel] = useState("");
   const [newBookTitle, setNewBookTitle] = useState("");
-  const [newRepoName, setNewRepoName] = useState("");
-  const [repoNameEdited, setRepoNameEdited] = useState(false);
+  const [decision, setDecision] = useState<RepositoryDecision | null>(null);
   const [repoChoices, setRepoChoices] = useState<GitHubRepositoryChoices>(defaultGitHubRepositoryChoices);
   const [progress, setProgress] = useState<BookRepositoryProgress | null>(null);
   const [failure, setFailure] = useState<BookRepositoryError | null>(null);
@@ -56,68 +55,68 @@ export function AddBookPage() {
   // The size a new book starts from: its words per scene, its review settings and one empty chapter entry per chapter. Nothing for none.
   const [startSize, setStartSize] = useState<AutopilotPresetId | null>(null);
 
+  const connection = useConnectionStore((state) => state.configuration.github);
+  // Without a token of its own to pick, the GitHub connection (the app, or a token connected in Settings) is the one to use.
+  useEffect(() => {
+    if (selectedToken === "default" && !settings.defaultGitHubToken && connection?.token) setSelectedToken("connection");
+  }, [selectedToken, settings.defaultGitHubToken, connection?.token]);
+
   const activeToken =
-    selectedToken === "default"
-      ? settings.defaultGitHubToken
-      : selectedToken === "custom"
-        ? customToken.trim()
-        : settings.extraGitHubTokens[Number(selectedToken)]?.token ?? "";
+    selectedToken === "connection"
+      ? connection?.token ?? ""
+      : selectedToken === "default"
+        ? settings.defaultGitHubToken
+        : selectedToken === "custom"
+          ? customToken.trim()
+          : settings.extraGitHubTokens[Number(selectedToken)]?.token ?? "";
+  const activeApp = selectedToken === "connection" ? connection?.credentialKind === "app" : classifyTokenKind(activeToken) === "app";
+  const cacheKey = credentialCacheKey({ app: activeApp, login: selectedToken === "connection" ? connection?.identity?.username : undefined, token: activeToken });
 
   const preflight = useGitHubPreflight(storageMode === "github" ? activeToken || undefined : undefined);
-  const nameProblem = storageMode === "github" && newRepoName.trim() ? repositoryNameProblem(newRepoName) : null;
 
-  const { repos, loading, error } = useRepositories(
-    storageMode === "github" ? activeToken || undefined : undefined,
-  );
-
-  const hasPrivateRepos = repos.some((r) => r.private);
-  const hasPublicRepos = repos.some((r) => !r.private);
-  const showScopeHint =
-    activeToken && !loading && !error && hasPublicRepos && !hasPrivateRepos;
-
-  const [search, setSearch] = useState("");
-  const [adding, setAdding] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!repoNameEdited) setNewRepoName(defaultRepositoryName(newBookTitle));
-  }, [newBookTitle, repoNameEdited]);
-
-  const filtered = repos.filter(
-    (r) =>
-      r.full_name.toLowerCase().includes(search.toLowerCase()) ||
-      (r.description ?? "").toLowerCase().includes(search.toLowerCase()),
-  );
-
-  async function handleAdd(repo: RepoSummary) {
-    setAdding(repo.full_name);
+  /** The book as it is stored once its repository is known: the credential it uses is the one the person picked on this page. */
+  function bookEntry(input: { owner: string; repo: string; name: string; activeBranch?: string; startPreset?: AutopilotPresetId }): BookEntry {
     const usingCustom = selectedToken === "custom";
-    const entry: BookEntry = {
+    const usingConnection = selectedToken === "connection";
+    return {
       id: crypto.randomUUID(),
-      owner: repo.owner,
-      repo: repo.name,
-      name: repo.name,
-      tokenIndex:
-        selectedToken === "default" || usingCustom ? null : Number(selectedToken),
+      owner: input.owner,
+      repo: input.repo,
+      name: input.name,
+      tokenIndex: selectedToken === "default" || usingCustom || usingConnection ? null : Number(selectedToken),
       bookToken: usingCustom ? customToken.trim() : undefined,
-      bookTokenLabel: usingCustom
-        ? customTokenLabel.trim() || `${repo.name} PAT`
-        : undefined,
+      bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${input.repo} PAT` : undefined,
+      useGitHubConnection: usingConnection ? true : undefined,
+      activeBranch: input.activeBranch,
+      startPreset: input.startPreset,
       addedAt: new Date().toISOString(),
     };
-    const next = [...settings.books, entry];
-    patchSettings({ books: next });
+  }
+
+  /** A repository that is a Narrarium book already is added as it is: nothing in it is written. */
+  async function addExistingBook(repository: { owner: string; name: string }) {
+    setCreatingRepo(true);
+    setCreateError(null);
     try {
+      const entry = bookEntry({ owner: repository.owner, repo: repository.name, name: repository.name });
+      patchSettings({ books: [...settings.books, entry] });
       await save();
       navigate(`/app/books/${entry.id}`);
+    } catch (err) {
+      setCreateError(String(err));
     } finally {
-      setAdding(null);
+      setCreatingRepo(false);
     }
   }
 
   async function handleCreateNewBook(retry = false) {
     const title = newBookTitle.trim();
-    const repoName = newRepoName.trim();
-    if (!title || (storageMode === "github" && (!repoName || !activeToken || repositoryNameProblem(repoName)))) return;
+    const github = storageMode === "github";
+    if (github && (!activeToken || !decision?.ready)) return;
+    // A repository that is a book already needs no title: it is added as it is.
+    if (github && decision?.outcome?.kind === "connect-book" && decision.repository) { await addExistingBook(decision.repository); return; }
+    if (!title) return;
+    const repoName = decision?.name ?? "";
     setCreateError(null);
     setFailure(null);
     setCreatingRepo(true);
@@ -143,35 +142,25 @@ export function AddBookPage() {
         navigate(`/app/books/${entry.id}`);
         return;
       }
-      failureOwner.current = ownerOf(repoChoices) ?? "";
+      // A repository that is there is filled (empty) or replaced (when the person said so); a new one is made with what was chosen.
+      const existingTarget = decision?.mode === "existing" ? decision : null;
+      failureOwner.current = existingTarget?.owner ?? ownerOf(repoChoices) ?? "";
       setProgress({ step: "repository" });
       // The template is a chunk of its own (about 400 KB): it is fetched here, when a repository is made, and by no other page.
       const { loadBookTemplate, composeCompleteBookFiles } = await import("@/narrarium/bookTemplate");
       const files = composeCompleteBookFiles(await loadBookTemplate(), { title, language: settings.ui.language, files: startSize ? presetOutlineFiles(startSize) : undefined });
       const result = await createCompleteBookRepository({
         token: activeToken,
-        owner: ownerOf(repoChoices),
+        owner: existingTarget ? existingTarget.owner : ownerOf(repoChoices),
         name: repoName,
         description: `Narrarium book: ${title}`,
         visibility: repoChoices.visibility,
         files,
-        existing: retry ? "empty" : "error",
-        pages: repoChoices.pages ? "enable" : "skip",
+        existing: existingTarget ? (existingTarget.overwrite ? "overwrite" : "empty") : retry ? "empty" : "error",
+        pages: !existingTarget && repoChoices.pages ? "enable" : "skip",
         onProgress: setProgress,
       });
-      const usingCustom = selectedToken === "custom";
-      const entry: BookEntry = {
-        id: crypto.randomUUID(),
-        owner: result.owner,
-        repo: result.repo,
-        name: title,
-        tokenIndex: selectedToken === "default" || usingCustom ? null : Number(selectedToken),
-        bookToken: usingCustom ? customToken.trim() : undefined,
-        bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${result.repo} PAT` : undefined,
-        activeBranch: result.defaultBranch,
-        startPreset: startSize ?? undefined,
-        addedAt: new Date().toISOString(),
-      };
+      const entry = bookEntry({ owner: result.owner, repo: result.repo, name: title, activeBranch: result.defaultBranch, startPreset: startSize ?? undefined });
       patchSettings({ books: [...settings.books, entry] });
       setCreated({ result, bookId: entry.id });
       await save();
@@ -183,6 +172,10 @@ export function AddBookPage() {
       setProgress(null);
     }
   }
+
+  const connectsBook = storageMode === "github" && decision?.outcome?.kind === "connect-book";
+  const action = decision ? decisionAction(decision) : "create";
+  const submitDisabled = creatingRepo || (storageMode === "local-only" ? !newBookTitle.trim() : !activeToken || !decision?.ready || (!connectsBook && !newBookTitle.trim()));
 
   async function handleDeleteEmptyRepository() {
     const empty = failure?.repository;
@@ -213,23 +206,6 @@ export function AddBookPage() {
         </Alert>
       )}
 
-      {showScopeHint && (
-        <Alert>
-          <Lock className="h-4 w-4" />
-          <AlertDescription>
-            {t("addBook.privateHint1")}{" "}
-            <strong>
-              <code>repo</code>
-            </strong>{" "}
-            {t("addBook.privateHint2")}{" "}
-            <strong>{t("addBook.allRepositories")}</strong>.{" "}
-            <Link className="underline" to="/app/settings">
-              {t("addBook.updateToken")}
-            </Link>
-          </AlertDescription>
-        </Alert>
-      )}
-
       <div className="grid gap-2 sm:max-w-xs">
         <Label>{settings.ui.language === "it" ? "Archiviazione" : "Storage"}</Label>
         <Select value={storageMode} onValueChange={(value) => setStorageMode(value as "local-only" | "github")}>
@@ -246,6 +222,7 @@ export function AddBookPage() {
             <SelectValue placeholder={t("addBook.selectToken")} />
           </SelectTrigger>
           <SelectContent>
+            {connection?.token && <SelectItem value="connection">{t("github.picker.tokenConnection", { account: connection.identity?.username ?? "GitHub" })}</SelectItem>}
             <SelectItem value="default">
               {t("addBook.defaultToken")}
               {settings.defaultGitHubToken
@@ -290,108 +267,37 @@ export function AddBookPage() {
           <CardDescription>{t("addBook.createNewDescription")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label>{t("addBook.bookTitle")}</Label>
-              <Input value={newBookTitle} onChange={(e) => setNewBookTitle(e.target.value)} placeholder={t("addBook.bookTitlePlaceholder")} />
-            </div>
-            {storageMode === "github" && <div className="grid gap-2">
-              <Label>{t("addBook.repositoryName")}</Label>
-              <Input value={newRepoName} aria-invalid={nameProblem ? true : undefined} aria-describedby="add-book-repo-name-hint" onChange={(e) => { setRepoNameEdited(true); setNewRepoName(e.target.value); }} placeholder="book-my-story" />
-              <p id="add-book-repo-name-hint" className={nameProblem ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>{nameProblem ? t(`github.createBook.panel.nameProblem.${nameProblem}`) : newRepoName.trim() ? t("addBook.repoNameHint") : t("addBook.repoNameHintEmpty")}</p>
-            </div>}
+          <div className="grid gap-2 sm:max-w-md">
+            <Label htmlFor="add-book-title">{t("addBook.bookTitle")}</Label>
+            <Input id="add-book-title" value={newBookTitle} onChange={(e) => setNewBookTitle(e.target.value)} placeholder={t("addBook.bookTitlePlaceholder")} />
           </div>
-          <StartSizePicker value={startSize} onChange={setStartSize} />
-          {storageMode === "github" && <GitHubRepositoryPanel choices={repoChoices} onChange={setRepoChoices} preflight={preflight} disabled={creatingRepo} hasToken={Boolean(activeToken)} />}
+          {!connectsBook && <StartSizePicker value={startSize} onChange={setStartSize} />}
+          {storageMode === "github" && (
+            <GitHubRepositoryPicker
+              context="add"
+              token={activeToken}
+              app={activeApp}
+              login={selectedToken === "connection" ? connection?.identity?.username : undefined}
+              cacheKey={cacheKey}
+              defaultName={defaultRepositoryName(newBookTitle)}
+              choices={repoChoices}
+              onChoicesChange={setRepoChoices}
+              preflight={preflight}
+              books={settings.books}
+              disabled={creatingRepo}
+              onDecision={setDecision}
+            />
+          )}
           {createError && <Alert variant="destructive"><AlertDescription>{createError}</AlertDescription></Alert>}
           {storageMode === "github" && <GitHubCreateProgress progress={progress} busy={creatingRepo} />}
-          {failure && <GitHubCreateFailure error={failure} owner={failureOwner.current} repo={newRepoName.trim()} busy={creatingRepo} onRetry={() => void handleCreateNewBook(true)} onDelete={handleDeleteEmptyRepository} />}
-          <Button className="w-full sm:w-fit [@media(pointer:coarse)]:h-11" onClick={() => void handleCreateNewBook()} disabled={creatingRepo || !newBookTitle.trim() || (storageMode === "github" && (!activeToken || !newRepoName.trim() || Boolean(nameProblem)))}>
+          {failure && <GitHubCreateFailure error={failure} owner={failureOwner.current} repo={decision?.name ?? ""} busy={creatingRepo} onRetry={() => void handleCreateNewBook(true)} onDelete={handleDeleteEmptyRepository} />}
+          <Button className="w-full sm:w-fit [@media(pointer:coarse)]:h-11" onClick={() => void handleCreateNewBook()} disabled={submitDisabled}>
             {creatingRepo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : storageMode === "local-only" ? <HardDrive className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
-            {creatingRepo ? t("addBook.creatingRepo") : storageMode === "local-only" ? (settings.ui.language === "it" ? "Crea libro locale" : "Create local book") : t("addBook.createRepo")}
+            {creatingRepo ? t("addBook.creatingRepo") : storageMode === "local-only" ? (settings.ui.language === "it" ? "Crea libro locale" : "Create local book") : action === "create" ? t("addBook.createRepo") : t(`github.picker.action.${action}`)}
           </Button>
         </CardContent>
       </Card>}
 
-      {storageMode === "github" && !created && <Card>
-        <CardHeader>
-          <CardTitle>{t("addBook.existingReposTitle")}</CardTitle>
-          <CardDescription>{t("addBook.existingReposDescription")}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          className="pl-9"
-          placeholder={t("addBook.filterRepos")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          disabled={!activeToken}
-        />
-      </div>
-
-      {/* Repo list */}
-      {loading && (
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          {t("addBook.loadingRepos")}
-        </div>
-      )}
-
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {!loading && !error && filtered.length === 0 && activeToken && (
-        <p className="text-sm text-muted-foreground">
-          {t("addBook.noRepos")}
-        </p>
-      )}
-
-      <div className="space-y-2">
-        {filtered.map((repo) => {
-          const alreadyAdded = settings.books.some(
-            (b) => b.owner === repo.owner && b.repo === repo.name,
-          );
-          return (
-            <Card key={repo.id} className="p-4">
-              <div className="flex items-start gap-4">
-                <Github className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-                <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-2 text-sm font-medium">
-                   {repo.full_name}
-                   {repo.private ? (
-                     <Lock className="h-3 w-3 text-muted-foreground" />
-                  ) : (
-                    <Globe className="h-3 w-3 text-muted-foreground" />
-                  )}
-                  </p>
-                  {repo.description && <p className="mt-1 text-xs text-muted-foreground">{repo.description}</p>}
-                </div>
-                <div className="shrink-0">
-                  {alreadyAdded ? (
-                    <Badge variant="secondary">{t("addBook.added")}</Badge>
-                  ) : (
-                    <Button
-                      size="sm"
-                      disabled={adding === repo.full_name}
-                      onClick={() => void handleAdd(repo)}
-                    >
-                      {adding === repo.full_name ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : null}
-                      {t("addBook.add")}
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </Card>
-          );
-        })}
-      </div>
-        </CardContent>
-      </Card>}
     </div>
   );
 }

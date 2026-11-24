@@ -6,7 +6,6 @@ const bookGithubEn = {
     connectGithub: {
       title: "Connect this book to GitHub",
       description: "The local working copy is kept and published to a GitHub repository, together with the reader, the Pages workflow and the files the framework gives every book.",
-      repository: "Repository",
       overwrite: "Overwrite existing repository",
       overwriteHint: "If the repository is not empty, its branch will be replaced by this local book.",
       submit: "Create or connect the repository",

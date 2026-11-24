@@ -37,8 +37,10 @@ Only for a token: in Narrarium open **Settings → GitHub** and save the token a
 
 Open **My Books → Add Book**.
 
-- **Connect** an existing Narrarium repository from the list.
-- **Create** a new one: choose GitHub as the storage, then the title, the repository name, the **owner** (your account or an organization the token can create in), the **visibility** (private by default) and whether to turn on GitHub Pages. Before you start, a short list says what will be created and what the token seems unable to do; it never blocks you.
+- Choose GitHub as the storage, then pick one of the two modes of the repository:
+  - **Connect an existing repository**: a searchable list of the repositories your credential can use (type to filter, arrow keys and Enter to pick; it reads a few at a time and loads more when you ask or when a search needs them). It shows whether each is private or public, whether you can write to it and when it was last pushed. What happens next depends on what you pick: a repository that is **already a Narrarium book** is added as it is (nothing in it is written); an **empty** one is filled with the new book; one with **other files** is never touched unless you turn on «Replace what is in the repository».
+  - **Create a new repository**: choose its name (proposed from the title; if the name is taken you get the next free one), the **owner** (your account or an organization the token can create in), the **visibility** (private by default) and whether to turn on GitHub Pages. Before you start, a short list says what will be created and what the credential seems unable to do; it never blocks you.
+- With the **GitHub app**, the list shows only the repositories the app is installed on. If the one you expected is missing, use «Change repositories on GitHub» (the app needs the permissions «Repository creation», «Contents» and «Workflows»), then reload the list.
 
 ### What the creator makes
 
@@ -64,7 +66,7 @@ The result page says what was done and what was not. Nothing is lost; do the mis
 
 1. **The Pages workflow was not added** (the token has no *workflow* permission). Use the **Copy the workflow** button, open the repository on GitHub, choose **Add file → Create new file**, name it `.github/workflows/deploy-reader-pages.yml`, paste the text and commit it to the main branch. Or add the permission to the token (classic: `workflow`; fine-grained: *Workflows: Read and write*) and create the book again.
 2. **Pages is not on.** On GitHub open the repository → **Settings → Pages** and set **Source** to **GitHub Actions**. Then open the **Actions** tab and wait for the run *Deploy Reader To GitHub Pages* to finish. The reader is at `https://<owner>.github.io/<repository>/`.
-3. **The token cannot create repositories.** Create an empty repository on github.com and connect it: on a book that lives on this device, **Book Settings → Connect this book to GitHub** accepts an existing empty repository.
+3. **The token cannot create repositories.** Create an empty repository on github.com and connect it: on a book that lives on this device, **Book Settings → Connect this book to GitHub** lets you pick the empty repository from the list (or an existing Narrarium book, which is added as a book of its own while the book of this device stays as it is).
 
 The workflow does not cache npm: a repository made in a browser has no lock file, and the cache step would fail without one. The first run installs the packages from scratch, a few seconds slower.
 

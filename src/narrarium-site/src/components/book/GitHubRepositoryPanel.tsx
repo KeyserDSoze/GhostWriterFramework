@@ -47,7 +47,7 @@ export function useGitHubPreflight(token: string | undefined): GitHubPreflightSt
   return state;
 }
 
-const FIELD = "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-11";
+const FIELD = "flex h-10 w-full rounded-md border border-field bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-11";
 const CHOICE = "flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border p-3 transition focus-within:ring-2 focus-within:ring-ring";
 
 const ISSUE_KEYS: Record<BookRepositoryPreflightIssue, string> = {
@@ -66,9 +66,11 @@ export interface GitHubRepositoryPanelProps {
   disabled?: boolean;
   /** Shows the token notes only when there is a token to talk about. */
   hasToken: boolean;
+  /** The credential is the GitHub app's: the note says what the app needs (installed on the repository, and its permissions), not what a token's scopes are. */
+  app?: boolean;
 }
 
-export function GitHubRepositoryPanel({ choices, onChange, preflight, disabled, hasToken }: GitHubRepositoryPanelProps) {
+export function GitHubRepositoryPanel({ choices, onChange, preflight, disabled, hasToken, app }: GitHubRepositoryPanelProps) {
   const { t } = useTranslation();
   const base = useId();
   const ready = preflight.status === "ready" ? preflight.preflight : null;
@@ -77,6 +79,7 @@ export function GitHubRepositoryPanel({ choices, onChange, preflight, disabled, 
   const set = (patch: Partial<GitHubRepositoryChoices>) => onChange({ ...choices, ...patch });
   const setVisibility = (visibility: "private" | "public") => set({ visibility, ...(choices.pagesChosen ? {} : { pages: visibility === "public" }) });
   const issues = ready?.issues ?? [];
+  const isApp = Boolean(app) || ready?.tokenKind === "app";
 
   return (
     <div className="space-y-4">
@@ -130,12 +133,13 @@ export function GitHubRepositoryPanel({ choices, onChange, preflight, disabled, 
 
       {hasToken && (
         <section aria-labelledby={`${base}-token`} className="rounded-lg border p-3">
-          <h3 id={`${base}-token`} className="text-sm font-medium">{t("github.createBook.panel.token.title")}</h3>
+          <h3 id={`${base}-token`} className="text-sm font-medium">{t(isApp ? "github.createBook.panel.token.titleApp" : "github.createBook.panel.token.title")}</h3>
           <div role="status" aria-live="polite" className="mt-1 space-y-1 text-xs text-muted-foreground">
-            {preflight.status === "loading" && <p>{t("github.createBook.panel.token.checking")}</p>}
-            {preflight.status === "failed" && <p>{t("github.createBook.panel.token.failed")}</p>}
-            {ready?.tokenKind === "classic" && <p>{t("github.createBook.panel.token.classic", { scopes: ready.scopes.length ? ready.scopes.join(", ") : t("github.createBook.panel.token.noScopes") })}</p>}
-            {issues.map((issue) => <p key={issue}>{issue === "app-token" ? t("github.createBook.app.token") : t(`github.createBook.panel.token.${ISSUE_KEYS[issue]}`)}</p>)}
+            {preflight.status === "loading" && !isApp && <p>{t("github.createBook.panel.token.checking")}</p>}
+            {preflight.status === "failed" && !isApp && <p>{t("github.createBook.panel.token.failed")}</p>}
+            {isApp && <p>{t("github.createBook.app.token")}</p>}
+            {!isApp && ready?.tokenKind === "classic" && <p>{t("github.createBook.panel.token.classic", { scopes: ready.scopes.length ? ready.scopes.join(", ") : t("github.createBook.panel.token.noScopes") })}</p>}
+            {!isApp && issues.map((issue) => <p key={issue}>{t(`github.createBook.panel.token.${ISSUE_KEYS[issue]}`)}</p>)}
           </div>
         </section>
       )}

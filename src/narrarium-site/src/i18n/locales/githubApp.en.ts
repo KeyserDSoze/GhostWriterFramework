@@ -139,7 +139,7 @@ const githubAppEn = {
   github: {
     createBook: {
       app: {
-        token: "A GitHub connection (the app). It can create repositories only if the app was given the «Repository creation» (or «Administration») permission, and add the Pages workflow only with «Workflows». If it cannot, you are told which one is missing, and you can create an empty repository on github.com yourself and connect it.",
+        token: "This is the GitHub connection (the app). It works only on the repositories the app is installed on. It needs the permission «Repository creation» (or «Administration») to create a repository, «Contents» to write the files of the book, and «Workflows» to add the Pages workflow. If one is missing you are told which, and you can create an empty repository on github.com and connect it here.",
         cannotCreate: "The GitHub app cannot create repositories for {{owner}}. It needs the «Repository creation» (or «Administration») permission, and for an organization an owner who approved it. You can also create an empty repository on github.com yourself and connect it here.",
         workflowNotAllowed: "The Pages workflow was not added: the GitHub app has no «Workflows» permission. The repository is complete without it. Add the file by hand, as shown below, or give the app that permission.",
         notReachable: "The repository was created, but the GitHub app cannot reach it yet. Install the app on it (or on all your repositories) on GitHub, then check again.",

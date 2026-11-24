@@ -6,7 +6,6 @@ const bookGithubIt = {
     connectGithub: {
       title: "Collega il libro a GitHub",
       description: "La working copy locale viene mantenuta e pubblicata in una repository GitHub, insieme al lettore, al workflow di Pages e ai file che il framework dà a ogni libro.",
-      repository: "Repository",
       overwrite: "Sovrascrivi repository esistente",
       overwriteHint: "Se la repository non è vuota, il suo branch verrà sostituito con questo libro locale.",
       submit: "Crea o collega la repository",

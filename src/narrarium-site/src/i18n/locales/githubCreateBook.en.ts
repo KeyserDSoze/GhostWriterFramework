@@ -35,6 +35,7 @@ const githubCreateBookEn = {
         },
         token: {
           title: "About this token",
+          titleApp: "About the GitHub connection (the app)",
           checking: "Checking what this token can do…",
           failed: "Could not read what this token can do. You can still go on: any refusal is explained afterwards.",
           classic: "A classic token with the scopes: {{scopes}}.",

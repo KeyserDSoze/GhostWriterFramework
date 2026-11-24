@@ -35,6 +35,7 @@ const githubCreateBookIt = {
         },
         token: {
           title: "Su questo token",
+          titleApp: "Sulla connessione GitHub (l'app)",
           checking: "Controllo cosa può fare questo token…",
           failed: "Non sono riuscito a leggere cosa può fare questo token. Puoi procedere lo stesso: ogni rifiuto viene spiegato dopo.",
           classic: "Un token classico con gli scope: {{scopes}}.",
