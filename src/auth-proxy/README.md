@@ -236,7 +236,7 @@ token, a code or a secret.
 | --- | --- | --- | --- |
 | `GOOGLE_CLIENT_ID` | variable | `wrangler.toml` | public Google client id (the one in `src/narrarium-site/src/config/publicClients.ts`) |
 | `MICROSOFT_CLIENT_ID` | variable | `wrangler.toml` | public Microsoft application id (same file) |
-| `GITHUB_APP_CLIENT_ID` | variable | `wrangler.toml` | public Client ID of the GitHub App (not the App ID); empty until the app is registered, and `github` stays `false` in `/oauth/status` while it is empty |
+| `GITHUB_APP_CLIENT_ID` | variable | `wrangler.toml` | public Client ID of the GitHub App «Narrarium» (not the App ID); `github` is `true` in `/oauth/status` only when the secret `GITHUB_APP_CLIENT_SECRET` is set as well |
 | `GOOGLE_CLIENT_SECRET` | **secret** | Worker secret | never in the repository; uploaded by the deploy workflow |
 | `MICROSOFT_CLIENT_SECRET` | **secret** | Worker secret | never in the repository; uploaded by the deploy workflow |
 | `GITHUB_APP_CLIENT_SECRET` | **secret** | Worker secret | never in the repository; uploaded by the deploy workflow from the repository secret `GH_APP_CLIENT_SECRET` (GitHub forbids repository secret names that start with `GITHUB_`) |

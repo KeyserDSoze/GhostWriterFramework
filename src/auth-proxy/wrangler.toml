@@ -31,9 +31,10 @@ workers_dev = true
 # They must be the ids the site uses to start the sign-in; change both together.
 GOOGLE_CLIENT_ID = "91477716497-k7n97b2q9ic3nc75jpjmb0d3f73s1vgu.apps.googleusercontent.com"
 MICROSOFT_CLIENT_ID = "a80b2024-b9e3-4cb1-8480-aac7f164a6eb"
-# Client ID of the GitHub App (set after registering the GitHub App; the site publishes the same id).
-# While it is empty, GET /oauth/status reports github as false.
-GITHUB_APP_CLIENT_ID = ""
+# Client ID of the GitHub App «Narrarium» (public, like the two above; the site is built with the same id in the
+# repository variable VITE_GITHUB_APP_CLIENT_ID). GET /oauth/status reports github as true only when the secret
+# GITHUB_APP_CLIENT_SECRET is also set (repository secret GH_APP_CLIENT_SECRET).
+GITHUB_APP_CLIENT_ID = "Iv23liB6QuRD2ypTNPOH"
 # Redirect URIs the broker may exchange a Microsoft or GitHub code for (comma separated, exact match).
 # This list replaces the built-in defaults, so keep every entry you still need. A site
 # published under a sub-path (GitHub Pages) adds its own callback URL here.

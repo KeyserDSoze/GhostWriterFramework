@@ -55,9 +55,9 @@ describe("wrangler.toml", () => {
     assert.equal(vars.MICROSOFT_CLIENT_ID, PUBLIC_MICROSOFT_CLIENT_ID);
   });
 
-  it("declares the GitHub App client id, empty until the app is registered", () => {
+  it("declares the client id of the registered GitHub App, public like the other two", () => {
     assert.equal(Object.hasOwn(vars, "GITHUB_APP_CLIENT_ID"), true);
-    assert.equal(vars.GITHUB_APP_CLIENT_ID, "");
+    assert.match(vars.GITHUB_APP_CLIENT_ID, /^Iv[0-9A-Za-z]{10,40}$/);
   });
 
   it("lists the same redirect URIs the code defaults to", () => {
