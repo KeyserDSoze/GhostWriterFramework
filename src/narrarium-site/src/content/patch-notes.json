@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.107.0",
+    "date": "2026-11-24",
+    "en": {
+      "title": "The text of a step that answers with a value stays on screen while it is written",
+      "summary": "While the autopilot designs the concept of the book, plans the chapters or evaluates them, the mini-player, the band, the «In progress» card of the Autopilot page and the messages of the step show the reply as it is written and keep it on screen until the call ends: no more flicker between the text and «The model is answering…», and one character count that only grows.",
+      "changes": [
+        "A step that answers with a value (the concept of the book, the plan, the evaluations of the readers, the decisions of the director, the summary of a scene) shows its reply as it streams in the mini-player, in the band, on the page of every book and in the «In progress» card, in a fixed-width font. «The model is answering… (12 KB)» is shown only until its first words arrive.",
+        "Once on screen, the text stays until the call ends, and its character count never goes down: the text no longer disappears every second, and the count no longer jumps between two different numbers.",
+        "A step that makes more than one call (a scene and then its summary, a step that asks again) shows the text of the call that is answering: the scene is no longer shown while its summary is written, and nothing of an earlier call is shown as the new one's. When the provider falls back to another model in the middle of a reply, the text of the first attempt stays until the second one writes.",
+        "In the messages of the step, the response being written keeps the end of the live text after what has been recorded, with a counter that only grows, also while the numbers of the reply arrive.",
+        "A page opened while a step runs, or a connection to the personal server that comes back after a gap, shows the text of the step again at once instead of waiting for the next step.",
+        "At the end of a step, the screen reader is told how much it wrote (the scene, not the short summary that follows it); «Answering» is still said once per step. All of this also works with a personal server that has not been updated yet."
+      ]
+    },
+    "it": {
+      "title": "Il testo di un passo che risponde con un valore resta sullo schermo mentre viene scritto",
+      "summary": "Mentre l'autopilot progetta il concept del libro, pianifica i capitoli o li valuta, il mini-player, la banda, la scheda «In corso» della pagina Autopilot e i messaggi del passo mostrano la risposta mentre viene scritta e la tengono sullo schermo fino alla fine della chiamata: niente più sfarfallio tra il testo e «Il modello sta rispondendo…», e un solo conteggio dei caratteri, che cresce soltanto.",
+      "changes": [
+        "Un passo che risponde con un valore (il concept del libro, il piano, le valutazioni dei lettori, le decisioni del direttore, il riassunto di una scena) mostra la sua risposta mentre arriva nel mini-player, nella banda, nella pagina di ogni libro e nella scheda «In corso», con un carattere a larghezza fissa. «Il modello sta rispondendo… (12 KB)» compare solo finché non arrivano le prime parole.",
+        "Una volta sullo schermo, il testo resta fino alla fine della chiamata e il suo conteggio dei caratteri non scende mai: il testo non sparisce più ogni secondo e il conteggio non salta più tra due numeri diversi.",
+        "Un passo che fa più di una chiamata (una scena e poi il suo riassunto, un passo che chiede di nuovo) mostra il testo della chiamata che sta rispondendo: la scena non viene più mostrata mentre si scrive il suo riassunto, e nulla di una chiamata precedente viene mostrato come se fosse della nuova. Quando il provider passa a un altro modello a metà di una risposta, il testo del primo tentativo resta finché il secondo non scrive.",
+        "Nei messaggi del passo, la risposta in scrittura tiene la fine del testo dal vivo dopo ciò che è già registrato, con un contatore che cresce soltanto, anche mentre arrivano i numeri della risposta.",
+        "Una pagina aperta mentre un passo è in corso, o una connessione al server personale che torna dopo un'interruzione, mostra di nuovo subito il testo del passo invece di aspettare il passo successivo.",
+        "Alla fine di un passo, al lettore di schermo viene detto quanto ha scritto (la scena, non il breve riassunto che la segue); «Sta rispondendo» viene ancora detto una sola volta per passo. Tutto questo funziona anche con un server personale non ancora aggiornato."
+      ]
+    }
+  },
+  {
     "version": "0.106.0",
     "date": "2026-11-26",
     "en": {
