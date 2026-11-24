@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.100.0",
+    "date": "2026-11-24",
+    "en": {
+      "title": "Your settings sync to GitHub by themselves, and the newest copy comes first",
+      "summary": "Connecting GitHub, with the app or with a token, now saves your account settings automatically in a private narrarium.settings repository on your GitHub account. When the copies of your account differ, the newest one is proposed first.",
+      "changes": [
+        "After «Connect with GitHub» (the app) or after a personal access token, account sync turns on by itself: the first sync reads narrarium.settings if it exists, and creates it as a private repository if it does not. A connection you had already switched off stays off.",
+        "If GitHub does not let the app create narrarium.settings, or the app is not installed on a narrarium.settings that already exists, the GitHub card says so in plain words, with the link «Choose repositories on GitHub», a «Try again» button, and the hint that you can create the repository by hand or use a personal access token. Nothing is retried on its own, and a public narrarium.settings is still refused.",
+        "When your account data differs between this device, GitHub, Google Drive and OneDrive, the dialog now shows the date and time each copy was last changed, marks the newest one in words and selects it. The main button is «Use the newest copy»; the other copies are still a choice away, and no copy is overwritten until you confirm.",
+        "With several accounts connected, every change goes to all of them, a missing copy is created, and a service that fails no longer holds back the others.",
+        "With the GitHub app connected and installed on a book's repository, the «Which token each book uses» list now offers, for a book that uses its own, a named or the default token, «Use the GitHub connection». It first checks with a real call that the connection can read and write the repository, and only then removes the book's own token; if the check fails, nothing is changed. Nothing is ever switched by itself.",
+        "When no book needs the default token any more, the card suggests removing it («Remove the default token»), after an explicit confirmation."
+      ]
+    },
+    "it": {
+      "title": "Le impostazioni si sincronizzano da sole su GitHub, e la copia più recente viene prima",
+      "summary": "Collegando GitHub, con l'app o con un token, le impostazioni del tuo account vengono ora salvate in automatico in un repository privato narrarium.settings nel tuo account GitHub. Quando le copie del tuo account sono diverse, viene proposta per prima la più recente.",
+      "changes": [
+        "Dopo «Connetti con GitHub» (l'app) o dopo un token di accesso personale, la sincronizzazione dell'account si attiva da sola: la prima sincronizzazione legge narrarium.settings se esiste e, se non esiste, lo crea come repository privato. Una connessione che avevi già disattivato resta disattivata.",
+        "Se GitHub non permette all'app di creare narrarium.settings, o l'app non è installata su un narrarium.settings già esistente, la scheda GitHub lo dice in parole semplici, con il link «Scegli i repository su GitHub», il pulsante «Riprova» e il suggerimento di creare il repository a mano o di usare un token di accesso personale. Nulla viene ritentato da solo, e un narrarium.settings pubblico viene ancora rifiutato.",
+        "Quando i dati del tuo account sono diversi tra questo dispositivo, GitHub, Google Drive e OneDrive, la finestra ora mostra data e ora dell'ultima modifica di ogni copia, indica a parole la più recente e la seleziona. Il pulsante principale è «Usa la copia più recente»; le altre copie restano a portata di scelta e nessuna copia viene sovrascritta finché non confermi.",
+        "Con più account collegati, ogni modifica arriva a tutti, una copia mancante viene creata e un servizio che fallisce non blocca più gli altri.",
+        "Con la GitHub App collegata e installata sul repository di un libro, l'elenco «Quale token usa ogni libro» ora propone, per un libro che usa un token proprio, uno con nome o quello predefinito, «Usa la connessione GitHub». Prima controlla con una chiamata reale che la connessione possa leggere e scrivere il repository e solo dopo toglie il token proprio del libro; se il controllo fallisce, non cambia nulla. Nulla viene mai cambiato da solo.",
+        "Quando nessun libro ha più bisogno del token predefinito, la scheda suggerisce di rimuoverlo («Rimuovi il token predefinito»), dopo una conferma esplicita."
+      ]
+    }
+  },
+  {
     "version": "0.99.2",
     "date": "2026-11-24",
     "en": {
