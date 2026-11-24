@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  ALLOWED_ORIGIN,
   FAKE_GOOGLE_CLIENT_ID,
   FAKE_GOOGLE_SECRET,
   GOOGLE_REVOKE_URL,
@@ -67,6 +68,37 @@ describe("POST /oauth/google/token", () => {
     const body = await assertError(response, 400, "invalid_grant");
     assert.ok(!body.message.includes("Malformed"));
     assert.ok(!body.message.includes("bad-code"));
+  });
+
+  it("tries the page's origin as redirect_uri when Google says that «postmessage» does not match, and only then", async () => {
+    provider.reply((call) => {
+      const form = formOf(call);
+      return form.redirect_uri === "postmessage"
+        ? jsonResponse(400, { error: "redirect_uri_mismatch", error_description: "Bad Request" })
+        : jsonResponse(200, GOOGLE_TOKEN_REPLY);
+    });
+    const response = await oauthCall("/oauth/google/token", { json: { code: "4/0AGoogleAuthCode" } });
+    assert.equal((await readJson(response, 200)).accessToken, "ya29.google-access-token");
+    assert.deepEqual(provider.calls.map((call) => formOf(call).redirect_uri), ["postmessage", ALLOWED_ORIGIN]);
+    for (const call of provider.calls) assert.equal(formOf(call).code, "4/0AGoogleAuthCode");
+  });
+
+  it("never sends an origin that the Worker does not allow, and never retries another failure", async () => {
+    // A request from an origin that is not allowed is refused before any exchange: its origin cannot reach Google.
+    provider.reply(() => jsonResponse(400, { error: "redirect_uri_mismatch", error_description: "Bad Request" }));
+    const foreign = await oauthCall("/oauth/google/token", { json: { code: "c" }, origin: "https://evil.example" });
+    assert.equal(foreign.status, 403);
+    assert.equal(provider.calls.length, 0);
+
+    // A request with no origin at all (not a browser of the site) gets the first try only: there is no origin to offer.
+    const none = await oauthCall("/oauth/google/token", { json: { code: "c" }, origin: "" });
+    assert.ok(none.status === 502 || none.status === 403, `status ${none.status}`);
+    assert.ok(provider.calls.every((call) => formOf(call).redirect_uri === "postmessage"));
+
+    provider.calls.length = 0;
+    provider.reply(() => jsonResponse(400, { error: "invalid_grant", error_description: "Malformed auth code." }));
+    await assertError(await oauthCall("/oauth/google/token", { json: { code: "c" } }), 400, "invalid_grant");
+    assert.equal(provider.calls.length, 1, "a rejected code is not tried again");
   });
 
   it("reports a misconfigured client as upstream_error rather than as a caller mistake", async () => {

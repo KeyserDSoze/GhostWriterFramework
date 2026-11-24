@@ -98,7 +98,7 @@ Notes:
 - `expiresIn` is a whole number of seconds. Optional fields are omitted, never `null`.
 - **Google `/token`**: the code must come from the Google Identity Services code flow
   in popup mode (`initCodeClient` with `ux_mode: "popup"`), whose redirect URI is the
-  literal `postmessage`; the broker sends exactly that. Google returns a
+  literal `postmessage`; the broker sends that first and, only if Google answers `redirect_uri_mismatch`, repeats the exchange with the origin of the page (Google's guide says the origin is the redirect URI; the origin is one the Worker already allows). Google returns a
   `refreshToken` only when the user (re)consents, so keep the stored one when the
   answer has none. Google does **not** rotate refresh tokens.
 - **Microsoft `/token`**: the site runs the authorization code flow with PKCE (S256).

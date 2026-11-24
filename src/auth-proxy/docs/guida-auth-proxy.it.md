@@ -284,7 +284,7 @@ Il client OAuth «Web» del progetto si gestisce solo dalla console. L'ID è gi�
 1. **Audience:** tipo utente *External*; stato di pubblicazione **In production** (se è *Testing*, premi **Publish app**). In *Testing* i refresh token scadono dopo 7 giorni.
 2. **Clients** → il client «Web application» `91477716497-…`:
    - **Authorized JavaScript origins** (esatte, senza `/` finale): `https://narrarium.net`, `https://www.narrarium.net`, `http://localhost:5173`, `http://localhost:4173`.
-   - **Authorized redirect URIs:** nessuno (flusso a popup).
+   - **Authorized redirect URIs** (le stesse quattro origini, senza percorso): `https://narrarium.net`, `https://www.narrarium.net`, `http://localhost:5173`, `http://localhost:4173`. Nel flusso a popup il sito non fa nessun reindirizzamento, ma lo scambio del codice usa come `redirect_uri` `postmessage` o, se Google dice che non coincide, l'origine della pagina: averle qui costa niente e copre il secondo caso.
    - **Client secrets:** il segreto che hai già vale; se vuoi uno nuovo, **Add secret** e copialo subito.
 3. **Data Access:** il sito chiede `drive.appdata`, `drive`, `openid`, `profile`, `email` (`src/narrarium-site/src/config/googleAuth.ts`). `drive` è un ambito **restricted**: finché l'app non è verificata, gli utenti vedono l'avviso «app non verificata». Per uso personale si può proseguire; le alternative (chiedere la verifica o far chiedere al sito solo ambiti non sensibili) sono decisioni del prodotto.
 
@@ -301,7 +301,7 @@ gcloud services list --enabled --project <ID progetto> --filter="name:drive.goog
 
 ### 4.3 Caso noto, non provato dal vivo
 
-Se il primo collegamento di Google dà `502 upstream_error` con `redirect_uri_mismatch`: la documentazione di Google (aggiornata il 29 ottobre 2026) dice che nel flusso a popup il `redirect_uri` dello scambio è **l'origine della pagina**, mentre il Worker invia `postmessage` (valore non documentato, che molti sviluppatori riportano funzionante). In quel caso la correzione è nel Worker: segnalalo, non cambiare nulla nella console.
+Il Worker prova prima `postmessage` (il valore che con il flusso a popup funziona da sempre) e, se Google risponde `redirect_uri_mismatch`, ripete lo scambio con l'origine della pagina (solo una che il Worker consente), come dice la documentazione di Google aggiornata il 29 ottobre 2026. Se il primo collegamento dà comunque `502 upstream_error` con `redirect_uri_mismatch`, controlla che le quattro origini siano anche tra gli **Authorized redirect URIs**.
 
 ---
 

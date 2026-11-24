@@ -383,15 +383,27 @@ function tokenAnswer(tokens, keys) {
 
 const noContent = () => ({ status: 204, body: null });
 
-async function googleToken(body, { provider, credentials }) {
+async function googleToken(body, { provider, credentials, origin }) {
   const code = readField(body, "code");
-  const tokens = await requestTokens(provider, {
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: "postmessage",
-    client_id: credentials.clientId,
-    client_secret: credentials.clientSecret,
-  });
+  const exchange = (redirectUri) =>
+    requestTokens(provider, {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+      client_id: credentials.clientId,
+      client_secret: credentials.clientSecret,
+    });
+  let tokens;
+  try {
+    tokens = await exchange("postmessage");
+  } catch (error) {
+    // Google's guide to the popup flow says the exchange uses the origin of the page that asked for the code as redirect_uri, while the way
+    // that has always worked with it is «postmessage». «postmessage» goes first; only when Google says the redirect URI does not match is the
+    // origin tried, and only one that this Worker already allows (the request's own, checked by the caller) is ever sent.
+    const mismatch = error instanceof HttpError && error.status === 502 && error.message.includes("(redirect_uri_mismatch)");
+    if (!mismatch || !origin) throw error;
+    tokens = await exchange(origin);
+  }
   return tokenAnswer(tokens, ["accessToken", "expiresIn", "refreshToken", "scope", "idToken"]);
 }
 
@@ -589,7 +601,7 @@ async function handleProviderRoute(request, env, route, allowedOrigin) {
     throw new HttpError(501, "not_configured", `${provider.name} sign-in is not configured on this server.`);
   }
   const body = await readJsonBody(request);
-  const result = await HANDLERS[`${route.provider}/${route.action}`](body, { provider, credentials, env });
+  const result = await HANDLERS[`${route.provider}/${route.action}`](body, { provider, credentials, env, origin: allowedOrigin });
   return jsonResponse(result.status, result.body, allowedOrigin);
 }
 

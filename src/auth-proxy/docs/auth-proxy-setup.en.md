@@ -37,9 +37,9 @@ Done in this change: the code moved from `infra/models-github-proxy` to `src/aut
 
 ## 4. Google checklist (no CLI exists for the Web OAuth client)
 
-- **Console → Google Auth Platform:** **Audience** External and **In production** (in *Testing* refresh tokens last 7 days); **Clients** → the Web client `91477716497-…`: Authorized JavaScript origins `https://narrarium.net`, `https://www.narrarium.net`, `http://localhost:5173`, `http://localhost:4173`; **no** redirect URIs (popup flow); keep or **Add secret**; **Data Access:** the site requests `drive.appdata`, `drive` (**restricted**: unverified-app warning until verified), `openid`, `profile`, `email`.
+- **Console → Google Auth Platform:** **Audience** External and **In production** (in *Testing* refresh tokens last 7 days); **Clients** → the Web client `91477716497-…`: Authorized JavaScript origins `https://narrarium.net`, `https://www.narrarium.net`, `http://localhost:5173`, `http://localhost:4173`; Authorized redirect URIs: the same four origins, no path; keep or **Add secret**; **Data Access:** the site requests `drive.appdata`, `drive` (**restricted**: unverified-app warning until verified), `openid`, `profile`, `email`.
 - **Drive API (probably already on):** `gcloud services enable drive.googleapis.com --project <id>`; `gcloud services list --enabled --project <id> --filter="name:drive.googleapis.com"` (syntax from the official docs; `gcloud` is not installed here).
-- **Known untested case:** Google's docs (updated 2026-10-29) say that in popup mode the code exchange's `redirect_uri` is the page origin; the Worker sends the undocumented `postmessage` that many developers report working. If the first Google connection gives `redirect_uri_mismatch`, report it: the fix is in the Worker.
+- **Two ways to exchange the code:** the Worker sends `postmessage` first (what has always worked with the popup flow) and, only if Google answers `redirect_uri_mismatch`, repeats the exchange with the page origin, as Google's docs (updated 2026-10-29) describe, and only an origin the Worker allows. Add the same four origins under **Authorized redirect URIs** too: it costs nothing and covers the second case.
 
 ## 5. Cloudflare hardening (optional, after everything works)
 
