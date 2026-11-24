@@ -11,8 +11,14 @@ import {
 import { loadAuditReport } from "@/narrarium/audit";
 import { getLocalFile } from "@/repository/localRepository";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
-import { classifyRepositoryError, RepositoryError } from "@/repository/repositoryError";
-import { blockNetwork, createLinkedBookClone, createLocalOnlyBook, resetLocalWorkspace } from "./helpers/localFirst";
+import { classifyRepositoryError, RepositoryError, repositoryErrorDescription } from "@/repository/repositoryError";
+import { createTrackedGitHubClient } from "@/repository/githubRequest";
+import { fetchRepositoryBlobBytes } from "@/repository/repositoryBlobTransport";
+import { RepositoryByteMeter } from "@/repository/repositoryLimits";
+import { githubRemoteAvailability, isUsableGitHubToken } from "@/github/remoteAvailability";
+import i18n from "@/i18n";
+import { DEFAULT_SETTINGS, LOCAL_BOOK_TOKEN, resolveBookToken, resolveWorkingCopyToken, type BookEntry } from "@/types/settings";
+import { blockNetwork, createLinkedBookClone, createLinkedBookWithoutCredential, createLocalOnlyBook, resetLocalWorkspace } from "./helpers/localFirst";
 
 // The working copy in IndexedDB answers every read of a book that has one: a file it does not hold does not exist (yet), and GitHub is not asked.
 // GitHub is a peer the book syncs with, never a source a page reads from.
@@ -81,6 +87,7 @@ describe("a book without a working copy on this device", () => {
     await expect(readFileWithSha("", "writer", "novel", "main", "book.md")).rejects.toMatchObject({ name: "RepositoryError", kind: "no-credential" });
     await expect(loadFileContent("", "writer", "novel", "book.md", "main")).rejects.toMatchObject({ name: "RepositoryError", kind: "no-credential" });
     await expect(optionalBinaryFileContent("", "writer", "novel", "assets/book/cover.png", "main")).rejects.toMatchObject({ name: "RepositoryError", kind: "no-credential" });
+    await expect(readFileWithSha(LOCAL_BOOK_TOKEN, "writer", "novel", "main", "book.md")).rejects.toMatchObject({ name: "RepositoryError", kind: "no-credential" });
     expect(network.requests).toEqual([]);
   });
 
@@ -97,5 +104,68 @@ describe("a request that never reached GitHub", () => {
     const transport = Object.assign(new Error("fetch failed"), { name: "HttpError", status: 500, cause: new TypeError("Failed to fetch") });
     expect(classifyRepositoryError(transport, "update")).toMatchObject({ kind: "network", operation: "update" });
     expect(classifyRepositoryError(Object.assign(new Error("Server Error"), { name: "HttpError", status: 502 }), "update")).toMatchObject({ kind: "service-unavailable" });
+  });
+});
+
+describe("a GitHub book without a credential", () => {
+  const files = [
+    { path: "book.md", content: "---\ntype: book\nid: book\ntitle: Linked\n---\n\nA linked book.\n" },
+    { path: "chapters/001-the-gate/chapter.md", content: "---\ntype: chapter\nid: chapter:001-the-gate\nnumber: 1\ntitle: The Gate\n---\n\nThe first chapter.\n" },
+  ];
+
+  it("gives its services the token of the working copy, and the pages that reach GitHub no credential", async () => {
+    const linked = await createLinkedBookWithoutCredential({ files });
+    expect(resolveWorkingCopyToken(linked.book, DEFAULT_SETTINGS)).toBe(LOCAL_BOOK_TOKEN);
+    expect(resolveBookToken(linked.book, DEFAULT_SETTINGS)).toBe("");
+    expect(githubRemoteAvailability(linked.book, resolveBookToken(linked.book, DEFAULT_SETTINGS))).toBe("no-credential");
+    expect(githubRemoteAvailability(linked.book, linked.token)).toBe("no-credential");
+    expect(resolveWorkingCopyToken({ ...linked.book, bookToken: "ghp_book" }, DEFAULT_SETTINGS)).toBe("ghp_book");
+  });
+
+  it("reads every file from its working copy, a missing one is absent, and GitHub is not asked", async () => {
+    const network = blockNetwork();
+    const linked = await createLinkedBookWithoutCredential({ files });
+
+    expect((await readFileWithSha(linked.token, linked.book.owner, linked.book.repo, linked.branch, "book.md")).content).toContain("A linked book.");
+    await expect(readFileWithSha(linked.token, linked.book.owner, linked.book.repo, linked.branch, "audit/book.md")).rejects.toMatchObject(notFound);
+    await expect(optionalBinaryFileContent(linked.token, linked.book.owner, linked.book.repo, "assets/book/cover.webp", linked.branch)).resolves.toBeNull();
+    await expect(loadAuditReport({ token: linked.token, book: linked.book, branch: linked.branch, structure: linked.structure, target: { scope: "book", bookId: linked.book.id } })).resolves.toBeNull();
+    expect(linked.structure.chapters.map((chapter) => chapter.slug)).toEqual(["001-the-gate"]);
+    expect(network.requests).toEqual([]);
+  });
+
+  it("sends nothing to GitHub without a credential, whatever asks: what is missing is said, in both languages", async () => {
+    const network = blockNetwork();
+    for (const token of ["", LOCAL_BOOK_TOKEN]) {
+      const refused = createTrackedGitHubClient(token).rest.repos.get({ owner: "writer", repo: "novel" });
+      await expect(refused).rejects.toMatchObject({ name: "RepositoryError", kind: "no-credential" });
+      await expect(fetchRepositoryBlobBytes({ token, owner: "writer", repo: "novel", path: "book.md", sha: "blob-0", kind: "text", meter: new RepositoryByteMeter("transfer") })).rejects.toMatchObject({ kind: "no-credential" });
+    }
+    expect(network.requests).toEqual([]);
+    const error = new RepositoryError("No GitHub credential.", "no-credential", "read");
+    await i18n.changeLanguage("en");
+    expect(repositoryErrorDescription(error, (key, options) => i18n.t(key, options))).toBe("This needs GitHub: connect GitHub or add a token to use it. Your work stays on this device.");
+    await i18n.changeLanguage("it");
+    expect(repositoryErrorDescription(error, (key, options) => i18n.t(key, options))).toMatch(/^Serve GitHub: collega GitHub/);
+    await i18n.changeLanguage("en");
+  });
+});
+
+describe("a credential GitHub refuses", () => {
+  const book: BookEntry = { id: "book", owner: "writer", repo: "novel", name: "Novel", tokenIndex: null, activeBranch: "main", addedAt: "2026-11-24T00:00:00.000Z" };
+  const answer = (status: number) => vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(status === 401 ? { message: "Bad credentials" } : { id: 1, name: "novel", full_name: "writer/novel" }), { status, headers: { "content-type": "application/json" } })));
+
+  it("counts as no credential from the first refusal, and as a credential again once GitHub accepts it", async () => {
+    answer(401);
+    expect(githubRemoteAvailability(book, "ghp_revoked")).toBe("ready");
+    await expect(createTrackedGitHubClient("ghp_revoked").rest.repos.get({ owner: "writer", repo: "novel" })).rejects.toMatchObject({ status: 401 });
+    expect(githubRemoteAvailability(book, "ghp_revoked")).toBe("no-credential");
+    expect(isUsableGitHubToken("ghp_revoked")).toBe(false);
+    // Another credential, a new token or the renewed token of the app, is a credential at once.
+    expect(githubRemoteAvailability(book, "ghp_renewed")).toBe("ready");
+
+    answer(200);
+    await createTrackedGitHubClient("ghp_revoked").rest.repos.get({ owner: "writer", repo: "novel" });
+    expect(githubRemoteAvailability(book, "ghp_revoked")).toBe("ready");
   });
 });

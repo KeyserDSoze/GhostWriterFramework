@@ -13,7 +13,7 @@ import { captureRepositoryOperationScope } from "@/repository/repositoryOperatio
 import { commitLocalChanges } from "@/repository/repositoryService";
 import { commitAndPushTextFileMutation, resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMutation";
 import { DEFAULT_SETTINGS } from "@/types/settings";
-import { blockNetwork, createLinkedBookClone, createLocalOnlyBook, resetLocalWorkspace, type LocalFirstBook } from "./helpers/localFirst";
+import { blockNetwork, createLinkedBookClone, createLinkedBookWithoutCredential, createLocalOnlyBook, resetLocalWorkspace, type LocalFirstBook } from "./helpers/localFirst";
 
 // Writes go to the working copy and wait there, as local commits, for the next sync: a book kept on this device never publishes, a linked book that cannot
 // reach GitHub keeps the change, and nothing the author has not published yet blocks the next change.
@@ -130,5 +130,65 @@ describe("a change the Copilot applies", () => {
       .rejects.toThrow("The local working copy must be clean before starting this operation.");
     expect((await getLocalFile(linked.meta.id, "book.md", captureRepositoryOperationScope()))?.text).toBe("# Book\n");
     expect(network.requests).toEqual([]);
+  });
+});
+
+describe("a GitHub book without a credential", () => {
+  const files = [
+    { path: "book.md", content: "---\ntype: book\nid: book\ntitle: Linked\n---\n\nDescribe the book here.\n" },
+    { path: "ideas.md", content: "# Ideas\n" },
+  ];
+
+  it("runs, saves and updates an audit in the working copy, next to a local commit, without GitHub", async () => {
+    const network = blockNetwork();
+    const linked = await createLinkedBookWithoutCredential({ files });
+    await withOneLocalCommit(linked);
+    const target = { scope: "book" as const, bookId: linked.book.id };
+
+    const report = await runAudit({ accountScope: localWorkspaceScope(), token: linked.token, book: linked.book, branch: linked.branch, structure: linked.structure, settings: DEFAULT_SETTINGS, target });
+    const updated = await updateAuditFinding({ token: linked.token, book: linked.book, branch: linked.branch, structure: linked.structure, target, findingId: report.findings[0].id, status: "resolved", authorNote: "Fixed." });
+
+    expect(updated.findings[0]).toMatchObject({ status: "resolved", authorNote: "Fixed." });
+    // Saved as the local commits a sync publishes once GitHub is connected.
+    expect((await getLocalRepositoryStatusSnapshot(linked.book.owner, linked.book.repo, linked.branch, localWorkspaceScope()))?.status).toMatchObject({ ahead: 1, dirty: 0 });
+    expect((await listUnpushedLocalCommits(linked.meta.id))[0].files.map((file) => file.path)).toEqual(expect.arrayContaining(["audit/book.md", "ideas.md"]));
+    expect(network.requests).toEqual([]);
+  });
+
+  it("keeps a change the Copilot applies as a local commit, next to the ones before", async () => {
+    const network = blockNetwork();
+    const linked = await createLinkedBookWithoutCredential({ files });
+    await withOneLocalCommit(linked);
+
+    const result = await commitAndPushTextFileMutation({ token: linked.token, book: linked.book, branch: linked.branch, expectedRemoteHeadSha: "remote-head", message: "Apply 1 Copilot file update", mutations: [{ path: "notes/gate.md", content: "# The gate\n", expectedCurrentHash: null }] });
+
+    expect(result.mode).toBe("local");
+    expect((await getLocalFile(linked.meta.id, "notes/gate.md", captureRepositoryOperationScope()))?.text).toBe("# The gate\n");
+    expect((await listUnpushedLocalCommits(linked.meta.id))[0].files.map((file) => file.path)).toEqual(expect.arrayContaining(["ideas.md", "notes/gate.md"]));
+    expect(network.requests).toEqual([]);
+  });
+});
+
+describe("a credential GitHub refuses (revoked, expired)", () => {
+  it("keeps the change of the Copilot as a local commit, and the next change is not sent to GitHub at all", async () => {
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      requests.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return new Response(JSON.stringify({ message: "Bad credentials" }), { status: 401, headers: { "content-type": "application/json" } });
+    }));
+    const linked = await createLinkedBookClone({ token: "ghp_revoked_for_copilot", files: [{ path: "book.md", content: "# Book\n" }] });
+    const before = await getLocalFile(linked.meta.id, "book.md", captureRepositoryOperationScope());
+
+    const first = await commitAndPushTextFileMutation({ token: linked.token, book: linked.book, branch: linked.branch, expectedRemoteHeadSha: "remote-head", message: "Apply 1 Copilot file update", mutations: [{ path: "book.md", content: "# Book, revised\n", expectedCurrentHash: before!.currentHash }] });
+    expect(first.mode).toBe("local");
+    expect((await getLocalFile(linked.meta.id, "book.md", captureRepositoryOperationScope()))?.text).toBe("# Book, revised\n");
+    const refused = requests.length;
+    expect(refused).toBeGreaterThan(0);
+
+    const second = await commitAndPushTextFileMutation({ token: linked.token, book: linked.book, branch: linked.branch, expectedRemoteHeadSha: "remote-head", message: "Apply 1 Copilot file update", mutations: [{ path: "notes/gate.md", content: "# The gate\n", expectedCurrentHash: null }] });
+    expect(second.mode).toBe("local");
+    // Both wait in the local commit of the book, for the sync once GitHub accepts a credential.
+    expect((await listUnpushedLocalCommits(linked.meta.id))[0].files.map((file) => file.path)).toEqual(expect.arrayContaining(["book.md", "notes/gate.md"]));
+    expect(requests).toHaveLength(refused);
   });
 });

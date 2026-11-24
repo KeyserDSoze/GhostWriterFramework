@@ -5,8 +5,10 @@ import type { LoadedWriterContext } from "@/assistant/context";
 import { runAssistantPrompt } from "@/assistant/service";
 import { BUILTIN_TOOLS } from "@/assistant/tools/builtinTools";
 import { evaluateToolContract, missingToolRequirementsMessage } from "@/assistant/tools/runtimeContract";
-import type { AppSettings, BookEntry } from "@/types/settings";
-import { blockNetwork, createLocalOnlyBook, resetLocalWorkspace } from "./helpers/localFirst";
+import { LOCAL_BOOK_TOKEN, type AppSettings, type BookEntry } from "@/types/settings";
+import { putLocalRepository } from "@/repository/localRepository";
+import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import { blockNetwork, createLinkedBookWithoutCredential, createLocalOnlyBook, resetLocalWorkspace } from "./helpers/localFirst";
 
 // The Copilot's tools of the remote repository (branches, commits, pull requests) say why they cannot run without GitHub; its local tools (an audit)
 // are prepared from the working copy, with no request to GitHub.
@@ -27,8 +29,9 @@ afterEach(() => vi.unstubAllGlobals());
 describe("the tools of the remote repository", () => {
   const gitTools = BUILTIN_TOOLS.filter((entry) => entry.area === "git");
 
-  it("cover branches, commits and pull requests", () => {
+  it("cover branches, commits and pull requests, and only those of the remote need GitHub", () => {
     expect(gitTools.map((entry) => entry.id).sort()).toEqual(["create-pull-request", "list-branches", "list-commits", "list-pull-requests", "show-branch-diff", "switch-branch"]);
+    expect(BUILTIN_TOOLS.filter((entry) => entry.prerequisites.includes("GitHub")).map((entry) => entry.id).sort()).toEqual(["create-pull-request", "list-branches", "list-commits", "list-pull-requests", "show-branch-diff"]);
   });
 
   it("need a book linked to GitHub, a credential and a connection, and say which is missing", () => {
@@ -67,6 +70,45 @@ describe("an audit asked to the Copilot", () => {
     const message = await runAssistantPrompt({ prompt: "run audit", context: localContext, settings, book: local.book, branch: local.branch, token: local.token, history: [], compactSummary: "", compactedMessageCount: 0, attachments: [], accountScope: localWorkspaceScope() });
 
     expect(message.action).toMatchObject({ kind: "navigate", to: `/app/books/${local.book.id}/audit`, toolId: "run-audit", sourceRevisions: { "audit/book.md": null } });
+    expect(network.requests).toEqual([]);
+  });
+});
+
+describe("the Copilot of a GitHub book without a credential", () => {
+  const files = [{ path: "book.md", content: "---\ntype: book\nid: book\ntitle: Linked\n---\n\nA linked book.\n" }];
+  const prompt = async (book: BookEntry, branch: string, token: string, structure: unknown, text: string) => runAssistantPrompt({
+    prompt: text,
+    context: { route: { kind: "book", bookId: book.id }, branchReady: true, branch, structure, chapter: null, paragraph: null, relevantFiles: [] } as unknown as LoadedWriterContext,
+    settings, book, branch, token, history: [], compactSummary: "", compactedMessageCount: 0, attachments: [], accountScope: localWorkspaceScope(),
+  });
+
+  it("offers every tool of the working copy, and only the tools of the remote ask to connect GitHub", () => {
+    for (const entry of BUILTIN_TOOLS) {
+      const missing = evaluateToolContract(entry, runtime(linked, LOCAL_BOOK_TOKEN)).missing;
+      if (entry.prerequisites.includes("GitHub")) expect(missing, entry.id).toContain("GitHub credential");
+      else expect(missing.filter((requirement) => /GitHub|token|credential|connection/i.test(requirement)), entry.id).toEqual([]);
+    }
+  });
+
+  it("answers the tools of the remote, and prepares an audit, without a request", async () => {
+    const network = blockNetwork();
+    const book = await createLinkedBookWithoutCredential({ files });
+    for (const text of ["list branches", "show recent commits", "list pull requests"]) {
+      expect((await prompt(book.book, book.branch, book.token, book.structure, text)).text, text).toBe("This needs GitHub: connect GitHub to use it.");
+    }
+    expect((await prompt(book.book, book.branch, book.token, book.structure, "run audit")).action).toMatchObject({ kind: "navigate", toolId: "run-audit", sourceRevisions: { "audit/book.md": null } });
+    expect(network.requests).toEqual([]);
+  });
+
+  it("switches to a branch kept on this device, and says that one that is not, or a new one, needs GitHub", async () => {
+    const network = blockNetwork();
+    const book = await createLinkedBookWithoutCredential({ files });
+    await putLocalRepository({ bookId: book.book.id, repositoryKind: "book", remoteKind: "github", owner: book.book.owner, repo: book.book.repo, branch: "draft-two", defaultBranch: "main", remoteHeadSha: "remote-head", clonedAt: new Date().toISOString(), cloneComplete: true, cloneStatus: "complete", expectedFileCount: 0 }, captureRepositoryOperationScope());
+
+    const kept = await prompt(book.book, book.branch, book.token, book.structure, "switch to branch draft-two");
+    expect(kept.action).toMatchObject({ kind: "switch-book-branch", branchName: "draft-two", createIfMissing: false, sourceRevision: expect.stringMatching(/^local:remote-head:/) });
+    expect((await prompt(book.book, book.branch, book.token, book.structure, "switch to branch elsewhere")).text).toBe("Branch `elsewhere` is not on this device: connect GitHub to download it.");
+    expect((await prompt(book.book, book.branch, book.token, book.structure, "create branch fresh-start")).text).toBe("This needs GitHub: connect GitHub to use it.");
     expect(network.requests).toEqual([]);
   });
 });

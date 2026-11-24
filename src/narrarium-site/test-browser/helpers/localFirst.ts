@@ -4,7 +4,7 @@ import { createLocalOnlyBookRepository } from "@/repository/repositoryService";
 import { buildLocalBookStructure, putCleanLocalFile, putLocalRepository, type LocalRepositoryMeta } from "@/repository/localRepository";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { useAuthStore } from "@/store/authStore";
-import { LOCAL_BOOK_TOKEN, type BookEntry } from "@/types/settings";
+import { DEFAULT_SETTINGS, LOCAL_BOOK_TOKEN, resolveWorkingCopyToken, type BookEntry } from "@/types/settings";
 import type { BookStructure } from "@/types/book";
 
 /**
@@ -55,4 +55,15 @@ export async function createLinkedBookClone(input: { owner?: string; repo?: stri
   let index = 0;
   for (const file of input.files) await putCleanLocalFile({ repoId: meta.id, path: file.path, kind: "text", text: file.content, baseSha: `blob-${index++}`, size: new TextEncoder().encode(file.content).byteLength }, scope);
   return { book, branch, token: input.token ?? "", meta, structure: await buildLocalBookStructure(meta) };
+}
+
+/**
+ * A book linked to GitHub with its working copy on this device and no GitHub credential at all (no token, no connection): the pages give its services the
+ * token of the working copy, which is the local one.
+ */
+export async function createLinkedBookWithoutCredential(input: { branch?: string; files: Array<{ path: string; content: string }> }): Promise<LocalFirstBook> {
+  const linked = await createLinkedBookClone({ branch: input.branch, files: input.files });
+  const token = resolveWorkingCopyToken(linked.book, DEFAULT_SETTINGS);
+  if (token !== LOCAL_BOOK_TOKEN) throw new Error("The settings of the test have a GitHub credential.");
+  return { ...linked, token };
 }

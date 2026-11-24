@@ -16,9 +16,10 @@ import { resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMut
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { useDossierStore } from "@/store/dossierStore";
 import { DEFAULT_SETTINGS, resolveBookExportSettings } from "@/types/settings";
-import { blockNetwork, createLocalOnlyBook, resetLocalWorkspace, type LocalFirstBook } from "./helpers/localFirst";
+import { blockNetwork, createLinkedBookWithoutCredential, createLocalOnlyBook, resetLocalWorkspace, type LocalFirstBook } from "./helpers/localFirst";
 
-// The services behind the pages of a book kept on this device, with every request failing as offline: each works from the working copy and none asks GitHub.
+// The services behind the pages of a book kept on this device, and of a GitHub book with no credential on this device, with every request failing as
+// offline: each works from the working copy with the token the pages give it, and none asks GitHub.
 
 const CHAPTER = "001-the-gate";
 const files = [
@@ -38,13 +39,6 @@ beforeEach(async () => {
   // The IndexedDB of these tests keeps a picture only as a Blob it can clone: the one of Node, as a browser keeps its own.
   vi.stubGlobal("Blob", NodeBlob);
   network = blockNetwork();
-  local = await createLocalOnlyBook("The Glass Gate", files);
-  // The author saved once: the book has a local commit it can never push, as books kept on this device do.
-  await commitLocalChanges({ bookId: local.book.id, owner: "", repo: "", branch: local.branch, accountIdentity: localWorkspaceScope() }, "Save local book changes").catch(() => undefined);
-  const scope = captureRepositoryOperationScope();
-  await writeLocalBinaryScoped(local.meta.id, "assets/book/cover.png", PNG, scope);
-  await writeLocalBinaryScoped(local.meta.id, "assets/characters/mara/primary.png", PNG, scope);
-  local.structure = await buildLocalBookStructure(local.meta);
   URL.createObjectURL = vi.fn(() => `blob:local-${Math.random()}`);
   window.matchMedia = vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) as unknown as typeof window.matchMedia;
 });
@@ -53,7 +47,22 @@ afterEach(() => {
   expect(network.requests).toEqual([]);
 });
 
-describe("a book kept on this device, with GitHub out of reach", () => {
+const BOOKS: Array<[string, () => Promise<LocalFirstBook>]> = [
+  ["a book kept on this device", () => createLocalOnlyBook("The Glass Gate", files)],
+  ["a GitHub book without a credential", () => createLinkedBookWithoutCredential({ files: [{ path: "book.md", content: "---\ntype: book\nid: book\ntitle: The Glass Gate\nlanguage: en\n---\n\nA book of gates.\n" }, ...files] })],
+];
+
+describe.each(BOOKS)("%s, with GitHub out of reach", (_name, create) => {
+  beforeEach(async () => {
+    local = await create();
+    // The author saved once: the book has a local commit, which waits for a sync it may never have.
+    await commitLocalChanges({ bookId: local.book.id, owner: local.book.owner, repo: local.book.repo, branch: local.branch, accountIdentity: localWorkspaceScope() }, "Save local book changes").catch(() => undefined);
+    const scope = captureRepositoryOperationScope();
+    await writeLocalBinaryScoped(local.meta.id, "assets/book/cover.png", PNG, scope);
+    await writeLocalBinaryScoped(local.meta.id, "assets/characters/mara/primary.png", PNG, scope);
+    local.structure = await buildLocalBookStructure(local.meta);
+  });
+
   it("shows its cover and its pictures in the reader", async () => {
     const book = await loadReaderBook({ book: local.book, structure: local.structure, token: local.token, branch: local.branch, readerSettings: { ...DEFAULT_SETTINGS.reader, showImages: true }, presentationSettings: resolveBookExportSettings(local.book), entities: [], objectUrls: [] });
     expect(book.coverUrl).toMatch(/^blob:local-/);

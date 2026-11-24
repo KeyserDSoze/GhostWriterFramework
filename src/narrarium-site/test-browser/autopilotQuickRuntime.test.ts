@@ -26,6 +26,7 @@ import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
+import { markGitHubCredentialRejected } from "@/github/remoteAvailability";
 import { FakeBookServer, PIN } from "./helpers/fakeBookServer";
 import { FakeLockRegistry, installNavigatorLocks } from "./helpers/fakeWebLocks";
 
@@ -363,6 +364,25 @@ describe("publishing from the browser while the autopilot runs", () => {
     }
     expect(steps()).toBeGreaterThan(3);
     expect(chapters()).toBe(1);
+    expect(mocks.publish).not.toHaveBeenCalled();
+    expect(last(ended())?.status).not.toBe("error");
+  });
+
+  it("runs a GitHub book without a credential here to its end, and publishes nothing: its commits wait for a sync once GitHub is connected", async () => {
+    useBook(GITHUB_BOOK, { defaultGitHubToken: "" });
+    await runtime.start(GITHUB_BOOK.id, { brief: BRIEF, options: { ...OPTIONS, publishEvery: "step" } });
+    await vi.waitFor(() => expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(false), { timeout: 5000 });
+    expect(steps()).toBeGreaterThan(3);
+    expect(mocks.publish).not.toHaveBeenCalled();
+    expect(last(ended())?.status).not.toBe("error");
+  });
+
+  it("publishes nothing with a credential GitHub refused, and the run goes on to its end", async () => {
+    markGitHubCredentialRejected("ghp_refused_by_github");
+    useBook(GITHUB_BOOK, { defaultGitHubToken: "ghp_refused_by_github" });
+    await runtime.start(GITHUB_BOOK.id, { brief: BRIEF, options: { ...OPTIONS, publishEvery: "step" } });
+    await vi.waitFor(() => expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(false), { timeout: 5000 });
+    expect(steps()).toBeGreaterThan(3);
     expect(mocks.publish).not.toHaveBeenCalled();
     expect(last(ended())?.status).not.toBe("error");
   });

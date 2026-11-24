@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 test.use({ serviceWorkers: "block" });
 
@@ -50,7 +50,8 @@ function requestPath(event: RequestEvent): string {
   return decodeURIComponent(new URL(event.url).pathname);
 }
 
-function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[]; headRequests: string[]; headRequestsByPhase: Record<RequestPhase, string[]>; blobDownloads: string[]; contentDownloads: string[]; unexpected: UnexpectedRequest[]; setPhase: (phase: RequestPhase) => void; setSettingsStalled: (stalled: boolean) => void } {
+function installDeterministicNetworkMocks(page: Page, options: { credential?: boolean } = {}): { events: RequestEvent[]; headRequests: string[]; headRequestsByPhase: Record<RequestPhase, string[]>; blobDownloads: string[]; contentDownloads: string[]; unexpected: UnexpectedRequest[]; setPhase: (phase: RequestPhase) => void; setSettingsStalled: (stalled: boolean) => void; setCredential: (credential: boolean) => void } {
+  let credential = options.credential ?? true;
   const events: RequestEvent[] = [];
   const headRequests: string[] = [];
   const headRequestsByPhase: Record<RequestPhase, string[]> = { opening: [], sync: [], reload: [] };
@@ -102,7 +103,8 @@ function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[];
     }
     if (url.pathname === "/drive/v3/files/e2e-settings" && url.searchParams.has("alt")) {
       if (settingsStalled) await stalledSettings;
-      await route.fulfill({ json: { version: 2, defaultGitHubToken: "e2e-github-token", extraGitHubTokens: [], repository: { autoFetchOnOpen: true, autoFetchIntervalMinutes: 0, autoPullWhenClean: false }, ui: { language: "en", theme: "light" }, books: [{ id: BOOK_ID, owner: "KeyserDSoze", repo: "Jesus", name: "Jesus", tokenIndex: null, bookToken: "e2e-github-token", activeBranch: "test2", addedAt: "2024-01-01T00:00:00.000Z" }] } });
+      const token = credential ? "e2e-github-token" : "";
+      await route.fulfill({ json: { version: 2, defaultGitHubToken: token, extraGitHubTokens: [], repository: { autoFetchOnOpen: true, autoFetchIntervalMinutes: 0, autoPullWhenClean: false }, ui: { language: "en", theme: "light" }, books: [{ id: BOOK_ID, owner: "KeyserDSoze", repo: "Jesus", name: "Jesus", tokenIndex: null, ...(credential ? { bookToken: token } : {}), activeBranch: "test2", addedAt: "2024-01-01T00:00:00.000Z" }] } });
       return;
     }
     if (url.pathname === "/drive/v3/files/e2e-settings") {
@@ -196,11 +198,11 @@ function installDeterministicNetworkMocks(page: Page): { events: RequestEvent[];
     await route.fulfill({ status: 500, json: { message: `Unexpected GitHub request: ${method} ${path}` } });
   });
 
-  return { events, headRequests, headRequestsByPhase, blobDownloads, contentDownloads, unexpected, setPhase: (next) => { phase = next; }, setSettingsStalled: (stalled) => { settingsStalled = stalled; } };
+  return { events, headRequests, headRequestsByPhase, blobDownloads, contentDownloads, unexpected, setPhase: (next) => { phase = next; }, setSettingsStalled: (stalled) => { settingsStalled = stalled; }, setCredential: (next) => { credential = next; } };
 }
 
-async function installSeed(page: Page): Promise<void> {
-  await page.addInitScript(({ repositoryId, files, accountIdentity, workspaceId, bookId }) => {
+async function installSeed(page: Page, options: { credential?: boolean; workingCopy?: boolean } = {}): Promise<void> {
+  await page.addInitScript(({ repositoryId, files, accountIdentity, workspaceId, bookId, credential, workingCopy }) => {
     const marker = "narrarium-e2e-issue-65-seeded-v1";
     const target = window as unknown as { __narrariumE2eSeedReady?: Promise<void> };
     if (window.localStorage.getItem(marker)) {
@@ -224,7 +226,7 @@ async function installSeed(page: Page): Promise<void> {
       },
     };
     window.localStorage.setItem(`narrarium-settings-cache-v2:${encodeURIComponent("google:e2e-google-user")}`, JSON.stringify(cachedSettings));
-    window.sessionStorage.setItem(`narrarium-settings-credentials-v1:${encodeURIComponent("google:e2e-google-user")}`, JSON.stringify({ defaultGitHubToken: "e2e-github-token", extraGitHubTokens: [], azureOpenAIApiKey: "", integrationApiKeys: {}, deepSearchApiKeys: { braveApiKey: "", tavilyApiKey: "" }, bookTokens: { [bookId]: { token: "e2e-github-token" } } }));
+    if (credential) window.sessionStorage.setItem(`narrarium-settings-credentials-v1:${encodeURIComponent("google:e2e-google-user")}`, JSON.stringify({ defaultGitHubToken: "e2e-github-token", extraGitHubTokens: [], azureOpenAIApiKey: "", integrationApiKeys: {}, deepSearchApiKeys: { braveApiKey: "", tavilyApiKey: "" }, bookTokens: { [bookId]: { token: "e2e-github-token" } } }));
     window.localStorage.setItem("narrarium-account-continuity-v1", JSON.stringify({ version: 1, accounts: { google: { version: 1, provider: "google", providerAccountId: user.providerAccountId, normalizedEmail: user.email, displayName: user.name, picture: user.picture, createdAt: 1704067200000, lastSeen: now } } }));
     window.sessionStorage.setItem("narrarium-auth-session-v1", JSON.stringify({ version: 1, state: { accessToken: "e2e-google-token", accessTokenExpiry: now + 3_600_000, provider: user.provider, providerAccountId: user.providerAccountId } }));
 
@@ -290,8 +292,8 @@ async function installSeed(page: Page): Promise<void> {
         const storeNames = [...db.objectStoreNames];
         const transaction = db.transaction(storeNames, "readwrite");
         for (const name of storeNames) transaction.objectStore(name).clear();
-        transaction.objectStore("repositories").put({ id: repositoryId, localInstanceId: "e2e-local-instance", bookId, repositoryKind: "book", remoteKind: "github", owner: "KeyserDSoze", repo: "Jesus", branch: "test2", defaultBranch: "main", remoteHeadSha: "head-test2", remoteChanged: false, remoteStatus: "clean", remoteCheckedAt: "2024-01-01T00:00:00.000Z", lastRemoteHead: "head-test2", lastKnownChanged: false, clonedAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z", lastFetchAt: "2024-01-01T00:00:00.000Z", cloneComplete: true, cloneStatus: "complete", expectedFileCount: prepared.length, nextCommitOrder: 0, accountScope: accountIdentity, operationFence: 0 });
-        for (const file of prepared) transaction.objectStore("files").put(file);
+        if (workingCopy) transaction.objectStore("repositories").put({ id: repositoryId, localInstanceId: "e2e-local-instance", bookId, repositoryKind: "book", remoteKind: "github", owner: "KeyserDSoze", repo: "Jesus", branch: "test2", defaultBranch: "main", remoteHeadSha: "head-test2", remoteChanged: false, remoteStatus: "clean", remoteCheckedAt: "2024-01-01T00:00:00.000Z", lastRemoteHead: "head-test2", lastKnownChanged: false, clonedAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z", lastFetchAt: "2024-01-01T00:00:00.000Z", cloneComplete: true, cloneStatus: "complete", expectedFileCount: prepared.length, nextCommitOrder: 0, accountScope: accountIdentity, operationFence: 0 });
+        if (workingCopy) for (const file of prepared) transaction.objectStore("files").put(file);
         transaction.oncomplete = () => resolve();
         transaction.onerror = () => reject(transaction.error);
         transaction.onabort = () => reject(transaction.error ?? new Error("E2E IndexedDB seed aborted"));
@@ -316,7 +318,7 @@ async function installSeed(page: Page): Promise<void> {
         request.onerror = () => reject(request.error);
       });
     })();
-  }, { repositoryId: REPOSITORY_ID, files: seededFiles, accountIdentity: ACCOUNT_IDENTITY, workspaceId: WORKSPACE_ID, bookId: BOOK_ID });
+  }, { repositoryId: REPOSITORY_ID, files: seededFiles, accountIdentity: ACCOUNT_IDENTITY, workspaceId: WORKSPACE_ID, bookId: BOOK_ID, credential: options.credential ?? true, workingCopy: options.workingCopy ?? true });
 }
 
 async function readLocalFile(page: Page): Promise<{ text: string; status: string; committed: boolean }> {
@@ -628,6 +630,139 @@ test("a linked book offline works from its working copy, saves on this device an
   await page.goto(`app/books/${BOOK_ID}`);
   await page.getByRole("button", { name: "Actions", exact: true }).click();
   await expect(page.getByText("You are offline: commit history and pull requests need GitHub.")).toBeVisible();
+  expect(github).toEqual([]);
+});
+
+test("a GitHub book without a credential works from its working copy, saves as local commits and publishes them once GitHub is connected", async ({ page }) => {
+  test.setTimeout(180_000);
+  // No GitHub credential on this device (no token, no connection), and GitHub out of reach: every request to it is recorded and fails.
+  const network = installDeterministicNetworkMocks(page, { credential: false });
+  const github: string[] = [];
+  page.on("request", (request) => { if (request.url().startsWith("https://api.github.com/")) github.push(`${request.method()} ${request.url()}`); });
+  const blocked = (route: Route) => route.abort("internetdisconnected");
+  await page.route("https://api.github.com/**", blocked);
+  await installSeed(page, { credential: false });
+  const rawError = /content read failed|REPOSITORY_[A-Z_]+|Failed to fetch|NetworkError|TypeError|Load failed|could not be reached|is not in the local working copy|HttpError|Bad credentials|No GitHub token configured|token is required|Push or discard|must be clean/i;
+  const problems = async () => (await page.locator('[role="alert"], [role="status"]').allInnerTexts()).filter((text) => rawError.test(text));
+  const book = `app/books/${BOOK_ID}`;
+  const chapter = `${book}/chapters/001-the-arrival`;
+  const paragraph = `${chapter}/paragraphs/001`;
+
+  // Every page of the book opens from the working copy.
+  for (const [route, component, text] of [
+    [book, "BookPage"],
+    [`${book}/dashboard`, "BookDashboardPage"],
+    [`${book}/outline`, "OutlinePage"],
+    [`${book}/autopilot`, "AutopilotPage"],
+    [`${book}/autopilot/settings`, "AutopilotSettingsPage"],
+    [`${book}/director`, "DirectorPage"],
+    [`${book}/assets`, "AssetGalleryPage"],
+    [`${book}/reader`, "ReaderPreviewPage", INITIAL_BODY],
+    [`${book}/export`, "BookExportPage"],
+    [`${book}/research`, "DeepResearchPage"],
+    [`${book}/ghostwriters`, "GhostwritersPage"],
+    [`${book}/evaluation-style`, "EvaluationStylePage"],
+    [`${book}/simulated-readers`, "ReaderPersonasPage"],
+    [`${book}/settings`, "BookSettingsPage"],
+    [`${book}/audit`, "AuditPage", "No audit report yet"],
+    [chapter, "ChapterPage"],
+    [`${chapter}/workspace/draft`, "WorkspaceDocPage"],
+    [`${chapter}/drafts`, "DraftStageRoute"],
+    [`${chapter}/scripts`, "ScriptStageRoute"],
+    [`${chapter}/reader-evaluations`, "ReaderEvaluationsPage"],
+    [`${chapter}/audit`, "AuditPage", "No audit report yet"],
+    [paragraph, "ParagraphPage", INITIAL_BODY],
+    [`${paragraph}/workspace/draft`, "WorkspaceDocPage"],
+    [`${paragraph}/workspace/script`, "WorkspaceDocPage"],
+    [`${paragraph}/reader-evaluations`, "ReaderEvaluationsPage"],
+    [`${paragraph}/audit`, "AuditPage", "No audit report yet"],
+    [`${paragraph}/split`, "ParagraphSplitPage"],
+  ] as Array<[string, string, string?]>) {
+    await page.goto(route);
+    await expect(page.locator(`[data-route-ready="${component}"]`), route).toBeAttached({ timeout: 15_000 });
+    if (text) await expect(page.getByText(text).first(), route).toBeVisible({ timeout: 15_000 });
+    await page.waitForTimeout(400);
+    expect(await problems(), route).toEqual([]);
+  }
+  // Export works without a credential: the button is there, not a warning about a token.
+  await page.goto(`${book}/export`);
+  await expect(page.locator('[data-route-ready="BookExportPage"]')).toBeAttached({ timeout: 15_000 });
+  await expect(page.getByRole("main").getByRole("button", { name: "Export", exact: true })).toBeVisible({ timeout: 15_000 });
+
+  // The GitHub tab offers the branch this device has and says that listing or making GitHub's needs GitHub; the Online reader tab cannot manage the reader.
+  await page.goto(`${book}/settings#github`);
+  const githubTab = page.getByRole("tabpanel", { name: "GitHub" });
+  await expect(githubTab.getByText("This needs GitHub: connect GitHub to use it.").first()).toBeVisible({ timeout: 15_000 });
+  await expect(githubTab.getByRole("button", { name: "Load remote branches" })).toBeDisabled();
+  await expect(githubTab.getByRole("link", { name: "Connect GitHub" }).first()).toHaveAttribute("href", /\/app\/settings\/github$/);
+  await page.getByRole("tab", { name: "Online reader" }).click();
+  await expect(page.getByText("This book has no GitHub token, so its reader cannot be managed from here.")).toBeVisible({ timeout: 15_000 });
+
+  // Saving works, and a sync saves the change as a local commit on this device.
+  await page.goto(paragraph);
+  await page.getByRole("button", { name: "Edit paragraph" }).click();
+  await page.getByRole("textbox", { name: "Start writing…" }).fill(EDITED_BODY);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /local changes/ }).click();
+  await expect(page.getByText("This book has no GitHub credential on this device: it works here, and fetch, pull and push need GitHub. Connect GitHub to use them.")).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Fetch" })).toBeDisabled();
+  await expect(page.getByRole("menuitem", { name: "Pull" })).toBeDisabled();
+  await expect(page.getByRole("menuitem", { name: "Connect GitHub" })).toBeVisible();
+  await page.getByRole("button", { name: "Full sync" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved on this device. Connect GitHub to sync it." }).first()).toBeVisible();
+  expect(await readLocalFile(page)).toMatchObject({ committed: true, text: expect.stringContaining(EDITED_BODY) });
+
+  // The repository status says what needs GitHub, and how to connect it.
+  await page.reload();
+  await page.getByRole("button", { name: /local commits/ }).click();
+  await page.getByRole("menuitem", { name: "View status" }).click();
+  const status = page.getByRole("dialog");
+  await expect(status.getByText(/This book has no GitHub credential on this device: you read, write and save it here, as local commits/)).toBeVisible();
+  await expect(status.getByRole("link", { name: "Connect GitHub" })).toHaveAttribute("href", /\/app\/settings\/github$/);
+  await page.keyboard.press("Escape");
+
+  // The actions of the book: the commit history and the pull requests need GitHub, and the panel offers to connect it.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(book);
+  await page.getByRole("button", { name: "Actions", exact: true }).click();
+  await expect(page.getByText("Commit history and pull requests need GitHub: connect GitHub to use them.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Connect GitHub" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Commits", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "PRs", exact: true })).toHaveCount(0);
+  expect(github).toEqual([]);
+
+  // GitHub is connected: the author adds a token in the GitHub settings, and the next sync publishes what was saved without it.
+  await page.unroute("https://api.github.com/**", blocked);
+  network.setCredential(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto("app/settings/github");
+  await page.locator("#default-token").fill("e2e-github-token");
+  // Within the app, as the author goes back to the book: the token typed above is in the settings of this session.
+  await page.evaluate((path) => { window.history.pushState({}, "", path); window.dispatchEvent(new PopStateEvent("popstate")); }, new URL(paragraph, baseURL).pathname);
+  await expect(page.getByRole("button", { name: "Edit paragraph" })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("button", { name: /local commits/ }).click();
+  await page.getByRole("button", { name: "Full sync" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Sync complete:" }).first()).toBeVisible({ timeout: 15_000 });
+  const pushed = network.events.find((event) => event.method === "POST" && /\/git\/blobs$/.test(requestPath(event)));
+  expect(JSON.parse(pushed?.body ?? "{}").content).toContain(EDITED_BODY);
+  expect(network.events.filter((event) => event.method === "PATCH" && /\/git\/refs\/heads\/test2$/.test(requestPath(event)))).toHaveLength(1);
+  expect(await readLocalFile(page)).toMatchObject({ status: "clean", committed: false, text: expect.stringContaining(EDITED_BODY) });
+  expect(network.unexpected.filter((request) => request.url.startsWith("https://api.github.com/"))).toEqual([]);
+});
+
+test("a GitHub book never downloaded on this device, without a credential, says so plainly and offers to connect GitHub", async ({ page }) => {
+  installDeterministicNetworkMocks(page, { credential: false });
+  const github: string[] = [];
+  page.on("request", (request) => { if (request.url().startsWith("https://api.github.com/")) github.push(`${request.method()} ${request.url()}`); });
+  await page.route("https://api.github.com/**", (route) => route.abort("internetdisconnected"));
+  await installSeed(page, { credential: false, workingCopy: false });
+
+  await page.goto(`app/books/${BOOK_ID}`);
+  const alert = page.getByRole("alert").filter({ hasText: "This book is not on this device yet: connect GitHub to download it." });
+  await expect(alert).toBeVisible({ timeout: 15_000 });
+  await alert.getByRole("link", { name: "Connect GitHub" }).click();
+  await expect(page).toHaveURL(/\/app\/settings\/github$/);
   expect(github).toEqual([]);
 });
 

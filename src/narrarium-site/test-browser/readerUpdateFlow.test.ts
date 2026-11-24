@@ -14,6 +14,7 @@ import { RepositoryConflictError } from "@/repository/safeRepositoryMutation";
 import { applyReaderUpdate } from "@/readerUpdate/apply";
 import { CustomizedWorkflowRefused } from "@/readerUpdate/commit";
 import { inspectReaderUpdate, type ReaderUpdateInspection } from "@/readerUpdate/inspect";
+import { markGitHubCredentialRejected } from "@/github/remoteAvailability";
 import { blockNetwork, createLinkedBookClone, createLocalOnlyBook, resetLocalWorkspace, type LocalFirstBook } from "./helpers/localFirst";
 import v1 from "./fixtures/pagesWorkflowV1.yml?raw";
 
@@ -123,6 +124,17 @@ describe("a book published with a password and an old reader", () => {
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
     const inspection = await inspect(local);
     expect(asUpdate(inspection).delivery).toBe("offline");
+    const outcome = await apply(local, inspection);
+    expect(outcome.published).toBe(false);
+    expect(push.fn).not.toHaveBeenCalled();
+    expect(await listUnpushedLocalCommits(local.meta.id)).toHaveLength(1);
+  }, 60_000);
+
+  it("stays a local commit when GitHub refused the book's credential, exactly as without one, and says it publishes at the next sync", async () => {
+    const local = await jesus({ token: "ghp_refused_by_github" });
+    markGitHubCredentialRejected("ghp_refused_by_github");
+    const inspection = await inspect(local);
+    expect(asUpdate(inspection).delivery).toBe("no-credential");
     const outcome = await apply(local, inspection);
     expect(outcome.published).toBe(false);
     expect(push.fn).not.toHaveBeenCalled();
