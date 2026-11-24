@@ -1,0 +1,86 @@
+import type { Octokit } from "@octokit/rest";
+
+export interface FakeFailure { status: number; message?: string; headers?: Record<string, string> }
+
+export interface FakeReaderGitHub {
+  octokit: Octokit;
+  secrets: Map<string, string>;
+  variable: { value: string | null };
+  pages: { enabled: boolean; htmlUrl: string; plan?: boolean };
+  workflowPresent: { value: boolean };
+  runs: Array<{ id: number; status: string; conclusion: string | null; html_url: string; created_at: string; head_branch: string }>;
+  calls: Array<{ method: string; args: Record<string, unknown> }>;
+  /** Makes the next calls of a method fail (the number of times given, or for ever). */
+  fail(method: string, failure: FakeFailure, times?: number): void;
+  clearFailures(): void;
+  order(): string[];
+}
+
+/** A well-formed repository public key (32 bytes, base64): the real sealed box can run against it. */
+export const FAKE_PUBLIC_KEY = btoa(String.fromCharCode(...Array.from({ length: 32 }, (_, index) => index + 9)));
+
+const MUTATIONS = new Set(["createOrUpdateRepoSecret", "deleteRepoSecret", "createRepoVariable", "updateRepoVariable", "deleteRepoVariable", "createWorkflowDispatch", "createPagesSite", "deletePagesSite"]);
+
+function requestError(failure: FakeFailure): Error {
+  return Object.assign(new Error(failure.message ?? `HTTP ${failure.status}`), { status: failure.status, response: { headers: failure.headers ?? {} } });
+}
+
+/** An in-memory GitHub that answers only the calls of the reader's access, records every call, and can be told to refuse any of them. */
+export function createFakeReaderGitHub(): FakeReaderGitHub {
+  const state = {
+    secrets: new Map<string, string>(),
+    variable: { value: null as string | null },
+    pages: { enabled: false, htmlUrl: "https://me.github.io/book/" } as FakeReaderGitHub["pages"],
+    workflowPresent: { value: true },
+    runs: [] as FakeReaderGitHub["runs"],
+    calls: [] as FakeReaderGitHub["calls"],
+  };
+  const failures = new Map<string, FakeFailure & { remaining: number }>();
+  const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
+    get: () => ({ data: { private: true, default_branch: "main", html_url: "https://github.com/me/book", permissions: { admin: true, push: true, pull: true } } }),
+    getRepoPublicKey: () => ({ data: { key_id: "key-1", key: FAKE_PUBLIC_KEY } }),
+    createOrUpdateRepoSecret: (args) => { state.secrets.set(String(args.secret_name), String(args.encrypted_value)); return { data: {} }; },
+    deleteRepoSecret: (args) => { if (!state.secrets.has(String(args.secret_name))) throw requestError({ status: 404 }); state.secrets.delete(String(args.secret_name)); return { data: {} }; },
+    listRepoSecrets: () => ({ data: { total_count: state.secrets.size, secrets: [...state.secrets.keys()].map((name) => ({ name })) } }),
+    getRepoVariable: () => { if (state.variable.value === null) throw requestError({ status: 404 }); return { data: { name: "READER_PASSWORD_SECRETS", value: state.variable.value } }; },
+    createRepoVariable: (args) => { if (state.variable.value !== null) throw requestError({ status: 409 }); state.variable.value = String(args.value); return { data: {} }; },
+    updateRepoVariable: (args) => { if (state.variable.value === null) throw requestError({ status: 404 }); state.variable.value = String(args.value); return { data: {} }; },
+    deleteRepoVariable: () => { if (state.variable.value === null) throw requestError({ status: 404 }); state.variable.value = null; return { data: {} }; },
+    createWorkflowDispatch: () => { state.runs.unshift({ id: state.runs.length + 1, status: "queued", conclusion: null, html_url: `https://github.com/me/book/actions/runs/${state.runs.length + 1}`, created_at: "2026-11-25T10:00:00Z", head_branch: "main" }); return { data: {} }; },
+    listWorkflowRuns: () => ({ data: { workflow_runs: state.runs } }),
+    getContent: () => {
+      if (!state.workflowPresent.value) throw requestError({ status: 404 });
+      return { data: { type: "file", content: btoa("name: Deploy reader\n") } };
+    },
+    getPages: () => { if (!state.pages.enabled) throw requestError({ status: 404 }); return { data: { html_url: state.pages.htmlUrl, build_type: "workflow" } }; },
+    createPagesSite: () => {
+      if (state.pages.plan) throw requestError({ status: 422, message: "Your current plan does not support GitHub Pages for this repository." });
+      if (state.pages.enabled) throw requestError({ status: 409 });
+      state.pages.enabled = true;
+      return { data: {} };
+    },
+    deletePagesSite: () => { if (!state.pages.enabled) throw requestError({ status: 404 }); state.pages.enabled = false; return { data: {} }; },
+  };
+  const group = (names: string[]) => Object.fromEntries(names.map((name) => [name, async (args: Record<string, unknown> = {}) => {
+    state.calls.push({ method: name, args });
+    const failure = failures.get(name);
+    if (failure && failure.remaining > 0) {
+      failure.remaining -= 1;
+      throw requestError(failure);
+    }
+    return handlers[name](args);
+  }]));
+  const octokit = {
+    rest: {
+      repos: group(["get", "getContent", "getPages", "createPagesSite", "deletePagesSite"]),
+      actions: group(["getRepoPublicKey", "createOrUpdateRepoSecret", "deleteRepoSecret", "listRepoSecrets", "getRepoVariable", "createRepoVariable", "updateRepoVariable", "deleteRepoVariable", "createWorkflowDispatch", "listWorkflowRuns"]),
+    },
+  } as unknown as Octokit;
+  return {
+    octokit,
+    ...state,
+    fail(method, failure, times = Number.POSITIVE_INFINITY) { failures.set(method, { ...failure, remaining: times }); },
+    clearFailures() { failures.clear(); },
+    order: () => state.calls.filter((call) => MUTATIONS.has(call.method)).map((call) => call.method === "createOrUpdateRepoSecret" || call.method === "deleteRepoSecret" ? `${call.method}:${String(call.args.secret_name)}` : call.method),
+  };
+}

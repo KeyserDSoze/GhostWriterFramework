@@ -44,7 +44,7 @@ Each thing Narrarium does on GitHub needs a permission of the token. If a permis
 | Pull requests | `repo` | Pull requests: Read and write | Pull requests: Read and write |
 | Create the repository | `repo` | Administration or Repository creation: Read and write | Repository creation (or Administration): write |
 | Write `.github/workflows/*` | `workflow` | Workflows: Read and write | Workflows: Read and write |
-| Turn on GitHub Pages | `repo` | Pages and Administration: Read and write | not with the app: turn it on at github.com, or use a token |
+| Turn on GitHub Pages | `repo` | Pages and Administration: Read and write | Pages: write, if the app has it; otherwise turn it on at github.com, or use a token |
 | Delete a repository | `delete_repo` | Administration: Read and write | not with the app: delete it at github.com, or use a token |
 
 - With the GitHub app, what happens when a permission is missing is told in words: Narrarium names the permission to give the app (for example **Repository creation** to create a repository, **Workflows** to add the Pages workflow) and offers the way out that always works: create the empty repository on github.com yourself, then connect it. A repository the app creates is reachable at once only if the app has the creation permission; if it is not, the card shows the install step.
@@ -53,6 +53,34 @@ Each thing Narrarium does on GitHub needs a permission of the token. If a permis
 - A fine-grained token that only selects some repositories cannot create a new one or use it at once: choose **All repositories** for that. A fine-grained token has one owner: to work in an organization, make the organization its **Resource owner**.
 - Organizations with single sign-on need the token authorized for them (**Configure SSO**). A refusal for that reason is reported as such.
 - When GitHub's limit on requests is reached, Narrarium stops and tells you at what time to try again; it never retries on its own.
+
+## Reader access: passwords and GitHub Pages
+
+In **Book Settings**, a book on GitHub has an **Reader access** card. It turns GitHub Pages on or off for the book, lists the passwords that open the published reader, adds and removes them, and shows how the last publication went. A book with no password is public: anyone with the address can read it.
+
+- **Add a password** with a label (who it is for) and either a generated password or one you type; the card reads its strength and warns that the encrypted book is published at a public address, so anyone can download it and try passwords on their own computer: use a long random password, like the generated ones. **Remove** takes it away: the reader stops accepting it the next time it is published, and what someone already read or saved with it cannot be taken back.
+- GitHub never shows the value of a secret, so Narrarium keeps the passwords in the account data it already syncs (your Google Drive, OneDrive or the private `narrarium.settings` repository), masked until you press **Show**, with a **Copy** button. They are never in the book, in an export, in an AI request or in a log. A password that exists on GitHub but was not made here, and the older single password of a book, are listed as such and can only be removed.
+- Every change goes to GitHub in an order that never leaves the published reader pointing at a secret that is not there: adding writes the secret, then lists it in the repository variable `READER_PASSWORD_SECRETS`, then starts the publishing workflow; removing first takes the name off the variable, then deletes the secret, then starts the workflow. The secrets are `READER_PASSWORD_001`, `READER_PASSWORD_002`, and so on. If a step fails the card says which one, what is already done, what the published reader is doing, and offers to try again.
+- **Turn off Pages** asks for confirmation. By default the workflow and the passwords stay, so that turning Pages on again publishes with the same ones. A second, separate choice also deletes the password secrets and the variable on GitHub, and a third, again separate, forgets the passwords kept in Narrarium.
+- A private repository's Pages site is still reachable by its address on GitHub plans without access control for Pages: the encryption is the only protection. Revoking a password stops everything published afterwards, not what was already read.
+
+### Permissions this needs
+
+The token a book uses (the GitHub app, or a personal access token) needs these repository permissions, all **Read and write** (Metadata: Read is always there):
+
+| Permission | What it is for |
+| --- | --- |
+| Secrets | write and delete the password secrets, and read their names |
+| Variables (Actions variables) | the variable that lists them |
+| Actions | start the publishing workflow and read its runs |
+| Pages | turn Pages on and off, and read its address |
+| Contents and Workflows | read and update the reader workflow file |
+
+When GitHub refuses a step, the card names the permission that is missing (it reads GitHub's `X-Accepted-GitHub-Permissions` header when there is one) and says where to add it:
+
+- **GitHub app:** the app's permissions are set by whoever runs the app (GitHub › Settings › Developer settings › GitHub Apps › the app › Permissions & events › Repository permissions). After they change, each installation has to accept the new permissions (GitHub › Settings › Applications › the app, or the request GitHub sends). Until then, use a personal access token.
+- **Fine-grained token:** GitHub › Settings › Developer settings › Personal access tokens › Fine-grained tokens › the token › Repository permissions: set Actions, Contents, Pages, Secrets, Variables and Workflows to **Read and write**, then save.
+- **Classic token:** the `repo` scope, and `workflow` to change the workflow file.
 
 ## Creating a repository from a book
 

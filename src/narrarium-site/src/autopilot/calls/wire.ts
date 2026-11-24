@@ -1,3 +1,4 @@
+import { allReaderPasswordValues } from "@/readerAccess/model";
 import { pickAiRuntimeConfig, type AiCallBegin, type AiCallEnd, type AiCallField, type AiCallPruneResult, type AiCallStore, type AiCallTask, type AiCallTaskDraft, type AiCallTaskPage, type AiCallTextChunk, type AiCallTotals, type AutopilotSessionConfig } from "narrarium-engine";
 import { currentRepositoryScopeIdentity } from "@/repository/repositoryOperationScope";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -116,6 +117,8 @@ export function browserCallsSecrets(): string[] {
   add(settings.defaultGitHubToken);
   for (const token of settings.extraGitHubTokens ?? []) add(token.token);
   add(settings.personalServer?.token);
+  // The passwords of the protected reader: no record of a call may ever hold one.
+  for (const password of allReaderPasswordValues(settings)) add(password);
   return [...found];
 }
 

@@ -305,6 +305,19 @@ export const DEFAULT_AUDIT_SETTINGS: AuditSettings = {
 
 // ─── Book entry (one GitHub repository = one book) ───────────────────────────
 
+export type ReaderPasswordStatus = "pending" | "active" | "removing";
+
+/** A password of a book's protected reader, kept so that it can be shown again: `secretName` is the repository secret that carries it to the build. */
+export interface ReaderPasswordRecord {
+  id: string;
+  label: string;
+  value: string;
+  createdAt: string;
+  secretName: string;
+  /** `pending`: saved here, not yet fully on GitHub. `active`: published. `removing`: a removal that has started and is not finished. */
+  status: ReaderPasswordStatus;
+}
+
 export interface BookEntry {
   /** Unique local ID (crypto.randomUUID()) */
   id: string;
@@ -571,6 +584,11 @@ export interface AppSettings {
    * token goes first, as it always did. It is only a preference: the token of the app itself is never in the settings.
    */
   githubPreferConnection?: boolean;
+  /**
+   * The passwords of the protected reader of each GitHub book, by repository (`owner/repo`, lower case). GitHub's secrets are write-only, so the passwords the
+   * owner can see again live here: in the account data that already syncs (and nowhere else on this device). An older client keeps the field as it is.
+   */
+  readerAccess?: Record<string, ReaderPasswordRecord[]>;
   azureOpenAI: AzureOpenAIConfig;
   aiIntegrations: AIIntegration[];
   defaultWritingIntegrationId?: string;

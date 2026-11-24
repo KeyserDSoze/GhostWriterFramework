@@ -35,6 +35,8 @@ import { GitHubCreateFailure, GitHubCreateProgress, GitHubCreateResult } from "@
 
 // Which token the book uses, and whether the GitHub app reaches it, is a chunk of its own.
 const BookGitHubAccess = lazy(() => import("@/components/book/BookGitHubAccess").then((module) => ({ default: module.BookGitHubAccess })));
+// The passwords and GitHub Pages of the reader, and the sealed-box code they need, load only with this card.
+const ReaderAccessCard = lazy(() => import("@/components/book/readerAccess/ReaderAccessCard").then((module) => ({ default: module.ReaderAccessCard })));
 import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { readTokenHealth, tokenExpirationWarning, type TokenHealth } from "@/repository/tokenHealth";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
@@ -270,6 +272,8 @@ export function BookSettingsPage() {
       </Card>}
 
       {bookStorageMode(currentBook) === "github" && <Suspense fallback={null}><BookGitHubAccess book={currentBook} /></Suspense>}
+
+      {bookStorageMode(currentBook) === "github" && <Suspense fallback={null}><ReaderAccessCard book={currentBook} /></Suspense>}
 
       {attachedResult && <GitHubCreateResult result={attachedResult} onOpenBook={() => navigate(`/app/books/${currentBook.id}`)} />}
       {!attachedResult && bookStorageMode(currentBook) === "local-only" && (
