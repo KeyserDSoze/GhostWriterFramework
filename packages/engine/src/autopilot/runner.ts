@@ -1249,18 +1249,21 @@ export class AutopilotRun {
         this.current = activity;
         this.emit({ type: "task-started", activity });
         this.recordTask(activity, "running");
-        let lastProgress = 0;
-        let lastStructuredProgress: number | undefined;
-        let lastJsonTail: number | undefined;
-        let structuredTail = "";
         let callSeq = 0;
         const ai = async (request: Omit<AiRequest, "signal">): Promise<AiResponse> => {
           lastLabel = request.label;
           const user = correction?.label === request.label ? `${request.user}\n\n${currentRequest(correction.note)}` : request.user;
+          const seq = ++callSeq;
+          // What this call says of itself while it answers: its own text, its own pace, nothing of the call before it.
+          let lastProgress = 0;
+          let lastStructuredProgress: number | undefined;
+          let lastJsonTail: number | undefined;
+          let structuredTail = "";
+          let structuredLength: number | undefined;
           const call = this.calls?.start({
             runId: this.runId,
             activityId: activity.id,
-            seq: ++callSeq,
+            seq,
             stepAttempt,
             task: activity.task,
             chapter: activity.chapterNumber ?? null,
@@ -1276,7 +1279,7 @@ export class AutopilotRun {
             temperature: request.temperature ?? null,
           }) ?? null;
           if (call) this.emit({ type: "call-started", activityId: activity.id, callId: call.callId, seq: call.seq, label: request.label, capability: request.capability, structured: Boolean(request.json), systemBytes: call.systemBytes, userBytes: call.userBytes });
-          const callId = call ? { callId: call.callId } : {};
+          const callId = { ...(call ? { callId: call.callId } : {}), callSeq: seq };
           const finishCall = (status: Exclude<AiCallStatus, "running">, outcome: { response?: AiResponse; error?: unknown } = {}): void => {
             if (!call) return;
             const info: CallEndInfo = call.end(status, outcome);
@@ -1295,22 +1298,26 @@ export class AutopilotRun {
             this.emit({ type: "task-progress", activityId: activity.id, ...callId, characters: text.length, preview: tail(text, 700) });
           };
           // A structured reply streams its JSON: its tail is said as the text of a prose step is, at most about three times a second, and the
-          // arguments themselves are never kept by the runner (the records keep them when the book keeps records).
+          // arguments themselves are never kept by the runner (the records keep them when the book keeps records). A shorter JSON (`""` too) is a new
+          // attempt of the call: it is said at once, so that what a client shows starts again with it.
           const onStructuredText = request.json ? (text: string) => {
             call?.onText(text);
             request.onStructuredText?.(text);
+            const restart = structuredLength !== undefined && text.length < structuredLength;
             structuredTail = tail(text, 700);
+            structuredLength = text.length;
             const at = Date.now();
-            if (lastJsonTail !== undefined && at - lastJsonTail < 350) return;
+            if (!restart && lastJsonTail !== undefined && at - lastJsonTail < 350) return;
             lastJsonTail = at;
             this.emit({ type: "task-progress", activityId: activity.id, ...callId, kind: "json", characters: text.length, preview: structuredTail });
           } : undefined;
-          // A structured reply has no text to show: the client reports how much has arrived (up to four times a second), and one report a second is said, as numbers only.
+          // The client reports how much of a structured reply has arrived (up to four times a second), and one report a second is said, as numbers. Its
+          // characters are the JSON's once the JSON streams (one count for the call, the one its tail says), the client's count before.
           const onProgress = request.json ? (progress: AiProgress) => {
             const at = this.now().getTime();
             if (lastStructuredProgress !== undefined && at - lastStructuredProgress < STRUCTURED_PROGRESS_INTERVAL_MS) return;
             lastStructuredProgress = at;
-            this.emit({ type: "task-progress", activityId: activity.id, ...callId, bytes: progress.bytes, characters: progress.characters, preview: structuredTail });
+            this.emit({ type: "task-progress", activityId: activity.id, ...callId, bytes: progress.bytes, characters: structuredLength ?? progress.characters, preview: structuredTail });
           } : undefined;
           let response: AiResponse;
           const boost = this.outputBoosts.get(boostKey) ?? 1;

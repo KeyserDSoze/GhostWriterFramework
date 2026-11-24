@@ -791,8 +791,11 @@ export type AutopilotMessageCode =
  * numbers (`bytes` of the reply that arrived, `characters` of its text or arguments, and the `preview` of the JSON so far, empty until it streams), at most once a second. It is never saved
  * and never replayed to a client that connects later; `snapshot().live` carries the last one.
  * A structured step that streams its JSON (the arguments of its function, as they arrive) says it with its tail: `task-progress` with `kind: "json"`,
- * `preview` (the last 700 characters of the JSON so far) and `characters`, and no `bytes`. `callId` says which AI call of the step it is, when the
- * book keeps AI call records (`call-started` and `call-ended`, see `AutopilotSessionConfig.calls`). Those two events carry ids, sizes and times, never text.
+ * `preview` (the last 700 characters of the JSON so far) and `characters`, and no `bytes`; its numbers event says the same `characters` (the JSON so
+ * far, once it streams). A shorter text or JSON than the one before (`""` included) is a new attempt of the call, said at once. `callSeq` says which
+ * call of the step it is (from 1), and `callId` names it when the book keeps AI call records (`call-started` and `call-ended`, see
+ * `AutopilotSessionConfig.calls`); those two events carry ids, sizes and times, never text. A client follows the events with `applyLiveProgress`, as
+ * `snapshot().live` does: the shown text of a call never goes back to nothing until the call ends, and nothing of a call is shown as another's.
  * A `callsStoreFailed` insight says that the records of the AI calls could not be kept (the store is full or failed): the run goes on without them.
  * The insights about the outline carry the chapter they are about (`chapterNumber`) and, for a ghostwriter the outline names that does
  * not exist, its slug (`ghostwriter`), so that a client can say them in its language.
@@ -801,7 +804,7 @@ export type AutopilotEventBody =
   | { type: "run-started"; runId: string; host: "browser" | "server" }
   | { type: "run-ended"; runId: string; status: AutopilotStatus; message?: string | null; code?: AutopilotMessageCode }
   | { type: "task-started"; activity: AutopilotActivity }
-  | { type: "task-progress"; activityId: string; characters: number; preview: string; bytes?: number; callId?: string; kind?: "json" }
+  | { type: "task-progress"; activityId: string; characters: number; preview: string; bytes?: number; callId?: string; callSeq?: number; kind?: "json" }
   | { type: "call-started"; activityId: string; callId: string; seq: number; label: string; capability: string; structured: boolean; systemBytes: number; userBytes: number }
   | { type: "call-ended"; activityId: string; callId: string; status: AiCallStatus; attempts: number; characters: number; storedBytes: number; partial: boolean; durationMs: number; dropped: AiCallDropReason | null }
   | { type: "task-finished"; activity: AutopilotActivity }
@@ -882,6 +885,25 @@ export interface AutopilotStateSummary {
   retry?: AutopilotRetryInfo;
 }
 
+/**
+ * What a client shows of the step that runs while its model answers: the text of the call that answers now, and how much there is. It changes only
+ * through `applyLiveProgress` (the session for `snapshot().live`, the web app for its panels), so that it says the same everywhere.
+ */
+export interface AutopilotLive {
+  activity: AutopilotActivity;
+  /** The characters of the call's text so far: its prose, or the JSON of a structured reply. Never fewer within an attempt of the call. */
+  characters: number;
+  /** The end of that text (at most 700 characters); empty until the call has written something. */
+  preview: string;
+  /** The text is the JSON of a structured reply (the arguments of its function, or its JSON), not prose. */
+  json?: boolean;
+  /** A structured reply: how many bytes of it have arrived, as a number only. Once said, it stays until the call, its attempt or the step changes. */
+  bytes?: number;
+  /** Which call of the step the text belongs to (from 1), and its id when the book keeps the records of its calls. */
+  callSeq?: number;
+  callId?: string;
+}
+
 /** What a client needs to render the autopilot of one book. */
 export interface AutopilotSnapshot {
   bookId: string;
@@ -892,8 +914,8 @@ export interface AutopilotSnapshot {
    */
   summary?: AutopilotStateSummary | null;
   activities: AutopilotActivity[];
-  /** Activity currently running with its streamed preview, if any. `bytes` is the last number a structured step said (see `task-progress`). */
-  live: { activity: AutopilotActivity; characters: number; preview: string; bytes?: number } | null;
+  /** Activity currently running with what its model is writing, if any (see `AutopilotLive` and `task-progress`). */
+  live: AutopilotLive | null;
   running: boolean;
   host: "browser" | "server" | null;
   /**

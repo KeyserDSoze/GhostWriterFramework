@@ -28,6 +28,7 @@ import {
   type FrozenWorkItem,
 } from "./frozen.js";
 import { readBrief } from "./brief.js";
+import { applyLiveProgress, startLive } from "./live.js";
 import { outlinePlanStatus, type OutlineWrittenChange } from "./outline-check.js";
 import { advanceState } from "./planner.js";
 import {
@@ -251,8 +252,9 @@ export class AutopilotSession {
   private emit(body: AutopilotEventBody, options: { replay?: boolean } = {}): void {
     const event = { ...body, bookId: this.config.bookId, at: this.now().toISOString(), seq: ++this.seq } as AutopilotEvent;
     if (body.type === "state") this.summary = body.state;
-    if (body.type === "task-started") this.live = { activity: body.activity, characters: 0, preview: "" };
-    else if (body.type === "task-progress" && this.live?.activity.id === body.activityId) this.live = { activity: this.live.activity, characters: body.characters, preview: body.preview, ...(body.bytes !== undefined ? { bytes: body.bytes } : {}) };
+    // What `snapshot().live` says follows the events by the one rule every client follows (`applyLiveProgress`).
+    if (body.type === "task-started") this.live = startLive(body.activity);
+    else if (body.type === "task-progress" && this.live?.activity.id === body.activityId) this.live = applyLiveProgress(this.live, body);
     else if (body.type === "task-finished" && this.live?.activity.id === body.activity.id) this.live = null;
     else if (body.type === "run-ended") this.live = null;
     // Streaming previews and heartbeats are only useful live; keep the replay buffer for meaningful events.

@@ -60,7 +60,8 @@ test("a structured step that streams for ten seconds says so once a second: ten 
   for (const event of progress) {
     assert.equal(event.activityId, started.activity.id);
     assert.equal(event.preview, "", "no text: only numbers");
-    assert.deepEqual(Object.keys(event).sort(), ["activityId", "at", "bookId", "bytes", "characters", "preview", "seq", "type"]);
+    // Changed on purpose (engine 0.1.15): every progress says which call of the step it is (`callSeq`), so that a client never shows one call's text as another's.
+    assert.deepEqual(Object.keys(event).sort(), ["activityId", "at", "bookId", "bytes", "callSeq", "characters", "preview", "seq", "type"]);
     assert.ok(Number.isInteger(event.bytes) && Number.isInteger(event.characters));
   }
   assert.deepEqual(progress.map((event) => event.bytes), [1, 5, 9, 13, 17, 21, 25, 29, 33, 37].map((report) => report * 1000), "the report at the start of each second");
