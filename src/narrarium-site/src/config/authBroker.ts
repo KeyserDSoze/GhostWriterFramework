@@ -1,7 +1,7 @@
 /**
  * Where the OAuth token broker lives.
  *
- * The broker is the Cloudflare Worker that already proxies GitHub Models (infra/models-github-proxy). It keeps the
+ * The broker is the Cloudflare Worker that already proxies GitHub Models (src/auth-proxy). It keeps the
  * Google and Microsoft client secrets, so the site can hold long-lived credentials for Google Drive and OneDrive.
  * Its address is the origin of VITE_GITHUB_MODELS_BASE, or VITE_AUTH_BROKER_BASE when that is set. With no Worker
  * configured (the site talks to models.github.ai directly) there is no broker, and nothing is ever sent to GitHub's host.

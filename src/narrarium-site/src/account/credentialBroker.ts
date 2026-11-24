@@ -1,5 +1,5 @@
 /**
- * Client of the stateless OAuth token broker (the Cloudflare Worker, see infra/models-github-proxy/README.md).
+ * Client of the stateless OAuth token broker (the Cloudflare Worker, see src/auth-proxy/README.md).
  *
  * The browser keeps the refresh token; the Worker keeps the client secrets, swaps authorization codes and renews
  * access tokens. This module only speaks the broker's documented contract and checks every answer strictly.

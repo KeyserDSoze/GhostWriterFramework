@@ -3,7 +3,7 @@
  *
  * The browser cannot call https://models.github.ai directly because that host
  * does not return CORS headers. In production this should point at the
- * Cloudflare Worker proxy in infra/models-github-proxy via
+ * Cloudflare Worker proxy in src/auth-proxy via
  * VITE_GITHUB_MODELS_BASE. The proxy forwards paths one-to-one, so runtime code
  * only swaps the origin and keeps /inference and /catalog/models unchanged.
  */

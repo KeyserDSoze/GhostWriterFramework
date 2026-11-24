@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.99.1",
+    "date": "2026-11-24",
+    "en": {
+      "title": "Sign in with GitHub is now switched on",
+      "summary": "The Narrarium GitHub App is registered and connected to the sign-in service, so «Connect with GitHub» is offered in Account & Sync. This release also makes browsers pick up the new configuration.",
+      "changes": [
+        "The GitHub card of Account & Sync now offers «Connect with GitHub» instead of saying that the sign-in is not active on this site; the personal access token stays available as the advanced option.",
+        "Google Drive, OneDrive and GitHub sign-in now go through the new sign-in service, which holds the secrets of all three providers.",
+        "If Account & Sync still says that GitHub sign-in is not active after the update, reload the page once so the browser takes this version."
+      ]
+    },
+    "it": {
+      "title": "L'accesso con GitHub è ora attivo",
+      "summary": "La GitHub App di Narrarium è registrata e collegata al servizio di accesso, quindi in Account e sincronizzazione compare «Collega con GitHub». Questa versione fa anche prendere ai browser la nuova configurazione.",
+      "changes": [
+        "La scheda GitHub di Account e sincronizzazione ora offre «Collega con GitHub» invece di dire che l'accesso non è attivo su questo sito; il token di accesso personale resta disponibile come opzione avanzata.",
+        "L'accesso a Google Drive, OneDrive e GitHub passa ora dal nuovo servizio di accesso, che custodisce i segreti di tutti e tre i provider.",
+        "Se dopo l'aggiornamento Account e sincronizzazione dice ancora che l'accesso con GitHub non è attivo, ricarica la pagina una volta così il browser prende questa versione."
+      ]
+    }
+  },
+  {
     "version": "0.99.0",
     "date": "2026-11-24",
     "en": {
