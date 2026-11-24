@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.104.0",
+    "date": "2026-11-24",
+    "en": {
+      "title": "Books on GitHub Pages open in a full-page reader, with one or more passwords",
+      "summary": "A book repository created from Narrarium now publishes on GitHub Pages a full-page e-reader that always opens the latest publication and can be protected by several passwords kept as repository secrets. A book already published with a password must update its reader to get this protection.",
+      "changes": [
+        "The address of the book on GitHub Pages opens straight into the text: contents, progress in the book, a scrolling column or pages (arrow keys, Page Up and Page Down, a swipe of the finger), light, sepia and dark themes, font, text size, line spacing, margins and line width.",
+        "Readers can keep several bookmarks and add highlights and notes to the text; everything stays in their browser, for that book only, and finds its place again when the text changes. The reader's words follow the language of the book, Italian or English.",
+        "A book can be public or protected by one or more passwords: each password is a repository secret and the repository variable READER_PASSWORD_SECRETS lists their names. A protected book publishes only the reader and encrypted files, the browser can remember the password, and a password removed from the list stops opening the book at the next publication, telling the reader to enter a new one. For now the secrets and the variable are set on GitHub, in Settings → Secrets and variables → Actions.",
+        "Readers always get the latest publication: the reader checks it every time it opens, without keeping an old copy.",
+        "The characters, places and timeline of a public book are still published, now one click away from the reader.",
+        "A book published before this version with a reader password keeps its password, but it gets this protection only once its reader/ folder and its .github/workflows/deploy-reader-pages.yml are updated: from the folder of the book run npx create-narrarium-book@0.1.61 --upgrade . --with-reader --update-pages-workflow, then commit and push. The next publication is the protected reader. A public book gets the new reader in the same way. Narrarium will offer this update from the site in a later version."
+      ]
+    },
+    "it": {
+      "title": "I libri su GitHub Pages si aprono in un lettore a tutta pagina, con una o più password",
+      "summary": "Un repository di libro creato da Narrarium ora pubblica su GitHub Pages un lettore a tutta pagina che apre sempre l'ultima pubblicazione e può essere protetto da più password custodite come segreti del repository. Un libro già pubblicato con una password deve aggiornare il suo lettore per avere questa protezione.",
+      "changes": [
+        "L'indirizzo del libro su GitHub Pages si apre direttamente sul testo: indice, avanzamento nel libro, una colonna a scorrimento o le pagine (frecce, Pagina su e Pagina giù, uno scorrimento del dito), temi chiaro, seppia e scuro, carattere, dimensione del testo, interlinea, margini e larghezza della riga.",
+        "Chi legge può tenere più segnalibri e aggiungere evidenziazioni e note al testo; tutto resta nel suo browser, per quel libro soltanto, e ritrova il suo posto quando il testo cambia. Le parole del lettore seguono la lingua del libro, italiano o inglese.",
+        "Un libro può essere pubblico o protetto da una o più password: ogni password è un segreto del repository e la variabile del repository READER_PASSWORD_SECRETS ne elenca i nomi. Un libro protetto pubblica solo il lettore e file cifrati, il browser può ricordare la password, e una password tolta dall'elenco smette di aprire il libro dalla pubblicazione successiva, chiedendo a chi legge di inserirne una nuova. Per ora segreti e variabile si impostano su GitHub, in Settings → Secrets and variables → Actions.",
+        "Chi legge riceve sempre l'ultima pubblicazione: il lettore la controlla ogni volta che si apre, senza tenere una copia vecchia.",
+        "Personaggi, luoghi e cronologia di un libro pubblico restano pubblicati, ora a un clic dal lettore.",
+        "Un libro pubblicato prima di questa versione con una password del lettore conserva la sua password, ma riceve questa protezione solo dopo l'aggiornamento della sua cartella reader/ e del file .github/workflows/deploy-reader-pages.yml: dalla cartella del libro esegui npx create-narrarium-book@0.1.61 --upgrade . --with-reader --update-pages-workflow, poi fai commit e push. La pubblicazione successiva è il lettore protetto. Un libro pubblico riceve il nuovo lettore allo stesso modo. Narrarium offrirà questo aggiornamento dal sito in una versione successiva."
+      ]
+    }
+  },
+  {
     "version": "0.103.0",
     "date": "2026-11-24",
     "en": {
