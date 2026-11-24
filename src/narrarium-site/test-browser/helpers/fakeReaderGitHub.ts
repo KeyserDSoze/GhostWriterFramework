@@ -9,6 +9,8 @@ export interface FakeReaderGitHub {
   pages: { enabled: boolean; htmlUrl: string; plan?: boolean };
   workflowPresent: { value: boolean };
   workflowText: { value: string };
+  /** `active` or `disabled_manually`, as GitHub says it. */
+  workflowState: { value: string };
   runs: Array<{ id: number; status: string; conclusion: string | null; html_url: string; created_at: string; head_branch: string }>;
   calls: Array<{ method: string; args: Record<string, unknown> }>;
   /** Makes the next calls of a method fail (the number of times given, or for ever). */
@@ -20,7 +22,7 @@ export interface FakeReaderGitHub {
 /** A well-formed repository public key (32 bytes, base64): the real sealed box can run against it. */
 export const FAKE_PUBLIC_KEY = btoa(String.fromCharCode(...Array.from({ length: 32 }, (_, index) => index + 9)));
 
-const MUTATIONS = new Set(["createOrUpdateRepoSecret", "deleteRepoSecret", "createRepoVariable", "updateRepoVariable", "deleteRepoVariable", "createWorkflowDispatch", "createPagesSite", "deletePagesSite"]);
+const MUTATIONS = new Set(["updatePagesSite", "enableWorkflow", "disableWorkflow", "createOrUpdateRepoSecret", "deleteRepoSecret", "createRepoVariable", "updateRepoVariable", "deleteRepoVariable", "createWorkflowDispatch", "createPagesSite", "deletePagesSite"]);
 
 function requestError(failure: FakeFailure): Error {
   return Object.assign(new Error(failure.message ?? `HTTP ${failure.status}`), { status: failure.status, response: { headers: failure.headers ?? {} } });
@@ -33,6 +35,7 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     variable: { value: null as string | null },
     pages: { enabled: false, htmlUrl: "https://me.github.io/book/" } as FakeReaderGitHub["pages"],
     workflowPresent: { value: true },
+    workflowState: { value: "active" },
     /** The text of the workflow file: by default one that reads the passwords. */
     workflowText: { value: "name: Deploy reader\nenv:\n  PASSWORDS: ${{ vars.READER_PASSWORD_SECRETS }}\n" },
     runs: [] as FakeReaderGitHub["runs"],
@@ -62,7 +65,27 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
       state.pages.enabled = true;
       return { data: {} };
     },
+    updatePagesSite: () => { state.pages.enabled = true; return { data: {} }; },
+    getWorkflow: () => { if (!state.workflowPresent.value) throw requestError({ status: 404 }); return { data: { state: state.workflowState.value } }; },
+    enableWorkflow: () => { state.workflowState.value = "active"; return { data: {} }; },
+    disableWorkflow: () => { if (!state.workflowPresent.value) throw requestError({ status: 404 }); state.workflowState.value = "disabled_manually"; return { data: {} }; },
     deletePagesSite: () => { if (!state.pages.enabled) throw requestError({ status: 404 }); state.pages.enabled = false; return { data: {} }; },
+  };
+  const ROUTES: Record<string, string> = {
+    "GET /repos/{owner}/{repo}/pages": "getPages",
+    "POST /repos/{owner}/{repo}/pages": "createPagesSite",
+    "PUT /repos/{owner}/{repo}/pages": "updatePagesSite",
+    "DELETE /repos/{owner}/{repo}/pages": "deletePagesSite",
+    "GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}": "getWorkflow",
+    "PUT /repos/{owner}/{repo}/actions/workflows/{workflow_id}/enable": "enableWorkflow",
+    "PUT /repos/{owner}/{repo}/actions/workflows/{workflow_id}/disable": "disableWorkflow",
+    "POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches": "createWorkflowDispatch",
+    "GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs": "listWorkflowRuns",
+    "GET /repos/{owner}/{repo}/actions/variables/{name}": "getRepoVariable",
+    "PATCH /repos/{owner}/{repo}/actions/variables/{name}": "updateRepoVariable",
+    "POST /repos/{owner}/{repo}/actions/variables": "createRepoVariable",
+    "DELETE /repos/{owner}/{repo}/actions/variables/{name}": "deleteRepoVariable",
+    "DELETE /repos/{owner}/{repo}/actions/secrets/{secret_name}": "deleteRepoSecret",
   };
   const group = (names: string[]) => Object.fromEntries(names.map((name) => [name, async (args: Record<string, unknown> = {}) => {
     state.calls.push({ method: name, args });
@@ -73,7 +96,22 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     }
     return handlers[name](args);
   }]));
+  const call = async (name: string, args: Record<string, unknown> = {}) => {
+    state.calls.push({ method: name, args });
+    const failure = failures.get(name);
+    if (failure && failure.remaining > 0) {
+      failure.remaining -= 1;
+      throw requestError(failure);
+    }
+    return handlers[name](args);
+  };
   const octokit = {
+    /** What the reader package's helpers call: a route and its parameters, answered by the same handlers (and counted under the same names) as the REST methods. */
+    request: async (route: string, args: Record<string, unknown> = {}) => {
+      const name = ROUTES[route];
+      if (!name) throw new Error(`The fake GitHub does not know the route ${route}`);
+      return call(name, args);
+    },
     rest: {
       repos: group(["get", "getContent", "getPages", "createPagesSite", "deletePagesSite"]),
       actions: group(["getRepoPublicKey", "createOrUpdateRepoSecret", "deleteRepoSecret", "listRepoSecrets", "getRepoVariable", "createRepoVariable", "updateRepoVariable", "deleteRepoVariable", "createWorkflowDispatch", "listWorkflowRuns"]),

@@ -20,7 +20,7 @@ const records = () => useSettingsStore.getState().settings.readerAccess?.["ada/b
 function both() {
   const git = createFakeGitHub();
   const reader = createFakeReaderGitHub();
-  const octokit = { rest: { ...git.octokit.rest, actions: reader.octokit.rest.actions } } as unknown as Octokit;
+  const octokit = { rest: { ...git.octokit.rest, actions: reader.octokit.rest.actions }, request: reader.octokit.request } as unknown as Octokit;
   return { git, reader, octokit };
 }
 
@@ -79,7 +79,7 @@ describe("the first password of a book made with a protected reader", () => {
     expect(git.names().filter((name) => name === "git.createCommit")).toHaveLength(2);
     expect(git.filesAt("ada", "book-glass-harbor")!.has(PAGES_WORKFLOW_PATH)).toBe(true);
     expect(records()[0]).toMatchObject({ label: "First password", value: PASSWORD, secretName: "READER_PASSWORD_001", status: "active" });
-    expect(reader.order()).toEqual(["createOrUpdateRepoSecret:READER_PASSWORD_001", "createRepoVariable"]);
+    expect(reader.order()).toEqual(["createOrUpdateRepoSecret:READER_PASSWORD_001", "updateRepoVariable", "createRepoVariable"]);
     expect(JSON.stringify(reader.calls)).not.toContain(PASSWORD);
     expect(JSON.stringify(git.calls)).not.toContain(PASSWORD);
   });
@@ -147,7 +147,7 @@ describe("the first password of a book made with a protected reader", () => {
     expect(reader.variable.value).toBe("READER_PASSWORD_001");
     expect(git.filesAt("ada", "book-glass-harbor")!.has(PAGES_WORKFLOW_PATH)).toBe(true);
     // The secret was written before the workflow landed.
-    expect(reader.order()[reader.order().length - 2]).toBe("createOrUpdateRepoSecret:READER_PASSWORD_001");
+    expect(reader.order()[reader.order().length - 3]).toBe("createOrUpdateRepoSecret:READER_PASSWORD_001");
   });
 
   it("says which part stopped when the retry fails: the password on GitHub, or the workflow", async () => {

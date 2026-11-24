@@ -176,7 +176,7 @@ describe.each(["en", "it"] as const)("Reader access in %s", (language) => {
       fireEvent.click(screen.getByRole("button", { name: text.add }));
 
       expect(await screen.findByText(text.publishing)).toBeInTheDocument();
-      expect(github.order()).toEqual([`createOrUpdateRepoSecret:${name(1)}`, "createRepoVariable", "createWorkflowDispatch"]);
+      expect(github.order()).toEqual([`createOrUpdateRepoSecret:${name(1)}`, "updateRepoVariable", "createRepoVariable", "createWorkflowDispatch"]);
       expect(kept()).toEqual([expect.objectContaining({ label: "Beta readers", value: field.value === "" ? expect.anything() : expect.stringMatching(/-/), secretName: name(1), status: "active" })]);
       expect(env.save).toHaveBeenCalled();
       expect(JSON.stringify(github.calls)).not.toContain(kept()[0].value);
@@ -272,7 +272,7 @@ describe.each(["en", "it"] as const)("Reader access in %s", (language) => {
       expect(within(dialog).queryByRole("checkbox")).toBeNull();
       fireEvent.click(within(dialog).getByRole("button", { name: text.offConfirm }));
       await waitFor(() => expect(github.pages.enabled).toBe(false));
-      expect(github.order()).toEqual(["deletePagesSite"]);
+      expect(github.order()).toEqual(["disableWorkflow", "deletePagesSite"]);
       expect(github.secrets.has(name(1))).toBe(true);
       expect(kept()).toHaveLength(1);
     });

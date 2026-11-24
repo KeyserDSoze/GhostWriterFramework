@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { LEGACY_READER_SECRET, READER_PASSWORDS_VARIABLE, READER_WORKFLOW_FILE, READER_WORKFLOW_PATH, allocateReaderSecretName, formatReaderVariable, isReaderSecretName, parseReaderVariable, readerSecretName, readerSecretNumber } from "@/readerAccess/contract";
+import { LEGACY_READER_SECRET, READER_PASSWORDS_VARIABLE, READER_WORKFLOW_FILE, READER_WORKFLOW_PATH, allocateReaderSecretName, isReaderSecretName, readerSecretName, readerSecretNumber } from "@/readerAccess/contract";
 import { PAGES_WORKFLOW_PATH } from "@/github/bookRepository";
+import { formatReaderPasswordSecretNames, parseReaderPasswordSecretNames } from "narrarium-astro-reader/github-pages";
 
 describe("the names the site and the reader's workflow agree on", () => {
   it("are the ones in the plan", () => {
@@ -26,39 +27,26 @@ describe("the names the site and the reader's workflow agree on", () => {
 });
 
 describe("the variable that lists the secrets", () => {
-  it("is read as a comma list: trimmed, without empty entries or repeats, in the order it has", () => {
-    expect(parseReaderVariable("READER_PASSWORD_002, READER_PASSWORD_001,,READER_PASSWORD_002 ")).toEqual(["READER_PASSWORD_002", "READER_PASSWORD_001"]);
-    expect(parseReaderVariable("")).toEqual([]);
-    expect(parseReaderVariable(null)).toEqual([]);
-    expect(parseReaderVariable(undefined)).toEqual([]);
-  });
-
-  it("is written in number order with no repeats, and an empty list has no value", () => {
-    expect(formatReaderVariable(["READER_PASSWORD_010", "READER_PASSWORD_002", "READER_PASSWORD_002", "READER_PASSWORD_001"])).toBe("READER_PASSWORD_001,READER_PASSWORD_002,READER_PASSWORD_010");
-    expect(formatReaderVariable([])).toBe("");
+  it("is read and written by the reader package: the same list the build reads", () => {
+    expect(parseReaderPasswordSecretNames("READER_PASSWORD_002, READER_PASSWORD_001,,READER_PASSWORD_002 ").names).toEqual(["READER_PASSWORD_002", "READER_PASSWORD_001"]);
+    expect(formatReaderPasswordSecretNames(["READER_PASSWORD_001", "READER_PASSWORD_002"])).toBe("READER_PASSWORD_001,READER_PASSWORD_002");
+    expect(formatReaderPasswordSecretNames([])).toBe("");
   });
 });
 
 describe("the name for a new password", () => {
   const names = (...numbers: number[]) => numbers.map(readerSecretName);
 
-  it("is the first number nothing holds", () => {
+  it("is one past the highest number anything holds", () => {
     expect(allocateReaderSecretName([])).toBe("READER_PASSWORD_001");
     expect(allocateReaderSecretName(names(1, 2, 3))).toBe("READER_PASSWORD_004");
-    expect(allocateReaderSecretName(names(2, 3))).toBe("READER_PASSWORD_001");
-    expect(allocateReaderSecretName(names(1, 3))).toBe("READER_PASSWORD_002");
+    expect(allocateReaderSecretName(names(2, 3))).toBe("READER_PASSWORD_004");
+    expect(allocateReaderSecretName(names(1, 3))).toBe("READER_PASSWORD_004");
   });
 
-  it("never reuses a name that is still taken, wherever it is held (listed, a secret, or kept in Narrarium)", () => {
-    const listed = names(1);
-    const secrets = names(2);
-    const stored = names(3);
-    expect(allocateReaderSecretName([...listed, ...secrets, ...stored])).toBe("READER_PASSWORD_004");
-  });
-
-  it("reuses a number only once nothing holds it any more", () => {
-    expect(allocateReaderSecretName(names(1, 2, 3))).toBe("READER_PASSWORD_004");
-    expect(allocateReaderSecretName(names(1, 3))).toBe("READER_PASSWORD_002");
+  it("never reuses a name, wherever it is held (listed, a secret, or kept in Narrarium)", () => {
+    expect(allocateReaderSecretName([...names(1), ...names(2), ...names(3)])).toBe("READER_PASSWORD_004");
+    expect(allocateReaderSecretName(names(5))).toBe("READER_PASSWORD_006");
   });
 
   it("is not confused by the older secret or by names that are not reader secrets", () => {

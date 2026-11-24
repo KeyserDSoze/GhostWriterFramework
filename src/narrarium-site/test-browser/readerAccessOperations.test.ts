@@ -32,7 +32,8 @@ describe("adding a password", () => {
     const result = await addReaderPassword(deps(), { label: "Beta readers", value: PASSWORD });
 
     expect(result).toEqual({ ok: true, done: ["check", "save", "secret", "variable", "save", "dispatch"], dispatched: true, secretName: name(1) });
-    expect(github.order()).toEqual([`createOrUpdateRepoSecret:${name(1)}`, "createRepoVariable", "createWorkflowDispatch"]);
+    // The package updates the variable first and creates it when GitHub says it is not there.
+    expect(github.order()).toEqual([`createOrUpdateRepoSecret:${name(1)}`, "updateRepoVariable", "createRepoVariable", "createWorkflowDispatch"]);
     expect(kept).toEqual([[`${name(1)}:pending`], [`${name(1)}:active`]]);
     expect(stored).toEqual([{ id: "id-1", label: "Beta readers", value: PASSWORD, createdAt: "2026-11-25T10:00:00.000Z", secretName: name(1), status: "active" }]);
     expect(github.variable.value).toBe(name(1));
@@ -57,13 +58,13 @@ describe("adding a password", () => {
     expect(github.variable.value).toBe(`${name(1)},${name(4)}`);
   });
 
-  it("reuses the number of a password whose secret was deleted and that nothing lists", async () => {
+  it("never reuses a number: the new password goes one past the highest that is listed or has a secret", async () => {
     github.variable.value = `${name(1)},${name(3)}`;
     github.secrets.set(name(1), "x");
     github.secrets.set(name(3), "x");
     const result = await addReaderPassword(deps(), { label: "x", value: PASSWORD });
-    expect(result.secretName).toBe(name(2));
-    expect(github.variable.value).toBe(`${name(1)},${name(2)},${name(3)}`);
+    expect(result.secretName).toBe(name(4));
+    expect(github.variable.value).toBe(`${name(1)},${name(3)},${name(4)}`);
   });
 
   it("updates the variable that exists instead of creating it", async () => {
@@ -245,7 +246,8 @@ describe("Pages", () => {
       const result = await disableReaderPages(deps(), { deleteSecrets: false, forgetStored: false });
       expect(result).toMatchObject({ ok: true, done: ["pages"] });
       expect(github.pages.enabled).toBe(false);
-      expect(github.order()).toEqual(["deletePagesSite"]);
+      // The package pauses the workflow first, so that a push does not build a site that is not there.
+      expect(github.order()).toEqual(["disableWorkflow", "deletePagesSite"]);
       expect(github.variable.value).toBe(`${name(1)},${name(2)}`);
       expect([...github.secrets.keys()].sort()).toEqual([LEGACY_READER_SECRET, "NPM_TOKEN", name(1), name(2)].sort());
       expect(stored).toHaveLength(1);
@@ -254,7 +256,7 @@ describe("Pages", () => {
     it("on request also deletes the variable first, then the password secrets (and no other secret), but still keeps the stored passwords", async () => {
       const result = await disableReaderPages(deps(), { deleteSecrets: true, forgetStored: false });
       expect(result.ok).toBe(true);
-      expect(github.order().slice(0, 2)).toEqual(["deletePagesSite", "deleteRepoVariable"]);
+      expect(github.order().slice(0, 3)).toEqual(["disableWorkflow", "deletePagesSite", "deleteRepoVariable"]);
       expect(github.order().filter((call) => call.startsWith("deleteRepoSecret")).sort()).toEqual([`deleteRepoSecret:${LEGACY_READER_SECRET}`, `deleteRepoSecret:${name(1)}`, `deleteRepoSecret:${name(2)}`].sort());
       expect(github.variable.value).toBeNull();
       expect([...github.secrets.keys()]).toEqual(["NPM_TOKEN"]);
@@ -285,7 +287,7 @@ describe("Pages", () => {
     it("says where the cleanup stopped, and keeps the stored passwords then", async () => {
       github.fail("deleteRepoSecret", { status: 403 });
       const result = await disableReaderPages(deps(), { deleteSecrets: true, forgetStored: true });
-      expect(result).toMatchObject({ ok: false, done: ["pages", "variable"], failed: { step: "secret-delete" } });
+      expect(result).toMatchObject({ ok: false, done: ["pages"], failed: { step: "secret-delete" } });
       expect(stored).toHaveLength(1);
     });
   });

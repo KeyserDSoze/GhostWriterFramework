@@ -1,5 +1,20 @@
 import type { Octokit } from "@octokit/rest";
-import { READER_PASSWORDS_VARIABLE, READER_WORKFLOW_FILE, READER_WORKFLOW_PATH, parseReaderVariable } from "@/readerAccess/contract";
+import {
+  PagesRequestError,
+  disablePagesSite,
+  dispatchPagesWorkflow,
+  enablePagesSite,
+  readLatestPagesRun,
+  readPagesSite,
+  readPagesWorkflowState,
+  readReaderPasswordNames,
+  writeReaderPasswordNames,
+  type DisablePagesResult,
+  type EnablePagesResult,
+  type GitHubRequest,
+  type WorkflowState,
+} from "narrarium-astro-reader/github-pages";
+import { READER_WORKFLOW_PATH } from "@/readerAccess/contract";
 import { ReaderFlowError, classifyReaderFailure, type ReaderStep } from "@/readerAccess/errors";
 
 /**
@@ -9,9 +24,22 @@ import { ReaderFlowError, classifyReaderFailure, type ReaderStep } from "@/reade
  */
 export interface RepositoryRef { owner: string; repo: string }
 
+/**
+ * What the reader package's Pages helpers do (Pages on and off, the workflow's state, the variable of the passwords, the start of a run and its latest run) is
+ * not done twice here: they run over the client's `request`. This module keeps what the package does not have (the repository, the public key, the secrets,
+ * the text of the workflow file) and turns every failure, the package's `PagesRequestError` included, into the classified one the screens explain.
+ */
+function requestOf(octokit: Octokit): GitHubRequest {
+  return (route, parameters) => (octokit.request as unknown as (route: string, parameters?: Record<string, unknown>) => Promise<{ status: number; data?: unknown }>)(route, parameters);
+}
+
+function causeOf(error: unknown): unknown {
+  return error instanceof PagesRequestError ? (error as { cause?: unknown }).cause ?? { status: error.status } : error;
+}
+
 async function call<T>(step: ReaderStep, run: () => Promise<T>): Promise<T> {
   try { return await run(); }
-  catch (error) { throw new ReaderFlowError(step, classifyReaderFailure(error, step)); }
+  catch (error) { throw new ReaderFlowError(step, classifyReaderFailure(causeOf(error), step)); }
 }
 
 function statusOf(error: unknown): number | undefined {
@@ -54,59 +82,32 @@ export async function listSecretNames(octokit: Octokit, repo: RepositoryRef): Pr
 
 /** The names the variable lists, or an empty list when there is no variable. */
 export async function readPasswordVariable(octokit: Octokit, repo: RepositoryRef): Promise<{ names: string[]; exists: boolean }> {
-  try {
-    const { data } = await call("variable-read", () => octokit.rest.actions.getRepoVariable({ ...repo, name: READER_PASSWORDS_VARIABLE }));
-    return { names: parseReaderVariable(data.value), exists: true };
-  } catch (error) {
-    if (statusOf(error) === 404) return { names: [], exists: false };
-    throw error;
-  }
+  const names = await call("variable-read", () => readReaderPasswordNames(requestOf(octokit), repo));
+  return { names: names ?? [], exists: names !== null };
 }
 
-/** Writes the variable (creating it when it does not exist yet). An empty list deletes it: a variable with no value is not something to depend on. */
-export async function writePasswordVariable(octokit: Octokit, repo: RepositoryRef, value: string, exists: boolean): Promise<{ exists: boolean }> {
-  if (!value) {
-    if (exists) {
-      try { await call("variable-delete", () => octokit.rest.actions.deleteRepoVariable({ ...repo, name: READER_PASSWORDS_VARIABLE })); }
-      catch (error) { if (statusOf(error) !== 404) throw error; }
-    }
-    return { exists: false };
-  }
-  if (exists) {
-    try {
-      await call("variable-write", () => octokit.rest.actions.updateRepoVariable({ ...repo, name: READER_PASSWORDS_VARIABLE, value }));
-      return { exists: true };
-    } catch (error) {
-      if (statusOf(error) !== 404) throw error;
-    }
-  }
-  try {
-    await call("variable-write", () => octokit.rest.actions.createRepoVariable({ ...repo, name: READER_PASSWORDS_VARIABLE, value }));
-  } catch (error) {
-    // Created by someone in the meantime: it is there now, and an update is what was meant.
-    if (statusOf(error) !== 409 && statusOf(error) !== 422) throw error;
-    await call("variable-write", () => octokit.rest.actions.updateRepoVariable({ ...repo, name: READER_PASSWORDS_VARIABLE, value }));
-  }
-  return { exists: true };
+/** Writes the variable, in the order given (created when it does not exist yet). An empty list deletes it: a variable with no value is not something to depend on. */
+export async function writePasswordVariable(octokit: Octokit, repo: RepositoryRef, names: string[]): Promise<void> {
+  await call(names.length ? "variable-write" : "variable-delete", () => writeReaderPasswordNames(requestOf(octokit), repo, names));
 }
 
 /** Starts the publishing workflow on a branch (`workflow_dispatch` on the reader's workflow file). */
 export async function dispatchWorkflow(octokit: Octokit, repo: RepositoryRef, ref: string): Promise<void> {
-  await call("dispatch", () => octokit.rest.actions.createWorkflowDispatch({ ...repo, workflow_id: READER_WORKFLOW_FILE, ref }));
+  await call("dispatch", () => dispatchPagesWorkflow(requestOf(octokit), repo, { ref }));
 }
 
 export type RunState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
-export interface WorkflowRun { id: number; state: RunState; url: string; createdAt: string; branch?: string }
+export interface WorkflowRun { id: number; state: RunState; url: string; createdAt: string; headSha?: string }
 
 function runState(status: string | null, conclusion: string | null): RunState {
   if (status === "completed") return conclusion === "success" ? "succeeded" : conclusion === "cancelled" ? "cancelled" : "failed";
   return status === "in_progress" ? "running" : "queued";
 }
 
-/** The newest runs of the reader's workflow. */
-export async function latestRuns(octokit: Octokit, repo: RepositoryRef, limit = 5): Promise<WorkflowRun[]> {
-  const { data } = await call("runs", () => octokit.rest.actions.listWorkflowRuns({ ...repo, workflow_id: READER_WORKFLOW_FILE, per_page: limit }));
-  return data.workflow_runs.map((run) => ({ id: run.id, state: runState(run.status, run.conclusion), url: run.html_url, createdAt: run.created_at, ...(run.head_branch ? { branch: run.head_branch } : {}) }));
+/** The latest run of the reader's workflow (a list of none or one). */
+export async function latestRuns(octokit: Octokit, repo: RepositoryRef): Promise<WorkflowRun[]> {
+  const run = await call("runs", () => readLatestPagesRun(requestOf(octokit), repo));
+  return run ? [{ id: run.id, state: runState(run.status, run.conclusion), url: run.htmlUrl ?? "", createdAt: run.createdAt ?? "", ...(run.headSha ? { headSha: run.headSha } : {}) }] : [];
 }
 
 /** Whether the repository has the reader's workflow file, and its text (for the check that it is the current one). */
@@ -127,23 +128,21 @@ export type PagesState =
   | { status: "off" };
 
 export async function getPagesState(octokit: Octokit, repo: RepositoryRef): Promise<PagesState> {
-  try {
-    const { data } = await call("pages-read", () => octokit.rest.repos.getPages({ ...repo }));
-    return { status: "enabled", url: data.html_url ?? `https://${repo.owner}.github.io/${repo.repo}/`, buildType: data.build_type ?? null };
-  } catch (error) {
-    if (statusOf(error) === 404) return { status: "off" };
-    throw error;
-  }
+  const site = await call("pages-read", () => readPagesSite(requestOf(octokit), repo));
+  return site ? { status: "enabled", url: site.htmlUrl ?? `https://${repo.owner}.github.io/${repo.repo}/`, buildType: site.buildType } : { status: "off" };
 }
 
-/** Turns Pages on with the workflow as its source; Pages that is already on is the outcome that was wanted. */
-export async function enablePages(octokit: Octokit, repo: RepositoryRef): Promise<void> {
-  try { await call("pages-enable", () => octokit.rest.repos.createPagesSite({ ...repo, build_type: "workflow" })); }
-  catch (error) { if (statusOf(error) !== 409) throw error; }
+/** `active`, `paused` (turned off by hand or by turning Pages off), `missing`, or what GitHub says; `null` when it could not be read. */
+export async function getWorkflowState(octokit: Octokit, repo: RepositoryRef): Promise<WorkflowState> {
+  return call("workflow-read", () => readPagesWorkflowState(requestOf(octokit), repo));
 }
 
-/** Turns Pages off; Pages that is already off is the outcome that was wanted. */
-export async function disablePages(octokit: Octokit, repo: RepositoryRef): Promise<void> {
-  try { await call("pages-disable", () => octokit.rest.repos.deletePagesSite({ ...repo })); }
-  catch (error) { if (statusOf(error) !== 404) throw error; }
+/** Turns Pages on with the workflow as its source (and resumes the workflow if it was paused); Pages already on is the outcome that was wanted. */
+export async function enablePages(octokit: Octokit, repo: RepositoryRef): Promise<EnablePagesResult> {
+  return call("pages-enable", () => enablePagesSite(requestOf(octokit), repo));
+}
+
+/** Turns Pages off (the workflow is paused); with `removePasswords` the variable and the reader's secrets go too. What GitHub refused along the way is in `failures`. */
+export async function disablePages(octokit: Octokit, repo: RepositoryRef, options: { removePasswords?: boolean } = {}): Promise<DisablePagesResult> {
+  return call("pages-disable", () => disablePagesSite(requestOf(octokit), repo, options));
 }

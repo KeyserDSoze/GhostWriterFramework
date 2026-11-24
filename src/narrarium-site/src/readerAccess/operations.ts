@@ -1,8 +1,8 @@
 import type { Octokit } from "@octokit/rest";
 import type { ReaderPasswordRecord } from "@/types/settings";
-import { LEGACY_READER_SECRET, allocateReaderSecretName, formatReaderVariable, isReaderSecretName } from "@/readerAccess/contract";
-import { deleteSecret, disablePages, dispatchWorkflow, enablePages, getPublicKey, listSecretNames, putSecret, readPasswordVariable, readWorkflowFile, writePasswordVariable, type RepositoryRef } from "@/readerAccess/api";
-import { ReaderFlowError, type ReaderFailure } from "@/readerAccess/errors";
+import { LEGACY_READER_SECRET, allocateReaderSecretName, isReaderSecretName } from "@/readerAccess/contract";
+import { deleteSecret, disablePages, dispatchWorkflow, enablePages, getPublicKey, listSecretNames, putSecret, readPasswordVariable, writePasswordVariable, type RepositoryRef } from "@/readerAccess/api";
+import { ReaderFlowError, classifyReaderFailure, type ReaderFailure } from "@/readerAccess/errors";
 import { takenReaderNames } from "@/readerAccess/model";
 
 /**
@@ -84,7 +84,7 @@ async function publish(deps: ReaderOperationDeps, run: Run, record: ReaderPasswo
     await run.step("variable", async () => {
       const variable = await listedNow(deps);
       if (variable.names.includes(record.secretName)) return;
-      await writePasswordVariable(deps.octokit, deps.repo, formatReaderVariable([...variable.names, record.secretName]), variable.exists);
+      await writePasswordVariable(deps.octokit, deps.repo, [...variable.names, record.secretName]);
     });
     step = "save";
     await run.step("save", () => deps.records.set(replaceRecord(deps.records.get(), { ...record, status: "active" })));
@@ -165,7 +165,7 @@ export async function removeReaderPassword(deps: ReaderOperationDeps, secretName
       await run.step("variable", async () => {
         const variable = await listedNow(deps);
         if (!variable.names.includes(secretName)) return;
-        await writePasswordVariable(deps.octokit, deps.repo, formatReaderVariable(variable.names.filter((name) => name !== secretName)), variable.exists);
+        await writePasswordVariable(deps.octokit, deps.repo, variable.names.filter((name) => name !== secretName));
       });
     }
     step = "secret-delete";
@@ -183,15 +183,13 @@ export async function republishReader(deps: ReaderOperationDeps): Promise<Reader
   return startWorkflow(deps, new Run(deps));
 }
 
-/** Turns Pages on for an existing book and, when the repository has the workflow, publishes at once. */
+/** Turns Pages on for an existing book (the package resumes the workflow if it was paused) and, when the repository has the workflow, publishes at once. */
 export async function enableReaderPages(deps: ReaderOperationDeps): Promise<ReaderOperationResult> {
   const run = new Run(deps);
-  try { await run.step("pages", () => enablePages(deps.octokit, deps.repo)); }
+  let workflow: "resumed" | "active" | "missing";
+  try { workflow = (await run.step("pages", () => enablePages(deps.octokit, deps.repo))).workflow; }
   catch (error) { return run.fail("pages", error); }
-  let workflowPresent = false;
-  try { workflowPresent = (await readWorkflowFile(deps.octokit, deps.repo, deps.branch)).present; }
-  catch { workflowPresent = false; }
-  return workflowPresent ? startWorkflow(deps, run) : run.ok();
+  return workflow !== "missing" ? startWorkflow(deps, run) : run.ok();
 }
 
 export interface DisablePagesOptions {
@@ -201,20 +199,28 @@ export interface DisablePagesOptions {
   forgetStored: boolean;
 }
 
-/** Turns Pages off. The cleanup, when asked, takes the variable off first and then the secrets, and the stored passwords last. */
+/**
+ * Turns Pages off, through the reader package (the workflow is paused so that a push does not build a site that is not there). The cleanup, when asked, takes
+ * the variable off first and then the secrets; a reader secret that the variable did not list is deleted after it, and the stored passwords last.
+ */
 export async function disableReaderPages(deps: ReaderOperationDeps, options: DisablePagesOptions): Promise<ReaderOperationResult> {
   const run = new Run(deps);
-  try { await run.step("pages", () => disablePages(deps.octokit, deps.repo)); }
+  let result;
+  try { result = await run.step("pages", () => disablePages(deps.octokit, deps.repo, { removePasswords: options.deleteSecrets })); }
   catch (error) { return run.fail("pages", error); }
   if (!options.deleteSecrets) return run.ok();
   let step: ReaderOperationStep = "variable";
   try {
-    const variable = await listedNow(deps);
-    await run.step("variable", () => writePasswordVariable(deps.octokit, deps.repo, "", variable.exists));
+    // What the package could not delete (a refusal of the variable or of a secret) is the cleanup that stopped; a refusal to pause the workflow is not.
+    const refused = result.failures.find((failure) => failure.status !== undefined && !/pause/i.test(failure.step));
+    if (refused) {
+      step = /variable/i.test(refused.step) ? "variable" : "secret-delete";
+      const readerStep = step === "variable" ? "variable-delete" : "secret-delete";
+      throw new ReaderFlowError(readerStep, classifyReaderFailure({ status: refused.status }, readerStep));
+    }
     step = "secret-delete";
     const secrets = await listSecretNames(deps.octokit, deps.repo);
-    const names = new Set([...secrets.filter((name) => isReaderSecretName(name) || name === LEGACY_READER_SECRET), ...deps.records.get().map((record) => record.secretName)]);
-    await run.step("secret-delete", async () => { for (const name of names) await deleteSecret(deps.octokit, deps.repo, name); });
+    await run.step("secret-delete", async () => { for (const name of secrets.filter((name) => isReaderSecretName(name) || name === LEGACY_READER_SECRET)) await deleteSecret(deps.octokit, deps.repo, name); });
     if (options.forgetStored) {
       step = "forget";
       await run.step("forget", () => deps.records.set([]));

@@ -5,7 +5,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
 import { classifyTokenKind, type GitHubTokenKind } from "@/github/bookRepository";
 import { resolveGitHubRemoteToken, type BookEntry, type ReaderPasswordRecord } from "@/types/settings";
-import { getPagesState, getRepositoryInfo, latestRuns, listSecretNames, readPasswordVariable, readWorkflowFile, type PagesState, type RepositoryInfo, type WorkflowRun } from "@/readerAccess/api";
+import { getPagesState, getRepositoryInfo, getWorkflowState, latestRuns, listSecretNames, readPasswordVariable, readWorkflowFile, type PagesState, type RepositoryInfo, type WorkflowRun } from "@/readerAccess/api";
 import { ReaderFlowError, classifyReaderFailure, type ReaderFailure } from "@/readerAccess/errors";
 import { readerRecordsOf, withReaderRecords, type RemoteReaderState } from "@/readerAccess/model";
 import { addReaderPassword, disableReaderPages, enableReaderPages, removeReaderPassword, republishReader, resumeReaderPassword, type DisablePagesOptions, type ReaderOperationDeps, type ReaderOperationResult } from "@/readerAccess/operations";
@@ -19,11 +19,13 @@ export interface ReaderSnapshot {
   remote: RemoteReaderState;
   runs: WorkflowRun[] | null;
   workflow: { present: boolean; content?: string } | null;
+  /** `active`, `paused` (Pages was turned off), `missing`, or what GitHub says; `null` when it could not be read. */
+  workflowState: string | null;
   failures: Partial<Record<ReaderPart, ReaderFailure>>;
   loadedAt: number | null;
 }
 
-const EMPTY: ReaderSnapshot = { repository: null, pages: null, remote: { secrets: null, listed: null }, runs: null, workflow: null, failures: {}, loadedAt: null };
+const EMPTY: ReaderSnapshot = { repository: null, pages: null, remote: { secrets: null, listed: null }, runs: null, workflow: null, workflowState: null, failures: {}, loadedAt: null };
 const POLL_MS = 6_000;
 const POLL_LIMIT_MS = 15 * 60_000;
 
@@ -60,16 +62,17 @@ export function useReaderAccess(book: BookEntry) {
     octokitRef.current = octokit;
     setLoading(true);
     const failures: ReaderSnapshot["failures"] = {};
-    const [repository, pages, secrets, variable, runs, workflow] = await Promise.all([
+    const [repository, pages, secrets, variable, runs, workflow, workflowState] = await Promise.all([
       settle("repository", "repository", getRepositoryInfo(octokit, repo), failures),
       settle("pages", "pages-read", getPagesState(octokit, repo), failures),
       settle("secrets", "secrets-list", listSecretNames(octokit, repo), failures),
       settle("variable", "variable-read", readPasswordVariable(octokit, repo), failures),
       settle("runs", "runs", latestRuns(octokit, repo), failures),
       settle("workflow", "workflow-read", readWorkflowFile(octokit, repo), failures),
+      getWorkflowState(octokit, repo).catch(() => null),
     ]);
     if (!alive.current) return;
-    setSnapshot({ repository, pages, remote: { secrets, listed: variable ? variable.names : null }, runs, workflow, failures, loadedAt: Date.now() });
+    setSnapshot({ repository, pages, remote: { secrets, listed: variable ? variable.names : null }, runs, workflow, workflowState, failures, loadedAt: Date.now() });
     setLoading(false);
   }, [token, repo]);
 
