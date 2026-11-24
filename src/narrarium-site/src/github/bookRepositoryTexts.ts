@@ -1,9 +1,11 @@
 import type { BookRepositoryError } from "@/github/bookRepository";
 
 /** The words for a failure of the creation of a repository, from its code (the texts are `github.createBook.error.*`). */
-export function bookRepositoryErrorText(t: (key: string, options?: Record<string, unknown>) => string, error: BookRepositoryError, context: { owner: string; repo: string }, locale?: string): string {
+export function bookRepositoryErrorText(t: (key: string, options?: Record<string, unknown>) => string, error: BookRepositoryError, context: { owner: string; repo: string; /** The login the token belongs to, when it is known: the name used when the owner was left on «your account». */ accountLogin?: string }, locale?: string): string {
   const reset = error.resetAt ? new Date(error.resetAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) : undefined;
-  const params = { owner: context.owner, repo: context.repo, reset, status: error.status };
+  // Left on «your account», the owner is not named by the caller: the login of the token is, and without it the sentence says «your account» (`_account` texts), never an empty name.
+  const owner = context.owner.trim() || context.accountLogin?.trim() || "";
+  const params = { owner, repo: context.repo, reset, status: error.status, ...(owner ? {} : { context: "account" }) };
   switch (error.code) {
     case "cannot-create":
       if (error.tokenKind === "app" && error.reason !== "sso-required") return t("github.createBook.app.cannotCreate", params);

@@ -8,7 +8,7 @@ import { useConnectionStore } from "@/account/connectionStore";
 import { bookStorageMode, resolveGitHubCredential, resolveGitHubRemoteToken, type BookEntry } from "@/types/settings";
 import { attachLocalBookToGitHub } from "@/repository/repositoryService";
 import { BookRepositoryError, deleteEmptyBookRepository, isBookRepositoryError, type BookRepositoryProgress, type CreateCompleteBookRepositoryResult } from "@/github/bookRepository";
-import { defaultGitHubRepositoryChoices, ownerOf, useGitHubPreflight, type GitHubRepositoryChoices } from "@/components/book/GitHubRepositoryPanel";
+import { defaultGitHubRepositoryChoices, ownerOf, preflightLogin, useGitHubPreflight, type GitHubRepositoryChoices } from "@/components/book/GitHubRepositoryPanel";
 import { credentialCacheKey, type RepositoryDecision } from "@/github/repositoryPickerModel";
 import { useProtectedReaderSetup } from "@/components/book/useProtectedReaderSetup";
 
@@ -74,5 +74,5 @@ export function useAttachToGitHub(book: BookEntry) {
     await deleteEmptyBookRepository({ token, owner: empty.owner, repo: empty.repo, defaultBranch: empty.defaultBranch });
   }
 
-  return { readerSetup, setResult, choices, setChoices, progress, failure, result, decision, setDecision, attaching, error, token, preflight, app, login, cacheKey, attach, deleteEmptyRepository, owner: decision?.owner ?? ownerOf(choices) ?? "", books: settings.books };
+  return { readerSetup, setResult, choices, setChoices, progress, failure, result, decision, setDecision, attaching, error, token, preflight, app, login, cacheKey, attach, deleteEmptyRepository, owner: decision?.owner ?? ownerOf(choices) ?? "", accountLogin: login ?? preflightLogin(preflight), books: settings.books };
 }

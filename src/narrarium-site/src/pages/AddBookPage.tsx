@@ -17,7 +17,7 @@ import {
 import { useSettingsStore } from "@/store/settingsStore";
 import { useSettings } from "@/drive/useSettings";
 import { BookRepositoryError, classifyTokenKind, createCompleteBookRepository, deleteEmptyBookRepository, isBookRepositoryError, type BookRepositoryProgress, type CreateCompleteBookRepositoryResult } from "@/github/bookRepository";
-import { defaultGitHubRepositoryChoices, ownerOf, useGitHubPreflight, type GitHubRepositoryChoices } from "@/components/book/GitHubRepositoryPanel";
+import { defaultGitHubRepositoryChoices, ownerOf, preflightLogin, useGitHubPreflight, type GitHubRepositoryChoices } from "@/components/book/GitHubRepositoryPanel";
 import { GitHubRepositoryPicker } from "@/components/book/GitHubRepositoryPicker";
 import { credentialCacheKey, decisionAction, type RepositoryDecision } from "@/github/repositoryPickerModel";
 import { useConnectionStore } from "@/account/connectionStore";
@@ -295,7 +295,7 @@ export function AddBookPage() {
           )}
           {createError && <Alert variant="destructive"><AlertDescription>{createError}</AlertDescription></Alert>}
           {storageMode === "github" && <GitHubCreateProgress progress={progress} busy={creatingRepo} />}
-          {failure && <GitHubCreateFailure error={failure} owner={failureOwner.current} repo={decision?.name ?? ""} busy={creatingRepo} onRetry={() => void handleCreateNewBook(true)} onDelete={handleDeleteEmptyRepository} />}
+          {failure && <GitHubCreateFailure error={failure} owner={failureOwner.current} accountLogin={preflightLogin(preflight)} repo={decision?.name ?? ""} busy={creatingRepo} onRetry={() => void handleCreateNewBook(true)} onDelete={handleDeleteEmptyRepository} />}
           <Button className="w-full sm:w-fit [@media(pointer:coarse)]:h-11" onClick={() => void handleCreateNewBook()} disabled={submitDisabled}>
             {creatingRepo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : storageMode === "local-only" ? <HardDrive className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
             {creatingRepo ? t("addBook.creatingRepo") : storageMode === "local-only" ? (settings.ui.language === "it" ? "Crea libro locale" : "Create local book") : action === "create" ? t("addBook.createRepo") : t(`github.picker.action.${action}`)}

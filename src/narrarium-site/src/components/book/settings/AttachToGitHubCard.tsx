@@ -36,7 +36,7 @@ export function AttachToGitHubCard({ book, attach }: { book: BookEntry; attach: 
         />
         {attach.error && <Alert variant="destructive"><AlertDescription>{attach.error}</AlertDescription></Alert>}
         <GitHubCreateProgress progress={attach.progress} busy={attach.attaching} />
-        {attach.failure && <GitHubCreateFailure error={attach.failure} owner={attach.owner} repo={attach.decision?.name ?? ""} busy={attach.attaching} onRetry={() => void attach.attach()} onDelete={attach.deleteEmptyRepository} />}
+        {attach.failure && <GitHubCreateFailure error={attach.failure} owner={attach.owner} accountLogin={attach.accountLogin} repo={attach.decision?.name ?? ""} busy={attach.attaching} onRetry={() => void attach.attach()} onDelete={attach.deleteEmptyRepository} />}
         <Button className="h-auto min-h-10 whitespace-normal text-left [@media(pointer:coarse)]:min-h-11" onClick={() => void attach.attach()} disabled={attach.attaching || !attach.decision?.ready}>{attach.attaching ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Github className="mr-1 h-4 w-4" />}{attach.decision && decisionAction(attach.decision) !== "create" ? t(`github.picker.action.${decisionAction(attach.decision)}`) : t("bookSettings.connectGithub.submit")}</Button>
       </CardContent>
     </Card>

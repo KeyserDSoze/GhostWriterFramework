@@ -33,6 +33,11 @@ export function ownerOf(choices: GitHubRepositoryChoices): string | undefined {
   return value || undefined;
 }
 
+/** The login the token belongs to, once it has been read (the preflight reads it): the name of «your account» in the messages of a failed creation. */
+export function preflightLogin(state: GitHubPreflightState): string | undefined {
+  return state.status === "ready" ? state.preflight.login || undefined : undefined;
+}
+
 export type GitHubPreflightState = { status: "idle" } | { status: "loading" } | { status: "ready"; preflight: BookRepositoryPreflight } | { status: "failed" };
 
 /** What the token seems able to do, read once for each token (a read of the user and of the organizations: no permission to ask for). */

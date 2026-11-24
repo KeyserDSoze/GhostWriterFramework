@@ -32,6 +32,8 @@ export function GitHubCreateProgress({ progress, busy }: { progress: BookReposit
 export interface GitHubCreateFailureProps {
   error: BookRepositoryError;
   owner: string;
+  /** The login of the token, when it is known: used when `owner` is empty (the owner was left on «your account»). */
+  accountLogin?: string;
   repo: string;
   busy: boolean;
   /** Fill the same empty repository again. */
@@ -41,7 +43,7 @@ export interface GitHubCreateFailureProps {
 }
 
 /** What went wrong, in words; and, when the repository exists with no first commit, the two things the user can do about it. */
-export function GitHubCreateFailure({ error, owner, repo, busy, onRetry, onDelete }: GitHubCreateFailureProps) {
+export function GitHubCreateFailure({ error, owner, accountLogin, repo, busy, onRetry, onDelete }: GitHubCreateFailureProps) {
   const { t, i18n } = useTranslation();
   const [step, setStep] = useState<"idle" | "confirm" | "deleting" | "deleted" | "failed">("idle");
   const confirmRef = useRef<HTMLButtonElement>(null);
@@ -50,7 +52,7 @@ export function GitHubCreateFailure({ error, owner, repo, busy, onRetry, onDelet
   useEffect(() => { if (step === "confirm") confirmRef.current?.focus(); }, [step]);
   // On a phone the form is longer than the screen: the failure comes into view, without taking the focus from the button that was pressed.
   useEffect(() => { alertRef.current?.scrollIntoView?.({ block: "nearest" }); }, []);
-  const text = bookRepositoryErrorText(t, error, { owner: empty?.owner ?? owner, repo: empty?.repo ?? repo }, i18n.resolvedLanguage || i18n.language);
+  const text = bookRepositoryErrorText(t, error, { owner: empty?.owner ?? owner, repo: empty?.repo ?? repo, accountLogin }, i18n.resolvedLanguage || i18n.language);
   const remove = async () => {
     setStep("deleting");
     try { await onDelete(); setStep("deleted"); } catch { setStep("failed"); }
