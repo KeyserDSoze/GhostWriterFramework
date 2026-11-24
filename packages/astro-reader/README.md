@@ -24,7 +24,7 @@ npx narrarium-astro-reader reader --book-root .. --package-name my-book-reader
 
 ## What the reader includes
 
-- the published reader at the root of the site: a shell that holds no content, fetches `version.json` on every open (never a stale publication, no service worker) and reads the book from one bundle, public or encrypted
+- the published reader at the root of the site: a full-page e-reader whose shell holds no content, fetches `version.json` on every open (never a stale publication, no service worker) and reads the book from one bundle, public or encrypted. Mobile first and desktop: contents, progress in the book, a scrolling column or pages (keyboard: arrows, Page Up/Down, Space, Home/End; a finger swipe turns the page), light, sepia and dark themes (or the device's), font, text size, line spacing, margins, line width and alignment, several bookmarks, highlights and notes anchored to the chapter, the scene and the paragraph (with the quoted text, so that they find their place again when the text changes); everything is kept in the browser under the id of the book (on GitHub Pages, the repository's numeric id). The labels follow the language of the book (Italian or English). WCAG 2.2 AA: contrast checked by a test for every theme, visible focus, named controls and dialogs, 44px targets, reduced motion, no sideways scrolling at 320 CSS px with the largest text
 - password protection with one or several passwords (key slots: AES-256-GCM, PBKDF2-SHA256 600,000 iterations), kept as repository secrets and listed in the `READER_PASSWORD_SECRETS` variable; see `docs/reader-password.md`
 - the canon pages of a public book under `book/`: landing page plus chapter-by-chapter reading
 - previous, next, and jump chapter navigation

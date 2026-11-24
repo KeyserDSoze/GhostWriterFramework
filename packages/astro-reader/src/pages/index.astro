@@ -1,13 +1,14 @@
 ---
 import "../styles/reader.css";
 import { getBookRoot } from "../lib/book.js";
+import { READER_FONTS, READER_PALETTES, paletteCss } from "../lib/ereader/themes.js";
 import { getReaderBuild } from "../lib/reader-build.js";
 import { readerLabels, readerLanguage } from "../lib/reader-i18n.js";
 
 /**
  * The shell of the published reader: its code, its words and the version it belongs to, never a word of the book. On every open it asks
  * `version.json` (no-store), reloads once if it is not the current build, unlocks a protected book and downloads the bundle by its hashed
- * name (see lib/reader-session.ts).
+ * name (lib/reader-session.ts); then lib/ereader/app.ts lays the book out.
  */
 const build = await getReaderBuild(getBookRoot());
 const labels = readerLabels(build.language);
@@ -17,14 +18,37 @@ const boot = {
   bookId: build.bookId,
   fallback: build.versionFile,
   labels,
+  uiLanguage,
   bookLanguage: build.language,
   canonHref: build.protected ? null : "book/",
 };
 const bootJson = JSON.stringify(boot).replace(/</g, "\\u003c");
+const prefsKey = `narrarium-reader:${build.bookId}:prefs`;
+
+const icon = {
+  contents: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h2M9 6h11M4 12h2M9 12h11M4 18h2M9 18h11"/></svg>',
+  bookmark: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3.5h10v17l-5-4-5 4z"/></svg>',
+  notes: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 4h14v12l-4 4H5z"/><path d="M15 20v-4h4M8 9h8M8 13h5"/></svg>',
+  settings: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 19 8 5l5 14M4.8 14h6.4M14 19l3.5-9 3.5 9M15 16.5h5"/></svg>',
+  previous: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 5-7 7 7 7"/></svg>',
+  next: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg>',
+  close: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg>',
+};
+const radios = (name: string, options: Array<[string, string]>) => options.map(([value, label]) => ({ name, value, label, id: `er-${name}-${value}` }));
+const themeOptions = radios("theme", [["light", labels.themeLight], ["sepia", labels.themeSepia], ["dark", labels.themeDark], ["auto", labels.themeAuto]]);
+const fontOptions = radios("font", [["serif", labels.fontSerif], ["classic", labels.fontClassic], ["sans", labels.fontSans], ["readable", labels.fontReadable]]);
+const widthOptions = radios("width", [["0", labels.widthNarrow], ["1", labels.widthMedium], ["2", labels.widthWide], ["3", labels.widthFull]]);
+const alignOptions = radios("align", [["start", labels.alignStart], ["justify", labels.alignJustify]]);
+const modeOptions = radios("mode", [["scroll", labels.modeScroll], ["paged", labels.modePaged]]);
+const steppers = [
+  { name: "size", legend: labels.textSize, less: labels.smaller, more: labels.larger },
+  { name: "leading", legend: labels.lineSpacing, less: labels.less, more: labels.more },
+  { name: "margin", legend: labels.margins, less: labels.narrower, more: labels.wider },
+];
 ---
 
 <!doctype html>
-<html lang={uiLanguage} data-reader-version={build.version}>
+<html lang={uiLanguage} data-reader-version={build.version} data-theme="auto">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -32,10 +56,19 @@ const bootJson = JSON.stringify(boot).replace(/</g, "\\u003c");
     <title>{build.title}</title>
     {build.protected && <meta name="robots" content="noindex, nofollow" />}
     <base href={import.meta.env.BASE_URL} />
+    <style is:inline set:html={paletteCss()}></style>
+    <script is:inline define:vars={{ prefsKey }}>
+      // The theme before the first paint, so that a dark reader never sees a white flash.
+      try {
+        var saved = JSON.parse(localStorage.getItem(prefsKey) || "null");
+        if (saved && /^(light|sepia|dark|auto)$/.test(saved.theme)) document.documentElement.dataset.theme = saved.theme;
+      } catch (error) {}
+    </script>
   </head>
   <body class="reader-body">
     <a class="reader-skip" href="#reader-text">{labels.skipToText}</a>
     <p class="reader-status" id="reader-status" role="status" aria-live="polite">{labels.loading}</p>
+    <noscript><p class="reader-status">{labels.noScript}{boot.canonHref && <> <a href={boot.canonHref}>{labels.bookOverview}</a></>}</p></noscript>
 
     <section class="reader-lock" id="reader-lock" aria-labelledby="reader-lock-title" hidden>
       <div class="reader-lock__panel">
@@ -56,37 +89,180 @@ const bootJson = JSON.stringify(boot).replace(/</g, "\\u003c");
               required
               aria-describedby="reader-lock-intro reader-lock-message"
             />
-            <button type="button" class="reader-lock__reveal" id="reader-password-reveal" aria-pressed="false" aria-controls="reader-password">{labels.showPassword}</button>
+            <button type="button" class="ereader-text-button" id="reader-password-reveal" aria-pressed="false" aria-controls="reader-password">{labels.showPassword}</button>
           </div>
           <label class="reader-lock__remember">
             <input type="checkbox" id="reader-remember" checked />
             <span>{labels.rememberLabel}</span>
           </label>
-          <button type="submit" class="reader-lock__submit" id="reader-unlock">{labels.unlock}</button>
+          <button type="submit" class="ereader-primary" id="reader-unlock">{labels.unlock}</button>
         </form>
       </div>
     </section>
 
-    <div class="reader-app" id="reader-app" hidden>
-      <header class="reader-bar">
-        <p class="reader-bar__title">{build.title}</p>
-        <label class="reader-bar__contents">
-          <span class="reader-visually-hidden">{labels.contents}</span>
-          <select id="reader-chapter-select"></select>
-        </label>
+    <div class="ereader" id="reader-app" data-mode="scroll" hidden>
+      <header class="ereader-bar ereader-bar--top">
+        <button type="button" class="ereader-button" id="er-open-contents" aria-haspopup="dialog" aria-controls="er-contents">
+          <Fragment set:html={icon.contents} /><span class="ereader-button__label">{labels.contents}</span>
+        </button>
+        <div class="ereader-bar__titles">
+          <p class="ereader-bar__book">{build.title}</p>
+          <p class="ereader-bar__chapter" id="er-chapter-title"></p>
+        </div>
+        <button type="button" class="ereader-button" id="er-bookmark" aria-pressed="false">
+          <Fragment set:html={icon.bookmark} /><span class="ereader-button__label">{labels.bookmarkHere}</span>
+        </button>
+        <button type="button" class="ereader-button" id="er-open-notes" aria-haspopup="dialog" aria-controls="er-notes">
+          <Fragment set:html={icon.notes} /><span class="ereader-button__label">{labels.bookmarksAndNotes}</span>
+        </button>
+        <button type="button" class="ereader-button" id="er-open-settings" aria-haspopup="dialog" aria-controls="er-settings">
+          <Fragment set:html={icon.settings} /><span class="ereader-button__label">{labels.settings}</span>
+        </button>
       </header>
-      <main class="reader-text" id="reader-text" tabindex="-1" lang={build.language}></main>
-      <nav class="reader-pager" aria-label={labels.contents}>
-        <button type="button" id="reader-previous">{labels.previousChapter}</button>
-        <span id="reader-position"></span>
-        <button type="button" id="reader-next">{labels.nextChapter}</button>
-      </nav>
-      {build.protected && (
-        <p class="reader-forget">
-          <button type="button" id="reader-forget">{labels.forgetPassword}</button>
-        </p>
-      )}
+
+      <main class="ereader-viewport" id="reader-text" tabindex="-1" lang={build.language}>
+        <div class="ereader-flow" id="er-flow"></div>
+      </main>
+
+      <footer class="ereader-bar ereader-bar--bottom">
+        <button type="button" class="ereader-button" id="er-previous">
+          <Fragment set:html={icon.previous} /><span class="ereader-button__label" id="er-previous-label">{labels.previousChapter}</span>
+        </button>
+        <div class="ereader-progress">
+          <p class="ereader-progress__text"><span id="er-progress-text"></span> <span id="er-page-text"></span></p>
+          <div class="ereader-progress__track" id="er-progress" role="progressbar" aria-label={labels.progressLabel} aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="ereader-progress__fill" id="er-progress-fill"></div>
+          </div>
+        </div>
+        <button type="button" class="ereader-button" id="er-next">
+          <span class="ereader-button__label" id="er-next-label">{labels.nextChapter}</span><Fragment set:html={icon.next} />
+        </button>
+      </footer>
+
+      <div class="ereader-selection" id="er-selection" role="toolbar" aria-label={labels.selectionTools} hidden>
+        <button type="button" class="ereader-text-button" id="er-highlight">{labels.highlight}</button>
+        <button type="button" class="ereader-text-button" id="er-note">{labels.addNote}</button>
+      </div>
+      <p class="reader-visually-hidden" id="er-live" aria-live="polite"></p>
     </div>
+
+    <dialog class="ereader-dialog" id="er-contents" aria-labelledby="er-contents-title">
+      <div class="ereader-dialog__head">
+        <h2 id="er-contents-title">{labels.contents}</h2>
+        <button type="button" class="ereader-button" data-close-dialog aria-label={labels.close}><Fragment set:html={icon.close} /></button>
+      </div>
+      <nav class="ereader-dialog__body" aria-labelledby="er-contents-title">
+        <ol class="ereader-toc" id="er-toc"></ol>
+      </nav>
+    </dialog>
+
+    <dialog class="ereader-dialog" id="er-notes" aria-labelledby="er-notes-title">
+      <div class="ereader-dialog__head">
+        <h2 id="er-notes-title">{labels.bookmarksAndNotes}</h2>
+        <button type="button" class="ereader-button" data-close-dialog aria-label={labels.close}><Fragment set:html={icon.close} /></button>
+      </div>
+      <div class="ereader-dialog__body">
+        <section aria-labelledby="er-bookmarks-title">
+          <h3 id="er-bookmarks-title">{labels.tabBookmarks}</h3>
+          <ul class="ereader-list" id="er-bookmark-list"></ul>
+        </section>
+        <section aria-labelledby="er-annotations-title">
+          <h3 id="er-annotations-title">{labels.tabNotes}</h3>
+          <p><button type="button" class="ereader-text-button" id="er-note-here">{labels.addNoteHere}</button></p>
+          <ul class="ereader-list" id="er-annotation-list"></ul>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog class="ereader-dialog" id="er-settings" aria-labelledby="er-settings-title">
+      <div class="ereader-dialog__head">
+        <h2 id="er-settings-title">{labels.settings}</h2>
+        <button type="button" class="ereader-button" data-close-dialog aria-label={labels.close}><Fragment set:html={icon.close} /></button>
+      </div>
+      <form class="ereader-dialog__body ereader-settings" id="er-settings-form">
+        <fieldset>
+          <legend>{labels.theme}</legend>
+          <div class="ereader-choices">
+          {themeOptions.map((option) => {
+            const light = READER_PALETTES[option.value === "auto" ? "light" : (option.value as "light" | "sepia" | "dark")];
+            const dark = READER_PALETTES[option.value === "auto" ? "dark" : (option.value as "light" | "sepia" | "dark")];
+            return (
+              <label class="ereader-choice"><input type="radio" name={option.name} value={option.value} id={option.id} /><span class="ereader-swatch" aria-hidden="true" style={`--swatch-a:${light.bg};--swatch-b:${dark.bg};--swatch-text-a:${light.text};--swatch-text-b:${dark.text};--swatch-rule:${light.control}`}><span>A</span><span>a</span></span><span>{option.label}</span></label>
+            );
+          })}
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>{labels.font}</legend>
+          <div class="ereader-choices">
+          {fontOptions.map((option) => (
+            <label class="ereader-choice"><input type="radio" name={option.name} value={option.value} id={option.id} /><span style={`font-family:${READER_FONTS[option.value as keyof typeof READER_FONTS]}`}>{option.label}</span></label>
+          ))}
+          </div>
+        </fieldset>
+        {steppers.map((stepper) => (
+          <fieldset>
+            <legend>{stepper.legend}</legend>
+            <div class="ereader-stepper">
+              <button type="button" class="ereader-text-button" data-step={stepper.name} data-direction="-1">{stepper.less}</button>
+              <output id={`er-${stepper.name}-value`} aria-live="polite"></output>
+              <button type="button" class="ereader-text-button" data-step={stepper.name} data-direction="1">{stepper.more}</button>
+            </div>
+          </fieldset>
+        ))}
+        <fieldset>
+          <legend>{labels.lineWidth}</legend>
+          <div class="ereader-choices">
+          {widthOptions.map((option) => (
+            <label class="ereader-choice"><input type="radio" name={option.name} value={option.value} id={option.id} /><span>{option.label}</span></label>
+          ))}
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>{labels.alignment}</legend>
+          <div class="ereader-choices">
+          {alignOptions.map((option) => (
+            <label class="ereader-choice"><input type="radio" name={option.name} value={option.value} id={option.id} /><span>{option.label}</span></label>
+          ))}
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>{labels.readingMode}</legend>
+          <div class="ereader-choices">
+          {modeOptions.map((option) => (
+            <label class="ereader-choice"><input type="radio" name={option.name} value={option.value} id={option.id} /><span>{option.label}</span></label>
+          ))}
+          </div>
+        </fieldset>
+        <label class="ereader-check"><input type="checkbox" name="sceneTitles" id="er-scene-titles" /><span>{labels.sceneTitles}</span></label>
+        <p><button type="button" class="ereader-text-button" id="er-reset">{labels.resetSettings}</button></p>
+        <section class="ereader-settings__extra" id="er-book-links" aria-labelledby="er-book-links-title" hidden>
+          <h3 id="er-book-links-title">{labels.theBook}</h3>
+          <ul class="ereader-links" id="er-book-link-list"></ul>
+        </section>
+        {build.protected && (
+          <section class="ereader-settings__extra" aria-labelledby="er-device-title">
+            <h3 id="er-device-title">{labels.thisDevice}</h3>
+            <p><button type="button" class="ereader-text-button" id="reader-forget">{labels.forgetPassword}</button></p>
+          </section>
+        )}
+      </form>
+    </dialog>
+
+    <dialog class="ereader-dialog ereader-dialog--small" id="er-note-dialog" aria-labelledby="er-note-title">
+      <form class="ereader-dialog__body" id="er-note-form" method="dialog">
+        <h2 id="er-note-title">{labels.noteTitle}</h2>
+        <p class="ereader-note__quote-label">{labels.noteQuote}</p>
+        <blockquote class="ereader-note__quote" id="er-note-quote"></blockquote>
+        <label class="ereader-note__label" for="er-note-text">{labels.noteLabel}</label>
+        <textarea id="er-note-text" rows="5"></textarea>
+        <div class="ereader-note__actions">
+          <button type="submit" class="ereader-primary" value="save" id="er-note-save">{labels.save}</button>
+          <button type="submit" class="ereader-text-button" value="cancel" formnovalidate>{labels.cancel}</button>
+          <button type="button" class="ereader-text-button ereader-danger" id="er-note-delete" hidden>{labels.deleteHighlight}</button>
+        </div>
+      </form>
+    </dialog>
 
     <script type="application/json" id="narrarium-reader-boot" set:html={bootJson}></script>
     <script>

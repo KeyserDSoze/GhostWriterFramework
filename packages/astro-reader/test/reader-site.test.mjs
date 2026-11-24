@@ -17,6 +17,7 @@ const PASSWORDS = { first: "Zebra-Ocelot-9431", second: "piano verde 77" };
 const SECRETS_JSON = JSON.stringify({ github_token: "ghs_RUN_TOKEN_SHOULD_NEVER_APPEAR_123", READER_PASSWORD_001: PASSWORDS.first, READER_PASSWORD_002: PASSWORDS.second, OTHER_SECRET: "other-secret-value-xyz" });
 
 let bookRoot;
+let italianRoot;
 const builds = {};
 
 async function filesOf(dir, prefix = "") {
@@ -36,15 +37,19 @@ async function readAll(dir) {
 
 test.before(async () => {
   bookRoot = await mkdtemp(path.join(os.tmpdir(), "narrarium-reader-site-"));
-  await createSampleBook(bookRoot);
+  await createSampleBook(bookRoot, { extraParagraphs: 10 });
   builds.public = await buildReaderSite({ bookRoot, name: "public" });
   builds.protected = await buildReaderSite({ bookRoot, name: "protected", env: { READER_PASSWORD_SECRETS: "READER_PASSWORD_001,READER_PASSWORD_002", NARRARIUM_READER_SECRETS: SECRETS_JSON } });
   builds.revoked = await buildReaderSite({ bookRoot, name: "revoked", env: { READER_PASSWORD_SECRETS: "READER_PASSWORD_001", NARRARIUM_READER_SECRETS: SECRETS_JSON } });
+  italianRoot = await mkdtemp(path.join(os.tmpdir(), "narrarium-reader-site-it-"));
+  await createSampleBook(italianRoot, { title: "Il Porto di Vetro", language: "it", extraParagraphs: 2 });
+  builds.italian = await buildReaderSite({ bookRoot: italianRoot, name: "italian", base: "/porto/", env: { NARRARIUM_READER_PASSWORD: "aperto" } });
   for (const [name, build] of Object.entries(builds)) assert.equal(build.code, 0, `${name} build failed:\n${build.output}`);
 });
 
 test.after(async () => {
   if (bookRoot) await rm(bookRoot, { recursive: true, force: true });
+  if (italianRoot) await rm(italianRoot, { recursive: true, force: true });
   for (const build of Object.values(builds)) await rm(build.outDir, { recursive: true, force: true });
 });
 
@@ -266,6 +271,290 @@ test.describe("in Chromium", () => {
       assert.deepEqual(errors, []);
     } finally {
       await context.close();
+    }
+  });
+
+  /** Select characters [from, to) of a block of a scene, as a reader would with the mouse or a finger. */
+  async function select(page, scene, block, from, to) {
+    await page.evaluate(({ scene, block, from, to }) => {
+      const element = document.querySelector(`[data-scene="${scene}"] [data-block="${block}"]`);
+      element.scrollIntoView({ block: "center" });
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let offset = 0;
+      const range = document.createRange();
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        const end = offset + node.data.length;
+        if (from >= offset && from <= end) range.setStart(node, from - offset);
+        if (to >= offset && to <= end) {
+          range.setEnd(node, to - offset);
+          break;
+        }
+        offset = end;
+      }
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }, { scene, block, from, to });
+    await page.waitForSelector("#er-selection:not([hidden])");
+  }
+
+  test("several bookmarks are added, listed in book order, opened and deleted, and kept on the device", async (t) => {
+    const opened = await newPage(t);
+    if (!opened) return;
+    const { page, context, errors } = opened;
+    try {
+      server.publish(builds.public.outDir);
+      await page.goto(server.url);
+      await page.waitForSelector("#reader-app:not([hidden])");
+      assert.match(await page.textContent("#er-progress-text"), /Chapter 1 of 2 · 0%/);
+
+      // A bookmark in chapter 2, then one at the top of chapter 1: the list puts chapter 1 first.
+      await page.click("#er-next");
+      await page.waitForFunction(() => document.querySelector("#er-chapter-title").textContent.includes("The Long Tide"));
+      assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("ereader-chapter__title")), true, "the new chapter's title has the focus");
+      await page.click("#er-bookmark");
+      assert.equal(await page.getAttribute("#er-bookmark", "aria-pressed"), "true");
+      await page.click("#er-open-contents");
+      await page.waitForSelector("#er-contents[open]");
+      assert.equal(await page.getAttribute("#er-toc button[aria-current='page']", "aria-current"), "page");
+      await page.click("#er-toc > li:first-child > button");
+      await page.waitForFunction(() => document.querySelector("#er-chapter-title").textContent.includes("Lanterns"));
+      await page.evaluate(() => document.querySelector('[data-scene="002-low-water"] [data-block="0"]').scrollIntoView({ block: "start" }));
+      await page.waitForTimeout(100);
+      await page.click("#er-bookmark");
+      const percent = Number((await page.textContent("#er-progress-text")).match(/(\d+)%/)[1]);
+      assert.ok(percent > 0 && percent < 100, `progress ${percent}%`);
+      assert.equal(await page.getAttribute("#er-progress", "aria-valuenow"), String(percent));
+
+      await page.click("#er-open-notes");
+      await page.waitForSelector("#er-notes[open]");
+      const items = await page.locator("#er-bookmark-list .ereader-item__where").allTextContents();
+      assert.deepEqual(items, ["Chapter 1 · Lanterns Over Water", "Chapter 2 · The Long Tide"]);
+      assert.match(await page.locator("#er-bookmark-list .ereader-item__quote").first().textContent(), /TIDEMARKER/);
+      // Open the chapter 2 bookmark from the list.
+      await page.locator("#er-bookmark-list .ereader-item__go").nth(1).click();
+      await page.waitForFunction(() => document.querySelector("#er-chapter-title").textContent.includes("The Long Tide"));
+      assert.equal(await page.isVisible("#er-notes"), false);
+
+      await page.reload();
+      await page.waitForSelector("#reader-app:not([hidden])");
+      assert.match(await page.textContent("#er-chapter-title"), /The Long Tide/, "the reading position is kept");
+      await page.click("#er-open-notes");
+      await page.waitForSelector("#er-notes[open]");
+      assert.equal(await page.locator("#er-bookmark-list > li").count(), 2, "the bookmarks are kept");
+      const deleteLabel = await page.locator("#er-bookmark-list > li").first().locator("button.ereader-text-button").getAttribute("aria-label");
+      assert.match(deleteLabel, /^Delete the bookmark: Chapter 1/);
+      await page.locator("#er-bookmark-list > li").first().locator("button.ereader-text-button").click();
+      assert.equal(await page.locator("#er-bookmark-list > li").count(), 1);
+      assert.equal(await page.evaluate(() => document.activeElement?.closest("#er-bookmark-list") !== null), true, "the focus stays in the list");
+      const stored = JSON.parse(await page.evaluate(() => localStorage.getItem("narrarium-reader:test-book:bookmarks")));
+      assert.equal(stored.items.length, 1);
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("highlights and notes are anchored to a chapter, a scene and a paragraph, edited and deleted, and kept after a reload", async (t) => {
+    const opened = await newPage(t);
+    if (!opened) return;
+    const { page, context, errors } = opened;
+    try {
+      server.publish(builds.public.outDir);
+      await page.goto(server.url);
+      await page.waitForSelector("#reader-app:not([hidden])");
+      await select(page, "001-the-quay-at-dusk", 0, 11, 23);
+      await page.click("#er-highlight");
+      await page.waitForSelector("mark.ereader-mark");
+      assert.equal(await page.textContent("mark.ereader-mark"), "the lanterns");
+
+      await select(page, "002-low-water", 1, 0, 11);
+      await page.click("#er-note");
+      await page.waitForSelector("#er-note-dialog[open]");
+      assert.equal(await page.textContent("#er-note-quote"), "Paragraph 1");
+      assert.equal(await page.evaluate(() => document.activeElement?.id), "er-note-text");
+      await page.fill("#er-note-text", "Why the gulls?");
+      await page.click("#er-note-save");
+      await page.waitForSelector('mark.ereader-mark[data-kind="note"]');
+
+      const stored = JSON.parse(await page.evaluate(() => localStorage.getItem("narrarium-reader:test-book:annotations")));
+      assert.deepEqual(stored.items.map((item) => ({ kind: item.kind, chapter: item.chapter, scene: item.scene, block: item.startBlock, quote: item.quote, note: item.note })), [
+        { kind: "highlight", chapter: "001-lanterns-over-water", scene: "001-the-quay-at-dusk", block: 0, quote: "the lanterns", note: undefined },
+        { kind: "note", chapter: "001-lanterns-over-water", scene: "002-low-water", block: 1, quote: "Paragraph 1", note: "Why the gulls?" },
+      ]);
+
+      await page.reload();
+      await page.waitForSelector("#reader-app:not([hidden])");
+      assert.equal(await page.locator("mark.ereader-mark").count(), 2, "both are drawn again");
+
+      // Edit the note from the list, then delete the highlight from the text.
+      await page.click("#er-open-notes");
+      await page.waitForSelector("#er-notes[open]");
+      assert.match(await page.textContent("#er-annotation-list"), /Why the gulls\?/);
+      await page.locator("#er-annotation-list > li").nth(1).getByRole("button", { name: "Edit the note" }).click();
+      await page.waitForSelector("#er-note-dialog[open]");
+      await page.fill("#er-note-text", "The gulls write nothing down.");
+      await page.click("#er-note-save");
+      await page.waitForSelector("#er-notes[open]");
+      assert.match(await page.textContent("#er-annotation-list"), /The gulls write nothing down\./);
+      await page.keyboard.press("Escape");
+      await page.click("mark.ereader-mark[data-kind='highlight']");
+      await page.waitForSelector("#er-note-dialog[open]");
+      await page.click("#er-note-delete");
+      await page.waitForFunction(() => document.querySelectorAll("mark.ereader-mark").length === 1);
+
+      // A note without selecting anything, from the keyboard: on the paragraph where the reader is.
+      await page.click("#er-open-notes");
+      await page.waitForSelector("#er-notes[open]");
+      await page.click("#er-note-here");
+      await page.waitForSelector("#er-note-dialog[open]");
+      await page.keyboard.type("A note from the keyboard.");
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Enter");
+      await page.waitForSelector("#er-notes[open]");
+      assert.match(await page.textContent("#er-annotation-list"), /A note from the keyboard\./);
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("settings: theme, text and pages; the keyboard and a swipe turn the pages; everything is kept", async (t) => {
+    const opened = await newPage(t, { width: 390, height: 700 });
+    if (!opened) return;
+    const { page, context, errors } = opened;
+    try {
+      server.publish(builds.public.outDir);
+      await page.goto(server.url);
+      await page.waitForSelector("#reader-app:not([hidden])");
+      const size = () => page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".ereader-scene__text p")).fontSize));
+      const before = await size();
+      await page.click("#er-open-settings");
+      await page.waitForSelector("#er-settings[open]");
+      await page.check("#er-theme-sepia");
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "sepia");
+      await page.click("[data-step='size'][data-direction='1']");
+      await page.click("[data-step='size'][data-direction='1']");
+      assert.equal(await page.textContent("#er-size-value"), "125%");
+      assert.ok((await size()) > before);
+      await page.check("#er-font-sans");
+      await page.check("#er-mode-paged");
+      await page.keyboard.press("Escape");
+      assert.equal(await page.evaluate(() => document.activeElement?.id), "er-open-settings", "the focus goes back to the button that opened the settings");
+      assert.equal(await page.getAttribute("#reader-app", "data-mode"), "paged");
+      const pageText = () => page.textContent("#er-page-text");
+      assert.match(await pageText(), /Page 1 of (\d+)/);
+      const pages = Number((await pageText()).match(/of (\d+)/)[1]);
+      assert.ok(pages >= 3, `${pages} pages`);
+      await page.keyboard.press("ArrowRight");
+      await page.waitForFunction(() => /Page 2 of/.test(document.querySelector("#er-page-text").textContent));
+      await page.keyboard.press("End");
+      await page.waitForFunction((count) => document.querySelector("#er-page-text").textContent.includes(`Page ${count} of`), pages);
+      await page.keyboard.press("ArrowRight");
+      await page.waitForFunction(() => document.querySelector("#er-chapter-title").textContent.includes("The Long Tide"));
+      await page.keyboard.press("ArrowLeft");
+      await page.waitForFunction(() => document.querySelector("#er-chapter-title").textContent.includes("Lanterns"));
+      assert.match(await pageText(), new RegExp(`Page ${pages} of ${pages}`), "back from chapter 2 lands on the last page of chapter 1");
+      // A swipe of a finger to the left turns the page forward, to the right backward.
+      const swipe = (from, to) => page.evaluate(({ from, to }) => {
+        const viewport = document.querySelector("#reader-text");
+        viewport.dispatchEvent(new PointerEvent("pointerdown", { pointerType: "touch", clientX: from, clientY: 300, bubbles: true }));
+        viewport.dispatchEvent(new PointerEvent("pointerup", { pointerType: "touch", clientX: to, clientY: 310, bubbles: true }));
+      }, { from, to });
+      await swipe(80, 320);
+      await page.waitForFunction((count) => document.querySelector("#er-page-text").textContent.includes(`Page ${count - 1} of`), pages);
+      await swipe(320, 80);
+      await page.waitForFunction((count) => document.querySelector("#er-page-text").textContent.includes(`Page ${count} of`), pages);
+
+      await page.reload();
+      await page.waitForSelector("#reader-app:not([hidden])");
+      assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "sepia");
+      assert.equal(await page.getAttribute("#reader-app", "data-mode"), "paged");
+      assert.match(await pageText(), new RegExp(`Page ${pages} of ${pages}`), "the page is kept");
+      const prefs = JSON.parse(await page.evaluate(() => localStorage.getItem("narrarium-reader:test-book:prefs")));
+      assert.deepEqual({ theme: prefs.theme, font: prefs.font, mode: prefs.mode, size: prefs.size }, { theme: "sepia", font: "sans", mode: "paged", size: 4 });
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("accessibility: names, languages, focus, reduced motion, and no sideways scrolling at 320 CSS px with the largest text", async (t) => {
+    if (browser.unavailable) return t.skip("Chromium is not installed here.");
+    const context = await browser.newContext({ viewport: { width: 320, height: 640 }, reducedMotion: "reduce" });
+    const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    try {
+      server.publish(builds.public.outDir);
+      await page.addInitScript(() => localStorage.setItem("narrarium-reader:test-book:prefs", JSON.stringify({ v: 1, size: 8, leading: 5 })));
+      await page.goto(server.url);
+      await page.waitForSelector("#reader-app:not([hidden])");
+      const report = await page.evaluate(() => {
+        const visible = (element) => element.offsetParent !== null || getComputedStyle(element).position === "fixed";
+        const unnamed = [...document.querySelectorAll("button, a[href], input, select, textarea, [role='progressbar']")]
+          .filter((element) => visible(element) || element.closest("dialog"))
+          .filter((element) => {
+            const label = element.getAttribute("aria-label") || element.textContent.trim() || (element.id && document.querySelector(`label[for="${element.id}"]`)?.textContent.trim()) || element.closest("label")?.textContent.trim();
+            return !label;
+          })
+          .map((element) => element.outerHTML.slice(0, 80));
+        const dialogs = [...document.querySelectorAll("dialog")].filter((dialog) => !document.getElementById(dialog.getAttribute("aria-labelledby") ?? "")?.textContent.trim()).map((dialog) => dialog.id);
+        return {
+          unnamed,
+          dialogs,
+          lang: document.documentElement.lang,
+          textLang: document.querySelector("main").lang,
+          sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          fontSize: getComputedStyle(document.querySelector(".ereader-scene__text p")).fontSize,
+          reduced: matchMedia("(prefers-reduced-motion: reduce)").matches,
+          smallTargets: [...document.querySelectorAll(".ereader-bar button")].filter((button) => { const box = button.getBoundingClientRect(); return box.width < 24 || box.height < 24; }).length,
+        };
+      });
+      assert.deepEqual(report.unnamed, [], "every control has a name");
+      assert.deepEqual(report.dialogs, [], "every dialog has a title");
+      assert.equal(report.lang, "en");
+      assert.equal(report.textLang, "en");
+      assert.equal(report.fontSize, "36px", "the largest text: 200%");
+      assert.ok(report.sideways <= 0, `the page scrolls sideways by ${report.sideways}px`);
+      assert.equal(report.reduced, true);
+      assert.equal(report.smallTargets, 0, "targets of at least 24 by 24 CSS px");
+      // Keyboard: Tab reaches the bar, a dialog opens and closes with the keyboard and gives the focus back.
+      await page.focus("#er-open-contents");
+      await page.keyboard.press("Enter");
+      await page.waitForSelector("#er-contents[open]");
+      await page.keyboard.press("Escape");
+      assert.equal(await page.evaluate(() => document.activeElement?.id), "er-open-contents");
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("an Italian book speaks Italian: the lock, the bars and the dialogs", async (t) => {
+    if (browser.unavailable) return t.skip("Chromium is not installed here.");
+    const italianServer = await serveSite("/porto/");
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    try {
+      italianServer.publish(builds.italian.outDir);
+      await page.goto(italianServer.url);
+      await page.waitForSelector("#reader-lock:not([hidden])");
+      assert.equal(await page.evaluate(() => document.documentElement.lang), "it");
+      assert.equal(await page.textContent("#reader-lock-title"), "Questo libro è protetto");
+      await page.fill("#reader-password", "aperto");
+      await page.click("#reader-unlock");
+      await page.waitForSelector("#reader-app:not([hidden])");
+      assert.match(await page.textContent("#er-progress-text"), /Capitolo 1 di 2/);
+      assert.equal(await page.getAttribute("#er-open-contents .ereader-button__label", "class"), "ereader-button__label");
+      assert.equal(await page.textContent("#er-open-contents .ereader-button__label"), "Indice");
+      await page.click("#er-open-settings");
+      assert.equal(await page.textContent("#er-settings-title"), "Impostazioni di lettura");
+      assert.equal(await page.textContent("#reader-forget"), "Dimentica la password su questo dispositivo");
+    } finally {
+      await context.close();
+      await italianServer.close();
     }
   });
 });

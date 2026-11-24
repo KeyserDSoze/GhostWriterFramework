@@ -1,29 +1,4 @@
-/* The published reader (src/pages/index.astro). */
-
-:root {
-  color-scheme: light dark;
-  --reader-bg: #fbfaf7;
-  --reader-text: #1d1b18;
-  --reader-muted: #5b554c;
-  --reader-accent: #8a4b14;
-  --reader-border: #d6d0c5;
-  --reader-surface: #ffffff;
-  --reader-focus: #1a56c4;
-  --reader-font: Charter, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
-  --reader-ui-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --reader-bg: #151412;
-    --reader-text: #ebe6dc;
-    --reader-muted: #b4ad9f;
-    --reader-accent: #e8a868;
-    --reader-border: #3d3a35;
-    --reader-surface: #1f1d1a;
-    --reader-focus: #8fb4ff;
-  }
-}
+/* The published reader (src/pages/index.astro). Colors come from lib/ereader/themes.ts (written inline by the page as --er-* variables). */
 
 *,
 *::before,
@@ -34,14 +9,15 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  background: var(--er-bg);
 }
 
 body.reader-body {
   margin: 0;
   min-height: 100dvh;
-  background: var(--reader-bg);
-  color: var(--reader-text);
-  font-family: var(--reader-ui-font);
+  background: var(--er-bg);
+  color: var(--er-text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   line-height: 1.5;
 }
 
@@ -50,8 +26,23 @@ body.reader-body {
 }
 
 :focus-visible {
-  outline: 3px solid var(--reader-focus);
+  outline: 3px solid var(--er-focus);
   outline-offset: 2px;
+}
+
+a {
+  color: var(--er-accent);
+}
+
+svg {
+  width: 1.5rem;
+  height: 1.5rem;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .reader-visually-hidden {
@@ -69,12 +60,12 @@ body.reader-body {
 .reader-skip {
   position: absolute;
   left: 0.5rem;
-  top: -4rem;
+  top: -5rem;
   z-index: 50;
   padding: 0.75rem 1rem;
-  background: var(--reader-surface);
-  color: var(--reader-text);
-  border: 2px solid var(--reader-focus);
+  background: var(--er-surface);
+  color: var(--er-text);
+  border: 2px solid var(--er-focus);
   border-radius: 0.5rem;
 }
 
@@ -84,26 +75,100 @@ body.reader-body {
 
 .reader-status {
   margin: 0;
-  padding: 0.75rem 1rem;
+  padding: 0.5rem 1rem;
   text-align: center;
-  color: var(--reader-muted);
+  color: var(--er-muted);
+  background: var(--er-surface);
+  border-bottom: 1px solid var(--er-rule);
 }
 
-.reader-status button,
-.reader-pager button,
-.reader-lock button {
+.reader-status:empty {
+  display: none;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+
+.ereader-button,
+.ereader-text-button,
+.ereader-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-width: 44px;
   min-height: 44px;
-  padding: 0.5rem 1rem;
+  padding: 0.5rem 0.75rem;
   border-radius: 0.5rem;
-  border: 1px solid var(--reader-border);
-  background: var(--reader-surface);
-  color: var(--reader-text);
   font: inherit;
   cursor: pointer;
+  color: var(--er-text);
+  background: transparent;
+  border: 1px solid transparent;
 }
 
+.ereader-button {
+  padding: 0.5rem;
+}
+
+.ereader-text-button {
+  border-color: var(--er-control);
+  background: var(--er-bg);
+}
+
+.ereader-button:hover,
+.ereader-text-button:hover {
+  background: color-mix(in srgb, var(--er-text) 8%, transparent);
+}
+
+.ereader-button[aria-pressed="true"] {
+  color: var(--er-accent);
+}
+
+.ereader-button[aria-pressed="true"] svg {
+  fill: currentColor;
+}
+
+.ereader-button:disabled,
+.ereader-text-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ereader-primary {
+  font-weight: 600;
+  background: var(--er-accent);
+  color: var(--er-on-accent);
+  border-color: var(--er-accent);
+}
+
+.ereader-danger {
+  color: var(--er-text);
+  border-style: dashed;
+}
+
+.ereader-button__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (min-width: 52rem) {
+  .ereader-button__label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip: auto;
+  }
+}
+
+/* ── The lock ───────────────────────────────────────────────────────────── */
+
 .reader-lock {
-  min-height: 80dvh;
+  min-height: 85dvh;
   display: grid;
   place-items: center;
   padding: 1.5rem 1rem;
@@ -115,20 +180,21 @@ body.reader-body {
 
 .reader-lock__book {
   margin: 0 0 0.25rem;
-  color: var(--reader-muted);
-  font-family: var(--reader-font);
+  color: var(--er-muted);
+  font-family: var(--er-book-font, Georgia, serif);
   font-size: 1.125rem;
 }
 
 .reader-lock__title {
   margin: 0 0 0.75rem;
   font-size: 1.5rem;
+  line-height: 1.25;
 }
 
 .reader-lock__message {
   padding: 0.75rem 1rem;
-  border-left: 4px solid var(--reader-accent);
-  background: var(--reader-surface);
+  border-left: 4px solid var(--er-accent);
+  background: var(--er-surface);
 }
 
 .reader-lock__form {
@@ -142,113 +208,638 @@ body.reader-body {
 
 .reader-lock__field {
   display: flex;
-  gap: 0.5rem;
   flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
-.reader-lock__field input {
+.reader-lock__field input,
+.ereader-dialog textarea {
   flex: 1 1 12rem;
   min-height: 44px;
   padding: 0.5rem 0.75rem;
-  border: 1px solid var(--reader-muted);
+  border: 1px solid var(--er-control);
   border-radius: 0.5rem;
-  background: var(--reader-surface);
-  color: var(--reader-text);
+  background: var(--er-bg);
+  color: var(--er-text);
   font: inherit;
 }
 
-.reader-lock__remember {
+.reader-lock__remember,
+.ereader-check {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.625rem;
   align-items: center;
+  min-height: 44px;
 }
 
-.reader-lock__remember input {
+.reader-lock__remember input,
+.ereader-check input,
+.ereader-choice input {
   width: 1.25rem;
   height: 1.25rem;
-}
-
-.reader-lock__submit {
-  font-weight: 600;
-  background: var(--reader-text) !important;
-  color: var(--reader-bg) !important;
-}
-
-.reader-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.5rem 1rem;
-  border-bottom: 1px solid var(--reader-border);
-}
-
-.reader-bar__title {
   margin: 0;
+  accent-color: var(--er-accent);
+  flex: none;
+}
+
+/* ── The reader ─────────────────────────────────────────────────────────── */
+
+.ereader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto 1fr auto;
+  min-height: 100dvh;
+}
+
+.ereader[data-mode="scroll"] .ereader-flow :is(a[href], button, mark, [tabindex], h1, h2, [data-block]) {
+  scroll-margin-top: calc(var(--er-top-bar, 3.5rem) + 0.5rem);
+  scroll-margin-bottom: calc(var(--er-bottom-bar, 4rem) + 0.5rem);
+}
+
+.ereader-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem max(0.25rem, env(safe-area-inset-right)) 0.25rem max(0.25rem, env(safe-area-inset-left));
+  background: var(--er-surface);
+  color: var(--er-text);
+  z-index: 10;
+}
+
+.ereader-bar--top {
+  position: sticky;
+  top: 0;
+  border-bottom: 1px solid var(--er-rule);
+}
+
+.ereader-bar--bottom {
+  position: sticky;
+  bottom: 0;
+  border-top: 1px solid var(--er-rule);
+  padding-bottom: max(0.25rem, env(safe-area-inset-bottom));
+}
+
+.ereader-bar__titles {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 0.25rem;
+  text-align: center;
+}
+
+.ereader-bar__book,
+.ereader-bar__chapter {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ereader-bar__book {
+  font-size: 0.8125rem;
+  color: var(--er-muted);
+}
+
+.ereader-bar__chapter {
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.ereader-progress {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 0.5rem;
+  text-align: center;
+}
+
+.ereader-progress__text {
+  margin: 0 0 0.25rem;
+  font-size: 0.8125rem;
+  color: var(--er-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ereader-progress__track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--er-rule);
+  overflow: hidden;
+}
+
+.ereader-progress__fill {
+  height: 100%;
+  width: 0;
+  background: var(--er-accent);
+}
+
+.ereader-viewport {
+  min-width: 0;
+  outline: none;
+  touch-action: pan-y pinch-zoom;
+}
+
+.ereader-viewport:focus-visible {
+  outline: 3px solid var(--er-focus);
+  outline-offset: -3px;
+}
+
+.ereader-flow {
+  --er-font-size: 18px;
+  --er-leading: 1.6;
+  --er-margin: 1.25rem;
+  --er-measure: 34em;
+  font-family: var(--er-book-font, Georgia, serif);
+  font-size: var(--er-font-size);
+  line-height: var(--er-leading);
+  text-align: var(--er-align, start);
+  hyphens: var(--er-hyphens, manual);
+  overflow-wrap: break-word;
+}
+
+.ereader-chapter {
+  max-width: var(--er-measure);
+  margin-inline: auto;
+  padding: 1.5em var(--er-margin) 3em;
+}
+
+.ereader-chapter__head {
+  margin: 0.5em 0 2em;
+  text-align: center;
+}
+
+.ereader-chapter__number {
+  margin: 0 0 0.5em;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.75em;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--er-muted);
+}
+
+.ereader-chapter__title {
+  margin: 0;
+  font-size: 1.6em;
+  line-height: 1.2;
   font-weight: 600;
 }
 
-.reader-bar__contents select {
-  min-height: 44px;
-  max-width: 100%;
-  font: inherit;
+.ereader-chapter__title:focus {
+  outline: none;
 }
 
-.reader-text {
-  max-width: 38rem;
-  margin: 0 auto;
-  padding: 1.5rem 1.25rem 3rem;
-  font-family: var(--reader-font);
-  font-size: 1.125rem;
-  line-height: 1.7;
+.ereader-chapter__title:focus-visible {
+  outline: 3px solid var(--er-focus);
 }
 
-.reader-chapter__title {
+.ereader-scene + .ereader-scene {
+  margin-top: 2em;
+}
+
+.ereader-scene__title {
+  margin: 0 0 1em;
+  font-size: 1em;
+  font-weight: 600;
+  text-align: start;
+}
+
+.ereader[data-scene-titles="hidden"] .ereader-scene__title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.ereader[data-scene-titles="hidden"] .ereader-scene + .ereader-scene::before {
+  content: "⁂";
+  display: block;
+  margin: 0 0 1em;
+  text-align: center;
+  color: var(--er-muted);
+}
+
+.ereader-scene__text > * {
+  margin: 0 0 0.9em;
+}
+
+.ereader-scene__text blockquote {
+  margin-inline: 1.5em 0;
+  font-style: italic;
+}
+
+.ereader-scene__text hr {
+  border: 0;
+  text-align: center;
+}
+
+.ereader-scene__text hr::before {
+  content: "* * *";
+  color: var(--er-muted);
+}
+
+.ereader-figure {
+  margin: 1.5em 0;
+  break-inside: avoid;
+}
+
+.ereader-figure__frame {
   display: grid;
-  gap: 0.25rem;
-  margin: 1rem 0 2rem;
-  font-size: 1.75rem;
-  line-height: 1.25;
+  place-items: center;
+  width: 100%;
+  background: var(--er-surface);
+  border-radius: 0.375rem;
 }
 
-.reader-chapter__number {
-  font-size: 0.875rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--reader-muted);
-  font-family: var(--reader-ui-font);
+.ereader-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 80dvh;
+  object-fit: contain;
+  border-radius: 0.375rem;
 }
 
-.reader-scene__title {
-  font-size: 1.125rem;
-  margin: 2.5rem 0 1rem;
+.ereader-figure figcaption {
+  margin-top: 0.5em;
+  font-size: 0.85em;
+  color: var(--er-muted);
+  text-align: center;
 }
 
-.reader-pager {
+mark.ereader-mark {
+  background: var(--er-mark);
+  color: var(--er-mark-text);
+  border-radius: 0.125em;
+  cursor: pointer;
+}
+
+mark.ereader-mark[data-kind="note"] {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+
+.ereader-chapter__end {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem 1rem;
+  gap: 0.75rem;
+  justify-content: center;
+  margin-top: 3em;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 1rem;
+}
+
+.ereader-chapter__empty {
+  color: var(--er-muted);
+  font-style: italic;
+}
+
+/* Pages: the chapter is laid out in columns as wide as the screen, and the viewport moves one column at a time. */
+.ereader[data-mode="paged"] {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ereader[data-mode="paged"] .ereader-viewport {
+  overflow: hidden;
+  min-height: 0;
+  height: 100%;
+}
+
+.ereader[data-mode="paged"] .ereader-flow {
+  height: 100%;
+  padding: 1.25rem var(--er-side-pad, 1.25rem);
+  column-width: var(--er-column-width, 20rem);
+  column-gap: var(--er-column-gap, 2.5rem);
+  column-fill: auto;
+}
+
+.ereader[data-mode="paged"] .ereader-chapter {
+  max-width: none;
+  padding: 0;
+}
+
+.ereader[data-mode="paged"] .ereader-chapter__head,
+.ereader[data-mode="paged"] .ereader-scene__title,
+.ereader[data-mode="paged"] .ereader-chapter__number {
+  break-after: avoid;
+}
+
+.ereader[data-mode="paged"] .ereader-figure img {
+  max-height: calc(100dvh - 12rem);
+}
+
+.ereader[data-mode="paged"] .ereader-chapter__end {
+  display: none;
+}
+
+/* The tools of a selection, above the bottom bar, out of the way of the system's own menu. */
+.ereader-selection {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--er-bottom-bar, 4rem) + 0.75rem);
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.375rem;
+  background: var(--er-surface);
+  border: 1px solid var(--er-control);
+  border-radius: 0.75rem;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.2);
+}
+
+.ereader-selection .ereader-text-button {
+  white-space: nowrap;
+}
+
+/* ── Dialogs ────────────────────────────────────────────────────────────── */
+
+.ereader-dialog {
+  width: min(40rem, calc(100vw - 1.5rem));
+  max-height: calc(100dvh - 2rem);
+  padding: 0;
+  border: 1px solid var(--er-rule);
+  border-radius: 0.875rem;
+  background: var(--er-surface);
+  color: var(--er-text);
+  overflow: auto;
+}
+
+.ereader-dialog::backdrop {
+  background: rgb(0 0 0 / 0.5);
+}
+
+.ereader-dialog--small {
+  width: min(32rem, calc(100vw - 1.5rem));
+}
+
+.ereader-dialog__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 1rem 1.5rem;
-  border-top: 1px solid var(--reader-border);
+  gap: 0.5rem;
+  padding: 0.5rem 0.5rem 0.5rem 1.25rem;
+  background: var(--er-surface);
+  border-bottom: 1px solid var(--er-rule);
 }
 
-.reader-forget {
-  text-align: center;
-  margin: 0 0 2rem;
+.ereader-dialog h2 {
+  margin: 0;
+  font-size: 1.25rem;
 }
 
-.reader-forget button {
+.ereader-dialog h3 {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 1.0625rem;
+}
+
+.ereader-dialog__body {
+  padding: 0.5rem 1.25rem 1.5rem;
+}
+
+@media (max-width: 40rem) {
+  .ereader-dialog:not(.ereader-dialog--small) {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+    border-radius: 0;
+    border: 0;
+  }
+}
+
+.ereader-toc,
+.ereader-toc ol,
+.ereader-list,
+.ereader-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ereader-toc > li + li {
+  border-top: 1px solid var(--er-rule);
+}
+
+.ereader-toc button {
+  display: flex;
+  gap: 0.75rem;
+  width: 100%;
   min-height: 44px;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  border: 1px solid var(--reader-border);
+  padding: 0.625rem 0.5rem;
+  border: 0;
+  border-radius: 0.375rem;
   background: transparent;
-  color: var(--reader-text);
+  color: var(--er-text);
   font: inherit;
+  text-align: start;
   cursor: pointer;
+}
+
+.ereader-toc button:hover {
+  background: color-mix(in srgb, var(--er-text) 8%, transparent);
+}
+
+.ereader-toc button[aria-current] {
+  font-weight: 700;
+  color: var(--er-accent);
+}
+
+.ereader-toc__number {
+  min-width: 2ch;
+  color: var(--er-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ereader-toc ol {
+  padding: 0 0 0.5rem 2.25rem;
+}
+
+.ereader-toc ol button {
+  font-size: 0.9375rem;
+}
+
+.ereader-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--er-rule);
+}
+
+.ereader-item__go {
+  flex: 1 1 16rem;
+  display: grid;
+  gap: 0.125rem;
+  min-height: 44px;
+  padding: 0.375rem 0.5rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--er-text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.ereader-item__go:hover {
+  background: color-mix(in srgb, var(--er-text) 8%, transparent);
+}
+
+.ereader-item__where {
+  font-weight: 600;
+}
+
+.ereader-item__quote {
+  font-family: var(--er-book-font, Georgia, serif);
+}
+
+.ereader-item__note {
+  white-space: pre-wrap;
+}
+
+.ereader-item__meta {
+  font-size: 0.8125rem;
+  color: var(--er-muted);
+}
+
+.ereader-item__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ereader-empty {
+  color: var(--er-muted);
+}
+
+.ereader-settings fieldset {
+  min-width: 0;
+  margin: 1.25rem 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.ereader-settings legend {
+  padding: 0;
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+
+.ereader-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.ereader-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.375rem 0.75rem;
+  border: 1px solid var(--er-control);
+  border-radius: 0.5rem;
+  background: var(--er-bg);
+  cursor: pointer;
+}
+
+.ereader-choice:has(input:checked) {
+  border-color: var(--er-accent);
+  box-shadow: inset 0 0 0 1px var(--er-accent);
+}
+
+.ereader-choice:has(input:focus-visible) {
+  outline: 3px solid var(--er-focus);
+  outline-offset: 2px;
+}
+
+.ereader-swatch {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  width: 2rem;
+  height: 1.5rem;
+  border-radius: 0.25rem;
+  border: 1px solid var(--swatch-rule);
+  overflow: hidden;
+  font-family: Georgia, serif;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  text-align: center;
+}
+
+.ereader-swatch > span:first-child {
+  background: var(--swatch-a);
+  color: var(--swatch-text-a);
+}
+
+.ereader-swatch > span:last-child {
+  background: var(--swatch-b);
+  color: var(--swatch-text-b);
+}
+
+.ereader-stepper {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ereader-stepper output {
+  min-width: 5.5rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.ereader-settings .ereader-check {
+  margin-top: 1rem;
+}
+
+.ereader-settings__extra {
+  margin-top: 1rem;
+  border-top: 1px solid var(--er-rule);
+}
+
+.ereader-links li {
+  margin: 0.5rem 0;
+}
+
+.ereader-note__quote-label {
+  margin: 1rem 0 0.25rem;
+  font-size: 0.875rem;
+  color: var(--er-muted);
+}
+
+.ereader-note__quote {
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--er-accent);
+  font-family: var(--er-book-font, Georgia, serif);
+  max-height: 8rem;
+  overflow: auto;
+}
+
+.ereader-note__label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.375rem;
+}
+
+.ereader-dialog textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.ereader-note__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
 }
 
 @media (prefers-reduced-motion: reduce) {

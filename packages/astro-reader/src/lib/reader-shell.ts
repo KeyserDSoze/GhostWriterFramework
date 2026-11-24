@@ -1,12 +1,13 @@
+import { startEReader } from "./ereader/app.js";
 import { withoutReloadParam } from "./reader-freshness.js";
-import { formatLabel, type ReaderLabels } from "./reader-i18n.js";
-import type { ReaderBundle, ReaderChapter } from "./reader-protocol.js";
-import { ReaderOpenError, openReaderSession, type OpenedReader, type PasswordReason, type ReaderBoot } from "./reader-session.js";
+import type { ReaderLabels } from "./reader-i18n.js";
+import { ReaderOpenError, openReaderSession, type PasswordReason, type ReaderBoot } from "./reader-session.js";
 
-/** The browser side of the shell: the lock, the opening of the book, and its reading view. */
+/** The browser side of the shell: the lock and the opening of the book; then the e-reader (ereader/app.ts) lays it out. */
 
 export interface ShellBoot extends ReaderBoot {
   labels: ReaderLabels;
+  uiLanguage: string;
   bookLanguage: string;
   /** The pages of the canon, published only for a public book. */
   canonHref: string | null;
@@ -114,89 +115,6 @@ function hideLock(): void {
   if (lock) lock.hidden = true;
 }
 
-function renderChapter(container: HTMLElement, chapter: ReaderChapter, labels: ReaderLabels): void {
-  const article = document.createElement("article");
-  article.className = "reader-chapter";
-  const heading = document.createElement("h1");
-  heading.className = "reader-chapter__title";
-  heading.tabIndex = -1;
-  heading.innerHTML = `<span class="reader-chapter__number"></span><span class="reader-chapter__name"></span>`;
-  (heading.firstElementChild as HTMLElement).textContent = formatLabel(labels.chapterLabel, { number: chapter.number });
-  (heading.lastElementChild as HTMLElement).textContent = chapter.title;
-  article.append(heading);
-  if (chapter.scenes.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "reader-chapter__empty";
-    empty.textContent = labels.emptyChapter;
-    article.append(empty);
-  }
-  for (const scene of chapter.scenes) {
-    const section = document.createElement("section");
-    section.className = "reader-scene";
-    section.dataset.scene = scene.slug;
-    const title = document.createElement("h2");
-    title.className = "reader-scene__title";
-    title.textContent = scene.title;
-    const prose = document.createElement("div");
-    prose.className = "reader-scene__text";
-    // The core's renderer: no raw HTML and no unsafe URL ever reach this string.
-    prose.innerHTML = scene.html;
-    section.append(title, prose);
-    article.append(section);
-  }
-  container.replaceChildren(article);
-}
-
-function showReader(opened: OpenedReader, boot: ShellBoot): void {
-  const { labels } = boot;
-  const bundle: ReaderBundle = opened.bundle;
-  const app = element<HTMLElement>("reader-app");
-  const text = element<HTMLElement>("reader-text");
-  const select = element<HTMLSelectElement>("reader-chapter-select");
-  const previous = element<HTMLButtonElement>("reader-previous");
-  const next = element<HTMLButtonElement>("reader-next");
-  const position = element<HTMLElement>("reader-position");
-  const chapters = bundle.chapters;
-  app.hidden = false;
-  setStatus(opened.staleShell ? labels.staleShell : opened.online ? "" : labels.offline);
-
-  if (chapters.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "reader-chapter__empty";
-    empty.textContent = labels.noChapters;
-    text.replaceChildren(empty);
-    select.disabled = previous.disabled = next.disabled = true;
-    return;
-  }
-
-  select.replaceChildren(...chapters.map((chapter, index) => {
-    const option = document.createElement("option");
-    option.value = String(index);
-    option.textContent = `${chapter.number}. ${chapter.title}`;
-    return option;
-  }));
-
-  let current = 0;
-  const show = (index: number, focus: boolean) => {
-    current = Math.max(0, Math.min(chapters.length - 1, index));
-    renderChapter(text, chapters[current], labels);
-    select.value = String(current);
-    previous.disabled = current === 0;
-    next.disabled = current === chapters.length - 1;
-    position.textContent = formatLabel(labels.chapterOf, { number: current + 1, total: chapters.length });
-    window.scrollTo(0, 0);
-    if (focus) text.querySelector<HTMLElement>(".reader-chapter__title")?.focus();
-  };
-  document.getElementById("reader-forget")?.addEventListener("click", () => {
-    opened.forgetPassword();
-    setStatus(labels.passwordForgotten);
-  });
-  select.addEventListener("change", () => show(Number(select.value), true));
-  previous.addEventListener("click", () => show(current - 1, true));
-  next.addEventListener("click", () => show(current + 1, true));
-  show(0, false);
-}
-
 function showError(error: unknown, labels: ReaderLabels): void {
   const message = error instanceof ReaderOpenError && error.code === "unsupported" ? labels.unsupported : labels.openFailed;
   const status = element("reader-status");
@@ -217,12 +135,13 @@ export async function startReaderShell(): Promise<void> {
   const boot = JSON.parse(bootElement.textContent || "{}") as ShellBoot;
   const clean = withoutReloadParam(window.location.href);
   if (clean) window.history.replaceState(window.history.state, "", clean);
+  const local = guardedStorage(() => window.localStorage);
   try {
     const result = await openReaderSession(
       boot,
       {
         fetch: window.fetch.bind(window),
-        local: guardedStorage(() => window.localStorage),
+        local,
         session: guardedStorage(() => window.sessionStorage),
         href: window.location.href,
         baseHref: document.baseURI,
@@ -232,7 +151,8 @@ export async function startReaderShell(): Promise<void> {
     );
     if (result.kind === "reloading") return;
     hideLock();
-    showReader(result, boot);
+    setStatus(result.staleShell ? boot.labels.staleShell : result.online ? "" : boot.labels.offline);
+    startEReader(result, boot, local);
   } catch (error) {
     console.error("[narrarium-reader]", error);
     hideLock();
