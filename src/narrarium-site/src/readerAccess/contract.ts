@@ -8,20 +8,18 @@
  *    name that was in use is never given again;
  *  - the older single secret `NARRARIUM_READER_PASSWORD`, which still counts as one password (it can be seen to exist, never read).
  */
-import {
-  LEGACY_READER_PASSWORD_SECRET,
-  PAGES_WORKFLOW_FILE,
-  PAGES_WORKFLOW_PATH,
-  READER_PASSWORD_SECRETS_VARIABLE,
-  nextReaderPasswordSecretName,
-} from "narrarium-astro-reader/github-pages";
-
-export const READER_WORKFLOW_PATH = PAGES_WORKFLOW_PATH;
-export const READER_WORKFLOW_FILE = PAGES_WORKFLOW_FILE;
-export const READER_PASSWORDS_VARIABLE = READER_PASSWORD_SECRETS_VARIABLE;
+/**
+ * The names are the reader package's (`PAGES_WORKFLOW_FILE`, `PAGES_WORKFLOW_PATH`, `READER_PASSWORD_SECRETS_VARIABLE`, `LEGACY_READER_PASSWORD_SECRET`), written
+ * out here because this file is read by code that loads with every page, which must not carry the package's workflow and Pages code with it. A test holds
+ * each of them equal to the package's, so a rename there breaks the build here (`readerAccessContract.test.ts`). The helpers that do something with them (the
+ * list of passwords, Pages, the workflow, the next name) are the package's and are imported where they are used, in the screens that load on demand.
+ */
+export const READER_WORKFLOW_PATH = ".github/workflows/deploy-reader-pages.yml";
+export const READER_WORKFLOW_FILE = "deploy-reader-pages.yml";
+export const READER_PASSWORDS_VARIABLE = "READER_PASSWORD_SECRETS";
 export const READER_SECRET_PREFIX = "READER_PASSWORD_";
 export const READER_SECRET_DIGITS = 3;
-export const LEGACY_READER_SECRET = LEGACY_READER_PASSWORD_SECRET;
+export const LEGACY_READER_SECRET = "NARRARIUM_READER_PASSWORD";
 
 const NAME_PATTERN = new RegExp(`^${READER_SECRET_PREFIX}(\\d{${READER_SECRET_DIGITS},})$`);
 
@@ -38,12 +36,4 @@ export function readerSecretNumber(name: string): number | null {
 
 export function isReaderSecretName(name: string): boolean {
   return readerSecretNumber(name) !== null;
-}
-
-/**
- * The name for a new password, from the reader package (`nextReaderPasswordSecretName`): one past the highest number that any place holds — the variable,
- * the secrets that exist in the repository, and the passwords Narrarium keeps — so a name that was in use is never given again.
- */
-export function allocateReaderSecretName(taken: Iterable<string>): string {
-  return nextReaderPasswordSecretName([...taken]);
 }

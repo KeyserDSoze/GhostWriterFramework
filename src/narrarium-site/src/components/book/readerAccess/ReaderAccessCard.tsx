@@ -14,7 +14,7 @@ import { inspectReaderWorkflow } from "@/readerAccess/workflowPlan";
 import { AddPasswordForm } from "@/components/book/readerAccess/AddPasswordForm";
 import { PasswordRow } from "@/components/book/readerAccess/PasswordRow";
 import { ReaderResultNotice } from "@/components/book/readerAccess/ReaderResultNotice";
-import { useReaderAccess } from "@/components/book/readerAccess/useReaderAccess";
+import { useReaderAccess, type ReaderAccess } from "@/components/book/readerAccess/useReaderAccess";
 
 const RUN_STATE_KEY = { queued: "queued", running: "running", succeeded: "succeeded", failed: "failed", cancelled: "cancelled" } as const;
 
@@ -24,8 +24,12 @@ const RUN_STATE_KEY = { queued: "queued", running: "running", succeeded: "succee
  * the variable, then starts the workflow (see `readerAccess/operations`) and says what happened if a step fails.
  */
 export function ReaderAccessCard({ book }: { book: BookEntry }) {
+  return <ReaderAccessCardView access={useReaderAccess(book)} />;
+}
+
+/** The same card over an access that the caller holds, so that the card beside it (the update of the reader) reads and follows the same GitHub state. */
+export function ReaderAccessCardView({ access }: { access: ReaderAccess }) {
   const { t } = useTranslation();
-  const access = useReaderAccess(book);
   const { snapshot, records } = access;
   const titleId = useId();
   const [removing, setRemoving] = useState<ReaderPasswordRow | null>(null);

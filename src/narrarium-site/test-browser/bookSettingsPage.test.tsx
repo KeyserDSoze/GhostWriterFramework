@@ -8,7 +8,7 @@ vi.mock("@/drive/useSettings", () => ({ useSettings: () => ({ save: env.save, sy
 vi.mock("@/components/book/McpServerSection", () => ({ McpServerSection: () => <section aria-label="mcp-stub" /> }));
 vi.mock("@/components/book/BookGitHubAccess", () => ({ BookGitHubAccess: () => <section aria-label="book-github-access-stub" /> }));
 vi.mock("@/components/book/GitHubRepositoryPicker", () => ({ GitHubRepositoryPicker: () => <section aria-label="picker-stub" /> }));
-vi.mock("@/components/book/readerAccess/ReaderAccessCard", () => ({ ReaderAccessCard: () => { env.readerMounts += 1; return <section aria-label="reader-access-stub">Reader access card</section>; } }));
+vi.mock("@/components/book/readerAccess/ReaderTabContent", () => ({ ReaderTabContent: () => { env.readerMounts += 1; return <section aria-label="reader-access-stub">Reader access card</section>; } }));
 
 import i18n from "@/i18n";
 import { BookSettingsPage } from "@/pages/BookSettingsPage";

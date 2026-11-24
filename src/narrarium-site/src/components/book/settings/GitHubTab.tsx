@@ -16,19 +16,23 @@ import { AUTO_BRANCH } from "@/bookSettings/draft";
 import { useBooksStore } from "@/store/booksStore";
 
 // Which token the book uses, and whether the GitHub app reaches it, is a chunk of its own.
+// The notice that an old reader can be updated reads the working copy and the template, so it is a chunk of its own.
+const ReaderUpdateNotice = lazy(() => import("@/components/book/readerAccess/ReaderUpdateNotice").then((module) => ({ default: module.ReaderUpdateNotice })));
 const BookGitHubAccess = lazy(() => import("@/components/book/BookGitHubAccess").then((module) => ({ default: module.BookGitHubAccess })));
 
 interface Props {
   book: BookEntry;
   draft: BookSettingsDraft;
   patch: (change: Partial<BookSettingsDraft>) => void;
+  /** Opens the Online reader tab, where the reader of the book is updated. */
+  onGoToReader: () => void;
 }
 
 /**
  * Everything about the book and GitHub. A book on this device is offered the connection (choose a repository from the list, or name a new one), and its working
  * branch is shown as local. A book on GitHub shows its repository, which credential it uses and its state, the token's status and the working branch.
  */
-export function GitHubTab({ book, draft, patch }: Props) {
+export function GitHubTab({ book, draft, patch, onGoToReader }: Props) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const settings = useSettingsStore((state) => state.settings);
@@ -54,6 +58,7 @@ export function GitHubTab({ book, draft, patch }: Props) {
   return (
     <>
       {result}
+      <Suspense fallback={null}><ReaderUpdateNotice book={book} onOpen={onGoToReader} /></Suspense>
       <Card>
         <CardHeader>
           <CardTitle>{t("bookSettings.tabs.repositoryTitle")}</CardTitle>

@@ -83,7 +83,7 @@ export async function retryProtectedReader(input: RetryProtectedReaderInput): Pr
 }
 
 /** A refusal to write a workflow is a missing permission (Workflows), told as such; anything else is classified as for any call. */
-function classifyWorkflowFailure(error: unknown): ReaderFailure {
+export function classifyWorkflowFailure(error: unknown): ReaderFailure {
   const failure = classifyReaderFailure(error, "workflow-read");
   const message = error && typeof error === "object" && "message" in error ? String((error as { message: unknown }).message) : "";
   if ((failure.kind === "permission" || failure.kind === "not-found" || failure.kind === "other") && /workflow/i.test(message)) return { kind: "permission", status: "status" in failure && failure.status ? failure.status : 403, permissions: ["workflows"], fromHeader: false };

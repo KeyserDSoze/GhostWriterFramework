@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { LEGACY_READER_SECRET, READER_PASSWORDS_VARIABLE, READER_WORKFLOW_FILE, READER_WORKFLOW_PATH, allocateReaderSecretName, isReaderSecretName, readerSecretName, readerSecretNumber } from "@/readerAccess/contract";
+import { LEGACY_READER_SECRET, READER_PASSWORDS_VARIABLE, READER_SECRET_PREFIX, READER_WORKFLOW_FILE, READER_WORKFLOW_PATH, isReaderSecretName, readerSecretName, readerSecretNumber } from "@/readerAccess/contract";
 import { PAGES_WORKFLOW_PATH } from "@/github/bookRepository";
-import { formatReaderPasswordSecretNames, parseReaderPasswordSecretNames } from "narrarium-astro-reader/github-pages";
+import { LEGACY_READER_PASSWORD_SECRET, PAGES_WORKFLOW_FILE, PAGES_WORKFLOW_PATH as PACKAGE_WORKFLOW_PATH, READER_PASSWORD_SECRET_PREFIX, READER_PASSWORD_SECRETS_VARIABLE, formatReaderPasswordSecretNames, parseReaderPasswordSecretNames } from "narrarium-astro-reader/github-pages";
+import { allocateReaderSecretName } from "@/readerAccess/operations";
 
 describe("the names the site and the reader's workflow agree on", () => {
   it("are the ones in the plan", () => {
@@ -23,6 +24,16 @@ describe("the names the site and the reader's workflow agree on", () => {
     for (const other of [LEGACY_READER_SECRET, "READER_PASSWORD_", "READER_PASSWORD_7", "READER_PASSWORD_00A", "reader_password_001", "X_READER_PASSWORD_001"]) expect(readerSecretNumber(other)).toBeNull();
     expect(isReaderSecretName("READER_PASSWORD_003")).toBe(true);
     expect(isReaderSecretName(LEGACY_READER_SECRET)).toBe(false);
+  });
+});
+
+describe("the names written out in the contract", () => {
+  it("are the reader package's own: a rename there breaks this test", () => {
+    expect(READER_WORKFLOW_PATH).toBe(PACKAGE_WORKFLOW_PATH);
+    expect(READER_WORKFLOW_FILE).toBe(PAGES_WORKFLOW_FILE);
+    expect(READER_PASSWORDS_VARIABLE).toBe(READER_PASSWORD_SECRETS_VARIABLE);
+    expect(READER_SECRET_PREFIX).toBe(READER_PASSWORD_SECRET_PREFIX);
+    expect(LEGACY_READER_SECRET).toBe(LEGACY_READER_PASSWORD_SECRET);
   });
 });
 

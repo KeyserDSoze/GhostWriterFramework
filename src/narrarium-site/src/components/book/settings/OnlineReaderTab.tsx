@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { bookStorageMode, type BookEntry } from "@/types/settings";
 
 // The passwords and GitHub Pages of the reader, and the sealed-box code they need, load only when this tab is first opened.
-const ReaderAccessCard = lazy(() => import("@/components/book/readerAccess/ReaderAccessCard").then((module) => ({ default: module.ReaderAccessCard })));
+const ReaderTabContent = lazy(() => import("@/components/book/readerAccess/ReaderTabContent").then((module) => ({ default: module.ReaderTabContent })));
 
 interface Props {
   book: BookEntry;
@@ -35,7 +35,7 @@ export function OnlineReaderTab({ book, opened, onGoToGitHub }: Props) {
   if (!opened) return null;
   return (
     <Suspense fallback={<p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />{t("readerAccess.loading")}</p>}>
-      <ReaderAccessCard book={book} />
+      <ReaderTabContent book={book} />
     </Suspense>
   );
 }

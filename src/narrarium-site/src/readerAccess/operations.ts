@@ -1,6 +1,7 @@
 import type { Octokit } from "@octokit/rest";
 import type { ReaderPasswordRecord } from "@/types/settings";
-import { LEGACY_READER_SECRET, allocateReaderSecretName, isReaderSecretName } from "@/readerAccess/contract";
+import { nextReaderPasswordSecretName } from "narrarium-astro-reader/github-pages";
+import { LEGACY_READER_SECRET, isReaderSecretName } from "@/readerAccess/contract";
 import { deleteSecret, disablePages, dispatchWorkflow, enablePages, getPublicKey, listSecretNames, putSecret, readPasswordVariable, writePasswordVariable, type RepositoryRef } from "@/readerAccess/api";
 import { ReaderFlowError, classifyReaderFailure, type ReaderFailure } from "@/readerAccess/errors";
 import { takenReaderNames } from "@/readerAccess/model";
@@ -42,6 +43,14 @@ export interface ReaderOperationResult {
   dispatched: boolean;
   /** The secret that the operation was about. */
   secretName?: string;
+}
+
+/**
+ * The name for a new password, from the reader package (`nextReaderPasswordSecretName`): one past the highest number that any place holds — the variable, the
+ * secrets that exist in the repository and the passwords Narrarium keeps — so a name that was in use is never given again.
+ */
+export function allocateReaderSecretName(taken: Iterable<string>): string {
+  return nextReaderPasswordSecretName([...taken]);
 }
 
 class Run {

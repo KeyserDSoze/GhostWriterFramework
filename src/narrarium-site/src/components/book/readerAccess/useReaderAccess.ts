@@ -49,6 +49,8 @@ export function useReaderAccess(book: BookEntry) {
   const [busy, setBusy] = useState<ReaderOperationKind | null>(null);
   const [outcome, setOutcome] = useState<{ kind: ReaderOperationKind; result: ReaderOperationResult; text: ReaderResultText } | null>(null);
   const [polling, setPolling] = useState(false);
+  /** The commit whose publication is being waited for: the poll goes on until the run of that commit has finished. */
+  const [awaiting, setAwaiting] = useState<string | null>(null);
   const octokitRef = useRef<Octokit | null>(null);
   const alive = useRef(true);
   const repo = useMemo(() => ({ owner: book.owner, repo: book.repo }), [book.owner, book.repo]);
@@ -118,19 +120,21 @@ export function useReaderAccess(book: BookEntry) {
   const latest = snapshot.runs?.[0];
   const going = latest?.state === "queued" || latest?.state === "running";
   useEffect(() => {
-    if (!(polling || going)) return undefined;
+    if (!(polling || going || awaiting)) return undefined;
     const started = Date.now();
+    const finished = (run: WorkflowRun | undefined) => Boolean(run) && run!.state !== "queued" && run!.state !== "running";
     const timer = window.setInterval(() => {
       const octokit = octokitRef.current;
-      if (!octokit || Date.now() - started > POLL_LIMIT_MS) { window.clearInterval(timer); setPolling(false); return; }
+      if (!octokit || Date.now() - started > POLL_LIMIT_MS) { window.clearInterval(timer); setPolling(false); setAwaiting(null); return; }
       void latestRuns(octokit, repo).then((runs) => {
         if (!alive.current) return;
         setSnapshot((before) => ({ ...before, runs }));
-        if (runs[0] && runs[0].state !== "queued" && runs[0].state !== "running") { window.clearInterval(timer); setPolling(false); }
+        const done = awaiting ? runs[0]?.headSha === awaiting && finished(runs[0]) : finished(runs[0]);
+        if (done) { window.clearInterval(timer); setPolling(false); setAwaiting(null); }
       }, () => undefined);
     }, POLL_MS);
     return () => window.clearInterval(timer);
-  }, [polling, going, repo]);
+  }, [polling, going, awaiting, repo]);
 
   return {
     token: Boolean(token),
@@ -142,6 +146,8 @@ export function useReaderAccess(book: BookEntry) {
     outcome,
     dismissOutcome: () => setOutcome(null),
     refresh,
+    /** Follows the publication of a commit that was just pushed: it reads the runs until the one of that commit has finished. */
+    watchCommit: (sha: string) => { setAwaiting(sha); void refresh(); },
     add: (input: { label: string; value: string }) => run("add", (d) => addReaderPassword(d, input)),
     remove: (secretName: string) => run("remove", (d) => removeReaderPassword(d, secretName)),
     resume: (secretName: string) => run("resume", (d) => resumeReaderPassword(d, secretName)),
@@ -150,3 +156,5 @@ export function useReaderAccess(book: BookEntry) {
     disablePages: (options: DisablePagesOptions) => run("disable-pages", (d) => disableReaderPages(d, options)),
   };
 }
+
+export type ReaderAccess = ReturnType<typeof useReaderAccess>;

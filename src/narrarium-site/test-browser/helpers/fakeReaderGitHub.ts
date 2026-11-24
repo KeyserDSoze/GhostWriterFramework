@@ -11,7 +11,7 @@ export interface FakeReaderGitHub {
   workflowText: { value: string };
   /** `active` or `disabled_manually`, as GitHub says it. */
   workflowState: { value: string };
-  runs: Array<{ id: number; status: string; conclusion: string | null; html_url: string; created_at: string; head_branch: string }>;
+  runs: Array<{ id: number; status: string; conclusion: string | null; html_url: string; created_at: string; head_branch: string; head_sha?: string }>;
   calls: Array<{ method: string; args: Record<string, unknown> }>;
   /** Makes the next calls of a method fail (the number of times given, or for ever). */
   fail(method: string, failure: FakeFailure, times?: number): void;

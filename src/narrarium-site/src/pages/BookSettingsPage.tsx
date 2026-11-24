@@ -100,7 +100,7 @@ export function BookSettingsPage() {
 
   const tabs: ConfigTab[] = [
     { key: "general", label: t("bookSettings.tabs.general"), panel: <GeneralTab book={book} name={draft.name} onName={(name) => patch({ name })} presentation={draft.presentation} onPresentation={(change) => setSession((current) => (current ? { ...current, draft: { ...current.draft, presentation: change(current.draft.presentation) } } : current))} /> },
-    { key: "github", label: t("bookSettings.tabs.github"), panel: <GitHubTab book={book} draft={draft} patch={patch} /> },
+    { key: "github", label: t("bookSettings.tabs.github"), panel: <GitHubTab book={book} draft={draft} patch={patch} onGoToReader={() => selectTab("reader")} /> },
     { key: "reader", label: t("bookSettings.tabs.reader"), panel: <OnlineReaderTab book={book} opened={readerOpened && availability.get("reader")?.available !== false} onGoToGitHub={() => selectTab("github")} /> },
     { key: "export", label: t("bookSettings.tabs.export"), panel: <ExportTab book={book} draft={draft.exportDraft} presentation={draft.presentation} onChange={(exportDraft) => patch({ exportDraft })} /> },
     { key: "audit", label: t("bookSettings.tabs.audit"), panel: <AuditTab audit={draft.audit} onChange={(audit) => patch({ audit })} /> },

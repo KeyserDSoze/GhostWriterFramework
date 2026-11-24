@@ -15,3 +15,10 @@ test("the guide says passwords are kept in the account data, shown on request, a
   assert.match(read("github-sync.en.md"), /never in the book, in an export, in an AI request or in a log/);
   assert.match(read("github-sync.it.md"), /Non finiscono mai nel libro, in un'esportazione, in una richiesta a un'IA o in un log/);
 });
+
+test("the guide describes the update of an old reader: the exposure, the one commit, the offline case and the check from outside, in both languages", () => {
+  for (const [file, needles] of [
+    ["github-sync.en.md", ["Update the reader", "downloads/book.epub", "Replace my edits", "publishes at the next sync", "Check from outside", "version.json"]],
+    ["github-sync.it.md", ["Aggiorna il lettore", "downloads/book.epub", "Sostituisci le mie modifiche", "si pubblica alla prossima sincronizzazione", "Controllo da fuori", "version.json"]],
+  ]) for (const needle of needles) assert.ok(read(file).includes(needle), `${file}: ${needle}`);
+});
