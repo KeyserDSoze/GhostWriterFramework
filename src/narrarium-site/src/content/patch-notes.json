@@ -29,7 +29,7 @@
   },
   {
     "version": "0.106.0",
-    "date": "2026-11-26",
+    "date": "2026-11-24",
     "en": {
       "title": "Book settings in tabs, a protected online reader from Narrarium, and the update of an old reader",
       "summary": "The settings of a book are now one page of tabs with Save at the top; a book on GitHub can publish an online reader protected by passwords that you manage without leaving Narrarium; and a book published with an old reader is told so and can update it in one visible commit.",
