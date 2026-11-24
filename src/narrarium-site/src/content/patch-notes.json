@@ -1,5 +1,37 @@
 [
   {
+    "version": "0.103.0",
+    "date": "2026-11-24",
+    "en": {
+      "title": "Every page reads the book from this device; GitHub is only where it syncs",
+      "summary": "The pages of a book read and write only its working copy in the browser: a book kept on this device, or a GitHub book while you are offline, opens and works everywhere without asking GitHub, and what really needs GitHub says so in words. The Audit page of a local book no longer fails with «GitHub content read failed for audit/book.md».",
+      "changes": [
+        "A file that is not in the book yet (an audit not run, a resume, a picture) is simply absent: no page asks GitHub for it any more. Audits, their findings and notes live in the browser like any other file of the book until the next sync, which publishes them with the rest.",
+        "A book kept on this device can run and update audits, use the Copilot, write scripts, delete scenes and save from every page even after «Full sync» has saved it locally: earlier, a local commit blocked these with «Push or discard existing local commits», although such a book has nowhere to push. Its pill says «Local only» once everything is saved, and no longer asks to push.",
+        "A GitHub book offline, or without a GitHub credential, saves on this device: «Full sync» commits the changes and says they will be synced when you are back online, a change applied by the Copilot stays on this device instead of being undone, and the autopilot waits to publish instead of stopping on a network error.",
+        "What needs GitHub says why instead of failing: commit history, pull requests, branches, fetch, pull, push, re-clone and the Copilot's branch and pull request tools are hidden or disabled for a book kept on this device («Connect this book to GitHub…») and while offline («You are offline…»), in English and in Italian.",
+        "The repository status of a book kept on this device shows «This device only» and keeps what the device can do: export a backup, commit, undo new files; the diff of a changed file says that its previous version is not kept here instead of comparing it with an empty file. Its labels are now translated in both languages.",
+        "The reader shows the cover and the pictures of a book kept on this device; the dashboard shows «This device only» instead of an internal branch name; the book settings let a local book change its name and its audit settings, and explain that branches live on GitHub.",
+        "«Auto-fetch on open» in the repository settings now works: opening a GitHub book checks once whether the remote branch changed, and offers to sync if it did. A book whose copy is not on this device says why it cannot open (kept on another device, offline, no GitHub credential) instead of «Load failed».",
+        "The first-run guide opens the pages it names (add a book, Account & Sync, your books) instead of sending you to sign up on GitHub."
+      ]
+    },
+    "it": {
+      "title": "Ogni pagina legge il libro da questo dispositivo; GitHub è solo dove si sincronizza",
+      "summary": "Le pagine di un libro leggono e scrivono solo la sua copia di lavoro nel browser: un libro conservato su questo dispositivo, o un libro su GitHub mentre sei offline, si apre e funziona ovunque senza chiedere nulla a GitHub, e ciò che davvero richiede GitHub lo dice a parole. La pagina Audit di un libro locale non fallisce più con «GitHub content read failed for audit/book.md».",
+      "changes": [
+        "Un file che il libro non ha ancora (un audit non eseguito, un riassunto, un'immagine) semplicemente non c'è: nessuna pagina lo chiede più a GitHub. Gli audit, i loro rilievi e le note vivono nel browser come ogni altro file del libro fino alla sincronizzazione successiva, che li pubblica con il resto.",
+        "Un libro conservato su questo dispositivo può eseguire e aggiornare gli audit, usare il Copilot, scrivere le scalette, eliminare le scene e salvare da ogni pagina anche dopo che «Sync completo» lo ha salvato localmente: prima un commit locale le bloccava con «Push or discard existing local commits», anche se un libro così non ha dove fare push. La sua pillola dice «Solo locale» quando tutto è salvato e non chiede più di fare push.",
+        "Un libro su GitHub offline, o senza una credenziale GitHub, salva su questo dispositivo: «Sync completo» fa il commit delle modifiche e dice che saranno sincronizzate quando tornerai online, una modifica applicata dal Copilot resta su questo dispositivo invece di essere annullata, e l'autopilot aspetta a pubblicare invece di fermarsi su un errore di rete.",
+        "Ciò che richiede GitHub dice perché invece di fallire: cronologia dei commit, pull request, branch, fetch, pull, push, nuovo clone e gli strumenti del Copilot per branch e pull request sono nascosti o disattivati per un libro conservato su questo dispositivo («Collega il libro a GitHub…») e quando sei offline («Sei offline…»), in italiano e in inglese.",
+        "Lo stato del repository di un libro conservato su questo dispositivo mostra «Solo su questo dispositivo» e tiene ciò che il dispositivo può fare: esportare un backup, fare commit, annullare i file nuovi; il diff di un file modificato dice che la sua versione precedente non è conservata qui invece di confrontarlo con un file vuoto. Le sue etichette ora sono tradotte in entrambe le lingue.",
+        "Il lettore mostra la copertina e le immagini di un libro conservato su questo dispositivo; la panoramica mostra «Solo su questo dispositivo» invece del nome interno di un branch; le impostazioni del libro permettono a un libro locale di cambiare nome e impostazioni dell'audit, e spiegano che i branch stanno su GitHub.",
+        "«Auto-fetch all'apertura» nelle impostazioni del repository ora funziona: aprire un libro su GitHub controlla una volta se il branch remoto è cambiato e, se sì, propone di sincronizzare. Un libro la cui copia non è su questo dispositivo dice perché non si apre (conservato su un altro dispositivo, offline, nessuna credenziale GitHub) invece di «Caricamento non riuscito».",
+        "La guida del primo avvio apre le pagine che nomina (aggiungi un libro, Account e sincronizzazione, i tuoi libri) invece di mandarti a registrarti su GitHub."
+      ]
+    }
+  },
+  {
     "version": "0.102.1",
     "date": "2026-11-24",
     "en": {
