@@ -1,172 +1,97 @@
 ---
-import BaseLayout from "../layouts/BaseLayout.astro";
-import { loadHomePageData } from "../lib/book";
-import AssetFigure from "../components/AssetFigure.astro";
-import { loadAssetFigure } from "../lib/assets";
-import { countPublicCanonEntries } from "../lib/public-canon";
-import { isFullCanonMode } from "../lib/reader-mode";
+import "../styles/reader.css";
+import { getBookRoot } from "../lib/book.js";
+import { getReaderBuild } from "../lib/reader-build.js";
+import { readerLabels, readerLanguage } from "../lib/reader-i18n.js";
 
-const { ready, root, book, chapters, draftChapterCount, characters, locations, factions, items, secrets, timelineEvents } = await loadHomePageData();
-const title = book?.frontmatter.title ?? "Narrarium Reader";
-const coverFigure = await loadAssetFigure("book", `${title} cover`);
-const fullCanonMode = isFullCanonMode();
-const visibleCharacterCount = await countPublicCanonEntries("character", characters);
-const visibleLocationCount = await countPublicCanonEntries("location", locations);
-const visibleFactionCount = await countPublicCanonEntries("faction", factions);
-const visibleItemCount = await countPublicCanonEntries("item", items);
-const visibleTimelineCount = await countPublicCanonEntries("timeline-event", timelineEvents);
-const chapterCards = await Promise.all(
-  chapters.map(async (chapter) => ({
-    ...chapter,
-    figure: await loadAssetFigure(String(chapter.metadata.id ?? `chapter:${chapter.slug}`), chapter.metadata.title),
-  })),
-);
+/**
+ * The shell of the published reader: its code, its words and the version it belongs to, never a word of the book. On every open it asks
+ * `version.json` (no-store), reloads once if it is not the current build, unlocks a protected book and downloads the bundle by its hashed
+ * name (see lib/reader-session.ts).
+ */
+const build = await getReaderBuild(getBookRoot());
+const labels = readerLabels(build.language);
+const uiLanguage = readerLanguage(build.language);
+const boot = {
+  version: build.version,
+  bookId: build.bookId,
+  fallback: build.versionFile,
+  labels,
+  bookLanguage: build.language,
+  canonHref: build.protected ? null : "book/",
+};
+const bootJson = JSON.stringify(boot).replace(/</g, "\\u003c");
 ---
 
-<BaseLayout title={title} description="Read a Narrarium repository chapter by chapter." activeSection="home">
-  <section class="hero">
-    {coverFigure ? (
-      <div class="hero-layout">
-        <div class="hero-cover">
-          <AssetFigure figure={coverFigure} />
-        </div>
-        <div class="hero-body">
-          <p class="eyebrow">Reader</p>
-          <h1>{title}</h1>
-          <p class="lede">
-            {ready
-              ? "Read the book chapter by chapter and browse the linked canon from one place."
-              : "Set `NARRARIUM_BOOK_ROOT` to a Narrarium book repository to load the reader."}
-          </p>
-          {ready && chapters.length > 0 && <div class="chip-row"><a class="chip" href="downloads/book.epub" download>Download EPUB</a></div>}
-        </div>
+<!doctype html>
+<html lang={uiLanguage} data-reader-version={build.version}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>{build.title}</title>
+    {build.protected && <meta name="robots" content="noindex, nofollow" />}
+    <base href={import.meta.env.BASE_URL} />
+  </head>
+  <body class="reader-body">
+    <a class="reader-skip" href="#reader-text">{labels.skipToText}</a>
+    <p class="reader-status" id="reader-status" role="status" aria-live="polite">{labels.loading}</p>
+
+    <section class="reader-lock" id="reader-lock" aria-labelledby="reader-lock-title" hidden>
+      <div class="reader-lock__panel">
+        <p class="reader-lock__book">{build.title}</p>
+        <h1 class="reader-lock__title" id="reader-lock-title">{labels.lockTitle}</h1>
+        <p class="reader-lock__intro" id="reader-lock-intro">{labels.lockIntro}</p>
+        <p class="reader-lock__message" id="reader-lock-message" role="alert" hidden></p>
+        <form class="reader-lock__form" id="reader-lock-form" novalidate>
+          <label class="reader-lock__label" for="reader-password">{labels.passwordLabel}</label>
+          <div class="reader-lock__field">
+            <input
+              id="reader-password"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              autocapitalize="off"
+              spellcheck="false"
+              required
+              aria-describedby="reader-lock-intro reader-lock-message"
+            />
+            <button type="button" class="reader-lock__reveal" id="reader-password-reveal" aria-pressed="false" aria-controls="reader-password">{labels.showPassword}</button>
+          </div>
+          <label class="reader-lock__remember">
+            <input type="checkbox" id="reader-remember" checked />
+            <span>{labels.rememberLabel}</span>
+          </label>
+          <button type="submit" class="reader-lock__submit" id="reader-unlock">{labels.unlock}</button>
+        </form>
       </div>
-    ) : (
-      <>
-        <p class="eyebrow">Reader</p>
-        <h1>{title}</h1>
-        <p class="lede">
-          {ready
-            ? "Read the book chapter by chapter and browse the linked canon from one place."
-            : "Set `NARRARIUM_BOOK_ROOT` to a Narrarium book repository to load the reader."}
+    </section>
+
+    <div class="reader-app" id="reader-app" hidden>
+      <header class="reader-bar">
+        <p class="reader-bar__title">{build.title}</p>
+        <label class="reader-bar__contents">
+          <span class="reader-visually-hidden">{labels.contents}</span>
+          <select id="reader-chapter-select"></select>
+        </label>
+      </header>
+      <main class="reader-text" id="reader-text" tabindex="-1" lang={build.language}></main>
+      <nav class="reader-pager" aria-label={labels.contents}>
+        <button type="button" id="reader-previous">{labels.previousChapter}</button>
+        <span id="reader-position"></span>
+        <button type="button" id="reader-next">{labels.nextChapter}</button>
+      </nav>
+      {build.protected && (
+        <p class="reader-forget">
+          <button type="button" id="reader-forget">{labels.forgetPassword}</button>
         </p>
-        {ready && chapters.length > 0 && <div class="chip-row"><a class="chip" href="downloads/book.epub" download>Download EPUB</a></div>}
-      </>
-    )}
-
-    <div class="grid stats">
-      <div class="card">
-        <div class="label">Book Root</div>
-        <div class="value value-path">{root}</div>
-      </div>
-      <div class="card">
-        <div class="label">Chapters</div>
-        <div class="value">{chapters.length}</div>
-      </div>
-      <div class="card">
-        <div class="label">Author</div>
-        <div class="value">{book?.frontmatter.author ?? "Unknown"}</div>
-      </div>
-      <div class="card">
-        <div class="label">Language</div>
-        <div class="value">{book?.frontmatter.language ?? "n/a"}</div>
-      </div>
+      )}
     </div>
-  </section>
 
-  {ready ? (
-    <>
-      <section class="section">
-        <h2>Browse</h2>
-        <div class="catalog-grid">
-          <article class="catalog-card">
-            <a href="characters/">
-              <span class="browse-card-icon">👤</span>
-              <h3 class="chapter-title">Characters</h3>
-              <div class="chapter-meta">Browse the people in the story.</div>
-              <div class="chip-row"><span class="chip">{visibleCharacterCount} visible</span></div>
-            </a>
-          </article>
-          <article class="catalog-card">
-            <a href="locations/">
-              <span class="browse-card-icon">📍</span>
-              <h3 class="chapter-title">Locations</h3>
-              <div class="chapter-meta">Browse places, settings, and landmarks.</div>
-              <div class="chip-row"><span class="chip">{visibleLocationCount} visible</span></div>
-            </a>
-          </article>
-          <article class="catalog-card">
-            <a href="factions/">
-              <span class="browse-card-icon">⚔️</span>
-              <h3 class="chapter-title">Factions</h3>
-              <div class="chapter-meta">Browse groups, alliances, and power blocks.</div>
-              <div class="chip-row"><span class="chip">{visibleFactionCount} visible</span></div>
-            </a>
-          </article>
-          <article class="catalog-card">
-            <a href="items/">
-              <span class="browse-card-icon">🗡️</span>
-              <h3 class="chapter-title">Items</h3>
-              <div class="chapter-meta">Browse objects, tools, and recurring symbols.</div>
-              <div class="chip-row"><span class="chip">{visibleItemCount} visible</span></div>
-            </a>
-          </article>
-          {fullCanonMode && (
-            <article class="catalog-card">
-              <a href="secrets/">
-                <span class="browse-card-icon">🔒</span>
-                <h3 class="chapter-title">Secrets</h3>
-                <div class="chapter-meta">Browse hidden information and later reveals.</div>
-                <div class="chip-row"><span class="chip">{secrets.length} entries</span></div>
-              </a>
-            </article>
-          )}
-          <article class="catalog-card">
-            <a href="timeline/">
-              <span class="browse-card-icon">📅</span>
-              <h3 class="chapter-title">Timeline</h3>
-              <div class="chapter-meta">Follow the order of events across the book.</div>
-              <div class="chip-row"><span class="chip">{visibleTimelineCount} visible</span></div>
-            </a>
-          </article>
-          {fullCanonMode && (
-            <article class="catalog-card">
-              <a href="workshop/">
-                <span class="browse-card-icon">🧭</span>
-                <h3 class="chapter-title">Workshop</h3>
-                <div class="chapter-meta">Inspect drafts, ideas, notes, story design, and promoted items.</div>
-                <div class="chip-row"><span class="chip">{draftChapterCount} draft chapters</span></div>
-              </a>
-            </article>
-          )}
-        </div>
-      </section>
-
-      <section class="section" id="chapters">
-        <h2>Chapters</h2>
-        {chapterCards.length > 0 ? (
-          <div class="chapter-list">
-            {chapterCards.map((chapter) => (
-              <article class="chapter-card">
-                <a href={`chapters/${chapter.slug}/`}>
-                  {chapter.figure && <AssetFigure figure={chapter.figure} className="catalog-media" />}
-                  <div class="chapter-number">{String(chapter.metadata.number).padStart(3, "0")}</div>
-                  <h3 class="chapter-title">{chapter.metadata.title}</h3>
-                  <div class="chapter-meta">{chapter.metadata.summary ?? "Open the chapter."}</div>
-                </a>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <div class="empty">
-            This book is connected, but there are no chapters yet. Add the first chapter and the reader will show it automatically.
-          </div>
-        )}
-      </section>
-    </>
-  ) : (
-    <div class="empty">
-      No book repository detected. Point `NARRARIUM_BOOK_ROOT` to a Narrarium book and reload the reader.
-    </div>
-  )}
-</BaseLayout>
+    <script type="application/json" id="narrarium-reader-boot" set:html={bootJson}></script>
+    <script>
+      import { startReaderShell } from "../lib/reader-shell";
+      void startReaderShell();
+    </script>
+  </body>
+</html>

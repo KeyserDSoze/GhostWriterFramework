@@ -32,14 +32,35 @@ export function resolveBookRoot(defaultBookRoot, cwd = process.cwd()) {
   return path.resolve(cwd, configured ?? defaultBookRoot);
 }
 
+/**
+ * What the dev server watches in the book: the folders and files above, as paths (chokidar 4 has no globs and watches a folder with
+ * everything in it). A target that does not exist yet is left out until the server starts again.
+ */
 export function resolveBookWatchTargets(bookRoot) {
-  return watchPatterns.map((pattern) => path.join(bookRoot, pattern));
+  return watchPatterns
+    .map((pattern) => path.join(bookRoot, pattern.replace(/\/\*\*\/\*$/, "")))
+    .filter((target) => existsSync(target));
 }
 
 export function formatWatchedPath(filePath, basePath) {
   const relative = path.relative(basePath, filePath);
   const target = relative && !relative.startsWith("..") ? relative : filePath;
   return toPosix(target);
+}
+
+/**
+ * True when this build is asked to protect the book (a list of password secrets, or the single password of the older readers). Such a
+ * build must not leave an EPUB in clear in `public/`, which Astro would publish: the reader publishes its own, encrypted.
+ */
+export function isProtectedBuildRequested(env = process.env) {
+  const list = String(env.READER_PASSWORD_SECRETS ?? "").trim();
+  const single = String(env.NARRARIUM_READER_PASSWORD ?? "").trim();
+  return Boolean(list || single);
+}
+
+/** Removes the EPUB a previous public build left in `public/downloads/`. */
+export async function removePublicEpub(cwd = process.cwd()) {
+  await rm(path.resolve(cwd, "public", "downloads", "book.epub"), { force: true }).catch(() => undefined);
 }
 
 export async function exportReaderEpub(defaultBookRoot, cwd = process.cwd()) {

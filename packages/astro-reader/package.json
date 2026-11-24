@@ -18,6 +18,11 @@
       "import": "./cli-dist/scaffold.js",
       "require": "./cli-dist/scaffold.js",
       "default": "./cli-dist/scaffold.js"
+    },
+    "./github-pages": {
+      "types": "./cli-dist/github-pages.d.ts",
+      "import": "./cli-dist/github-pages.js",
+      "default": "./cli-dist/github-pages.js"
     }
   },
   "files": [

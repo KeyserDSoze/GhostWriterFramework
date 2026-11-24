@@ -1,7 +1,5 @@
 ---
 import type { GlossaryEntry } from "../lib/glossary";
-import { getReaderPassword } from "../lib/reader-mode.js";
-import { encryptString } from "../lib/content-crypto.js";
 
 interface Props {
   glossary: GlossaryEntry[];
@@ -10,9 +8,7 @@ interface Props {
 }
 
 const { glossary, chapters } = Astro.props;
-const password = getReaderPassword();
 const rawGlossaryJson = JSON.stringify(glossary).replace(/</g, "\\u003c");
-const glossaryEncrypted = password ? encryptString(rawGlossaryJson, password) : null;
 const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
 ---
 
@@ -148,10 +144,7 @@ const chaptersJson = JSON.stringify(chapters).replace(/</g, "\\u003c");
   <div class="tts-status" data-tts-status>Speech will resume from the saved sentence when available.</div>
 </aside>
 
-{glossaryEncrypted
-  ? <script type="application/json" id="canon-glossary-data" data-enc-iv={glossaryEncrypted.iv} data-enc-ct={glossaryEncrypted.ct}></script>
-  : <script type="application/json" id="canon-glossary-data" set:html={rawGlossaryJson}></script>
-}
+<script type="application/json" id="canon-glossary-data" set:html={rawGlossaryJson}></script>
 <script type="application/json" id="reader-chapter-data" set:html={chaptersJson}></script>
 
 <script>

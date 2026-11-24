@@ -8,6 +8,7 @@ import path from "node:path";
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { PAGES_WORKFLOW_PATH, buildPagesWorkflow, planPagesWorkflowUpgrade } from "narrarium-astro-reader/scaffold";
 import {
   createChapter,
   createCharacterProfile,
@@ -33,6 +34,7 @@ type ParsedArgs = {
   skipInstall?: boolean;
   pagesDomain?: string;
   upgrade?: boolean;
+  updatePagesWorkflow?: boolean;
 };
 
 const args = parseArgs(process.argv.slice(2));
@@ -167,6 +169,7 @@ async function runUpgrade(args: ParsedArgs) {
 
   let readerPath = "";
   let readerInstalled = false;
+  let pagesWorkflowNotes: string[] = [];
 
   if (resolved.withReader) {
     const readerDir = path.join(targetPath, resolved.readerDir);
@@ -176,7 +179,7 @@ async function runUpgrade(args: ParsedArgs) {
     readerPath = await runReaderScaffold(readerDir, readerBookRoot, readerPackageName, pagesDomain);
     await writeManagedRootPackageJson(targetPath, book?.frontmatter.title ?? path.basename(targetPath), resolved.readerDir);
     await writeManagedRootScriptLedgerScript(targetPath, resolved.readerDir);
-    await writeManagedRootPagesWorkflow(targetPath, resolved.readerDir, pagesDomain);
+    pagesWorkflowNotes = await writeManagedRootPagesWorkflow(targetPath, resolved.readerDir, pagesDomain, Boolean(args.updatePagesWorkflow));
     if (!resolved.skipInstall) {
       installNodeDependencies(readerPath);
       readerInstalled = true;
@@ -195,6 +198,7 @@ async function runUpgrade(args: ParsedArgs) {
         : "- No legacy story prose links needed migration.",
       ...(readerPath ? [`- Reader scaffold upgraded at ${readerPath}`] : ["- Reader scaffold not touched. Pass `--with-reader` to refresh it too."]),
       ...(readerInstalled ? ["- Reader dependencies were reinstalled automatically"] : []),
+      ...pagesWorkflowNotes,
       ...(manuscriptDepsInstalled ? ["- Python manuscript dependencies installed/updated automatically"] : []),
       "",
       "Next steps:",
@@ -281,7 +285,7 @@ async function resolveUpgradeInputs(args: ParsedArgs) {
   }
 
   if (!input.isTTY || !output.isTTY) {
-    throw new Error("Missing target directory. Use create-narrarium-book --upgrade <dir> [--with-reader|--no-reader] [--reader-dir <name>] [--no-install] [--pages-domain <domain>].");
+    throw new Error("Missing target directory. Use create-narrarium-book --upgrade <dir> [--with-reader|--no-reader] [--reader-dir <name>] [--no-install] [--pages-domain <domain>] [--update-pages-workflow].");
   }
 
   const rl = createInterface({ input, output });
@@ -354,6 +358,9 @@ function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--upgrade":
         parsed.upgrade = true;
+        break;
+      case "--update-pages-workflow":
+        parsed.updatePagesWorkflow = true;
         break;
       default:
         break;
@@ -484,7 +491,7 @@ async function writeRootScriptLedgerScript(targetPath: string, readerDir: string
 async function writeRootPagesWorkflow(targetPath: string, readerDir: string, pagesDomain?: string): Promise<void> {
   const workflowDir = path.join(targetPath, ".github", "workflows");
   await mkdir(workflowDir, { recursive: true });
-  await writeFile(path.join(workflowDir, "deploy-reader-pages.yml"), buildRootPagesWorkflow(readerDir, pagesDomain), "utf8");
+  await writeFile(path.join(targetPath, PAGES_WORKFLOW_PATH), buildRootPagesWorkflow(readerDir, pagesDomain), "utf8");
 }
 
 function buildRootPackageJson(title: string, readerDir: string): string {
@@ -579,10 +586,31 @@ function buildRootScriptLedgerScript(readerDir: string): string {
   ].join("\n") + "\n";
 }
 
-async function writeManagedRootPagesWorkflow(targetPath: string, readerDir: string, pagesDomain: string | undefined): Promise<void> {
-  // Never overwrite an existing workflow — the user may have uncommented the
-  // password secret or made other manual edits that must be preserved.
-  await writeOnceFile(targetPath, path.join(".github", "workflows", "deploy-reader-pages.yml"), buildRootPagesWorkflow(readerDir, pagesDomain));
+/**
+ * The Pages workflow of an existing book: written when it is missing, otherwise changed only when asked (`--update-pages-workflow`) and
+ * only when it is a workflow Narrarium wrote and nobody edited (its single password secret line is kept). A workflow with edits that
+ * cannot be merged is never overwritten here; the lines that differ are printed.
+ */
+async function writeManagedRootPagesWorkflow(targetPath: string, readerDir: string, pagesDomain: string | undefined, update: boolean): Promise<string[]> {
+  const workflowPath = path.join(targetPath, PAGES_WORKFLOW_PATH);
+  const existing = await readFile(workflowPath, "utf8").catch(() => null);
+  const plan = planPagesWorkflowUpgrade(existing, { readerDir: readerDir.split(path.sep).join("/"), pagesDomain });
+  if (plan.status === "missing") {
+    await writeRootPagesWorkflow(targetPath, readerDir, pagesDomain);
+    return [`- Added ${PAGES_WORKFLOW_PATH}`];
+  }
+  if (plan.status === "current") return [];
+  if (plan.status === "generated") {
+    if (!update) {
+      return [`- A newer ${PAGES_WORKFLOW_PATH} is available (the reader can be protected by several passwords kept as repository secrets). It was not changed: run the upgrade again with --update-pages-workflow to update it.`];
+    }
+    await writeFile(workflowPath, plan.text, "utf8");
+    return [`- Updated ${PAGES_WORKFLOW_PATH}:`, ...plan.changes.map((change) => `  - ${change}`)];
+  }
+  return [
+    `- ${PAGES_WORKFLOW_PATH} has edits Narrarium cannot merge, so it was left as it is${update ? " (--update-pages-workflow never replaces edits)" : ""}. Lines that differ from Narrarium's workflow:`,
+    ...plan.customizations.map((line) => `  ${line}`),
+  ];
 }
 
 async function writeManagedFile(targetRoot: string, relativePath: string, content: string): Promise<void> {
@@ -592,17 +620,6 @@ async function writeManagedFile(targetRoot: string, relativePath: string, conten
     return;
   }
 
-  await mkdir(path.dirname(targetFilePath), { recursive: true });
-  await writeFile(targetFilePath, content, "utf8");
-}
-
-/** Write a file only if it does not already exist. Used for user-editable files like workflow YAMLs. */
-async function writeOnceFile(targetRoot: string, relativePath: string, content: string): Promise<void> {
-  const targetFilePath = path.join(targetRoot, relativePath);
-  const existing = await readFile(targetFilePath, "utf8").catch(() => null);
-  if (existing !== null) {
-    return;
-  }
   await mkdir(path.dirname(targetFilePath), { recursive: true });
   await writeFile(targetFilePath, content, "utf8");
 }
@@ -666,69 +683,8 @@ function inferReaderPagesDomain(targetPath: string, readerDir: string): string |
 }
 
 function buildRootPagesWorkflow(readerDir: string, pagesDomain?: string): string {
-  const normalizedReaderDir = readerDir.split(path.sep).join("/");
-  const envLines = pagesDomain
-    ? [`          NARRARIUM_BOOK_ROOT: .`, `          SITE_BASE: /`, `          SITE_URL: https://${pagesDomain}`]
-    : [`          NARRARIUM_BOOK_ROOT: .`, `          SITE_BASE: /\${{ github.event.repository.name }}/`];
-  return `name: Deploy Reader To GitHub Pages
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: github-pages
-  cancel-in-progress: true
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: ${normalizedReaderDir}/package-lock.json
-
-      - name: Install project dependencies
-        run: npm install
-
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
-      - name: Build reader site
-        env:
-${envLines.join("\n")}
-        run: npm run build
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ${normalizedReaderDir}/dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: \${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-`;
+  // The workflow GitHub runs for a book: the reader package writes it, with the reader passwords read from the repository's secrets.
+  return buildPagesWorkflow({ readerDir: readerDir.split(path.sep).join("/"), pagesDomain });
 }
 
 function resolveReaderCliPath(require: NodeRequire, packageRoot: string): string {

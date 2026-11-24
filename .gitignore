@@ -13,3 +13,4 @@ obj/
 .env*.local
 .config/
 .local/
+packages/astro-reader/.test-output/

@@ -36,6 +36,23 @@ export function readReaderEnv(keys, sources = [process.env, astroEnv]) {
     }
     return undefined;
 }
+/**
+ * The raw values of these variables, the process's first and then the ones Astro read from `.env` (`astro build` does not put those in
+ * `process.env`). Raw: a JSON of secrets must reach its parser as it is.
+ */
+export function readReaderEnvSnapshot(keys, sources = [process.env, astroEnv]) {
+    const snapshot = {};
+    for (const key of keys) {
+        for (const source of sources) {
+            const value = source?.[key];
+            if (typeof value === "string" && value.trim()) {
+                snapshot[key] = value;
+                break;
+            }
+        }
+    }
+    return snapshot;
+}
 export function readReaderBookRootEnv(sources = [process.env, astroEnv]) {
     const value = readReaderEnv(["NARRARIUM_BOOK_ROOT", "GHOSTWRITER_BOOK_ROOT"], sources);
     if (!value || isClearlyInvalidBookRootValue(value)) {

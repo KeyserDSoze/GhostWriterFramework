@@ -8,11 +8,12 @@ import RelatedLinks from "../../components/RelatedLinks.astro";
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import { getBookRoot, loadEntityPageData } from "../../lib/book";
 import { buildCanonPageView } from "../../lib/public-canon";
+import { publishesCanonPages } from "../../lib/reader-build";
 
 export async function getStaticPaths() {
   const root = getBookRoot();
   const ready = await pathExists(path.join(root, "book.md"));
-  if (!ready) return [];
+  if (!ready || !publishesCanonPages()) return [];
 
   const entities = await listEntities(root, "timeline-event");
   return entities.map((entity) => ({ params: { slug: entity.slug }, props: { slug: entity.slug } }));

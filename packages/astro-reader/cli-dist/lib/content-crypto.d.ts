@@ -1,46 +1,22 @@
-/** Return the singleton salt for this build/dev process, creating it on first call. */
-export declare function getBuildSalt(): Buffer;
-/** Base64-encoded build salt, ready to embed in an HTML attribute. */
-export declare function getBuildSaltBase64(): string;
+import { type ReaderKeySlot, type ReaderProtection } from "./reader-protocol.js";
 /**
- * Known plaintext embedded (encrypted) in the built HTML so the browser can
- * verify a password by attempting decryption rather than comparing a fast hash.
- * This forces brute-force attempts to pay the full PBKDF2 cost every time.
- */
-export declare const CANARY_PLAINTEXT = "narrarium-ok";
-export interface EncryptedChunk {
-    /** Base64-encoded 12-byte random IV. */
-    iv: string;
-    /** Base64-encoded (ciphertext ∥ 16-byte GCM auth tag). */
-    ct: string;
-}
-/**
- * Encrypt a UTF-8 string with AES-256-GCM using PBKDF2-derived key.
+ * The build side of the reader's encryption (Node). The browser side is `reader-unlock.ts` (Web Crypto); the tests run one against the other.
  *
- * The ciphertext field contains the encrypted bytes immediately followed by
- * the 16-byte GCM authentication tag, so Web Crypto's AES-GCM decrypt can
- * verify integrity without any additional framing.
+ * Each build draws a content key K (`createContentKey`), encrypts every artifact once with it (`encryptArtifact`) and wraps it once for each
+ * password (`createKeySlots`). Neither K nor a password is ever written anywhere but in memory: the slots carry only salts, IVs and K wrapped.
  */
-export declare function encryptString(plaintext: string, password: string): EncryptedChunk;
-/**
- * Encrypt the canary plaintext with the same PBKDF2-derived build key.
- *
- * Embed `iv` and `ct` in the built HTML as `data-canary-iv` / `data-canary-ct`.
- * The browser verifies the password by decrypting the canary and checking that
- * the result equals `CANARY_PLAINTEXT` — no fast-hash oracle in the HTML.
- */
-export declare function encryptCanary(password: string): EncryptedChunk;
-/**
- * Encrypt a raw Buffer with AES-256-GCM using the same PBKDF2-derived build
- * key. Returns raw `iv` and `ct` Buffers for binary file endpoints.
- *
- * Wire format (concatenate before serving):
- *   [12-byte IV][ciphertext ∥ 16-byte GCM auth tag]
- *
- * Client side: `bytes.slice(0, 12)` = IV, `bytes.slice(12)` = ciphertext+tag.
- */
-export declare function encryptBufferRaw(data: Buffer, password: string): {
-    iv: Buffer;
-    ct: Buffer;
-};
+/** A fresh random 256-bit content key: one for each build, never written. */
+export declare function createContentKey(): Buffer;
+/** One slot: K wrapped with AES-256-GCM under PBKDF2-SHA256(password, a random salt of this slot). */
+export declare function wrapContentKey(contentKey: Buffer, password: string, iterations?: number): Promise<ReaderKeySlot>;
+/** The slots of a build, one for each distinct password (the same password twice is one slot), in the order given. */
+export declare function createKeySlots(contentKey: Buffer, passwords: string[], iterations?: number): Promise<ReaderProtection>;
+/** `[12-byte IV][ciphertext and 16-byte tag]`, the layout `reader-unlock.ts` opens. */
+export declare function encryptArtifact(contentKey: Buffer, plaintext: Uint8Array, aad: string): Buffer;
+/** The bundle of a protected book: its JSON compressed (encrypted bytes do not compress on the way), then encrypted. */
+export declare function encryptBundle(contentKey: Buffer, json: string): Buffer;
+/** The inverse of `encryptArtifact`, for the tests and for checks that run in Node. */
+export declare function decryptArtifact(contentKey: Buffer, data: Uint8Array, aad: string): Buffer;
+/** Node's own unwrapping of a slot (the browser uses Web Crypto): null when the password is not the slot's. */
+export declare function unwrapContentKeyNode(slot: ReaderKeySlot, password: string, iterations: number): Promise<Buffer | null>;
 //# sourceMappingURL=content-crypto.d.ts.map

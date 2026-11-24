@@ -15,11 +15,12 @@ import { getBookRoot, loadChapterPageData } from "../../lib/book";
 import { loadChapterEvaluation, loadParagraphEvaluation } from "../../lib/evaluations";
 import { isFullCanonMode } from "../../lib/reader-mode";
 import { renderReaderMarkdown } from "../../lib/markdown";
+import { publishesCanonPages } from "../../lib/reader-build";
 
 export async function getStaticPaths() {
   const root = getBookRoot();
   const ready = await pathExists(path.join(root, "book.md"));
-  if (!ready) return [];
+  if (!ready || !publishesCanonPages()) return [];
 
   const chapters = await listChapters(root);
   return chapters.map((chapter) => ({
@@ -71,7 +72,7 @@ const renderedParagraphs = await Promise.all(
   currentChapterNumber={chapter.metadata.number}
 >
   <section class="hero focus-hidden">
-    <a class="chapter-back-link" href="./#chapters">Back to chapters</a>
+    <a class="chapter-back-link" href="book/#chapters">Back to chapters</a>
     <p class="eyebrow">Chapter {String(chapter.metadata.number).padStart(3, "0")}</p>
     <h1>{chapter.metadata.title}</h1>
     {chapter.metadata.summary && <p class="lede">{chapter.metadata.summary}</p>}

@@ -24,7 +24,9 @@ npx narrarium-astro-reader reader --book-root .. --package-name my-book-reader
 
 ## What the reader includes
 
-- book landing page plus chapter-by-chapter reading
+- the published reader at the root of the site: a shell that holds no content, fetches `version.json` on every open (never a stale publication, no service worker) and reads the book from one bundle, public or encrypted
+- password protection with one or several passwords (key slots: AES-256-GCM, PBKDF2-SHA256 600,000 iterations), kept as repository secrets and listed in the `READER_PASSWORD_SECRETS` variable; see `docs/reader-password.md`
+- the canon pages of a public book under `book/`: landing page plus chapter-by-chapter reading
 - previous, next, and jump chapter navigation
 - reading preferences, bookmark, and continue-reading state stored locally
 - live search across canon, chapters, and scenes
@@ -90,6 +92,18 @@ If `EPUBCHECK_CMD` or `EPUBCHECK_JAR` is set, EPUB export and build also run EPU
 
 `npm run doctor` also reports if the linked book repository has stale or missing structured story-state snapshots, so author-facing continuity drift shows up before deployment.
 
+## Password protection
+
+A build is public unless passwords are configured. On GitHub the passwords are repository secrets and the repository variable `READER_PASSWORD_SECRETS` lists their names (`READER_PASSWORD_001,READER_PASSWORD_002`); the Pages workflow passes `${{ toJSON(secrets) }}` to the build step only and the build reads only the listed names. Locally, set `NARRARIUM_READER_PASSWORD` (one password) or `READER_PASSWORD_SECRETS` with `NARRARIUM_READER_SECRETS` (a JSON object of name → password).
+
+A protected build publishes only `index.html`, `version.json` and encrypted files under `content/`: the canon pages and `downloads/book.epub` are left out, and the build stops if anything in clear would remain.
+
 ## GitHub Pages
 
 You can pass `--pages-domain example.com` when scaffolding to emit `public/CNAME` and a Pages workflow already pointed at that domain.
+
+In a book repository the workflow GitHub runs is the root `.github/workflows/deploy-reader-pages.yml`, written by `create-narrarium-book`. `narrarium-astro-reader/scaffold` (and, without any Node import, `narrarium-astro-reader/github-pages`) exports what a host needs to manage it:
+
+- `buildPagesWorkflow(options)`: the workflow text;
+- `planPagesWorkflowUpgrade(existingText, options)`: what to commit to bring an existing repository's workflow to this version. It recognizes the workflows Narrarium wrote, keeps the `NARRARIUM_READER_PASSWORD` secret line of an older protected book, and reports a file with edits it cannot merge as `customized` (never `safe`);
+- `enablePagesSite`, `disablePagesSite`, `readPagesSite`, `readPagesWorkflowState`, `dispatchPagesWorkflow`, `readLatestPagesRun`, `readReaderPasswordNames`, `writeReaderPasswordNames`: Pages on and off and the password list, through any Octokit-style `request(route, parameters)`. Turning Pages off keeps the workflow file, the variable and the secrets and pauses the workflow; `removePasswords: true` also deletes the variable and the password secrets.

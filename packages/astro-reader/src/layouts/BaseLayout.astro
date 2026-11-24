@@ -5,8 +5,8 @@ import SiteSearch from "../components/SiteSearch.astro";
 import { listChapters } from "narrarium";
 import { getBookRoot } from "../lib/book.js";
 import { loadCanonGlossary } from "../lib/glossary.js";
-import { isFullCanonMode, getReaderPassword } from "../lib/reader-mode.js";
-import { getBuildSaltBase64, encryptCanary } from "../lib/content-crypto.js";
+import { isFullCanonMode } from "../lib/reader-mode.js";
+import { publishesCanonPages } from "../lib/reader-build.js";
 import { loadSearchIndex } from "../lib/search.js";
 
 interface Props {
@@ -26,16 +26,13 @@ interface Props {
 }
 
 const { title, description, activeSection = "home", currentChapterNumber } = Astro.props;
-const canonGlossary = await loadCanonGlossary(currentChapterNumber);
-const searchIndex = await loadSearchIndex(currentChapterNumber);
-const readerChapters = await listChapters(getBookRoot()).catch(() => []);
+// A protected book publishes the reader alone (its text is in the encrypted bundle): these pages are written empty, then left out of the
+// published files, so that no title, name or line of the book is in clear.
+const published = publishesCanonPages();
+const canonGlossary = published ? await loadCanonGlossary(currentChapterNumber) : [];
+const searchIndex = published ? await loadSearchIndex(currentChapterNumber) : [];
+const readerChapters = published ? await listChapters(getBookRoot()).catch(() => []) : [];
 const fullCanonMode = isFullCanonMode();
-const password = getReaderPassword();
-const cryptoSalt = password ? getBuildSaltBase64() : null;
-const canary = password ? encryptCanary(password) : null;
-if (!password) {
-  console.info("[narrarium-reader] NARRARIUM_READER_PASSWORD not set — building without encryption.");
-}
 const isChapterPage = Number.isFinite(currentChapterNumber);
 ---
 
@@ -44,8 +41,9 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title}</title>
-    {description && <meta name="description" content={description} />}
+    <title>{published ? title : "Narrarium Reader"}</title>
+    {published && description && <meta name="description" content={description} />}
+    {!published && <meta name="robots" content="noindex, nofollow" />}
     <base href={import.meta.env.BASE_URL} />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -66,180 +64,23 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
       })();
     </script>
   </head>
-    <body class:list={[isChapterPage && "page-chapter"]} data-reader-chapter-number={currentChapterNumber} data-full-canon={fullCanonMode ? "true" : "false"} data-crypto-salt={cryptoSalt ?? undefined} data-canary-iv={canary?.iv ?? undefined} data-canary-ct={canary?.ct ?? undefined}>
+    <body class:list={[isChapterPage && "page-chapter"]} data-reader-chapter-number={published ? currentChapterNumber : undefined} data-full-canon={fullCanonMode ? "true" : "false"}>
     <script is:inline>
-      (function () {
-        /* ── Content-ready promise ────────────────────────────────────────────
-           Resolved values:
-             "plain"     – no encryption, content available immediately
-             "locked"    – encrypted, no stored key, waiting for user password
-             "decrypted" – encrypted, auto-decrypted from stored AES key
-        ──────────────────────────────────────────────────────────────────── */
-        var salt = document.body.dataset.cryptoSalt;
-        var canaryIv = document.body.dataset.canaryIv;
-        var canaryCt = document.body.dataset.canaryCt;
-
-        if (!salt) {
-          // No encryption configured — content is always available.
-          window._narrariumContentReady = Promise.resolve("plain");
-          return;
-        }
-
-        // ── Helpers ──────────────────────────────────────────────────────────
-        function b64ToBytes(b64) {
-          var bin = atob(b64);
-          var bytes = new Uint8Array(bin.length);
-          for (var i = 0; i < bin.length; i++) { bytes[i] = bin.charCodeAt(i); }
-          return bytes;
-        }
-
-        function aesDecrypt(cryptoKey, ivB64, ctB64) {
-          return crypto.subtle.decrypt(
-            { name: "AES-GCM", iv: b64ToBytes(ivB64) },
-            cryptoKey,
-            b64ToBytes(ctB64)
-          ).then(function (buf) { return new TextDecoder().decode(buf); });
-        }
-
-        function decryptAllContent(cryptoKey) {
-          var tasks = [];
-
-          // Decrypt JSON script data tags
-          document.querySelectorAll('script[type="application/json"][data-enc-iv]').forEach(function (el) {
-            var iv = el.getAttribute("data-enc-iv");
-            var ct = el.getAttribute("data-enc-ct");
-            if (!iv || !ct) return;
-            tasks.push(
-              aesDecrypt(cryptoKey, iv, ct).then(function (plaintext) {
-                el.textContent = plaintext;
-                el.removeAttribute("data-enc-iv");
-                el.removeAttribute("data-enc-ct");
-              })
-            );
-          });
-
-          // Decrypt inline HTML placeholder spans
-          document.querySelectorAll("[data-enc-html]").forEach(function (el) {
-            var iv = el.getAttribute("data-enc-iv");
-            var ct = el.getAttribute("data-enc-ct");
-            if (!iv || !ct) return;
-            tasks.push(
-              aesDecrypt(cryptoKey, iv, ct).then(function (html) {
-                var tpl = document.createElement("template");
-                tpl.innerHTML = html;
-                el.parentNode.insertBefore(tpl.content, el);
-                el.parentNode.removeChild(el);
-              })
-            );
-          });
-
-          return Promise.all(tasks);
-        }
-
-        // ── Deferred promise setup ───────────────────────────────────────────
-        var _resolveReady;
-        window._narrariumContentReady = new Promise(function (res) { _resolveReady = res; });
-
-        /**
-         * Decrypt all page content with the given CryptoKey, remove the lock
-         * class, and resolve _narrariumContentReady.
-         * @param {boolean} isAutoDecrypt - true when called from stored-key path;
-         *   false (default) when called after the user submits the password form.
-         *   When false, dispatches narrarium:content-unlocked so late-init scripts
-         *   that already observed "locked" can re-initialize.
-         */
-        window._narrariumDecryptPage = function (cryptoKey, isAutoDecrypt) {
-          return decryptAllContent(cryptoKey).then(function () {
-            document.body.classList.remove("reader-auth-locked");
-            _resolveReady("decrypted");
-            if (!isAutoDecrypt) {
-              document.dispatchEvent(new CustomEvent("narrarium:content-unlocked"));
-            }
-          });
-        };
-
-        // ── Try auto-decrypt from stored AES key ─────────────────────────────
-        var storedKeyB64 = null;
-        try { storedKeyB64 = localStorage.getItem("narrarium-reader-aes-key"); } catch (_) {}
-
-        if (storedKeyB64) {
-          // Show loading overlay while we verify and decrypt with the stored key.
-          document.body.classList.add("reader-decrypting");
-          crypto.subtle.importKey(
-            "raw", b64ToBytes(storedKeyB64),
-            { name: "AES-GCM", length: 256 },
-            false, ["decrypt"]
-          )
-            .then(function (key) {
-              // Verify canary — AES-GCM auth tag rejects a stale or wrong key
-              // before we touch any page content.
-              return aesDecrypt(key, canaryIv, canaryCt).then(function (plaintext) {
-                if (plaintext !== "narrarium-ok") throw new Error("stale");
-                // Expose the key so the EPUB download handler can reuse it.
-                window._narrariumAesKey = key;
-                // Guard against a race where the auto-decrypt micro-task resolves
-                // before the HTML parser has emitted <main> and its encrypted spans.
-                // If the DOM is still being parsed, defer until DOMContentLoaded.
-                function waitForDom() {
-                  if (document.readyState === "loading") {
-                    return new Promise(function (resolve) {
-                      document.addEventListener("DOMContentLoaded", resolve, { once: true });
-                    });
-                  }
-                  return Promise.resolve();
-                }
-                return waitForDom().then(function () {
-                  return window._narrariumDecryptPage(key, true);
-                });
-              });
-            })
-            .then(function () {
-              document.body.classList.remove("reader-decrypting");
-            })
-            .catch(function () {
-              // Stored key is stale or corrupt — clear it and show lock screen.
-              document.body.classList.remove("reader-decrypting");
-              try { localStorage.removeItem("narrarium-reader-aes-key"); } catch (_) {}
-              document.body.classList.add("reader-auth-locked");
-              _resolveReady("locked");
-            });
-        } else {
-          document.body.classList.add("reader-auth-locked");
-          _resolveReady("locked");
-        }
-      })();
+      // The pages of the canon are never encrypted: a protected book publishes only the reader (see publishesCanonPages).
+      window._narrariumContentReady = Promise.resolve("plain");
     </script>
-    {canary && (
-      <div id="reader-loading" aria-hidden="true">
-        <div class="reader-loading__spinner"></div>
-      </div>
-    )}
-    {canary && (
-      <div id="reader-password-gate" role="dialog" aria-modal="true" aria-label="Access required">
-        <div class="reader-password-gate__inner">
-          <p class="eyebrow">Narrarium Reader</p>
-          <h1 class="reader-password-gate__title">Access Required</h1>
-          <p class="reader-password-gate__desc">Enter the password to access this book.</p>
-          <form id="reader-password-form" class="reader-password-gate__form" novalidate>
-            <input
-              type="password"
-              id="reader-password-input"
-              class="reader-password-gate__input"
-              placeholder="Password"
-              autocomplete="current-password"
-            />
-            <button type="submit" class="reader-password-gate__button">Unlock</button>
-          </form>
-          <p id="reader-password-error" class="reader-password-gate__error" hidden>Incorrect password. Please try again.</p>
-        </div>
-      </div>
-    )}
+    {!published ? (
+      <main class="shell">
+        <p class="lede">This book is protected. <a href="./">Open the reader</a>.</p>
+      </main>
+    ) : (
     <main class="shell">
       <header class="masthead">
-        <a class="brand" href="./">Narrarium</a>
+        <a class="brand" href="book/">Narrarium</a>
         <nav class="site-nav">
-          <a class:list={["nav-link", activeSection === "home" && "is-active"]} href="./">Book</a>
-          <a class:list={["nav-link", activeSection === "chapters" && "is-active"]} href="./#chapters">Chapters</a>
+          <a class="nav-link" href="./">Read</a>
+          <a class:list={["nav-link", activeSection === "home" && "is-active"]} href="book/">Book</a>
+          <a class:list={["nav-link", activeSection === "chapters" && "is-active"]} href="book/#chapters">Chapters</a>
           {fullCanonMode && <a class:list={["nav-link", activeSection === "workshop" && "is-active"]} href="workshop/">Workshop</a>}
           <a class:list={["nav-link", activeSection === "characters" && "is-active"]} href="characters/">Characters</a>
           <a class:list={["nav-link", activeSection === "locations" && "is-active"]} href="locations/">Locations</a>
@@ -258,91 +99,13 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
       </header>
       <slot />
     </main>
-    <SiteSearch entries={searchIndex} />
-    <ReaderRuntime glossary={canonGlossary} chapters={readerChapters} currentChapterNumber={currentChapterNumber} />
-    {canary && (
-      <script is:inline>
-        (function initPasswordGate() {
-          var gate = document.getElementById("reader-password-gate");
-          var form = document.getElementById("reader-password-form");
-          var input = document.getElementById("reader-password-input");
-          var errorEl = document.getElementById("reader-password-error");
-          var cryptoSalt = document.body.dataset.cryptoSalt;
-          var canaryIv = document.body.dataset.canaryIv;
-          var canaryCt = document.body.dataset.canaryCt;
-          if (!gate || !form || !cryptoSalt || !canaryIv || !canaryCt) return;
-          if (input) { input.focus(); }
-
-          function b64ToBytes(b64) {
-            var bin = atob(b64);
-            var bytes = new Uint8Array(bin.length);
-            for (var i = 0; i < bin.length; i++) { bytes[i] = bin.charCodeAt(i); }
-            return bytes;
-          }
-
-          function aesDecrypt(cryptoKey, ivB64, ctB64) {
-            return crypto.subtle.decrypt(
-              { name: "AES-GCM", iv: b64ToBytes(ivB64) },
-              cryptoKey,
-              b64ToBytes(ctB64)
-            ).then(function (buf) { return new TextDecoder().decode(buf); });
-          }
-
-          form.addEventListener("submit", function (event) {
-            event.preventDefault();
-            var password = input ? input.value : "";
-            if (!password) return;
-
-            var encoded = new TextEncoder().encode(password);
-            var saltBytes = b64ToBytes(cryptoSalt);
-
-            // Derive the AES-256-GCM key via PBKDF2 — the full 100 000-iteration
-            // cost is paid on every attempt, making offline brute-force impractical.
-            crypto.subtle.importKey("raw", encoded, "PBKDF2", false, ["deriveKey"])
-              .then(function (keyMaterial) {
-                return crypto.subtle.deriveKey(
-                  { name: "PBKDF2", salt: saltBytes, iterations: 100000, hash: "SHA-256" },
-                  keyMaterial,
-                  { name: "AES-GCM", length: 256 },
-                  true,          // extractable so we can export and store it
-                  ["decrypt"]
-                );
-              })
-              .then(function (aesKey) {
-                // Verify against the canary block — AES-GCM auth tag rejects wrong keys.
-                return aesDecrypt(aesKey, canaryIv, canaryCt).then(function (plaintext) {
-                  if (plaintext !== "narrarium-ok") throw new Error("wrong password");
-
-                  // Persist the raw key bytes so auto-decrypt works on reload.
-                  crypto.subtle.exportKey("raw", aesKey).then(function (rawBuf) {
-                    var rawBytes = new Uint8Array(rawBuf);
-                    var b64 = btoa(String.fromCharCode.apply(null, Array.from(rawBytes)));
-                    try { localStorage.setItem("narrarium-reader-aes-key", b64); } catch (_) {}
-                  });
-
-                  // Expose the key so the EPUB download handler can reuse it.
-                  window._narrariumAesKey = aesKey;
-
-                  // Decrypt the page — passes false = manual unlock, so the
-                  // content-unlocked event will fire for late-init scripts.
-                  return window._narrariumDecryptPage(aesKey, false);
-                });
-              })
-              .catch(function () {
-                if (errorEl) { errorEl.hidden = false; }
-                if (input) { input.value = ""; input.focus(); }
-              });
-          });
-        })();
-      </script>
     )}
+    {published && <SiteSearch entries={searchIndex} />}
+    {published && <ReaderRuntime glossary={canonGlossary} chapters={readerChapters} currentChapterNumber={currentChapterNumber} />}
     <script is:inline>
       /* ── EPUB download ──────────────────────────────────────────────────────
-         The epub.enc static endpoint is always generated at build time.
-         • Encrypted build: client fetches, decrypts with the stored AES key,
-           creates an in-memory Blob and triggers a browser <a download>.
-         • Plain build:     client fetches, wraps in a Blob, triggers download.
-         The button is hidden until _narrariumContentReady resolves.
+         The epub.enc static endpoint holds the EPUB of a public book; the
+         client fetches it, wraps it in a Blob and triggers a download.
       ──────────────────────────────────────────────────────────────────────── */
       (function () {
         var btn = document.querySelector("[data-epub-download]");
@@ -355,7 +118,6 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
         });
 
         btn.addEventListener("click", function () {
-          var isEncrypted = Boolean(document.body.dataset.cryptoSalt);
           var epubUrl = new URL("epub.enc", document.baseURI).toString();
 
           btn.setAttribute("disabled", "");
@@ -364,17 +126,6 @@ const isChapterPage = Number.isFinite(currentChapterNumber);
             .then(function (r) {
               if (!r.ok) throw new Error("fetch failed: " + r.status);
               return r.arrayBuffer();
-            })
-            .then(function (buf) {
-              if (isEncrypted) {
-                var aesKey = window._narrariumAesKey;
-                if (!aesKey) throw new Error("no key");
-                var bytes = new Uint8Array(buf);
-                var iv = bytes.slice(0, 12);
-                var ct = bytes.slice(12);
-                return crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, aesKey, ct);
-              }
-              return buf;
             })
             .then(function (plainBuf) {
               var blob = new Blob([plainBuf], { type: "application/epub+zip" });

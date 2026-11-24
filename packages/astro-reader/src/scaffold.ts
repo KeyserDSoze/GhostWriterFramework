@@ -2,6 +2,9 @@ import { cp, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isClearlyInvalidBookRootValue, normalizeReaderEnvValue, resolveReaderBookRootCandidate } from "./lib/env.js";
+import { buildPagesWorkflow } from "./pages-workflow.js";
+
+export * from "./github-pages.js";
 
 type ScaffoldOptions = {
   bookRoot?: string;
@@ -82,7 +85,8 @@ export async function scaffoldReaderSite(targetDir: string, options: ScaffoldOpt
   const workflowPath = path.join(targetRoot, ".github", "workflows", "deploy-pages.yml");
   const existingWorkflow = await readFile(workflowPath, "utf8").catch(() => null);
   if (existingWorkflow === null) {
-    await writeFile(workflowPath, buildPagesWorkflow(pagesDomain), "utf8");
+    // The workflow of a reader kept as a repository of its own; inside a book, GitHub runs the root one (create-narrarium-book writes it).
+    await writeFile(workflowPath, buildPagesWorkflow({ readerDir: ".", pagesDomain }), "utf8");
   }
 
   if (pagesDomain) {
@@ -146,26 +150,27 @@ By default the reader uses a spoiler-safe public mode. If you want a private ful
 
 ## Password protection
 
-Set \`NARRARIUM_READER_PASSWORD\` to encrypt all prose content at build time using AES-256-GCM.
-Visitors must enter the correct password before any text is revealed.
+The published reader can be public or protected by one or several passwords. A protected build encrypts the whole book once with a
+key drawn for that build (AES-256-GCM) and publishes one key slot per password (PBKDF2-SHA256, 600,000 iterations): the browser tries
+the typed password against the slots, and only the reader's shell, \`version.json\` and encrypted files are published.
 
-For local development, add the variable to your \`.env\` file:
+On GitHub the passwords are repository secrets, and the repository variable \`READER_PASSWORD_SECRETS\` lists their names
+(for example \`READER_PASSWORD_001,READER_PASSWORD_002\`). The Pages workflow gives the build step the secrets as JSON and the build
+reads only the listed names; a password removed from the list stops opening the book at the next publication. With no name listed the
+book is public. Narrarium manages the list and the secrets for you.
+
+For a local build, either set the older single password:
 
 \`\`\`bash
 NARRARIUM_READER_PASSWORD=your-secret-password
 \`\`\`
 
-For GitHub Pages deployment, add it to the \`Build site\` step in \`.github/workflows/deploy-pages.yml\`:
+or the same two variables the workflow passes:
 
-\`\`\`yaml
-- name: Build site
-  env:
-    SITE_BASE: /\${{ github.event.repository.name }}/
-    NARRARIUM_READER_PASSWORD: \${{ secrets.NARRARIUM_READER_PASSWORD }}
-  run: npm run build
+\`\`\`bash
+READER_PASSWORD_SECRETS=READER_PASSWORD_001,READER_PASSWORD_002
+NARRARIUM_READER_SECRETS={"READER_PASSWORD_001":"first password","READER_PASSWORD_002":"second password"}
 \`\`\`
-
-Store the actual password as a repository secret: **Settings → Secrets and variables → Actions → New repository secret**.
 
 ## Doctor
 
@@ -236,72 +241,6 @@ function mergeReaderEnvFile(existingContent: string | null, bookRoot: string, ta
   }
 
   return `${buildReaderEnvFile(bookRoot).trimEnd()}\n${existingContent}`;
-}
-
-function buildPagesWorkflow(pagesDomain?: string): string {
-  const envBlock = pagesDomain
-    ? ["          SITE_BASE: /", `          SITE_URL: https://${pagesDomain}`].join("\n")
-    : "          SITE_BASE: /${{ github.event.repository.name }}/";
-
-  return `name: Deploy Reader To GitHub Pages
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: github-pages
-  cancel-in-progress: true
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
-      - name: Build site
-        env:
-${envBlock}
-          # NARRARIUM_READER_PASSWORD: \${{ secrets.NARRARIUM_READER_PASSWORD }}
-        run: npm run build
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: \${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
-`;
 }
 
 function toPosix(value: string): string {

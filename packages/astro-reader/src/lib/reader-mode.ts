@@ -33,12 +33,3 @@ export function readerCanonModeFromCookieHeader(cookieHeader: string): ReaderCan
   if (value === "public") return "public";
   return undefined;
 }
-
-/**
- * Returns the raw NARRARIUM_READER_PASSWORD env var value, or null when the
- * variable is not set. Used at build time to derive the AES-256-GCM key for
- * content encryption. Never embedded in the built HTML.
- */
-export function getReaderPassword(): string | null {
-  return readReaderEnv(["NARRARIUM_READER_PASSWORD"]) ?? null;
-}

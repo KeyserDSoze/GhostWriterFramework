@@ -1,3 +1,4 @@
+export * from "./github-pages.js";
 type ScaffoldOptions = {
     bookRoot?: string;
     packageName?: string;
@@ -10,5 +11,4 @@ export declare function scaffoldReaderSite(targetDir: string, options?: Scaffold
     coreDependency: string;
     bookRoot: string;
 }>;
-export {};
 //# sourceMappingURL=scaffold.d.ts.map
