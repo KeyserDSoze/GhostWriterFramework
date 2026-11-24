@@ -2527,6 +2527,7 @@ const en = {
       "remote-not-found": "The synced data was not found on the service.",
       "remote-deleted": "The synced data was deleted from the service.",
       "remote-public": "The GitHub repository is public. Make it private before syncing.",
+      "repository-unreachable": "The Narrarium GitHub app cannot create or reach the narrarium.settings repository. The GitHub card in Account & Sync says what to do.",
       "rate-limited": "The service is limiting requests. Try again in a few minutes.",
       "cache-revalidation": "The service answered with an outdated copy. Try again.",
       network: "The request did not reach the service. Check your connection and try again.",

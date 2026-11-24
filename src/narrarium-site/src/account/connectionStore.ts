@@ -275,7 +275,8 @@ export function installAccountDirtyPropagation(): void {
     const state = useConnectionStore.getState();
     for (const backend of ["google-drive", "onedrive", "github"] as const) {
       const connection = state.configuration[connectionKey(backend)];
-      if (connection?.replica.enabled && connection.replica.status !== "syncing") void state.updateReplica(backend, { status: "dirty" });
+      // A replica that waits for the owner to fix something on GitHub stays in its error: more changes do not make it a new attempt.
+      if (connection?.replica.enabled && connection.replica.status !== "syncing" && connection.replica.errorKind !== "repository-unreachable") void state.updateReplica(backend, { status: "dirty" });
     }
   });
 }

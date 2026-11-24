@@ -1,15 +1,17 @@
-import { useId, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, ExternalLink, KeyRound, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 import "@/i18n/githubApp";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { credentialMode } from "@/account/credentialMode";
 import type { LocalGitHubConnection } from "@/account/types";
 import { GITHUB_APP_CLIENT_ID, GITHUB_APP_SLUG } from "@/config/publicClients";
-import { bookCredentialLines, githubSignInAvailable, type BookCredentialLine } from "@/github/githubAccessModel";
+import { bookCredentialLines, bookUsingConnection, canOfferConnection, defaultTokenRemovable, githubSignInAvailable, type BookCredentialLine } from "@/github/githubAccessModel";
+import { verifyConnectionReadsRepository } from "@/github/githubConnectionRead";
 import { installAppUrl, type AppInstallation } from "@/github/githubAppInstall";
 import { useAppInstallations } from "@/github/useAppInstallations";
 import { useBrokerAvailability } from "@/hooks/useBrokerAvailability";
@@ -38,6 +40,8 @@ export interface GitHubAccessSectionProps {
   pat: string;
   onPatChange: (value: string) => void;
   onConnectPat: () => void;
+  /** «Try again» of the notice that the app cannot reach narrarium.settings: syncs the GitHub replica now. */
+  onRetrySync?: () => void;
   busy: boolean;
 }
 
@@ -59,7 +63,51 @@ export function GitHubAccessSection(props: GitHubAccessSectionProps) {
   const patId = "github-pat";
   const installed = installs.status === "ready" || installs.status === "error" || installs.status === "loading" ? installs.installations : null;
   const lines = bookCredentialLines(settings.books, settings, installed, connection?.identity?.username);
+  const unreachable = Boolean(connection && connection.accountSyncEnabled && connection.replica.status === "error" && connection.replica.errorKind === "repository-unreachable");
+  const manage = installed?.find((entry) => !entry.suspended) ?? installed?.[0];
   const needsReconnect = Boolean(connection && app && (connection.replica.status === "needs-auth" || (!connection.refreshToken && (connection.accessTokenExpiry ?? 0) < Date.now())));
+
+  // Moving a book to the connection, and dropping the default token, are offers: they are done on a click, after the check, and told in a status line.
+  const offerLines = bookCredentialLines(settings.books, settings, app && !needsReconnect && installs.status === "ready" ? installs.installations : null, connection?.identity?.username);
+  const [switching, setSwitching] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<{ bookId?: string; text: string; failed: boolean } | null>(null);
+  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
+  const removable = app && !needsReconnect && defaultTokenRemovable(offerLines, settings);
+
+  async function useConnection(line: BookCredentialLine) {
+    const book = settings.books.find((entry) => entry.id === line.bookId);
+    if (!book || switching) return;
+    const repo = `${line.owner}/${line.repo}`;
+    setSwitching(line.bookId);
+    setOutcome({ bookId: line.bookId, text: t("accountSync.github.use.working", { repo }), failed: false });
+    try {
+      const read = await verifyConnectionReadsRepository(line.owner, line.repo);
+      if (read.ok === false) {
+        setOutcome({ bookId: line.bookId, failed: true, text: read.reason === "refused" ? t("accountSync.github.use.refused", { repo, status: read.status }) : read.reason === "read-only" ? t("accountSync.github.use.readOnly", { repo }) : t("accountSync.github.use.unreachable", { repo }) });
+        return;
+      }
+      const previous = useSettingsStore.getState().settings.books;
+      useSettingsStore.getState().patchSettings({ books: previous.map((entry) => (entry.id === book.id ? bookUsingConnection(entry) : entry)) });
+      try { await save(); }
+      catch {
+        useSettingsStore.getState().patchSettings({ books: previous });
+        setOutcome({ bookId: line.bookId, failed: true, text: t("accountSync.github.use.saveFailed") });
+        return;
+      }
+      setOutcome({ bookId: line.bookId, failed: false, text: t("accountSync.github.use.done", { book: line.name }) });
+    } finally { setSwitching(null); }
+  }
+
+  async function removeDefaultToken() {
+    const previous = useSettingsStore.getState().settings.defaultGitHubToken;
+    setConfirmingRemoval(false);
+    useSettingsStore.getState().patchSettings({ defaultGitHubToken: "" });
+    try { await save(); setOutcome({ failed: false, text: t("accountSync.github.use.removed") }); }
+    catch {
+      useSettingsStore.getState().patchSettings({ defaultGitHubToken: previous });
+      setOutcome({ failed: true, text: t("accountSync.github.use.removeFailed") });
+    }
+  }
 
   const setPrefer = (value: boolean) => {
     useSettingsStore.getState().patchSettings({ githubPreferConnection: value ? true : undefined });
@@ -123,16 +171,51 @@ export function GitHubAccessSection(props: GitHubAccessSectionProps) {
         </div>
       )}
 
+      {connection && connection.accountSyncEnabled && !unreachable && <p className="text-xs text-muted-foreground">{t("accountSync.github.settings.automatic")}</p>}
+      {unreachable && (
+        <section role="alert" aria-labelledby="github-unreachable-title" className="space-y-2 rounded-md border border-amber-600/60 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          <h3 id="github-unreachable-title" className="flex items-start gap-2 text-sm font-medium"><AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{t("accountSync.github.settings.unreachableTitle")}</h3>
+          <p>{t("accountSync.github.settings.unreachable")}</p>
+          <p>{t("accountSync.github.settings.unreachableFix")}</p>
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            {GITHUB_APP_SLUG && <ExternalAnchor href={manage ? manage.settingsUrl : installAppUrl()}>{t("accountSync.github.install.choose")}</ExternalAnchor>}
+            {props.onRetrySync && <Button size="sm" variant="outline" onClick={props.onRetrySync} disabled={props.busy}>{props.busy ? t("accountSync.github.settings.retrying") : t("accountSync.github.settings.retry")}</Button>}
+          </div>
+        </section>
+      )}
+
       {(!connection || !app || needsReconnect) && connectBlock}
       {app && <InstallBlock installs={installs} installations={installed} />}
-      {!app || needsReconnect ? patBlock : null}
+      {!app || needsReconnect || unreachable ? patBlock : null}
 
       {connection && lines.length > 0 && (
         <section aria-labelledby={`${rememberId}-books`} className="space-y-2">
           <h3 id={`${rememberId}-books`} className="text-sm font-medium">{t("accountSync.github.books.title")}</h3>
           <ul className="space-y-1 text-xs" aria-label={t("accountSync.github.books.sectionLabel")}>
-            {lines.map((line) => <BookLine key={line.bookId} line={line} />)}
+            {lines.map((line) => {
+              const offerLine = offerLines.find((entry) => entry.bookId === line.bookId);
+              return <BookLine key={line.bookId} line={line} offer={Boolean(offerLine && canOfferConnection(offerLine))} switching={switching === line.bookId} disabled={switching !== null} onUse={() => offerLine && void useConnection(offerLine)} outcome={outcome?.bookId === line.bookId ? outcome : null} />;
+            })}
           </ul>
+          {removable && (
+            <div className="space-y-2 rounded-md border p-2 text-xs">
+              <p>{t("accountSync.github.use.removeOffer")}</p>
+              <Button size="sm" variant="outline" onClick={() => setConfirmingRemoval(true)}>{t("accountSync.github.use.removeButton")}</Button>
+            </div>
+          )}
+          <div role="status" aria-live="polite" className="text-xs">{outcome && !outcome.bookId && <p className={outcome.failed ? "text-destructive" : "text-muted-foreground"}>{outcome.text}</p>}</div>
+          <Dialog open={confirmingRemoval} onOpenChange={setConfirmingRemoval}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{t("accountSync.github.use.removeTitle")}</DialogTitle>
+                <DialogDescription>{t("accountSync.github.use.removeBody")}</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setConfirmingRemoval(false)}>{t("accountSync.github.use.removeCancel")}</Button>
+                <Button variant="destructive" onClick={() => void removeDefaultToken()}>{t("accountSync.github.use.removeButton")}</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           <div className="flex items-start justify-between gap-3 rounded-md border p-2">
             <div className="min-w-0"><Label htmlFor={`${rememberId}-prefer`}>{t("accountSync.github.prefer.label")}</Label><p className="text-xs text-muted-foreground">{t("accountSync.github.prefer.help")}</p><p className="mt-1 text-xs text-muted-foreground">{t("accountSync.github.prefer.order")}</p></div>
             <Switch id={`${rememberId}-prefer`} checked={Boolean(settings.githubPreferConnection)} onCheckedChange={setPrefer} />
@@ -143,7 +226,7 @@ export function GitHubAccessSection(props: GitHubAccessSectionProps) {
   );
 }
 
-function BookLine({ line }: { line: BookCredentialLine }) {
+function BookLine({ line, offer, switching, disabled, onUse, outcome }: { line: BookCredentialLine; offer: boolean; switching: boolean; disabled: boolean; onUse: () => void; outcome: { text: string; failed: boolean } | null }) {
   const { t } = useTranslation();
   const uses = t(`accountSync.github.books.uses.${line.source ?? "none"}`);
   return (
@@ -151,6 +234,15 @@ function BookLine({ line }: { line: BookCredentialLine }) {
       <p>{t("accountSync.github.books.line", { book: line.name, uses })}</p>
       {line.reach && <ReachNote line={line} />}
       {line.serverWithAppToken && <p className="flex items-start gap-2 text-amber-800 dark:text-amber-300"><AlertTriangle aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />{t("accountSync.github.server.warning")}</p>}
+      {offer && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="text-muted-foreground">{t("accountSync.github.use.offer")}</span>
+          <Button size="sm" variant="outline" aria-label={t("accountSync.github.use.buttonFor", { book: line.name })} onClick={onUse} disabled={disabled}>
+            {switching && <Loader2 aria-hidden="true" className="mr-1 h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />}{t("accountSync.github.use.button")}
+          </Button>
+        </div>
+      )}
+      <div role="status" aria-live="polite">{outcome && <p className={outcome.failed ? "text-destructive" : "text-muted-foreground"}>{outcome.text}</p>}</div>
     </li>
   );
 }

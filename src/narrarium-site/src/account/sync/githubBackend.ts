@@ -1,5 +1,5 @@
 import { Octokit } from "@octokit/rest";
-import type { AccountRemoteExpectation, AccountRemoteSnapshot, AccountSyncBackend, LocalAccountSnapshot, SyncableAccountData } from "@/account/types";
+import type { AccountRemoteExpectation, AccountRemoteSnapshot, AccountSyncBackend, GitHubCredentialKind, LocalAccountSnapshot, SyncableAccountData } from "@/account/types";
 import { accountContentHash } from "@/account/vectorClock";
 import { parseAccountRepositoryFiles, serializeAccountRepository } from "@/account/serialization";
 import { RepositoryByteMeter, utf8Bytes } from "@/repository/repositoryLimits";
@@ -17,11 +17,23 @@ export class GitHubAccountRepositoryPublicError extends Error {
   }
 }
 
+/**
+ * The GitHub App's token cannot create narrarium.settings, or reach the one that exists (the app is installed on selected repositories only, or GitHub
+ * refused the creation). It is a state the owner fixes on GitHub, not a passing error: the sync says so once and does not retry by itself.
+ */
+export class GitHubAccountRepositoryUnreachableError extends Error {
+  readonly code = "GITHUB_ACCOUNT_REPOSITORY_UNREACHABLE";
+  constructor(readonly reason: "create-refused" | "exists-not-shared" | "no-access") {
+    super("The Narrarium GitHub app cannot create or reach the narrarium.settings repository.");
+    this.name = "GitHubAccountRepositoryUnreachableError";
+  }
+}
+
 export class GitHubAccountSyncBackend implements AccountSyncBackend {
   readonly kind = "github" as const;
   private readonly octokit: Octokit;
 
-  constructor(token: string, private readonly owner: string) {
+  constructor(token: string, private readonly owner: string, private readonly credentialKind: GitHubCredentialKind = "pat") {
     this.octokit = new Octokit({ auth: token });
   }
 
@@ -123,13 +135,27 @@ export class GitHubAccountSyncBackend implements AccountSyncBackend {
       return { private: response.data.private, default_branch: response.data.default_branch || "main" };
     } catch (error) {
       if (error instanceof GitHubAccountRepositoryPublicError) throw error;
+      if (this.refusedToTheApp(error)) throw new GitHubAccountRepositoryUnreachableError("no-access");
       if (statusOf(error) !== 404 || !create) return statusOf(error) === 404 ? null : Promise.reject(error);
       const authenticated = await this.octokit.rest.users.getAuthenticated();
       if (String(authenticated.data.login).toLocaleLowerCase() !== this.owner.toLocaleLowerCase()) throw new Error("GitHub account repository can only be created for the authenticated user.");
-      const created = await this.octokit.rest.repos.createForAuthenticatedUser({ name: GITHUB_ACCOUNT_REPOSITORY, private: true, auto_init: false, description: "Private Narrarium account synchronization data" });
+      let created;
+      try {
+        created = await this.octokit.rest.repos.createForAuthenticatedUser({ name: GITHUB_ACCOUNT_REPOSITORY, private: true, auto_init: false, description: "Private Narrarium account synchronization data" });
+      } catch (createError) {
+        // «Not found» above and «name already exists» here together mean the repository is there but this app does not see it.
+        if (this.credentialKind === "app" && statusOf(createError) === 422) throw new GitHubAccountRepositoryUnreachableError("exists-not-shared");
+        if (this.refusedToTheApp(createError) || (this.credentialKind === "app" && statusOf(createError) === 404)) throw new GitHubAccountRepositoryUnreachableError("create-refused");
+        throw createError;
+      }
       if (!created.data.private) throw new GitHubAccountRepositoryPublicError();
       return { private: true, default_branch: created.data.default_branch || "main" };
     }
+  }
+
+  /** GitHub told the app «not allowed» (as opposed to a limit that passes): only a GitHub App token is judged this way, a personal token's refusal stays a permission error. */
+  private refusedToTheApp(error: unknown): boolean {
+    return this.credentialKind === "app" && statusOf(error) === 403 && !isRateLimit(error);
   }
 
   private async bootstrapEmptyRepository(branch: string): Promise<string> {
@@ -143,6 +169,8 @@ export class GitHubAccountSyncBackend implements AccountSyncBackend {
         content: encodeBase64(BOOTSTRAP_CONTENT),
       });
     } catch (error) {
+      // A repository the app just created but cannot write to: GitHub did not give the app access to it.
+      if (this.refusedToTheApp(error) || (this.credentialKind === "app" && statusOf(error) === 404)) throw new GitHubAccountRepositoryUnreachableError("no-access");
       if (statusOf(error) !== 409 && statusOf(error) !== 422) throw error;
       const ref = await this.octokit.rest.git.getRef({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, ref: `heads/${branch}` });
       if (!await this.isBootstrapCommit(ref.data.object.sha)) throw new Error("GitHub account repository changed before it could be updated.");
@@ -177,6 +205,11 @@ export class GitHubAccountSyncBackend implements AccountSyncBackend {
 
 function statusOf(error: unknown): number | undefined {
   return error && typeof error === "object" && "status" in error && typeof error.status === "number" ? error.status : undefined;
+}
+
+function isRateLimit(error: unknown): boolean {
+  const value = error && typeof error === "object" ? error as { message?: unknown; response?: { headers?: Record<string, unknown> } } : {};
+  return value.response?.headers?.["x-ratelimit-remaining"] === "0" || (typeof value.message === "string" && /rate.?limit|abuse/i.test(value.message));
 }
 
 function encodeBase64(value: string): string {

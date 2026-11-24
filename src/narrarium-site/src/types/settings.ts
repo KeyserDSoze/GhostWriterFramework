@@ -331,6 +331,11 @@ export interface BookEntry {
   bookToken?: string;
   /** Optional label for the inline book PAT. */
   bookTokenLabel?: string;
+  /**
+   * The owner moved this book to the GitHub connection («Use the GitHub connection»): it uses the connection's token ahead of the default token. It never
+   * outranks a token typed for the book or a named one, and it is dropped when the owner picks a token for the book.
+   */
+  useGitHubConnection?: boolean;
   /** Optional active branch selected for this book. Undefined = use the personal dev branch. */
   activeBranch?: string;
   /** The size the book was created from ("Parti da una misura"): the review options its first autopilot configuration starts with, until the autopilot has a state. */
@@ -434,7 +439,7 @@ export function resolveGitHubRemoteToken(book: BookEntry, settings: AppSettings)
 }
 
 export function resolveGitHubCredential(book: BookEntry, settings: AppSettings): ResolvedGitHubCredential | null {
-  return resolveGitHubCredentialValue({ bookToken: book.bookToken, tokenIndex: book.tokenIndex, extraTokens: settings.extraGitHubTokens, defaultToken: settings.defaultGitHubToken, preferConnection: settings.githubPreferConnection });
+  return resolveGitHubCredentialValue({ bookToken: book.bookToken, tokenIndex: book.tokenIndex, extraTokens: settings.extraGitHubTokens, defaultToken: settings.defaultGitHubToken, preferConnection: settings.githubPreferConnection, useConnection: book.useGitHubConnection });
 }
 
 export function bookStorageMode(book: BookEntry): BookStorageMode {

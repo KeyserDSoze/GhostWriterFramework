@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveGitHubCredentialValue, setConnectedGitHubToken } from "@/github/githubCredentialRuntime";
-import { bookCredentialLines, githubSignInAvailable } from "@/github/githubAccessModel";
+import { bookCredentialLines, bookUsingConnection, canOfferConnection, defaultTokenRemovable, githubSignInAvailable } from "@/github/githubAccessModel";
 import { resolveGitHubCredential, resolveGitHubRemoteToken, DEFAULT_SETTINGS, type AppSettings, type BookEntry } from "@/types/settings";
 import { migrateSettings } from "@/drive/cloudSettingsClient";
 
@@ -81,5 +81,91 @@ describe("what the page says about each book", () => {
     expect(githubSignInAvailable(false, "Iv1.x")).toBe(false);
     expect(githubSignInAvailable(null, "Iv1.x")).toBeNull();
     expect(githubSignInAvailable(null, "")).toBe(false);
+  });
+});
+
+describe("moving a book to the GitHub connection", () => {
+  const install = (selection: "all" | "selected", repositories: string[] = [], suspended = false) => [{ id: 1, account: "me", accountType: "User" as const, selection, repositories, suspended, settingsUrl: "https://github.com/settings/installations/1" }];
+  const lines = (books: BookEntry[], patch: Partial<AppSettings>, installations: ReturnType<typeof install> | null) => bookCredentialLines(books, settings(patch, books), installations, "me");
+  beforeEach(() => setConnectedGitHubToken("ghu_app", "app"));
+
+  it("a book on the default token, an own token or a named token is offered the connection when the installation covers its repository", () => {
+    const books = [book(), book({ id: "b2", repo: "two", bookToken: "ghp_own" }), book({ id: "b3", repo: "three", tokenIndex: 0 })];
+    const all = lines(books, { defaultGitHubToken: "ghp_default", extraGitHubTokens: [{ label: "work", token: "ghp_named" }] }, install("all"));
+    expect(all.map((line) => [line.source, line.appReach, canOfferConnection(line)])).toEqual([["default-pat", "all", true], ["book-pat", "all", true], ["named-pat", "all", true]]);
+    const some = lines(books, { defaultGitHubToken: "ghp_default", extraGitHubTokens: [{ label: "work", token: "ghp_named" }] }, install("selected", ["me/one", "me/three"]));
+    expect(some.map((line) => [line.appReach, canOfferConnection(line)])).toEqual([["selected", true], ["outside-selection", false], ["selected", true]]);
+  });
+
+  it("is not offered when the app does not reach the repository, is suspended, or the installations are not known yet", () => {
+    const books = [book({ repo: "one" }), book({ id: "b2", owner: "acme", repo: "two" })];
+    const base = { defaultGitHubToken: "ghp_default" };
+    expect(lines(books, base, install("all", [], true)).map(canOfferConnection)).toEqual([false, false]);
+    expect(lines(books, base, install("all")).map(canOfferConnection)).toEqual([true, false]);
+    expect(lines(books, base, null).map(canOfferConnection)).toEqual([false, false]);
+  });
+
+  it("is not offered to a book that already uses the connection, nor to one run by the personal server", () => {
+    const books = [book({ useGitHubConnection: true }), book({ id: "b2", repo: "two", autopilotHost: "server" }), book({ id: "b3", repo: "three" })];
+    const result = lines(books, { defaultGitHubToken: "ghp_default" }, install("all"));
+    expect(result.map((line) => line.source)).toEqual(["app", "default-pat", "default-pat"]);
+    expect(result.map(canOfferConnection)).toEqual([false, false, true]);
+  });
+
+  it("makes the book use the connection: no own token, no named token, the default token is not followed; the named token stays in the list", () => {
+    const own = book({ bookToken: "ghp_own", bookTokenLabel: "one PAT", tokenIndex: 0 });
+    const moved = bookUsingConnection(own);
+    expect(moved).toMatchObject({ id: "b1", owner: "me", repo: "one", tokenIndex: null, useGitHubConnection: true });
+    expect("bookToken" in moved).toBe(false);
+    expect("bookTokenLabel" in moved).toBe(false);
+    const withDefault = { defaultGitHubToken: "ghp_default", extraGitHubTokens: [{ label: "work", token: "ghp_named" }] };
+    expect(resolveGitHubCredential(moved, settings(withDefault, [moved]))).toEqual({ token: "ghu_app", source: "app" });
+    expect(resolveGitHubCredential(bookUsingConnection(book()), settings(withDefault))).toEqual({ token: "ghu_app", source: "app" });
+    expect(settings(withDefault).extraGitHubTokens).toHaveLength(1);
+  });
+
+  it("the move is for that book only, and never outranks a token typed for the book afterwards", () => {
+    const moved = bookUsingConnection(book());
+    const other = book({ id: "b2", repo: "two" });
+    const config = settings({ defaultGitHubToken: "ghp_default" }, [moved, other]);
+    expect(resolveGitHubCredential(moved, config)?.source).toBe("app");
+    expect(resolveGitHubCredential(other, config)?.source).toBe("default-pat");
+    expect(resolveGitHubCredential({ ...moved, bookToken: "ghp_typed" }, config)?.source).toBe("book-pat");
+  });
+
+  it("falls back to the default token when the connection is gone", () => {
+    setConnectedGitHubToken(undefined);
+    expect(resolveGitHubCredential(bookUsingConnection(book()), settings({ defaultGitHubToken: "ghp_default" }))?.source).toBe("default-pat");
+  });
+
+  it("survives the settings being loaded again", () => {
+    const migrated = migrateSettings({ ...DEFAULT_SETTINGS, books: [bookUsingConnection(book())] });
+    expect(migrated.books[0].useGitHubConnection).toBe(true);
+  });
+});
+
+describe("when the default token can be removed", () => {
+  const installations = [{ id: 1, account: "me", accountType: "User" as const, selection: "all" as const, repositories: [], suspended: false, settingsUrl: "https://github.com/settings/installations/1" }];
+  const check = (books: BookEntry[], patch: Partial<AppSettings>, known = installations) => {
+    const config = settings({ defaultGitHubToken: "ghp_default", ...patch }, books);
+    return defaultTokenRemovable(bookCredentialLines(books, config, known, "me"), config);
+  };
+  beforeEach(() => setConnectedGitHubToken("ghu_app", "app"));
+
+  it("is suggested when every book uses the connection, and not before", () => {
+    expect(check([bookUsingConnection(book()), bookUsingConnection(book({ id: "b2", repo: "two" }))], {})).toBe(true);
+    expect(check([bookUsingConnection(book()), book({ id: "b2", repo: "two" })], {})).toBe(false);
+  });
+
+  it("is not suggested without a default token, without any book on the connection, or while the app does not reach a book on it", () => {
+    expect(check([bookUsingConnection(book())], { defaultGitHubToken: "  " })).toBe(false);
+    expect(check([], {})).toBe(false);
+    expect(check([book({ bookToken: "ghp_own" })], {})).toBe(false);
+    expect(check([bookUsingConnection(book()), bookUsingConnection(book({ id: "b2", owner: "acme", repo: "two" }))], {})).toBe(false);
+    expect(check([bookUsingConnection(book())], {}, null as never)).toBe(false);
+  });
+
+  it("is suggested when the other books keep their own or a named token, which do not need the default one", () => {
+    expect(check([bookUsingConnection(book()), book({ id: "b2", repo: "two", bookToken: "ghp_own" }), book({ id: "b3", repo: "three", tokenIndex: 0 })], { extraGitHubTokens: [{ label: "work", token: "ghp_named" }] })).toBe(true);
   });
 });

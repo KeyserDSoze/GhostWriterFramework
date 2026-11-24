@@ -282,3 +282,169 @@ describe("in a book's own settings", () => {
     void jsonResponse;
   });
 });
+
+describe.each(["en", "it"] as const)("the GitHub card says what happens to narrarium.settings, in %s", (language) => {
+  const text = language === "en"
+    ? { automatic: /sync by themselves to narrarium\.settings, a private repository/, title: "The app cannot reach narrarium.settings", detail: /could not create it, or it exists and the app is not installed on it/, choose: "Choose repositories on GitHub", retry: "Try again", pat: "Use a personal access token (advanced)" }
+    : { automatic: /si sincronizzano da sole in narrarium\.settings, un repository privato/, title: "L'app non riesce a raggiungere narrarium.settings", detail: /non è riuscita a crearlo, oppure esiste ma l'app non è installata su di esso/, choose: "Scegli i repository su GitHub", retry: "Riprova", pat: "Usa un token di accesso personale (avanzato)" };
+  const unreachable = (patch: Partial<LocalGitHubConnection> = {}) => app({ accountSyncEnabled: true, replica: { enabled: true, status: "error", errorKind: "repository-unreachable" }, ...patch });
+
+  it("tells that the settings sync by themselves when the sync is on and well", async () => {
+    net.reply("GET", INSTALLATIONS, { installations: [installation("all")] });
+    await open(language, props({ connection: app({ accountSyncEnabled: true, replica: { enabled: true, status: "idle" } }) }));
+    expect(screen.getByText(text.automatic)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("says nothing about syncing when the owner switched it off", async () => {
+    net.reply("GET", INSTALLATIONS, { installations: [installation("all")] });
+    await open(language, props({ connection: app({ accountSyncEnabled: false, replica: { enabled: false, status: "disabled" } }) }));
+    expect(screen.queryByText(text.automatic)).toBeNull();
+    expect(screen.queryByText(text.title)).toBeNull();
+  });
+
+  it("explains the failure in plain words, with the link to choose repositories, a retry, and the personal token as the way out", async () => {
+    net.reply("GET", INSTALLATIONS, { installations: [installation("selected")] });
+    const properties = props({ connection: unreachable(), onRetrySync: vi.fn() });
+    await open(language, properties);
+    const alert = screen.getByRole("alert");
+    expect(within(alert).getByText(text.title)).toBeInTheDocument();
+    expect(within(alert).getByText(text.detail)).toBeInTheDocument();
+    const link = within(alert).getByRole("link", { name: new RegExp(text.choose) });
+    expect(link).toHaveAttribute("href", expect.stringMatching(/^https:\/\/github\.com\//));
+    expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+    fireEvent.click(within(alert).getByRole("button", { name: text.retry }));
+    expect(properties.onRetrySync).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(text.pat)).toBeInTheDocument();
+    expect(screen.queryByText(text.automatic)).toBeNull();
+  });
+
+  it("disables the retry while a sync is running", async () => {
+    net.reply("GET", INSTALLATIONS, { installations: [] });
+    await open(language, props({ connection: unreachable(), onRetrySync: vi.fn(), busy: true }));
+    expect(within(screen.getByRole("alert")).getByRole("button")).toBeDisabled();
+  });
+});
+
+describe.each(["en", "it"] as const)("the GitHub card offers to move a book to the connection, in %s", (language) => {
+  const text = language === "en"
+    ? { offer: "This book can use the GitHub connection (it reaches the repository).", button: /^Use the GitHub connection for /, now: (name: string) => `${name} now uses the GitHub connection.`, refused: /did not let the connection read me\/one \(error 404\), so nothing was changed/, unreachable: /Could not reach GitHub to check me\/one, so nothing was changed/, readOnly: /can read me\/one but cannot write to it, so nothing was changed and the book keeps its own token/, saveFailed: "The change could not be saved, so nothing was changed.", removeOffer: /No book needs the default token any more/, remove: "Remove the default token", title: "Remove the default token?", cancel: "Cancel", removed: "The default token was removed." }
+    : { offer: "Questo libro può usare la connessione GitHub (raggiunge il repository).", button: /^Usa la connessione GitHub per /, now: (name: string) => `${name} ora usa la connessione GitHub.`, refused: /non ha lasciato leggere me\/one alla connessione \(errore 404\), quindi non è cambiato nulla/, unreachable: /Non sono riuscito a raggiungere GitHub per controllare me\/one, quindi non è cambiato nulla/, readOnly: /può leggere me\/one ma non scrivere, quindi non è cambiato nulla e il libro tiene il suo token/, saveFailed: "Non è stato possibile salvare la modifica, quindi non è cambiato nulla.", removeOffer: /Nessun libro ha più bisogno del token predefinito/, remove: "Rimuovi il token predefinito", title: "Rimuovere il token predefinito?", cancel: "Annulla", removed: "Il token predefinito è stato rimosso." };
+  const REPO = "https://api.github.com/repos/me/one";
+  const connected = () => app({ accountSyncEnabled: true, replica: { enabled: true, status: "idle" } });
+  const books = () => useSettingsStore.getState().settings.books;
+  const withDefault = { defaultGitHubToken: "ghp_default" };
+
+  beforeEach(() => setConnectedGitHubToken("ghu_app", "app"));
+
+  async function openWithOffer(list: BookEntry[] = [book()], settings: Record<string, unknown> = withDefault) {
+    net.reply("GET", INSTALLATIONS, { installations: [installation("all")] });
+    net.reply("GET", REPO, { full_name: "me/one", permissions: { admin: false, push: true, pull: true } });
+    await open(language, props({ connection: connected() }), list, settings);
+    await screen.findByText(text.offer);
+  }
+
+  it("offers the move to a book on the default token, and changes nothing until it is asked", async () => {
+    await openWithOffer();
+    expect(screen.getByText(`One: ${language === "en" ? "the default token" : "il token predefinito"}`)).toBeInTheDocument();
+    expect(books()[0]).toMatchObject({ tokenIndex: null });
+    expect(books()[0].useGitHubConnection).toBeUndefined();
+    expect(net.callsTo("GET", REPO)).toHaveLength(0);
+    expect(env.save).not.toHaveBeenCalled();
+  });
+
+  it("checks with a real call that the connection reads the repository, then removes the book's own token and says so", async () => {
+    await openWithOffer([book({ bookToken: "ghp_own", bookTokenLabel: "one PAT" })]);
+    fireEvent.click(screen.getByRole("button", { name: text.button }));
+    await screen.findByText(text.now("One"));
+    expect(net.callsTo("GET", REPO)).toHaveLength(1);
+    expect(net.callsTo("GET", REPO)[0].headers.authorization).toBe("Bearer ghu_app");
+    expect(books()[0]).toMatchObject({ tokenIndex: null, useGitHubConnection: true });
+    expect(books()[0].bookToken).toBeUndefined();
+    expect(books()[0].bookTokenLabel).toBeUndefined();
+    expect(env.save).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(text.offer)).toBeNull();
+    expect(screen.getByText(`One: ${language === "en" ? "your GitHub connection (the app)" : "la tua connessione GitHub (l'app)"}`)).toBeInTheDocument();
+  });
+
+  it("keeps the book's own token when GitHub refuses the read", async () => {
+    await openWithOffer([book({ bookToken: "ghp_own" })]);
+    net.reply("GET", REPO, { message: "Not Found" }, 404);
+    fireEvent.click(screen.getByRole("button", { name: text.button }));
+    expect(await screen.findByText(text.refused)).toBeInTheDocument();
+    expect(books()[0]).toMatchObject({ bookToken: "ghp_own" });
+    expect(books()[0].useGitHubConnection).toBeUndefined();
+    expect(env.save).not.toHaveBeenCalled();
+    expect(screen.getByText(text.offer)).toBeInTheDocument();
+  });
+
+  it("keeps the book's own token when the connection reads the repository but cannot write to it, and offers nothing else", async () => {
+    await openWithOffer([book({ bookToken: "ghp_own" })]);
+    for (const permissions of [{ admin: false, push: false, pull: true }, { pull: true }, undefined]) {
+      net.reply("GET", REPO, { full_name: "me/one", ...(permissions ? { permissions } : {}) });
+      fireEvent.click(screen.getByRole("button", { name: text.button }));
+      expect(await screen.findByText(text.readOnly)).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: text.button })).toBeEnabled());
+      expect(books()[0]).toMatchObject({ bookToken: "ghp_own" });
+      expect(books()[0].useGitHubConnection).toBeUndefined();
+    }
+    expect(env.save).not.toHaveBeenCalled();
+    expect(screen.queryByText(text.removeOffer)).toBeNull();
+  });
+
+  it("keeps the book's own token when GitHub cannot be reached", async () => {
+    net.reply("GET", INSTALLATIONS, { installations: [installation("all")] });
+    await open(language, props({ connection: connected() }), [book({ bookToken: "ghp_own" })], withDefault);
+    await screen.findByText(text.offer);
+    fireEvent.click(screen.getByRole("button", { name: text.button }));
+    expect(await screen.findByText(text.unreachable)).toBeInTheDocument();
+    expect(books()[0]).toMatchObject({ bookToken: "ghp_own" });
+    expect(env.save).not.toHaveBeenCalled();
+  });
+
+  it("puts the book back as it was when the change cannot be saved", async () => {
+    await openWithOffer([book({ bookToken: "ghp_own" })]);
+    env.save.mockRejectedValueOnce(new Error("offline"));
+    fireEvent.click(screen.getByRole("button", { name: text.button }));
+    expect(await screen.findByText(text.saveFailed)).toBeInTheDocument();
+    expect(books()[0]).toMatchObject({ bookToken: "ghp_own" });
+    expect(books()[0].useGitHubConnection).toBeUndefined();
+  });
+
+  it("makes no offer for a repository the app does not reach", async () => {
+    net.reply("GET", INSTALLATIONS, { installations: [installation("selected")] });
+    net.reply("GET", "https://api.github.com/user/installations/1/repositories?per_page=100&page=1", { repositories: [{ full_name: "me/other" }] });
+    await open(language, props({ connection: connected() }), [book()], withDefault);
+    await screen.findByText(/Installed on 1 repository of me|Installata su 1 repository di me/);
+    expect(screen.queryByText(text.offer)).toBeNull();
+  });
+
+  it("suggests removing the default token only when no book needs it, and asks before deleting it", async () => {
+    await openWithOffer();
+    expect(screen.queryByText(text.removeOffer)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: text.button }));
+    await screen.findByText(text.now("One"));
+    expect(screen.getByText(text.removeOffer)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: text.remove }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(text.title)).toBeInTheDocument();
+    expect(useSettingsStore.getState().settings.defaultGitHubToken).toBe("ghp_default");
+    fireEvent.click(within(dialog).getByRole("button", { name: text.cancel }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(useSettingsStore.getState().settings.defaultGitHubToken).toBe("ghp_default");
+
+    fireEvent.click(screen.getByRole("button", { name: text.remove }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: text.remove }));
+    expect(await screen.findByText(text.removed)).toBeInTheDocument();
+    expect(useSettingsStore.getState().settings.defaultGitHubToken).toBe("");
+    expect(screen.queryByText(text.removeOffer)).toBeNull();
+  });
+
+  it("does not suggest removing the default token while a book still falls back to it", async () => {
+    net.reply("GET", INSTALLATIONS, { installations: [installation("all")] });
+    await open(language, props({ connection: connected() }), [book({ useGitHubConnection: true }), book({ id: "b2", repo: "two", name: "Two" })], withDefault);
+    await waitFor(() => expect(net.callsTo("GET", INSTALLATIONS)).toHaveLength(1));
+    await screen.findAllByText(/me\/(one|two)|reaches|raggiunge/);
+    expect(screen.queryByText(text.removeOffer)).toBeNull();
+  });
+});

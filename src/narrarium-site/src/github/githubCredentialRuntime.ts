@@ -39,13 +39,15 @@ export function resolveGitHubCredentialValue(input: {
   extraTokens: Array<{ token: string }>;
   defaultToken: string;
   preferConnection?: boolean;
+  /** This book was moved to the connection (it has no token of its own and does not follow the default token). */
+  useConnection?: boolean;
 }): ResolvedGitHubCredential | null {
   if (input.bookToken?.trim()) return { token: input.bookToken.trim(), source: "book-pat" };
   if (input.tokenIndex != null) {
     const token = input.extraTokens[input.tokenIndex]?.token.trim();
     if (token) return { token, source: "named-pat" };
   }
-  if (input.preferConnection && connectedGitHubToken) return { token: connectedGitHubToken, source: connectedGitHubSource };
+  if ((input.preferConnection || input.useConnection) && connectedGitHubToken) return { token: connectedGitHubToken, source: connectedGitHubSource };
   if (input.defaultToken.trim()) return { token: input.defaultToken.trim(), source: "default-pat" };
   if (!connectedGitHubToken) return null;
   return { token: connectedGitHubToken, source: connectedGitHubSource };

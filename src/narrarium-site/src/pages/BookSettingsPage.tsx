@@ -179,6 +179,8 @@ export function BookSettingsPage() {
       tokenIndex: mode === "default" || usingCustom ? null : Number(mode),
       bookToken: usingCustom ? customToken.trim() || undefined : undefined,
       bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${currentBook.repo} PAT` : undefined,
+      // Picking another token for the book ends the move to the GitHub connection; saving the page without touching the token keeps it.
+      useGitHubConnection: mode === initialMode(currentBook) ? currentBook.useGitHubConnection : undefined,
       activeBranch: activeBranch === "__auto__" ? undefined : activeBranch,
       exportSettings: {
         ...currentBook.exportSettings,

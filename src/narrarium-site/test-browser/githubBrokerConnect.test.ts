@@ -61,7 +61,7 @@ describe("finishing «Connect with GitHub»", () => {
     expect(connection()).toMatchObject({
       backend: "github", method: "github-app", credentialKind: "app", token: SECRETS.access, refreshToken: SECRETS.refresh, rememberMe: true,
       identity: { provider: "github", providerAccountId: "4242", username: "writer", displayName: "The Writer" },
-      accountSyncEnabled: false,
+      accountSyncEnabled: true, replica: { enabled: true },
     });
     expect(connection()!.accessTokenExpiry).toBeGreaterThan(Date.now() + 7 * 3_600_000);
     expect(connection()!.accessTokenExpiry).toBeLessThan(Date.now() + 8 * 3_600_000);
@@ -98,6 +98,21 @@ describe("finishing «Connect with GitHub»", () => {
     await completeGitHubBrokerConnection({ code: SECRETS.code, state: await authorize() });
     expect(connection()).toMatchObject({ credentialKind: "app", accountSyncEnabled: true, replica: { enabled: true, status: "dirty", lastSuccessfulSyncAtUtc: "2026-11-20T10:00:00.000Z" } });
     expect(connection()!.replica.errorKind).toBeUndefined();
+  });
+
+  it("keeps the sync switched off for the same account that had it off, and starts afresh for another account", async () => {
+    const PAT = { method: "github-pat" as const, credentialKind: "pat" as const, token: "ghp_old", rememberMe: true, accountSyncEnabled: false, repositoryOwner: "writer" };
+    await useConnectionStore.getState().connectGitHub({ ...PAT, identity: { provider: "github", providerAccountId: "4242", displayName: "W", username: "writer" }, replica: { enabled: false, status: "disabled" } });
+    net.reply("POST", TOKEN_URL, ANSWER);
+    net.reply("GET", USER_URL, USER);
+    await completeGitHubBrokerConnection({ code: SECRETS.code, state: await authorize() });
+    expect(connection()).toMatchObject({ credentialKind: "app", accountSyncEnabled: false, replica: { enabled: false, status: "disabled" } });
+
+    await useConnectionStore.getState().connectGitHub({ ...PAT, identity: { provider: "github", providerAccountId: "999", displayName: "Other", username: "other" }, replica: { enabled: false, status: "disabled" } });
+    net.reply("POST", TOKEN_URL, ANSWER);
+    net.reply("GET", USER_URL, USER);
+    await completeGitHubBrokerConnection({ code: SECRETS.code, state: await authorize() });
+    expect(connection()).toMatchObject({ identity: { providerAccountId: "4242" }, accountSyncEnabled: true, replica: { enabled: true } });
   });
 
   describe("saves nothing, and leaves the existing connection as it was, when any step fails", () => {

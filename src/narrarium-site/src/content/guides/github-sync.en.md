@@ -27,6 +27,12 @@ In **Account & Sync**, the GitHub card offers both, and you can use either or bo
 
 Your books keep working as they are: a token you saved for a book, a named token or the default token always win over the connection. The card shows, for each book, which token it uses (its own token, a named one, the default one, or your GitHub connection), and one switch, **Prefer the GitHub connection over the default token**, puts the connection ahead of the default token for the books that have no token of their own. The same line is in each book's settings.
 
+With the app connected, the same list also offers a book that uses its own token, a named token or the default token the button **Use the GitHub connection**, when the app is installed on that book's repository. Narrarium first checks with the connection that it can read and write the repository, and only if that works does it let go of the book's own token; otherwise nothing changes. Nothing is switched by itself, and a book run by your personal server is not offered the move, because the server cannot renew the app's token. When no book needs the default token any more, the card offers **Remove the default token**, after a confirmation.
+
+## Your settings in a private repository
+
+When you connect GitHub, with the app or with a token, your account settings sync by themselves to **narrarium.settings**, a private repository of your GitHub account that Narrarium creates the first time and keeps up to date. If you switched account sync off on the card, it stays off. With the app, GitHub may refuse to create the repository, or the app may not be installed on one that already exists: the card then says so, with **Choose repositories on GitHub** and a **Try again** button, and nothing is retried on its own. You can also create `narrarium.settings` yourself as a private repository, or connect with a token instead. When the copies differ (this device, GitHub, Google Drive, OneDrive), Narrarium shows when each was last changed, selects the newest and waits for you to confirm with **Use the newest copy**: nothing is overwritten before that, and the other copies stay a choice away.
+
 ## Permissions per token type
 
 Each thing Narrarium does on GitHub needs a permission of the token. If a permission is missing, GitHub refuses that one action and Narrarium tells you which one; the rest keeps working.

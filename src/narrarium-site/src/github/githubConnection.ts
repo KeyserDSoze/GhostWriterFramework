@@ -1,5 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import { useConnectionStore } from "@/account/connectionStore";
+import { accountSyncForNewGitHubConnection } from "@/account/githubSyncChoice";
 import type { GitHubCredentialKind } from "@/account/types";
 
 export async function connectGitHubCredential(input: { token: string; kind: GitHubCredentialKind; rememberMe: boolean; accountSyncEnabled?: boolean }): Promise<void> {
@@ -22,7 +23,7 @@ export async function connectGitHubCredential(input: { token: string; kind: GitH
     },
     token,
     rememberMe: input.rememberMe,
-    accountSyncEnabled: input.accountSyncEnabled ?? true,
+    accountSyncEnabled: input.accountSyncEnabled ?? accountSyncForNewGitHubConnection(useConnectionStore.getState().configuration.github, String(user.id)),
     repositoryOwner: user.login,
   });
 }

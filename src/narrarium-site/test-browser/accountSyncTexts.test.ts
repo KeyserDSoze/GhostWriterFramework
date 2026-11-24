@@ -6,7 +6,7 @@ import type { AccountSyncErrorKind, LocalReplicaState } from "@/account/types";
 
 // Adding a member to one of these unions without listing it here is a compile error, so no state goes without a text.
 const ERROR_KINDS: Record<AccountSyncErrorKind, true> = {
-  offline: true, "credential-missing": true, "credential-invalid": true, "credential-expired": true, "permission-denied": true, "remote-not-found": true, "remote-deleted": true, "remote-public": true,
+  offline: true, "credential-missing": true, "credential-invalid": true, "credential-expired": true, "permission-denied": true, "remote-not-found": true, "remote-deleted": true, "remote-public": true, "repository-unreachable": true,
   "rate-limited": true, "cache-revalidation": true, network: true, "schema-incompatible": true, "remote-corrupt": true, "hash-mismatch": true, unknown: true,
 };
 const REPLICA_STATUSES: Record<LocalReplicaState["status"], true> = { disabled: true, idle: true, dirty: true, syncing: true, "needs-auth": true, offline: true, behind: true, ahead: true, diverged: true, error: true };

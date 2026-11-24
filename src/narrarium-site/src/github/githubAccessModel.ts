@@ -19,6 +19,10 @@ export interface BookCredentialLine {
   serverWithAppToken: boolean;
   /** For a book that uses the app token: whether the app reaches its repository. `null` until the installations are known. */
   reach: RepositoryReach | null;
+  /** Whether the app reaches the book's repository, whatever token the book uses now. `null` until the installations are known (or without an app connection). */
+  appReach: RepositoryReach | null;
+  /** The book's autopilot runs on the personal server, which cannot renew the app's 8-hour token. */
+  runsOnServer: boolean;
   /** The repository belongs to the account of the connection (not to an organization): who has to install the app. */
   ownAccount: boolean;
 }
@@ -34,6 +38,8 @@ export function bookCredentialLines(books: readonly BookEntry[], settings: AppSe
       repo: book.repo,
       source,
       serverWithAppToken: book.autopilotHost === "server" && source === "app",
+      appReach: installations ? repositoryReach(installations, book.owner, book.repo) : null,
+      runsOnServer: book.autopilotHost === "server",
       reach: source === "app" && installations ? repositoryReach(installations, book.owner, book.repo) : null,
       ownAccount: Boolean(login) && book.owner.toLowerCase() === login!.toLowerCase(),
     };
@@ -43,4 +49,31 @@ export function bookCredentialLines(books: readonly BookEntry[], settings: AppSe
 /** True when the effective credential of the book is the app's access token (what a personal server cannot renew). */
 export function bookUsesAppToken(book: BookEntry, settings: AppSettings): boolean {
   return resolveGitHubCredential(book, settings)?.source === "app";
+}
+
+const REACHED: readonly RepositoryReach[] = ["all", "selected"];
+
+/**
+ * Whether to offer a book «Use the GitHub connection»: the app reaches its repository (the installation covers it), the book uses a token of its own, a
+ * named one or the default one, and its autopilot does not run on the personal server (which cannot renew the app's token). It is only an offer: nothing
+ * is switched until the owner asks, and not before the connection has been seen reading the repository.
+ */
+export function canOfferConnection(line: BookCredentialLine): boolean {
+  return line.appReach !== null && REACHED.includes(line.appReach) && (line.source === "book-pat" || line.source === "named-pat" || line.source === "default-pat") && !line.runsOnServer;
+}
+
+/** The book as it is once it uses the GitHub connection: no token of its own, no named token, and not the default token. The named token stays in the list. */
+export function bookUsingConnection(book: BookEntry): BookEntry {
+  const { bookToken: _bookToken, bookTokenLabel: _bookTokenLabel, ...rest } = book;
+  return { ...rest, tokenIndex: null, useGitHubConnection: true };
+}
+
+/**
+ * Whether to suggest removing the default token: there is one, at least one book already uses the app, and no book still falls back to the default token.
+ * Every book that uses the app must be one the app reaches, or the connection is not yet proven to serve them all.
+ */
+export function defaultTokenRemovable(lines: readonly BookCredentialLine[], settings: Pick<AppSettings, "defaultGitHubToken">): boolean {
+  if (!settings.defaultGitHubToken.trim()) return false;
+  const onApp = lines.filter((line) => line.source === "app");
+  return onApp.length > 0 && onApp.every((line) => line.appReach !== null && REACHED.includes(line.appReach)) && !lines.some((line) => line.source === "default-pat");
 }

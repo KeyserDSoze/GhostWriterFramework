@@ -5,7 +5,6 @@ import { compareAccountManifests } from "@/account/vectorClock";
 import { accountSyncEnvelope } from "@/account/serialization";
 import type { AccountRemoteSnapshot, AccountSyncBackend, AccountSyncBackendKind, LocalAccountSnapshot, ReplicaComparison } from "@/account/types";
 import { DriveAccountSyncBackend } from "@/account/sync/driveBackend";
-import { GitHubAccountSyncBackend } from "@/account/sync/githubBackend";
 import { useSettingsStore, LOCAL_SETTINGS_SOURCE_SCHEMA_VERSION } from "@/store/settingsStore";
 import { useCostsStore } from "@/costs/costsStore";
 import { useClipboardStore } from "@/clipboard/clipboardStore";
@@ -73,6 +72,16 @@ function activeBackendKinds(): AccountSyncBackendKind[] {
   ];
 }
 
+/**
+ * What the automatic sync (a change, going back online, opening the app) runs. A replica whose last failure is one the owner has to fix on GitHub is left
+ * out until the owner asks again («Sync now», «Try again», signing in again): asking GitHub the same refused question on every change would only repeat it.
+ */
+function automaticBackendKinds(): AccountSyncBackendKind[] {
+  const github = useConnectionStore.getState().configuration.github?.replica;
+  const blocked = github?.status === "error" && github.errorKind === "repository-unreachable";
+  return activeBackendKinds().filter((kind) => !(blocked && kind === "github"));
+}
+
 async function createBackend(kind: AccountSyncBackendKind): Promise<AccountSyncBackend> {
   const configuration = useConnectionStore.getState().configuration;
   const token = kind === "onedrive" ? await acquireMicrosoftConnectionToken() : kind === "google-drive" ? await acquireGoogleConnectionToken() : await acquireGitHubConnectionToken();
@@ -89,7 +98,9 @@ async function createBackend(kind: AccountSyncBackendKind): Promise<AccountSyncB
   const connection = configuration.github;
   const owner = connection?.identity?.username ?? connection?.repositoryOwner;
   if (!connection || !owner) throw new AccountCredentialError(kind, "missing");
-  return new GitHubAccountSyncBackend(token, owner);
+  // GitHub's account repository code (and Octokit with it) loads with the first GitHub sync, not with the app shell.
+  const { GitHubAccountSyncBackend } = await import("@/account/sync/githubBackend");
+  return new GitHubAccountSyncBackend(token, owner, connection.credentialKind);
 }
 
 async function localSnapshotWithHash(): Promise<LocalAccountSnapshot> {
@@ -152,6 +163,7 @@ export function classifyAccountSyncError(error: unknown) {
   const statusMatch = message.match(/(?:^|[\s:(])([1-5]\d{2})(?:[\s).]|$)/);
   const status = typeof value.status === "number" ? value.status : statusMatch ? Number(statusMatch[1]) : undefined;
   if (value.code === "GITHUB_ACCOUNT_REPOSITORY_PUBLIC") return "remote-public" as const;
+  if (value.code === "GITHUB_ACCOUNT_REPOSITORY_UNREACHABLE") return "repository-unreachable" as const;
   if (status === 401 || /expired/.test(message)) return "credential-expired" as const;
   if (status === 403 || /permission|forbidden/.test(message)) return "permission-denied" as const;
   if (status === 404) return "remote-not-found" as const;
@@ -170,8 +182,8 @@ interface AccountSyncResult {
   failures: Map<AccountSyncBackendKind, unknown>;
 }
 
-export async function syncAllAccountReplicas(): Promise<{ synced: AccountSyncBackendKind[]; reconciliation: boolean }> {
-  const { synced, reconciliation } = await withAccountSyncLock(() => syncAccountReplicas(activeBackendKinds()));
+export async function syncAllAccountReplicas(options: { automatic?: boolean } = {}): Promise<{ synced: AccountSyncBackendKind[]; reconciliation: boolean }> {
+  const { synced, reconciliation } = await withAccountSyncLock(() => syncAccountReplicas(options.automatic ? automaticBackendKinds() : activeBackendKinds()));
   return { synced, reconciliation };
 }
 
@@ -326,7 +338,7 @@ export function scheduleAccountSync(delayMs = 2_000): void {
   cancelScheduledAccountSync();
   syncTimer = setTimeout(() => {
     syncTimer = null;
-    if (navigator.onLine !== false) void syncAllAccountReplicas().catch(() => undefined);
+    if (navigator.onLine !== false) void syncAllAccountReplicas({ automatic: true }).catch(() => undefined);
   }, delayMs);
 }
 

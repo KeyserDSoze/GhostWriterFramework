@@ -7,7 +7,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { LocalTime } from "@/components/ui/local-time";
 import { Switch } from "@/components/ui/switch";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftMsalInstance, microsoftSilentRequest, setMicrosoftRememberMe } from "@/config/msal";
 import { useConnectionStore } from "@/account/connectionStore";
@@ -16,9 +15,10 @@ import { ConnectFlowError, describeConnectError, describeSignInFailure } from "@
 import { credentialMode } from "@/account/credentialMode";
 import { beginMicrosoftSignIn, type MicrosoftSignInSession } from "@/account/microsoftSignIn";
 import { useBrokerAvailability } from "@/hooks/useBrokerAvailability";
-import { deleteRemoteAccountData, resolveAccountReconciliation, syncAllAccountReplicas, syncOneAccountReplica, useAccountSyncStore } from "@/account/accountSync";
+import { deleteRemoteAccountData, syncAllAccountReplicas, syncOneAccountReplica, useAccountSyncStore } from "@/account/accountSync";
 import "@/i18n/githubApp";
 import { connectGitHubCredential } from "@/github/githubConnection";
+import { ReconciliationDialog } from "@/components/account/ReconciliationDialog";
 import { loadLocalAccountSnapshot } from "@/account/accountLocalStore";
 import type { AccountSyncBackendKind, LocalGoogleConnection, LocalMicrosoftConnection } from "@/account/types";
 import { isFailureStatus } from "@/account/syncStatus";
@@ -214,8 +214,13 @@ export function AccountSyncPage() {
   async function connectPat() {
     setBusy("github");
     setError(null);
-    try { await connectGitHubCredential({ token: pat, kind: "pat", rememberMe, accountSyncEnabled: true }); setPat(""); }
-    catch (cause) { setError(String(cause)); }
+    try { await connectGitHubCredential({ token: pat, kind: "pat", rememberMe }); setPat(""); }
+    catch (cause) { setError(String(cause)); setBusy(null); return; }
+    // The first sync follows the connection, as with the other services; a failure is shown and stays on the card.
+    try {
+      if (useConnectionStore.getState().configuration.github?.replica.enabled) await syncOneAccountReplica("github");
+      await refreshLocalSummary();
+    } catch (cause) { setError(describeSyncFailure(cause, t)); }
     finally { setBusy(null); }
   }
 
@@ -345,7 +350,7 @@ export function AccountSyncPage() {
         </ConnectionCard>
         <ConnectionCard title="GitHub" icon={<Github className="h-5 w-5" />} connected={Boolean(configuration.github)} enabled={configuration.github?.replica.enabled} status={configuration.github?.replica.status} errorKind={configuration.github?.replica.errorKind} errorMessage={configuration.github?.replica.lastErrorMessage} lastSync={configuration.github?.replica.lastSuccessfulSyncAtUtc} detail={configuration.github ? `${configuration.github.identity?.username ?? "GitHub"} · ${configuration.github.credentialKind === "app" ? "GitHub App" : "PAT"}` : undefined} busy={syncing || busy === "github"} hideConnect onToggle={(enabled) => useConnectionStore.getState().setEnabled("github", enabled)} onConnect={() => void connectGitHubApp()} onReconnect={() => (configuration.github?.credentialKind === "app" ? void connectGitHubApp() : document.getElementById("github-pat")?.focus())} onSync={() => runSync("github")} onDisconnect={() => disconnect("github")} onDelete={() => removeRemote("github")}>
           <Suspense fallback={<p className="flex items-center gap-2 border-t pt-3 text-xs text-muted-foreground"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" />{t("accountSync.loading")}</p>}>
-            <GitHubAccessSection connection={configuration.github} rememberMe={githubRemember} onRememberChange={setGithubRemember} onConnect={() => void connectGitHubApp()} starting={githubStarting} startError={githubStartError} pat={pat} onPatChange={setPat} onConnectPat={() => void connectPat()} busy={busy !== null} />
+            <GitHubAccessSection connection={configuration.github} rememberMe={githubRemember} onRememberChange={setGithubRemember} onConnect={() => void connectGitHubApp()} starting={githubStarting} startError={githubStartError} pat={pat} onPatChange={setPat} onConnectPat={() => void connectPat()} onRetrySync={() => void runSync("github")} busy={busy !== null} />
           </Suspense>
         </ConnectionCard>
       </div>
@@ -354,7 +359,7 @@ export function AccountSyncPage() {
 
       <Card className="border-destructive/40"><CardHeader><CardTitle>{italian ? "Zona pericolosa" : "Danger zone"}</CardTitle><CardDescription>{italian ? "Logout e disconnessione non eliminano i dati. Questa è l'unica azione che rimuove l'intero workspace locale." : "Logout and disconnect keep local data. This is the explicit action that removes the entire local workspace."}</CardDescription></CardHeader><CardContent><Button variant="destructive" onClick={() => void deleteLocalData()}>{italian ? "Elimina tutti i dati locali" : "Delete all local data"}</Button></CardContent></Card>
 
-      <ReconciliationDialog italian={italian} />
+      <ReconciliationDialog />
     </div>
   );
 }
@@ -396,12 +401,4 @@ function ConnectionCard(props: { title: string; icon: React.ReactNode; connected
   const state = t(`accountSync.state.${props.status ?? "idle"}`, { defaultValue: props.status ?? "idle", service: props.title });
   const failed = Boolean(props.errorKind && isFailureStatus(props.status));
   return <Card><CardHeader><CardTitle className="flex items-center gap-2">{props.icon}{props.title}</CardTitle><CardDescription>{props.detail ?? (props.connected ? t("accountSync.card.status", { state }) : t("accountSync.card.notConnected"))}</CardDescription></CardHeader><CardContent className="space-y-3">{props.lastSync && <p className="text-xs text-muted-foreground">{t("accountSync.card.lastSync")}: <LocalTime value={props.lastSync} /></p>}{failed && <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs"><p className="font-medium">{t("accountSync.card.lastError")}</p><p>{t(`accountSync.error.${props.errorKind}`, { defaultValue: props.errorKind, service: props.title })}</p>{props.errorMessage && <p className="mt-1 break-words font-mono text-xs text-muted-foreground">{props.errorMessage}</p>}</div>}{props.connected && props.credentials}{props.connected ? <><div className="flex items-center justify-between rounded-md border p-2"><Label htmlFor={toggleId}>{t("accountSync.card.dataSync")}</Label><Switch id={toggleId} checked={Boolean(props.enabled)} onCheckedChange={(enabled) => void props.onToggle?.(enabled)} /></div><div className="flex flex-wrap gap-2"><Button size="sm" onClick={() => void props.onSync()} disabled={props.busy || !props.enabled}><RefreshCw className="mr-1 h-4 w-4" />{t("accountSync.card.sync")}</Button>{props.status === "needs-auth" && <Button size="sm" variant="outline" onClick={() => void (props.onReconnect ?? props.onConnect)()} disabled={props.connectDisabled || props.busy}>{t("accountSync.card.reconnectService", { service: props.title })}</Button>}<Button size="sm" variant="outline" onClick={() => void props.onDisconnect()}><Unplug className="mr-1 h-4 w-4" />{t("accountSync.card.disconnect")}</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => void props.onDelete()}><Trash2 className="mr-1 h-4 w-4" />{t("accountSync.card.deleteRemote")}</Button></div></> : props.hideConnect ? null : <Button onClick={() => void props.onConnect()} disabled={props.busy || props.connectDisabled}>{props.busy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}{t("accountSync.card.connect")}</Button>}{props.children}</CardContent></Card>;
-}
-
-function ReconciliationDialog({ italian }: { italian: boolean }) {
-  const { t } = useTranslation();
-  const reconciliation = useAccountSyncStore((state) => state.reconciliation);
-  const setReconciliation = useAccountSyncStore((state) => state.setReconciliation);
-  const [resolving, setResolving] = useState(false);
-  return <Dialog open={Boolean(reconciliation)} onOpenChange={(open) => { if (!open && !resolving) setReconciliation(null); }}><DialogContent><DialogHeader><DialogTitle>{italian ? "Copie account differenti" : "Different account copies found"}</DialogTitle></DialogHeader><p className="text-sm text-muted-foreground">{italian ? "Nessuna copia verrà sovrascritta finché non scegli quella autorevole." : "No copy will be overwritten until you choose the authoritative version."}</p><div className="space-y-2">{reconciliation?.candidates.map((candidate) => <button key={candidate.id} type="button" className="flex w-full items-center justify-between rounded-lg border p-3 text-left hover:bg-accent" disabled={resolving} onClick={() => { setResolving(true); void resolveAccountReconciliation(candidate.id).finally(() => setResolving(false)); }}><span><strong>{candidate.label}</strong><br /><span className="text-xs text-muted-foreground"><LocalTime value={candidate.snapshot.manifest.modifiedAtUtc} /> · {candidate.snapshot.manifest.modifiedByDeviceId} · {t("accountSync.local.books", { count: candidate.snapshot.data.settings.books.length })} · {t("accountSync.local.chats", { count: candidate.snapshot.data.chats.length })}</span></span><span className="text-xs font-semibold uppercase">{candidate.comparison}</span></button>)}</div><DialogFooter><Button variant="outline" onClick={() => setReconciliation(null)} disabled={resolving}>{t("common.cancel")}</Button></DialogFooter></DialogContent></Dialog>;
 }

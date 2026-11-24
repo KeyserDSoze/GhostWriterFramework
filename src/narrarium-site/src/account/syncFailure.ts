@@ -23,5 +23,6 @@ export function describeSyncFailure(error: unknown, t: TFunction): string {
   if (error instanceof AccountSyncFailure && (error.kind === "credential-expired" || error.kind === "credential-missing")) {
     return t("accountSync.error.credential-expired", { service: accountServiceName(error.backend) });
   }
+  if (error instanceof AccountSyncFailure && error.kind === "repository-unreachable") return t("accountSync.error.repository-unreachable");
   return String(error);
 }

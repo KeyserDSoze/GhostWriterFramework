@@ -2772,6 +2772,7 @@ const it = {
       "remote-not-found": "I dati sincronizzati non sono stati trovati sul servizio.",
       "remote-deleted": "I dati sincronizzati sono stati eliminati dal servizio.",
       "remote-public": "Il repository GitHub è pubblico. Rendilo privato prima di sincronizzare.",
+      "repository-unreachable": "L'app GitHub di Narrarium non riesce a creare o raggiungere il repository narrarium.settings. La scheda GitHub in Account e sincronizzazione spiega cosa fare.",
       "rate-limited": "Il servizio sta limitando le richieste. Riprova tra qualche minuto.",
       "cache-revalidation": "Il servizio ha risposto con una copia non aggiornata. Riprova.",
       network: "La richiesta non ha raggiunto il servizio. Controlla la connessione e riprova.",

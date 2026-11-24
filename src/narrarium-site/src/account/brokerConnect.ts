@@ -8,6 +8,7 @@ import { bufferedAccessTokenExpiry } from "@/account/brokerAccessToken";
 import { ConnectFlowError } from "@/account/connectErrors";
 import { useConnectionStore } from "@/account/connectionStore";
 import { exchangeCode } from "@/account/credentialBroker";
+import { accountSyncForNewGitHubConnection } from "@/account/githubSyncChoice";
 import { microsoftIdentityFromClientInfo, type MicrosoftAuthorization } from "@/account/microsoftSignIn";
 import type { LocalReplicaState } from "@/account/types";
 import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
@@ -137,8 +138,8 @@ export async function completeGitHubBrokerConnection(options: GitHubBrokerConnec
     accessTokenExpiry: bufferedAccessTokenExpiry(tokens.expiresIn),
     refreshToken: tokens.refreshToken,
     rememberMe: authorization.rememberMe,
-    // A connection that already syncs the account keeps doing so; a new one starts with that off: the app may not reach narrarium.settings yet.
-    accountSyncEnabled: sameAccount ? existing.accountSyncEnabled : false,
+    // The account syncs by itself, as with a token; the owner's earlier choice for this same account stands. If the app cannot reach narrarium.settings the card says so.
+    accountSyncEnabled: accountSyncForNewGitHubConnection(existing, accountId),
     repositoryOwner: user.login,
     ...(sameAccount && existing ? { replica: upgradedReplica(existing.replica) } : {}),
   });

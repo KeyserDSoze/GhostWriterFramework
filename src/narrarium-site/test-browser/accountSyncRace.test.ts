@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "fake-indexeddb/auto";
 import { closeAccountLocalStoreForTests, initializeAccountLocalStore, loadLocalAccountSnapshot, saveLocalAccountClipboard } from "@/account/accountLocalStore";
 import { useConnectionStore } from "@/account/connectionStore";
-import { classifyAccountSyncError, scheduleAccountSync, syncOneAccountReplica, useAccountSyncStore } from "@/account/accountSync";
-import { ACCOUNT_SYNC_SCHEMA_VERSION } from "@/account/types";
+import { classifyAccountSyncError, scheduleAccountSync, syncAllAccountReplicas, syncOneAccountReplica, useAccountSyncStore } from "@/account/accountSync";
+import { GitHubAccountRepositoryUnreachableError } from "@/account/sync/githubBackend";
+import { ACCOUNT_SYNC_SCHEMA_VERSION, type AccountRemoteSnapshot, type AccountSyncBackendKind } from "@/account/types";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { emptyCostsFile } from "@/costs/model";
 
@@ -14,6 +15,9 @@ const drives = vi.hoisted(() => ({
   microsoft: { pull: vi.fn(), push: vi.fn(), remove: vi.fn() },
 }));
 vi.mock("@/account/sync/githubBackend", () => ({
+  GitHubAccountRepositoryUnreachableError: class extends Error {
+    readonly code = "GITHUB_ACCOUNT_REPOSITORY_UNREACHABLE";
+  },
   GitHubAccountSyncBackend: class {
     kind = "github" as const;
     pull = github.pull;
@@ -125,5 +129,118 @@ describe("account synchronization races", () => {
 
   it("classifies an HTTP 304 reported in an untyped provider error", () => {
     expect(classifyAccountSyncError(new Error("OneDrive folder lookup: 304"))).toBe("cache-revalidation");
+  });
+  describe("with every account connected (GitHub, Google Drive and OneDrive)", () => {
+    async function connectAll() {
+      await useConnectionStore.getState().connectGoogle({ identity: { provider: "google", providerAccountId: "google-1", displayName: "G" }, accessToken: "google-token", accessTokenExpiry: Date.now() + 60_000, rememberMe: true });
+      await useConnectionStore.getState().connectMicrosoft({ identity: { provider: "microsoft", providerAccountId: "microsoft-1", displayName: "M" }, accessToken: "microsoft-token", homeAccountId: "microsoft-1", localAccountId: "local-1", rememberMe: true });
+    }
+    /** What a service holds when this device has changed the data since: an older version of the same account. */
+    async function olderCopy(backend: AccountSyncBackendKind): Promise<AccountRemoteSnapshot> {
+      const current = (await loadLocalAccountSnapshot())!;
+      return { backend, data: current.data, manifest: { ...current.manifest, snapshotId: "older", vectorClock: {}, contentHash: undefined }, revision: `rev-${backend}`, format: "current" };
+    }
+    const pulls = () => [github.pull, drives.google.pull, drives.microsoft.pull];
+    const pushes = () => [github.push, drives.google.push, drives.microsoft.push];
+    beforeEach(async () => {
+      await connectAll();
+      for (const push of pushes()) push.mockResolvedValue({ revision: "new" });
+    });
+
+    it("pushes a change to every active service", async () => {
+      github.pull.mockResolvedValue(await olderCopy("github"));
+      drives.google.pull.mockResolvedValue(await olderCopy("google-drive"));
+      drives.microsoft.pull.mockResolvedValue(await olderCopy("onedrive"));
+
+      const result = await syncAllAccountReplicas();
+
+      expect(result.synced.sort()).toEqual(["github", "google-drive", "onedrive"]);
+      for (const push of pushes()) expect(push).toHaveBeenCalledOnce();
+      expect(github.push.mock.calls[0][1]).toMatchObject({ snapshotId: "older", revision: "rev-github" });
+      for (const kind of ["google", "microsoft", "github"] as const) expect(useConnectionStore.getState().configuration[kind]?.replica).toMatchObject({ status: "idle", errorKind: undefined });
+    });
+
+    it("creates the copy on a service that has none, and updates the others", async () => {
+      github.pull.mockResolvedValue(null);
+      drives.google.pull.mockResolvedValue(await olderCopy("google-drive"));
+      drives.microsoft.pull.mockResolvedValue(null);
+
+      const result = await syncAllAccountReplicas();
+
+      expect(result.synced.sort()).toEqual(["github", "google-drive", "onedrive"]);
+      expect(github.push.mock.calls[0][1]).toEqual({ absent: true });
+      expect(drives.microsoft.push.mock.calls[0][1]).toEqual({ absent: true });
+      expect(drives.google.push.mock.calls[0][1]).toMatchObject({ snapshotId: "older" });
+    });
+
+    it("keeps syncing the other services when one of them fails to be written", async () => {
+      github.pull.mockResolvedValue(null);
+      drives.google.pull.mockResolvedValue(null);
+      drives.microsoft.pull.mockResolvedValue(null);
+      github.push.mockRejectedValue(Object.assign(new Error("GitHub is down"), { status: 500 }));
+
+      const result = await syncAllAccountReplicas();
+
+      expect(result.synced.sort()).toEqual(["google-drive", "onedrive"]);
+      expect(drives.google.push).toHaveBeenCalledOnce();
+      expect(drives.microsoft.push).toHaveBeenCalledOnce();
+      const { configuration } = useConnectionStore.getState();
+      expect(configuration.github?.replica).toMatchObject({ status: "error" });
+      expect(configuration.google?.replica).toMatchObject({ status: "idle", errorKind: undefined });
+      expect(configuration.microsoft?.replica).toMatchObject({ status: "idle", errorKind: undefined });
+    });
+
+    it("keeps syncing the other services when one of them cannot be read", async () => {
+      github.pull.mockRejectedValue(new TypeError("network unavailable"));
+      drives.google.pull.mockResolvedValue(await olderCopy("google-drive"));
+      drives.microsoft.pull.mockResolvedValue(null);
+
+      const result = await syncAllAccountReplicas();
+
+      expect(result.synced.sort()).toEqual(["google-drive", "onedrive"]);
+      expect(github.push).not.toHaveBeenCalled();
+      expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ status: "error", errorKind: "network" });
+    });
+
+    describe("when the GitHub app cannot create or reach narrarium.settings", () => {
+      const refused = () => new GitHubAccountRepositoryUnreachableError("create-refused");
+
+      it("is told apart from a permission error, and the other services are not held back", async () => {
+        expect(classifyAccountSyncError(refused())).toBe("repository-unreachable");
+        github.pull.mockResolvedValue(null);
+        drives.google.pull.mockResolvedValue(null);
+        drives.microsoft.pull.mockResolvedValue(null);
+        github.push.mockRejectedValue(refused());
+
+        const result = await syncAllAccountReplicas();
+
+        expect(result.synced.sort()).toEqual(["google-drive", "onedrive"]);
+        expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ status: "error", errorKind: "repository-unreachable" });
+        expect(useConnectionStore.getState().configuration.google?.replica.status).toBe("idle");
+      });
+
+      it("is not tried again by the automatic sync, but «Sync now» tries once more", async () => {
+        github.pull.mockRejectedValue(refused());
+        drives.google.pull.mockResolvedValue(null);
+        drives.microsoft.pull.mockResolvedValue(null);
+        await expect(syncOneAccountReplica("github")).rejects.toMatchObject({ kind: "repository-unreachable" });
+        expect(github.pull).toHaveBeenCalledTimes(1);
+
+        const { installAccountDirtyPropagation } = await import("@/account/connectionStore");
+        installAccountDirtyPropagation();
+        window.dispatchEvent(new CustomEvent("narrarium:account-local-changed"));
+        scheduleAccountSync(0);
+        await vi.waitFor(() => expect(drives.google.push).toHaveBeenCalled());
+        scheduleAccountSync(0);
+        await vi.waitFor(() => expect(drives.google.pull.mock.calls.length).toBeGreaterThanOrEqual(2));
+        expect(github.pull).toHaveBeenCalledTimes(1);
+        expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ status: "error", errorKind: "repository-unreachable" });
+
+        github.pull.mockResolvedValue(null);
+        await syncOneAccountReplica("github");
+        expect(github.pull).toHaveBeenCalledTimes(2);
+        expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ status: "idle", errorKind: undefined });
+      });
+    });
   });
 });

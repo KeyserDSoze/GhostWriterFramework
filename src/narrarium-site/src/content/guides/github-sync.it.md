@@ -27,6 +27,12 @@ In **Account e sincronizzazione**, la scheda GitHub li offre entrambi, e puoi us
 
 I tuoi libri continuano a funzionare come prima: un token salvato per un libro, un token con nome o quello predefinito vincono sempre sulla connessione. La scheda mostra, per ogni libro, quale token usa (il suo, uno con nome, quello predefinito o la tua connessione GitHub), e un interruttore, **Preferisci la connessione GitHub al token predefinito**, mette la connessione davanti al token predefinito per i libri che non hanno un token proprio. La stessa riga è nelle impostazioni di ogni libro.
 
+Con l'app collegata, la stessa lista propone anche a un libro che usa un token proprio, uno con nome o quello predefinito il pulsante **Usa la connessione GitHub**, quando l'app è installata sul repository di quel libro. Narrarium controlla prima con la connessione di poter leggere e scrivere il repository e solo se funziona lascia andare il token proprio del libro; altrimenti non cambia nulla. Nulla viene cambiato da solo, e a un libro gestito dal tuo server personale il passaggio non viene proposto, perché il server non può rinnovare il token dell'app. Quando nessun libro ha più bisogno del token predefinito, la scheda propone **Rimuovi il token predefinito**, dopo una conferma.
+
+## Le tue impostazioni in un repository privato
+
+Quando colleghi GitHub, con l'app o con un token, le impostazioni del tuo account si sincronizzano da sole in **narrarium.settings**, un repository privato del tuo account GitHub che Narrarium crea la prima volta e tiene aggiornato. Se hai disattivato la sincronizzazione dell'account nella scheda, resta disattivata. Con l'app, GitHub può rifiutarsi di creare il repository, oppure l'app può non essere installata su uno già esistente: la scheda lo dice, con **Scegli i repository su GitHub** e il pulsante **Riprova**, e nulla viene ritentato da solo. Puoi anche creare tu `narrarium.settings` come repository privato, oppure collegarti con un token. Quando le copie sono diverse (questo dispositivo, GitHub, Google Drive, OneDrive), Narrarium mostra quando ognuna è stata modificata, seleziona la più recente e aspetta la tua conferma con **Usa la copia più recente**: prima di allora non viene sovrascritto nulla, e le altre copie restano a portata di scelta.
+
 ## Permessi per tipo di token
 
 Ogni cosa che Narrarium fa su GitHub richiede un permesso del token. Se un permesso manca, GitHub rifiuta quella sola azione e Narrarium ti dice quale; il resto continua a funzionare.

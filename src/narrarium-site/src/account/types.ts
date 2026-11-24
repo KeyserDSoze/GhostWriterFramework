@@ -65,6 +65,7 @@ export type AccountSyncErrorKind =
   | "remote-not-found"
   | "remote-deleted"
   | "remote-public"
+  | "repository-unreachable"
   | "rate-limited"
   | "cache-revalidation"
   | "network"
