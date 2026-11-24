@@ -354,6 +354,19 @@ describe("publishing from the browser while the autopilot runs", () => {
     expect(mocks.publish).not.toHaveBeenCalled();
   });
 
+  it("publishes nothing while the browser is offline: the commits wait on this device, and the run goes on to its end", async () => {
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    try {
+      await runWhole("step");
+    } finally {
+      online.mockRestore();
+    }
+    expect(steps()).toBeGreaterThan(3);
+    expect(chapters()).toBe(1);
+    expect(mocks.publish).not.toHaveBeenCalled();
+    expect(last(ended())?.status).not.toBe("error");
+  });
+
   it("goes on as it always did without a choice: after every chapter when the older option says so", async () => {
     useBook(GITHUB_BOOK);
     await runtime.start(GITHUB_BOOK.id, { brief: BRIEF, options: { ...OPTIONS, syncAfterChapter: true } });

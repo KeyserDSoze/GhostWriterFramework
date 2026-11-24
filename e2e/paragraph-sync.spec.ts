@@ -544,6 +544,8 @@ test("authenticated route families survive direct navigation and refresh", async
     if (route === "app/docs/dependency-security") await expect(routePage.getByRole("heading", { name: "Dependency security policy" }).first()).toBeVisible();
     await expect(routePage.getByRole("alert").filter({ hasText: "Load failed" })).toHaveCount(0);
     expect(network.unexpected, route).toEqual([]);
+    // The working copy answers every read of a page: a file it does not hold is absent, and no page reads the contents of GitHub.
+    expect(network.contentDownloads, route).toEqual([]);
     await context.close();
   }
   for (const route of ["app/books", `app/books/${BOOK_ID}`, `app/books/${BOOK_ID}/chapters/001-the-arrival`, `app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001`, "app/settings", "app/docs"]) {
@@ -556,8 +558,77 @@ test("authenticated route families survive direct navigation and refresh", async
     await expect(routePage.locator("[data-route-ready]").last()).toBeAttached({ timeout: 15000 });
     await expect(routePage.getByRole("alert").filter({ hasText: "Load failed" })).toHaveCount(0);
     expect(network.unexpected, route).toEqual([]);
+    expect(network.contentDownloads, route).toEqual([]);
     await context.close();
   }
+});
+
+test("auto-fetch on open checks the head of the remote branch once when a linked book is opened, and reads no content", async ({ page }) => {
+  // The seeded settings turn "Auto-fetch on open" on and the periodic check off.
+  const network = installDeterministicNetworkMocks(page);
+  await installSeed(page);
+  await page.goto(`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001`);
+  await expect(page.getByRole("button", { name: "Edit paragraph" })).toBeVisible({ timeout: 15_000 });
+  await expect.poll(() => network.headRequests.length).toBe(1);
+  await page.waitForTimeout(1500);
+  expect(network.headRequests).toHaveLength(1);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Edit paragraph" })).toBeVisible({ timeout: 15_000 });
+  await expect.poll(() => network.headRequests.length).toBe(2);
+  expect(network.blobDownloads).toEqual([]);
+  expect(network.contentDownloads).toEqual([]);
+  expect(network.unexpected).toEqual([]);
+});
+
+test("a linked book offline works from its working copy, saves on this device and says what needs GitHub", async ({ page }) => {
+  test.setTimeout(120_000);
+  installDeterministicNetworkMocks(page);
+  // The browser is offline: GitHub cannot be reached, and every request to it is recorded.
+  const github: string[] = [];
+  page.on("request", (request) => { if (request.url().startsWith("https://api.github.com/")) github.push(`${request.method()} ${request.url()}`); });
+  await page.route("https://api.github.com/**", (route) => route.abort("internetdisconnected"));
+  await page.addInitScript(() => { Object.defineProperty(Navigator.prototype, "onLine", { configurable: true, get: () => false }); });
+  await installSeed(page);
+  const rawError = /content read failed|REPOSITORY_[A-Z_]+|Failed to fetch|NetworkError|TypeError|Load failed|could not be reached|is not in the local working copy|HttpError|Push or discard|must be clean/i;
+  const problems = async () => (await page.locator('[role="alert"], [role="status"]').allInnerTexts()).filter((text) => rawError.test(text));
+
+  await page.goto(`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001`);
+  await page.getByRole("button", { name: "Edit paragraph" }).click();
+  await page.getByRole("textbox", { name: "Start writing…" }).fill(EDITED_BODY);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+
+  const pill = page.getByRole("button", { name: /local changes/ });
+  await expect(pill).toBeVisible({ timeout: 15_000 });
+  await pill.click();
+  await expect(page.getByText("You are offline: fetch, pull and push resume when the connection is back.")).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Pull" })).toBeDisabled();
+  await page.getByRole("button", { name: "Full sync" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved on this device. It will be synced with GitHub when you are back online." }).first()).toBeVisible();
+  expect((await readLocalFile(page)).committed).toBe(true);
+
+  for (const [route, component, text] of [
+    [`app/books/${BOOK_ID}`, "BookPage"],
+    [`app/books/${BOOK_ID}/audit`, "AuditPage", "No audit report yet"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival/audit`, "AuditPage", "No audit report yet"],
+    [`app/books/${BOOK_ID}/reader`, "ReaderPreviewPage", "E2E edit: the gate remembered every name."],
+    [`app/books/${BOOK_ID}/export`, "BookExportPage"],
+    [`app/books/${BOOK_ID}/settings`, "BookSettingsPage", "You are offline: branches need GitHub."],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival`, "ChapterPage"],
+    [`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001/workspace/draft`, "WorkspaceDocPage"],
+  ] as Array<[string, string, string?]>) {
+    await page.goto(route);
+    await expect(page.locator(`[data-route-ready="${component}"]`), route).toBeAttached({ timeout: 15_000 });
+    if (text) await expect(page.getByText(text).first(), route).toBeVisible({ timeout: 15_000 });
+    await page.waitForTimeout(400);
+    expect(await problems(), route).toEqual([]);
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`app/books/${BOOK_ID}`);
+  await page.getByRole("button", { name: "Actions", exact: true }).click();
+  await expect(page.getByText("You are offline: commit history and pull requests need GitHub.")).toBeVisible();
+  expect(github).toEqual([]);
 });
 
 test("loads the Copilot panel only after its launcher is used", async ({ page }) => {

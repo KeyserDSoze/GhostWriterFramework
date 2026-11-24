@@ -124,4 +124,15 @@ describe("authoritative mutation refresh", () => {
 
     expect(useBooksStore.getState().structures.book.title).toBe("newer");
   });
+
+  test("leaves a branch without a working copy to the book's own load instead of reading GitHub", async () => {
+    useBooksStore.setState({ structures: { book: structure("before") }, structureGenerations: { book: 3 } });
+    repository.getExistingLocalBookStructure.mockResolvedValue(null);
+
+    await refreshBookAfterMutation({ book, token: "token", branch: "proposal" });
+
+    expect(github.loadBookStructure).not.toHaveBeenCalled();
+    expect(useBooksStore.getState().structures.book).toBeUndefined();
+    expect(useBooksStore.getState().structureGenerations.book).toBe(4);
+  });
 });
