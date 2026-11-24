@@ -143,12 +143,14 @@ export function BookPage() {
   const bookDocDirty = bookBody !== savedBookBody || JSON.stringify(bookFrontmatter) !== JSON.stringify(savedBookFrontmatter);
 
   useEffect(() => {
-    if (!book || !token) return;
+    // book.md is read from the working copy, once it is on this device: never from GitHub before it.
+    if (!book || structure?.loadedBranch !== branch) return;
     const key = `${book.id}:${branch}:book.md`;
     if (loadedBookDocRef.current === key) return;
     loadedBookDocRef.current = key;
     setBookDocLoading(true);
     const controller = new AbortController();
+    let settled = false;
     readFileWithSha(token, book.owner, book.repo, branch, "book.md", controller.signal)
       .then(({ content, sha }) => {
         const { frontmatter, body } = splitMarkdownDoc(content);
@@ -172,9 +174,10 @@ export function BookPage() {
         setSavedBookBody(structure?.description ?? "");
         setBookSha("");
       })
-      .finally(() => { if (!controller.signal.aborted) setBookDocLoading(false); });
-    return () => controller.abort();
-  }, [book, token, branch, structure?.title, structure?.description, structure?.language, structure?.ghostwriter, settings.ui.language]);
+      .finally(() => { settled = true; if (!controller.signal.aborted) setBookDocLoading(false); });
+    // A read cut short by a newer render is read again by it.
+    return () => { controller.abort(); if (!settled && loadedBookDocRef.current === key) loadedBookDocRef.current = ""; };
+  }, [book, token, branch, structure?.loadedBranch, structure?.title, structure?.description, structure?.language, structure?.ghostwriter, settings.ui.language]);
 
   function patchBookFrontmatter(key: string, value: string) {
     setBookFrontmatter((prev) => {

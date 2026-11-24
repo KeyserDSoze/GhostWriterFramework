@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
+import { repositoryErrorDescription } from "@/repository/repositoryError";
 import {
   closePullRequest,
   createPullRequest,
@@ -46,7 +47,7 @@ export function PullRequestsDialog(props: {
       const items = await listOpenPullRequests(token, owner, repo, head);
       setPulls(items);
     } catch (err) {
-      toast({ title: t("git.loadPrsFailed"), description: String(err), variant: "destructive" });
+      toast({ title: t("git.loadPrsFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
     } finally {
       setLoading(false);
     }

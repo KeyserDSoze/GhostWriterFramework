@@ -55,7 +55,7 @@ export function classifyRepositoryError(error: unknown, operation: RepositoryOpe
   if (error instanceof RepositoryLimitExceededError) {
     return new RepositoryError("REPOSITORY_LIMIT_EXCEEDED", "limit-exceeded", operation, undefined, { measuredBytes: error.measuredBytes, allowedBytes: error.allowedBytes });
   }
-  const record = error && typeof error === "object" ? error as { name?: unknown; message?: unknown; status?: unknown; response?: { status?: unknown; headers?: Record<string, unknown>; data?: { message?: unknown } } } : null;
+  const record = error && typeof error === "object" ? error as { name?: unknown; message?: unknown; status?: unknown; cause?: unknown; response?: { status?: unknown; headers?: Record<string, unknown>; data?: { message?: unknown } } } : null;
   const status = typeof record?.status === "number" ? record.status : typeof record?.response?.status === "number" ? record.response.status : undefined;
   const name = typeof record?.name === "string" ? record.name : "";
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
@@ -68,6 +68,8 @@ export function classifyRepositoryError(error: unknown, operation: RepositoryOpe
   const branchProtected = (status === 403 || status === 422) && /protected branch|protected_branch|branch protection|gh006|required status check|review is required/.test(message);
   const permissionDenied = status === 403 && /resource not accessible|installation|repository access|repo scope|insufficient permission|must have.*permission/.test(message);
   const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+  // Octokit reports a request that never reached GitHub as a status 500 whose cause is the `TypeError` of `fetch`.
+  const unreachable = error instanceof TypeError || record?.cause instanceof TypeError;
   const kind: RepositoryErrorKind = name === "AbortError" || code === "ABORT_ERR" ? "abort"
     : name === "QuotaExceededError" ? "limit-exceeded"
     : abuseLimited ? "abuse-limit"
@@ -79,8 +81,8 @@ export function classifyRepositoryError(error: unknown, operation: RepositoryOpe
             : status === 403 ? "permission-unverified"
         : status === 404 && operation === "read" ? "not-found"
           : status === 404 || status === 409 || status === 412 || status === 422 ? "conflict"
-            : status !== undefined && status >= 500 ? "service-unavailable"
-              : offline || error instanceof TypeError ? "network"
+            : status !== undefined && status >= 500 && !unreachable ? "service-unavailable"
+              : offline || unreachable ? "network"
                 : /CONFLICT|HEAD_MISMATCH/.test(code) ? "conflict" : "unknown";
   const reset = headers["x-ratelimit-reset"];
   const rateLimitReset = reset && /^\d{1,12}$/.test(reset) ? new Date(Number(reset) * 1000).toISOString() : undefined;

@@ -13,6 +13,7 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { resolveBookToken } from "@/types/settings";
 import { createFile, isGitHubFileNotFoundError, readFileWithSha, updateFile } from "@/github/githubClient";
+import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { FrozenChangeNotice, FrozenChapterBar } from "@/components/frozen/FrozenChapter";
 import { useFrozenChapter } from "@/components/frozen/useFrozenChapter";
@@ -109,6 +110,11 @@ export function ParagraphSplitPage() {
     },
   });
 
+  // A missing file is an empty pane; any other failure is said, and the pane stops loading.
+  const loadFailed = (error: unknown) => {
+    if (!isGitHubFileNotFoundError(error)) toast({ title: t("common.loadFailed"), description: repositoryErrorDescription(error, t), variant: "destructive" });
+  };
+
   // Load both files.
   useEffect(() => {
     if (!book || !token || !finalPath || !draftPath) return;
@@ -118,21 +124,25 @@ export function ParagraphSplitPage() {
     setDraft({ ...EMPTY_PANE, loading: true });
     setFinal({ ...EMPTY_PANE, loading: true });
     const controller = new AbortController();
+    let pending = 2;
 
     readFileWithSha(token, book.owner, book.repo, branch, finalPath, controller.signal)
       .then(({ content, sha }) => {
         const { frontmatter, body } = splitDoc(content);
         setFinal({ loading: false, exists: true, frontmatter, body, savedBody: body, sha, saving: false });
       })
-      .catch((error) => { if (!controller.signal.aborted && isGitHubFileNotFoundError(error)) setFinal({ ...EMPTY_PANE, loading: false }); });
+      .catch((error) => { if (!controller.signal.aborted) { setFinal({ ...EMPTY_PANE, loading: false }); loadFailed(error); } })
+      .finally(() => { pending -= 1; });
 
     readFileWithSha(token, book.owner, book.repo, branch, draftPath, controller.signal)
       .then(({ content, sha }) => {
         const { frontmatter, body } = splitDoc(content);
         setDraft({ loading: false, exists: true, frontmatter, body, savedBody: body, sha, saving: false });
       })
-      .catch((error) => { if (!controller.signal.aborted && isGitHubFileNotFoundError(error)) setDraft({ ...EMPTY_PANE, loading: false, exists: false }); });
-    return () => controller.abort();
+      .catch((error) => { if (!controller.signal.aborted) { setDraft({ ...EMPTY_PANE, loading: false, exists: false }); loadFailed(error); } })
+      .finally(() => { pending -= 1; });
+    // Reads cut short by a newer render are made again by it, instead of leaving both panes loading.
+    return () => { controller.abort(); if (pending > 0 && loadedRef.current === key) loadedRef.current = ""; };
   }, [book, token, branch, draftPath, finalPath]);
 
   const draftDirty = draft.body !== draft.savedBody;

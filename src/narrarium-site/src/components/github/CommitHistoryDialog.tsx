@@ -10,6 +10,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
+import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { listBranchCommits, type BranchCommitSummary } from "@/github/githubClient";
 
 export function CommitHistoryDialog(props: {
@@ -31,7 +32,7 @@ export function CommitHistoryDialog(props: {
     void listBranchCommits(token, owner, repo, branch)
       .then(setCommits)
       .catch((err) => {
-        toast({ title: t("git.loadCommitsFailed"), description: String(err), variant: "destructive" });
+        toast({ title: t("git.loadCommitsFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
       })
       .finally(() => setLoading(false));
   }, [open, token, owner, repo, branch, toast]);

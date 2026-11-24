@@ -1,4 +1,4 @@
-import type { BookEntry } from "@/types/settings";
+import { LOCAL_BOOK_TOKEN, type BookEntry } from "@/types/settings";
 import {
   getLocalRepository,
   getLocalFile,
@@ -13,7 +13,7 @@ import {
 } from "@/repository/localRepository";
 import { AmbiguousLocalPushError, pushLocalCommits, RemoteHeadMismatchError, RepositorySyncConflictError, syncFullRepository } from "@/repository/repositoryService";
 import { loadRemoteFileContentAtRef } from "@/github/githubClient";
-import { optionalRepositoryRead } from "@/repository/repositoryError";
+import { isRepositoryError, optionalRepositoryRead } from "@/repository/repositoryError";
 import { reconcileRemoteMutation } from "@/repository/remoteMutationReconciliation";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
@@ -57,11 +57,20 @@ export async function preflightRepositoryOperation(input: {
     throw new Error("A local working copy for the selected branch is required.");
   }
   if (meta.cloneComplete !== true) throw new Error("The local working copy has not been fully verified.");
-  const [dirty, ahead] = await Promise.all([listDirtyLocalFiles(meta.id), listUnpushedLocalCommits(meta.id)]);
-  input.signal?.throwIfAborted();
+  return { repoId: meta.id, remoteHeadSha: meta.remoteHeadSha, branch: input.branch };
+}
+
+/** A change published at once must not take along local work the author has not published yet: that waits for the author's own push or sync. */
+async function assertNothingElseToPublish(repoId: string, signal?: AbortSignal): Promise<void> {
+  const [dirty, ahead] = await Promise.all([listDirtyLocalFiles(repoId), listUnpushedLocalCommits(repoId)]);
+  signal?.throwIfAborted();
   if (dirty.length) throw new Error("The local working copy must be clean before starting this operation.");
   if (ahead.length) throw new Error("Push or discard existing local commits before starting this operation.");
-  return { repoId: meta.id, remoteHeadSha: meta.remoteHeadSha, branch: input.branch };
+}
+
+/** A branch without a working copy on this device lives only on GitHub: a book kept on this device, or one without a credential, never goes there. */
+export function assertRemoteBranchReachable(input: { token: string; book: BookEntry }): void {
+  if (!input.book.owner || !input.book.repo || !input.token || input.token === LOCAL_BOOK_TOKEN) throw new Error("A local working copy for the selected branch is required.");
 }
 
 export async function resolveRepositoryHeadForMutation(input: { token: string; book: BookEntry; branch: string; signal?: AbortSignal }): Promise<string> {
@@ -71,6 +80,7 @@ export async function resolveRepositoryHeadForMutation(input: { token: string; b
   const local = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, scope).catch(() => null) : null;
   input.signal?.throwIfAborted();
   if (local) return (await preflightRepositoryOperation(input)).remoteHeadSha;
+  assertRemoteBranchReachable(input);
   const octokit = createTrackedGitHubClient(input.token, identity ? { accountIdentity: identity, owner: input.book.owner, repo: input.book.repo, branch: input.branch } : undefined);
   const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, request: { signal: input.signal } });
   input.signal?.throwIfAborted();
@@ -168,10 +178,14 @@ export async function commitAndPushTextFileMutation(input: {
   const local = identity ? await getLocalRepository(input.book.owner, input.book.repo, input.branch, operationScope).catch(() => null) : null;
   input.signal?.throwIfAborted();
   if (!local) {
+    assertRemoteBranchReachable(input);
     const commitSha = await mutateRemoteTextFiles(input);
     return { commitSha, mode: "remote" };
   }
   if (local.remoteHeadSha !== input.expectedRemoteHeadSha) throw new RepositoryConflictError("The local working copy is based on a different remote head.");
+  // A book kept on this device has nowhere to publish; without a GitHub credential or a connection the next sync publishes: the change stays a local commit.
+  const publish = input.push !== false && local.remoteKind !== "none" && Boolean(input.token) && input.token !== LOCAL_BOOK_TOKEN
+    && (typeof navigator === "undefined" || navigator.onLine !== false);
   const writes = input.mutations.filter((mutation) => mutation.content !== undefined);
   const snapshots = await Promise.all(writes.map(async (mutation) => ({ path: mutation.path, file: await getLocalFile(local.id, mutation.path, operationScope) ?? null })));
   input.signal?.throwIfAborted();
@@ -195,6 +209,7 @@ export async function commitAndPushTextFileMutation(input: {
   let localCommit;
   try {
     input.signal?.throwIfAborted();
+    if (publish) await assertNothingElseToPublish(local.id, input.signal);
     localCommit = await mutateLocalTextFilesAndCreateCommitAtomically(local.id, operationScope, input.message, input.mutations);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("File changed since")) {
@@ -203,7 +218,7 @@ export async function commitAndPushTextFileMutation(input: {
     }
     throw error;
   }
-  if (input.push === false) return { commitSha: localCommit.id, mode: "local" };
+  if (!publish) return { commitSha: localCommit.id, mode: "local" };
   let pushed;
   let pushStarted = false;
   try {
@@ -259,6 +274,8 @@ export async function commitAndPushTextFileMutation(input: {
       if (!settled) throw new Error("The local working copy disappeared after repository sync.");
       return { commitSha: settled.remoteHeadSha, mode: "local" };
     }
+    // GitHub out of reach: the commit stays on this device, like any other local change, and the next sync publishes it.
+    if (isRepositoryError(error, "network")) return { commitSha: localCommit.id, mode: "local" };
     await restoreLocalFilesAndDeleteCommit(local.id, operationScope, localCommit.id, snapshots);
     throw error;
   }

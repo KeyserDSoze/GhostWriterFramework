@@ -3,7 +3,7 @@ import { parseDocument, stringify } from "yaml";
 import { SCRIPT_LEDGER_PATH, type ScriptLedgerSourceFile } from "narrarium/script-ledger";
 import { loadRemoteFileContentAtRef } from "@/github/githubClient";
 import { getLocalRepository, listLocalFiles } from "@/repository/localRepository";
-import { commitAndPushTextFileMutation, preflightRepositoryOperation, RepositoryConflictError, sha256Text } from "@/repository/safeRepositoryMutation";
+import { assertRemoteBranchReachable, commitAndPushTextFileMutation, preflightRepositoryOperation, RepositoryConflictError, sha256Text } from "@/repository/safeRepositoryMutation";
 import type { BookEntry } from "@/types/settings";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 
@@ -29,6 +29,7 @@ async function collectSources(input: { token: string; book: BookEntry; branch: s
     return { files, headSha: preflight.remoteHeadSha };
   }
 
+  assertRemoteBranchReachable(input);
   const octokit = new Octokit({ auth: input.token });
   const request = { request: { signal: input.signal } };
   const ref = await octokit.rest.git.getRef({ owner: input.book.owner, repo: input.book.repo, ref: `heads/${input.branch}`, ...request });

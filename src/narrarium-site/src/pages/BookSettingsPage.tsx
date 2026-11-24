@@ -4,6 +4,7 @@ import { GitBranch, Github, KeyRound, Loader2, Plus, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import "@/i18n/bookGithub";
 import "@/i18n/githubCreateBook";
+import "@/i18n/localFirst";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Button } from "@/components/ui/button";
@@ -120,7 +121,7 @@ export function BookSettingsPage() {
         setBaseBranch(defaultBranch);
       })
       .catch((err) => {
-        toast({ title: t("bookSettings.loadBranchesFailed"), description: String(err), variant: "destructive" });
+        toast({ title: t("bookSettings.loadBranchesFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
       })
       .finally(() => setLoadingBranches(false));
   }
@@ -190,7 +191,7 @@ export function BookSettingsPage() {
     const usingCustom = mode === "custom";
     const updated: BookEntry = {
       ...currentBook,
-      name: name.trim() || currentBook.repo,
+      name: name.trim() || currentBook.name || currentBook.repo,
       tokenIndex: mode === "default" || usingCustom ? null : Number(mode),
       bookToken: usingCustom ? customToken.trim() || undefined : undefined,
       bookTokenLabel: usingCustom ? customTokenLabel.trim() || `${currentBook.repo} PAT` : undefined,
@@ -300,7 +301,7 @@ export function BookSettingsPage() {
         </Card>
       )}
 
-      {bookStorageMode(currentBook) === "github" && <Card>
+      <Card>
         <CardHeader>
           <CardTitle>{t("bookSettings.general")}</CardTitle>
           <CardDescription>{t("bookSettings.generalDescription")}</CardDescription>
@@ -311,9 +312,9 @@ export function BookSettingsPage() {
             <Input id="book-name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
         </CardContent>
-      </Card>}
+      </Card>
 
-      {bookStorageMode(currentBook) === "github" && <Card>
+      <Card>
         <CardHeader>
           <CardTitle>{t("bookSettings.auditSettings")}</CardTitle>
           <CardDescription>{t("bookSettings.auditSettingsDescription")}</CardDescription>
@@ -386,7 +387,7 @@ export function BookSettingsPage() {
             <AutoTextarea id="audit-custom-prompt" value={auditSettings.customPrompt} onChange={(event) => patchAuditSettings({ customPrompt: event.target.value })} placeholder={t("bookSettings.auditCustomPromptPlaceholder")} className="min-h-24" disabled={!auditSettings.enabled} />
           </div>
         </CardContent>
-      </Card>}
+      </Card>
 
       <Card>
         <CardHeader>
@@ -414,7 +415,14 @@ export function BookSettingsPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      {bookStorageMode(currentBook) === "local-only" ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><GitBranch className="h-4 w-4" />{t("bookSettings.branchWorkspace")}</CardTitle>
+            <CardDescription>{t("localFirst.branchesLocal")}</CardDescription>
+          </CardHeader>
+        </Card>
+      ) : <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><GitBranch className="h-4 w-4" />{t("bookSettings.branchWorkspace")}</CardTitle>
           <CardDescription>
@@ -422,6 +430,7 @@ export function BookSettingsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {offline && <p className="text-xs text-muted-foreground">{t("localFirst.branchesOffline")}</p>}
           <div className="grid gap-2">
             <Label>{t("bookSettings.activeBranch")}</Label>
             <Select value={activeBranch} onValueChange={setActiveBranch} disabled={loadingBranches}>
@@ -441,14 +450,14 @@ export function BookSettingsPage() {
             <p className="text-xs text-muted-foreground">{t("bookSettings.createBranchHint", { base: baseBranch })}</p>
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
               <Input placeholder="feature/new-arc" value={newBranchName} onChange={(e) => setNewBranchName(e.target.value)} />
-              <Button onClick={() => void handleCreateBranch()} disabled={creatingBranch || !newBranchName.trim()}>
+              <Button onClick={() => void handleCreateBranch()} disabled={creatingBranch || !newBranchName.trim() || offline}>
                 {creatingBranch ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Plus className="mr-1 h-4 w-4" />}
                 {t("bookSettings.createBranch")}
               </Button>
             </div>
           </div>
         </CardContent>
-      </Card>
+      </Card>}
 
       <Card>
         <CardHeader>

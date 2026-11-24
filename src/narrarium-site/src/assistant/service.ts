@@ -1099,7 +1099,8 @@ async function auditNavigationFromPrompt(input: PromptInput & { book: BookEntry;
   }
   let provenance: AssistantActionProvenance;
   try {
-    provenance = await actionProvenance(input, toolId, operation === "delete" ? [resolved.reportPath] : []);
+    // The action is bound to the report it opens, read from the working copy: the audit of a book kept on this device, or offline, is prepared all the same.
+    provenance = await actionProvenance(input, toolId, [resolved.reportPath]);
   } catch (error) {
     return makeAssistantMessage("assistant", `I could not prepare the audit action safely: ${error instanceof Error ? error.message : String(error)}`);
   }

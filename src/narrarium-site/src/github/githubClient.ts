@@ -1,5 +1,6 @@
 import type { Octokit } from "@octokit/rest";
 import { BookStructure, Chapter, Paragraph, BookFile, ResearchFile } from "@/types/book";
+import { LOCAL_BOOK_TOKEN } from "@/types/settings";
 import { applyLocalFileChangesAtomically, deleteLocalFileAtomically, getLocalFile, getLocalRepository, listLocalFiles, mutateLocalTextFilesAtomically, renameLocalTextFileAtomically, sha256Text, writeLocalBinaryScoped, type LocalFileAtomicWrite, type LocalTextFileMutation } from "@/repository/localRepository";
 import { captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
 import {
@@ -72,6 +73,19 @@ function githubContentUrl(owner: string, repo: string, path: string, ref?: strin
   return `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}${query}`;
 }
 
+/**
+ * GitHub is read only for a book that has no working copy on this device, and only with a credential: a book kept on this device (the local token,
+ * no owner) or a book without a token never sends a request.
+ */
+function assertRemoteReadable(token: string, owner: string, repo: string, path: string): void {
+  if (!token || token === LOCAL_BOOK_TOKEN || !owner || !repo) throw new RepositoryError(`No GitHub credential to read ${path}.`, "credential-invalid", "read");
+}
+
+/** The complete working copy answers for its branch: a file it does not hold is absent until a sync brings it, and GitHub is not asked. */
+function absentFromWorkingCopy(path: string): RepositoryError {
+  return new RepositoryError(`${path} is not in the local working copy.`, "not-found", "read", 404);
+}
+
 async function fetchContentJson(
   token: string,
   owner: string,
@@ -82,6 +96,7 @@ async function fetchContentJson(
   signal?: AbortSignal,
   contentKind: "text" | "binary" | "metadata" = "text",
 ): Promise<{ content?: string; sha?: string }> {
+  assertRemoteReadable(token, owner, repo, path);
   let response: Response;
   try {
     response = await fetch(githubContentUrl(owner, repo, path, ref, fresh), {
@@ -551,6 +566,7 @@ export async function loadFileContent(
     signal?.throwIfAborted();
     if (file?.kind === "text" && file.text !== undefined) { assertRepositoryFileBytes("text", utf8Bytes(file.text)); return file.text; }
     if (file?.kind === "binary" && file.blob) { assertRepositoryFileBytes("binary", file.blob.size); return new TextDecoder().decode(await settleOnAbort(file.blob.arrayBuffer(), signal)); }
+    throw absentFromWorkingCopy(path);
   }
   const data = await fetchContentJson(token, owner, repo, path, ref, false, signal);
   signal?.throwIfAborted();
@@ -599,7 +615,9 @@ export async function loadBinaryFileContent(
     const file = await getLocalFile(id, path, scope);
     if (file?.kind === "binary" && file.blob) { assertRepositoryFileBytes("binary", file.blob.size); return new Uint8Array(await file.blob.arrayBuffer()); }
     if (file?.kind === "text" && file.text !== undefined) { assertRepositoryFileBytes("text", utf8Bytes(file.text)); return new TextEncoder().encode(file.text); }
+    throw absentFromWorkingCopy(path);
   }
+  assertRemoteReadable(token, owner, repo, path);
   let response: Response;
   try {
     response = await fetch(githubContentUrl(owner, repo, path, ref, true), { cache: "no-store", headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28" } });
@@ -693,6 +711,7 @@ export async function readFileWithSha(
     signal?.throwIfAborted();
     if (file?.kind === "text" && file.text !== undefined) { assertRepositoryFileBytes("text", utf8Bytes(file.text)); return { content: file.text, sha: file.currentHash }; }
     if (file?.kind === "binary" && file.blob) { assertRepositoryFileBytes("binary", file.blob.size); return { content: new TextDecoder().decode(await file.blob.arrayBuffer()), sha: file.currentHash }; }
+    throw absentFromWorkingCopy(path);
   }
   const data = await fetchContentJson(token, owner, repo, path, branch, true, signal);
   if (data.content && data.sha) {
@@ -1363,11 +1382,6 @@ export async function reorderParagraphsInChapter(
     for (const [path, expected] of Object.entries(options.expectedParagraphHashes ?? {})) {
       const current = files.find((file) => file.path === path);
       if (!current || current.currentHash !== expected) throw new RepositoryError(`File changed since it was read: ${path}`, "conflict", "update", 409);
-    }
-    if (options.expectedRemoteHeadSha) {
-      const remote = createGitHubClient(token, { owner, repo, branch });
-      const ref = await remote.rest.git.getRef({ owner, repo, ref: `heads/${branch}`, request: { signal: options.signal } });
-      if (ref.data.object.sha !== options.expectedRemoteHeadSha) throw new RepositoryError("The remote branch changed before the paragraph operation.", "conflict", "update", 409);
     }
     const textWrites: StructuralTextWrite[] = [];
     const binaryWrites: LocalFileAtomicWrite[] = [];

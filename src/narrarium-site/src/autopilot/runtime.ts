@@ -443,6 +443,8 @@ export class BrowserAutopilotRuntime {
   private async publishFromBrowser(book: BookEntry, branch: string): Promise<void> {
     const token = resolveGitHubRemoteToken(book, settings());
     if (!token) return;
+    // Offline the commits wait in the working copy: the next step, chapter or sync publishes them, and the run does not stop on a network error.
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
     await syncFullRepository({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentRepositoryScopeIdentity(), token });
     this.recordSync(book.id, syncOutcome("published"));
   }

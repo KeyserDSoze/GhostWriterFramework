@@ -1063,7 +1063,7 @@ const en = {
     dedicatedHint: "This PAT is stored on the book entry in your Drive settings and overrides the default token for all reads and writes to this book.",
     createOneAt: "Create one at",
     withPermissions: "with Contents read & write and Metadata read on this repository.",
-    noTokenWarning: "No token is configured for this selection. The book will not load until a token is available.",
+    noTokenWarning: "No token is configured for this selection: the book cannot be downloaded or synced with GitHub until a token is available.",
     labelOptional: "Label (optional)",
     loadBranchesFailed: "Failed to load branches",
     settingsSaved: "Book settings saved",

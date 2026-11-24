@@ -178,7 +178,7 @@ describe("connecting the book to a repository that is there", () => {
   it("starts on the list of the repositories, and the button names what will happen", async () => {
     arrange({ repositories: [{ owner: "ada", name: "giungla", holds: "empty" }] });
     expect(await screen.findByRole("radio", { name: "Connect an existing repository" })).toBeChecked();
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Overwrite existing repository" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Name of the new repository")).not.toBeInTheDocument();
     await pickRepository("giungla");
     expect(await screen.findByText("ada/giungla is empty: the book of this device is published into it.")).toBeInTheDocument();

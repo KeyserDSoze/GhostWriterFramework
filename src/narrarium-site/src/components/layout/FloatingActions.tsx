@@ -17,6 +17,8 @@ import { useSaveStore } from "@/store/saveStore";
 import { usePageActionsStore } from "@/store/pageActionsStore";
 import { useContextualActions } from "@/hooks/useContextualActions";
 import { chapterNumberFromSlug } from "@/lib/chapterSlug";
+import { useGitHubRemoteAvailability } from "@/github/remoteAvailability";
+import "@/i18n/localFirst";
 import { lazy, Suspense } from "react";
 
 const BookExportDialog = lazy(() => import("@/components/book/BookExportDialog").then((module) => ({ default: module.BookExportDialog })));
@@ -57,6 +59,7 @@ export function FloatingActions() {
   const paragraph = paragraphNum && chapter ? chapter.paragraphs.find((p) => p.number === paragraphNum) : undefined;
   const book = bookId ? settings.books.find((b) => b.id === bookId) : undefined;
   const token = book ? resolveBookToken(book, settings) : "";
+  const remote = useGitHubRemoteAvailability(book, token);
 
   async function openOrCreate(kind: "draft" | "script") {
     if (!chapter || !paragraph || !book || !token) return;
@@ -175,8 +178,17 @@ export function FloatingActions() {
             )}
             {book && token && !chapter && (
               <div className="flex flex-col gap-1 px-1 py-1">
-                <CommitHistoryDialog token={token} owner={book.owner} repo={book.repo} branch={branch} />
-                <PullRequestsDialog token={token} owner={book.owner} repo={book.repo} head={branch} base={structure?.defaultBranch ?? "main"} />
+                {remote === "ready" ? (
+                  <>
+                    <CommitHistoryDialog token={token} owner={book.owner} repo={book.repo} branch={branch} />
+                    <PullRequestsDialog token={token} owner={book.owner} repo={book.repo} head={branch} base={structure?.defaultBranch ?? "main"} />
+                  </>
+                ) : (
+                  <p className="px-1.5 py-1 text-xs text-muted-foreground">
+                    {t(remote === "local" ? "localFirst.gitFeaturesLocal" : remote === "offline" ? "localFirst.gitFeaturesOffline" : "localFirst.gitFeaturesNoCredential")}
+                    {remote !== "offline" && <> <Link to={`/app/books/${encodeURIComponent(book.id)}/settings`} onClick={() => setOpen(false)} className="underline underline-offset-2">{t("localFirst.openBookSettings")}</Link></>}
+                  </p>
+                )}
                 {structure && <AssetImageDialog book={book} branch={branch} token={token} kind="book" title={structure.title ?? book.name} textPath="book.md" resumePath="resumes/total.md" />}
                 {structure && <Suspense fallback={<span className="px-2 py-1 text-xs text-muted-foreground" role="status">{t("common.loading")}</span>}><BookExportDialog book={book} structure={structure} branch={branch} token={token} /></Suspense>}
               </div>

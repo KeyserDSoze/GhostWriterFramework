@@ -19,20 +19,27 @@ import { triggerCurrentRepositorySync } from "@/store/repositorySyncStore";
 import { FileDiff } from "@/components/diff/DiffView";
 import { fetchBlobBytesForRepository } from "@/repository/repositoryService";
 import { RepositoryByteMeter } from "@/repository/repositoryLimits";
+import { useGitHubRemoteAvailability, type GitHubRemoteAvailability } from "@/github/remoteAvailability";
+import "@/i18n/localFirst";
 
-function PendingFileDiff({ file, token, owner, repo, expanded }: { file: LocalRepositoryFile; token: string; owner: string; repo: string; expanded: boolean }) {
+function PendingFileDiff({ file, token, owner, repo, expanded, remote }: { file: LocalRepositoryFile; token: string; owner: string; repo: string; expanded: boolean; remote: GitHubRemoteAvailability }) {
+  const { t } = useTranslation();
   const [base, setBase] = useState<string | null>(null);
+  // The working copy keeps the hash of a file's previous version, not its text: only GitHub can give it back, and only when it can be reached.
+  const baseOnGitHub = Boolean(file.baseSha) && remote === "ready";
   useEffect(() => {
     let cancelled = false;
     if (!expanded || file.kind !== "text") return;
-    if (!file.baseSha) { setBase(""); return; }
+    if (file.status === "new") { setBase(""); return; }
+    if (!baseOnGitHub || !file.baseSha) { setBase(null); return; }
     void fetchBlobBytesForRepository(token, owner, repo, file.path, file.baseSha, new RepositoryByteMeter("mutation"))
       .then((bytes) => { if (!cancelled) setBase(new TextDecoder().decode(bytes)); })
       .catch(() => { if (!cancelled) setBase(null); });
     return () => { cancelled = true; };
-  }, [expanded, file.baseSha, file.kind, file.path, owner, repo, token]);
+  }, [expanded, baseOnGitHub, file.baseSha, file.kind, file.path, file.status, owner, repo, token]);
   if (!expanded) return null;
-  if (file.kind !== "text" || base === null) return <p className="text-xs text-muted-foreground">{file.kind === "text" ? "Diff non disponibile" : "File binario: diff non disponibile"}</p>;
+  if (file.kind !== "text") return <p className="text-xs text-muted-foreground">{t("localFirst.diffBinary")}</p>;
+  if (base === null) return <p className="text-xs text-muted-foreground">{t(file.status === "new" || baseOnGitHub ? "localFirst.diffUnavailable" : !file.baseSha || remote === "local" ? "localFirst.diffNoBase" : remote === "offline" ? "localFirst.diffOffline" : "localFirst.githubNeededNoCredential")}</p>;
   return <FileDiff previous={base} next={file.status === "deleted" ? "" : file.text ?? ""} className="max-h-64" />;
 }
 
@@ -90,11 +97,12 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const [busy, setBusy] = useState<string | null>(null);
   const [tokenHealth, setTokenHealth] = useState<TokenHealth | null>(null);
   const token = book ? resolveBookToken(book, settings) : "";
+  const remote = useGitHubRemoteAvailability(book, token);
   const disabled = !book || !!busy;
   const operationalReady = maintenance?.lifecycle === "complete";
   const localOnly = Boolean(book && bookStorageMode(book) === "local-only");
-  const networkDisabled = localOnly || !book || !token || !!busy || !navigator.onLine || !operationalReady;
-  const maintenanceNetworkDisabled = localOnly || !book || !token || !!busy || !navigator.onLine;
+  const networkDisabled = remote !== "ready" || !!busy || !operationalReady;
+  const maintenanceNetworkDisabled = remote !== "ready" || !!busy;
   const storageHigh = Boolean(storage.usage && storage.quota && storage.usage / storage.quota > 0.8);
   const draftDirtyFiles = useMemo(() => dirtyFiles.filter((file) => file.path.startsWith("drafts/")), [dirtyFiles]);
   const remoteStatus = repoMeta ? effectiveRemoteStatus(repoMeta) : null;
@@ -281,10 +289,10 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   }
 
   async function deleteRecovery(recovery: LocalRepositoryRecovery) {
-    if (!currentAccountIdentity || !window.confirm(`Eliminare il recovery del ${new Date(recovery.createdAt).toLocaleString()}?`)) return;
+    if (!currentAccountIdentity || !window.confirm(t("localFirst.deleteRecoveryConfirm", { date: new Date(recovery.createdAt).toLocaleString() }))) return;
     await run(`delete-recovery-${recovery.id}`, async () => {
       await deleteLocalRecoverySnapshot(recovery.id, captureRepositoryOperationScope());
-      return "Recovery eliminato";
+      return t("localFirst.recoveryDeleted");
     });
   }
 
@@ -307,9 +315,9 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
         {!book ? <p className="text-sm text-muted-foreground">{t("repoStatus.noBook")}</p> : (
           <div className="min-w-0 space-y-4">
             <div className="rounded-xl border bg-muted/20 p-3 text-sm">
-              <p className="break-all font-medium">{book.owner}/{book.repo}</p>
-               <p className="text-xs text-muted-foreground">{status ? t("repoStatus.summary", { dirty: status.dirty, ahead }) : t("repoStatus.notCloned")}</p>
-               {repoMeta && <p className="mt-1 text-xs text-muted-foreground">{t(remoteStatus === "changed" ? "repoStatus.behind" : remoteStatus === "checking" ? "repoStatus.checking" : remoteStatus === "unavailable" || remoteStatus === "unverified" ? (repoMeta.lastKnownChanged ? "repoStatus.staleChanged" : "repoStatus.unverified") : "repoStatus.clean")}</p>}
+              <p className="break-all font-medium">{localOnly ? t("localFirst.deviceOnly") : `${book.owner}/${book.repo}`}</p>
+               <p className="text-xs text-muted-foreground">{!status ? t("repoStatus.notCloned") : localOnly ? t("repoStatus.dirty", { count: status.dirty }) : t("repoStatus.summary", { dirty: status.dirty, ahead })}</p>
+               {repoMeta && !localOnly && <p className="mt-1 text-xs text-muted-foreground">{t(remoteStatus === "changed" ? "repoStatus.behind" : remoteStatus === "checking" ? "repoStatus.checking" : remoteStatus === "unavailable" || remoteStatus === "unverified" ? (repoMeta.lastKnownChanged ? "repoStatus.staleChanged" : "repoStatus.unverified") : "repoStatus.clean")}</p>}
               {maintenance?.lifecycle && <p className="mt-1 text-xs font-medium">{t("repoStatus.lifecycle", { status: t(`repoStatus.lifecycleStates.${maintenance.lifecycle}`) })}</p>}
               {maintenance && <p className="mt-1 text-xs text-muted-foreground">{t("repoStatus.maintenanceCounts", { modified: maintenance.status.modified, new: maintenance.status.new, deleted: maintenance.status.deleted, commits: maintenance.unpushedCommits.length, recoveries: maintenance.recoveries.length, rewrites: maintenance.rewriteOperationCount })}</p>}
               {maintenance?.legacyCopies.length ? <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">{t("repoStatus.legacyCopies", { count: maintenance.legacyCopies.length })}</p> : null}
@@ -326,7 +334,8 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                 <p className={storageHigh ? "mt-2 text-xs font-medium text-amber-800 dark:text-amber-300" : "mt-2 text-xs text-muted-foreground"}>{t("repoStatus.storage", { usage: formatBytes(storage.usage), quota: storage.quota ? formatBytes(storage.quota) : "n/d" })}{storageHigh ? ` · ${t("repoStatus.storageHigh")}` : ""}</p>
               )}
             </div>
-            <div className="rounded-xl border p-3 text-sm">
+            {remote !== "ready" && <p className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">{t(remote === "local" ? "localFirst.statusLocal" : remote === "offline" ? "localFirst.statusOffline" : "localFirst.repositoryMenuNoCredential")}</p>}
+            {!localOnly && <div className="rounded-xl border p-3 text-sm">
               <p className="font-medium">{t("repoStatus.tokenHealth")}</p>
               {tokenHealth && <p className="text-xs text-muted-foreground">{t(`repoStatus.tokenPermission.${tokenHealth.permissionStatus}`)}</p>}
               <p className="text-xs text-muted-foreground">{tokenHealth?.expiresAt ? t(`repoStatus.expiration.${tokenExpirationWarning(tokenHealth.expiresAt)}`, { date: new Date(tokenHealth.expiresAt).toLocaleDateString() }) : t("repoStatus.expiration.unknown")}</p>
@@ -336,8 +345,8 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                 setTokenHealth(health);
                 return t("repoStatus.tokenHealthy");
               })}>{busy === "token-health" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-1 h-4 w-4" />}{t("repoStatus.checkToken")}</Button>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-3">
+            </div>}
+            {!localOnly && <div className="grid gap-2 sm:grid-cols-3">
               <Button variant="outline" className="sm:col-span-3" disabled={maintenanceNetworkDisabled} onClick={() => void run("recover-lifecycle", async () => {
                 if (!book || !branch || !currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
                  const result = await ensureLocalBookStructure({ bookId: book.id, book, token, accountIdentity: currentAccountIdentity, branch, onProgress: (p) => setCloneProgress(book.id, p) });
@@ -358,7 +367,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                 return t("repoStatus.pullDone", { count: result.updated });
               })}>{busy === "pull" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <GitPullRequest className="mr-1 h-4 w-4" />}{t("repoStatus.pull")}</Button>
               <Button variant="outline" disabled={networkDisabled || ahead === 0} onClick={() => { onOpenChange(false); void triggerCurrentRepositorySync(); }}><UploadCloud className="mr-1 h-4 w-4" />{t("repoStatus.push")}</Button>
-            </div>
+            </div>}
             <Button variant="outline" className="w-full" disabled={disabled} onClick={() => void exportBackup()}>{busy === "backup" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}{t("repoStatus.exportBackup")}</Button>
             {recoveries.length > 0 && (
               <div className="space-y-2 rounded-xl border p-3">
@@ -366,7 +375,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                 {recoveries.map((recovery) => (
                   <div key={recovery.id} className="flex flex-col gap-2 rounded border p-2 text-xs sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0"><p>{new Date(recovery.createdAt).toLocaleString()}</p><p className="break-words text-muted-foreground">{recovery.reason}</p></div>
-                    <div className="flex flex-wrap gap-1"><Button size="sm" variant="outline" disabled={!!busy || !operationalReady} onClick={() => void restoreRecovery(recovery)}>{busy === `recovery-${recovery.id}` ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.restoreRecovery")}</Button><Button size="sm" variant="outline" disabled={!!busy} onClick={() => exportRecovery(recovery)}>Esporta</Button><Button size="sm" variant="outline" disabled={!!busy} onClick={() => void deleteRecovery(recovery)}>Elimina</Button></div>
+                    <div className="flex flex-wrap gap-1"><Button size="sm" variant="outline" disabled={!!busy || !operationalReady} onClick={() => void restoreRecovery(recovery)}>{busy === `recovery-${recovery.id}` ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.restoreRecovery")}</Button><Button size="sm" variant="outline" disabled={!!busy} onClick={() => exportRecovery(recovery)}>{t("localFirst.exportRecovery")}</Button><Button size="sm" variant="outline" disabled={!!busy} onClick={() => void deleteRecovery(recovery)}>{t("localFirst.deleteRecovery")}</Button></div>
                   </div>
                 ))}
               </div>
@@ -381,10 +390,10 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
               })}>{busy === "resync-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-1 h-4 w-4" />}{t("repoStatus.resyncLocal")}</Button>
              </div>}
             <div className="grid gap-2 sm:grid-cols-2">
-              <Button variant="outline" disabled={maintenanceNetworkDisabled} onClick={() => void recloneLocal()}>{busy === "reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.reclone")}</Button>
+              {!localOnly && <Button variant="outline" disabled={maintenanceNetworkDisabled} onClick={() => void recloneLocal()}>{busy === "reclone" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1 h-4 w-4" />}{t("repoStatus.reclone")}</Button>}
               <Button variant="destructive" disabled={disabled || !maintenance || (!maintenance.removalPending && !backupReceipt) || removeConfirmation !== `REMOVE ${book.owner}/${book.repo}`} onClick={() => void removeLocal()}>{busy === "remove-local" ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}{maintenance?.removalPending ? t("repoStatus.resumeRemoval") : t("repoStatus.removePermanently")}</Button>
             </div>
-            {branch && <div className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs">
+            {branch && !localOnly && <div className="space-y-2 rounded-xl border border-destructive/40 bg-destructive/5 p-3 text-xs">
               <p className="font-medium text-destructive">{t("repoStatus.forceRecloneTitle")}</p>
               <p className="text-muted-foreground">{t("repoStatus.forceRecloneDescription")}</p>
               <p className="break-all font-mono">FORCE RECLONE {book.owner}/{book.repo}#{branch}</p>
@@ -439,28 +448,38 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                     </div>
                   )}
                   <div className="flex flex-wrap gap-2">
-                    <Button type="button" size="sm" variant="outline" disabled={disabled || dirtyFiles.length === 0} onClick={() => setSelectedRestorePaths(dirtyFiles.map((file) => file.path))}>Seleziona tutti</Button>
-                    <Button type="button" size="sm" variant="outline" disabled={disabled || selectedRestorePaths.length === 0} onClick={() => setSelectedRestorePaths([])}>Deseleziona</Button>
-                    <Button type="button" size="sm" variant="outline" disabled={disabled || selectedRestorePaths.length === 0} onClick={() => void run("restore-files", async () => {
-                      const repo = await currentRepo();
-                      if (!repo || !book || !currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
-                      const result = await restoreLocalFilesToBase({ repoId: repo.id, bookId: book.id, owner: repo.owner, repo: repo.repo, branch: repo.branch, accountIdentity: currentAccountIdentity, paths: selectedRestorePaths, token: token || undefined });
-                      await commitLocalChanges({ ...await exactTarget() }, "Restore selected files");
-                      setSelectedRestorePaths([]);
-                      return `Ripristinati ${result.restored} file`;
-                    })}>Ripristina selezionati</Button>
+                    <Button type="button" size="sm" variant="outline" disabled={disabled || dirtyFiles.length === 0} onClick={() => setSelectedRestorePaths(dirtyFiles.map((file) => file.path))}>{t("localFirst.selectAll")}</Button>
+                    <Button type="button" size="sm" variant="outline" disabled={disabled || selectedRestorePaths.length === 0} onClick={() => setSelectedRestorePaths([])}>{t("localFirst.clearSelection")}</Button>
+                    <Button type="button" size="sm" variant="outline" disabled={disabled || selectedRestorePaths.length === 0} onClick={() => {
+                      // A book kept on this device has no previous version of a changed file to go back to: only the new files can be undone.
+                      if (localOnly && dirtyFiles.some((file) => selectedRestorePaths.includes(file.path) && file.status !== "new")) {
+                        toast({ title: t("repoStatus.actionFailed"), description: t("localFirst.restoreNoBase"), variant: "destructive" });
+                        return;
+                      }
+                      void run("restore-files", async () => {
+                        const repo = await currentRepo();
+                        if (!repo || !book || !currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
+                        const result = await restoreLocalFilesToBase({ repoId: repo.id, bookId: book.id, owner: repo.owner, repo: repo.repo, branch: repo.branch, accountIdentity: currentAccountIdentity, paths: selectedRestorePaths, token: token || undefined });
+                        // Undoing only new files leaves nothing to commit.
+                        await commitLocalChanges({ ...await exactTarget() }, "Restore selected files").catch((error: unknown) => {
+                          if (!(error instanceof Error && error.message === "No local changes to commit.")) throw error;
+                        });
+                        setSelectedRestorePaths([]);
+                        return t("localFirst.restoredFiles", { count: result.restored });
+                      });
+                    }}>{t("localFirst.restoreSelected")}</Button>
                   </div>
                   <div className="max-h-[32rem] min-w-0 space-y-2 overflow-y-auto text-xs">
                     {dirtyFiles.map((file) => {
                       return (
                         <div key={file.path} className="min-w-0 rounded border px-2 py-2">
                           <label className="flex min-w-0 items-start gap-2">
-                            <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={selectedRestorePaths.includes(file.path)} onChange={(event) => setSelectedRestorePaths((current) => event.target.checked ? [...current, file.path] : current.filter((path) => path !== file.path))} aria-label={`Seleziona ${file.path} per il ripristino`} />
+                            <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={selectedRestorePaths.includes(file.path)} onChange={(event) => setSelectedRestorePaths((current) => event.target.checked ? [...current, file.path] : current.filter((path) => path !== file.path))} aria-label={t("localFirst.selectForRestore", { path: file.path })} />
                           <span className="w-16 shrink-0 uppercase text-muted-foreground">{file.status}</span>
                           <span className="min-w-0 flex-1 break-all font-mono">{file.path}</span>
                           </label>
-                          <Button type="button" size="sm" variant="ghost" className="mt-1 h-7 px-2 text-xs" onClick={() => setExpandedDiffPaths((current) => current.includes(file.path) ? current.filter((path) => path !== file.path) : [...current, file.path])}>{expandedDiffPaths.includes(file.path) ? "Nascondi diff" : "Mostra diff"}</Button>
-                          <div className="mt-2"><PendingFileDiff file={file} token={token} owner={book?.owner ?? ""} repo={book?.repo ?? ""} expanded={expandedDiffPaths.includes(file.path)} /></div>
+                          <Button type="button" size="sm" variant="ghost" className="mt-1 h-7 px-2 text-xs" onClick={() => setExpandedDiffPaths((current) => current.includes(file.path) ? current.filter((path) => path !== file.path) : [...current, file.path])}>{expandedDiffPaths.includes(file.path) ? t("localFirst.hideDiff") : t("localFirst.showDiff")}</Button>
+                          <div className="mt-2"><PendingFileDiff file={file} token={token} owner={book?.owner ?? ""} repo={book?.repo ?? ""} expanded={expandedDiffPaths.includes(file.path)} remote={remote} /></div>
                         </div>
                       );
                     })}

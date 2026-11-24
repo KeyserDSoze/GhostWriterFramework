@@ -41,6 +41,8 @@ import { KeyboardShortcutsDialog } from "@/components/layout/KeyboardShortcutsDi
 import { SyncStatusIndicator } from "@/components/layout/SyncStatusIndicator";
 import { triggerCurrentSave } from "@/store/saveStore";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
+import { useGitHubRemoteAvailability } from "@/github/remoteAvailability";
+import "@/i18n/localFirst";
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -86,6 +88,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const location = useLocation();
   const speechRef = useRef<SpeechController | null>(null);
   const speechGenerationRef = useRef(0);
+  const fetchedOnOpen = useRef<string | null>(null);
   const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -106,6 +109,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     ?? (user?.email ? emailToBranchName(user.email) : undefined);
   const currentToken = currentBook ? resolveBookToken(currentBook, settings) : "";
   const currentBookIsLocal = Boolean(currentBook && bookStorageMode(currentBook) === "local-only");
+  const remote = useGitHubRemoteAvailability(currentBook, currentToken);
   const currentAccountIdentity = localWorkspaceScope();
   const repositoryTarget = currentBook && currentBranch && currentAccountIdentity ? { bookId: currentBook.id, owner: currentBook.owner, repo: currentBook.repo, branch: currentBranch, accountIdentity: currentAccountIdentity } : null;
   const currentStructure = currentBookId ? structures[currentBookId] : undefined;
@@ -133,11 +137,12 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       if (!snapshot) { if (!cancelled) setRepoStatus({ label: t("repoStatus.notCloned"), tone: "offline" }); return; }
       const { meta: repo, status } = snapshot;
       if (cancelled) return;
-      if (currentBookIsLocal && status.dirty === 0 && status.ahead === 0) {
-        setRepoStatus({ label: settings.ui.language === "it" ? "Solo locale" : "Local only", tone: "clean" });
+      // The local commits of a book kept on this device are its saved history: there is nowhere to push them, so they are not "ahead" of anything.
+      if (currentBookIsLocal && status.dirty === 0) {
+        setRepoStatus({ label: t("localFirst.pillLocalOnly"), tone: "clean" });
         return;
       }
-      if (status.ahead > 0) {
+      if (!currentBookIsLocal && status.ahead > 0) {
         const commits = await listUnpushedLocalCommits(repo.id).catch(() => []);
         const oldest = commits[0];
         const oldMs = oldest ? Date.now() - new Date(oldest.createdAt).getTime() : 0;
@@ -171,10 +176,13 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   }, [cloneProgress, currentAccountIdentity, currentBook, currentBookId, currentBookIsLocal, currentBranch, settings.ui.language, t, toast]);
 
   useEffect(() => {
-    if (!currentBook || bookStorageMode(currentBook) === "local-only" || !settings.repository.autoFetchIntervalMinutes || settings.repository.autoFetchIntervalMinutes <= 0) return;
+    if (!currentBook) fetchedOnOpen.current = null;
+    if (!currentBook || bookStorageMode(currentBook) === "local-only") return;
+    const intervalMinutes = settings.repository.autoFetchIntervalMinutes;
+    const onOpen = settings.repository.autoFetchOnOpen && fetchedOnOpen.current !== currentBook.id;
+    if (!onOpen && (!intervalMinutes || intervalMinutes <= 0)) return;
     const token = resolveBookToken(currentBook, settings);
     if (!token) return;
-    const intervalMs = settings.repository.autoFetchIntervalMinutes * 60_000;
     const tick = async () => {
       if (!navigator.onLine) return;
       try {
@@ -198,9 +206,15 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         // Background sync is opportunistic; keep local editing uninterrupted.
       }
     };
-    const timer = window.setInterval(() => void tick(), intervalMs);
+    // "Auto-fetch on open": one light check of the remote head when a book is opened, the same check the periodic one makes.
+    if (onOpen && repositoryTarget) {
+      fetchedOnOpen.current = currentBook.id;
+      void tick();
+    }
+    if (!intervalMinutes || intervalMinutes <= 0) return;
+    const timer = window.setInterval(() => void tick(), intervalMinutes * 60_000);
     return () => window.clearInterval(timer);
-  }, [currentBook, settings]);
+  }, [currentBook, currentBranch, settings]);
 
   async function changeLanguage(code: "en" | "it") {
     await i18n.changeLanguage(code);
@@ -248,13 +262,14 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   }
 
   async function runFullSync(conflictResolutions?: Record<string, RepositorySyncConflictChoice>): Promise<boolean> {
-    if (!repositoryTarget || !currentToken) return false;
+    if (!repositoryTarget) return false;
     setRepoActionBusy("sync");
     try {
-      if (currentBookIsLocal) {
+      // Without GitHub at hand (a book kept on this device, no credential, offline) the changes are committed here, and publishing them waits.
+      if (remote !== "ready") {
         const snapshot = await getLocalRepositoryStatusSnapshot(repositoryTarget.owner, repositoryTarget.repo, repositoryTarget.branch, repositoryTarget.accountIdentity);
         if (snapshot?.status.dirty) await commitLocalChanges(repositoryTarget, "Save local book changes");
-        toast({ title: settings.ui.language === "it" ? "Libro salvato localmente" : "Book saved locally" });
+        toast({ title: t("localFirst.savedLocally"), description: remote === "offline" ? t("localFirst.savedOffline") : remote === "no-credential" ? t("localFirst.savedNoCredential") : undefined });
         return true;
       }
       const result = await syncFullRepository({ ...repositoryTarget, token: currentToken, conflictResolutions });
@@ -304,7 +319,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   }
 
   useRegisterRepositorySync({
-    enabled: Boolean(currentBook && currentToken && (currentBookIsLocal || navigator.onLine)),
+    enabled: Boolean(repositoryTarget),
     busy: repoActionBusy === "sync",
     onSync: () => runFullSync(),
   });
@@ -374,25 +389,26 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
                 <span className="min-w-0 max-w-[34vw] truncate sm:max-w-none">{visibleRepoStatus.label}</span>
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuContent align="end" className="w-64" aria-describedby={remote !== "ready" ? "repository-menu-github-hint" : undefined}>
               <DropdownMenuLabel>{t("repoStatus.quickActions")}</DropdownMenuLabel>
               <div className="p-2">
-                <Button className="w-full" size="sm" disabled={!currentBook || !currentToken || !!repoActionBusy} onClick={() => void triggerCurrentRepositorySync()}>{repoActionBusy === "sync" ? <RefreshCcw className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-1 h-4 w-4" />}{t("repoStatus.sync")}</Button>
+                <Button className="w-full" size="sm" disabled={!repositoryTarget || !!repoActionBusy} onClick={() => void triggerCurrentRepositorySync()}>{repoActionBusy === "sync" ? <RefreshCcw className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-1 h-4 w-4" />}{t("repoStatus.sync")}</Button>
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => setRepoDialogOpen(true)}><Activity className="mr-2 h-4 w-4" />{t("repoStatus.viewStatus")}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setRepoDialogOpen(true)}><Eye className="mr-2 h-4 w-4" />{t("repoStatus.viewChangedFiles")}</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled={currentBookIsLocal || !currentBook || !currentToken || !!repoActionBusy} onSelect={() => void runRepoAction("fetch", async () => {
+              {remote !== "ready" && <DropdownMenuLabel id="repository-menu-github-hint" className="max-w-64 text-xs font-normal text-muted-foreground">{t(remote === "local" ? "localFirst.repositoryMenuLocal" : remote === "offline" ? "localFirst.repositoryMenuOffline" : "localFirst.repositoryMenuNoCredential")}</DropdownMenuLabel>}
+              <DropdownMenuItem disabled={remote !== "ready" || !!repoActionBusy} onSelect={() => void runRepoAction("fetch", async () => {
                 const result = await fetchRemoteStatus({ ...repositoryTarget!, token: currentToken });
                 return result.changed ? t("repoStatus.remoteChanged") : t("repoStatus.remoteUpToDate");
               })}><RefreshCcw className="mr-2 h-4 w-4" />{t("repoStatus.fetch")}</DropdownMenuItem>
-              <DropdownMenuItem disabled={currentBookIsLocal || !currentBook || !currentToken || !!repoActionBusy} onSelect={() => void runRepoAction("pull", async () => {
+              <DropdownMenuItem disabled={remote !== "ready" || !!repoActionBusy} onSelect={() => void runRepoAction("pull", async () => {
                 const result = await pullRemoteChanges({ ...repositoryTarget!, token: currentToken });
                 return t("repoStatus.pullDone", { count: result.updated });
               })}><GitPullRequest className="mr-2 h-4 w-4" />{t("repoStatus.pull")}</DropdownMenuItem>
               <DropdownMenuItem disabled={!repositoryTarget || !!repoActionBusy} onSelect={() => void runRepoAction("commit", async () => { await commitLocalChanges(repositoryTarget!, ""); return t("repoStatus.commitDone"); })}><GitCommit className="mr-2 h-4 w-4" />{t("repoStatus.commit")}</DropdownMenuItem>
-               <DropdownMenuItem disabled={currentBookIsLocal || !repositoryTarget || !currentToken || !!repoActionBusy} onSelect={() => void triggerCurrentRepositorySync()}><UploadCloud className="mr-2 h-4 w-4" />{t("repoStatus.push")}</DropdownMenuItem>
+               <DropdownMenuItem disabled={remote !== "ready" || !repositoryTarget || !!repoActionBusy} onSelect={() => void triggerCurrentRepositorySync()}><UploadCloud className="mr-2 h-4 w-4" />{t("repoStatus.push")}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}

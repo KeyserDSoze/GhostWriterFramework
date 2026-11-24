@@ -1,4 +1,3 @@
-import { loadBookStructure } from "@/github/githubClient";
 import { getExistingLocalBookStructure } from "@/repository/repositoryService";
 import { useBooksStore } from "@/store/booksStore";
 import type { BookEntry } from "@/types/settings";
@@ -30,8 +29,6 @@ export async function refreshBookAfterMutation(input: {
   const generation = useBooksStore.getState().invalidateStructure(input.book.id);
   const identity = localWorkspaceScope();
   const local = await getExistingLocalBookStructure(input.book.id, input.book.owner, input.book.repo, input.branch, identity);
-  const structure = local?.structure.loadedBranch === input.branch
-    ? local.structure
-    : await loadBookStructure(input.token, input.book.owner, input.book.repo, input.branch);
-  useBooksStore.getState().setStructure(input.book.id, structure, generation);
+  // Without a working copy of that branch the structure stays invalidated: the book's pages load it again from their own working copy.
+  if (local?.structure.loadedBranch === input.branch) useBooksStore.getState().setStructure(input.book.id, local.structure, generation);
 }

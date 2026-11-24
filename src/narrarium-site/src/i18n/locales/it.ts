@@ -1063,7 +1063,7 @@ const it = {
     dedicatedHint: "Questo PAT viene salvato sulla voce del libro nelle impostazioni Drive e sostituisce il token predefinito per tutte le letture e scritture su questo libro.",
     createOneAt: "Creane uno su",
     withPermissions: "con Contents read & write e Metadata read su questo repository.",
-    noTokenWarning: "Nessun token è configurato per questa selezione. Il libro non verrà caricato finché un token non sarà disponibile.",
+    noTokenWarning: "Nessun token è configurato per questa selezione: il libro non può essere scaricato né sincronizzato con GitHub finché un token non sarà disponibile.",
     labelOptional: "Etichetta (opzionale)",
     loadBranchesFailed: "Caricamento branch non riuscito",
     settingsSaved: "Impostazioni libro salvate",

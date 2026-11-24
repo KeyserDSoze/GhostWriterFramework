@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, BookOpen, CheckCircle2, GitBranch, Image, PackageCheck, Wand2 } from "lucide-react";
+import { AlertCircle, BookOpen, CheckCircle2, GitBranch, HardDrive, Image, PackageCheck, Wand2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,8 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useAuthStore } from "@/store/authStore";
-import { resolveBookExportProfiles, resolveBookExportSettings } from "@/types/settings";
+import { bookStorageMode, resolveBookExportProfiles, resolveBookExportSettings } from "@/types/settings";
+import "@/i18n/localFirst";
 import type { Chapter, Paragraph } from "@/types/book";
 
 interface ChecklistItem {
@@ -89,10 +90,14 @@ export function BookDashboardPage() {
           <p className="text-muted-foreground">{t("dashboard.description")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={structure.loadedBranch === structure.defaultBranch ? "secondary" : "outline"} className="gap-1">
-            <GitBranch className="h-3 w-3" />
-            {ensuring ? t("bookPage.creatingBranch") : branch}
-          </Badge>
+          {bookStorageMode(book) === "local-only" ? (
+            <Badge variant="secondary" className="gap-1"><HardDrive className="h-3 w-3" />{t("localFirst.deviceOnly")}</Badge>
+          ) : (
+            <Badge variant={structure.loadedBranch === structure.defaultBranch ? "secondary" : "outline"} className="gap-1">
+              <GitBranch className="h-3 w-3" />
+              {ensuring ? t("bookPage.creatingBranch") : branch}
+            </Badge>
+          )}
           <Button asChild variant="outline" size="sm"><Link to={`/app/books/${book.id}/settings`}>{t("bookPage.bookSettings")}</Link></Button>
         </div>
       </div>

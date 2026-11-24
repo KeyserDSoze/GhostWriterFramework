@@ -588,7 +588,7 @@ function EntityDetailsView({ details }: { details: EntityDetails }) {
   );
 }
 
-async function loadReaderBook(input: {
+export async function loadReaderBook(input: {
   book: BookEntry;
   structure: BookStructure;
   token: string;
@@ -821,7 +821,8 @@ async function loadImageUrl(input: { token: string; book?: BookEntry; owner?: st
   if (!isApprovedRepositoryAssetPath(path)) return undefined;
   const owner = input.owner ?? input.book?.owner;
   const repo = input.repo ?? input.book?.repo;
-  if (!owner || !repo) return undefined;
+  // A book kept on this device has no owner and no repository: its images are in its working copy all the same.
+  if (owner === undefined || repo === undefined) return undefined;
   const bytes = await optionalBinaryFileContent(input.token, owner, repo, path, input.branch);
   if (!bytes) return undefined;
   const url = URL.createObjectURL(new Blob([bytesToArrayBuffer(bytes)], { type: imageMimeType(path) }));

@@ -4,6 +4,7 @@ import type { AssistantAttachment, AssistantMessage } from "@/assistant/store";
 import type { AppSettings, BookEntry, ChatCapability } from "@/types/settings";
 import type { AttachmentImportTarget } from "@/assistant/attachmentImport";
 import type { CopilotToolDescriptor, CopilotToolPrerequisite } from "./types";
+import { githubRemoteAvailability, type GitHubRemoteAvailability } from "@/github/remoteAvailability";
 
 export interface CopilotToolRuntimeContext {
   settings: AppSettings;
@@ -52,6 +53,11 @@ export function llmTaskForTool(toolId: string): ChatCapability | null {
 
 export function evaluateToolContract(tool: CopilotToolDescriptor, runtime: CopilotToolRuntimeContext): CopilotToolContractResult {
   const missing: string[] = tool.prerequisites.filter((requirement) => !hasPrerequisite(requirement, runtime));
+  // The tools of the remote repository (branches, commits, pull requests) need GitHub itself, not the working copy.
+  if (tool.area === "git") {
+    const remote = githubRemoteAvailability(runtime.book ?? undefined, runtime.token);
+    if (remote !== "ready") missing.push(GITHUB_REMOTE_REQUIREMENT[remote]);
+  }
   if (tool.requiresLlm) {
     const task = llmTaskForTool(tool.id);
     if (!task || !resolveTaskCandidates(runtime.settings, task).some((candidate) => candidate.integration && candidate.model && (!toolRequiresForcedTool(tool.id) || candidate.supportsToolCalls !== false))) {
@@ -66,6 +72,14 @@ function toolRequiresForcedTool(toolId: string): boolean {
   return toolId === "evaluate-with-readers" || toolId === "summarize-reader-evaluations" || toolId === "write-evaluation" || toolId === "evaluate-chapter-paragraphs" || toolId === "run-audit" || toolId === "update-audit";
 }
 
+const GITHUB_REMOTE_REQUIREMENT = { local: "GitHub repository", "no-credential": "GitHub credential", offline: "connection" } as const satisfies Record<Exclude<GitHubRemoteAvailability, "ready">, string>;
+
+const GITHUB_REMOTE_TEXT: Record<keyof typeof GITHUB_REMOTE_REQUIREMENT, { en: string; it: string }> = {
+  local: { en: "This needs GitHub: connect the book to GitHub to use it.", it: "Serve GitHub: collega il libro a GitHub per usare questa funzione." },
+  "no-credential": { en: "This needs GitHub: add a GitHub credential to use it.", it: "Serve GitHub: aggiungi una credenziale GitHub per usare questa funzione." },
+  offline: { en: "You are offline: this needs GitHub.", it: "Sei offline: questa funzione richiede GitHub." },
+};
+
 export function assertToolExecutionResult(tool: CopilotToolDescriptor, message: AssistantMessage): void {
   if (!tool.mutatesData && message.mutation) throw new Error(`Read-only Copilot tool ${tool.id} returned a repository mutation.`);
   if (tool.destructive && message.mutation) {
@@ -74,6 +88,8 @@ export function assertToolExecutionResult(tool: CopilotToolDescriptor, message: 
 }
 
 export function missingToolRequirementsMessage(tool: CopilotToolDescriptor, missing: readonly string[], language: string): string {
+  const remote = (Object.keys(GITHUB_REMOTE_REQUIREMENT) as Array<keyof typeof GITHUB_REMOTE_REQUIREMENT>).find((reason) => missing.includes(GITHUB_REMOTE_REQUIREMENT[reason]));
+  if (remote) return GITHUB_REMOTE_TEXT[remote][language === "it" ? "it" : "en"];
   const requirements = missing.join(", ");
   return language === "it"
     ? `Il tool ${tool.name} non può essere eseguito ora. Requisiti mancanti: ${requirements}.`

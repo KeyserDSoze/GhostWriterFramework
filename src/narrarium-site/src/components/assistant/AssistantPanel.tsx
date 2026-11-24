@@ -55,6 +55,7 @@ import { isMediaOperationOwned, stopMediaStreamTracks } from "@/assistant/mediaO
 import { assistantActionToolId, policyTargetEnabled, quickActionToolId } from "@/assistant/toolPolicy";
 import { hasAssistantActionProvenance, isOutlineProposal, OUTLINE_FILE, sourceRevisionFromFiles, validateAssistantAction } from "@/assistant/actionValidation";
 import "@/i18n/outlineCopilot";
+import "@/i18n/localFirst";
 import { FrozenProposalNotice } from "@/components/frozen/FrozenProposalNotice";
 import { copilotToolRegistry, isCopilotToolIdEnabled } from "@/assistant/tools/registry";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
@@ -81,7 +82,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { resolveBookExportSettings, resolveBookToken, type BookEntry } from "@/types/settings";
+import { bookStorageMode, resolveBookExportSettings, resolveBookToken, type BookEntry } from "@/types/settings";
+import { githubRemoteAvailability } from "@/github/remoteAvailability";
 import {
   compareBranches,
   createBranchFromBase,
@@ -111,7 +113,7 @@ import { commitAndPushTextFileMutation, RepositoryConflictError, resolveReposito
 import { applyCanonicalRevisionResults, currentRevisionToken, fileRevisionMatches, fileUpdateCounts, markFileUpdatesApplied, markFileUpdatesFailed, markFileUpdatesUndone, pendingFileUpdates, type AppliedFileUpdateResult } from "@/assistant/multiFileOperation";
 import { buildCanonEntityDocument } from "@/narrarium/canon";
 import { BrowserSpeechFallbackRequired } from "@/assistant/mediaFallback";
-import { optionalRepositoryRead } from "@/repository/repositoryError";
+import { optionalRepositoryRead, repositoryErrorDescription } from "@/repository/repositoryError";
 import { hasOpenFloatingLayer } from "@/lib/floatingLayer";
 import { refreshBookAfterMutation, runPromptWithMutationRefresh } from "@/assistant/mutationRefresh";
 import { captureLiveVoiceRewriteSnapshot, generateLiveVoiceRewrite, liveVoiceRewriteMatches, persistLiveVoiceRewrite, resolveLiveVoiceRewrite, type LiveVoiceRewriteContext, type LiveVoiceSource, type PendingLiveVoiceRewrite } from "@/assistant/liveVoiceRewrite";
@@ -2346,13 +2348,19 @@ export function AssistantPanel() {
     const structure = structures[bookId];
     const token = book ? resolveBookToken(book, settings) : "";
     if (!book || !structure || !token) return;
+    // The branches are compared on GitHub: say why when it cannot be reached, instead of sending a request that fails.
+    const remote = githubRemoteAvailability(book, token);
+    if (remote !== "ready") {
+      toast({ title: t("assistant.toastBranchDiffFailed"), description: t(remote === "local" ? "localFirst.githubNeeded" : remote === "offline" ? "localFirst.githubNeededOffline" : "localFirst.githubNeededNoCredential") });
+      return;
+    }
     setLoadingDiff(true);
     try {
       const files = await compareBranches(token, book.owner, book.repo, structure.defaultBranch, branch);
       setDiffFiles(files);
       setSyncOpen(true);
     } catch (err) {
-      toast({ title: t("assistant.toastBranchDiffFailed"), description: String(err), variant: "destructive" });
+      toast({ title: t("assistant.toastBranchDiffFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
     } finally {
       setLoadingDiff(false);
     }
@@ -2504,7 +2512,9 @@ export function AssistantPanel() {
     }
 
     actions.push({ id: "note", labelKey: "assistant.actions.saveNote", icon: FileText, run: ask("Create a writer note from the current context and save it."), disabled: !hasChatMessages });
-    if (bookId) actions.push({ id: "diff", labelKey: "assistant.actions.syncDiff", icon: GitBranch, run: () => void loadBranchDiff(), disabled: loadingDiff });
+    // Comparing branches needs a GitHub repository: a book kept on this device has none.
+    const diffBook = bookId ? settings.books.find((entry) => entry.id === bookId) : undefined;
+    if (diffBook && bookStorageMode(diffBook) !== "local-only") actions.push({ id: "diff", labelKey: "assistant.actions.syncDiff", icon: GitBranch, run: () => void loadBranchDiff(), disabled: loadingDiff });
     return actions;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, bookId, loadingDiff, currentSession?.messages.length]);

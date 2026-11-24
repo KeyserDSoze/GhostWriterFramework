@@ -2,7 +2,7 @@ import { parseDocument, stringify } from "yaml";
 import { completeToolRouted } from "@/assistant/router";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import type { LlmRunMetadata } from "@/assistant/llm";
-import { loadFileContent, loadRemoteFileContentAtRef } from "@/github/githubClient";
+import { loadFileContent } from "@/github/githubClient";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
 import { parseGhostwriter } from "@/narrarium/ghostwriter";
 import { composeGhostwriterStyleContext } from "@/narrarium/pipeline";
@@ -290,14 +290,9 @@ async function mutateLocalDraftFiles(repoId: string, mutations: Array<{ path: st
 
 async function readWorkingCopyText(context: RewriteWorkspaceContext, path: string): Promise<{ content: string | null; hash: string | null }> {
   const local = await getLocalFileEntry(context.repoId, path, captureRepositoryOperationScope());
-  if (local) {
-    if (local.status === "deleted") return { content: null, hash: null };
-    if (local.kind === "text") return { content: local.text ?? "", hash: local.currentHash };
-    return { content: new TextDecoder().decode(await local.blob?.arrayBuffer() ?? new ArrayBuffer(0)), hash: local.currentHash };
-  }
-  const remote = await optionalRepositoryRead(() => loadRemoteFileContentAtRef(context.token, context.book.owner, context.book.repo, path, context.branch));
-  if (!remote) return { content: null, hash: null };
-  return { content: remote.content, hash: await sha256Text(remote.content) };
+  if (!local || local.status === "deleted") return { content: null, hash: null };
+  if (local.kind === "text") return { content: local.text ?? "", hash: local.currentHash };
+  return { content: new TextDecoder().decode(await local.blob?.arrayBuffer() ?? new ArrayBuffer(0)), hash: local.currentHash };
 }
 
 export async function loadRewriteWorkingCopyText(context: RewriteRepositoryContext, path: string): Promise<string | null> {

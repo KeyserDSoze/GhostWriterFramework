@@ -6,7 +6,8 @@ import { ensureLocalBookStructure, getExistingLocalBookStructure, invalidateRepo
 import { useAuthStore } from "@/store/authStore";
 import { useBooksStore, type LegacyBookStructureErrorCode } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
-import { resolveBookToken } from "@/types/settings";
+import { bookStorageMode, resolveBookToken, type BookEntry } from "@/types/settings";
+import "@/i18n/localFirst";
 import { ensureDefaultGhostwriter } from "@/narrarium/defaultGhostwriter";
 import { currentRepositoryScopeIdentity } from "@/repository/repositoryOperationScope";
 
@@ -33,6 +34,14 @@ export function retryBookStructureLoad(bookId: string): number {
     if (key.includes(`::${bookId}::`)) failedOperations.delete(key);
   });
   return generation;
+}
+
+/** Why the working copy of a book cannot be brought to this device now: it lives on another device, there is no GitHub credential, or the browser is offline. */
+function missingWorkingCopyMessage(book: BookEntry, token: string): string {
+  if (bookStorageMode(book) === "local-only") return i18n.t(book.localRepositoryId ? "common.loadFailed" : "localFirst.localBookOnAnotherDevice");
+  if (!token) return i18n.t("localFirst.notDownloadedNoCredential");
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return i18n.t("localFirst.notDownloadedOffline");
+  return i18n.t("common.loadFailed");
 }
 
 function operationKey(epoch: number, identity: string, bookId: string, owner: string, repo: string, branch: string, generation: number): string {
@@ -111,13 +120,17 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
   books.setCloneProgress(bookId, undefined);
   books.beginStructureOperation(bookId, token, epoch, generation);
 
+  // Set once the book needs its working copy brought to this device (a clone, a repair, a personal branch): then a failure says why that cannot happen now.
+  let needsDownload = false;
   const promise = (async () => {
     const tokenValue = resolveBookToken(book, settings);
 
     let authoritativeBranch = operationBranch;
     let local = await getExistingLocalBookStructure(bookId, book.owner, book.repo, authoritativeBranch, identity, { includeIncomplete: true });
-    if (resolution.requiresCreation && user?.email && !books.workingBranches[bookId]) {
+    // A personal branch is made on GitHub: a book kept on this device has none, its branch is the one of its working copy.
+    if (resolution.requiresCreation && user?.email && !books.workingBranches[bookId] && bookStorageMode(book) !== "local-only") {
       if (local?.meta.cloneComplete !== true) {
+        needsDownload = true;
         if (!tokenValue) throw new Error(i18n.t("bookPage.noTokenConfigured"));
         authoritativeBranch = await ensureAuthoritativePersonalBranch({
           token: tokenValue,
@@ -138,6 +151,7 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
       if (local.meta.cloneComplete === true) {
         nextStructure = local.structure;
       } else {
+        needsDownload = true;
         if (!navigator.onLine) throw new Error("The local working copy is incomplete and requires an online repair.");
         if (!tokenValue) throw new Error(i18n.t("bookPage.noTokenConfigured"));
         nextStructure = (await ensureLocalBookStructure({
@@ -152,7 +166,9 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
         })).structure;
       }
     } else {
+      needsDownload = true;
       if (!tokenValue) throw new Error(i18n.t("bookPage.noTokenConfigured"));
+      if (bookStorageMode(book) !== "local-only" && typeof navigator !== "undefined" && navigator.onLine === false) throw new Error("The working copy cannot be downloaded while offline.");
       const ensured = await ensureLocalBookStructure({
         bookId,
         book,
@@ -206,7 +222,7 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
         : null;
       useBooksStore.getState().setError(bookId, legacy
         ? { code: legacy, adoptionTarget: error && typeof error === "object" && "adoptionTarget" in error ? error.adoptionTarget as import("@/auth/legacyAdoptionConsent").LegacyAdoptionTarget | undefined : undefined }
-        : { code: "BOOK_STRUCTURE_LOAD_FAILED", message: i18n.t("common.loadFailed") });
+        : { code: "BOOK_STRUCTURE_LOAD_FAILED", message: needsDownload ? missingWorkingCopyMessage(book, resolveBookToken(book, settings)) : i18n.t("common.loadFailed") });
     }
   }).finally(() => {
     finishLocalLoading();

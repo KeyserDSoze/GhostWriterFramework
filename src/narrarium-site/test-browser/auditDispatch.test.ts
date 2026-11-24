@@ -5,9 +5,11 @@ import { runAssistantPrompt } from "@/assistant/service";
 import { auditRunBlocker } from "@/narrarium/auditAvailability";
 import type { LoadedWriterContext } from "@/assistant/context";
 import type { AppSettings, BookEntry } from "@/types/settings";
+import { RepositoryError } from "@/repository/repositoryError";
 
-const { listBranchCommits, loadAuditReport, updateAuditFinding, resolveRepositoryHeadForMutation } = vi.hoisted(() => ({
+const { listBranchCommits, readFileWithSha, loadAuditReport, updateAuditFinding, resolveRepositoryHeadForMutation } = vi.hoisted(() => ({
   listBranchCommits: vi.fn(),
+  readFileWithSha: vi.fn(),
   loadAuditReport: vi.fn(),
   updateAuditFinding: vi.fn(),
   resolveRepositoryHeadForMutation: vi.fn(),
@@ -16,6 +18,7 @@ const { listBranchCommits, loadAuditReport, updateAuditFinding, resolveRepositor
 vi.mock("@/github/githubClient", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/github/githubClient")>(),
   listBranchCommits,
+  readFileWithSha,
 }));
 
 vi.mock("@/narrarium/audit", async (importOriginal) => ({
@@ -84,6 +87,8 @@ describe("audit Copilot dispatch", () => {
   beforeEach(() => {
     listBranchCommits.mockReset();
     listBranchCommits.mockResolvedValue([{ sha: "head-sha" }]);
+    readFileWithSha.mockReset();
+    readFileWithSha.mockRejectedValue(new RepositoryError("audit/book.md is not in the local working copy.", "not-found", "read", 404));
     resolveRepositoryHeadForMutation.mockReset();
     resolveRepositoryHeadForMutation.mockResolvedValue("source-head");
     loadAuditReport.mockReset();
@@ -93,14 +98,16 @@ describe("audit Copilot dispatch", () => {
   it.each([
     ["run audit", "run-audit"],
     ["update audit", "update-audit"],
-  ])("dispatches %s as one run request", async (request, toolId) => {
+  ])("dispatches %s as one run request bound to the report in the working copy, without GitHub", async (request, toolId) => {
     const message = await prompt(request);
     expect(message.action).toMatchObject({
       kind: "navigate",
       to: "/app/books/book-id/audit",
       toolId,
+      sourceRevisions: { "audit/book.md": null },
     });
-    expect(listBranchCommits).toHaveBeenCalledTimes(1);
+    expect(readFileWithSha).toHaveBeenCalledWith("token", "owner", "repo", "main", "audit/book.md");
+    expect(listBranchCommits).not.toHaveBeenCalled();
   });
 
   it("opens an existing audit without requiring a model or starting execution", async () => {
@@ -138,7 +145,7 @@ describe("audit Copilot dispatch", () => {
   });
 
   it("reports dispatch preparation failures without promising execution", async () => {
-    listBranchCommits.mockRejectedValueOnce(new Error("head unavailable"));
+    readFileWithSha.mockRejectedValueOnce(new Error("head unavailable"));
     const message = await prompt("run audit");
     expect(message.text).toContain("could not prepare the audit action safely");
     expect(message.text).toContain("head unavailable");
