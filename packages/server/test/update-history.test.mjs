@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { createFakeAutopilotAi } from "narrarium-engine/testing";
 import * as testing from "../dist/testing.mjs";
-import { adminLogin, noRelease, until, withServer } from "./helpers.mjs";
+import { adminLogin, noRelease, oneUpdateFileAtATime, until, withServer } from "./helpers.mjs";
 import { logCollector } from "./oauth-helpers.mjs";
 import { REGISTRY_KEY, bootstrapRelease, fakeNpm, fakeRegistry, forgeRelease, keyEntry, keysDocument, keysUrl, makeRegistryKey, npmFailures, registrySignature, signedVersionDocument, versionUrl, withoutPublishAttestation } from "./release-fixtures.mjs";
 
@@ -71,7 +71,7 @@ async function withSupervisor({ releases, latest, currentVersion, auditOutput = 
   for (const [version, output] of Object.entries(auditOutput)) npm.state.auditOutput.set(version, output);
   for (const version of failInstall) npm.state.failInstall.add(version);
   const registry = fakeRegistry({ releases, latest, routes });
-  const installer = new RuntimeInstaller({ dataRoot, npmBinary: "npm", runner: npm.runner, fetch: registry.fetch });
+  const installer = oneUpdateFileAtATime(new RuntimeInstaller({ dataRoot, npmBinary: "npm", runner: npm.runner, fetch: registry.fetch }));
   const lines = [];
   const children = fakeChildren({ stubborn });
   const supervised = superviseServer({ installer, currentVersion, spawnChild: children.spawn, pollMs: 5, stopTimeoutMs: 150, forwardSignals: false, log: (line) => lines.push(line) });

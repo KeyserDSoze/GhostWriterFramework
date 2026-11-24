@@ -111,8 +111,26 @@ export async function approve(admin, ...bases) {
   if (answer.status !== 200) throw new Error(`approving ${bases.join(", ")} failed: ${answer.status} ${JSON.stringify(answer.body)}`);
 }
 
-/** Wait until the book's autopilot is not running, and answer its snapshot. */
-export async function finished(client, bookId, timeoutMs = 30_000) {
-  await until(async () => !(await client.autopilot(bookId)).running, timeoutMs);
+/**
+ * How long a test waits for a whole autopilot run to end. A one-chapter run is some twenty provider calls, each followed by commits that
+ * are flushed to disk: about a second on Linux, 7 to 11 seconds on an idle Windows runner of GitHub Actions, and more than the 30 seconds
+ * this used to be on one that was busy with other test files (run 45487539414, where the tests around it took three to four times longer
+ * as well). The wait ends as soon as the run does: this only bounds a run that would never end.
+ */
+export const RUN_END_MS = 120_000;
+
+/** Wait until the book's autopilot is not running, and answer its snapshot. A run that does not end in time is told with where it was. */
+export async function finished(client, bookId, timeoutMs = RUN_END_MS) {
+  let last;
+  try {
+    await until(async () => {
+      last = await client.autopilot(bookId);
+      return !last.running;
+    }, timeoutMs);
+  } catch (error) {
+    if (error?.message !== "timed out") throw error;
+    const where = last?.state ? { status: last.state.status, phase: last.state.phase, message: last.state.message, live: last.live?.activity?.title, activities: last.activities?.length } : { state: null };
+    throw new Error(`timed out: the autopilot of "${bookId}" was still running after ${timeoutMs} ms (${JSON.stringify(where)}).`);
+  }
   return client.autopilot(bookId);
 }

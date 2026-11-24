@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { remoteBookStore, syncBookStores } from "narrarium-engine";
 import { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } from "narrarium-engine/testing";
 // New exports are read through the namespace, so a missing one fails the test that needs it and nothing else.
@@ -13,7 +14,12 @@ import { ONE_CHAPTER, aiConfigFor, approve, fakeProvider, finished, seedBookFile
 
 const shape = ({ status, code, message }) => ({ status, code, message });
 const remove = (...directories) => Promise.all(directories.map((directory) => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })));
-const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "-C", cwd, ...args], { encoding: "utf8" });
+// The server under test runs in this process, so a synchronous git would stop its event loop as well. Three of them in a row took a few
+// seconds on a loaded Windows runner: the connection the client used last had then been idle past the server's keep-alive (5 s, and the
+// 1 s Node adds), the client, whose own 3 s timer could not run either, sent the next request on it, and the server reset it ("not
+// reachable", run 45433310584). Git runs asynchronously here, so both timers run on time.
+const gitFile = promisify(execFile);
+const git = async (cwd, ...args) => (await gitFile("git", ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "-C", cwd, ...args], { encoding: "utf8" })).stdout;
 const GITHUB = { kind: "github", owner: "me", repo: "remote", branch: "main" };
 
 /** The answer of a request that failed, as the typed client reports it. */
@@ -214,19 +220,25 @@ test("S1: a run that meets a transient provider failure repeats the step after t
 // S1.4: the engine's heartbeat commits are ordinary commits for git and for the sync with the browser
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * How long the test waits for the first two heartbeat commits of the held step. Each is a commit of the server's git: a fraction of a second
+ * on Linux, a few seconds on a busy Windows runner (the whole test took 25 s there in run 45487539414, against 6 s on an idle one).
+ */
+const TWO_HEARTBEATS_MS = 60_000;
+
 /** A bare repository with one commit on `main`, standing in for GitHub, and a clone to play the author with. */
 async function seedOrigin() {
   const origin = await mkdtemp(path.join(os.tmpdir(), "narrarium-origin-"));
   const seed = await mkdtemp(path.join(os.tmpdir(), "narrarium-seed-"));
-  execFileSync("git", ["init", "--quiet", "--bare", origin]);
-  execFileSync("git", ["init", "--quiet", "-b", "main", seed]);
+  await gitFile("git", ["init", "--quiet", "--bare", origin]);
+  await gitFile("git", ["init", "--quiet", "-b", "main", seed]);
   for (const [file, content] of Object.entries(seedBookFilesWithChapters())) {
     await mkdir(path.dirname(path.join(seed, file)), { recursive: true });
     await writeFile(path.join(seed, file), content);
   }
-  git(seed, "add", "-A");
-  git(seed, "commit", "--quiet", "-m", "seed");
-  git(seed, "push", "--quiet", origin, "main");
+  await git(seed, "add", "-A");
+  await git(seed, "commit", "--quiet", "-m", "seed");
+  await git(seed, "push", "--quiet", origin, "main");
   return { origin, seed };
 }
 
@@ -240,14 +252,14 @@ test("S1: heartbeat commits made during a long step are ordinary commits: git pu
         await client.registerBook("gh", { title: "Remote", storage: GITHUB, githubToken: "ghp_x" });
         const working = server.data.bookDirectory("gh");
         // Read while the server commits: a moment in which git cannot read is no answer yet, not a failure.
-      const subjects = () => {
-        try {
-          return git(working, "log", "--format=%s").split(/\r?\n/).filter(Boolean);
-        } catch {
-          return [];
-        }
-      };
-        const heartbeats = () => subjects().filter((subject) => subject === "Autopilot: heartbeat").length;
+        const subjects = async () => {
+          try {
+            return (await git(working, "log", "--format=%s")).split(/\r?\n/).filter(Boolean);
+          } catch {
+            return [];
+          }
+        };
+        const heartbeats = async () => (await subjects()).filter((subject) => subject === "Autopilot: heartbeat").length;
 
         // The browser's first sync, before the run.
         const local = new MemoryBookStore(seedBookFilesWithChapters());
@@ -258,25 +270,25 @@ test("S1: heartbeat commits made during a long step are ordinary commits: git pu
         // A long step: the AI call is held while the engine saves its heartbeat again and again (every 150 ms here, every 5 minutes for real).
         await client.startAutopilot("gh", ONE_CHAPTER);
         await slow.started;
-        await until(() => heartbeats() >= 2, 15_000);
+        await until(async () => (await heartbeats()) >= 2, TWO_HEARTBEATS_MS);
 
         // The author writes on GitHub while the run works, and the server syncs with heartbeats among its local commits and more arriving.
         await writeFile(path.join(seeded.seed, "notes-by-the-author.md"), "---\ntype: note\nid: note:author\ntitle: Author\n---\n\nA line written on GitHub.\n");
-        git(seeded.seed, "add", "-A");
-        git(seeded.seed, "commit", "--quiet", "-m", "author edit");
-        git(seeded.seed, "push", "--quiet", seeded.origin, "main");
+        await git(seeded.seed, "add", "-A");
+        await git(seeded.seed, "commit", "--quiet", "-m", "author edit");
+        await git(seeded.seed, "push", "--quiet", seeded.origin, "main");
         const synced = await client.syncGitHub("gh");
         assert.equal(synced.lastSync.ok, true, synced.lastSync.message);
-        assert.ok(subjects().includes("author edit"), "the server has the author's commit, with its own heartbeats on top of it");
-        const pushed = git(seeded.origin, "log", "--format=%s", "main").split(/\r?\n/).filter(Boolean);
+        assert.ok((await subjects()).includes("author edit"), "the server has the author's commit, with its own heartbeats on top of it");
+        const pushed = (await git(seeded.origin, "log", "--format=%s", "main")).split(/\r?\n/).filter(Boolean);
         assert.ok(pushed.includes("Autopilot: heartbeat"), "the heartbeat commits are on GitHub");
         assert.ok(pushed.includes("author edit"), "next to the author's");
 
         // The run ends (the heartbeats stop), and the browser's second sync agrees with the server.
         await client.pauseAutopilot("gh", "now");
         slow.release();
-        await until(async () => !(await client.autopilot("gh")).running);
-        assert.equal(git(working, "status", "--porcelain").trim(), "", "nothing is left half done in the working copy");
+        await finished(client, "gh");
+        assert.equal((await git(working, "status", "--porcelain")).trim(), "", "nothing is left half done in the working copy");
         const second = await syncBookStores({ local, remote, base: first.base });
         assert.deepEqual(second.conflicts, [], "a heartbeat never makes a conflict");
         assert.deepEqual(second.skipped ?? [], []);

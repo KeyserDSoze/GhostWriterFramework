@@ -59,6 +59,29 @@ export async function until(check, timeoutMs = 10_000) {
   }
 }
 
+/** The control files of an update that the server (here, the test) and the supervisor both read and write. */
+const UPDATE_FILE_METHODS = ["readUpdateRequest", "writeUpdateRequest", "readUpdateResult", "writeUpdateResult", "readUpdateVerification", "writeUpdateVerification"];
+
+/**
+ * A supervisor in the test's own process looks for a request every 5 ms (every 500 ms for real), so it has `update-request.json` open
+ * almost all the time, and the test writes the next request over it with a rename. Windows cannot replace a file that is open (EPERM),
+ * and the server's few retries, made for the rare moment in which a supervisor in another process reads the file, ran out (run
+ * 45468225966). Here the control files of the update are read and written one at a time, so a rename never meets an open handle of
+ * this process. What is read and written, and what the tests check of it, is unchanged.
+ */
+export function oneUpdateFileAtATime(installer) {
+  let queue = Promise.resolve();
+  for (const name of UPDATE_FILE_METHODS) {
+    const original = installer[name].bind(installer);
+    installer[name] = (...args) => {
+      const turn = queue.then(() => original(...args));
+      queue = turn.catch(() => undefined);
+      return turn;
+    };
+  }
+  return installer;
+}
+
 /** Start a server on free ports with a read/write/run client token. */
 export async function withServer(run, extra = {}) {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "narrarium-server-test-"));

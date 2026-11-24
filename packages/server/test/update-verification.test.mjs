@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import * as server from "../dist/testing.mjs";
-import { until } from "./helpers.mjs";
+import { oneUpdateFileAtATime, until } from "./helpers.mjs";
 import {
   REAL_RELEASE,
   REAL_REGISTRY_KEYS,
@@ -451,7 +451,7 @@ async function withSupervisor({ releases, latest, currentVersion, auditOutput = 
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), "narrarium-verify-"));
   const npm = fakeNpm({ releases, latest });
   const registry = fakeRegistry({ releases, latest });
-  const installer = new RuntimeInstaller({ dataRoot, npmBinary: "npm", runner: npm.runner, fetch: registry.fetch });
+  const installer = oneUpdateFileAtATime(new RuntimeInstaller({ dataRoot, npmBinary: "npm", runner: npm.runner, fetch: registry.fetch }));
   for (const [version, output] of Object.entries(auditOutput)) npm.state.auditOutput.set(version, output);
   const lines = [];
   const children = fakeChildren();

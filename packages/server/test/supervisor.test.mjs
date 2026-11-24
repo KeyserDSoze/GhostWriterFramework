@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import { RuntimeInstaller, UPDATE_MESSAGES, superviseServer } from "../dist/testing.mjs";
-import { npmMetadata, until } from "./helpers.mjs";
+import { npmMetadata, oneUpdateFileAtATime, until } from "./helpers.mjs";
 import { forgingRegistry, integrityFor, lockfile } from "./release-fixtures.mjs";
 
 /** npm as the installer sees it: metadata, installs into the staging prefix, signature audit. */
@@ -83,9 +83,9 @@ async function withRuntime(run, npmOptions) {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), "narrarium-runtime-test-"));
   const npm = fakeNpm(npmOptions);
   try {
-    await run(new RuntimeInstaller({ dataRoot, npmBinary: "npm", runner: npm.runner, fetch: forgingRegistry().fetch }), npm, dataRoot);
+    await run(oneUpdateFileAtATime(new RuntimeInstaller({ dataRoot, npmBinary: "npm", runner: npm.runner, fetch: forgingRegistry().fetch })), npm, dataRoot);
   } finally {
-    await rm(dataRoot, { recursive: true, force: true });
+    await rm(dataRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 

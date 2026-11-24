@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import * as server from "../dist/testing.mjs";
 import { SERVER_VERSION } from "../dist/testing.mjs";
-import { adminLogin, until, withServer } from "./helpers.mjs";
+import { adminLogin, oneUpdateFileAtATime, until, withServer } from "./helpers.mjs";
 import { REAL_RELEASE, REAL_VERSION, attestationUrl, bootstrapRelease, fakeNpm, fakeRegistry, forgeRelease, latestUrl } from "./release-fixtures.mjs";
 
 const { HIGHEST_VERSION_FILE, RollbackRefusedError, RuntimeInstaller, UPDATE_MESSAGES, checkNpmServerRelease, cliMain, prepareRuntime, superviseServer } = server;
@@ -29,7 +29,7 @@ async function withHistory(run, { install = ["0.1.1", "0.2.0"], extraReleases = 
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), "narrarium-rollback-"));
   const npm = fakeNpm({ releases, latest: "0.2.0" });
   const registry = fakeRegistry({ releases, latest: "0.2.0" });
-  const installer = new RuntimeInstaller({ dataRoot, npmBinary: "npm", runner: npm.runner, fetch: registry.fetch });
+  const installer = oneUpdateFileAtATime(new RuntimeInstaller({ dataRoot, npmBinary: "npm", runner: npm.runner, fetch: registry.fetch }));
   try {
     for (const version of install) await installer.installVersion(version);
     await run({ installer, npm, registry, dataRoot });
