@@ -351,6 +351,15 @@ export interface BookEntry {
   useGitHubConnection?: boolean;
   /** Optional active branch selected for this book. Undefined = use the personal dev branch. */
   activeBranch?: string;
+  /** When this device chose its branch, or took the one chosen last on another device (`branchMemory`). Kept on this device only, like `activeBranch`. */
+  activeBranchAt?: string;
+  /**
+   * Set while the branch chosen last on another device is being opened here: the branch this device had before (`""` for the personal branch). The book
+   * goes back to it when that branch cannot be opened on this device. Kept on this device only.
+   */
+  adoptedFrom?: string;
+  /** The name of the branch of a book kept on this device (default `main`): a new or empty repository it is published to gets it as its default branch. */
+  localBranchName?: string;
   /** The size the book was created from ("Parti da una misura"): the review options its first autopilot configuration starts with, until the autopilot has a state. */
   startPreset?: AutopilotPresetId;
   /** Optional export settings and saved Drive target for this book. */
@@ -483,12 +492,47 @@ export interface SpeechSettings {
 }
 
 export interface RepositorySettings {
-  /** Lightweight remote-head check when opening a local repository. */
+  /** Lightweight remote-head check when opening a local repository. Superseded by `autoSync`, which an older client does not know: kept for it. */
   autoFetchOnOpen: boolean;
-  /** Periodic lightweight remote-head check. 0 disables the interval. */
+  /** Periodic lightweight remote-head check. 0 disables the interval. Superseded by `autoSync`. */
   autoFetchIntervalMinutes: number;
-  /** Apply remote changes automatically only when the local repo is clean. */
+  /** Apply remote changes automatically only when the local repo is clean. Superseded by `autoSync`. */
   autoPullWhenClean: boolean;
+  /** How GitHub books sync by themselves, unless a book says otherwise (`BookBranchMemory.autoSync`). Absent: read from the switches above. */
+  autoSync?: AutoSyncMode;
+}
+
+/**
+ * Automatic sync of a GitHub book: never (`off`), when the book is opened and when the window comes back (`open-focus`), or also every few minutes
+ * (`periodic`). It only ever pulls into a clean working copy and pushes when GitHub did not move: everything else waits for the person.
+ */
+export type AutoSyncMode = "off" | "open-focus" | "periodic";
+
+/** A branch of a book the person worked on: chosen, created or opened, on any device. */
+export interface KnownBranchRecord {
+  name: string;
+  /** When it was last chosen or opened (ISO). */
+  lastUsedAt: string;
+  /** Created in Narrarium, from the switcher or the book settings. */
+  createdHere?: boolean;
+  /** A name of the person's for the list; the branch itself keeps its name. */
+  label?: string;
+  /** Kept in sync automatically even beyond the most recent ones (`true`), or never (`false`). Absent: by how recently it was used. */
+  sync?: boolean;
+}
+
+/**
+ * The branches of one GitHub book, in the account data that syncs (`AppSettings.branchMemory`): the last one the person worked on, on any device, and every
+ * branch they worked on. Branch names and dates only, never a token. Two copies that both changed keep, for each book, the record changed last.
+ */
+export interface BookBranchMemory {
+  lastWorkingBranch?: string;
+  lastWorkingAt?: string;
+  knownBranches: KnownBranchRecord[];
+  /** The automatic sync of this book; absent: the default of the settings (`RepositorySettings.autoSync`). */
+  autoSync?: AutoSyncMode;
+  /** When this record last changed (ISO): the newer record wins when two copies of the account data meet. */
+  updatedAt: string;
 }
 
 export type ResearchIntent = "auto" | "news" | "encyclopedia" | "internet";
@@ -601,6 +645,11 @@ export interface AppSettings {
    * owner can see again live here: in the account data that already syncs (and nowhere else on this device). An older client keeps the field as it is.
    */
   readerAccess?: Record<string, ReaderPasswordRecord[]>;
+  /**
+   * The branches of each GitHub book, by repository (`owner/repo`, lower case): the last one worked on and all those worked on, so that another device
+   * opens the same branch and syncs the same ones. In the account data that already syncs; an older client keeps the field as it is.
+   */
+  branchMemory?: Record<string, BookBranchMemory>;
   azureOpenAI: AzureOpenAIConfig;
   aiIntegrations: AIIntegration[];
   defaultWritingIntegrationId?: string;

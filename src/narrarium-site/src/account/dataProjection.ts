@@ -12,7 +12,7 @@ export function projectSyncableSettings(settings: AppSettings): AppSettings {
     defaultGitHubToken: syncable(settings.defaultGitHubToken),
     extraGitHubTokens: settings.extraGitHubTokens.map((entry) => ({ ...entry, token: syncable(entry.token) })),
     books: settings.books.map((book) => {
-      const { localRepositoryId: _localRepositoryId, activeBranch: _activeBranch, exportSettings: _exportSettings, ...portableBook } = book;
+      const { localRepositoryId: _localRepositoryId, activeBranch: _activeBranch, activeBranchAt: _activeBranchAt, adoptedFrom: _adoptedFrom, exportSettings: _exportSettings, ...portableBook } = book;
       if (portableBook.bookToken && isDeviceLocalSecret(portableBook.bookToken)) delete portableBook.bookToken;
       const rawExportSettings = book.exportSettings && {
         ...book.exportSettings,
@@ -45,6 +45,8 @@ export function mergeLocalDeviceSettings(local: AppSettings, remote: AppSettings
         ...book,
         ...(device.localRepositoryId ? { localRepositoryId: device.localRepositoryId } : {}),
         ...(device.activeBranch ? { activeBranch: device.activeBranch } : {}),
+        ...(device.activeBranchAt ? { activeBranchAt: device.activeBranchAt } : {}),
+        ...(device.adoptedFrom !== undefined ? { adoptedFrom: device.adoptedFrom } : {}),
         ...(exportSettings ? { exportSettings } : {}),
       };
     }),

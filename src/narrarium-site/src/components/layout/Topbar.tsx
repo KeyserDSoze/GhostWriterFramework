@@ -42,6 +42,8 @@ import { triggerCurrentSave } from "@/store/saveStore";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { githubRemoteAvailability, useGitHubRemoteAvailability } from "@/github/remoteAvailability";
 import "@/i18n/localFirst";
+import { adoptRememberedBranches, recordOpenedBranch } from "@/branches/memory";
+import { setOpenBook } from "@/branches/openBook";
 
 // The repository status is opened from its menu or from a page: its code and its texts load then, not with the shell of every page.
 const RepositoryStatusDialog = lazy(() => import("@/components/repository/RepositoryStatusDialog").then((module) => ({ default: module.RepositoryStatusDialog })));
@@ -124,6 +126,28 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     paths: currentObjectNavigation.currentFilePaths,
   });
   const readerSettingsState = route.kind === "reader" ? { returnTo: location.pathname } : undefined;
+  const currentStructureLoaded = Boolean(currentStructure);
+
+  // Entering a book takes the branch chosen last on another device since it was open here; while it is on the screen, nothing moves it.
+  useEffect(() => {
+    if (!currentBookId) return;
+    const loaded = useSettingsStore.getState().settings;
+    const adopted = adoptRememberedBranches(loaded, { only: currentBookId });
+    if (adopted !== loaded) patchSettings({ books: adopted.books });
+  }, [currentBookId, patchSettings]);
+  useEffect(() => {
+    setOpenBook(currentBookId && currentStructureLoaded ? currentBookId : null);
+  }, [currentBookId, currentStructureLoaded]);
+  // A branch opened here for the first time joins the branches of the book that every device knows.
+  const loadedBranch = currentStructure?.loadedBranch;
+  useEffect(() => {
+    const loaded = useSettingsStore.getState().settings;
+    const book = loaded.books.find((entry) => entry.id === currentBookId);
+    const patch = book && loadedBranch ? recordOpenedBranch(loaded, book, loadedBranch, new Date().toISOString()) : null;
+    if (!patch) return;
+    patchSettings(patch);
+    void save().catch(() => undefined);
+  }, [currentBookId, loadedBranch, patchSettings, save]);
 
   useEffect(() => {
     const bookId = currentBookId;

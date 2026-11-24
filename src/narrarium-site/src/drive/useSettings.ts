@@ -32,6 +32,38 @@ function legacySeedSettings() {
   }
 }
 
+/** Save the settings of the store now, to the local account store (and to the legacy cloud copy of an account that still has one). */
+export async function saveSettingsNow(): Promise<boolean> {
+  const store = useSettingsStore.getState();
+  store.setSyncStatus("saving");
+  try {
+    const auth = useAuthStore.getState();
+    if (store.accountIdentity && !store.accountIdentity.startsWith("workspace:") && auth.user && auth.accessToken) {
+      const saved = await saveCloudSettings(auth.user.provider, auth.accessToken, store.settings, { fileId: store.driveFileId, revision: store.cloudRevision });
+      store.setDriveFileId(saved.fileId);
+      store.setCloudRevision(saved.revision);
+    }
+    if (!await loadLocalAccountSnapshot()) {
+      await initializeAccountLocalStore({
+        settings: store.settings,
+        costs: useCostsStore.getState().file,
+        clipboard: useClipboardStore.getState().items,
+        chats: [],
+      });
+    }
+    await saveLocalAccountSettings(useSettingsStore.getState().settings);
+    noteAiSettingsSaved(useSettingsStore.getState().settings);
+    store.setCloudLoaded(true);
+    store.setCloudReconciled(true);
+    store.setSyncStatus("idle");
+    return true;
+  } catch (error) {
+    console.error("Local settings save error:", error);
+    store.setSyncStatus("error");
+    throw error;
+  }
+}
+
 /**
  * Settings are always loaded from and saved to the durable local account store.
  * Remote replicas are coordinated separately and may fail without rolling back
@@ -101,36 +133,7 @@ export function useSettings() {
     finally { if (activeSettingsLoads.get(key) === operation) activeSettingsLoads.delete(key); }
   }, []);
 
-  const save = useCallback(async (): Promise<boolean> => {
-    const store = useSettingsStore.getState();
-    store.setSyncStatus("saving");
-    try {
-      const auth = useAuthStore.getState();
-      if (store.accountIdentity && !store.accountIdentity.startsWith("workspace:") && auth.user && auth.accessToken) {
-        const saved = await saveCloudSettings(auth.user.provider, auth.accessToken, store.settings, { fileId: store.driveFileId, revision: store.cloudRevision });
-        store.setDriveFileId(saved.fileId);
-        store.setCloudRevision(saved.revision);
-      }
-      if (!await loadLocalAccountSnapshot()) {
-        await initializeAccountLocalStore({
-          settings: store.settings,
-          costs: useCostsStore.getState().file,
-          clipboard: useClipboardStore.getState().items,
-          chats: [],
-        });
-      }
-      await saveLocalAccountSettings(useSettingsStore.getState().settings);
-      noteAiSettingsSaved(useSettingsStore.getState().settings);
-      store.setCloudLoaded(true);
-      store.setCloudReconciled(true);
-      store.setSyncStatus("idle");
-      return true;
-    } catch (error) {
-      console.error("Local settings save error:", error);
-      store.setSyncStatus("error");
-      throw error;
-    }
-  }, []);
+  const save = useCallback(saveSettingsNow, []);
 
   const resolveOfflineConflict = useCallback(async (choice: "local" | "cloud") => {
     const state = useSettingsStore.getState();

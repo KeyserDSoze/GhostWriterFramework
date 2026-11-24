@@ -3,6 +3,8 @@ import { persist } from "zustand/middleware";
 import { AppSettings, DEFAULT_SETTINGS } from "@/types/settings";
 import { SETTINGS_CACHE_SCHEMA_VERSION, assertOfflineSettingsReplacementAllowed } from "@/drive/settingsCache";
 import { noteAiSettingsSaved, resetAiSettingsBaseline } from "@/store/aiSettingsBaseline";
+import { adoptRememberedBranches } from "@/branches/memory";
+import { openBook } from "@/branches/openBook";
 
 export const CLOUD_SETTINGS_SOURCE_SCHEMA_VERSION = 1;
 export const LOCAL_SETTINGS_SOURCE_SCHEMA_VERSION = 1;
@@ -73,7 +75,8 @@ export const useSettingsStore = create<SettingsState>()(
         // What was loaded from the device is what the device holds: the routing a run compares with the one another tab may have saved since. Settings that did not come from it say nothing of it.
         if (load.source.kind === "local") noteAiSettingsSaved(settings);
         else resetAiSettingsBaseline();
-        return { settings, cloudLoaded: true };
+        // The branch chosen last on another device is taken by each book here, except the one on the screen: it takes it when it is opened again.
+        return { settings: adoptRememberedBranches(settings, { except: openBook() }), cloudLoaded: true };
       }),
       patchSettings: (patch) => set((s) => {
         const settings = { ...s.settings, ...patch };

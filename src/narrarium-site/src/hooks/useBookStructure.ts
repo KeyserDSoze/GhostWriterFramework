@@ -11,6 +11,8 @@ import { githubRemoteAvailability } from "@/github/remoteAvailability";
 import "@/i18n/localFirst";
 import { ensureDefaultGhostwriter } from "@/narrarium/defaultGhostwriter";
 import { currentRepositoryScopeIdentity } from "@/repository/repositoryOperationScope";
+import { isRepositoryError } from "@/repository/repositoryError";
+import { revertBranchAdoption, settleBranchAdoption, type AdoptionFailure } from "@/branches/adoption";
 
 type Operation = { token: string; epoch: number; controller: AbortController; promise: Promise<void> };
 
@@ -54,6 +56,13 @@ function missingWorkingCopyMessage(book: BookEntry, token: string, missing: Miss
   const reason = remote === "offline" ? "Offline" : "NoCredential";
   return missing === "branch" ? i18n.t(`localFirst.branchNotDownloaded${reason}`, { branch })
     : i18n.t(missing === "incomplete" ? `localFirst.incomplete${reason}` : `localFirst.notDownloaded${reason}`);
+}
+
+function adoptionFailure(error: unknown, book: BookEntry, needsDownload: boolean): AdoptionFailure {
+  const status = error && typeof error === "object" && "status" in error ? (error as { status?: unknown }).status : undefined;
+  if (isRepositoryError(error, "not-found") || status === 404) return "gone";
+  const remote = githubRemoteAvailability(book, resolveBookToken(book, useSettingsStore.getState().settings));
+  return needsDownload && remote !== "ready" ? "needs-github" : "failed";
 }
 
 function operationKey(epoch: number, identity: string, bookId: string, owner: string, repo: string, branch: string, generation: number): string {
@@ -235,6 +244,8 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
     useBooksStore.getState().setStructure(bookId, nextStructure, generation);
     useBooksStore.getState().setError(bookId);
     finishLocalLoading();
+    // The branch chosen last on another device opened: it is this device's branch now, and the person is told which one opened and why.
+    settleBranchAdoption(bookId, authoritativeBranch);
 
     if (scopeIsCurrent()) {
       for (let attempt = 0; attempt < 3 && scopeIsCurrent(); attempt += 1) {
@@ -262,6 +273,8 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
     // explicit or scheduled repository operations and validate credentials lazily.
   })().catch((error: unknown) => {
     if (loadEpoch === epoch) failedOperations.add(key);
+    // A branch chosen last on another device that cannot be opened here: the book goes back to the branch it had, and says why, instead of an error.
+    if (ownsOperation() && revertBranchAdoption(bookId, operationBranch, adoptionFailure(error, book, needsDownload))) return;
     if (ownsOperation()) {
       const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
       const legacy = typeof code === "string" && ["LEGACY_REPOSITORY_AUTH_REQUIRED", "LEGACY_REPOSITORY_COPY_CONFLICT", "LEGACY_REPOSITORY_ADOPTION_DECLINED", "LEGACY_REPOSITORY_CHANGED"].includes(code)
