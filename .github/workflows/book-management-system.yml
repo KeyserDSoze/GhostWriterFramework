@@ -2,6 +2,11 @@ name: Deploy Narrarium Site
 
 on:
   workflow_dispatch:
+    inputs:
+      fast_track:
+        description: "Fast track: build and publish this ref without the tests (use it for a small, already reviewed fix; CI still runs on every push)"
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -52,9 +57,11 @@ jobs:
         run: npx --yes npm@12.0.2 ci
 
       - name: Verify dependency security policy
+        if: ${{ !inputs.fast_track }}
         run: npm run dependency:check
 
       - name: Install Chromium
+        if: ${{ !inputs.fast_track }}
         run: npm run e2e:install
 
       - name: Configure Pages
@@ -65,6 +72,7 @@ jobs:
         run: npm run build -w narrarium && npm run build -w narrarium-engine && npm run build:cli -w narrarium-astro-reader && npm run build -w create-narrarium-book
 
       - name: Test Narrarium site
+        if: ${{ !inputs.fast_track }}
         run: npm run test -w narrarium-site
 
       - name: Build Narrarium site
@@ -79,6 +87,7 @@ jobs:
         run: npm run docs:build
 
       - name: Run Narrarium site E2E tests
+        if: ${{ !inputs.fast_track }}
         env:
           SITE_BASE: /
           SITE_URL: https://narrarium.net
@@ -88,9 +97,11 @@ jobs:
         run: npm run test:e2e:build
 
       - name: Verify GitHub Pages basename routing
+        if: ${{ !inputs.fast_track }}
         run: npm run test:e2e:basename
 
       - name: Rebuild root-scope E2E site
+        if: ${{ !inputs.fast_track }}
         env:
           SITE_BASE: /
           SITE_URL: https://narrarium.net
@@ -100,9 +111,24 @@ jobs:
         run: npm run test:e2e:build
 
       - name: Execute Narrarium site E2E tests
+        if: ${{ !inputs.fast_track }}
         env:
           SITE_BASE: /
         run: npm run test:e2e
+
+      - name: Say that the tests were skipped
+        if: ${{ inputs.fast_track }}
+        run: |
+          live="$(curl -fsS --max-time 20 https://narrarium.net/version.json 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).version)}catch{console.log("")}})')"
+          mine="$(node -p 'require("./src/narrarium-site/package.json").version')"
+          {
+            echo "### Fast track: the tests were skipped"
+            echo "Published without the unit tests, the dependency check and the E2E suites. Run CI on this commit afterwards."
+            echo "- site version of this build: \`$mine\`; live now: \`${live:-unknown}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$live" ] && [ "$live" = "$mine" ]; then
+            echo "::warning::This build has the same version as the live site ($mine): browsers that already have that version keep their cached files, so bump the site version for readers to get it."
+          fi
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5

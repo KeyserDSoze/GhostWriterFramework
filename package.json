@@ -32,7 +32,7 @@
     "e2e:install": "playwright install chromium",
     "test": "npm run test -w narrarium && npm run test -w narrarium-engine && npm run test -w narrarium-sdk && npm run test -w narrarium-mcp-server && npm run test -w create-narrarium-book && npm run test -w narrarium-astro-reader && npm run test -w narrarium-server && npm run test -w narrarium-site",
     "validate": "npm run validate -w narrarium --if-present && npm run validate -w narrarium-engine --if-present && npm run validate -w narrarium-sdk --if-present && npm run validate -w narrarium-server --if-present",
-    "dependency:check": "node --test scripts/workspace-publish.test.mjs && node scripts/check-dependency-policy.mjs && npm audit --audit-level=info && npm ls --depth=0"
+    "dependency:check": "node --test scripts/workspace-publish.test.mjs scripts/fast-track.test.mjs && node scripts/check-dependency-policy.mjs && npm audit --audit-level=info && npm ls --depth=0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1"

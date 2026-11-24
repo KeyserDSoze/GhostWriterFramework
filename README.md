@@ -158,7 +158,15 @@ To deploy it on GitHub Pages:
 - configure the Entra ID app registration with `https://narrarium.net/` as a SPA redirect URI
 - keep `SITE_BASE=/` in `.github/workflows/book-management-system.yml` for the custom domain deployment
 
-The workflow `Deploy Narrarium Site` builds `src/narrarium-site/dist` and uploads it with the official GitHub Pages artifact action. The build also writes `404.html` from `index.html`, so React Router paths such as `/docs/...` and `/app/books` survive direct refreshes on GitHub Pages.
+The workflow `Deploy Narrarium Site` builds `src/narrarium-site/dist` and uploads it with the official GitHub Pages artifact action.
+
+Every push to `main` that touches the site runs the whole gate (dependency check, unit tests, both E2E suites) before publishing. For a small, already reviewed fix there is a **fast track**: run the workflow by hand with the box checked and it builds and publishes the ref without those checks (the build itself, the patch-note rule and the scaffolder snapshot still apply, and `CI` still runs on the pushed commit):
+
+```bash
+gh workflow run book-management-system.yml --ref main -f fast_track=true
+```
+
+Bump the site version when readers must get the change: a browser that already has a version keeps its cached files, and the run says so when the version is the one already live. The build also writes `404.html` from `index.html`, so React Router paths such as `/docs/...` and `/app/books` survive direct refreshes on GitHub Pages.
 
 Repo-only helper commands:
 
