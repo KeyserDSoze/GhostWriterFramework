@@ -20,17 +20,35 @@ export interface StreamState {
   activity: AutopilotActivity;
   preview: string;
   characters: number;
-  /** The step answers with a value: there is no prose, only how much has arrived. */
+  /** The text is the JSON of a structured reply (the premise of the concept, a plan…), not prose. */
+  json: boolean;
+  /** The call of the step the text belongs to. */
+  call: string;
+  /** A structured reply that has no text yet: only how much of it has arrived («answering… 12 KB»). */
   answering: boolean;
 }
 
 function streamOf(live: LivePreview | null | undefined): StreamState | null {
-  return live ? { activity: live.activity, preview: live.preview, characters: live.characters, answering: live.bytes !== undefined } : null;
+  if (!live) return null;
+  return {
+    activity: live.activity,
+    preview: live.preview,
+    characters: live.characters,
+    json: live.json === true,
+    call: live.callId ?? (live.callSeq === undefined ? "" : String(live.callSeq)),
+    answering: live.bytes !== undefined && live.preview === "",
+  };
+}
+
+/** Whether two states draw the same lines: the numbers of a reply that has words (its bytes) change nothing that is drawn. */
+function sameStream(a: StreamState | null, b: StreamState | null): boolean {
+  if (!a || !b) return a === b;
+  return a.activity === b.activity && a.preview === b.preview && a.characters === b.characters && a.json === b.json && a.call === b.call && a.answering === b.answering;
 }
 
 /**
  * The text a book's step is streaming, followed at most once every `interval` milliseconds (four times a second): the lines are not drawn again for
- * every chunk. A step that starts or ends is followed at once.
+ * every chunk. A step or a call that starts or ends, and the first words of a call, are followed at once.
  */
 export function useThrottledStream(bookId: string, interval = STREAM_THROTTLE_MS): StreamState | null {
   const [value, setValue] = useState(() => streamOf(useAutopilotStore.getState().live[bookId]));
@@ -40,7 +58,8 @@ export function useThrottledStream(bookId: string, interval = STREAM_THROTTLE_MS
     const apply = () => {
       timer = null;
       last = performance.now();
-      setValue(streamOf(useAutopilotStore.getState().live[bookId]));
+      const next = streamOf(useAutopilotStore.getState().live[bookId]);
+      setValue((current) => (sameStream(current, next) ? current : next));
     };
     // What the store holds now (the book may have changed): drawn at once, and the next change too.
     setValue(streamOf(useAutopilotStore.getState().live[bookId]));
@@ -48,8 +67,10 @@ export function useThrottledStream(bookId: string, interval = STREAM_THROTTLE_MS
       const next = state.live[bookId];
       const before = previous.live[bookId];
       if (next === before) return;
-      // A step that starts or ends, or that turns from prose to a value (or back), is drawn at once: the text of before is not what goes on now.
-      if (!next || !before || next.activity.id !== before.activity.id || (next.bytes === undefined) !== (before.bytes === undefined)) {
+      // A step or a call that starts or ends, a text that turns from prose to JSON, and the first words of a call are drawn at once: the text of before
+      // is not what goes on now.
+      const callOf = (live: LivePreview) => live.callId ?? live.callSeq;
+      if (!next || !before || next.activity.id !== before.activity.id || callOf(next) !== callOf(before) || (next.json === true) !== (before.json === true) || (before.preview === "") !== (next.preview === "")) {
         if (timer) clearTimeout(timer);
         apply();
         return;
@@ -103,6 +124,8 @@ export function useStreamAnnouncements(bookIds: readonly string[], nameOf?: (boo
       reset = setTimeout(() => setMessage(text), 60);
     }, undefined, () => performance.now());
     const answered = new Set<string>();
+    // The most each step has written in one of its calls: a step whose last call is short (the summary of the scene it wrote) is said with what it wrote.
+    const written = new Map<string, number>();
     const say = (bookId: string, text: string) => {
       const book = names.current?.(bookId);
       return book ? t("autopilot.liveText.say.book", { book, message: text }) : text;
@@ -113,8 +136,11 @@ export function useStreamAnnouncements(bookIds: readonly string[], nameOf?: (boo
         const now = state.live[bookId];
         const before = previous.live[bookId];
         if (now === before) continue;
+        if (now) written.set(now.activity.id, Math.max(written.get(now.activity.id) ?? 0, now.characters));
         if (before && (!now || now.activity.id !== before.activity.id)) {
           answered.delete(before.activity.id);
+          const characters = Math.max(written.get(before.activity.id) ?? 0, before.characters);
+          written.delete(before.activity.id);
           const finished = [...state.feed].reverse().find((entry) => entry.event.bookId === bookId && entry.event.type === "task-finished" && entry.event.activity.id === before.activity.id)?.event;
           if (finished?.type === "task-finished") {
             const step = activityTitle(t, finished.activity);
@@ -122,7 +148,6 @@ export function useStreamAnnouncements(bookIds: readonly string[], nameOf?: (boo
             if (status === "failed") announcer.push(say(bookId, t("autopilot.liveText.say.failed", { step })), 3);
             else if (status === "cancelled") announcer.push(say(bookId, t("autopilot.liveText.say.cancelled", { step })), 2);
             else {
-              const characters = Math.max(before.characters, before.answerCharacters ?? 0);
               const done = t("autopilot.liveText.say.done", { step });
               const value = new Intl.NumberFormat(i18n.resolvedLanguage ?? i18n.language).format(characters);
               announcer.push(say(bookId, characters > 0 ? `${t("autopilot.liveText.say.complete", { count: characters, value })} ${done}` : done), 2);

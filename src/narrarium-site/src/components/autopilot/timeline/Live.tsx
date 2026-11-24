@@ -46,8 +46,9 @@ export const TimelineLive = memo(function TimelineLive({ bookId, shownAbove = 0,
     else if (activityId && useCallsView.getState().live[activityId]) callsLost.current?.(activityId);
     focused.current = false;
   }, [activityId]);
-  const answering = live?.bytes !== undefined;
-  const whole = live && !answering ? live.preview.trim() : "";
+  // The text of the call that answers: its prose, or the JSON of its reply as it streams (it never goes back to nothing while the call goes on).
+  const whole = live ? live.preview.trim() : "";
+  const json = live?.json === true;
   // The text is here when it has more to show than the band above shows of it (`shownAbove` characters, none where the band shows none): never the same text twice.
   const text = whole.replace(/\s+/g, " ").length > shownAbove ? whole : "";
   // The top of a text taller than the box fades, and only then: a short text is read whole.
@@ -72,7 +73,7 @@ export const TimelineLive = memo(function TimelineLive({ bookId, shownAbove = 0,
       {activity.reason && <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground/80">{t("autopilot.why")}:</span> {activity.reason}</p>}
       {activity.next && <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground/80">{t("autopilot.next")}:</span> {activity.next}</p>}
       {text && (
-        <p ref={textBox} className={cn("flex max-h-40 flex-col justify-end overflow-hidden whitespace-pre-wrap break-words rounded-md bg-background/70 p-2 font-serif text-xs italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]", cut && "[mask-image:linear-gradient(to_bottom,transparent,black_35%)]")}><span>{text}</span></p>
+        <p ref={textBox} data-live-text data-stream-json={json ? "" : undefined} className={cn("flex max-h-40 flex-col justify-end overflow-hidden whitespace-pre-wrap break-words rounded-md bg-background/70 p-2 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]", json ? "font-mono" : "font-serif italic", cut && "[mask-image:linear-gradient(to_bottom,transparent,black_35%)]")}><span>{text}</span></p>
       )}
       {text && characters > 0 && <p className="text-xs tabular-nums text-muted-foreground">{t("autopilot.characters", { count: characters })}</p>}
       <ModelAnswering bookId={bookId} />

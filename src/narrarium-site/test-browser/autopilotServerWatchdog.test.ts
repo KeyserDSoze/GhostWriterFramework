@@ -185,6 +185,55 @@ describe("after the connection came back", () => {
     expect(server.snapshotRequests).toEqual([SERVER_BOOK.id]);
   });
 
+  describe("the step that streams while the connection was away", () => {
+    const concept = { ...task, id: "activity-concept", task: "concept", phase: "concept", title: "Designing the concept of the book" } as AutopilotActivity;
+    const JSON_SO_FAR = "{\"logline\":\"A glassmaker's daughter must expose";
+    const live = () => useAutopilotStore.getState().live[SERVER_BOOK.id];
+    let seq = 0;
+    const push = (body: Record<string, unknown>) => server.push({ event: "autopilot", data: { bookId: SERVER_BOOK.id, at: new Date().toISOString(), seq: ++seq, ...body } as never });
+
+    it("is shown again at once from the snapshot, which takes the place of the preview that was cleared, and the events go on from it", async () => {
+      connect();
+      await settle();
+      push({ type: "task-started", activity: concept });
+      push({ type: "task-progress", activityId: concept.id, callSeq: 1, kind: "json", characters: 13, preview: "{\"logline\":\"" });
+      await settle();
+      expect(live()).toMatchObject({ preview: "{\"logline\":\"", json: true });
+
+      // The stream ends while the JSON goes on: the snapshot says how far it is.
+      server.running = true;
+      server.live = { activity: concept, characters: JSON_SO_FAR.length, preview: JSON_SO_FAR, json: true, bytes: 300, callSeq: 1 };
+      server.open[0].end();
+      await vi.advanceTimersByTimeAsync(3_000);
+      await settle();
+      expect(server.snapshotRequests).toEqual([SERVER_BOOK.id]);
+      expect(live()).toEqual(server.live);
+
+      // The numbers that follow keep the text; the JSON that follows goes on from it.
+      push({ type: "task-progress", activityId: concept.id, callSeq: 1, bytes: 900, characters: JSON_SO_FAR.length, preview: JSON_SO_FAR });
+      await settle();
+      expect(live()).toMatchObject({ preview: JSON_SO_FAR, characters: JSON_SO_FAR.length, bytes: 900, json: true });
+      push({ type: "task-progress", activityId: concept.id, callSeq: 1, kind: "json", characters: JSON_SO_FAR.length + 4, preview: `${JSON_SO_FAR} the` });
+      await settle();
+      expect(live()).toMatchObject({ preview: `${JSON_SO_FAR} the`, characters: JSON_SO_FAR.length + 4, bytes: 900 });
+    });
+
+    it("is not brought back by a snapshot when the events said it ended", async () => {
+      connect();
+      await settle();
+      push({ type: "task-started", activity: concept });
+      push({ type: "task-progress", activityId: concept.id, callSeq: 1, kind: "json", characters: JSON_SO_FAR.length, preview: JSON_SO_FAR });
+      // A snapshot taken just before the step ended, downloaded after its end was heard.
+      server.running = true;
+      server.live = { activity: concept, characters: JSON_SO_FAR.length, preview: JSON_SO_FAR, json: true, callSeq: 1 };
+      push({ type: "task-finished", activity: { ...concept, status: "succeeded", endedAt: new Date().toISOString() } });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await settle();
+      expect(server.snapshotRequests).toEqual([SERVER_BOOK.id]);
+      expect(live()).toBeNull();
+    });
+  });
+
   it("does nothing special for the very first connection: the pages ask for their own books", async () => {
     useAutopilotStore.setState({ live: { [SERVER_BOOK.id]: preview } });
     connect();

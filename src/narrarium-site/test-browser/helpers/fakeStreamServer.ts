@@ -1,4 +1,4 @@
-import { ServerRequestError, createAutopilotState, type AutopilotSnapshot, type NarrariumServerClient, type ServerBookSummary, type ServerInfo, type ServerStreamMessage } from "narrarium-engine";
+import { ServerRequestError, createAutopilotState, type AutopilotLive, type AutopilotSnapshot, type NarrariumServerClient, type ServerBookSummary, type ServerInfo, type ServerStreamMessage } from "narrarium-engine";
 
 export interface OpenStream {
   tab: string;
@@ -28,6 +28,8 @@ export class FakeStreamServer {
   sendsHello = true;
   /** The state a snapshot reports. */
   running = false;
+  /** The step a snapshot says runs, with what it wrote so far. */
+  live: AutopilotLive | null = null;
 
   get open(): OpenStream[] {
     return this.streams.filter((stream) => stream.state === "open");
@@ -63,7 +65,7 @@ export class FakeStreamServer {
       },
       async autopilot(bookId: string): Promise<AutopilotSnapshot> {
         server.snapshotRequests.push(bookId);
-        return { bookId, state: createAutopilotState(new Date("2026-11-21T10:00:00.000Z")), activities: [], live: null, running: server.running, host: "server" };
+        return { bookId, state: createAutopilotState(new Date("2026-11-21T10:00:00.000Z")), activities: [], live: server.live, running: server.running, host: "server" };
       },
       stream(onMessage: (message: ServerStreamMessage) => void, signal: AbortSignal): Promise<void> {
         return new Promise<void>((resolve, reject) => {

@@ -96,23 +96,23 @@ export function previewTail(text: string): string {
 
 /**
  * The text that streams, on one line. It follows the store by itself, so the page and the rest of the band are not drawn again for every chunk. Not read out: it is not live.
- * While a step answers with a value (the bytes come in) the tail of a scene that was written before is not what is going on now, and the line of the answer takes its place.
+ * The JSON of a structured reply is shown as its text is (in a fixed-width font); what is shown never goes back to nothing while the call goes on.
  */
 export function PreviewLine({ bookId }: { bookId: string }) {
   const preview = useAutopilotStore((state) => state.live[bookId]?.preview ?? "");
-  const answering = useAutopilotStore((state) => state.live[bookId]?.bytes !== undefined);
+  const json = useAutopilotStore((state) => state.live[bookId]?.json === true);
   const tail = previewTail(preview);
-  if (!tail || answering) return null;
-  return <p data-band-preview className="truncate font-serif text-xs italic text-muted-foreground">{tail}</p>;
+  if (!tail) return null;
+  return <p data-band-preview data-stream-json={json ? "" : undefined} className={cn("truncate text-xs text-muted-foreground", json ? "font-mono" : "font-serif italic")}>{tail}</p>;
 }
 
 /**
- * «The model is answering… (12 KB)», for a step that answers with a value: the bytes of the reply that have arrived, which is all that is known of it (never a word). It follows
- * the store by itself and is never read out: the one status of the row says the step and only the step, and a number that changes every second is not announced.
+ * «The model is answering… (12 KB)», for a step that answers with a value and has no text to show yet: the bytes of the reply that have arrived. Once its JSON streams, the
+ * text takes its place. It follows the store by itself and is never read out: the one status of the row says the step and only the step, and a number that changes every second is not announced.
  */
 export function ModelAnswering({ bookId, short = false }: { bookId: string; short?: boolean }) {
   const { t } = useTranslation();
-  const bytes = useAutopilotStore((state) => state.live[bookId]?.bytes);
+  const bytes = useAutopilotStore((state) => (state.live[bookId]?.preview ? undefined : state.live[bookId]?.bytes));
   if (bytes === undefined) return null;
   const size = formatBytes(bytes);
   return <p data-band-progress className="truncate text-xs text-muted-foreground">{short ? t("autopilot.band.answeringShort", { size }) : t("autopilot.band.answering", { size })}</p>;

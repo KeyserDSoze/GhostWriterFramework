@@ -227,7 +227,7 @@ export const ResponsePane = memo(function ResponsePane({ source, bookId, record,
       {text.error && !streaming ? (
         <PaneError error={text.error} retry={text.retry} />
       ) : (
-        <TextPane label={t("autopilot.calls.pane.label", { pane: name, call: label })} buffer={shown} version={shown === buffer ? version : shown.version} raw={raw} streaming={streaming} extra={laidOut ? "" : tail.extra} placeholder={placeholder} mono={laidOut !== null} />
+        <TextPane label={t("autopilot.calls.pane.label", { pane: name, call: label })} buffer={shown} version={shown === buffer ? version : shown.version} raw={raw} streaming={streaming} extra={laidOut ? "" : tail.extra} placeholder={placeholder} mono={laidOut !== null || record.request.structured} />
       )}
     </section>
   );

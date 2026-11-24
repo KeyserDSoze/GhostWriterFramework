@@ -54,8 +54,9 @@ describe("the doc of the autopilot says what the page does with what the engine 
     expect(where).not.toContain("comes with a version of the app after this one");
   });
 
-  it("says that a step which answers with a value shows how much has arrived, and nothing of the reply", () => {
-    for (const word of ["task-progress", "The model is answering"]) expect(doc, word).toContain(word);
+  // Changed on purpose (engine 0.1.15): the reply of a structured step is shown as it streams; «answering» only says how much has arrived until then.
+  it("says that a step which answers with a value shows its reply as it streams, how much has arrived until then, and that every host follows one rule", () => {
+    for (const word of ["task-progress", "The model is answering", "shows the JSON of its reply as it streams", "applyLiveProgress", "callSeq"]) expect(doc, word).toContain(word);
   });
 
   it("says that the verdict of a round and the beginning of the working time come from the engine, with a fallback", () => {

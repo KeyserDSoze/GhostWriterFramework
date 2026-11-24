@@ -181,7 +181,9 @@ report.budgets.routes = {
   // every tool of the local package and the whole docs page in it, before it was split out of the docs route).
   mcp: { rawBytes: 794_000, gzipBytes: 254_500 }, // 785_538/251_840
   login: { rawBytes: 940_000, gzipBytes: 292_500 }, // 929_737/289_244
-  appShell: { rawBytes: 2_703_000, gzipBytes: 819_500 }, // 2_675_530/810_894
+  // Raised in 0.107.0 by the same margin (it was 2_703_000/819_500 for 2_675_530/810_894): the store of the shell follows the text of the step that runs
+  // by the engine's own rule (applyLiveProgress, a chunk of 1_568/614 bytes it shares with the autopilot), so that no panel can disagree with the engine.
+  appShell: { rawBytes: 2_718_000, gzipBytes: 829_000 }, // 2_690_427/819_920
 };
 for (const [name, budget] of Object.entries(report.budgets.routes)) {
   const actual = routeGraphs[name];

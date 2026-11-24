@@ -130,7 +130,8 @@ export function useCallText({ source, bookId, callId, field, attempt, running, l
 
   const render = useThrottle(() => {
     const live = preview.current;
-    const tail: LiveTail = !live ? NO_TAIL : live.bytes !== null ? { extra: "", bytes: live.bytes } : { extra: tailBeyond(buffer.tail(OVERLAP), buffer.characters, live.text, live.characters), bytes: null };
+    // The text the live events carry goes after what the record has, prose or JSON alike; the bytes of a reply say «answering» only while it has no text.
+    const tail: LiveTail = !live ? NO_TAIL : live.text ? { extra: tailBeyond(buffer.tail(OVERLAP), buffer.characters, live.text, live.characters), bytes: live.bytes } : live.bytes !== null ? { extra: "", bytes: live.bytes } : NO_TAIL;
     setState({ ...flags.current, version: buffer.version, tail });
   }, PANE_UPDATE_MS);
 
@@ -217,7 +218,8 @@ export function useCallText({ source, bookId, callId, field, attempt, running, l
   useEffect(() => {
     const update = () => {
       const now = followed ? useAutopilotStore.getState().live[bookId] : null;
-      const next = now && now.activity.id === followed ? { text: now.preview, bytes: now.bytes ?? null, characters: now.characters } : null;
+      // The live text of this call only: another call of the step (`callId`) has its own pane.
+      const next = now && now.activity.id === followed && (now.callId === undefined || now.callId === callId) ? { text: now.preview, bytes: now.bytes ?? null, characters: now.characters } : null;
       if (next?.text === preview.current?.text && next?.bytes === preview.current?.bytes && next?.characters === preview.current?.characters) return;
       preview.current = next;
       render.run();
@@ -227,7 +229,7 @@ export function useCallText({ source, bookId, callId, field, attempt, running, l
     return useAutopilotStore.subscribe((now, before) => {
       if (now.live[bookId] !== before.live[bookId]) update();
     });
-  }, [followed, bookId, render]);
+  }, [followed, bookId, callId, render]);
 
   const retry = useCallback(() => setReload((key) => key + 1), []);
   return { buffer, version: state.version, loading: state.loading, done: state.done, error: state.error, restarts: state.restarts, tail: state.tail, retry };

@@ -37,11 +37,14 @@ afterEach(async () => {
 });
 
 describe("what the store keeps of a step that is answering", () => {
-  it("keeps the bytes of a structured reply and leaves the text that came before it where it was: the empty preview of the engine does not wipe the scene", async () => {
+  // Changed on purpose (engine 0.1.15, the live text that flickered): a structured reply after the prose of the step is another call of it (the summary
+  // of the scene). The scene is not shown as if it were what the summary writes: the summary starts from nothing, says its bytes until its JSON
+  // streams, and the scene stays on the page of the step, where it was written.
+  it("keeps the bytes of a structured reply that comes after the prose of the step, and shows nothing of the scene as its text", async () => {
     await ingest(prose(1));
     expect(live()).toMatchObject({ preview: PROSE, characters: PROSE.length });
     await ingest(structured(2, 12_288, 40));
-    expect(live()).toMatchObject({ preview: PROSE, characters: PROSE.length, bytes: 12_288 });
+    expect(live()).toMatchObject({ preview: "", characters: 40, bytes: 12_288 });
   });
 
   it("holds the bytes of a step that has no text, with the preview empty", async () => {

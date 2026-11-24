@@ -37,7 +37,7 @@ export function AutopilotLiveCard({ preview, bookTitle, className }: { preview: 
       {activity.reason && <p className="mt-1 text-xs text-muted-foreground"><span className="font-medium text-foreground/80">{t("autopilot.why")}:</span> {activity.reason}</p>}
       {activity.next && <p className="mt-0.5 text-xs text-muted-foreground"><span className="font-medium text-foreground/80">{t("autopilot.next")}:</span> {activity.next}</p>}
       {preview.preview && (
-        <p className="mt-2 max-h-32 overflow-hidden whitespace-pre-wrap rounded-md bg-background/70 p-2 font-serif text-xs italic leading-relaxed text-muted-foreground [mask-image:linear-gradient(to_bottom,transparent,black_35%)]">
+        <p data-stream-json={preview.json ? "" : undefined} className={cn("mt-2 max-h-32 overflow-hidden whitespace-pre-wrap break-words rounded-md bg-background/70 p-2 text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere] [mask-image:linear-gradient(to_bottom,transparent,black_35%)]", preview.json ? "font-mono" : "font-serif italic")}>
           {preview.preview}
         </p>
       )}

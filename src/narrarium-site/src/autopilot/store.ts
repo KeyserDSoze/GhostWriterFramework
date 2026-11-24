@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import type { AutopilotActivity, AutopilotEvent, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, FrozenAction, FrozenChangeKind, InterventionInput, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
+import { applyLiveProgress, normalizeLive, startLive } from "narrarium-engine";
+import type { AutopilotEvent, AutopilotLive, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, FrozenAction, FrozenChangeKind, InterventionInput, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
 import type { HandoverPlan, HandoverSide } from "@/autopilot/handover";
 import type { BookOperation } from "@/autopilot/operations";
 import type { PersonalServerSettings } from "@/types/settings";
@@ -67,20 +68,13 @@ export interface FeedEntry {
   bookTitle: string;
 }
 
-export interface LivePreview {
-  activity: AutopilotActivity;
-  /** The characters of the text the step has written so far. */
-  characters: number;
-  /** The tail of that text. */
-  preview: string;
-  /**
-   * How much of the reply of a step that answers with a value (a function call: the concept, the plan, an evaluation, a decision) has arrived: numbers only, never a word of the
-   * reply. Absent for a step that writes prose, and as soon as prose follows.
-   */
-  bytes?: number;
-  /** The characters of that reply so far, as the engine counts them (its text or the arguments of its function): a number, never a word of it. With `bytes`. */
-  answerCharacters?: number;
-}
+/**
+ * What the panels show of the step that runs: the engine's live part (`AutopilotLive`), changed by the engine's one rule (`applyLiveProgress`), as the
+ * session's `snapshot().live` is. The text of a call (its prose, or the JSON of a structured reply, `json`) never goes back to nothing until the call
+ * ends, its count never goes down within an attempt, the bytes of a structured reply say «answering» only while it has no text, and a new call of
+ * the step starts from nothing.
+ */
+export type LivePreview = AutopilotLive;
 
 export interface ServerConnectionState {
   status: ServerConnectionStatus;
@@ -156,6 +150,19 @@ function initialDockOpen(): boolean {
   }
 }
 
+/**
+ * The step a snapshot says runs, for a book whose panels follow none (a page opened while it ran, a connection that came back after a gap): its live
+ * part, so that what it writes is shown again at once and the events that follow go on from it. Nothing when the panels follow a step already, when
+ * the snapshot says nothing runs, or when the events said that step ended.
+ */
+function liveFromSnapshot(state: Pick<AutopilotStoreState, "live" | "feed">, bookId: string, snapshot: AutopilotSnapshot | null): LivePreview | null {
+  if (!snapshot?.running || state.live[bookId]) return null;
+  const live = normalizeLive(snapshot.live);
+  if (!live || live.activity.status !== "running") return null;
+  const ended = state.feed.some((entry) => entry.event.bookId === bookId && entry.event.type === "task-finished" && entry.event.activity.id === live.activity.id);
+  return ended ? null : live;
+}
+
 export function emptyView(bookId: string): BookAutopilotView {
   return { bookId, snapshot: null, loading: false, error: null, busyInAnotherTab: false, server: null, sync: null, operation: null, handover: null };
 }
@@ -206,25 +213,23 @@ export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
   },
   setPageDockOpen: (open) => set({ pageDockOpen: open }),
   setDockTab: (tab) => set({ dockTab: tab }),
-  patchView: (bookId, patch) => set((state) => ({ views: { ...state.views, [bookId]: { ...(state.views[bookId] ?? emptyView(bookId)), ...patch } } })),
+  patchView: (bookId, patch) => set((state) => {
+    const views = { ...state.views, [bookId]: { ...(state.views[bookId] ?? emptyView(bookId)), ...patch } };
+    const seeded = patch.snapshot ? liveFromSnapshot(state, bookId, patch.snapshot) : null;
+    return seeded ? { views, live: { ...state.live, [bookId]: seeded } } : { views };
+  }),
   ingest: (event, bookTitle) => set((state) => {
     signals.set(event.bookId, Date.now());
     if (event.type === "run-ended") runEnds.set(event.bookId, { status: event.status, message: event.message ?? null, ...(event.code ? { code: event.code } : {}), at: Date.now() });
     if (event.type === "task-progress") {
       const current = state.live[event.bookId];
       if (!current || current.activity.id !== event.activityId) return {};
-      // A step that answers with a value says numbers only, and an empty preview: the text of the scene that came before it stays where it was, and so do its characters.
-      if (typeof event.bytes === "number" && Number.isFinite(event.bytes) && event.bytes >= 0) {
-        const answered = typeof event.characters === "number" && Number.isFinite(event.characters) && event.characters >= 0 ? { answerCharacters: event.characters } : {};
-        return { live: { ...state.live, [event.bookId]: { ...current, bytes: event.bytes, ...answered } } };
-      }
-      // Prose: the function, if there was one, is over.
-      const { bytes: _answered, answerCharacters: _characters, ...text } = current;
-      return { live: { ...state.live, [event.bookId]: { ...text, characters: event.characters, preview: typeof event.preview === "string" ? event.preview : current.preview } } };
+      const next = applyLiveProgress(current, event);
+      return next === current ? {} : { live: { ...state.live, [event.bookId]: next } };
     }
     if (event.type === "state") return { summaries: { ...state.summaries, [event.bookId]: event.state } };
     let live = state.live;
-    if (event.type === "task-started") live = { ...live, [event.bookId]: { activity: event.activity, characters: 0, preview: "" } };
+    if (event.type === "task-started") live = { ...live, [event.bookId]: startLive(event.activity) };
     else if (event.type === "task-finished" || event.type === "run-ended") live = { ...live, [event.bookId]: null };
     const duplicate = state.feed.some((entry) => entry.event.bookId === event.bookId && entry.event.seq === event.seq && entry.event.at === event.at);
     return { live, feed: duplicate ? state.feed : [...state.feed, { event, bookTitle }].slice(-MAX_FEED) };
