@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.102.0",
+    "date": "2026-11-24",
+    "en": {
+      "title": "Connect a repository from a searchable list, or create one with the name you choose",
+      "summary": "When you add a book on GitHub, or connect a book of this device to GitHub, you now choose between two clear modes: connect a repository that is already there, picked from a searchable list, or create a new one with the name you want.",
+      "changes": [
+        "The repository is no longer a text field. «Connect an existing repository» shows a searchable list of the repositories your credential can use: it filters as you type, shows owner/name, private or public, whether you can write to it and when it was last pushed, and works with the keyboard (arrows, Home, End, Enter, Escape) and with a screen reader. It reads a few repositories at a time, loads more when you ask or when a search needs them, remembers what it read, and if GitHub's limit is reached it tells you at what time to try again.",
+        "«Create a new repository» keeps the name proposed from the title (for example grande-libro-della-giungla) and lets you change it. It checks that the name is free and, if it is taken, proposes the next free one. Visibility, Pages and the complete repository (reader, instructions, workflow) are the same as before.",
+        "Which mode comes first depends on you: the list when your credential reaches repositories, the creation of a new one when it reaches none.",
+        "What happens with the repository you pick is said before you press the button: a repository that is already a Narrarium book is added as it is and nothing in it is written (for a book of this device, it is added as a book of its own and the book of this device stays as it is); an empty one is filled with the book; one with other files is never touched unless you turn on «Replace what is in the repository», which is off by default and says what it will replace. A repository you cannot write to, or an archived one, cannot be published into.",
+        "With the GitHub app the list shows only the repositories the app is installed on, says so, and, when the one you expected is missing, offers «Change repositories on GitHub» and a button to reload the list. When no token of your own is set, the page for adding a book can use the GitHub connection.",
+        "The note «About this token» now speaks about the GitHub app when that is the connection in use: it says the app works on the repositories it is installed on and needs the permissions Repository creation, Contents and Workflows, instead of describing a personal token."
+      ]
+    },
+    "it": {
+      "title": "Collega un repository da un elenco in cui cercare, o creane uno con il nome che scegli",
+      "summary": "Quando aggiungi un libro su GitHub, o colleghi a GitHub un libro di questo dispositivo, ora scegli tra due modalità chiare: collegare un repository che c'è già, scelto da un elenco in cui cercare, oppure crearne uno nuovo con il nome che vuoi.",
+      "changes": [
+        "Il repository non è più un campo di testo. «Collega un repository esistente» mostra un elenco in cui cercare tra i repository che la tua credenziale può usare: filtra mentre scrivi, mostra proprietario/nome, privato o pubblico, se puoi scriverci e quando è stato l'ultimo push, e funziona con la tastiera (frecce, Home, Fine, Invio, Esc) e con uno screen reader. Legge pochi repository alla volta, ne carica altri quando lo chiedi o quando una ricerca ne ha bisogno, ricorda ciò che ha letto e, se si raggiunge il limite di GitHub, ti dice a che ora riprovare.",
+        "«Crea un nuovo repository» mantiene il nome proposto dal titolo (per esempio grande-libro-della-giungla) e te lo lascia cambiare. Controlla che il nome sia libero e, se è già usato, propone il primo libero. Visibilità, Pages e repository completo (lettore, istruzioni, workflow) sono come prima.",
+        "Quale modalità viene prima dipende da te: l'elenco quando la tua credenziale raggiunge dei repository, la creazione di uno nuovo quando non ne raggiunge nessuno.",
+        "Cosa succede con il repository che scegli viene detto prima che tu prema il pulsante: un repository che è già un libro Narrarium viene aggiunto com'è e non viene scritto nulla al suo interno (per un libro di questo dispositivo, viene aggiunto come libro a sé e il libro di questo dispositivo resta com'è); uno vuoto viene riempito con il libro; uno con altri file non viene mai toccato a meno che tu attivi «Sostituisci il contenuto del repository», disattivato di default e che dice cosa sostituirà. In un repository in cui non puoi scrivere, o archiviato, non si può pubblicare.",
+        "Con l'app GitHub l'elenco mostra solo i repository su cui l'app è installata, lo dice e, quando manca quello che ti aspettavi, propone «Cambia i repository su GitHub» e un pulsante per ricaricare l'elenco. Quando non hai un token tuo, la pagina per aggiungere un libro può usare la connessione GitHub.",
+        "La nota «Su questo token» ora parla dell'app GitHub quando è la connessione in uso: dice che l'app funziona sui repository su cui è installata e che le servono i permessi Repository creation, Contents e Workflows, invece di descrivere un token personale."
+      ]
+    }
+  },
+  {
     "version": "0.100.0",
     "date": "2026-11-24",
     "en": {
