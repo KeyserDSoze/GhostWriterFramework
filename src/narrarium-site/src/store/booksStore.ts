@@ -19,6 +19,8 @@ export interface BookStructureLoadError {
   code: LegacyBookStructureErrorCode | "BOOK_STRUCTURE_LOAD_FAILED";
   message?: string;
   adoptionTarget?: LegacyAdoptionTarget;
+  /** The copy could not be brought to this device for want of a GitHub credential: the alert offers to connect GitHub. */
+  connectGitHub?: boolean;
 }
 
 interface BooksState {

@@ -20,7 +20,7 @@ import {
 } from "@/narrarium/paragraphArtifacts";
 import { planCanonicalScriptMutation, SCRIPT_PATH_PATTERN, type CanonicalScriptMutationResult } from "@/narrarium/canonicalScriptMutationPlan";
 import { reconcileRemoteMutation, type IntendedRemoteRevision } from "@/repository/remoteMutationReconciliation";
-import { createTrackedGitHubClient } from "@/repository/githubRequest";
+import { createTrackedGitHubClient, recordGitHubCredentialAnswer } from "@/repository/githubRequest";
 import { REPOSITORY_BINARY_FILE_LIMIT_BYTES, REPOSITORY_TEXT_FILE_LIMIT_BYTES, RepositoryByteMeter, RepositoryLimitExceededError, assertRepositoryFileBytes, utf8Bytes } from "@/repository/repositoryLimits";
 import { readBoundedRepositoryResponse } from "@/repository/repositoryBlobTransport";
 import { currentRepositoryScopeIdentity } from "@/repository/repositoryOperationScope";
@@ -78,7 +78,7 @@ function githubContentUrl(owner: string, repo: string, path: string, ref?: strin
  * no owner) or a book without a token never sends a request.
  */
 function assertRemoteReadable(token: string, owner: string, repo: string, path: string): void {
-  if (!token || token === LOCAL_BOOK_TOKEN || !owner || !repo) throw new RepositoryError(`No GitHub credential to read ${path}.`, "credential-invalid", "read");
+  if (!token || token === LOCAL_BOOK_TOKEN || !owner || !repo) throw new RepositoryError(`No GitHub credential to read ${path}.`, "no-credential", "read");
 }
 
 /** The complete working copy answers for its branch: a file it does not hold is absent until a sync brings it, and GitHub is not asked. */
@@ -114,6 +114,7 @@ async function fetchContentJson(
       : error instanceof TypeError ? "network" : "unknown";
     throw new RepositoryError(`GitHub content read failed for ${path}.`, kind, "read", undefined, { cause: error });
   }
+  recordGitHubCredentialAnswer(token, response.status);
   if (!response.ok) {
     let message = "";
     try {
@@ -624,6 +625,7 @@ export async function loadBinaryFileContent(
   } catch (error) {
     throw classifyRepositoryError(error, "read", path);
   }
+  recordGitHubCredentialAnswer(token, response.status);
   if (response.ok) {
     try {
       const json = (response.headers.get("content-type") ?? "").includes("application/json");

@@ -442,9 +442,21 @@ export function resolveBookExportSettings(book: BookEntry, profileId?: string): 
  * 2. a named extra token referenced by `tokenIndex`
  * 3. the default GitHub token
  */
+/**
+ * The GitHub credential of a GitHub book (empty without one), the local token of a book kept on this device: for the pages that manage how a book reaches
+ * GitHub. The working-copy services take `resolveWorkingCopyToken`, and what may reach GitHub is decided by `githubRemoteAvailability`.
+ */
 export function resolveBookToken(book: BookEntry, settings: AppSettings): string {
   if (book.storageMode === "local-only") return LOCAL_BOOK_TOKEN;
   return resolveGitHubRemoteToken(book, settings);
+}
+
+/**
+ * The token the working-copy services take for a book: its GitHub credential when it has one, the local token otherwise (a book kept on this device, or a
+ * GitHub book without a credential). Reading, writing and committing need nothing more; the local token never reaches GitHub.
+ */
+export function resolveWorkingCopyToken(book: BookEntry, settings: AppSettings): string {
+  return resolveBookToken(book, settings) || LOCAL_BOOK_TOKEN;
 }
 
 export function resolveGitHubRemoteToken(book: BookEntry, settings: AppSettings): string {

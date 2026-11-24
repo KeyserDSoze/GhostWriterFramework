@@ -181,6 +181,7 @@ const en = {
   },
   repositoryErrors: {
     "not-found": "The repository or branch was not found.",
+    "no-credential": "This needs GitHub: connect GitHub or add a token to use it. Your work stays on this device.",
     "credential-invalid": "The GitHub token is invalid or revoked. Update the PAT and try again.",
     permission: "This token does not have the required access to this repository.",
     "permission-unverified": "GitHub could not verify repository permissions right now.",
@@ -701,7 +702,6 @@ const en = {
     toastChatDriveUnavailable: "Drive unavailable for chat export",
     toastChatDriveBookRequired: "Open a book to save this chat to Drive",
     toastChatDriveTargetMissing: "Choose a Drive export folder in the book export settings first",
-    toastNoBookToken: "No GitHub token configured for this book",
     toastNoNoteTarget: "There is no note target for the current page",
     toastParagraphUpdated: "Paragraph updated",
     toastRewriteFailed: "Apply rewrite failed",
@@ -950,7 +950,6 @@ const en = {
     chapterCreated: "Chapter {{number}} created",
     created: "{{label}} created",
     dossierLoadFailed: "Dossier load failed",
-    noTokenConfigured: "No GitHub token configured for this book.",
     bookMetadata: "Book metadata",
     titleField: "Title",
     languageField: "Language",

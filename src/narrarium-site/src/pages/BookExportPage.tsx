@@ -13,7 +13,7 @@ import { BookExportSettingsDialog } from "@/components/book/BookExportSettingsDi
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
-import { resolveBookExportProfiles, resolveBookExportSettings, resolveBookToken } from "@/types/settings";
+import { resolveBookExportProfiles, resolveBookExportSettings, resolveWorkingCopyToken } from "@/types/settings";
 
 export function BookExportPage() {
   const { t } = useTranslation();
@@ -31,7 +31,7 @@ export function BookExportPage() {
     );
   }
 
-  const token = resolveBookToken(book, settings);
+  const token = resolveWorkingCopyToken(book, settings);
 
   if (loading && !structure) return <BookExportSkeleton />;
 
@@ -60,12 +60,6 @@ export function BookExportPage() {
         </Badge>
       </div>
 
-      {!token && (
-        <Alert variant="destructive">
-          <AlertDescription>{t("bookPage.noTokenConfigured")}</AlertDescription>
-        </Alert>
-      )}
-
       <Card className="overflow-hidden">
         <CardHeader className="bg-muted/30">
           <CardTitle className="flex items-center gap-2"><PackageCheck className="h-5 w-5 text-primary" />{t("export.readyTitle")}</CardTitle>
@@ -85,7 +79,7 @@ export function BookExportPage() {
             <Button variant="outline" onClick={() => setConfigOpen(true)}>
               <Settings className="mr-1 h-4 w-4" />{t("export.configure")}
             </Button>
-            {token && <BookExportDialog book={book} structure={structure} branch={branch} token={token} />}
+            <BookExportDialog book={book} structure={structure} branch={branch} token={token} />
           </div>
         </CardContent>
       </Card>

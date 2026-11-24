@@ -15,7 +15,7 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { ProfileWarnings, confirmProfileSave } from "@/components/book/ProfileWarnings";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { deleteReaderPersonaOverride, findOrphanReaderEvaluationPaths, loadReaderPersonas, saveReaderPersona } from "@/narrarium/readerEvaluations";
 import { emptyReaderPersona, type ReaderPersonaProfile } from "@/narrarium/readerPersona";
 import { slugifyAny } from "@/narrarium/canon";
@@ -30,7 +30,7 @@ export function ReaderPersonasPage() {
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
   const { book, structure, error, reload } = useBookStructure(bookId);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const [profiles, setProfiles] = useState<ReaderPersonaProfile[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [draft, setDraft] = useState<ReaderPersonaProfile | null>(null);

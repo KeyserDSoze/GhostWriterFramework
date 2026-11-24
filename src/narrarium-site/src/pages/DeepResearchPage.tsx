@@ -22,7 +22,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { deleteFile, loadFileContent, readFileWithSha, updateFile } from "@/github/githubClient";
 import { runDeepResearch } from "@/research/engine";
 import { createEntityFromResearch, DEFAULT_CREATE_PROMPTS } from "@/research/createFromResearch";
@@ -671,7 +671,7 @@ export function DeepResearchPage() {
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
   const { book, structure, loading, error, reload } = useBookStructure(bookId);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const bookLanguage = structure?.language;
 
   const [selected, setSelected] = useState<string | null>(researchSlug ?? null);

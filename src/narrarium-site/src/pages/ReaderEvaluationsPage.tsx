@@ -15,7 +15,7 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useHasLocalRewriteOperation } from "@/hooks/useHasLocalRewriteOperation";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { loadFileContent, readFileWithSha } from "@/github/githubClient";
 import { deleteReaderEvaluation, generateReaderEvaluationSummary, hashReaderSource, latestNonStaleCompletedReaderEvaluations, loadReaderPersonas, parseReaderEvaluation, runReaderEvaluations, type ReaderEvaluationProgress, type ReaderEvaluationRecord, type ReaderEvaluationTarget } from "@/narrarium/readerEvaluations";
 import type { ReaderEvaluationDepth, ReaderPersonaProfile } from "@/narrarium/readerPersona";
@@ -33,7 +33,7 @@ export function ReaderEvaluationsPage() {
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
   const { book, structure, error, reload } = useBookStructure(bookId);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const chapter = structure?.chapters.find((entry) => entry.slug === chapterId);
   const paragraph = chapter?.paragraphs.find((entry) => entry.number === paragraphNum);
   const selection = (location.state as { readerEvaluationSelection?: string } | null)?.readerEvaluationSelection?.trim() ?? "";

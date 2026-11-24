@@ -113,7 +113,7 @@ const autopilotEn = {
         applies: "It applies from the next step, also while the autopilot runs.",
         now: "Publish now",
         saved: "Publishing to GitHub: {{mode}}.",
-        needsToken: "Add a GitHub token to publish.",
+        needsToken: "Connect GitHub to publish: the book is written here all the same.",
         tokenLink: "GitHub settings",
       },
       where: {
@@ -1170,7 +1170,7 @@ const autopilotEn = {
       noServer: "Connect your personal server in Settings → Personal server.",
       webLocks: "This browser cannot guarantee a single writer (Web Locks unavailable). Use an up-to-date browser or the personal server.",
       otherTab: "The other tab did not answer: switch to it to control the autopilot.",
-      githubToken: "This book has no GitHub token: add one in Settings → GitHub.",
+      githubToken: "This needs GitHub, and the book has no GitHub credential on this device: connect GitHub in Settings → GitHub.",
       bookMissing: "This book is no longer in your library.",
       busy: "The autopilot of this book is already running on {{label}}.",
       busyWith: {

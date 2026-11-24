@@ -12,7 +12,7 @@ import { useBooksStore } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { parseAppRoute } from "@/assistant/context";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { slugToTitle } from "@/github/githubClient";
 import { openCanonDossier } from "@/narrarium/openDossier";
 import { CANON_SECTION_ORDER, type CanonSection } from "@/lib/canonSections";
@@ -116,7 +116,7 @@ export function GlobalContextMenu() {
   async function openDossierForWord() {
     if (!dossierMatch || !dossierBookId) return;
     const book = settings.books.find((b) => b.id === dossierBookId);
-    const token = book ? resolveBookToken(book, settings) : "";
+    const token = book ? resolveWorkingCopyToken(book, settings) : "";
     if (!book || !token) return;
     close();
     try {

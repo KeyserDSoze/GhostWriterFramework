@@ -33,7 +33,6 @@ describe("Copilot tool runtime contracts", () => {
     ["chapter or paragraph open", (value) => ({ ...value, context: { ...value.context, chapter: null, paragraph: null } })],
     ["context loaded", (value) => ({ ...value, context: { ...value.context, branchReady: false } })],
     ["current page", (value) => ({ ...value, context: { ...value.context, chapter: null, paragraph: null, relevantFiles: [] } })],
-    ["git token", (value) => ({ ...value, token: "" })],
     ["non-default branch", (value) => ({ ...value, branch: "main" })],
     ["note open", (value) => ({ ...value, context: { ...value.context, noteTargetPath: null } })],
     ["paragraph open", (value) => ({ ...value, context: { ...value.context, paragraph: null } })],
@@ -42,6 +41,12 @@ describe("Copilot tool runtime contracts", () => {
   ])("enforces %s", (prerequisite, withoutRequirement) => {
     expect(evaluateToolContract(descriptor(prerequisite), runtime)).toEqual({ available: true, missing: [] });
     expect(evaluateToolContract(descriptor(prerequisite), withoutRequirement(runtime))).toEqual({ available: false, missing: [prerequisite] });
+  });
+
+  it("enforces GitHub, and says which part of it is missing: the book on GitHub, a credential, a connection", () => {
+    expect(evaluateToolContract(descriptor("GitHub"), runtime)).toEqual({ available: true, missing: [] });
+    expect(evaluateToolContract(descriptor("GitHub"), { ...runtime, token: "" })).toEqual({ available: false, missing: ["GitHub credential"] });
+    expect(evaluateToolContract(descriptor("GitHub"), { ...runtime, book: { ...book, storageMode: "local-only", owner: "", repo: "" } })).toEqual({ available: false, missing: ["GitHub repository"] });
   });
 
   it.each(BUILTIN_TOOLS.filter((tool) => tool.requiresLlm).map((tool) => [tool.id, tool] as const))("declares an executable LLM task for %s", (_id, tool) => {

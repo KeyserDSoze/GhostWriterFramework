@@ -3,6 +3,7 @@ import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { resolveBookToken } from "@/types/settings";
+import { githubRemoteAvailability } from "@/github/remoteAvailability";
 import { branchIsReady, ensureAuthoritativePersonalBranch, resolveAuthoritativeBranch } from "@/github/branchResolution";
 
 /**
@@ -37,7 +38,8 @@ export function useWorkingBranch(bookId: string | undefined): {
   const resolution = resolveAuthoritativeBranch({ activeBranch: book?.activeBranch, workingBranch: bookId ? workingBranches[bookId] : undefined, loadedBranch: structure?.loadedBranch, defaultBranch: structure?.defaultBranch, userEmail: user?.email });
 
   useEffect(() => {
-    if (!bookId || !book || !structure || !token || !user?.email) return;
+    // The personal branch is made on GitHub: without it (no credential, one GitHub refused, offline) the book stays on the branch its working copy has.
+    if (!bookId || !book || !structure || githubRemoteAvailability(book, token) !== "ready" || !user?.email) return;
     if (book.activeBranch) return;
     // Already resolved this session
     if (workingBranches[bookId]) return;
@@ -49,7 +51,7 @@ export function useWorkingBranch(bookId: string | undefined): {
 
     ensureAuthoritativePersonalBranch({ token, owner: book.owner, repo: book.repo, defaultBranch: structure.defaultBranch, email: user.email })
       .then((branch) => setWorkingBranch(bookId, branch))
-      .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .catch((cause) => { if (githubRemoteAvailability(book, token) === "ready") setError(cause instanceof Error ? cause.message : String(cause)); })
       .finally(() => setEnsuring(false));
   }, [book, bookId, structure, token, user?.email, workingBranches, setWorkingBranch]);
 

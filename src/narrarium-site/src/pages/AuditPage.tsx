@@ -48,7 +48,7 @@ import {
 } from "@/narrarium/audit";
 import { useRegisterPageActions } from "@/store/pageActionsStore";
 import { useSettingsStore } from "@/store/settingsStore";
-import { resolveBookAuditSettings, resolveBookToken, type AuditDepth } from "@/types/settings";
+import { resolveBookAuditSettings, resolveWorkingCopyToken, type AuditDepth } from "@/types/settings";
 import { auditRunBlocker } from "@/narrarium/auditAvailability";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { useRegisterPageSave } from "@/store/saveStore";
@@ -67,7 +67,7 @@ export function AuditPage() {
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
   const { book, structure, loading: structureLoading, error: structureError, reload } = useBookStructure(bookId);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const auditSettings = book ? resolveBookAuditSettings(book) : null;
   const targetInput: AuditTarget = paragraphNum
     ? { scope: "paragraph", bookId: bookId ?? "", chapterId, paragraphNum }

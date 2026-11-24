@@ -1,4 +1,4 @@
-import { Activity, ArrowLeftRight, BookOpen, CircleAlert, Cloud, Coins, Eye, EyeOff, GitCommit, GitPullRequest, HelpCircle, History, Keyboard, Languages, Menu, Moon, NotebookPen, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2, Wand2 } from "lucide-react";
+import { Activity, ArrowLeftRight, BookOpen, CircleAlert, Cloud, Coins, Eye, EyeOff, GitCommit, GitPullRequest, Github, HelpCircle, History, Keyboard, Languages, Menu, Moon, NotebookPen, PanelRight, RefreshCcw, Settings, Sun, UploadCloud, Volume2, Wand2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +12,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuthStore } from "@/store/authStore";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
@@ -24,7 +24,6 @@ import { ToastAction } from "@/components/ui/toast";
 import { useSettings } from "@/drive/useSettings";
 import { parseAppRoute } from "@/assistant/context";
 import { effectiveRemoteStatus, getLocalRepositoryStatusSnapshot, listUnpushedLocalCommits } from "@/repository/localRepository";
-import { RepositoryStatusDialog } from "@/components/repository/RepositoryStatusDialog";
 import { RepositorySyncConflictDialog } from "@/components/repository/RepositorySyncConflictDialog";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, RepositorySyncChoiceStaleError, RepositorySyncConflictError, syncFullRepository, type RepositorySyncConflictChoice, type RepositorySyncConflictResolution } from "@/repository/repositoryService";
@@ -41,8 +40,11 @@ import { KeyboardShortcutsDialog } from "@/components/layout/KeyboardShortcutsDi
 import { SyncStatusIndicator } from "@/components/layout/SyncStatusIndicator";
 import { triggerCurrentSave } from "@/store/saveStore";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
-import { useGitHubRemoteAvailability } from "@/github/remoteAvailability";
+import { githubRemoteAvailability, useGitHubRemoteAvailability } from "@/github/remoteAvailability";
 import "@/i18n/localFirst";
+
+// The repository status is opened from its menu or from a page: its code and its texts load then, not with the shell of every page.
+const RepositoryStatusDialog = lazy(() => import("@/components/repository/RepositoryStatusDialog").then((module) => ({ default: module.RepositoryStatusDialog })));
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -91,6 +93,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const fetchedOnOpen = useRef<string | null>(null);
   const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
+  const [repoDialogLoaded, setRepoDialogLoaded] = useState(false);
+  if (repoDialogOpen && !repoDialogLoaded) setRepoDialogLoaded(true);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const syncConflict = useRepositorySyncStore((state) => state.conflict);
   const setSyncConflict = useRepositorySyncStore((state) => state.setConflict);
@@ -182,9 +186,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     const onOpen = settings.repository.autoFetchOnOpen && fetchedOnOpen.current !== currentBook.id;
     if (!onOpen && (!intervalMinutes || intervalMinutes <= 0)) return;
     const token = resolveBookToken(currentBook, settings);
-    if (!token) return;
     const tick = async () => {
-      if (!navigator.onLine) return;
+      if (githubRemoteAvailability(currentBook, token) !== "ready") return;
       try {
         if (!repositoryTarget) return;
         const result = await fetchRemoteStatus({ ...repositoryTarget, token });
@@ -399,6 +402,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
               <DropdownMenuItem onSelect={() => setRepoDialogOpen(true)}><Eye className="mr-2 h-4 w-4" />{t("repoStatus.viewChangedFiles")}</DropdownMenuItem>
               <DropdownMenuSeparator />
               {remote !== "ready" && <DropdownMenuLabel id="repository-menu-github-hint" className="max-w-64 text-xs font-normal text-muted-foreground">{t(remote === "local" ? "localFirst.repositoryMenuLocal" : remote === "offline" ? "localFirst.repositoryMenuOffline" : "localFirst.repositoryMenuNoCredential")}</DropdownMenuLabel>}
+              {remote === "no-credential" && <DropdownMenuItem onSelect={() => navigate("/app/settings/github")}><Github className="mr-2 h-4 w-4" />{t("localFirst.connectGitHub")}</DropdownMenuItem>}
               <DropdownMenuItem disabled={remote !== "ready" || !!repoActionBusy} onSelect={() => void runRepoAction("fetch", async () => {
                 const result = await fetchRemoteStatus({ ...repositoryTarget!, token: currentToken });
                 return result.changed ? t("repoStatus.remoteChanged") : t("repoStatus.remoteUpToDate");
@@ -549,7 +553,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <RepositoryStatusDialog open={repoDialogOpen} onOpenChange={setRepoDialogOpen} book={currentBook} branch={currentBranch} settings={settings} />
+      {repoDialogLoaded && <Suspense fallback={null}><RepositoryStatusDialog open={repoDialogOpen} onOpenChange={setRepoDialogOpen} book={currentBook} branch={currentBranch} settings={settings} /></Suspense>}
       <RepositorySyncConflictDialog conflicts={syncConflict?.error.conflicts ?? []} busy={repoActionBusy === "sync"} onCancel={() => setSyncConflict(null)} onApply={applyConflictChoices} />
       <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </header>

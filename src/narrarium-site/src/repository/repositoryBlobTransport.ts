@@ -1,3 +1,4 @@
+import { assertGitHubCredential, recordGitHubCredentialAnswer } from "@/repository/githubRequest";
 import { classifyRepositoryError, RepositoryError } from "@/repository/repositoryError";
 import { RepositoryByteMeter, assertRepositoryAggregateBytes, assertRepositoryFileBytes, repositoryFileLimit, type RepositoryContentKind } from "@/repository/repositoryLimits";
 
@@ -16,6 +17,7 @@ export async function fetchRepositoryBlobBytes(input: {
   signal?: AbortSignal;
 }): Promise<Uint8Array> {
   input.signal?.throwIfAborted();
+  assertGitHubCredential(input.token);
   let response: Response;
   try {
     response = await fetch(blobUrl(input.owner, input.repo, input.sha), {
@@ -30,6 +32,7 @@ export async function fetchRepositoryBlobBytes(input: {
   } catch (error) {
     throw classifyRepositoryError(error, "read", input.path);
   }
+  recordGitHubCredentialAnswer(input.token, response.status);
   if (!response.ok) throw classifyRepositoryError({ status: response.status, response: { status: response.status, headers: Object.fromEntries(response.headers) } }, "read", input.path);
   if ((response.headers.get("content-type") ?? "").toLowerCase().includes("application/json")) throw new RepositoryError("GitHub returned JSON instead of raw blob content.", "malformed", "read", 200);
 

@@ -1,7 +1,8 @@
 import { AlertCircle } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import "@/i18n/localFirst";
 import { createLegacyRecoveryLoginRequest } from "@/auth/legacyRecoveryLogin";
 import { createLegacyAdoptionConsent } from "@/auth/legacyAdoptionConsent";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -56,7 +57,10 @@ export function BookStructureErrorAlert({ error, reload }: { error: BookStructur
             {declined && <Button size="sm" variant="ghost" onClick={() => navigate("/app/books")}>{t("common.cancel")}</Button>}
           </>
         ) : !legacy ? (
-          <Button size="sm" variant="outline" onClick={reload}>{t("common.reloadBook")}</Button>
+          <>
+            {error.connectGitHub && <Button size="sm" asChild><Link to="/app/settings/github">{t("localFirst.connectGitHub")}</Link></Button>}
+            <Button size="sm" variant="outline" onClick={reload}>{t("common.reloadBook")}</Button>
+          </>
         ) : null}
       </AlertDescription>
     </Alert>

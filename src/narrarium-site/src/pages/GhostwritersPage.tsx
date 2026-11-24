@@ -17,7 +17,7 @@ import { FileChangedNotice } from "@/components/book/FileChangedNotice";
 import { ProfileWarnings, confirmProfileSave } from "@/components/book/ProfileWarnings";
 import { useGuardedDocumentLoad } from "@/hooks/useGuardedDocumentLoad";
 import { useRegisterPageSave } from "@/store/saveStore";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { readFileWithSha } from "@/github/githubClient";
 import { canDeleteGhostwriter, emptyGhostwriter, ghostwriterReferencePaths, parseGhostwriter, serializeGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
 import { slugifyAny } from "@/narrarium/canon";
@@ -31,7 +31,7 @@ export function GhostwritersPage() {
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
   const { book, structure, loading, error, reload } = useBookStructure(bookId);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
 
   const [selected, setSelected] = useState<string | null>(null);
   const [profile, setProfile] = useState<GhostwriterProfile | null>(null);

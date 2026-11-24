@@ -5,6 +5,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { createTrackedGitHubClient } from "@/repository/githubRequest";
 import { classifyTokenKind, type GitHubTokenKind } from "@/github/bookRepository";
 import { resolveGitHubRemoteToken, type BookEntry, type ReaderPasswordRecord } from "@/types/settings";
+import { useGitHubRemoteAvailability } from "@/github/remoteAvailability";
 import { getPagesState, getRepositoryInfo, getWorkflowState, latestRuns, listSecretNames, readPasswordVariable, readWorkflowFile, type PagesState, type RepositoryInfo, type WorkflowRun } from "@/readerAccess/api";
 import { ReaderFlowError, classifyReaderFailure, type ReaderFailure } from "@/readerAccess/errors";
 import { readerRecordsOf, withReaderRecords, type RemoteReaderState } from "@/readerAccess/model";
@@ -42,6 +43,9 @@ export function useReaderAccess(book: BookEntry) {
   const settings = useSettingsStore((state) => state.settings);
   const { save } = useSettings();
   const token = resolveGitHubRemoteToken(book, settings);
+  // GitHub is asked only with a credential it accepts (remoteAvailability): a token it refused is no credential, as no token is.
+  const remote = useGitHubRemoteAvailability(book, token);
+  const usable = remote === "ready" || remote === "offline";
   const tokenKind: GitHubTokenKind = classifyTokenKind(token);
   const records = useMemo(() => readerRecordsOf(settings, book.owner, book.repo), [settings, book.owner, book.repo]);
   const [snapshot, setSnapshot] = useState<ReaderSnapshot>(EMPTY);
@@ -56,10 +60,10 @@ export function useReaderAccess(book: BookEntry) {
   const repo = useMemo(() => ({ owner: book.owner, repo: book.repo }), [book.owner, book.repo]);
 
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  useEffect(() => { octokitRef.current = token ? createTrackedGitHubClient(token) : null; }, [token]);
+  useEffect(() => { octokitRef.current = usable ? createTrackedGitHubClient(token) : null; }, [token, usable]);
 
   const refresh = useCallback(async () => {
-    const octokit = octokitRef.current ?? (token ? createTrackedGitHubClient(token) : null);
+    const octokit = usable ? octokitRef.current ?? createTrackedGitHubClient(token) : null;
     if (!octokit) return;
     octokitRef.current = octokit;
     setLoading(true);
@@ -76,7 +80,7 @@ export function useReaderAccess(book: BookEntry) {
     if (!alive.current) return;
     setSnapshot({ repository, pages, remote: { secrets, listed: variable ? variable.names : null }, runs, workflow, workflowState, failures, loadedAt: Date.now() });
     setLoading(false);
-  }, [token, repo]);
+  }, [token, usable, repo]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -137,7 +141,7 @@ export function useReaderAccess(book: BookEntry) {
   }, [polling, going, awaiting, repo]);
 
   return {
-    token: Boolean(token),
+    token: usable,
     tokenKind,
     records,
     snapshot,

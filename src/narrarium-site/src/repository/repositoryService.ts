@@ -19,6 +19,7 @@ import {
   getLocalRecoverySnapshot,
   getLocalRepository,
   getLocalRepositoryByBook,
+  listLocalRepositoriesByBook,
   getLocalRepositoryById,
   listAllLocalFiles,
   listDirtyLocalFiles,
@@ -780,6 +781,13 @@ export async function getExistingLocalBookStructure(bookId: string, owner: strin
   if (meta && meta.bookId !== bookId) return null;
   if (meta?.cloneComplete !== true && !options.includeIncomplete) return null;
   return meta ? { meta, structure: await buildLocalBookStructure(meta) } : null;
+}
+
+/** The most recently used complete working copy of a book on this device, whatever its branch: where a GitHub book keeps working when GitHub cannot be used. */
+export async function latestCompleteLocalBookStructure(bookId: string, owner: string, repo: string, accountIdentity: string): Promise<{ meta: LocalRepositoryMeta; structure: BookStructure } | null> {
+  const same = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
+  const meta = (await listLocalRepositoriesByBook(bookId, accountIdentity)).find((row) => row.cloneComplete === true && same(row.owner, owner) && same(row.repo, repo));
+  return meta ? getExistingLocalBookStructure(bookId, owner, repo, meta.branch, accountIdentity) : null;
 }
 
 export async function commitLocalChanges(target: ExactRepositoryTarget, message: string) {

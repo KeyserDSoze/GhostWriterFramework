@@ -7,7 +7,7 @@ import { useBooksStore } from "@/store/booksStore";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { parseAppRoute } from "@/assistant/context";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { useToast } from "@/components/ui/use-toast";
 import { AssetImageDialog } from "@/components/book/AssetImageDialog";
 import { CommitHistoryDialog } from "@/components/github/CommitHistoryDialog";
@@ -58,7 +58,7 @@ export function FloatingActions() {
   const chapter = chapterId && structure ? structure.chapters.find((c) => c.slug === chapterId) : undefined;
   const paragraph = paragraphNum && chapter ? chapter.paragraphs.find((p) => p.number === paragraphNum) : undefined;
   const book = bookId ? settings.books.find((b) => b.id === bookId) : undefined;
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const remote = useGitHubRemoteAvailability(book, token);
 
   async function openOrCreate(kind: "draft" | "script") {
@@ -186,7 +186,8 @@ export function FloatingActions() {
                 ) : (
                   <p className="px-1.5 py-1 text-xs text-muted-foreground">
                     {t(remote === "local" ? "localFirst.gitFeaturesLocal" : remote === "offline" ? "localFirst.gitFeaturesOffline" : "localFirst.gitFeaturesNoCredential")}
-                    {remote !== "offline" && <> <Link to={`/app/books/${encodeURIComponent(book.id)}/settings`} onClick={() => setOpen(false)} className="underline underline-offset-2">{t("localFirst.openBookSettings")}</Link></>}
+                    {remote === "local" && <> <Link to={`/app/books/${encodeURIComponent(book.id)}/settings`} onClick={() => setOpen(false)} className="underline underline-offset-2">{t("localFirst.openBookSettings")}</Link></>}
+                    {remote === "no-credential" && <> <Link to="/app/settings/github" onClick={() => setOpen(false)} className="underline underline-offset-2">{t("localFirst.connectGitHub")}</Link></>}
                   </p>
                 )}
                 {structure && <AssetImageDialog book={book} branch={branch} token={token} kind="book" title={structure.title ?? book.name} textPath="book.md" resumePath="resumes/total.md" />}

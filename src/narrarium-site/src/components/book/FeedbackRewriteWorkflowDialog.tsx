@@ -29,7 +29,7 @@ import {
 import { RewriteOperationRecoveryRequiredError } from "@/repository/localRewriteOperationStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { isFeedbackWorkflowRequestCurrent, useFeedbackRewriteWorkflowStore, type FeedbackRewriteIntent } from "@/store/feedbackRewriteWorkflowStore";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 
 export function FeedbackRewriteWorkflowDialog() {
@@ -39,7 +39,7 @@ export function FeedbackRewriteWorkflowDialog() {
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(state.intent?.bookId);
   const { book, structure, reload } = useBookStructure(state.intent?.bookId);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const context: RewriteRepositoryContext | null = book && structure && token
     ? { token, book, branch, structure, settings, accountScope: localWorkspaceScope() }
     : null;

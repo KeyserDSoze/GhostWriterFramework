@@ -9,7 +9,7 @@ import { CANON_SECTION_ORDER } from "@/lib/canonSections";
 import { ghostwriterPrompt } from "@/narrarium/ghostwriter";
 import { loadGhostwriterProfile } from "@/narrarium/pipeline";
 import type { BookStructure, Chapter, Paragraph } from "@/types/book";
-import { CHAT_CAPABILITIES, resolveBookToken, type AppSettings, type BookEntry, type ChatCapability, type CustomAction } from "@/types/settings";
+import { CHAT_CAPABILITIES, resolveWorkingCopyToken, type AppSettings, type BookEntry, type ChatCapability, type CustomAction } from "@/types/settings";
 import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
 
 export const ALL_TARGET_TYPES = "*";
@@ -126,7 +126,7 @@ export function resolveCustomActionTarget(input: {
   const chapter = structure && "chapterId" in route ? structure.chapters.find((entry) => entry.slug === route.chapterId) ?? null : null;
   const paragraph = chapter && "paragraphNum" in route ? chapter.paragraphs.find((entry) => entry.number === route.paragraphNum) ?? null : null;
   const branch = bookId ? resolveAuthoritativeBranch({ activeBranch: book?.activeBranch, workingBranch: input.workingBranches[bookId], loadedBranch: structure?.loadedBranch, defaultBranch: structure?.defaultBranch }).branch : undefined;
-  const token = book ? resolveBookToken(book, input.settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, input.settings) : "";
   if (bookId && !book) return null;
 
   switch (route.kind) {

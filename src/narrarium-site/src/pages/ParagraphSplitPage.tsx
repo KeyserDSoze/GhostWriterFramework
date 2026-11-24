@@ -11,7 +11,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { createFile, isGitHubFileNotFoundError, readFileWithSha, updateFile } from "@/github/githubClient";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
@@ -65,7 +65,7 @@ export function ParagraphSplitPage() {
 
   const chapter = structure?.chapters.find((c) => c.slug === chapterId);
   const paragraph = chapter?.paragraphs.find((p) => p.number === paragraphNum);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
 
   const draftPath = useMemo(() => {
     if (!chapter || !paragraph) return "";

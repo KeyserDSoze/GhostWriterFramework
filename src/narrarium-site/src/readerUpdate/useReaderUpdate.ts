@@ -4,6 +4,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { loadBookTemplate } from "@/narrarium/bookTemplate";
 import { resolveGitHubRemoteToken, type BookEntry } from "@/types/settings";
+import { useGitHubRemoteAvailability } from "@/github/remoteAvailability";
 import type { ReaderFailure } from "@/readerAccess/errors";
 import { classifyWorkflowFailure } from "@/readerAccess/creation";
 import { applyReaderUpdate, type ReaderUpdateOutcome } from "@/readerUpdate/apply";
@@ -51,6 +52,8 @@ export function useWorkingBranch(book: BookEntry): string {
 export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["remote"]) {
   const settings = useSettingsStore((state) => state.settings);
   const token = resolveGitHubRemoteToken(book, settings);
+  // Checked again when GitHub becomes reachable or not (a connection, a credential GitHub refuses): the delivery of the update follows it.
+  const remoteAvailability = useGitHubRemoteAvailability(book, token);
   const branch = useWorkingBranch(book);
   const key = `${book.id}|${branch}`;
   const entry = useReaderUpdateStore((state) => state.entries[key]) ?? EMPTY;
@@ -67,7 +70,7 @@ export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["re
     } catch {
       patch(key, { checking: false, inspection: null });
     }
-  }, [book, branch, token, remoteKey, key, patch]);
+  }, [book, branch, token, remoteKey, key, patch, remoteAvailability]);
 
   useEffect(() => { void check(); }, [check]);
 

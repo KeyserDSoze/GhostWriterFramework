@@ -8,7 +8,7 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { useHasLocalRewriteOperation } from "@/hooks/useHasLocalRewriteOperation";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { parseAppRoute } from "@/assistant/context";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { useToast } from "@/components/ui/use-toast";
 import { createChapterDraftArtifacts, createChapterEvaluationArtifact, createChapterResumeArtifact, createParagraphDraftArtifact, createParagraphEvaluationArtifact, createParagraphScriptArtifact } from "@/narrarium/workspace";
 import { usePageActionsStore } from "@/store/pageActionsStore";
@@ -66,7 +66,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   const chapter = chapterId && structure ? structure.chapters.find((c) => c.slug === chapterId) : undefined;
   const paragraph = paragraphNum && chapter ? chapter.paragraphs.find((p) => p.number === paragraphNum) : undefined;
   const book = bookId ? settings.books.find((b) => b.id === bookId) : undefined;
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const navTarget = resolveContextualNavigation(structure, location.pathname, bookId);
   const paragraphSlug = paragraph ? (paragraph.path.split("/").pop() ?? "").replace(/\.md$/i, "") : undefined;
   const rewriteScope = paragraph ? "paragraph" as const : chapter ? "chapter" as const : null;

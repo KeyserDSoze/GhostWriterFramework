@@ -1,9 +1,9 @@
 import type { BookStructure, Chapter, Paragraph } from "@/types/book";
 import type { AppSettings, BookEntry } from "@/types/settings";
 import { loadFileContent } from "@/github/githubClient";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { resolveAuthoritativeBranch } from "@/github/branchRules";
-import { isRepositoryNotFoundError } from "@/repository/repositoryError";
+import { isRepositoryError, isRepositoryNotFoundError } from "@/repository/repositoryError";
 import { canDiscloseSecretBody, isSecretPath, secretAccessMapForRoute, visibleSecretManifestEntries, type SecretAccess } from "@/assistant/secretPolicy";
 import { useOutlineFocusStore } from "@/store/outlineFocusStore";
 
@@ -223,7 +223,7 @@ export async function loadWriterContext(
       ? chapter.paragraphs.find((entry) => entry.number === route.paragraphNum) ?? null
       : null;
 
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const branchResolution = bookId ? resolveAuthoritativeBranch({ activeBranch: book?.activeBranch, workingBranch: requestedBranch ?? workingBranches[bookId], loadedBranch: structure?.loadedBranch, defaultBranch: structure?.defaultBranch }) : null;
   const readBranch = branchResolution?.branch;
   const branchReady = Boolean(!structure || branchResolution?.structureMatches);
@@ -242,7 +242,8 @@ export async function loadWriterContext(
         relevantFiles.push({ path, content });
         loaded.add(path);
       } catch (error) {
-        if (!required && isRepositoryNotFoundError(error)) return;
+        // A book with no working copy here and no credential has no source of files: the context goes without them, as it did without a token.
+        if (isRepositoryError(error, "no-credential") || (!required && isRepositoryNotFoundError(error))) return;
         throw error;
       }
     };

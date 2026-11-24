@@ -15,6 +15,7 @@ import { useAutopilotActions, type AutopilotActionName, type AutopilotCommands, 
 import { useAutopilotControl, type AutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useSettingsStore } from "@/store/settingsStore";
 import { bookStorageMode, resolveGitHubRemoteToken, type BookEntry } from "@/types/settings";
+import { isUsableGitHubToken } from "@/github/remoteAvailability";
 
 /** `page`: the band of the book's live page. `dock`: the live panel. `hub`: the card of the book on the page of every book, which keeps only what runs. */
 export type QuickVariant = "page" | "dock" | "hub";
@@ -121,7 +122,7 @@ export function useQuickModel(bookId: string, variant: QuickVariant): QuickModel
     limits: summary.limits ?? null,
     handover: view.handover,
     github: bookStorageMode(book) === "github",
-    token: Boolean(resolveGitHubRemoteToken(book, settings)),
+    token: isUsableGitHubToken(resolveGitHubRemoteToken(book, settings)),
     // What the host says it does now; a host that predates the field leaves it to the options, as the engine does.
     publish: summary.publish ?? effectivePublish(state?.options, host === "server" ? "step" : undefined),
     serverUsable: server.status === "online",

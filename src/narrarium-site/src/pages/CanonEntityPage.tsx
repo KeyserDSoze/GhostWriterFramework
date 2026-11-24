@@ -13,7 +13,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { readFileWithSha, updateFile } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
@@ -88,7 +88,7 @@ export function CanonEntityPage() {
   const { t } = useTranslation();
 
   const { book, structure, loading: structureLoading, error: structureError, reload } = useBookStructure(bookId);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const files = useMemo(() => {
     if (!bookId) return [] as Array<{ path: string }>;
     return [];

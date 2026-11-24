@@ -29,7 +29,7 @@ export type CopilotToolPrerequisite =
   | "chapter or paragraph open"
   | "context loaded"
   | "current page"
-  | "git token"
+  | "GitHub"
   | "local app"
   | "non-default branch"
   | "note open"

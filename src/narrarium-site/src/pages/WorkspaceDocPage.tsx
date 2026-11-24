@@ -13,7 +13,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { createFile, isGitHubFileNotFoundError, loadFileContent, mutateTextFilesAtomically, readFileWithSha, updateFile } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { GeneratePreviewDialog } from "@/components/book/GeneratePreviewDialog";
@@ -323,7 +323,7 @@ export function WorkspaceDocPage() {
   const { book, structure, loading: structureLoading, error: structureError, reload } = useBookStructure(bookId);
   const chapter = structure?.chapters.find((entry) => entry.slug === chapterId);
   const paragraph = chapter?.paragraphs.find((entry) => entry.number === paragraphNum);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const [entries, setEntries] = useState<MetaEntry[]>([]);
   const [body, setBody] = useState("");
   const [sha, setSha] = useState("");

@@ -1,4 +1,5 @@
 import { bookStorageMode, resolveGitHubRemoteToken, type AppSettings, type BookEntry } from "@/types/settings";
+import { isUsableGitHubToken } from "@/github/remoteAvailability";
 import type { LocalSyncConfiguration } from "@/account/types";
 import type { CopyStatus, CopyTargetKind } from "@/autopilot/calls/copies/types";
 
@@ -21,7 +22,7 @@ export interface ChoiceState {
 /** What each of the four choices can do for a book, from the connections the author already has. */
 export function choiceStates(book: BookEntry, settings: AppSettings, connections: LocalSyncConfiguration): ChoiceState[] {
   const github = bookStorageMode(book) === "github" && Boolean(book.owner && book.repo);
-  const token = Boolean(resolveGitHubRemoteToken(book, settings));
+  const token = isUsableGitHubToken(resolveGitHubRemoteToken(book, settings));
   const renew = (status: string | undefined) => status === "needs-auth";
   return [
     { choice: "none", available: true, unavailable: null, reconnect: false },

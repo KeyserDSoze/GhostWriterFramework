@@ -78,9 +78,9 @@ describe("a book without a working copy on this device", () => {
   it("does not call GitHub without a credential", async () => {
     const network = blockNetwork();
 
-    await expect(readFileWithSha("", "writer", "novel", "main", "book.md")).rejects.toMatchObject({ name: "RepositoryError", kind: "credential-invalid" });
-    await expect(loadFileContent("", "writer", "novel", "book.md", "main")).rejects.toMatchObject({ name: "RepositoryError", kind: "credential-invalid" });
-    await expect(optionalBinaryFileContent("", "writer", "novel", "assets/book/cover.png", "main")).rejects.toMatchObject({ name: "RepositoryError", kind: "credential-invalid" });
+    await expect(readFileWithSha("", "writer", "novel", "main", "book.md")).rejects.toMatchObject({ name: "RepositoryError", kind: "no-credential" });
+    await expect(loadFileContent("", "writer", "novel", "book.md", "main")).rejects.toMatchObject({ name: "RepositoryError", kind: "no-credential" });
+    await expect(optionalBinaryFileContent("", "writer", "novel", "assets/book/cover.png", "main")).rejects.toMatchObject({ name: "RepositoryError", kind: "no-credential" });
     expect(network.requests).toEqual([]);
   });
 

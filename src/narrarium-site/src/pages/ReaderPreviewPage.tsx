@@ -15,7 +15,7 @@ import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
 import { loadFileContent, optionalBinaryFileContent, slugToTitle } from "@/github/githubClient";
 import { canonSectionMeta, CANON_SECTION_ORDER, type CanonSection } from "@/lib/canonSections";
-import { resolveBookExportSettings, resolveBookToken, type BookEntry, type BookExportSettings, type ReaderBookmark, type ReaderSettings } from "@/types/settings";
+import { resolveBookExportSettings, resolveWorkingCopyToken, type BookEntry, type BookExportSettings, type ReaderBookmark, type ReaderSettings } from "@/types/settings";
 import type { BookFile, BookStructure, Chapter, Paragraph } from "@/types/book";
 import { paragraphSeparator, presentMetadata, type PresentedMetadata } from "@/export/metadataPresentation";
 import { isApprovedRepositoryAssetPath, renderRepositoryMarkdownHtml } from "@/markdown/safeMarkdown";
@@ -104,7 +104,7 @@ export function ReaderPreviewPage() {
   const { branch } = useWorkingBranch(bookId);
   const readerSettings = settings.reader;
   const presentationSettings = useMemo(() => (book ? resolveBookExportSettings(book) : null), [book]);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const [readerBook, setReaderBook] = useState<ReaderBook | null>(null);
   const [readerLoadError, setReaderLoadError] = useState("");
   const [busy, setBusy] = useState(false);

@@ -23,7 +23,7 @@ import {
   loadFileContent,
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
-import { resolveBookExportSettings, resolveBookToken, type ReaderSettings } from "@/types/settings";
+import { resolveBookExportSettings, resolveWorkingCopyToken, type ReaderSettings } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { GhostwriterField } from "@/components/book/GhostwriterField";
@@ -158,7 +158,7 @@ export function ParagraphPage() {
   const chapter = structure?.chapters.find((c) => c.slug === chapterId);
   const paragraph = chapter?.paragraphs.find((p) => p.number === paragraphNum);
 
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const presentationSettings = useMemo(() => (book ? resolveBookExportSettings(book) : null), [book]);
   const auditHref = `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${paragraphNum}/audit`;
   const auditActionHref = auditHref;

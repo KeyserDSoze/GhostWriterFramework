@@ -33,7 +33,7 @@ import { loadReaderPersonas } from "@/narrarium/readerPanel";
 import { openAskDirector, useAskDirectorStore } from "@/store/askDirectorStore";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useSettingsStore } from "@/store/settingsStore";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 
 type ListField = "priorities" | "taste" | "redLines";
 
@@ -102,7 +102,7 @@ export function DirectorPage() {
   const { settings } = useSettingsStore();
   const { branch, ready } = useWorkingBranch(bookId);
   const { book, structure, loading, error, reload } = useBookStructure(bookId);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const savedVersion = useAskDirectorStore((state) => state.savedVersion);
 
   const [profile, setProfile] = useState<DirectorProfile | null>(null);

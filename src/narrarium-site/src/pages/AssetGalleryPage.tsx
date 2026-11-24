@@ -12,7 +12,7 @@ import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAle
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
 import { optionalBinaryFileContent } from "@/github/githubClient";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { AssetImageDialog } from "@/components/book/AssetImageDialog";
 import type { AssetSubjectKind } from "@/assets/assetImages";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
@@ -41,7 +41,7 @@ export function AssetGalleryPage() {
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const cards = useMemo<AssetCardItem[]>(() => {
     if (!book || !structure) return [];
     const items: AssetCardItem[] = [{

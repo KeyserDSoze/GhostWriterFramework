@@ -9,7 +9,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { createCanonEntity, type EntityKind } from "@/narrarium/canon";
 
 export function CreateCanonInlineDialog({
@@ -26,7 +26,7 @@ export function CreateCanonInlineDialog({
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
   const { book, reload } = useBookStructure(bookId);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");

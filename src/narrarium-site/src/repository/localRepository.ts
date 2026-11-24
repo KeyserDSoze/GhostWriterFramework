@@ -1312,6 +1312,13 @@ export async function getLocalRepositoryByBook(bookId: string, scope: string): P
   return adopted;
 }
 
+/** Every working copy of a book in this scope, whatever its branch, the most recently used first. */
+export async function listLocalRepositoriesByBook(bookId: string, scope: string): Promise<LocalRepositoryMeta[]> {
+  if (!isCurrentAccountScope(scope)) return [];
+  const rows = await allFromIndex<LocalRepositoryMeta>("repositories", "bookId", bookId);
+  return rows.filter((row) => row.accountScope === scope).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
 export async function attachLocalRepositoryToGitHub(input: {
   repoId: string;
   scope: RepositoryOperationScope;

@@ -1,5 +1,6 @@
 export const repositoryErrorKinds = [
   "not-found",
+  "no-credential",
   "credential-invalid",
   "permission",
   "permission-unverified",

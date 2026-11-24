@@ -1,4 +1,5 @@
-import { LOCAL_BOOK_TOKEN, type BookEntry } from "@/types/settings";
+import type { BookEntry } from "@/types/settings";
+import { isUsableGitHubToken } from "@/github/remoteAvailability";
 import {
   getLocalRepository,
   getLocalFile,
@@ -70,7 +71,7 @@ async function assertNothingElseToPublish(repoId: string, signal?: AbortSignal):
 
 /** A branch without a working copy on this device lives only on GitHub: a book kept on this device, or one without a credential, never goes there. */
 export function assertRemoteBranchReachable(input: { token: string; book: BookEntry }): void {
-  if (!input.book.owner || !input.book.repo || !input.token || input.token === LOCAL_BOOK_TOKEN) throw new Error("A local working copy for the selected branch is required.");
+  if (!input.book.owner || !input.book.repo || !isUsableGitHubToken(input.token)) throw new Error("A local working copy for the selected branch is required.");
 }
 
 export async function resolveRepositoryHeadForMutation(input: { token: string; book: BookEntry; branch: string; signal?: AbortSignal }): Promise<string> {
@@ -154,10 +155,10 @@ async function mutateRemoteTextFiles(input: {
 }
 
 /**
- * Apply one optimistic multi-file text mutation and record it locally.
- * Local repositories accumulate commits in IndexedDB until an explicit push
- * or sync. Remote-only callers still need one Git Trees commit because they
- * have no local working copy in which to stage the mutation.
+ * Apply one optimistic multi-file text mutation as a commit of the working copy and, unless the caller passes `push: false`, publish it at once. This is
+ * the decided behaviour of the changes the Copilot applies (and undoes) on a GitHub book: they reach GitHub right away when it can be reached. Without
+ * GitHub (a book kept on this device, no credential or one GitHub refused, offline, or GitHub out of reach during the push) the commit stays on this
+ * device and the next sync publishes it. Remote-only callers (no working copy here) still need one Git Trees commit.
  */
 export async function commitAndPushTextFileMutation(input: {
   token: string;
@@ -167,7 +168,7 @@ export async function commitAndPushTextFileMutation(input: {
   message: string;
   mutations: RepositoryTextMutation[];
   signal?: AbortSignal;
-  /** Publish immediately only for the few callers that explicitly require it. */
+  /** `false` leaves the commit on this device for the author's next sync; by default it is published at once whenever GitHub can be reached. */
   push?: boolean;
 }): Promise<{ commitSha: string; mode: "local" | "remote" }> {
   const meter = new RepositoryByteMeter("mutation");
@@ -183,8 +184,9 @@ export async function commitAndPushTextFileMutation(input: {
     return { commitSha, mode: "remote" };
   }
   if (local.remoteHeadSha !== input.expectedRemoteHeadSha) throw new RepositoryConflictError("The local working copy is based on a different remote head.");
-  // A book kept on this device has nowhere to publish; without a GitHub credential or a connection the next sync publishes: the change stays a local commit.
-  const publish = input.push !== false && local.remoteKind !== "none" && Boolean(input.token) && input.token !== LOCAL_BOOK_TOKEN
+  // A book kept on this device has nowhere to publish; without a GitHub credential (none, or one GitHub refused) or a connection the next sync publishes:
+  // the change stays a local commit.
+  const publish = input.push !== false && local.remoteKind !== "none" && isUsableGitHubToken(input.token)
     && (typeof navigator === "undefined" || navigator.onLine !== false);
   const writes = input.mutations.filter((mutation) => mutation.content !== undefined);
   const snapshots = await Promise.all(writes.map(async (mutation) => ({ path: mutation.path, file: await getLocalFile(local.id, mutation.path, operationScope) ?? null })));
@@ -274,8 +276,8 @@ export async function commitAndPushTextFileMutation(input: {
       if (!settled) throw new Error("The local working copy disappeared after repository sync.");
       return { commitSha: settled.remoteHeadSha, mode: "local" };
     }
-    // GitHub out of reach: the commit stays on this device, like any other local change, and the next sync publishes it.
-    if (isRepositoryError(error, "network")) return { commitSha: localCommit.id, mode: "local" };
+    // GitHub out of reach, or the credential refused: the commit stays on this device, like any other local change, and the next sync publishes it.
+    if (isRepositoryError(error, "network") || isRepositoryError(error, "credential-invalid") || isRepositoryError(error, "no-credential")) return { commitSha: localCommit.id, mode: "local" };
     await restoreLocalFilesAndDeleteCommit(local.id, operationScope, localCommit.id, snapshots);
     throw error;
   }

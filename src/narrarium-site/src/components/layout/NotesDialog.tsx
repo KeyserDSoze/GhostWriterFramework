@@ -13,7 +13,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { parseAppRoute } from "@/assistant/context";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { deleteFile, readFileWithSha, updateFile } from "@/github/githubClient";
 import { createNote, renderNoteMarkdown, updateNoteFrontmatterField } from "@/narrarium/notes";
 import type { NoteFile } from "@/types/book";
@@ -38,7 +38,7 @@ export function NotesDialog({ open, onOpenChange }: { open: boolean; onOpenChang
   const route = parseAppRoute(location.pathname);
   const bookId = "bookId" in route ? route.bookId : undefined;
   const book = bookId ? settings.books.find((b) => b.id === bookId) : undefined;
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const { branch } = useWorkingBranch(bookId);
   const { reload } = useBookStructure(bookId);
   const structure = bookId ? structures[bookId] : undefined;

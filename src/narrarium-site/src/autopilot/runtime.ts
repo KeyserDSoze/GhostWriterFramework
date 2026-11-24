@@ -75,6 +75,8 @@ import { useAuthStore } from "@/store/authStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { bookStorageMode, resolveGitHubCredential, resolveGitHubRemoteToken, type BookEntry, type PersonalServerSettings } from "@/types/settings";
+import { githubRemoteAvailability, isUsableGitHubToken } from "@/github/remoteAvailability";
+import { isRepositoryError, repositoryErrorDescription } from "@/repository/repositoryError";
 
 export type AutopilotSetupErrorCode = "no-server" | "book-missing" | "web-locks" | "other-tab" | "github-token";
 
@@ -184,6 +186,7 @@ export function describeAutopilotError(error: unknown): string {
     if (conflicts !== null) return i18n.t("autopilot.errors.githubConflict", { count: conflicts });
   }
   if (error instanceof Error && error.name === "AiUnavailableError") return i18n.t("autopilot.errors.aiMissing");
+  if (isRepositoryError(error)) return repositoryErrorDescription(error, (key, options) => i18n.t(key, options));
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -439,13 +442,20 @@ export class BrowserAutopilotRuntime {
     return session;
   }
 
-  /** Publish the book's commits of this browser to GitHub: what the engine asks for after a step or a chapter, as the author chose. A book without a usable token publishes nothing. */
+  /**
+   * Publish the book's commits of this browser to GitHub: what the engine asks for after a step or a chapter, as the author chose. Without GitHub (no credential,
+   * one GitHub refused, offline) the commits wait in the working copy for the next step, chapter or sync, and the run goes on.
+   */
   private async publishFromBrowser(book: BookEntry, branch: string): Promise<void> {
     const token = resolveGitHubRemoteToken(book, settings());
-    if (!token) return;
-    // Offline the commits wait in the working copy: the next step, chapter or sync publishes them, and the run does not stop on a network error.
-    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
-    await syncFullRepository({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentRepositoryScopeIdentity(), token });
+    if (githubRemoteAvailability(book, token) !== "ready") return;
+    try {
+      await syncFullRepository({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentRepositoryScopeIdentity(), token });
+    } catch (error) {
+      // The engine reports a failed publication in the activity: in the author's words, not GitHub's.
+      if (isRepositoryError(error)) throw new Error(repositoryErrorDescription(error, (key, options) => i18n.t(key, options)));
+      throw error;
+    }
     this.recordSync(book.id, syncOutcome("published"));
   }
 
@@ -722,7 +732,7 @@ export class BrowserAutopilotRuntime {
         return this.syncNow(bookId, { push: true, throwOnError: true });
       }
       const token = resolveGitHubRemoteToken(book, settings());
-      if (!token) throw new AutopilotSetupError("github-token");
+      if (!isUsableGitHubToken(token)) throw new AutopilotSetupError("github-token");
       await syncFullRepository({ bookId: book.id, owner: book.owner, repo: book.repo, branch: resolveBookBranch(book), accountIdentity: currentRepositoryScopeIdentity(), token });
       const outcome = syncOutcome("published");
       this.recordSync(bookId, outcome);
@@ -1002,7 +1012,7 @@ export class BrowserAutopilotRuntime {
     let githubToken: string | undefined;
     if (bookStorageMode(book) === "github") {
       const token = resolveGitHubRemoteToken(book, settings());
-      if (!token) throw new AutopilotSetupError("github-token");
+      if (!isUsableGitHubToken(token)) throw new AutopilotSetupError("github-token");
       await syncFullRepository({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentRepositoryScopeIdentity(), token });
       storage = { kind: "github", owner: book.owner, repo: book.repo, branch };
       if (consent.sendGitHubToken) githubToken = token;
@@ -1197,7 +1207,7 @@ export class BrowserAutopilotRuntime {
   private async syncRepository(book: BookEntry, request: SyncRequest): Promise<SyncOutcome> {
     const branch = resolveBookBranch(book);
     const token = resolveGitHubRemoteToken(book, settings());
-    if (!token) throw new AutopilotSetupError("github-token");
+    if (!isUsableGitHubToken(token)) throw new AutopilotSetupError("github-token");
     const meta = await getLocalRepository(book.owner, book.repo, branch, captureRepositoryOperationScope());
     if (!meta) throw new LocalWorkingCopyMissingError();
     const target = { bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentRepositoryScopeIdentity(), token };

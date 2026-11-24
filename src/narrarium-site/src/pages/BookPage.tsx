@@ -33,7 +33,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { createFile, readFileWithSha, slugToTitle, updateFile } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type BookFile } from "@/types/book";
-import { bookStorageMode, resolveBookToken } from "@/types/settings";
+import { bookStorageMode, resolveWorkingCopyToken } from "@/types/settings";
 import { openCanonDossier } from "@/narrarium/openDossier";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { useRegisterPageSave } from "@/store/saveStore";
@@ -129,7 +129,7 @@ export function BookPage() {
   const { book, structure, loading, error, reload } = useBookStructure(bookId ?? "");
   // Kick off branch creation as soon as the structure is available
   const { branch, ensuring } = useWorkingBranch(bookId);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
 
   const [bookFrontmatter, setBookFrontmatter] = useState<Record<string, unknown>>({});
   const [bookBody, setBookBody] = useState("");
@@ -245,7 +245,7 @@ export function BookPage() {
     title: string;
     summary?: string;
   }) {
-    if (!book || !token) throw new Error(t("bookPage.noTokenConfigured"));
+    if (!book) throw new Error(t("bookPage.notFound"));
     await createChapterFile(token, book.owner, book.repo, branch, input);
     toast({ title: t("bookPage.chapterCreated", { number: formatOrdinal(input.number) }) });
     reload();
@@ -257,7 +257,7 @@ export function BookPage() {
       summary?: string;
       extraFrontmatter?: Record<string, unknown>;
     }) => {
-      if (!book || !token) throw new Error(t("bookPage.noTokenConfigured"));
+      if (!book) throw new Error(t("bookPage.notFound"));
       await createCanonEntity(token, book.owner, book.repo, branch, {
         kind,
         label: input.label,

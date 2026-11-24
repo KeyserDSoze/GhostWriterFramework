@@ -81,7 +81,9 @@ import { auditRunBlocker } from "@/narrarium/auditAvailability";
 import { canDiscloseSecretBody, canSearchAvailableFile, secretAccessFromManifest } from "@/assistant/secretPolicy";
 import { appendAssistantArchiveRecords, archiveAction, assistantSessionCompactionTarget, compactionText, MAX_ARCHIVE_SUMMARY_CHARS, truncateText } from "@/assistant/sessionCompaction";
 import { assistantSegmentSha256 } from "@/assistant/chatSegments";
-import { assertToolExecutionResult, evaluateToolContract, llmTaskForTool, missingToolRequirementsMessage, type CopilotToolRuntimeContext } from "@/assistant/tools/runtimeContract";
+import { assertToolExecutionResult, branchNotOnDeviceMessage, evaluateToolContract, githubNeededMessage, llmTaskForTool, missingToolRequirementsMessage, type CopilotToolRuntimeContext } from "@/assistant/tools/runtimeContract";
+import { branchRevision, localBranchCopy } from "@/assistant/branchRevision";
+import { githubRemoteAvailability } from "@/github/remoteAvailability";
 import { parseBranchName, parseBranchOperation } from "@/github/branchNameParser";
 import { buildPullRequestProposal, pullRequestRevision, summarizePullRequestFiles } from "@/assistant/pullRequestProposal";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
@@ -366,9 +368,9 @@ async function actionProvenance(
   }
   let sourceRevision = sourceRevisionFromFiles(sourceRevisions);
   if (!paths.length) {
-    const latestCommit = (await listBranchCommits(input.token, input.book.owner, input.book.repo, revisionBranch))[0]?.sha;
-    if (!latestCommit) throw new Error(`Could not resolve the source revision for branch ${revisionBranch}.`);
-    sourceRevision = latestCommit;
+    const revision = await branchRevision(input.book, input.token, revisionBranch);
+    if (!revision) throw new Error(`Could not resolve the source revision for branch ${revisionBranch}.`);
+    sourceRevision = revision;
   }
   return {
     toolId,
@@ -557,6 +559,12 @@ async function switchBookBranchFromPrompt(input: PromptInput & { book: BookEntry
   const branchName = parsed.branchName;
   const createIfMissing = parseBranchOperation(input.prompt) === "create";
   const baseBranch = input.context.structure?.defaultBranch ?? "main";
+  // Without GitHub a branch is switched to only when its working copy is on this device; making one is GitHub's.
+  const remote = githubRemoteAvailability(input.book, input.token);
+  if (remote !== "ready") {
+    if (createIfMissing) return makeAssistantMessage("assistant", githubNeededMessage(remote, input.settings.ui.language));
+    if (!await localBranchCopy(input.book, branchName)) return makeAssistantMessage("assistant", branchNotOnDeviceMessage(branchName, remote, input.settings.ui.language));
+  }
   const provenance = await actionProvenance(input, "switch-branch", [], createIfMissing ? baseBranch : input.branch);
   return {
     id: crypto.randomUUID(),

@@ -52,12 +52,12 @@ export function llmTaskForTool(toolId: string): ChatCapability | null {
 }
 
 export function evaluateToolContract(tool: CopilotToolDescriptor, runtime: CopilotToolRuntimeContext): CopilotToolContractResult {
-  const missing: string[] = tool.prerequisites.filter((requirement) => !hasPrerequisite(requirement, runtime));
-  // The tools of the remote repository (branches, commits, pull requests) need GitHub itself, not the working copy.
-  if (tool.area === "git") {
-    const remote = githubRemoteAvailability(runtime.book ?? undefined, runtime.token);
-    if (remote !== "ready") missing.push(GITHUB_REMOTE_REQUIREMENT[remote]);
-  }
+  // The tools of the remote repository (its branches, commits, pull requests) need GitHub itself, and say which part is missing; every other tool works on the
+  // working copy and needs no credential.
+  const remote = githubRemoteAvailability(runtime.book ?? undefined, runtime.token);
+  const missing: string[] = tool.prerequisites
+    .filter((requirement) => requirement === "GitHub" ? remote !== "ready" : !hasPrerequisite(requirement, runtime))
+    .map((requirement) => requirement === "GitHub" && remote !== "ready" ? GITHUB_REMOTE_REQUIREMENT[remote] : requirement);
   if (tool.requiresLlm) {
     const task = llmTaskForTool(tool.id);
     if (!task || !resolveTaskCandidates(runtime.settings, task).some((candidate) => candidate.integration && candidate.model && (!toolRequiresForcedTool(tool.id) || candidate.supportsToolCalls !== false))) {
@@ -76,7 +76,7 @@ const GITHUB_REMOTE_REQUIREMENT = { local: "GitHub repository", "no-credential":
 
 const GITHUB_REMOTE_TEXT: Record<keyof typeof GITHUB_REMOTE_REQUIREMENT, { en: string; it: string }> = {
   local: { en: "This needs GitHub: connect the book to GitHub to use it.", it: "Serve GitHub: collega il libro a GitHub per usare questa funzione." },
-  "no-credential": { en: "This needs GitHub: add a GitHub credential to use it.", it: "Serve GitHub: aggiungi una credenziale GitHub per usare questa funzione." },
+  "no-credential": { en: "This needs GitHub: connect GitHub to use it.", it: "Serve GitHub: collega GitHub per usare questa funzione." },
   offline: { en: "You are offline: this needs GitHub.", it: "Sei offline: questa funzione richiede GitHub." },
 };
 
@@ -89,11 +89,26 @@ export function assertToolExecutionResult(tool: CopilotToolDescriptor, message: 
 
 export function missingToolRequirementsMessage(tool: CopilotToolDescriptor, missing: readonly string[], language: string): string {
   const remote = (Object.keys(GITHUB_REMOTE_REQUIREMENT) as Array<keyof typeof GITHUB_REMOTE_REQUIREMENT>).find((reason) => missing.includes(GITHUB_REMOTE_REQUIREMENT[reason]));
-  if (remote) return GITHUB_REMOTE_TEXT[remote][language === "it" ? "it" : "en"];
+  if (remote) return githubNeededMessage(remote, language);
   const requirements = missing.join(", ");
   return language === "it"
     ? `Il tool ${tool.name} non può essere eseguito ora. Requisiti mancanti: ${requirements}.`
     : `${tool.name} cannot run right now. Missing requirements: ${requirements}.`;
+}
+
+/** What an action that needs GitHub itself says when GitHub cannot be used now. */
+export function githubNeededMessage(remote: Exclude<GitHubRemoteAvailability, "ready">, language: string): string {
+  return GITHUB_REMOTE_TEXT[remote][language === "it" ? "it" : "en"];
+}
+
+/** A branch without a working copy on this device comes only from GitHub. */
+export function branchNotOnDeviceMessage(branch: string, remote: Exclude<GitHubRemoteAvailability, "ready">, language: string): string {
+  if (language === "it") return remote === "offline"
+    ? `Il branch \`${branch}\` non è su questo dispositivo: potrai scaricarlo da GitHub quando tornerai online.`
+    : `Il branch \`${branch}\` non è su questo dispositivo: collega GitHub per scaricarlo.`;
+  return remote === "offline"
+    ? `Branch \`${branch}\` is not on this device: you can download it from GitHub once you are back online.`
+    : `Branch \`${branch}\` is not on this device: connect GitHub to download it.`;
 }
 
 function hasPrerequisite(requirement: CopilotToolPrerequisite, runtime: CopilotToolRuntimeContext): boolean {
@@ -106,7 +121,7 @@ function hasPrerequisite(requirement: CopilotToolPrerequisite, runtime: CopilotT
     case "chapter or paragraph open": return Boolean(context.chapter || context.paragraph || routeChapterTarget(context));
     case "context loaded": return Boolean(context.structure && context.branchReady && context.branch === runtime.branch);
     case "current page": return Boolean(context.chapter || context.paragraph || context.relevantFiles?.length);
-    case "git token": return Boolean(runtime.token);
+    case "GitHub": return githubRemoteAvailability(runtime.book ?? undefined, runtime.token) === "ready";
     case "local app": return true;
     case "non-default branch": return Boolean(context.structure && runtime.branch !== context.structure.defaultBranch);
     case "note open": return Boolean(context.noteTargetPath);

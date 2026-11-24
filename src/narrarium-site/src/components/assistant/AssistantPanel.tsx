@@ -82,8 +82,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { bookStorageMode, resolveBookExportSettings, resolveBookToken, type BookEntry } from "@/types/settings";
+import { bookStorageMode, resolveBookExportSettings, resolveWorkingCopyToken, type BookEntry } from "@/types/settings";
 import { githubRemoteAvailability } from "@/github/remoteAvailability";
+import { githubNeededMessage } from "@/assistant/tools/runtimeContract";
+import { branchRevision } from "@/assistant/branchRevision";
 import {
   compareBranches,
   createBranchFromBase,
@@ -1119,11 +1121,11 @@ export function AssistantPanel() {
     }
     const destination = resolved.destination;
     const book = settings.books.find((entry) => entry.id === destination.bookId && entry.owner === destination.owner && entry.repo === destination.repo);
-    const token = book ? resolveBookToken(book, settings) : "";
-    if (!book || !token) {
-      toast({ title: t("assistant.toastNoBookToken"), variant: "destructive" });
+    if (!book) {
+      toast({ title: t("assistant.toastNoNoteTarget"), variant: "destructive" });
       return;
     }
+    const token = resolveWorkingCopyToken(book, settings);
     const language = settings.ui.language;
     const warning = resolved.legacyOrCrossBook
       ? language === "it" ? "La chat non appartiene al libro attualmente aperto o non ha una provenienza salvata. Conferma esplicitamente la destinazione." : "This chat does not belong to the currently open book or has no saved provenance. Explicitly confirm the destination."
@@ -1424,7 +1426,7 @@ export function AssistantPanel() {
       const routeContext = await loadWriterContext(location.pathname, settings, settings.books, booksState.structures, booksState.workingBranches, branch);
       if (!ownsRequest()) return null;
       const book = routeContext.book;
-      const token = book ? resolveBookToken(book, settings) : "";
+      const token = book ? resolveWorkingCopyToken(book, settings) : "";
       const userMessage = { id: crypto.randomUUID(), role: "user" as const, text: trimmed };
       const secretPath = routeContext.route ? directSecretPath(routeContext.route) : null;
       useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage], sensitiveSecretPaths: secretPath ? [...new Set([...(current.sensitiveSecretPaths ?? []), secretPath])] : current.sensitiveSecretPaths }));
@@ -1594,7 +1596,7 @@ export function AssistantPanel() {
     if (!requireAssistantActionEnabled(action)) return;
     const source = readAloudReplaySource(action);
     const book = source ? settings.books.find((entry) => entry.id === source.bookId && entry.owner === source.owner && entry.repo === source.repo) : undefined;
-    const token = book ? resolveBookToken(book, settings) : "";
+    const token = book ? resolveWorkingCopyToken(book, settings) : "";
     if (!source || !book || !token) {
       toast({ title: t("assistant.rewriteSourceChanged") });
       return;
@@ -1801,7 +1803,7 @@ export function AssistantPanel() {
     pendingRewriteRef.current = resolveLiveVoiceRewrite(pending, "reject").pending;
     const activeBookId = activeBookIdRef.current;
     const book = activeBookId ? settingsRef.current.books.find((entry) => entry.id === activeBookId) : undefined;
-    const token = book ? resolveBookToken(book, settingsRef.current) : "";
+    const token = book ? resolveWorkingCopyToken(book, settingsRef.current) : "";
     if (!book || !token) return makeAssistantReply(t("assistant.rewriteSourceChanged"));
     let persistence: Awaited<ReturnType<typeof persistLiveVoiceRewrite>>;
     let scriptWarnings: string[] = [];
@@ -1984,9 +1986,9 @@ export function AssistantPanel() {
       currentRevision = sourceRevisionFromFiles(revisions);
     } else {
       const revisionBranch = action.kind === "switch-book-branch" && action.createIfMissing ? action.baseBranch ?? "main" : branch;
-      const latestCommit = (await listBranchCommits(token, book.owner, book.repo, revisionBranch).catch(() => []))[0]?.sha;
-      if (!latestCommit) return fail("source-unavailable");
-      currentRevision = latestCommit;
+      const revision = await branchRevision(book, token, revisionBranch).catch(() => null);
+      if (!revision) return fail("source-unavailable");
+      currentRevision = revision;
     }
     const revisionFailure = validateAssistantAction({
       action,
@@ -2008,7 +2010,7 @@ export function AssistantPanel() {
       const book = hasAssistantActionProvenance(action)
         ? settings.books.find((entry) => entry.owner.toLowerCase() === action.owner.toLowerCase() && entry.repo.toLowerCase() === action.repo.toLowerCase())
         : undefined;
-      const token = book ? resolveBookToken(book, settings) : "";
+      const token = book ? resolveWorkingCopyToken(book, settings) : "";
       if (!book || !token || !await validatePersistedMutation(action, book, token)) return;
     }
     navigate(action.to);
@@ -2020,7 +2022,7 @@ export function AssistantPanel() {
     const action = message.action;
     if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
-    const token = book ? resolveBookToken(book, settings) : "";
+    const token = book ? resolveWorkingCopyToken(book, settings) : "";
     if (!book || !token) return;
     if (!await validatePersistedMutation(action, book, token)) return;
     const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
@@ -2048,7 +2050,7 @@ export function AssistantPanel() {
     // A proposal for the outline is applied whole: moving an entry rewrites the ones it passes.
     const updates = pendingFileUpdates(action.updates, isOutlineProposal(action) ? undefined : selectedPaths);
     const book = settings.books.find((entry) => entry.id === action.bookId);
-    const token = book ? resolveBookToken(book, settings) : "";
+    const token = book ? resolveWorkingCopyToken(book, settings) : "";
     if (!book || !token || updates.length === 0) return;
     if (!await validatePersistedMutation(action, book, token)) return;
     const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
@@ -2129,8 +2131,14 @@ export function AssistantPanel() {
     const action = message.action;
     if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
-    const token = book ? resolveBookToken(book, settings) : "";
+    const token = book ? resolveWorkingCopyToken(book, settings) : "";
     if (!book || !token) return;
+    // Making a branch is GitHub's: without it, only a branch already on this device is switched to.
+    const remote = githubRemoteAvailability(book, token);
+    if (action.createIfMissing && remote !== "ready") {
+      toast({ title: t("assistant.toastBranchSwitchFailed"), description: githubNeededMessage(remote, settings.ui.language), variant: "destructive" });
+      return;
+    }
     if (!await validatePersistedMutation(action, book, token)) return;
     const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
     if (!operation) return;
@@ -2164,7 +2172,7 @@ export function AssistantPanel() {
     const action = message.action;
     if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
-    const token = book ? resolveBookToken(book, settings) : "";
+    const token = book ? resolveWorkingCopyToken(book, settings) : "";
     if (!book || !token) return;
     if (!await validatePersistedMutation(action, book, token)) return;
     const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
@@ -2239,7 +2247,7 @@ export function AssistantPanel() {
     const action = message.action;
     if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
-    const token = book ? resolveBookToken(book, settings) : "";
+    const token = book ? resolveWorkingCopyToken(book, settings) : "";
     if (!book || !token || !await validatePersistedMutation(action, book, token)) return;
     const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
     if (!operation) return;
@@ -2269,8 +2277,15 @@ export function AssistantPanel() {
     const action = message.action;
     if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
-    const token = book ? resolveBookToken(book, settings) : "";
-    if (!book || !token || !await validatePersistedMutation(action, book, token)) return;
+    const token = book ? resolveWorkingCopyToken(book, settings) : "";
+    if (!book || !token) return;
+    // A pull request is opened on GitHub: say why it cannot be now instead of sending a request that fails.
+    const remote = githubRemoteAvailability(book, token);
+    if (remote !== "ready") {
+      toast({ title: githubNeededMessage(remote, settings.ui.language), variant: "destructive" });
+      return;
+    }
+    if (!await validatePersistedMutation(action, book, token)) return;
     const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
     if (!operation) return;
     setBusy(true);
@@ -2292,7 +2307,7 @@ export function AssistantPanel() {
     const action = message.action;
     if (!requireAssistantActionEnabled(action)) return;
     const book = settings.books.find((entry) => entry.id === action.bookId);
-    const token = book ? resolveBookToken(book, settings) : "";
+    const token = book ? resolveWorkingCopyToken(book, settings) : "";
     if (!book || !token) return;
     if (!await validatePersistedMutation(action, book, token)) return;
     const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
@@ -2346,7 +2361,7 @@ export function AssistantPanel() {
     if (!bookId) return;
     const book = settings.books.find((entry) => entry.id === bookId);
     const structure = structures[bookId];
-    const token = book ? resolveBookToken(book, settings) : "";
+    const token = book ? resolveWorkingCopyToken(book, settings) : "";
     if (!book || !structure || !token) return;
     // The branches are compared on GitHub: say why when it cannot be reached, instead of sending a request that fails.
     const remote = githubRemoteAvailability(book, token);
@@ -2371,7 +2386,7 @@ export function AssistantPanel() {
     if (!bookId) return;
     const book = settings.books.find((entry) => entry.id === bookId);
     const structure = structures[bookId];
-    const token = book ? resolveBookToken(book, settings) : "";
+    const token = book ? resolveWorkingCopyToken(book, settings) : "";
     if (!book || !structure || !token) return;
     setBusy(true);
     try {
@@ -2398,7 +2413,7 @@ export function AssistantPanel() {
     const pending = pendingDiffRevert;
     if (!pending || !bookId) return;
     const book = settings.books.find((entry) => entry.id === bookId);
-    const token = book ? resolveBookToken(book, settings) : "";
+    const token = book ? resolveWorkingCopyToken(book, settings) : "";
     if (!book || !token) return;
     const operation = beginConfirmedMutation(book.id, localWorkspaceScope());
     if (!operation) return;
@@ -2448,7 +2463,7 @@ export function AssistantPanel() {
     }
     if (previousContents[key] === undefined) {
       const book = bookId ? settings.books.find((entry) => entry.id === bookId) : undefined;
-      const token = book ? resolveBookToken(book, settings) : "";
+      const token = book ? resolveWorkingCopyToken(book, settings) : "";
       if (book && token) {
         setLoadingDiffPath(key);
         try {

@@ -15,48 +15,48 @@ import type { CopilotToolPrerequisite } from "@/assistant/tools/types";
 const settings = { ui: { language: "en" }, copilotTools: { toolOverrides: {} } } as unknown as AppSettings;
 
 const EXPECTED_PREREQUISITES: Record<string, CopilotToolPrerequisite[]> = {
-  "search-book": ["book open", "git token", "context loaded"],
-  "switch-branch": ["book open", "git token"],
-  "import-attachments": ["attachments", "book open", "git token", "context loaded"],
-  "create-chapter": ["book open", "git token", "context loaded"],
-  "create-paragraph": ["chapter open", "git token", "context loaded"],
-  "create-entity": ["book open", "git token", "context loaded"],
-  "create-script": ["chapter or paragraph open", "git token", "context loaded"],
-  "create-draft": ["chapter or paragraph open", "git token", "context loaded"],
-  "update-plot": ["book open", "git token", "context loaded"],
-  "write-resume": ["chapter open", "git token", "context loaded"],
-  "write-evaluation": ["book open", "git token", "context loaded"],
-  "evaluate-chapter-paragraphs": ["book open", "git token", "context loaded"],
-  "rewrite-current-paragraph": ["paragraph open", "git token", "context loaded"],
-  "create-note": ["book open", "git token", "context loaded"],
-  "multi-file-edit": ["book open", "git token", "context loaded"],
-  "edit-outline": ["book open", "git token", "context loaded"],
+  "search-book": ["book open", "context loaded"],
+  "switch-branch": ["book open"],
+  "import-attachments": ["attachments", "book open", "context loaded"],
+  "create-chapter": ["book open", "context loaded"],
+  "create-paragraph": ["chapter open", "context loaded"],
+  "create-entity": ["book open", "context loaded"],
+  "create-script": ["chapter or paragraph open", "context loaded"],
+  "create-draft": ["chapter or paragraph open", "context loaded"],
+  "update-plot": ["book open", "context loaded"],
+  "write-resume": ["chapter open", "context loaded"],
+  "write-evaluation": ["book open", "context loaded"],
+  "evaluate-chapter-paragraphs": ["book open", "context loaded"],
+  "rewrite-current-paragraph": ["paragraph open", "context loaded"],
+  "create-note": ["book open", "context loaded"],
+  "multi-file-edit": ["book open", "context loaded"],
+  "edit-outline": ["book open", "context loaded"],
   "review-context": ["context loaded"],
   "summarize-context": ["context loaded"],
   "answer-from-context": ["context loaded"],
   "get-book": ["book open", "context loaded"],
   "get-chapter": ["book open", "context loaded"],
-  "get-paragraph": ["chapter open", "git token", "context loaded"],
-  "get-character": ["book open", "git token", "context loaded"],
-  "get-location": ["book open", "git token", "context loaded"],
-  "get-faction": ["book open", "git token", "context loaded"],
-  "get-item": ["book open", "git token", "context loaded"],
-  "get-secret": ["book open", "git token", "context loaded"],
-  "get-timeline-event": ["book open", "git token", "context loaded"],
-  "get-body": ["context loaded", "git token"],
-  "get-frontmatter": ["context loaded", "git token"],
-  "run-audit": ["book open", "git token", "context loaded"],
+  "get-paragraph": ["chapter open", "context loaded"],
+  "get-character": ["book open", "context loaded"],
+  "get-location": ["book open", "context loaded"],
+  "get-faction": ["book open", "context loaded"],
+  "get-item": ["book open", "context loaded"],
+  "get-secret": ["book open", "context loaded"],
+  "get-timeline-event": ["book open", "context loaded"],
+  "get-body": ["context loaded"],
+  "get-frontmatter": ["context loaded"],
+  "run-audit": ["book open", "context loaded"],
   "open-audit": ["book open"],
-  "update-audit": ["book open", "git token", "context loaded"],
-  "set-audit-finding-status": ["book open", "git token", "context loaded"],
-  "deep-research": ["book open", "git token", "context loaded"],
-  "create-from-research": ["book open", "research available", "git token", "context loaded"],
-  "read-current-page": ["current page", "book open", "git token", "context loaded"],
-  "list-simulated-readers": ["book open", "git token", "context loaded"],
-  "create-simulated-reader": ["book open", "git token", "context loaded"],
-  "toggle-simulated-reader": ["book open", "git token", "context loaded"],
-  "evaluate-with-readers": ["chapter or paragraph open", "git token", "context loaded"],
-  "summarize-reader-evaluations": ["reader evaluations available", "git token", "context loaded"],
+  "update-audit": ["book open", "context loaded"],
+  "set-audit-finding-status": ["book open", "context loaded"],
+  "deep-research": ["book open", "context loaded"],
+  "create-from-research": ["book open", "research available", "context loaded"],
+  "read-current-page": ["current page", "book open", "context loaded"],
+  "list-simulated-readers": ["book open", "context loaded"],
+  "create-simulated-reader": ["book open", "context loaded"],
+  "toggle-simulated-reader": ["book open", "context loaded"],
+  "evaluate-with-readers": ["chapter or paragraph open", "context loaded"],
+  "summarize-reader-evaluations": ["reader evaluations available", "context loaded"],
   "open-reader-evaluations": ["chapter or paragraph open"],
   "generate-draft-from-feedback": ["chapter or paragraph open"],
   "restore-previous-drafts": ["chapter or paragraph open"],
@@ -64,16 +64,16 @@ const EXPECTED_PREREQUISITES: Record<string, CopilotToolPrerequisite[]> = {
   "cancel-feedback-rewrite": ["chapter or paragraph open"],
   "open-reader": ["book open"],
   "navigate-app": ["local app"],
-  "list-branches": ["book open", "git token"],
-  "show-branch-diff": ["book open", "git token"],
-  "list-commits": ["book open", "git token"],
-  "list-pull-requests": ["book open", "git token"],
-  "create-pull-request": ["book open", "git token", "non-default branch"],
-  "delete-current-note": ["note open", "git token", "context loaded"],
-  "delete-current-paragraph": ["paragraph open", "git token", "context loaded"],
-  "delete-current-entity": ["canon entity open", "git token", "context loaded"],
-  "delete-reader-evaluation": ["chapter or paragraph open", "git token", "context loaded"],
-  "delete-audit": ["book open", "git token", "context loaded"],
+  "list-branches": ["book open", "GitHub"],
+  "show-branch-diff": ["book open", "GitHub"],
+  "list-commits": ["book open", "GitHub"],
+  "list-pull-requests": ["book open", "GitHub"],
+  "create-pull-request": ["book open", "GitHub", "non-default branch"],
+  "delete-current-note": ["note open", "context loaded"],
+  "delete-current-paragraph": ["paragraph open", "context loaded"],
+  "delete-current-entity": ["canon entity open", "context loaded"],
+  "delete-reader-evaluation": ["chapter or paragraph open", "context loaded"],
+  "delete-audit": ["book open", "context loaded"],
 };
 
 describe("Copilot catalog integrity", () => {
@@ -134,7 +134,8 @@ describe("Copilot catalog integrity", () => {
     const local = await runAssistantPrompt({ prompt: "open reader", context, settings, book, branch: "main", token: "", history: [], compactSummary: "", compactedMessageCount: 0, attachments: [], accountScope: null });
     expect(local.action).toMatchObject({ kind: "navigate", to: "/app/books/book-id/reader" });
     const blocked = await runAssistantPrompt({ prompt: "search for Ada", context, settings, book, branch: "main", token: "", history: [], compactSummary: "", compactedMessageCount: 0, attachments: [], accountScope: null });
-    expect(blocked.text).toContain("Missing requirements: git token, context loaded");
+    // A tool of the working copy waits for the copy, never for a credential.
+    expect(blocked.text).toContain("Missing requirements: context loaded.");
   });
 
   it("enforces the complete local-versus-repository prerequisite matrix", () => {
@@ -148,8 +149,11 @@ describe("Copilot catalog integrity", () => {
       expect(tool.prerequisites, tool.id).toEqual(EXPECTED_PREREQUISITES[tool.id]);
       const empty = evaluateToolContract(tool, runtime(emptyContext, "", null));
       if (tool.id === "navigate-app") expect(empty.available, tool.id).toBe(true);
-      if (EXPECTED_PREREQUISITES[tool.id].includes("git token")) {
-        expect(evaluateToolContract(tool, runtime(loadedContext)).missing, tool.id).toContain("git token");
+      // Only the tools of the remote need GitHub, and say which part of it is missing; the others run on the working copy with no credential at all.
+      if (EXPECTED_PREREQUISITES[tool.id].includes("GitHub")) {
+        expect(evaluateToolContract(tool, runtime(loadedContext)).missing, tool.id).toContain("GitHub credential");
+      } else {
+        expect(evaluateToolContract(tool, runtime(loadedContext)).missing.filter((requirement) => /GitHub|token|credential|connection/i.test(requirement)), tool.id).toEqual([]);
       }
       if (EXPECTED_PREREQUISITES[tool.id].includes("context loaded")) {
         expect(evaluateToolContract(tool, runtime(emptyContext, "token")).missing, tool.id).toContain("context loaded");

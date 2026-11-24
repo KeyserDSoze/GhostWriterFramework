@@ -18,7 +18,7 @@ import { useGuardedDocumentLoad } from "@/hooks/useGuardedDocumentLoad";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { useProseAssist } from "@/components/editor/useProseAssist";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { isGitHubFileNotFoundError, readFileWithSha } from "@/github/githubClient";
 import { captureImmediateMutation, commitImmediateMutation } from "@/assistant/immediateMutation";
 import { appendAssistantNote } from "@/assistant/service";
@@ -106,7 +106,7 @@ export function EvaluationStylePage() {
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
   const { book, structure, error, reload, loading: structureLoading } = useBookStructure(bookId);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
   const [criteria, setCriteria] = useState<Criterion[]>([]);

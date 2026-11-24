@@ -2,11 +2,12 @@ import { useCallback, useEffect } from "react";
 import i18n from "@/i18n";
 import { toast } from "@/components/ui/use-toast";
 import { ensureAuthoritativePersonalBranch, resolveAuthoritativeBranch } from "@/github/branchResolution";
-import { ensureLocalBookStructure, getExistingLocalBookStructure, invalidateRepositoryEnsureOperations } from "@/repository/repositoryService";
+import { ensureLocalBookStructure, getExistingLocalBookStructure, invalidateRepositoryEnsureOperations, latestCompleteLocalBookStructure } from "@/repository/repositoryService";
 import { useAuthStore } from "@/store/authStore";
 import { useBooksStore, type LegacyBookStructureErrorCode } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
-import { bookStorageMode, resolveBookToken, type BookEntry } from "@/types/settings";
+import { bookStorageMode, resolveBookToken, resolveWorkingCopyToken, type BookEntry } from "@/types/settings";
+import { githubRemoteAvailability } from "@/github/remoteAvailability";
 import "@/i18n/localFirst";
 import { ensureDefaultGhostwriter } from "@/narrarium/defaultGhostwriter";
 import { currentRepositoryScopeIdentity } from "@/repository/repositoryOperationScope";
@@ -36,12 +37,23 @@ export function retryBookStructureLoad(bookId: string): number {
   return generation;
 }
 
+/** What of the book is missing on this device when GitHub cannot bring it: the whole copy, the branch it is set to, or the rest of an interrupted download. */
+type MissingCopy = "book" | "branch" | "incomplete";
+
+class WorkingCopyUnavailableError extends Error {
+  constructor(readonly missing: MissingCopy) {
+    super(`The working copy (${missing}) cannot be brought to this device without GitHub.`);
+  }
+}
+
 /** Why the working copy of a book cannot be brought to this device now: it lives on another device, there is no GitHub credential, or the browser is offline. */
-function missingWorkingCopyMessage(book: BookEntry, token: string): string {
+function missingWorkingCopyMessage(book: BookEntry, token: string, missing: MissingCopy, branch: string): string {
   if (bookStorageMode(book) === "local-only") return i18n.t(book.localRepositoryId ? "common.loadFailed" : "localFirst.localBookOnAnotherDevice");
-  if (!token) return i18n.t("localFirst.notDownloadedNoCredential");
-  if (typeof navigator !== "undefined" && navigator.onLine === false) return i18n.t("localFirst.notDownloadedOffline");
-  return i18n.t("common.loadFailed");
+  const remote = githubRemoteAvailability(book, token);
+  if (remote !== "no-credential" && remote !== "offline") return i18n.t("common.loadFailed");
+  const reason = remote === "offline" ? "Offline" : "NoCredential";
+  return missing === "branch" ? i18n.t(`localFirst.branchNotDownloaded${reason}`, { branch })
+    : i18n.t(missing === "incomplete" ? `localFirst.incomplete${reason}` : `localFirst.notDownloaded${reason}`);
 }
 
 function operationKey(epoch: number, identity: string, bookId: string, owner: string, repo: string, branch: string, generation: number): string {
@@ -122,8 +134,27 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
 
   // Set once the book needs its working copy brought to this device (a clone, a repair, a personal branch): then a failure says why that cannot happen now.
   let needsDownload = false;
+  let missingCopy: MissingCopy = "book";
   const promise = (async () => {
+    // GitHub brings a copy to this device, and only with a credential and a connection; a book kept on this device makes its own. A copy already here is
+    // opened in every case.
     const tokenValue = resolveBookToken(book, settings);
+    const canDownload = () => bookStorageMode(book) === "local-only" || githubRemoteAvailability(book, tokenValue) === "ready";
+    const unavailable = (missing: MissingCopy) => {
+      needsDownload = true;
+      missingCopy = missing;
+      return new WorkingCopyUnavailableError(missing);
+    };
+    // Without GitHub a branch that is not here can be neither made nor downloaded: the book keeps working on the copy of it this device has, on its branch.
+    const keepLocalCopy = async () => {
+      const kept = await latestCompleteLocalBookStructure(bookId, book.owner, book.repo, identity);
+      // The operation still owns the book before it moves it to the branch of that copy: the working branch is what makes the move the current one.
+      if (!kept || !ownsOperation()) return null;
+      authoritativeBranch = kept.meta.branch;
+      operationBranch = authoritativeBranch;
+      useBooksStore.getState().setWorkingBranch(bookId, authoritativeBranch);
+      return kept;
+    };
 
     let authoritativeBranch = operationBranch;
     let local = await getExistingLocalBookStructure(bookId, book.owner, book.repo, authoritativeBranch, identity, { includeIncomplete: true });
@@ -131,15 +162,27 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
     if (resolution.requiresCreation && user?.email && !books.workingBranches[bookId] && bookStorageMode(book) !== "local-only") {
       if (local?.meta.cloneComplete !== true) {
         needsDownload = true;
-        if (!tokenValue) throw new Error(i18n.t("bookPage.noTokenConfigured"));
-        authoritativeBranch = await ensureAuthoritativePersonalBranch({
-          token: tokenValue,
-          owner: book.owner,
-          repo: book.repo,
-          defaultBranch: books.structures[bookId]?.defaultBranch ?? "main",
-          email: user.email,
-        });
-        local = await getExistingLocalBookStructure(bookId, book.owner, book.repo, authoritativeBranch, identity, { includeIncomplete: true });
+        const personal = canDownload()
+          ? await ensureAuthoritativePersonalBranch({
+            token: tokenValue,
+            owner: book.owner,
+            repo: book.repo,
+            defaultBranch: books.structures[bookId]?.defaultBranch ?? "main",
+            email: user.email,
+          }).catch((error: unknown) => {
+            // GitHub refused the credential, or went out of reach: the book stays on a copy this device has.
+            if (canDownload()) throw error;
+            return null;
+          })
+          : null;
+        if (personal) {
+          authoritativeBranch = personal;
+          local = await getExistingLocalBookStructure(bookId, book.owner, book.repo, authoritativeBranch, identity, { includeIncomplete: true });
+        } else {
+          local = await keepLocalCopy();
+          if (!local) throw unavailable("book");
+          needsDownload = false;
+        }
       }
       operationBranch = authoritativeBranch;
       if (!ownsOperation()) return;
@@ -151,9 +194,9 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
       if (local.meta.cloneComplete === true) {
         nextStructure = local.structure;
       } else {
+        if (!canDownload()) throw unavailable("incomplete");
         needsDownload = true;
-        if (!navigator.onLine) throw new Error("The local working copy is incomplete and requires an online repair.");
-        if (!tokenValue) throw new Error(i18n.t("bookPage.noTokenConfigured"));
+        missingCopy = "incomplete";
         nextStructure = (await ensureLocalBookStructure({
           bookId,
           book,
@@ -165,10 +208,13 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
           },
         })).structure;
       }
+    } else if (!canDownload()) {
+      // A branch the author chose is not changed behind their back: it is said which one is missing, when the book has another copy here.
+      const kept = resolution.source === "active" ? null : await keepLocalCopy();
+      if (!kept) throw unavailable(resolution.source === "active" && await latestCompleteLocalBookStructure(bookId, book.owner, book.repo, identity) ? "branch" : "book");
+      nextStructure = kept.structure;
     } else {
       needsDownload = true;
-      if (!tokenValue) throw new Error(i18n.t("bookPage.noTokenConfigured"));
-      if (bookStorageMode(book) !== "local-only" && typeof navigator !== "undefined" && navigator.onLine === false) throw new Error("The working copy cannot be downloaded while offline.");
       const ensured = await ensureLocalBookStructure({
         bookId,
         book,
@@ -190,10 +236,11 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
     useBooksStore.getState().setError(bookId);
     finishLocalLoading();
 
-    if (tokenValue && scopeIsCurrent()) {
+    if (scopeIsCurrent()) {
       for (let attempt = 0; attempt < 3 && scopeIsCurrent(); attempt += 1) {
         try {
-          const changed = await ensureDefaultGhostwriter({ token: tokenValue, book, branch: authoritativeBranch, structure: nextStructure, signal: controller.signal });
+          // The default ghostwriter is written into the working copy: like any other change, it needs no credential.
+          const changed = await ensureDefaultGhostwriter({ token: resolveWorkingCopyToken(book, settings), book, branch: authoritativeBranch, structure: nextStructure, signal: controller.signal });
           if (changed) {
             const refreshed = await getExistingLocalBookStructure(bookId, book.owner, book.repo, authoritativeBranch, identity);
             if (refreshed) nextStructure = refreshed.structure;
@@ -220,9 +267,12 @@ function startBookStructureOperation(bookId: string, requestedGeneration?: numbe
       const legacy = typeof code === "string" && ["LEGACY_REPOSITORY_AUTH_REQUIRED", "LEGACY_REPOSITORY_COPY_CONFLICT", "LEGACY_REPOSITORY_ADOPTION_DECLINED", "LEGACY_REPOSITORY_CHANGED"].includes(code)
         ? code as LegacyBookStructureErrorCode
         : null;
+      // The credential is read again: GitHub may have just refused the one the book had.
+      const token = resolveBookToken(book, useSettingsStore.getState().settings);
+      const noCredential = needsDownload && bookStorageMode(book) !== "local-only" && githubRemoteAvailability(book, token) === "no-credential";
       useBooksStore.getState().setError(bookId, legacy
         ? { code: legacy, adoptionTarget: error && typeof error === "object" && "adoptionTarget" in error ? error.adoptionTarget as import("@/auth/legacyAdoptionConsent").LegacyAdoptionTarget | undefined : undefined }
-        : { code: "BOOK_STRUCTURE_LOAD_FAILED", message: needsDownload ? missingWorkingCopyMessage(book, resolveBookToken(book, settings)) : i18n.t("common.loadFailed") });
+        : { code: "BOOK_STRUCTURE_LOAD_FAILED", message: needsDownload ? missingWorkingCopyMessage(book, token, missingCopy, operationBranch) : i18n.t("common.loadFailed"), ...(noCredential ? { connectGitHub: true } : {}) });
     }
   }).finally(() => {
     finishLocalLoading();

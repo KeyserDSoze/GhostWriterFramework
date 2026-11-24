@@ -44,7 +44,7 @@ import {
 } from "@/github/githubClient";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { type Paragraph } from "@/types/book";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { paragraphSlug } from "@/narrarium/canon";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMutation";
@@ -90,7 +90,7 @@ export function ChapterPage() {
 
   const chapterReaderEvaluationCount = countChapterReaderEvaluations(structure, chapterId ?? "");
 
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
 
   const { branch } = useWorkingBranch(bookId);
 

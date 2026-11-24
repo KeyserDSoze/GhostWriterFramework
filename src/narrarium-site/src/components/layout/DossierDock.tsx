@@ -10,7 +10,7 @@ import { useUiStore } from "@/store/uiStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { parseAppRoute } from "@/assistant/context";
-import { resolveBookToken } from "@/types/settings";
+import { resolveWorkingCopyToken } from "@/types/settings";
 import { slugToTitle } from "@/github/githubClient";
 import { openCanonDossier } from "@/narrarium/openDossier";
 import { CANON_SECTION_ORDER, canonSectionMeta, type CanonSection } from "@/lib/canonSections";
@@ -157,7 +157,7 @@ function DossierSearch({ structure, bookId, onPicked, autoFocus }: { structure: 
   }, []);
 
   const book = settings.books.find((b) => b.id === bookId);
-  const token = book ? resolveBookToken(book, settings) : "";
+  const token = book ? resolveWorkingCopyToken(book, settings) : "";
 
   async function pick(hit: { section: CanonSection; name: string; path: string; imagePath?: string }) {
     if (!book || !token) return;

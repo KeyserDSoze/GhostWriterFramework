@@ -34,7 +34,7 @@ describe("the tools of the remote repository", () => {
   it("need a book linked to GitHub, a credential and a connection, and say which is missing", () => {
     const local: BookEntry = { ...linked, id: "local", storageMode: "local-only", owner: "", repo: "", localRepositoryId: "repo", activeBranch: "local:repo" };
     expect(evaluateToolContract(tool("list-branches"), runtime(local, "narrarium-local-repository")).missing).toEqual(["GitHub repository"]);
-    expect(evaluateToolContract(tool("list-branches"), runtime(linked, "")).missing).toEqual(["git token", "GitHub credential"]);
+    expect(evaluateToolContract(tool("list-branches"), runtime(linked, "")).missing).toEqual(["GitHub credential"]);
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
     expect(evaluateToolContract(tool("list-commits"), runtime(linked, "ghp_token")).missing).toEqual(["connection"]);
     vi.restoreAllMocks();
@@ -43,7 +43,7 @@ describe("the tools of the remote repository", () => {
     expect(missingToolRequirementsMessage(tool("list-branches"), ["GitHub repository"], "en")).toBe("This needs GitHub: connect the book to GitHub to use it.");
     expect(missingToolRequirementsMessage(tool("list-branches"), ["GitHub repository"], "it")).toBe("Serve GitHub: collega il libro a GitHub per usare questa funzione.");
     expect(missingToolRequirementsMessage(tool("list-commits"), ["connection"], "it")).toBe("Sei offline: questa funzione richiede GitHub.");
-    expect(missingToolRequirementsMessage(tool("list-commits"), ["git token", "GitHub credential"], "en")).toBe("This needs GitHub: add a GitHub credential to use it.");
+    expect(missingToolRequirementsMessage(tool("list-commits"), ["GitHub credential"], "en")).toBe("This needs GitHub: connect GitHub to use it.");
   });
 
   it("answer a book kept on this device without a request", async () => {

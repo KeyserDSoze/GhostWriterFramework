@@ -1,4 +1,5 @@
-import { LOCAL_BOOK_TOKEN, bookStorageMode, type BookEntry } from "@/types/settings";
+import { bookStorageMode, type BookEntry } from "@/types/settings";
+import { isUsableGitHubToken } from "@/github/remoteAvailability";
 import { getLocalFile, getLocalRepository, listDirtyLocalFiles, listLocalFilesUnder, listUnpushedLocalCommits, sha256Text } from "@/repository/localRepository";
 import { captureRepositoryOperationScope, currentRepositoryScopeIdentity } from "@/repository/repositoryOperationScope";
 import { PAGES_WORKFLOW_PATH } from "@/github/bookRepository";
@@ -59,7 +60,8 @@ export async function inspectReaderUpdate(input: InspectReaderUpdateInput): Prom
     workingCopy: true,
     workflowText,
     folder,
-    credential: Boolean(input.token) && input.token !== LOCAL_BOOK_TOKEN && meta.remoteKind !== "none",
+    // The credential is the one decision of remoteAvailability: none, the local token, or one GitHub refused all leave the commit on this device.
+    credential: isUsableGitHubToken(input.token) && meta.remoteKind !== "none",
     localChanges: dirty.length > 0 || ahead.length > 0,
   });
   return { decision, workflowHash: workflow && workflow.status !== "deleted" ? workflow.currentHash : null, checkedAt };

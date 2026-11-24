@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 import { GitCommit, GitPullRequest, Loader2, RefreshCcw, RotateCcw, Trash2, UploadCloud, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -21,6 +22,7 @@ import { fetchBlobBytesForRepository } from "@/repository/repositoryService";
 import { RepositoryByteMeter } from "@/repository/repositoryLimits";
 import { useGitHubRemoteAvailability, type GitHubRemoteAvailability } from "@/github/remoteAvailability";
 import "@/i18n/localFirst";
+import "@/i18n/localFirstStatus";
 
 function PendingFileDiff({ file, token, owner, repo, expanded, remote }: { file: LocalRepositoryFile; token: string; owner: string; repo: string; expanded: boolean; remote: GitHubRemoteAvailability }) {
   const { t } = useTranslation();
@@ -103,6 +105,12 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
   const localOnly = Boolean(book && bookStorageMode(book) === "local-only");
   const networkDisabled = remote !== "ready" || !!busy || !operationalReady;
   const maintenanceNetworkDisabled = remote !== "ready" || !!busy;
+  // The previous version of a changed file is not kept on this device: only GitHub gives it back, so without it only the new files can be undone.
+  const restoreNeedsGitHub = (files: LocalRepositoryFile[], paths: string[]): boolean => {
+    if (remote === "ready" || !files.some((file) => paths.includes(file.path) && file.status !== "new")) return false;
+    toast({ title: t("repoStatus.actionFailed"), description: t(remote === "local" ? "localFirst.restoreNoBase" : remote === "offline" ? "localFirst.restoreOffline" : "localFirst.restoreNoCredential"), variant: "destructive" });
+    return true;
+  };
   const storageHigh = Boolean(storage.usage && storage.quota && storage.usage / storage.quota > 0.8);
   const draftDirtyFiles = useMemo(() => dirtyFiles.filter((file) => file.path.startsWith("drafts/")), [dirtyFiles]);
   const remoteStatus = repoMeta ? effectiveRemoteStatus(repoMeta) : null;
@@ -334,7 +342,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                 <p className={storageHigh ? "mt-2 text-xs font-medium text-amber-800 dark:text-amber-300" : "mt-2 text-xs text-muted-foreground"}>{t("repoStatus.storage", { usage: formatBytes(storage.usage), quota: storage.quota ? formatBytes(storage.quota) : "n/d" })}{storageHigh ? ` · ${t("repoStatus.storageHigh")}` : ""}</p>
               )}
             </div>
-            {remote !== "ready" && <p className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">{t(remote === "local" ? "localFirst.statusLocal" : remote === "offline" ? "localFirst.statusOffline" : "localFirst.repositoryMenuNoCredential")}</p>}
+            {remote !== "ready" && <p className="rounded-xl border border-dashed p-3 text-xs text-muted-foreground">{t(remote === "local" ? "localFirst.statusLocal" : remote === "offline" ? "localFirst.statusOffline" : "localFirst.statusNoCredential")}{remote === "no-credential" && <> <Link to="/app/settings/github" onClick={() => onOpenChange(false)} className="underline underline-offset-2">{t("localFirst.connectGitHub")}</Link></>}</p>}
             {!localOnly && <div className="rounded-xl border p-3 text-sm">
               <p className="font-medium">{t("repoStatus.tokenHealth")}</p>
               {tokenHealth && <p className="text-xs text-muted-foreground">{t(`repoStatus.tokenPermission.${tokenHealth.permissionStatus}`)}</p>}
@@ -436,7 +444,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                       <div className="flex flex-wrap gap-2">
                         <Button type="button" size="sm" variant="outline" disabled={disabled || draftDirtyFiles.length === 0} onClick={() => setSelectedDraftPaths(draftDirtyFiles.map((file) => file.path))}>{t("repoStatus.selectAllDrafts")}</Button>
                         <Button type="button" size="sm" variant="outline" disabled={disabled || selectedDraftPaths.length === 0} onClick={() => setSelectedDraftPaths([])}>{t("repoStatus.clearDraftSelection")}</Button>
-                        <Button type="button" size="sm" variant="outline" disabled={disabled || selectedDraftPaths.length === 0} onClick={() => void run("restore-drafts", async () => {
+                        <Button type="button" size="sm" variant="outline" disabled={disabled || selectedDraftPaths.length === 0} onClick={() => restoreNeedsGitHub(draftDirtyFiles, selectedDraftPaths) || void run("restore-drafts", async () => {
                           const repo = await currentRepo();
                           if (!repo) throw new Error(t("repoStatus.notCloned"));
                           if (!currentAccountIdentity || !book) throw new Error(t("repoStatus.notCloned"));
@@ -451,11 +459,7 @@ export function RepositoryStatusDialog({ open, onOpenChange, book, branch, setti
                     <Button type="button" size="sm" variant="outline" disabled={disabled || dirtyFiles.length === 0} onClick={() => setSelectedRestorePaths(dirtyFiles.map((file) => file.path))}>{t("localFirst.selectAll")}</Button>
                     <Button type="button" size="sm" variant="outline" disabled={disabled || selectedRestorePaths.length === 0} onClick={() => setSelectedRestorePaths([])}>{t("localFirst.clearSelection")}</Button>
                     <Button type="button" size="sm" variant="outline" disabled={disabled || selectedRestorePaths.length === 0} onClick={() => {
-                      // A book kept on this device has no previous version of a changed file to go back to: only the new files can be undone.
-                      if (localOnly && dirtyFiles.some((file) => selectedRestorePaths.includes(file.path) && file.status !== "new")) {
-                        toast({ title: t("repoStatus.actionFailed"), description: t("localFirst.restoreNoBase"), variant: "destructive" });
-                        return;
-                      }
+                      if (restoreNeedsGitHub(dirtyFiles, selectedRestorePaths)) return;
                       void run("restore-files", async () => {
                         const repo = await currentRepo();
                         if (!repo || !book || !currentAccountIdentity) throw new Error(t("repoStatus.notCloned"));
