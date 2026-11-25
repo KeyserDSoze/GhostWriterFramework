@@ -176,6 +176,17 @@ export function reasoningEffortOf(candidate: Pick<AiCandidate, "integration"> & 
   return candidate.supportsReasoning === false || candidate.reasoningParameter === "none" ? undefined : requestedEffort(candidate);
 }
 
+/**
+ * What a request does of the thinking level, as a panel says it: the level that is sent; `automatic` when none is chosen (nothing is sent, and the model
+ * uses its own default); `not-sent` when a level is chosen and the model does not take it (it is declared as not reasoning, or its thinking parameter is `none`).
+ */
+export type AiAttemptThinking = AiReasoningEffort | "automatic" | "not-sent";
+
+/** The thinking of the request a candidate gets (see `AiAttemptThinking`): the one rule of what is sent (`reasoningEffortOf`), told in three words. */
+export function attemptThinking(candidate: Pick<AiCandidate, "integration"> & Partial<Pick<AiCandidate, "thinking" | "supportsReasoning" | "reasoningParameter">>): AiAttemptThinking {
+  return reasoningEffortOf(candidate) ?? (requestedEffort(candidate) ? "not-sent" : "automatic");
+}
+
 /** One chat completion request exactly as it goes on the wire. */
 export interface ChatRequest {
   url: string;

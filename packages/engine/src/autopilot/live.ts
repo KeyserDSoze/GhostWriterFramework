@@ -1,7 +1,11 @@
+import { normalizeAttempt } from "./attempt.js";
 import type { AutopilotActivity, AutopilotEventBody, AutopilotLive } from "./types.js";
 
 /** A `task-progress` event, as `applyLiveProgress` reads it (with or without the fields of the stream). */
 export type AutopilotTaskProgress = Omit<Extract<AutopilotEventBody, { type: "task-progress" }>, "type">;
+
+/** A `call-attempt` event, as `applyLiveAttempt` reads it. */
+export type AutopilotCallAttempt = Omit<Extract<AutopilotEventBody, { type: "call-attempt" }>, "type">;
 
 /** The live part of a step that has just started: no call of it has said anything yet. */
 export function startLive(activity: AutopilotActivity): AutopilotLive {
@@ -28,7 +32,7 @@ function callOf(source: { callSeq?: number; callId?: string }): Pick<AutopilotLi
  * - The numbers of a structured reply (`bytes`) set the bytes, and the count while no JSON is shown, never lower. They never change the text: the tail
  *   they carry is the one the JSON already said (or, from an older engine, the one of the call before), so a reply that streams its JSON keeps it on
  *   screen while its numbers arrive, and a reply that does not shows «answering» with its bytes.
- * A progress of another step changes nothing.
+ * A progress of another step changes nothing. What the call asks (`trying`) is not text: it stays through all of this, and goes with the call that is over.
  */
 export function applyLiveProgress(live: AutopilotLive, event: AutopilotTaskProgress): AutopilotLive {
   if (event.activityId !== live.activity.id) return live;
@@ -45,12 +49,24 @@ export function applyLiveProgress(live: AutopilotLive, event: AutopilotTaskProgr
   const base: AutopilotLive = anotherCall || otherKind ? { activity: live.activity, characters: 0, preview: "", ...callOf(event) } : { ...live, ...callOf(event) };
   // A new attempt begins (its text is empty): what the attempt before wrote stays until the new one writes.
   if (kind !== "bytes" && preview === "" && characters === 0 && !(anotherCall || otherKind)) return base;
-  if (kind === "prose") return { activity: base.activity, characters, preview: preview ?? base.preview, ...callOf(base) };
+  if (kind === "prose") return { activity: base.activity, characters, preview: preview ?? base.preview, ...callOf(base), ...(base.trying ? { trying: base.trying } : {}) };
   if (kind === "json") {
     const { bytes: _before, ...text } = base;
     return { ...(base.json && characters < base.characters ? text : base), json: true, characters, preview: preview ?? base.preview };
   }
   return { ...base, bytes, ...(base.json ? {} : { characters: Math.max(base.characters, characters) }) };
+}
+
+/**
+ * How a `call-attempt` of the step that runs changes what is shown of it: it says which candidate of the route the call asks now (`trying`), and replaces the one before it (a call that goes on to its
+ * fallback says the next candidate, and the text of the attempt before stays until the new one writes, as `applyLiveProgress` says). The first attempt of another call starts that call from nothing, as its
+ * first progress would. An event of another step, or one that does not say which candidate it is, changes nothing.
+ */
+export function applyLiveAttempt(live: AutopilotLive, event: AutopilotCallAttempt): AutopilotLive {
+  const trying = normalizeAttempt(event);
+  if (event.activityId !== live.activity.id || !trying) return live;
+  const anotherCall = (event.callSeq !== undefined && event.callSeq !== live.callSeq) || (event.callId !== undefined && event.callId !== live.callId);
+  return { ...(anotherCall ? { activity: live.activity, characters: 0, preview: "" } : live), ...callOf(event), trying };
 }
 
 /** A live part read from somewhere else (a snapshot of another host, an older one): its fields as `AutopilotLive` has them, or null. */
@@ -59,12 +75,14 @@ export function normalizeLive(value: unknown): AutopilotLive | null {
   const live = value as Partial<AutopilotLive>;
   if (!live.activity || typeof live.activity !== "object" || typeof live.activity.id !== "string") return null;
   const bytes = count(live.bytes);
+  const trying = normalizeAttempt(live.trying);
   return {
     activity: live.activity,
     characters: count(live.characters) ?? 0,
     preview: typeof live.preview === "string" ? live.preview : "",
     ...(live.json === true ? { json: true } : {}),
     ...(bytes !== undefined ? { bytes } : {}),
+    ...(trying ? { trying } : {}),
     ...callOf({ ...(typeof live.callSeq === "number" ? { callSeq: live.callSeq } : {}), ...(typeof live.callId === "string" ? { callId: live.callId } : {}) }),
   };
 }

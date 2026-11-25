@@ -1,4 +1,6 @@
 import type { AiRouteStep, AiStreamEnd, AiTimeoutPhase, AiUsage } from "../ai/types.js";
+import type { AiStreamMode } from "../ai/config.js";
+import type { AiAttemptThinking } from "../ai/request.js";
 import type { AiCallDropReason, AiCallStatus } from "./calls/types.js";
 import type { ChapterFreezeAuthor, FrozenChapterChanges } from "../book/freeze.js";
 
@@ -787,6 +789,32 @@ export type AutopilotMessageCode =
   | "callsStoreFailed";
 
 /**
+ * Which candidate of the route a call asks now, and how: what the `call-attempt` event says and `AutopilotLive.trying` keeps, so that a client shows it as the request is sent. Only
+ * names and numbers: never a prompt, a reply or a key (the names are cleaned of the credentials of the configuration).
+ */
+export interface AutopilotAttemptInfo {
+  /** Which request of the call this is, from 1: every request counts, the ones that failed before it too. */
+  attempt: number;
+  /** The most requests the call can make: the candidates of the route that its plan did not leave out. */
+  attempts: number;
+  /** The place of the candidate in the route as the author wrote it: 0 is the primary, 1 the first fallback. */
+  candidateIndex: number;
+  /** How many candidates the route has as written. */
+  candidateCount: number;
+  /** The candidate is a fallback (`candidateIndex` above 0): the primary was not asked, or failed. */
+  fallback: boolean;
+  integrationId: string;
+  integrationName: string;
+  /** The kind of provider (`azure_openai`, `openai`, `github_models`). */
+  provider: string;
+  model: string;
+  /** What the request does of the thinking level: the level that is sent, `automatic` (none is chosen, the model decides) or `not-sent` (one is chosen and the model does not take it). */
+  thinking: AiAttemptThinking;
+  /** What the integration says about streaming. */
+  streamMode: AiStreamMode;
+}
+
+/**
  * Live events: everything the autopilot does, as it happens. `run-ended` carries a `code` when the run ended for a
  * reason a client can translate (`takenOver`: another runner owns the book now, so this run stopped without saving;
  * `chapterPause`: the author asked to pause at the end of the chapter and the chapter is closed; `stepLimit` and
@@ -810,6 +838,11 @@ export type AutopilotMessageCode =
  * call of the step it is (from 1), and `callId` names it when the book keeps AI call records (`call-started` and `call-ended`, see
  * `AutopilotSessionConfig.calls`); those two events carry ids, sizes and times, never text. A client follows the events with `applyLiveProgress`, as
  * `snapshot().live` does: the shown text of a call never goes back to nothing until the call ends, and nothing of a call is shown as another's.
+ * `call-attempt` says which candidate of the AI Router the call of the running step asks now, as its request is sent (see `AutopilotAttemptInfo`): which request of the call it is (`attempt` of `attempts`),
+ * its place in the route as written (`candidateIndex` of `candidateCount`: 0 is the primary, above that a `fallback`), the integration and the `model`, the `thinking` the request carries and the integration's
+ * `streamMode`. It names its call as `task-progress` does and is said whether or not the book keeps records; a call that goes on to its fallback says the next one, which replaces it. Never a prompt, a reply or
+ * a key. A client follows it with `applyLiveAttempt`, as `snapshot().live` does (`live.trying`): it stays until the next call says its own or the step ends, and a host older than this one never says it, so a
+ * client shows nothing for it. It is kept in the replay of the session, like `call-started`.
  * A `callsStoreFailed` insight says that the records of the AI calls could not be kept (the store is full or failed): the run goes on without them.
  * The insights about the outline carry the chapter they are about (`chapterNumber`) and, for a ghostwriter the outline names that does
  * not exist, its slug (`ghostwriter`), so that a client can say them in its language.
@@ -820,6 +853,7 @@ export type AutopilotEventBody =
   | { type: "task-started"; activity: AutopilotActivity }
   | { type: "task-progress"; activityId: string; characters: number; preview: string; bytes?: number; callId?: string; callSeq?: number; kind?: "json" }
   | { type: "call-started"; activityId: string; callId: string; seq: number; label: string; capability: string; structured: boolean; systemBytes: number; userBytes: number }
+  | ({ type: "call-attempt"; activityId: string; callId?: string; callSeq?: number } & AutopilotAttemptInfo)
   | { type: "call-ended"; activityId: string; callId: string; status: AiCallStatus; attempts: number; characters: number; storedBytes: number; partial: boolean; durationMs: number; dropped: AiCallDropReason | null }
   | { type: "task-finished"; activity: AutopilotActivity }
   | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode; attempt?: number; retries?: number; waitMs?: number; cycle?: number; cycles?: number | null; chapterNumber?: number; ghostwriter?: string }
@@ -900,8 +934,8 @@ export interface AutopilotStateSummary {
 }
 
 /**
- * What a client shows of the step that runs while its model answers: the text of the call that answers now, and how much there is. It changes only
- * through `applyLiveProgress` (the session for `snapshot().live`, the web app for its panels), so that it says the same everywhere.
+ * What a client shows of the step that runs while its model answers: the text of the call that answers now, how much there is, and which candidate of the route the call asks (`trying`). It
+ * changes only through `applyLiveProgress` and `applyLiveAttempt` (the session for `snapshot().live`, the web app for its panels), so that it says the same everywhere.
  */
 export interface AutopilotLive {
   activity: AutopilotActivity;
@@ -916,6 +950,11 @@ export interface AutopilotLive {
   /** Which call of the step the text belongs to (from 1), and its id when the book keeps the records of its calls. */
   callSeq?: number;
   callId?: string;
+  /**
+   * The candidate of the route the call asks now, from its `call-attempt` (see `AutopilotAttemptInfo`). The next attempt of the call replaces it; another call's text takes it away until that call says its own.
+   * Absent until the call's first request is sent, and from a host that does not say it.
+   */
+  trying?: AutopilotAttemptInfo;
 }
 
 /** What a client needs to render the autopilot of one book. */

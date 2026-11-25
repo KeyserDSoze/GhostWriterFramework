@@ -16,6 +16,7 @@ import { isItalian, languageCode, tail, truncate } from "../util/text.js";
 import { RunCalls, schemaHashOf, statusOf, type CallEndInfo } from "./calls/run-calls.js";
 import type { AiCallStore } from "./calls/port.js";
 import type { AiCallStatus, AiCallTaskStatus } from "./calls/types.js";
+import { attemptInfoOf } from "./attempt.js";
 import { autopilotErrorFields } from "./errors.js";
 import { readBrief } from "./brief.js";
 import { applyFrozenDecision, frozenAnswerAction, isFrozenQuestion, settleFrozenChanges } from "./frozen.js";
@@ -1329,7 +1330,13 @@ export class AutopilotRun {
               onText,
               ...(onStructuredText ? { onStructuredText } : {}),
               ...(onProgress ? { onProgress: request.onProgress ?? onProgress } : {}),
-              ...(call ? { onAttempt: call.onAttempt, onAttemptEnd: call.onAttemptEnd } : {}),
+              // Which candidate of the route the call asks now is said whether or not the book keeps records (`call-attempt`, which a client shows as it is sent).
+              onAttempt: (attempt) => {
+                call?.onAttempt(attempt);
+                const trying = attemptInfoOf(attempt);
+                if (trying) this.emit({ type: "call-attempt", activityId: activity.id, ...callId, ...trying });
+              },
+              ...(call ? { onAttemptEnd: call.onAttemptEnd } : {}),
               ...(boost > 1 ? { outputBoost: boost } : {}),
             });
           } catch (error) {

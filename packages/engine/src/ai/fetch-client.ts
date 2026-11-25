@@ -5,7 +5,7 @@ import { likelyTextTokens } from "./budget.js";
 import type { AiPricingConfig, AiRuntimeConfig, AiStreamMode } from "./config.js";
 import { resolveDeadlines, startClock, timeoutMessage, type DeadlineClock, type ExpiredDeadline, type ResolvedDeadlines } from "./deadlines.js";
 import { redactSecrets } from "./redact.js";
-import { effectiveAiBase, endpointOrigin, type AiReasoningEffort, type ChatRequest } from "./request.js";
+import { attemptThinking, effectiveAiBase, endpointOrigin, type AiAttemptThinking, type AiReasoningEffort, type ChatRequest } from "./request.js";
 import type { AiCandidate } from "./router.js";
 import { candidateBoundary, leftOutStep, planAttempts, sortedRoute, type PlannedAttempt } from "./routing.js";
 import { isEmptyToolArguments, splitReasoningBlock, structuredFromReply } from "./structured.js";
@@ -70,8 +70,16 @@ export interface FetchAiAttempt {
   provider: string;
   model: string;
   integrationId: string;
+  /** The integration's name as the author wrote it (cleaned of credentials): what a panel calls the one that is asked. */
+  integrationName: string;
   /** Position of the candidate in the route's order: 0 is the primary. */
   index: number;
+  /** How many candidates the route has as written, the ones this call leaves out included (`index` is the place of this one in it). */
+  candidates: number;
+  /** Which request of this call this is, from 1: every request counts, the ones that failed before it too. */
+  attempt: number;
+  /** The most requests this call can make: the candidates of the route that its plan did not leave out. */
+  attempts: number;
   /** Identifies this attempt: the `onAttemptEnd` call that closes it carries the same id. */
   attemptId: string;
   /** The messages actually sent, as copies: a model without tools gets the JSON instruction in the system prompt, and a conversation (`AiRequest.messages`) is reported whole, with its roles and parts. */
@@ -93,6 +101,8 @@ export interface FetchAiAttempt {
   toolsOnly: boolean;
   /** The thinking level the request carries: as `reasoning_effort`, or as the chat-template argument when `reasoningParameter` says so. Absent when none is sent (`automatic` sends nothing). */
   thinking?: AiReasoningEffort;
+  /** What the request does of the thinking level in three words: the level that is sent, `automatic` (none chosen: the model decides) or `not-sent` (a level is chosen and the model does not take it). */
+  thinkingMode: AiAttemptThinking;
   /** Where the level went, when it went in the chat-template argument (`chat_template_kwargs.reasoning_strength`, the model's "Thinking parameter"). Absent: it went as `reasoning_effort`, or no level was sent. */
   reasoningParameter?: "chat_template_kwargs.reasoning_strength";
   /**
@@ -294,6 +304,10 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
         const identity = { attemptId: randomId("attempt"), label: request.label, capability: request.capability, provider: integration.provider, model: candidate.model, integrationId: integration.id, index: attempt.index };
         const attemptReport: FetchAiAttempt = {
           ...identity,
+          integrationName: redactSecrets(integration.name, secrets),
+          candidates: plan.attempts.length + plan.leftOut.length,
+          attempt: tried + 1,
+          attempts: plan.attempts.length,
           // Copies: a listener can never change what is sent.
           messages: reportedMessages(attempt.built, request),
           ...(attempt.built?.outputLimit ? { maxOutputTokens: attempt.built.outputLimit } : {}),
@@ -305,6 +319,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           streamMode: integration.streamMode === "off" ? "off" : "auto",
           toolsOnly: config.toolsOnly !== false,
           ...(attempt.built?.thinking ? { thinking: attempt.built.thinking } : {}),
+          thinkingMode: attemptThinking(candidate),
           ...(attempt.built?.reasoningParameter ? { reasoningParameter: attempt.built.reasoningParameter } : {}),
           ...(skipped.length ? { skipped: skipped.map((entry) => ({ ...entry })) } : {}),
           ...(steps.some((step) => step.outcome === "left-out") ? { leftOut: sortedRoute(steps.filter((step) => step.outcome === "left-out")).map((step) => ({ ...step })) } : {}),
