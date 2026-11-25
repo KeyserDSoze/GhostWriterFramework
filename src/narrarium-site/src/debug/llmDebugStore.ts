@@ -59,8 +59,10 @@ export interface LlmDebugEntry {
   streamMode?: "auto" | "off";
   /** The API version the request carried (Azure OpenAI's `api-version`, or `v1`): a short word, nothing else. */
   apiVersion?: string;
-  /** The level that was sent; absent when none was. */
-  thinking?: "low" | "medium" | "high" | "xhigh";
+  /** The level that was sent (`none`: the model was sent `reasoning_effort: "none"`); absent when none was. */
+  thinking?: "low" | "medium" | "high" | "xhigh" | "none";
+  /** Why a level that was chosen was not sent, when the request is what decided it: it carried function tools and the model refuses a level with them. */
+  thinkingWhy?: "tools";
   /** Where the level went, only when it went as the argument of the chat template (the model's "Thinking parameter"); absent: it went as `reasoning_effort`, or no level was sent. */
   reasoningParameter?: "chat_template_kwargs.reasoning_strength";
   /** «Tools only» was in force for the call. */
@@ -78,10 +80,23 @@ export interface LlmDebugEntry {
   /** For a timeout: which deadline ran out. */
   timeoutPhase?: "start" | "idle" | "total";
   /**
+   * At the end, for a request the provider refused: what it answered as short words (the HTTP status, and the type, the parameter and the code of its error). Its message is never kept here: it is
+   * redacted, like every error of this history, because the history is saved in the browser and a message may quote what was sent.
+   */
+  providerError?: LlmDebugProviderError;
+  /**
    * At the end: what the transport saw of the call (the engine's `AiTransportDiagnostics`), kept as numbers, flags and the few words of a closed list. The end of the stream (`tail`) and the
    * reply that had arrived are never kept: this history stores metadata only, and is saved in the browser.
    */
   transport?: LlmDebugTransport;
+}
+
+/** The short words of what a provider answered when it refused a request: each one a plain identifier (`invalid_request_error`, `reasoning_effort`, `messages[0].content`), never a sentence. */
+export interface LlmDebugProviderError {
+  status?: number;
+  type?: string;
+  param?: string;
+  code?: string;
 }
 
 /** What the debug history keeps of the transport of a call: the figures of the response, how the stream ended, and the id the provider gave the request. */
@@ -149,7 +164,10 @@ function redactError(value: unknown): string | undefined {
     .slice(0, 1000);
 }
 
-const THINKING = new Set(["low", "medium", "high", "xhigh"]);
+const THINKING = new Set(["low", "medium", "high", "xhigh", "none"]);
+const THINKING_WHY = new Set(["tools"]);
+/** An identifier of a provider's error (a type, a parameter, a code): letters, digits and the signs of a name or a path, and no space, so that it can never be a sentence. */
+const PROVIDER_WORD = /^[A-Za-z0-9_.:/[\]-]{1,80}$/;
 /** The engine says where the level went only when it went as the argument of the chat template: the other two ways say nothing, so nothing else is kept. */
 const REASONING_PARAMETERS = new Set(["chat_template_kwargs.reasoning_strength"]);
 const STREAM_MODES = new Set(["auto", "off"]);
@@ -211,6 +229,17 @@ function transportFields(value: unknown): LlmDebugTransport | undefined {
   return Object.keys(kept).length ? kept as LlmDebugTransport : undefined;
 }
 
+/** What the store keeps of what a provider answered when it refused: its status and the identifiers of its error, and nothing that is a sentence. `undefined` when nothing is left. */
+function providerErrorFields(value: unknown): LlmDebugProviderError | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const source = value as Record<string, unknown>;
+  const status = count(source.status);
+  const word80 = (entry: unknown): string | undefined => (typeof entry === "string" && PROVIDER_WORD.test(entry) ? entry : undefined);
+  const fields: Record<string, unknown> = { status: status !== undefined && status >= 100 && status <= 599 ? status : undefined, type: word80(source.type), param: word80(source.param), code: word80(source.code) };
+  const kept = Object.fromEntries(Object.entries(fields).filter(([, entry]) => entry !== undefined));
+  return Object.keys(kept).length ? kept as LlmDebugProviderError : undefined;
+}
+
 /** What the store keeps of how an attempt was asked: flags, numbers and the few words of the engine, and nothing else, whatever it is given. A field that is not valid is left out. */
 function attemptFields(entry: LlmDebugEntry): Partial<LlmDebugEntry> {
   const fields: Record<string, unknown> = {
@@ -220,6 +249,7 @@ function attemptFields(entry: LlmDebugEntry): Partial<LlmDebugEntry> {
     streamMode: word(entry.streamMode, STREAM_MODES),
     apiVersion: typeof entry.apiVersion === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(entry.apiVersion) ? entry.apiVersion : undefined,
     thinking: word(entry.thinking, THINKING),
+    thinkingWhy: word(entry.thinkingWhy, THINKING_WHY),
     reasoningParameter: word(entry.reasoningParameter, REASONING_PARAMETERS),
     toolsOnly: flag(entry.toolsOnly),
     skipped: skippedModels(entry.skipped),
@@ -228,6 +258,7 @@ function attemptFields(entry: LlmDebugEntry): Partial<LlmDebugEntry> {
     firstByteMs: milliseconds(entry.firstByteMs),
     toolCalled: flag(entry.toolCalled),
     timeoutPhase: word(entry.timeoutPhase, TIMEOUT_PHASES),
+    providerError: providerErrorFields(entry.providerError),
     transport: transportFields(entry.transport),
   };
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as Partial<LlmDebugEntry>;
@@ -239,7 +270,7 @@ function storageErrorMessage(error: unknown, fallback: string): string {
 }
 
 export function redactLlmDebugEntry(entry: LlmDebugEntry): LlmDebugEntry {
-  const { structured: _s, tools: _t, stream: _st, streamMode: _sm, apiVersion: _av, thinking: _th, reasoningParameter: _rp, toolsOnly: _to, skipped: _sk, timeouts: _ti, streamed: _sd, firstByteMs: _fb, toolCalled: _tc, timeoutPhase: _tp, transport: _tr, ...rest } = entry;
+  const { structured: _s, tools: _t, stream: _st, streamMode: _sm, apiVersion: _av, thinking: _th, thinkingWhy: _tw, reasoningParameter: _rp, toolsOnly: _to, skipped: _sk, timeouts: _ti, streamed: _sd, firstByteMs: _fb, toolCalled: _tc, timeoutPhase: _tp, providerError: _pe, transport: _tr, ...rest } = entry;
   return {
     ...rest,
     ...attemptFields(entry),

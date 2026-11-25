@@ -203,6 +203,11 @@ function callsStoreText(t: TFunction, event: Extract<Notice, { type: "insight" }
   return reason ? t("autopilot.insight.callsStoreFailed", { reason, defaultValue: event.title }) : t("autopilot.insight.callsStoreFailed", { context: "noReason", defaultValue: event.title });
 }
 
+/** A model learned to refuse thinking when the request carries tools: the sentence of the app with the name of the model, when the engine says it (the words of an older host stay). */
+function modelLearnedText(t: TFunction, event: Extract<Notice, { type: "insight" }>): string {
+  return event.model ? t("autopilot.insight.modelLearned", { model: event.model, defaultValue: event.title }) : event.title;
+}
+
 /**
  * A run resumed by itself after a restart: by the personal server when it started again, or by this browser when the page was opened again (the
  * engine's words say the server): the book's host says which.
@@ -217,6 +222,7 @@ function noticeText(t: TFunction, event: Notice): string {
   if (event.type === "insight" && event.code === "resumedAfterRestart") return resumedText(t, event);
   if (event.type === "insight" && event.code === "failureRetry") return retryText(t, event);
   if (event.type === "insight" && event.code === "callsStoreFailed") return callsStoreText(t, event);
+  if (event.type === "insight" && event.code === "modelLearned") return modelLearnedText(t, event);
   if (event.type === "insight" && (event.code === "longRetryWait" || event.code === "longRetryExhausted")) return retryLaterText(t, event);
   if (CHAPTER_CODES.has(event.code)) return event.type === "insight" ? chapterText(t, event) : event.title;
   return t(`autopilot.insight.${event.code}`, { defaultValue: event.title });

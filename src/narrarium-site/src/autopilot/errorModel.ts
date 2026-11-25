@@ -1,4 +1,4 @@
-import { AUTOPILOT_ERROR_KINDS, redactSecrets, type AutopilotActivity, type AutopilotErrorDetail, type AutopilotErrorKind, type AutopilotRetryInfo, type AutopilotRouteStep, type AutopilotStateSummary, type AutopilotTaskKind } from "narrarium-engine";
+import { AUTOPILOT_ERROR_KINDS, describeErrorBody, redactSecrets, type AiErrorBody, type AutopilotActivity, type AutopilotErrorDetail, type AutopilotErrorKind, type AutopilotRetryInfo, type AutopilotRouteStep, type AutopilotStateSummary, type AutopilotTaskKind } from "narrarium-engine";
 import { filesInError } from "@/autopilot/stopReason";
 
 export { formatLimit } from "@/lib/formatLimit";
@@ -237,16 +237,35 @@ function routeLine(step: AutopilotRouteStep): string {
     step.status !== undefined ? `HTTP ${step.status}` : "",
     step.durationMs !== undefined ? `${step.durationMs} ms` : "",
   ].filter(Boolean).join(", ");
-  return `${step.position + 1}. ${who}: ${how}${step.message ? ` - ${scrub(step.message)}` : ""}`;
+  const words = step.body ? scrub(describeErrorBody(step.body), PROVIDER_CHARACTERS) : step.message ? scrub(step.message) : "";
+  return `${step.position + 1}. ${who}: ${how}${words ? ` - ${words}` : ""}`;
 }
 
 const MESSAGE_CHARACTERS = 600;
-/** A path that starts at the root of a disk (`/var/lib/…`, `C:\Users\…`) says where the files of a computer are: it is taken out. A path inside the book is not. */
-const DISK_PATH = /(^|[\s"'(=])(\/(?:[\w.@~+-]+\/){2,}[\w.@~+-]+|[A-Za-z]:\\[^\s"']+)/g;
+/** What the words of a provider keep: its own message is whole (the engine cut it at two thousand characters, with an ellipsis), and the line around it fits. */
+const PROVIDER_CHARACTERS = 2400;
+/**
+ * A path that starts at the root of a disk (`/var/lib/…`, `C:\Users\…`) says where the files of a computer are: it is taken out. A path inside the book is not, and neither is the route of an API
+ * (`/v1/chat/completions`, `/openai/responses`): a provider names it in its own words, and the diagnostics are no use to whoever reads them without it.
+ */
+const DISK_PATH = /(^|[\s"'(=])(\/(?!(?:v\d+|openai|api)\/)(?:[\w.@~+-]+\/){2,}[\w.@~+-]+|[A-Za-z]:\\[^\s"']+)/g;
 
-function scrub(text: string): string {
+function scrub(text: string, limit = MESSAGE_CHARACTERS): string {
   const clear = redactSecrets(text).replace(DISK_PATH, "$1[path]").replace(/\s+/g, " ").trim();
-  return clear.length > MESSAGE_CHARACTERS ? `${clear.slice(0, MESSAGE_CHARACTERS - 1).trimEnd()}…` : clear;
+  return clear.length > limit ? `${clear.slice(0, limit - 1).trimEnd()}…` : clear;
+}
+
+/** What a provider answered, as the lines of the text that is copied: its words as it wrote them, and the type, the parameter and the code of its error. */
+function providerLines(body: AiErrorBody): string[] {
+  if (body.shape === "empty") return ["Provider reply: no body"];
+  if (body.shape === "html") return ["Provider reply: a web page from a gateway or a proxy, not an answer of the provider", ...(body.raw ? [`Provider page: ${scrub(body.raw, PROVIDER_CHARACTERS)}`] : [])];
+  const lines: string[] = [];
+  if (body.message) lines.push(`Provider message: ${scrub(body.message, PROVIDER_CHARACTERS)}`);
+  else if (body.raw) lines.push(`Provider reply: ${scrub(body.raw, PROVIDER_CHARACTERS)}`);
+  if (body.type) lines.push(`Provider type: ${scrub(body.type)}`);
+  if (body.param) lines.push(`Provider param: ${scrub(body.param)}`);
+  if (body.code) lines.push(`Provider code: ${scrub(body.code)}`);
+  return lines;
 }
 
 /** What the connection did, for the text that is copied: figures and words of closed lists, in English, and never the end of the stream or the reply (they are words of the book). */
@@ -282,6 +301,7 @@ export function diagnosticsText({ source, appVersion, engineVersion, host, at, i
   if (task) lines.push(`Step: ${[task, step?.chapterNumber !== undefined ? `chapter ${step.chapterNumber}` : "", step?.sceneNumber !== undefined ? `scene ${step.sceneNumber}` : ""].filter(Boolean).join(", ")}`);
   if (source.repeats > 1) lines.push(`Failed in a row: ${source.repeats}`);
   if (typeof detail.status === "number") lines.push(`HTTP status: ${detail.status}`);
+  if (detail.body) lines.push(...providerLines(detail.body));
   if (clean(detail.endpoint)) lines.push(`Endpoint: ${clean(detail.endpoint)}`);
   if (clean(detail.apiVersion)) lines.push(`API version: ${clean(detail.apiVersion)}`);
   if (clean(detail.model)) lines.push(`Model: ${clean(detail.model)}`);

@@ -188,6 +188,9 @@ const autopilotIt = {
         thinking: "Thinking: {{level}}",
         thinkingAutomatic: "Thinking: automatico",
         thinkingNotSent: "Thinking: non inviato",
+        thinkingNotSentTools: "Thinking: non inviato (tool)",
+        thinkingNone: "Thinking: disattivato",
+        thinkingNoneTools: "Thinking: disattivato (tool)",
         level: { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high" },
         count: "tentativo {{attempt}}/{{attempts}}",
       },
@@ -419,6 +422,19 @@ const autopilotIt = {
       failed: "Il server non ha accettato la configurazione IA: {{reason}}",
       unavailable: "Ora il server non è raggiungibile, quindi non si sa cosa abbia.",
     },
+    learned: {
+      title: "{{model}}: il thinking è disattivato quando si usano i tool; lo ha detto il provider",
+      said: "{{name}} ha risposto:",
+      waysTitle: "Due strade",
+      doneTitle: "Cosa ha fatto Narrarium",
+      wayResponses: "Usare l'API Responses per questo modello. Il provider dice di usare /v1/responses per i function tool. Questa versione di Narrarium non può ancora chiamare l'API Responses.",
+      wayOff: "Disattivare il thinking quando si usano i tool. Narrarium lo ha fatto, solo per questo modello: le richieste con i tool vanno senza livello di thinking, quelle senza tool mantengono il loro.",
+      wayOffNone: "Disattivare il thinking quando si usano i tool. Narrarium lo ha fatto, solo per questo modello: le richieste con i tool vanno con il livello di thinking «none», l'unico valore che il modello accetta con i tool, quelle senza tool mantengono il loro.",
+      openSettings: "Apri le impostazioni del modello",
+      dismiss: "Chiudi",
+      toast: "{{name}} ha rifiutato un livello di thinking insieme ai tool. Narrarium ha disattivato il thinking quando si usano i tool, solo per questo modello: le richieste senza tool mantengono il loro thinking. Puoi cambiarlo nelle impostazioni del modello (Integrazioni AI).",
+      toastResponses: "{{name}} dice di usare l'API Responses per questo modello, oppure di disattivare il thinking quando si usano i tool. Narrarium ha disattivato il thinking quando si usano i tool, solo per questo modello: le richieste senza tool mantengono il loro thinking. Questa versione non può ancora chiamare l'API Responses. Puoi cambiare l'impostazione nella riga del modello (Integrazioni AI).",
+    },
     failure: {
       kind: {
         network: {
@@ -520,6 +536,18 @@ const autopilotIt = {
         status: "Stato HTTP",
         attempt: "Nuovo tentativo",
         attemptOf: "{{attempt}} di {{retries}}",
+      },
+      provider: {
+        title: "Cosa ha detto il provider",
+        status: "Stato HTTP",
+        message: "Messaggio",
+        type: "Tipo",
+        param: "Parametro",
+        code: "Codice",
+        reply: "Risposta",
+        raw: "Contenuto",
+        empty: "Nessun corpo: il provider ha inviato solo lo stato.",
+        page: "Una pagina web di un gateway o di un proxy, non una risposta del provider.",
       },
       countdown: {
         in: "Nuovo tentativo tra {{time}}",
@@ -625,6 +653,7 @@ const autopilotIt = {
       resumedAfterRestart_browser: "Ripreso da solo dopo la riapertura della pagina.",
       callsStoreFailed: "Non è stato possibile salvare i messaggi di questa esecuzione ({{reason}}). L'esecuzione prosegue, ma i messaggi non verranno conservati.",
       callsStoreFailed_noReason: "Non è stato possibile salvare i messaggi di questa esecuzione. L'esecuzione prosegue, ma i messaggi non verranno conservati.",
+      modelLearned: "{{model}}: il thinking è disattivato quando si usano i tool; lo ha detto il provider",
     },
     task: {
       concept: "Progettazione del concept",

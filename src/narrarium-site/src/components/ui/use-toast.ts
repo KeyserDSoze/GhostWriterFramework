@@ -11,6 +11,8 @@ export type ToasterToast = {
   description?: React.ReactNode;
   action?: React.ReactElement;
   variant?: ToastVariant;
+  /** How long it stays, in milliseconds; absent: as long as the toast viewport says. */
+  duration?: number;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 };

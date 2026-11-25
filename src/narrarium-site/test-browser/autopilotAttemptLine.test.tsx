@@ -186,6 +186,41 @@ describe("the line that says which candidate the step asks now", () => {
     expect(lineOf()?.querySelector("[data-attempt-thinking]")).toHaveTextContent(words);
   });
 
+  it("says why a level that was chosen is not sent when it is the tools that decide: «Thinking: not sent (tools)», and plain «not sent» for a model that does not take a level at all", async () => {
+    seedRun(withTrying({ ...PRIMARY, thinking: "not-sent", thinkingWhy: "tools" }));
+    render(<AttemptNow bookId={BOOK} />);
+    expect(lineOf()?.querySelector("[data-attempt-thinking]")).toHaveTextContent("Thinking: not sent (tools)");
+    cleanup();
+    seedRun(withTrying({ ...PRIMARY, thinking: "not-sent" }));
+    render(<AttemptNow bookId={BOOK} />);
+    expect(lineOf()?.querySelector("[data-attempt-thinking]")?.textContent).toBe("Thinking: not sent");
+    cleanup();
+    // The reason says nothing about a level that is sent: it is never shown next to one.
+    seedRun(withTrying({ ...PRIMARY, thinking: "high", thinkingWhy: "tools" }));
+    render(<AttemptNow bookId={BOOK} />);
+    expect(lineOf()?.querySelector("[data-attempt-thinking]")?.textContent).toBe("Thinking: High");
+    cleanup();
+    await i18n.changeLanguage("it");
+    seedRun(withTrying({ ...PRIMARY, thinking: "not-sent", thinkingWhy: "tools" }));
+    render(<AttemptNow bookId={BOOK} />);
+    expect(lineOf()?.querySelector("[data-attempt-thinking]")).toHaveTextContent("Thinking: non inviato (tool)");
+  });
+
+  it("says «Thinking: off (tools)» when the model is sent none because that is the one value it takes with tools, and «off» alone for none that nothing decided, in both languages", async () => {
+    seedRun(withTrying({ ...PRIMARY, thinking: "none", thinkingWhy: "tools" }));
+    render(<AttemptNow bookId={BOOK} />);
+    expect(lineOf()?.querySelector("[data-attempt-thinking]")?.textContent).toBe("Thinking: off (tools)");
+    cleanup();
+    seedRun(withTrying({ ...PRIMARY, thinking: "none" }));
+    render(<AttemptNow bookId={BOOK} />);
+    expect(lineOf()?.querySelector("[data-attempt-thinking]")?.textContent).toBe("Thinking: off");
+    cleanup();
+    await i18n.changeLanguage("it");
+    seedRun(withTrying({ ...PRIMARY, thinking: "none", thinkingWhy: "tools" }));
+    render(<AttemptNow bookId={BOOK} />);
+    expect(lineOf()?.querySelector("[data-attempt-thinking]")?.textContent).toBe("Thinking: disattivato (tool)");
+  });
+
   it("says it in Italian", async () => {
     await i18n.changeLanguage("it");
     seedRun(withTrying(FALLBACK));

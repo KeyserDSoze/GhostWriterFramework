@@ -99,6 +99,12 @@ export interface ChatModel {
    */
   reasoningParameter?: ReasoningParameter;
   /**
+   * The model refuses a thinking level when the request carries function tools («Function tools with reasoning_effort are not supported for gpt-6-luna…»): a request with tools goes without thinking (a
+   * request without tools keeps its level). `true` leaves the level out of the request; `"none"` sends `reasoning_effort: "none"`, for a model that refuses a request with tools that leaves it out. The author
+   * sets it (the checkbox of the model's row sets `true`), and the page sets it when the provider says so (the engine's `model-learned`, which says which). Any other value has no effect.
+   */
+  noThinkingWithTools?: true | "none";
+  /**
    * The API version this model's requests carry (Azure OpenAI's `api-version`): each deployment may need its own. Absent or empty: the integration's `apiVersion` (the default of
    * its models that do not name one), else the engine's default. `effectiveApiVersion` of the engine says which is used.
    */

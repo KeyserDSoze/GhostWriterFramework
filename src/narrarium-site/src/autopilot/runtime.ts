@@ -68,6 +68,7 @@ import {
   type SyncOutcome,
   type SyncOutcomeKind,
 } from "@/autopilot/store";
+import { rememberLearnedModel } from "@/autopilot/learnedModels";
 import { StreamWatchdog } from "@/autopilot/streamWatchdog";
 import { latestSummary } from "@/autopilot/summary";
 import { describeConflicts, recordedManifest } from "@/autopilot/syncConflicts";
@@ -188,6 +189,11 @@ function browserLabel(): string {
 /** The autopilot's saved state is damaged: raised by the engine here, answered as `state_corrupt` by the personal server. */
 function isStateCorrupt(error: unknown): boolean {
   return error instanceof Error && (error as { code?: unknown }).code === "state_corrupt";
+}
+
+/** A run learned something about a model (the provider refused a thinking level because the request carries tools): the flag goes into the settings and the page says it, once. */
+function learnedFromEvent(event: Extract<AutopilotEvent, { type: "model-learned" }>): void {
+  rememberLearnedModel({ integrationId: event.integrationId, integrationName: event.integrationName, model: event.model, body: event.body, off: event.off, responses: event.responses });
 }
 
 /** Readable message for errors shown in the autopilot views. */
@@ -534,6 +540,7 @@ export class BrowserAutopilotRuntime {
   /** Refresh views and the book structure after meaningful events (from this tab or another one). */
   private afterEvent(bookId: string, event: AutopilotEvent, local: boolean): void {
     if (event.type === "task-progress") return;
+    if (event.type === "model-learned") learnedFromEvent(event);
     this.refreshAfterEvent(bookId, event, 400);
     if (event.type === "task-finished" && event.activity.status === "succeeded" && event.activity.changedPaths?.some((path) => !path.startsWith("autopilot/"))) {
       this.debounce(`structure:${bookId}`, 1200, () => void this.reloadStructure(bookId));
@@ -1560,6 +1567,8 @@ export class BrowserAutopilotRuntime {
       const event = message.data;
       const known = settings().books.find((book) => book.id === event.bookId);
       useAutopilotStore.getState().ingest(event, known?.name ?? event.bookId);
+      // What a run on the server learned about a model is kept here too: the model's flag is in the settings of this browser, which is where the author changes it.
+      if (event.type === "model-learned") learnedFromEvent(event);
       if (!known || autopilotHostOf(known) !== "server") return;
       this.refreshAfterEvent(event.bookId, event, 500);
       if (!relayed && ((event.type === "task-finished" && event.activity.status === "succeeded") || event.type === "run-ended")) {

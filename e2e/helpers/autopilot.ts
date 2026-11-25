@@ -15,15 +15,21 @@ export const WORKSPACE_ID = "e2e-workspace";
 export const ACCOUNT_IDENTITY = `workspace:${WORKSPACE_ID}`;
 export const KEY = "e2e-plain-key-9f8a7b6c5d4e";
 
-/** One request that reached a provider: who got it, the model the request names, and the function (or `prose`) it asked for. */
+/** One request that reached a provider: who got it, the model the request names, the function (or `prose`) it asked for, and the thinking level it carried (`reasoning_effort`), when it carried one. */
 export interface StubCall {
   provider: string;
   model: string;
   tool: string;
+  thinking?: string;
 }
 
-/** How a provider answers: whole (after `delayMs`), with an HTTP error at once, or only after `ms` (a provider that is too slow to be waited for). */
-export type StubBehavior = { kind: "ok" } | { kind: "error"; status: number; message: string } | { kind: "slow"; ms: number };
+/**
+ * How a provider answers: whole (after `delayMs`), with an HTTP error at once (with the `type` of the error, `invalid_request_error` unless it says another, and its `param` and `code` when it has them),
+ * only after `ms` (a provider that is too slow to be waited for), or as a model that refuses a thinking level because the request carries function tools (a 400, as the provider of `gpt-6-luna` does) and answers
+ * every other request. `accepts` says what a request with function tools must carry to be taken, as the documentation of Azure OpenAI says of the families: `omit` (gpt-5.6-sol) the level left out, or none; `none`
+ * (gpt-6-luna) none only; `nothing` (gpt-6.2-sol) nothing: it takes function tools on the Responses API only, and refuses none for its value.
+ */
+export type StubBehavior = { kind: "ok" } | { kind: "error"; status: number; message: string; type?: string; param?: string; code?: string } | { kind: "slow"; ms: number } | { kind: "refuse-thinking-with-tools"; accepts?: "omit" | "none" | "nothing" };
 
 export interface StubProvider {
   server: Server;
@@ -57,19 +63,31 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
     if (request.method !== "POST") { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ data: [] })); return; }
     let raw = "";
     for await (const piece of request) raw += piece;
-    const body = JSON.parse(raw) as { model?: string; messages?: Array<{ role: string; content: unknown }>; tools?: Array<{ function: { name: string } }> };
+    const body = JSON.parse(raw) as { model?: string; reasoning_effort?: string; messages?: Array<{ role: string; content: unknown }>; tools?: Array<{ function: { name: string } }> };
     const text = (content: unknown) => (typeof content === "string" ? content : "");
     const system = text(body.messages?.find((message) => message.role === "system")?.content);
     const user = text([...(body.messages ?? [])].reverse().find((message) => message.role === "user")?.content);
     const tool = body.tools?.[0]?.function;
     asked.push(tool?.name ?? "prose");
-    const call: StubCall = { provider: options.name ?? "stub", model: body.model ?? "", tool: tool?.name ?? "prose" };
+    const call: StubCall = { provider: options.name ?? "stub", model: body.model ?? "", tool: tool?.name ?? "prose", ...(body.reasoning_effort ? { thinking: body.reasoning_effort } : {}) };
     calls.push(call);
     options.timeline?.push(call);
     if (state.behavior.kind === "error") {
       response.writeHead(state.behavior.status, { "content-type": "application/json" });
-      response.end(JSON.stringify({ error: { message: state.behavior.message, type: "invalid_request_error" } }));
+      response.end(JSON.stringify({ error: { message: state.behavior.message, type: state.behavior.type ?? "invalid_request_error", ...(state.behavior.param ? { param: state.behavior.param } : {}), ...(state.behavior.code ? { code: state.behavior.code } : {}) } }));
       return;
+    }
+    if (state.behavior.kind === "refuse-thinking-with-tools" && tool) {
+      const accepts = state.behavior.accepts ?? "omit";
+      const level = body.reasoning_effort;
+      const takes = accepts === "omit" ? !level || level === "none" : accepts === "none" ? level === "none" : false;
+      if (!takes) {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: accepts === "nothing" && level === "none"
+          ? { message: "Unsupported value: 'reasoning_effort' does not support 'none' with this model.", type: "invalid_request_error", param: "reasoning_effort", code: "unsupported_value" }
+          : { message: `Function tools with reasoning_effort are not supported for ${body.model} in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.`, type: "invalid_request_error", param: "reasoning_effort", code: null } }));
+        return;
+      }
     }
     const wait = state.behavior.kind === "slow" ? state.behavior.ms : state.delayMs;
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait));

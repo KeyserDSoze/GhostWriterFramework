@@ -4,7 +4,7 @@ import { formatLimit } from "@/lib/formatLimit";
 
 /** One fact about how an attempt was asked, or what came back: a text of the app with its figures, which the panel says in words. */
 export interface AttemptBadge {
-  id: "request" | "stream" | "apiVersion" | "thinking" | "reasoningParameter" | "called" | "skipped" | "firstByte" | "toolsOnly" | "limits" | "received" | "lastChunk" | "streamEnd" | "finishReason" | "usage" | "requestId";
+  id: "request" | "stream" | "apiVersion" | "thinking" | "reasoningParameter" | "called" | "skipped" | "firstByte" | "toolsOnly" | "limits" | "received" | "lastChunk" | "streamEnd" | "finishReason" | "usage" | "requestId" | "providerStatus" | "providerType" | "providerParam" | "providerCode";
   key: string;
   params?: Record<string, string>;
 }
@@ -25,7 +25,10 @@ export function attemptBadges(entry: LlmDebugEntry, language?: string): AttemptB
   const streaming = entry.streamed ?? entry.stream;
   if (streaming !== undefined) badges.push({ id: "stream", key: streaming ? "debug.attempt.streaming" : "debug.attempt.notStreaming" });
   if (entry.apiVersion) badges.push({ id: "apiVersion", key: "debug.attempt.apiVersion", params: { version: entry.apiVersion } });
-  if (entry.thinking) badges.push({ id: "thinking", key: "debug.attempt.thinking", params: { level: entry.thinking } });
+  if (entry.thinking === "none" && entry.thinkingWhy === "tools") badges.push({ id: "thinking", key: "debug.attempt.thinkingNoneTools" });
+  else if (entry.thinking) badges.push({ id: "thinking", key: "debug.attempt.thinking", params: { level: entry.thinking } });
+  // A level that was chosen and not sent because the request carries tools and the model refuses a level with them: it is not in the entry as a level, and the panel says why.
+  else if (entry.thinkingWhy === "tools") badges.push({ id: "thinking", key: "debug.attempt.thinkingNotSentTools" });
   // Next to the level: where it went, when it went as the argument of the chat template.
   if (entry.reasoningParameter) badges.push({ id: "reasoningParameter", key: "debug.attempt.reasoningParameter", params: { parameter: entry.reasoningParameter } });
   if (structured && entry.toolCalled !== undefined) badges.push({ id: "called", key: entry.toolCalled ? "debug.attempt.calledYes" : "debug.attempt.calledNo" });
@@ -40,6 +43,14 @@ export function attemptBadges(entry: LlmDebugEntry, language?: string): AttemptB
       : { id: "limits", key: "debug.attempt.limits", params: figures });
   }
   if (entry.transport) badges.push(...transportBadges(entry.transport, entry.status === "error", language));
+  // What the provider answered when it refused the request, as its own short words (its message is redacted in this history, like every error).
+  const refused = entry.providerError;
+  if (refused && entry.status === "error") {
+    if (refused.status !== undefined && entry.transport?.status === undefined) badges.push({ id: "providerStatus", key: "debug.attempt.providerStatus", params: { status: String(refused.status) } });
+    if (refused.type) badges.push({ id: "providerType", key: "debug.attempt.providerType", params: { value: refused.type } });
+    if (refused.param) badges.push({ id: "providerParam", key: "debug.attempt.providerParam", params: { value: refused.param } });
+    if (refused.code) badges.push({ id: "providerCode", key: "debug.attempt.providerCode", params: { value: refused.code } });
+  }
   return badges;
 }
 

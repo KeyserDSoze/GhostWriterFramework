@@ -49,6 +49,7 @@ import { QuestionCard } from "@/components/autopilot/QuestionCard";
 import { PendingReviews } from "@/components/autopilot/PendingReviews";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
 import { ErrorPanel } from "@/components/autopilot/ErrorPanel";
+import { LearnedModelNotices } from "@/components/autopilot/LearnedModelNotices";
 import { GithubConflictsAction } from "@/components/autopilot/GithubConflictsAction";
 import { GithubConflictsWindow } from "@/components/autopilot/GithubConflictsWindow";
 import { SyncConflicts } from "@/components/autopilot/SyncConflicts";
@@ -211,6 +212,7 @@ export function AutopilotPage() {
       {summary?.question && <QuestionCard bookId={bookId} question={summary.question} disabled={busy !== null || running} run={run} />}
       <PendingReviews reviews={state?.pendingReviews} running={running} />
       <ErrorPanel bookId={bookId} />
+      <LearnedModelNotices />
       {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} hintId={PROFILE_HINT_ID} />}
       {noAi && <Alert><AlertTriangle className="h-4 w-4" /><AlertDescription className="flex flex-wrap items-center justify-between gap-2"><span>{t("autopilot.errors.aiMissing")}</span><Button asChild size="sm" variant="outline"><Link to="/app/settings/ai-integrations">{t("settingsSection.aiIntegrationsTitle")}</Link></Button></AlertDescription></Alert>}
       {view.error && <Alert variant="destructive"><AlertDescription>{view.error}</AlertDescription></Alert>}

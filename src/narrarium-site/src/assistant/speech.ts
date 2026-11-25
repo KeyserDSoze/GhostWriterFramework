@@ -3,7 +3,8 @@ import type { AIIntegration, AppSettings } from "@/types/settings";
 import { resolveWritingIntegration } from "@/assistant/llm";
 import { resolveTaskCandidates, type TaskCandidate } from "@/assistant/router";
 import { sttDelta, ttsDelta, useCostsStore } from "@/costs/costsStore";
-import { useLlmDebugStore } from "@/debug/llmDebugStore";
+import { useLlmDebugStore, type LlmDebugProviderError } from "@/debug/llmDebugStore";
+import { providerErrorOf } from "@/debug/providerError";
 import { BrowserSpeechFallbackRequired, executeMediaFallback } from "@/assistant/mediaFallback";
 import { CandidateTimeoutError } from "@/assistant/executionLimits";
 import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
@@ -539,9 +540,10 @@ async function synthesizeChunk(text: string, integration: AIIntegration, model: 
   return URL.createObjectURL(blob);
 }
 
-function mediaDebugFailure(error: unknown, signal?: AbortSignal): { status: "error"; error: string; failureKind: "timeout" | "cancelled" | "provider"; timeoutMs?: number } {
+function mediaDebugFailure(error: unknown, signal?: AbortSignal): { status: "error"; error: string; failureKind: "timeout" | "cancelled" | "provider"; timeoutMs?: number; providerError?: LlmDebugProviderError } {
   const converted = signal?.reason instanceof CandidateTimeoutError ? signal.reason : error;
   if (converted instanceof CandidateTimeoutError) return { status: "error", error: converted.message, failureKind: "timeout", timeoutMs: converted.timeoutMs };
   const cancelled = signal?.aborted === true;
-  return { status: "error", error: converted instanceof Error ? converted.message : String(converted), failureKind: cancelled ? "cancelled" : "provider" };
+  const refused = providerErrorOf(converted);
+  return { status: "error", error: converted instanceof Error ? converted.message : String(converted), failureKind: cancelled ? "cancelled" : "provider", ...(refused ? { providerError: refused } : {}) };
 }

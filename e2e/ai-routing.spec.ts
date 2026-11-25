@@ -327,3 +327,140 @@ test("after «Swap with…» the live panel says that the model the run asks now
   await expect(card.locator("[data-attempt-integration]")).toHaveText(SECOND.name);
   await expect(card.locator("[data-attempt-thinking]")).toHaveText("Thinking: Low");
 });
+
+// What a provider answers when it refuses a request is said in its own words, as labelled fields, wherever the failure is told; and a model that refuses a thinking level because the request carries tools
+// is asked again once without the level, remembered as a setting of the model, and told to the author with the two ways out. The stubs play the providers: one answers every request with a 400 that has a type,
+// a param and a code; the other is a model that refuses `reasoning_effort` when the request carries a function.
+
+/** The setting the account's saved settings hold for a model (`false` when it has none): `null` when the model is not there. */
+const savedFlag = (page: Page, integration: string, model: string) => page.evaluate(({ integration, model }) => new Promise<boolean | "none" | null>((resolve) => {
+  const request = indexedDB.open("narrarium-local-account");
+  request.onsuccess = () => {
+    const db = request.result;
+    const read = db.transaction("core", "readonly").objectStore("core").getAll();
+    read.onsuccess = () => {
+      db.close();
+      const settings = read.result[0]?.settings as { aiIntegrations?: Array<{ id: string; chatModels?: Array<{ name: string; noThinkingWithTools?: boolean | "none" }> }> } | undefined;
+      const found = settings?.aiIntegrations?.find((entry) => entry.id === integration)?.chatModels?.find((entry) => entry.name === model);
+      resolve(found ? found.noThinkingWithTools ?? false : null);
+    };
+    read.onerror = () => { db.close(); resolve(null); };
+  };
+  request.onerror = () => resolve(null);
+}), { integration, model });
+
+const fieldOf = (scope: import("@playwright/test").Locator, name: string) => scope.locator(`[data-provider-field="${name}"] + dd`);
+
+test("a failure says what each provider answered, as labelled fields in its own words, in the trail of the router, in the records of the step and in the diagnostics that are copied", async ({ page }) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  const run = await begin(page, {
+    a: { kind: "error", status: 400, message: "Invalid value for 'tools[0].function.name': it must be a-z.", type: "invalid_request_error", param: "tools[0].function.name", code: "invalid_value" },
+    b: { kind: "error", status: 400, message: "The deployment is out of credits.", type: "billing_error", code: "insufficient_quota" },
+  });
+  const panel = page.locator("[data-autopilot-error][data-kind=\"provider\"]");
+  await expect(panel).toBeVisible({ timeout: 30_000 });
+  expect(order(run).startsWith("AB"), "the primary is asked, then the fallback").toBe(true);
+
+  // The trail says each candidate's own answer as fields.
+  const steps = panel.locator("[data-error-route] li");
+  await expect(steps).toHaveCount(2);
+  await expect(fieldOf(steps.nth(0), "message")).toHaveText("Invalid value for 'tools[0].function.name': it must be a-z.");
+  await expect(fieldOf(steps.nth(0), "type")).toHaveText("invalid_request_error");
+  await expect(fieldOf(steps.nth(0), "param")).toHaveText("tools[0].function.name");
+  await expect(fieldOf(steps.nth(0), "code")).toHaveText("invalid_value");
+  await expect(steps.nth(0).locator("[data-provider-field=\"message\"]")).toHaveText("Message");
+  await expect(fieldOf(steps.nth(1), "message")).toHaveText("The deployment is out of credits.");
+  await expect(fieldOf(steps.nth(1), "type")).toHaveText("billing_error");
+  await expect(steps.nth(1).locator("[data-provider-field=\"param\"]")).toHaveCount(0);
+
+  // The diagnostics that are copied have the same words, in English, with the route of the API kept as the provider wrote it.
+  await panel.getByRole("button", { name: "Copy diagnostics" }).click();
+  await expect(panel.locator("[data-error-copy]")).toHaveText("Diagnostics copied.");
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain("HTTP 400 — Invalid value for 'tools[0].function.name': it must be a-z. [type: invalid_request_error, param: tools[0].function.name, code: invalid_value]");
+  expect(copied).toContain("HTTP 400 — The deployment is out of credits. [type: billing_error, code: insufficient_quota]");
+  expect(copied).not.toContain(KEY);
+
+  // The records of the step say them too: the failed attempts of the call, in the same fields.
+  const activity = await firstActivity(page);
+  await page.evaluate((id) => { window.location.hash = `#task-${id}`; }, activity.id);
+  const failed = page.locator("[data-task-calls] [data-failed-attempts] li");
+  await expect(failed).toHaveCount(2, { timeout: 30_000 });
+  await expect(fieldOf(failed.nth(0), "param")).toHaveText("tools[0].function.name");
+  await expect(fieldOf(failed.nth(1), "code")).toHaveText("insufficient_quota");
+});
+
+test("a model that takes function tools only with none is asked without the level, then with none, remembered in its row, and told with the two ways out; its requests with tools carry none from then on, and the ones without tools keep their level", async ({ page }) => {
+  await page.setViewportSize({ width: 1700, height: 1000 });
+  const run = await begin(page, { a: { kind: "refuse-thinking-with-tools", accepts: "none" }, thinkingA: "high", delayMs: 150 });
+
+  // The notice: what was done, the provider's words as fields, and the two ways out in plain words, the Responses API first.
+  const notice = page.locator("[data-learned-model]");
+  await expect(notice).toBeVisible({ timeout: 30_000 });
+  await expect(notice.getByRole("heading")).toHaveText(`${FIRST.model}: thinking is turned off when tools are used; the provider said so`);
+  await expect(fieldOf(notice, "message")).toHaveText(`Function tools with reasoning_effort are not supported for ${FIRST.model} in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.`);
+  await expect(fieldOf(notice, "type")).toHaveText("invalid_request_error");
+  await expect(fieldOf(notice, "param")).toHaveText("reasoning_effort");
+  await expect(fieldOf(notice, "status")).toHaveText("400");
+  const ways = notice.locator("[data-learned-way]");
+  await expect(ways).toHaveCount(2);
+  await expect(ways.nth(0)).toHaveAttribute("data-learned-way", "responses");
+  await expect(ways.nth(0)).toContainText("Use the Responses API for this model");
+  await expect(ways.nth(1)).toHaveAttribute("data-learned-way", "no-thinking");
+  await expect(ways.nth(1)).toContainText("Turn thinking off when tools are used");
+  await expect(ways.nth(1)).toContainText("«none»");
+
+  // The run went on: the step that was refused was asked without the level, then with none, and the steps after it asked with none at once.
+  await expect.poll(() => run.a.calls.some((call) => call.tool === "prose"), { timeout: 40_000, message: "the run goes on to a step that writes prose" }).toBe(true);
+  const withTools = run.a.calls.filter((call) => call.tool !== "prose");
+  expect(withTools.slice(0, 3).map((call) => [call.tool === withTools[0].tool, call.thinking]), "the same step: the level, no level, none").toEqual([[true, "high"], [true, undefined], [true, "none"]]);
+  expect(withTools.slice(3).every((call) => call.thinking === "none"), "every request with tools after it carries none").toBe(true);
+  expect(run.a.calls.filter((call) => call.tool === "prose").every((call) => call.thinking === "high"), "a request without tools to the same model keeps its level").toBe(true);
+  expect(run.b.calls, "the fallback was never asked: the refusal is not a failure of the step").toHaveLength(0);
+
+  // The line of the step that runs says why the level is none.
+  await expect(page.locator("[data-autopilot-band] [data-attempt-thinking]").first()).toHaveText("Thinking: off (tools)", { timeout: 20_000 });
+
+  // The setting is in the model's row of the settings, ticked, and is saved with them as the model that takes none.
+  await expect.poll(() => savedFlag(page, FIRST.id, FIRST.model), { timeout: 20_000 }).toBe("none");
+  expect(await savedFlag(page, SECOND.id, SECOND.model), "only the model that refused").toBe(false);
+  await page.getByRole("button", { name: "EU", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await page.getByRole("link", { name: "AI Integrations" }).first().click();
+  // The section of the integrations, then the card of the one that refused: each is a disclosure, opened only when it is closed.
+  const section = page.locator("details").filter({ hasText: "Configure providers used for writing" }).first();
+  if (!(await section.evaluate((element) => (element as HTMLDetailsElement).open))) await section.locator("summary").first().click();
+  const card = page.locator("details", { has: page.locator("summary p.font-semibold", { hasText: FIRST.name }) }).last();
+  if (!(await card.evaluate((element) => (element as HTMLDetailsElement).open))) await card.locator("summary").first().click();
+  const box = page.getByRole("checkbox", { name: `Do not use thinking when tools are used — ${FIRST.model}` });
+  await expect(box).toBeChecked();
+});
+
+test("a model that takes function tools on the Responses API only fails with the provider's last words and what was tried, and nothing is learned", async ({ page }) => {
+  const run = await begin(page, { a: { kind: "refuse-thinking-with-tools", accepts: "nothing" }, b: { kind: "refuse-thinking-with-tools", accepts: "nothing" }, thinkingA: "high", thinkingB: "high" });
+  const panel = page.locator("[data-autopilot-error][data-kind=\"provider\"]");
+  await expect(panel).toBeVisible({ timeout: 30_000 });
+
+  // Each candidate was asked the three ways, and the trail says each request in order with the provider's words as fields.
+  const steps = panel.locator("[data-error-route] li");
+  await expect(steps).toHaveCount(6);
+  await expect(fieldOf(steps.nth(0), "message")).toContainText(`Function tools with reasoning_effort are not supported for ${FIRST.model}`);
+  await expect(fieldOf(steps.nth(2), "message")).toHaveText("Unsupported value: 'reasoning_effort' does not support 'none' with this model.");
+  await expect(fieldOf(steps.nth(2), "code")).toHaveText("unsupported_value");
+  await expect(fieldOf(steps.nth(5), "message")).toHaveText("Unsupported value: 'reasoning_effort' does not support 'none' with this model.");
+  const withTools = run.timeline.filter((call) => call.tool !== "prose");
+  expect(withTools.slice(0, 6).map((call) => [call.provider, call.thinking]), "the primary, then the fallback, each: the level, no level, none").toEqual([["A", "high"], ["A", undefined], ["A", "none"], ["B", "high"], ["B", undefined], ["B", "none"]]);
+
+  // The diagnostics say what was tried, and where the provider takes function tools.
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await panel.getByRole("button", { name: "Copy diagnostics" }).click();
+  await expect(panel.locator("[data-error-copy]")).toHaveText("Diagnostics copied.");
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain("Provider message: Unsupported value: 'reasoning_effort' does not support 'none' with this model.");
+  expect(copied).toContain("Narrarium asked again without a thinking level and with \"none\", and the model still refuses function tools on this endpoint: the provider says to use /v1/responses for them.");
+
+  // Nothing was learned: no notice, and no setting on either model.
+  await expect(page.locator("[data-learned-model]")).toHaveCount(0);
+  expect(await savedFlag(page, FIRST.id, FIRST.model)).toBe(false);
+  expect(await savedFlag(page, SECOND.id, SECOND.model)).toBe(false);
+});

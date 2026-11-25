@@ -40,7 +40,7 @@ export const AttemptNow = memo(function AttemptNow({ bookId, compact = false, cl
           <Dot />
           <span data-attempt-integration className="text-muted-foreground">{trying.integrationName}</span>
           <Dot />
-          <span data-attempt-thinking className="text-muted-foreground">{thinkingWords(t, trying.thinking)}</span>
+          <span data-attempt-thinking className="text-muted-foreground">{thinkingWords(t, trying.thinking, trying.thinkingWhy)}</span>
           {count && (
             <>
               <Dot />

@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import type { AutopilotRouteStep } from "narrarium-engine";
 import { leftOutReason } from "@/autopilot/routeWords";
+import { ProviderWords } from "@/components/autopilot/ProviderWords";
 import { formatLimit } from "@/lib/formatLimit";
 
 /** How an attempt ended, in words: what the provider answered, or which deadline ran out and whether it was the routing time that was left. */
@@ -23,12 +24,12 @@ export function RouteTrail({ route, integrationName }: { route: readonly Autopil
     <div data-error-route-box className="space-y-1">
       <p className="text-xs font-medium">{t("autopilot.route.title")}</p>
       <ol data-error-route className="list-decimal space-y-1.5 pl-5 text-xs">
-        {route.map((step) => {
+        {route.map((step, index) => {
           const target = t("autopilot.route.target", { integration: integrationName(step.integrationId) ?? (step.integrationName || step.integrationId), model: step.model });
           const left = step.outcome === "left-out";
           const showDuration = !left && typeof step.durationMs === "number" && !(step.outcome === "timeout" && typeof step.timeoutMs === "number");
           return (
-            <li key={`${step.position}:${step.integrationId}:${step.model}`} data-route-step={step.outcome} className="space-y-0.5">
+            <li key={`${index}:${step.position}:${step.integrationId}:${step.model}`} data-route-step={step.outcome} className="space-y-0.5">
               <p>
                 <span className="font-medium">{target}</span>
                 {" — "}
@@ -37,7 +38,8 @@ export function RouteTrail({ route, integrationName }: { route: readonly Autopil
               </p>
               {!left && step.endpoint && <p className="break-all text-muted-foreground">{step.endpoint}{step.apiVersion && <span data-route-api-version> · {t("autopilot.route.apiVersion", { version: step.apiVersion })}</span>}</p>}
               {!left && !step.endpoint && step.apiVersion && <p data-route-api-version className="text-muted-foreground">{t("autopilot.route.apiVersion", { version: step.apiVersion })}</p>}
-              {!left && step.message && <p className="whitespace-pre-wrap break-words text-muted-foreground [overflow-wrap:anywhere]">{step.message}</p>}
+              {!left && step.body && <ProviderWords body={step.body} className="text-muted-foreground" />}
+              {!left && !step.body && step.message && <p className="whitespace-pre-wrap break-words text-muted-foreground [overflow-wrap:anywhere]">{step.message}</p>}
             </li>
           );
         })}

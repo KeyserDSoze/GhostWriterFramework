@@ -8,6 +8,7 @@ import { ConnectionCheck } from "@/components/autopilot/ConnectionCheck";
 import { GithubConflictsAction } from "@/components/autopilot/GithubConflictsAction";
 import { ErrorFiles } from "@/components/autopilot/StopNotices";
 import { KindIcon } from "@/components/autopilot/KindIcon";
+import { ProviderWords } from "@/components/autopilot/ProviderWords";
 import { RouteTrail } from "@/components/autopilot/RouteTrail";
 import { ServerAiNote } from "@/components/autopilot/ServerAiNote";
 import { APP_VERSION } from "@/config/version";
@@ -320,6 +321,13 @@ function FailurePanel({ bookId, control, actions, wait }: FailurePanelProps) {
       )}
       {source.repeats > 1 && <p className="text-sm font-medium">{t("autopilot.failure.repeats", { count: source.repeats })}</p>}
       <Facts source={source} integrationName={integrationName} withRoute={showRoute} />
+      {/* What the provider answered, in its own words: the facts name the last candidate, and so does this; a route says each candidate's own. */}
+      {source.detail.body && !showRoute && (
+        <div data-error-provider className="space-y-1">
+          <p className="text-xs font-medium">{t("autopilot.failure.provider.title")}</p>
+          <ProviderWords body={source.detail.body} />
+        </div>
+      )}
       {showRoute && <RouteTrail route={route} integrationName={integrationName} />}
       {timeout && <TimeoutNotice note={timeout} />}
       {retryAfter !== null && <p data-error-retry-after className="text-sm font-medium">{t("autopilot.failure.retryAfter", { time: formatCountdown(retryAfter, language) })}</p>}

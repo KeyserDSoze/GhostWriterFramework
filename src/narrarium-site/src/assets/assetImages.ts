@@ -7,6 +7,7 @@ import { CandidateTimeoutError } from "@/assistant/executionLimits";
 import { executeMediaFallback } from "@/assistant/mediaFallback";
 import { imageTokenDelta, useCostsStore } from "@/costs/costsStore";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
+import { providerErrorOf } from "@/debug/providerError";
 import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
 import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
@@ -234,6 +235,7 @@ export async function generateAssetImage(input: {
         error: converted instanceof Error ? converted.message : String(converted),
         failureKind: converted instanceof CandidateTimeoutError ? "timeout" : attemptSignal?.aborted ? "cancelled" : "provider",
         ...(converted instanceof CandidateTimeoutError ? { timeoutMs: converted.timeoutMs } : {}),
+        ...(providerErrorOf(converted) ? { providerError: providerErrorOf(converted) } : {}),
       });
       throw err;
     }

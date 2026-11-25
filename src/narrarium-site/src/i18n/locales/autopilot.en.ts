@@ -188,6 +188,9 @@ const autopilotEn = {
         thinking: "Thinking: {{level}}",
         thinkingAutomatic: "Thinking: automatic",
         thinkingNotSent: "Thinking: not sent",
+        thinkingNotSentTools: "Thinking: not sent (tools)",
+        thinkingNone: "Thinking: off",
+        thinkingNoneTools: "Thinking: off (tools)",
         level: { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high" },
         count: "attempt {{attempt}}/{{attempts}}",
       },
@@ -419,6 +422,19 @@ const autopilotEn = {
       failed: "The server did not take the AI configuration: {{reason}}",
       unavailable: "The server cannot be reached now, so what it holds is not known.",
     },
+    learned: {
+      title: "{{model}}: thinking is turned off when tools are used; the provider said so",
+      said: "{{name}} answered:",
+      waysTitle: "Two ways out",
+      doneTitle: "What Narrarium did",
+      wayResponses: "Use the Responses API for this model. The provider says to use /v1/responses for function tools. This version of Narrarium cannot call the Responses API yet.",
+      wayOff: "Turn thinking off when tools are used. Narrarium did it, for this model only: requests with tools go without a thinking level, and requests without tools keep theirs.",
+      wayOffNone: "Turn thinking off when tools are used. Narrarium did it, for this model only: requests with tools are sent with the thinking level «none», the one value the model takes with them, and requests without tools keep theirs.",
+      openSettings: "Open the model's settings",
+      dismiss: "Dismiss",
+      toast: "{{name}} refused a thinking level together with tools. Narrarium turned thinking off when tools are used, for this model only: requests without tools keep their thinking. You can change it in the model's settings (AI Integrations).",
+      toastResponses: "{{name}} says to use the Responses API for this model, or to turn thinking off when tools are used. Narrarium turned thinking off when tools are used, for this model only: requests without tools keep their thinking. This version cannot call the Responses API yet. You can change the setting in the model's row (AI Integrations).",
+    },
     failure: {
       kind: {
         network: {
@@ -520,6 +536,18 @@ const autopilotEn = {
         status: "HTTP status",
         attempt: "Retry",
         attemptOf: "{{attempt}} of {{retries}}",
+      },
+      provider: {
+        title: "What the provider said",
+        status: "HTTP status",
+        message: "Message",
+        type: "Type",
+        param: "Param",
+        code: "Code",
+        reply: "Reply",
+        raw: "Content",
+        empty: "No body: the provider sent nothing but the status.",
+        page: "A web page from a gateway or a proxy, not an answer of the provider.",
       },
       countdown: {
         in: "Trying again in {{time}}",
@@ -625,6 +653,7 @@ const autopilotEn = {
       resumedAfterRestart_browser: "Resumed by itself after the page was opened again.",
       callsStoreFailed: "The messages of this run could not be saved ({{reason}}). The run goes on, but they will not be kept.",
       callsStoreFailed_noReason: "The messages of this run could not be saved. The run goes on, but they will not be kept.",
+      modelLearned: "{{model}}: thinking is turned off when tools are used; the provider said so",
     },
     task: {
       concept: "Designing the concept",

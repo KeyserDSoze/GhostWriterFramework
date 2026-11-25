@@ -17,10 +17,15 @@ export function candidateHint(t: Say, trying: Pick<AutopilotAttemptInfo, "fallba
   return trying.fallback ? t("autopilot.band.attempt.fallbackHint", { number: trying.candidateIndex }) : t("autopilot.band.attempt.primaryHint");
 }
 
-/** «Thinking: High»: the level the request carries; «Thinking: automatic» when none is chosen, «Thinking: not sent» when the model does not take the one that was. A level that is not known is said as it is. */
-export function thinkingWords(t: Say, thinking: AutopilotAttemptInfo["thinking"]): string {
+/**
+ * «Thinking: High»: the level the request carries; «Thinking: automatic» when none is chosen, «Thinking: not sent» when the model does not take the one that was, «Thinking: not sent (tools)» when
+ * the request carries function tools and the model refuses a level with them (`why`), and «Thinking: off (tools)» when it is sent `none` because that is the one value it takes with them. A level that is not known
+ * is said as it is.
+ */
+export function thinkingWords(t: Say, thinking: AutopilotAttemptInfo["thinking"], why?: AutopilotAttemptInfo["thinkingWhy"]): string {
   if (thinking === "automatic") return t("autopilot.band.attempt.thinkingAutomatic");
-  if (thinking === "not-sent") return t("autopilot.band.attempt.thinkingNotSent");
+  if (thinking === "not-sent") return t(why === "tools" ? "autopilot.band.attempt.thinkingNotSentTools" : "autopilot.band.attempt.thinkingNotSent");
+  if (thinking === "none") return t(why === "tools" ? "autopilot.band.attempt.thinkingNoneTools" : "autopilot.band.attempt.thinkingNone");
   return t("autopilot.band.attempt.thinking", { level: t(`autopilot.band.attempt.level.${thinking}`, { defaultValue: thinking }) });
 }
 

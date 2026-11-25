@@ -83,6 +83,18 @@ const autopilotCallsIt = {
           disk: "Il server era a corto di spazio su disco: i testi non sono stati conservati.",
         },
       },
+      provider: {
+        title: "Cosa ha detto il provider",
+        status: "Stato HTTP",
+        message: "Messaggio",
+        type: "Tipo",
+        param: "Parametro",
+        code: "Codice",
+        reply: "Risposta",
+        raw: "Contenuto",
+        empty: "Nessun corpo: il provider ha inviato solo lo stato.",
+        page: "Una pagina web di un gateway o di un proxy, non una risposta del provider.",
+      },
       attemptFacts: {
         apiVersion: "Versione API {{version}}",
         title: "Tentativo {{number}}",

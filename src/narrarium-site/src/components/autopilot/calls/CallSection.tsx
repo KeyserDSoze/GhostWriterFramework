@@ -12,6 +12,7 @@ import { askedAttempts, costWords, errorWords, failedAttempts, leftOutAttempts, 
 import { leftOutReason } from "@/autopilot/routeWords";
 import { useSettingsStore } from "@/store/settingsStore";
 import { PromptPane, ResponsePane } from "@/components/autopilot/calls/CallPanes";
+import { ProviderWords } from "@/components/autopilot/ProviderWords";
 import { TARGET } from "@/components/autopilot/calls/ui";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -91,6 +92,7 @@ function FailedAttempts({ record }: { record: AiCallRecord }) {
             {(attempt.endpoint || attempt.apiVersion) && <p className="break-all text-muted-foreground">{[attempt.endpoint, attempt.apiVersion ? t("autopilot.calls.attemptFacts.apiVersion", { version: attempt.apiVersion }) : ""].filter(Boolean).join(" · ")}</p>}
             {facts.length > 0 && <p className="tabular-nums text-muted-foreground">{facts.join(" · ")}</p>}
             {error && <p className="break-words text-destructive [overflow-wrap:anywhere]">{error}</p>}
+            {attempt.error?.body && <ProviderWords body={attempt.error.body} scope="autopilot.calls.provider" className="pt-0.5" />}
             {attempt.transport?.tail && (
               <p className="break-words text-muted-foreground [overflow-wrap:anywhere]"><span className="font-medium">{t("autopilot.calls.attemptFacts.tail")}:</span> <span className="font-mono">{attempt.transport.tail}</span></p>
             )}

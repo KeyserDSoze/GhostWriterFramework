@@ -196,6 +196,8 @@ const aiRouterIt = {
     thinkingParameterSuggestion: "Suggerito: {{value}}. La documentazione di un modello con questo nome dice che prende così il livello di thinking; finché non lo imposti, il livello va come reasoning_effort, che può essere ignorato.",
     thinkingParameterUse: "Usalo",
     thinkingParameterUseFor: "Usalo per {{name}}",
+    noThinkingWithTools: "Non usare il thinking quando si usano i tool",
+    noThinkingWithToolsHint: "Alcuni modelli rifiutano un livello di thinking quando la richiesta porta dei tool (il provider dice: «Function tools with reasoning_effort are not supported…»). Con «Non usare il thinking quando si usano i tool» attivo, una richiesta con i tool va a quel modello senza livello di thinking (o con «none», quando è l'unico valore che accetta con i tool), mentre una richiesta senza tool mantiene il suo. Narrarium lo attiva da sé la prima volta che il provider rifiuta, e scopre in che modo il modello lo accetta.",
     modelApiVersion: "Versione API",
     modelApiVersionInherit: "Eredità dall'integrazione: {{value}}",
     modelApiVersionOwn: "Versione propria",

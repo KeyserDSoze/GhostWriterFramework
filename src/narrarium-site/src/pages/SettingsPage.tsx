@@ -10,6 +10,7 @@ import { SecretInput } from "@/components/ui/secret-input";
 import { PersonalServerSettingsBody } from "@/components/settings/PersonalServerSettingsBody";
 import { IntegrationRequestFields } from "@/components/settings/IntegrationRequestFields";
 import { ModelApiVersionField, apiVersionLooksValid, inheritedApiVersion } from "@/components/settings/ModelApiVersionField";
+import { NoThinkingWithToolsField } from "@/components/settings/NoThinkingWithToolsField";
 import { ReasoningParameterField } from "@/components/settings/ReasoningParameterField";
 import { EndpointTools } from "@/components/settings/endpoint/EndpointTools";
 import { integrationAnchor } from "@/components/settings/endpoint/anchor";
@@ -779,6 +780,7 @@ function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onCh
           <p className="text-xs text-muted-foreground">{t("settings.chatModelsHint")}</p>
           <p id={`${id}-tools-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.forcedToolCallsHint")}</p>
           <p id={`${id}-thinking-parameter-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.thinkingParameterHint")}</p>
+          <p id={`${id}-no-thinking-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.noThinkingWithToolsHint")}</p>
           {provider === "azure_openai" && <p id={`${id}-api-version-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.modelApiVersionHint")}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -851,6 +853,7 @@ function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onCh
                 <Switch id={`${id}-${model.id}-tools`} aria-describedby={`${id}-tools-hint`} checked={model.supportsToolCalls !== false} onCheckedChange={(supportsToolCalls) => patchModel(model.id, { supportsToolCalls })} />
               </div>
               <ReasoningParameterField model={model} hintId={`${id}-thinking-parameter-hint`} onChange={(reasoningParameter) => patchModel(model.id, { reasoningParameter })} />
+              <NoThinkingWithToolsField model={model} hintId={`${id}-no-thinking-hint`} onChange={(noThinkingWithTools) => patchModel(model.id, { noThinkingWithTools })} />
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
               {CHAT_CAPABILITIES.map((capability) => {

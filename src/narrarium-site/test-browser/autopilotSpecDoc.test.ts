@@ -69,6 +69,16 @@ describe("the doc of the autopilot says what the page does with what the engine 
     for (const word of ["ChatModel.apiVersion", "effectiveApiVersion", "Own version", "Inherits from the integration", "aria-invalid", "AiRouteStep.apiVersion", "a server that predates it keeps the version of the integration"]) expect(router, word).toContain(word);
   });
 
+  it("says that a provider that refuses is told in its own words as labelled fields, wherever a failure is told, and what the debug panel keeps of it", () => {
+    const router = section("AI router tasks");
+    for (const word of ["What the provider said", "AiErrorBody", "errorDetail.body", "route[].body", "Provider message:", "Provider param:", "HTTP 400, no body", "short words", "OpenAI library"]) expect(router, word).toContain(word);
+  });
+
+  it("says what happens when a provider refuses a thinking level with tools: the retry, the memory, the setting and where it is, the notice with both ways out and the server", () => {
+    const router = section("AI router tasks");
+    for (const word of ["Do not use thinking when tools are used", "ChatModel.noThinkingWithTools", "refusesThinkingWithTools", "AiModelMemory", "model-learned", "LearnedModelNotices", "Responses API first", "Thinking: not sent (tools)", "Thinking: off (tools)", "thinkingWhy", "Responses API only", "gpt-6.2-sol", "with `none`", "a server that predates engine 0.1.19"]) expect(router, word).toContain(word);
+  });
+
   it("says that the verdict of a round and the beginning of the working time come from the engine, with a fallback", () => {
     for (const word of ["rounds[].verdict", "stats.workedMsSince"]) expect(doc, word).toContain(word);
   });

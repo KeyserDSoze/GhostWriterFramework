@@ -87,7 +87,7 @@ test("the candidates after the first are not asked once the routing time says it
   assert.deepEqual(stops, ["two:1"], "the first candidate is never asked about: it runs whatever the total");
 });
 
-test("a failure is reported in the sentence the client wrote when it wrote one, whole up to 600 characters, and as label and message otherwise (240)", async () => {
+test("a failure is reported in the sentence the client wrote when it wrote one, whole up to 2400 characters, and as label and message otherwise (240); what is cut ends with an ellipsis", async () => {
   const sentence = `openai muse-glimmer-30b: the provider did not start answering within 30 s (${"the Provider timeout of the integration ".repeat(8)})`;
   assert.ok(sentence.length > 240 && sentence.length < 600);
   const long = "x".repeat(500);
@@ -98,7 +98,25 @@ test("a failure is reported in the sentence the client wrote when it wrote one, 
   }), (error) => {
     assert.ok(error instanceof CompletionFallbackError);
     assert.equal(error.failures[0], sentence);
-    assert.equal(error.failures[1], `two: ${"x".repeat(240)}`);
+    assert.equal(error.failures[1], `two: ${"x".repeat(239)}…`, "the message of a failure that is not the client's is cut at 240 characters, with an ellipsis");
+    return true;
+  });
+});
+
+test("the words a provider answered are kept whole in the sentence (up to 2400 characters), with an ellipsis where they are cut, and their fields beside it for each failed candidate", async () => {
+  const body = { status: 400, shape: "openai", message: "Function tools with reasoning_effort are not supported for gpt-6-luna in /v1/chat/completions.", type: "invalid_request_error", param: "reasoning_effort" };
+  const words = `openai gpt-6-luna: HTTP 400 — ${body.message} [type: invalid_request_error, param: reasoning_effort]`;
+  const huge = `openai other: HTTP 400 — ${"w".repeat(3000)}`;
+  await assert.rejects(executeCompletionFallback({
+    candidates,
+    describe: (candidate) => (candidate.label === "one" ? words : huge),
+    run: async (candidate) => { throw Object.assign(new Error("ignored"), candidate.label === "one" ? { body } : {}); },
+  }), (error) => {
+    assert.ok(error instanceof CompletionFallbackError);
+    assert.equal(error.failures[0], words, "whole");
+    assert.equal(error.failures[1].length, 2400);
+    assert.ok(error.failures[1].endsWith("…"));
+    assert.deepEqual(error.answers, [{ label: "one", body }, { label: "two" }]);
     return true;
   });
 });

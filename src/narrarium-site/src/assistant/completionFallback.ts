@@ -1,3 +1,5 @@
+import type { AiErrorBody } from "narrarium-engine";
+
 export interface CompletionCandidate { label: string; }
 
 export function isValidTextCompletion(value: unknown): boolean {
@@ -5,13 +7,23 @@ export function isValidTextCompletion(value: unknown): boolean {
   return !/^\s*(?:\[?content filtered\]?|\[?response filtered\]?|blocked by (?:the )?safety filter)\s*[.!]?\s*$/i.test(value);
 }
 
-/** The most of an error that is kept for the author: its own message, or the sentence a failed candidate wrote (which says which deadline ran out and where it is changed). */
+/**
+ * The most of an error that is kept for the author: its own message, or the sentence a failed candidate wrote (which says which deadline ran out and where it is changed, or what the provider answered,
+ * whole: the engine keeps its words up to two thousand characters). What is cut ends with an ellipsis.
+ */
 const MAX_MESSAGE_CHARACTERS = 240;
-const MAX_SENTENCE_CHARACTERS = 600;
+const MAX_SENTENCE_CHARACTERS = 2400;
 
 function diagnostic(error: unknown, limit = MAX_MESSAGE_CHARACTERS): string {
   const raw = error instanceof Error ? error.message : String(error);
-  return raw.replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [redacted]").replace(/((?:api[_ -]?key|authorization|token|secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]").replace(/[\r\n]+/g, " ").slice(0, limit);
+  const clean = raw.replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [redacted]").replace(/((?:api[_ -]?key|authorization|token|secret)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]").replace(/[\r\n]+/g, " ");
+  return clean.length > limit ? `${clean.slice(0, limit - 1).trimEnd()}…` : clean;
+}
+
+/** What the provider of a failed candidate answered, when it answered something (the engine's `AiProviderError.body`): the words themselves are in the sentence, this is their fields. */
+function bodyOf(error: unknown): AiErrorBody | undefined {
+  const body = (error as { body?: AiErrorBody } | null)?.body;
+  return typeof body?.status === "number" ? body : undefined;
 }
 
 /** What kind of error a candidate failed with: its class name and HTTP status, never its message. */
@@ -29,13 +41,16 @@ export class CompletionFallbackError extends Error {
   readonly causes: CompletionFailureCause[];
   /** What stopped the candidates that were not tried (the routing time was used up). */
   readonly notes: string[];
-  constructor(failures: string[], causes: CompletionFailureCause[] = [], notes: string[] = []) {
+  /** The label of each failed candidate and what its provider answered, when it answered something (in the order of `failures`): the fields a reply can show beside the sentence. */
+  readonly answers: Array<{ label: string; body?: AiErrorBody }>;
+  constructor(failures: string[], causes: CompletionFailureCause[] = [], notes: string[] = [], answers: Array<{ label: string; body?: AiErrorBody }> = []) {
     const list = failures.join("; ");
     super(`All configured completion candidates failed: ${list}${notes.length ? `${/[.!?]$/.test(list) ? "" : "."} ${notes.join(" ")}` : ""}`);
     this.name = "CompletionFallbackError";
     this.failures = failures;
     this.causes = causes;
     this.notes = notes;
+    this.answers = answers;
   }
 }
 
@@ -72,6 +87,7 @@ export async function executeCompletionFallback<T extends CompletionCandidate>(i
   const failures: string[] = [];
   const causes: CompletionFailureCause[] = [];
   const notes: string[] = [];
+  const answers: Array<{ label: string; body?: AiErrorBody }> = [];
   for (const [index, candidate] of input.candidates.entries()) {
     input.signal?.throwIfAborted();
     if (index > 0) {
@@ -94,7 +110,9 @@ export async function executeCompletionFallback<T extends CompletionCandidate>(i
       const sentence = input.describe?.(candidate, error);
       failures.push(sentence !== undefined ? diagnostic(sentence, MAX_SENTENCE_CHARACTERS) : `${diagnostic(candidate.label)}: ${diagnostic(error)}`);
       causes.push(failureCause(error));
+      const body = bodyOf(error);
+      answers.push({ label: diagnostic(candidate.label), ...(body ? { body } : {}) });
     }
   }
-  throw new CompletionFallbackError(failures.length ? failures : ["no executable candidates"], causes, notes);
+  throw new CompletionFallbackError(failures.length ? failures : ["no executable candidates"], causes, notes, answers);
 }

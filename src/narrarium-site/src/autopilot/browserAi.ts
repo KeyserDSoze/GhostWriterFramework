@@ -18,6 +18,7 @@ import { acknowledgeCrossBoundaryFallback, type BoundaryCandidate } from "@/assi
 import { pageEnding } from "@/autopilot/localRuns";
 import { GITHUB_MODELS_BASE } from "@/config/githubModels";
 import { chatDelta, useCostsStore } from "@/costs/costsStore";
+import { inputOfLearning, rememberLearnedModel } from "@/autopilot/learnedModels";
 import { flattenLlmContent, useLlmDebugStore } from "@/debug/llmDebugStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import type { ForcedToolDefinition } from "@/assistant/llm";
@@ -59,6 +60,7 @@ function openDebugEntry(attempt: FetchAiAttempt, structured: boolean, route?: Br
     ...(attempt.apiVersion ? { apiVersion: attempt.apiVersion } : {}),
     toolsOnly: attempt.toolsOnly,
     ...(attempt.thinking ? { thinking: attempt.thinking } : {}),
+    ...(attempt.thinkingWhy ? { thinkingWhy: attempt.thinkingWhy } : {}),
     ...(attempt.reasoningParameter ? { reasoningParameter: attempt.reasoningParameter } : {}),
     ...(skipped.length ? { skipped } : {}),
     timeouts: { startMs: attempt.timeouts.startMs, idleMs: attempt.timeouts.idleMs, capMs: attempt.timeouts.capMs, ...(attempt.timeouts.raised ? { raisedFrom: attempt.timeouts.raised.from } : {}) },
@@ -82,7 +84,7 @@ function closeAttempt(config: AiRuntimeConfig, debugId: string | undefined, end:
     const came = { streamed: end.streamed, firstByteMs: end.firstByteMs, toolCalled: end.toolCalled, transport: end.transport };
     useLlmDebugStore.getState().finish(debugId, end.outcome === "ok"
       ? { status: "done", response: end.text, ...came, ...usage, cost }
-      : { status: "error", error: end.error, failureKind: end.failureKind, timeoutMs: end.timeoutMs, timeoutPhase: end.timeoutPhase, ...came, ...usage, cost });
+      : { status: "error", error: end.error, failureKind: end.failureKind, timeoutMs: end.timeoutMs, timeoutPhase: end.timeoutPhase, ...(end.errorBody ? { providerError: { status: end.errorBody.status, type: end.errorBody.type, param: end.errorBody.param, code: end.errorBody.code } } : {}), ...came, ...usage, cost });
   }
   if (usage && delta && pricing && (usage.inputTokens || usage.outputTokens)) useCostsStore.getState().recordCurrent(delta, end.model);
 }
@@ -159,6 +161,9 @@ export function createBrowserAi(options: BrowserAiOptions = {}): AiPort {
               // A listener of the caller must never break a call.
             }
           },
+          // A provider that refuses a thinking level because the request carries tools teaches the model's flag: kept in the settings of this browser, and said (a run says it as an event first, and the
+          // page keeps it once). The next call reads the settings, so it needs no memory of its own.
+          onLearned: (learning) => rememberLearnedModel(inputOfLearning(learning), { announce: true }),
           // The author refusing cancels the call (an AbortError: the run pauses); the engine only asks when the policy requires it.
           acknowledgeFallback: (from, to) => {
             acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: boundaryOf(from), to: boundaryOf(to), accountScope: operation.accountScope });

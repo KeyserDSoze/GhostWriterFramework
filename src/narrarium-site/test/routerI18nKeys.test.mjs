@@ -111,7 +111,7 @@ test("the texts of the tables are not in the app entry: they are bundled with th
   for (const [name, tree] of entries) assert.equal(typeof tree.routing.task.default, "string", `routing.task (${name}) stays in the entry: the custom actions page uses it`);
 });
 
-test("only the views of the settings page import the lazy catalogue (the router tables, the request fields of the integration card, the thinking parameter and the API version of a model and the lazy dialog that reads the models of an endpoint, which shows the same suggestion), so the app entry cannot pull it in", async () => {
+test("only the views of the settings page import the lazy catalogue (the router tables, the request fields of the integration card, the thinking parameter, the API version and the thinking with tools of a model and the lazy dialog that reads the models of an endpoint, which shows the same suggestion), so the app entry cannot pull it in", async () => {
   const importers = [];
   for (const entry of await readdir(new URL("src/", SITE), { recursive: true })) {
     if (!/\.(ts|tsx)$/.test(entry)) continue;
@@ -121,6 +121,7 @@ test("only the views of the settings page import the lazy catalogue (the router 
   assert.deepEqual(importers.sort(), [
     "src/components/settings/IntegrationRequestFields.tsx",
     "src/components/settings/ModelApiVersionField.tsx",
+    "src/components/settings/NoThinkingWithToolsField.tsx",
     "src/components/settings/ReasoningParameterField.tsx",
     "src/components/settings/endpoint/ModelCatalogDialog.tsx",
     "src/components/settings/router/RouterSections.tsx",

@@ -83,6 +83,18 @@ const autopilotCallsEn = {
           disk: "The server was short of disk: the texts were not kept.",
         },
       },
+      provider: {
+        title: "What the provider said",
+        status: "HTTP status",
+        message: "Message",
+        type: "Type",
+        param: "Param",
+        code: "Code",
+        reply: "Reply",
+        raw: "Content",
+        empty: "No body: the provider sent nothing but the status.",
+        page: "A web page from a gateway or a proxy, not an answer of the provider.",
+      },
       attemptFacts: {
         apiVersion: "API version {{version}}",
         title: "Attempt {{number}}",
