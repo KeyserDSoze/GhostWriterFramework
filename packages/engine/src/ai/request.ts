@@ -1,4 +1,4 @@
-import { effectiveApiVersion, effectiveResponsesApiVersion, isAzureV1Endpoint, normalizeApiProtocol, normalizeEndpointUrl, normalizeThinking, type AiApiProtocol, type AiIntegrationConfig, type AiReasoningParameter, type AiThinking } from "./config.js";
+import { effectiveApiVersion, effectiveResponsesApiVersion, isAzureV1Endpoint, normalizeApiProtocol, normalizeEndpointUrl, normalizeThinking, type AiApiProtocol, type AiIntegrationConfig, type AiNoThinkingWithTools, type AiReasoningParameter, type AiThinking } from "./config.js";
 import type { AiCandidate } from "./router.js";
 import { forcedToolChoice } from "./structured.js";
 import { completionTokenLimit, isReasoningModel, requestOutputLimit } from "./token-limit.js";
@@ -158,10 +158,37 @@ function conversationOf(request: Pick<AiRequest, "system" | "user" | "messages">
   return messages;
 }
 
+/** A message as the engine builds it for a request, whichever protocol it is sent through: text, or parts of text and `image_url` with a data URL (the form of Chat Completions; the Responses API's `input` is made from it). */
+export interface ChatWireMessage {
+  role: AiMessage["role"];
+  content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
+}
+
 /** The content of a message as the OpenAI API takes it: text as it is, a part of text as a text part and an image as an `image_url` with its data URL. */
-function wireContent(content: AiMessage["content"]): string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> {
+function wireContent(content: AiMessage["content"]): ChatWireMessage["content"] {
   if (typeof content === "string") return content;
   return content.map((part) => (part.type === "text" ? { type: "text" as const, text: part.text } : { type: "image_url" as const, image_url: { url: part.dataUrl } }));
+}
+
+/**
+ * The messages as the Responses API takes them in `input`: the system prompt as a developer message (the way the Azure portal sends it), what the author wrote as `input_text` parts and its images as
+ * `input_image` (the address of the image, a data URL here, is a string and not an object), and what the assistant said before as `output_text`, the only kind of part an assistant message may have.
+ */
+function responsesInput(messages: readonly ChatWireMessage[]): Array<{ role: "developer" | "user" | "assistant"; content: Array<Record<string, unknown>> }> {
+  return messages.map((message) => {
+    const parts = typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content;
+    return {
+      role: message.role === "system" ? "developer" : message.role,
+      content: parts.map((part) => (part.type === "text"
+        ? { type: message.role === "assistant" ? "output_text" : "input_text", text: part.text }
+        : { type: "input_image", image_url: part.image_url.url })),
+    };
+  });
+}
+
+/** A function as a tool of the Responses API: flat (its name, description and parameters beside its type, not inside a `function` object), and never strict: the schemas of the engine are best effort, as they are with Chat Completions, where strict is off unless asked. */
+function responsesTool(schema: AiJsonSchema): Record<string, unknown> {
+  return { type: "function", name: schema.name, description: schema.description, parameters: schema.parameters, strict: false };
 }
 
 /** The thinking levels that travel to the provider (as `reasoning_effort`, or as the chat-template argument the model's `reasoningParameter` says): `automatic` and no level at all send nothing. */
@@ -220,10 +247,13 @@ function requestedEffort(candidate: Pick<AiCandidate, "integration"> & Partial<P
 /**
  * The level a request carries: the one that is asked for, unless the model declares that it does not reason (`supportsReasoning: false`), which
  * is a refusal waiting to happen, or its author says that no level is sent to it (`reasoningParameter: "none"`). `automatic`, a level the engine does
- * not know and no level at all send nothing: `automatic` is a choice, so it is not overridden by the integration's level.
+ * not know and no level at all send nothing: `automatic` is a choice, so it is not overridden by the integration's level. The Responses API has
+ * one field for the level (`reasoning.effort`), so a model whose level goes in the chat template (`chat_template_kwargs.reasoning_strength`) is sent none when it is asked through it.
  */
-export function reasoningEffortOf(candidate: Pick<AiCandidate, "integration"> & Partial<Pick<AiCandidate, "thinking" | "supportsReasoning" | "reasoningParameter">>): AiReasoningEffort | undefined {
-  return candidate.supportsReasoning === false || candidate.reasoningParameter === "none" ? undefined : requestedEffort(candidate);
+export function reasoningEffortOf(candidate: Pick<AiCandidate, "integration"> & Partial<Pick<AiCandidate, "thinking" | "supportsReasoning" | "reasoningParameter" | "apiProtocol">>): AiReasoningEffort | undefined {
+  if (candidate.supportsReasoning === false || candidate.reasoningParameter === "none") return undefined;
+  if (candidate.apiProtocol === "responses" && candidate.reasoningParameter === CHAT_TEMPLATE_PARAMETER) return undefined;
+  return requestedEffort(candidate);
 }
 
 /**
@@ -244,17 +274,30 @@ export function canSendNone(candidate: Partial<Pick<AiCandidate, "supportsReason
  * The thinking of the request a candidate gets (see `AiAttemptThinking`): the one rule of what is sent (`reasoningEffortOf`, and, for a model that refuses a level when the request carries function tools,
  * none: the level left out, or `none` sent), told in a few words. `tools`: the request carries function tools (a forced function, a loop of tool calls).
  */
-export function attemptThinking(candidate: Pick<AiCandidate, "integration"> & Partial<Pick<AiCandidate, "thinking" | "supportsReasoning" | "reasoningParameter" | "noThinkingWithTools">>, tools = false): AiAttemptThinking {
-  if (tools && candidate.noThinkingWithTools === "none" && canSendNone(candidate)) return "none";
-  if (tools && candidate.noThinkingWithTools) return requestedEffort(candidate) ? "not-sent" : "automatic";
+export function attemptThinking(candidate: Pick<AiCandidate, "integration"> & Partial<Pick<AiCandidate, "thinking" | "supportsReasoning" | "reasoningParameter" | "noThinkingWithTools" | "apiProtocol">>, tools = false): AiAttemptThinking {
+  const off = withToolsRule(candidate);
+  if (tools && off === "none" && canSendNone(candidate)) return "none";
+  if (tools && off) return requestedEffort(candidate) ? "not-sent" : "automatic";
   return reasoningEffortOf(candidate) ?? (requestedEffort(candidate) ? "not-sent" : "automatic");
 }
 
-/** One chat completion request exactly as it goes on the wire. */
+/**
+ * What a model is set (or was learned) to do with its thinking level when the request carries function tools (`noThinkingWithTools`). It is a rule of Chat Completions: the Responses API takes a thinking level and function
+ * tools together, so a model that is asked through it has none, whatever is set (it comes back into force if the model is set back to Chat Completions).
+ */
+export function withToolsRule(candidate: Partial<Pick<AiCandidate, "noThinkingWithTools" | "apiProtocol">>): AiNoThinkingWithTools | undefined {
+  return candidate.apiProtocol === "responses" ? undefined : candidate.noThinkingWithTools;
+}
+
+/** One request to a chat model exactly as it goes on the wire, through Chat Completions or the Responses API (`protocol`). */
 export interface ChatRequest {
   url: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
+  /** The protocol the request is made through: `chat-completions` (the body has `messages`), or `responses` (the body has `input`). */
+  protocol: AiApiProtocol;
+  /** The messages the body carries, in the engine's form (see `ChatWireMessage`), whichever protocol they are sent through: what the hooks report and the router counts. */
+  messages: ChatWireMessage[];
   /** The reply is asked for as server-sent events: every request, the forced function included, unless the integration's `streamMode` is `off` or the model declares it does not stream. */
   stream: boolean;
   /** The structured reply is requested as a forced function call; otherwise the JSON schema travels in the system prompt. */
@@ -290,32 +333,37 @@ export interface ChatRequestOptions {
  * Pure: it calls nothing and changes nothing. Throws only when the integration cannot be called at all.
  */
 export function buildChatRequest(
-  candidate: Pick<AiCandidate, "integration" | "model"> & Partial<Pick<AiCandidate, "underlyingModel" | "supportsToolCalls" | "supportsStreaming" | "supportsReasoning" | "reasoningParameter" | "noThinkingWithTools" | "apiVersion" | "endpointUrl" | "maxOutputTokens" | "thinking">>,
+  candidate: Pick<AiCandidate, "integration" | "model"> & Partial<Pick<AiCandidate, "underlyingModel" | "supportsToolCalls" | "supportsStreaming" | "supportsReasoning" | "reasoningParameter" | "noThinkingWithTools" | "apiVersion" | "apiProtocol" | "endpointUrl" | "maxOutputTokens" | "thinking">>,
   request: Pick<AiRequest, "system" | "user" | "messages" | "json" | "maxOutputTokens" | "outputBoost" | "temperature" | "onText">,
   options: ChatRequestOptions = {},
 ): ChatRequest {
   const { integration, model } = candidate;
-  // The API version of the model that is asked: its own, else its integration's. A fallback in another integration, or another model, is asked with its own.
-  const apiVersion = effectiveApiVersion(integration, candidate);
-  const target = requestTarget(integration, model, options.githubModelsBaseUrl ?? GITHUB_MODELS_BASE_URL, apiVersion, "chat-completions", normalizeEndpointUrl(candidate.endpointUrl));
+  const protocol = effectiveApiProtocol(candidate);
+  const responses = protocol === "responses";
+  // The API version of the model that is asked: its own, else its integration's (for the Responses API, one that has it). A fallback in another integration, or another model, is asked with its own.
+  const apiVersion = (responses ? effectiveResponsesApiVersion : effectiveApiVersion)(integration, candidate);
+  const target = requestTarget(integration, model, options.githubModelsBaseUrl ?? GITHUB_MODELS_BASE_URL, apiVersion, protocol, normalizeEndpointUrl(candidate.endpointUrl));
   const useTools = Boolean(request.json) && candidate.supportsToolCalls !== false;
   // What the integration turns off a model does not turn on; what a model declares it cannot do is not asked of it.
   const stream = integration.streamMode !== "off" && candidate.supportsStreaming !== false;
   const notes: string[] = [];
   if (integration.streamMode !== "off" && !stream) notes.push(`Streaming was not used: "${model}" is declared as not streaming (supportsStreaming is off).`);
-  const messages = conversationOf(request, request.json && !useTools ? jsonInstruction(request.json) : undefined);
+  const messages = conversationOf(request, request.json && !useTools ? jsonInstruction(request.json) : undefined).map((message): ChatWireMessage => ({ role: message.role, content: wireContent(message.content) }));
   const outputLimit = requestOutputLimit(request, candidate);
-  const body: Record<string, unknown> = {
-    model,
-    messages: messages.map((message) => ({ role: message.role, content: wireContent(message.content) })),
-    ...completionTokenLimit(integration.provider, model, outputLimit, candidate.underlyingModel, apiVersion),
-  };
+  // The output limit and the thinking level are the one field each of the Responses API (`max_output_tokens`, `reasoning.effort`); Chat Completions has the parameters that its model families expect.
+  const body: Record<string, unknown> = responses
+    ? { model, input: responsesInput(messages), ...(outputLimit ? { max_output_tokens: outputLimit } : {}) }
+    : { model, messages, ...completionTokenLimit(integration.provider, model, outputLimit, candidate.underlyingModel, apiVersion) };
   if (request.temperature !== undefined && !isReasoningModel(integration.provider, model, candidate.underlyingModel)) body.temperature = request.temperature;
   // A model that refuses a level when the request carries function tools is sent none with them, or `none` when it takes no request without a level (it keeps the level for a request without tools).
-  const off = useTools ? candidate.noThinkingWithTools : undefined;
+  // The Responses API takes both together, so it has no such rule (`withToolsRule`).
+  const off = useTools ? withToolsRule(candidate) : undefined;
   const sendNone = off === "none" && canSendNone(candidate);
   const thinking: AiReasoningEffort | "none" | undefined = sendNone ? "none" : off ? undefined : reasoningEffortOf(candidate);
-  if (thinking) applyReasoningLevel(body, candidate.reasoningParameter, thinking);
+  if (thinking) {
+    if (responses) body.reasoning = { effort: thinking };
+    else applyReasoningLevel(body, candidate.reasoningParameter, thinking);
+  }
   const asked = requestedEffort(candidate);
   const noThinkingWithTools = Boolean(off) && (sendNone || Boolean(asked));
   if (sendNone) {
@@ -325,20 +373,28 @@ export function buildChatRequest(
   } else if (asked && !thinking) {
     notes.push(candidate.reasoningParameter === "none"
       ? `The thinking level "${asked}" was not sent: "${model}" has its thinking parameter set to "none".`
-      : `The thinking level "${asked}" was not sent: "${model}" is declared as not reasoning (supportsReasoning is off).`);
+      : candidate.supportsReasoning === false
+        ? `The thinking level "${asked}" was not sent: "${model}" is declared as not reasoning (supportsReasoning is off).`
+        : `The thinking level "${asked}" was not sent: the thinking parameter of "${model}" is "${CHAT_TEMPLATE_PARAMETER}", which only Chat Completions has, and the Responses API takes the level in "reasoning.effort".`);
   }
   if (useTools && request.json) {
-    body.tools = [{ type: "function", function: request.json }];
-    body.tool_choice = forcedToolChoice(integration.provider, apiVersion, request.json.name);
+    // Only the one function of the reply is sent, so "required" forces it: llama.cpp and LM Studio understand it where they ignore the named form. Chat Completions of old Azure API versions only knows the named form.
+    body.tools = [responses ? responsesTool(request.json) : { type: "function", function: request.json }];
+    body.tool_choice = responses ? "required" : forcedToolChoice(integration.provider, apiVersion, request.json.name);
   }
+  // The Responses API keeps what it answers for 30 days unless it is told not to: a manuscript is not stored.
+  if (responses) body.store = false;
   if (stream) {
     body.stream = true;
-    body.stream_options = { include_usage: true };
+    // Chat Completions sends the tokens of a stream only when asked; the Responses API always ends its stream with them.
+    if (!responses) body.stream_options = { include_usage: true };
   }
   return {
     url: target.url,
     headers: { "content-type": "application/json", accept: stream ? "text/event-stream" : "application/json", ...target.headers },
     body,
+    protocol,
+    messages,
     stream,
     useTools,
     ...(apiVersion ? { apiVersion } : {}),

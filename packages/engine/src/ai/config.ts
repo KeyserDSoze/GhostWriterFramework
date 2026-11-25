@@ -173,6 +173,7 @@ export interface AiChatModelConfig {
    * The model refuses a thinking level when the request carries function tools («Function tools with reasoning_effort are not supported for gpt-6-luna…»): a request with tools is asked without thinking,
    * and a request without tools keeps its level. `true` leaves the level out of the request; `"none"` sends `reasoning_effort: "none"`, for a model that refuses a request with tools that leaves it out
    * (the GPT-6 models that take function tools on Chat Completions do). The author sets it, and the engine learns it from the refusal (`AiModelMemory`) when the provider says so. Any other value is no value.
+   * It is a rule of Chat Completions: a model asked through the Responses API (`apiProtocol`) is sent its level with tools, whatever this says.
    */
   noThinkingWithTools?: AiNoThinkingWithTools;
   /**
@@ -182,7 +183,8 @@ export interface AiChatModelConfig {
   apiVersion?: string;
   /**
    * How this model's requests are made (`AI_API_PROTOCOLS`): absent or `chat-completions`, Chat Completions, as always; `responses`, the Responses API. The key of the integration is sent the way its provider
-   * takes it (the `api-key` header of Azure OpenAI, a bearer token for the others), whichever protocol it is. With the Responses API a thinking level and function tools work together, so `noThinkingWithTools` is not used.
+   * takes it (the `api-key` header of Azure OpenAI, a bearer token for the others), whichever protocol it is. With the Responses API a thinking level and function tools work together, so `noThinkingWithTools` is not used,
+   * and its one field for the level (`reasoning.effort`) leaves the chat-template parameter of `reasoningParameter` without a use.
    */
   apiProtocol?: AiApiProtocol;
   /**

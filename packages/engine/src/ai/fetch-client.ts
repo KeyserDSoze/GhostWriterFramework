@@ -30,18 +30,12 @@ const MAX_RETRY_AFTER_MS = 300_000;
 /** A message of an attempt, as it is reported: its role and its content, which is text or parts (text and images, with their data URLs). */
 export type FetchAiMessage = AiMessage;
 
-/** A message as it goes on the wire: text, or parts of text and `image_url`. */
-interface WireMessage {
-  role: FetchAiMessage["role"];
-  content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
-}
-
 /**
  * The messages of an attempt for its hook: what the request sends, read back into the engine's form, so that they are always copies (a listener can never change
  * a word of what is sent). An attempt that could not be built reports what the request would have sent.
  */
 function reportedMessages(built: ChatRequest | null, request: Pick<AiRequest, "system" | "user" | "messages">): FetchAiMessage[] {
-  const wire = built?.body.messages as WireMessage[] | undefined;
+  const wire = built?.messages;
   if (wire) {
     return wire.map((message) => ({
       role: message.role,
@@ -482,7 +476,8 @@ const MAX_STEP_MESSAGE_CHARACTERS = 240;
  * level («does not support 'none' with this model») is not this: that model takes function tools on the Responses API only.
  */
 function nextWithoutThinking(candidate: AiCandidate, built: ChatRequest | null, error: unknown, sent: ReadonlySet<string>): "omit" | "none" | undefined {
-  if (!(error instanceof AiProviderError) || !built?.useTools || !refusesThinkingWithTools(error.body)) return undefined;
+  // The Responses API takes function tools with a thinking level: a refusal there is no refusal of this kind, and asking again without the level would be the same request.
+  if (!(error instanceof AiProviderError) || !built?.useTools || built.protocol === "responses" || !refusesThinkingWithTools(error.body)) return undefined;
   return (["omit", "none"] as const).find((way) => !sent.has(way) && (way !== "none" || canSendNone(candidate)));
 }
 
@@ -659,18 +654,19 @@ const TRANSIENT_STATUSES = new Set([408, 429, 502, 503, 504, 520, 521, 522, 523,
  */
 const THINKING_PARAMETER = /reasoning[\s_-]?effort|reasoning[\s_-]?strength|chat[\s_-]?template[\s_-]?kwargs/i;
 
-/** Where a thinking level was sent, for the author who has to change it: the integration it was asked for, and the parameter it travelled in. */
+/** Where a thinking level was sent, for the author who has to change it: the integration it was asked for, and the parameter it travelled in (`reasoning.effort` is the Responses API's). */
 interface SentThinking {
   integration: string;
-  parameter: "reasoning_effort" | "chat_template_kwargs.reasoning_strength";
+  parameter: "reasoning_effort" | "reasoning.effort" | "chat_template_kwargs.reasoning_strength";
 }
 
-/** What to change when a model refuses its level: the "Thinking parameter" of the model (to the other of the two, or to none), or the thinking of the task or of the integration. */
+/** What to change when a model refuses its level: the "Thinking parameter" of the model (to the other of the two, or to none), or the thinking of the task or of the integration. The Responses API has one field for the level, so there is no other to offer. */
 function thinkingRemedy(model: string, sent: SentThinking): string {
   const other = sent.parameter === "reasoning_effort"
     ? `"chat_template_kwargs.reasoning_strength" (the level as an argument of the chat template, as Muse Glimmer takes it)`
     : `"reasoning_effort" (the OpenAI field)`;
-  return `Set "Thinking parameter" of the model "${model}" in AI Integrations to ${other} or to "none" (no level is sent), or set thinking to "Automatic" for this task in the AI Router, or for the integration "${sent.integration}" in AI Integrations.`;
+  const choices = sent.parameter === "reasoning.effort" ? `"none" (no level is sent)` : `${other} or to "none" (no level is sent)`;
+  return `Set "Thinking parameter" of the model "${model}" in AI Integrations to ${choices}, or set thinking to "Automatic" for this task in the AI Router, or for the integration "${sent.integration}" in AI Integrations.`;
 }
 
 /**
@@ -1296,7 +1292,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       requestId = requestIdOf(response.headers);
       if (response.ok) break;
       trace.firstByteMs ??= elapsed();
-      const failure = await clock.guard(providerError(response, integration.provider, model, redact, built.thinking && built.thinkingWhy !== "tools" ? { integration: integration.name, parameter: built.reasoningParameter ?? "reasoning_effort" } : undefined));
+      const failure = await clock.guard(providerError(response, integration.provider, model, redact, built.thinking && built.thinkingWhy !== "tools" ? { integration: integration.name, parameter: built.protocol === "responses" ? "reasoning.effort" : built.reasoningParameter ?? "reasoning_effort" } : undefined));
       failure.transport = transport();
       // A provider that refuses `stream_options` is asked again, at once, without it, and is not asked it again: its replies carry no token count, which is then an estimate.
       if (usageRequested && refusesUsageOption(failure, label)) {
