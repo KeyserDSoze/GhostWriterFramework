@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { create } from "zustand";
 import type { EntityKind } from "@/narrarium/canon";
 
@@ -212,6 +213,15 @@ export interface AssistantSessionMeta {
   updatedAt: string;
   /** Monotonic revision of persisted session content. Cloud ETags remain in `revision`. */
   contentRevision?: number;
+  /** A chat of Brainstorming, the mode of the Copilot on the Synopsis page: listed apart from the Copilot's, with the other chats of its book (`bookId`). */
+  mode?: "brainstorming";
+  bookId?: string;
+}
+
+/** The book Brainstorming works on, and the title its new chats take. */
+export interface BrainstormingTarget {
+  bookId: string;
+  title: string;
 }
 
 export interface AssistantSessionProvenance {
@@ -263,8 +273,19 @@ interface AssistantState {
   sessionAccountIdentity: string | null;
   sessionsLoading: boolean;
   currentSession: AssistantSession | null;
+  /**
+   * Brainstorming, the mode of the Copilot that the Synopsis page opens for its book, or `null` for the Copilot. While it lasts the Copilot's chat is
+   * kept aside (`copilotSession`) and comes back when the mode ends: «Back to Copilot», the Copilot's own launcher, or leaving the page.
+   */
+  brainstorming: BrainstormingTarget | null;
+  copilotSession: AssistantSession | null;
+  /** What a page adds to the launcher of the shell (the Synopsis adds Brainstorming's), drawn by the page's own code. */
+  pageLauncher: (() => ReactNode) | null;
   setOpen: (open: boolean) => void;
   launch: (mode: "chat" | "voice") => void;
+  startBrainstorming: (target: BrainstormingTarget) => void;
+  stopBrainstorming: () => void;
+  setPageLauncher: (launcher: (() => ReactNode) | null) => void;
   consumeLaunchMode: () => void;
   setBusy: (busy: boolean) => void;
   setSessions: (sessions: AssistantSessionMeta[]) => void;
@@ -286,8 +307,25 @@ export const useAssistantStore = create<AssistantState>((set) => ({
   sessionAccountIdentity: null,
   sessionsLoading: false,
   currentSession: null,
+  brainstorming: null,
+  copilotSession: null,
+  pageLauncher: null,
   setOpen: (open) => set({ open }),
-  launch: (launchMode) => set({ open: true, launchMode }),
+  launch: (launchMode) => set((state) => ({ ...withoutBrainstorming(state), open: true, launchMode })),
+  // The chat of the book's Brainstorming is opened by the panel (its latest, or a new one); the Copilot's waits aside.
+  startBrainstorming: (target) => set((state) => {
+    const current = state.currentSession;
+    const brainstorm = current?.mode === "brainstorming";
+    return {
+      brainstorming: target,
+      open: true,
+      launchMode: "chat",
+      copilotSession: brainstorm ? state.copilotSession : current,
+      currentSession: brainstorm && current.bookId === target.bookId ? current : null,
+    };
+  }),
+  stopBrainstorming: () => set(withoutBrainstorming),
+  setPageLauncher: (pageLauncher) => set({ pageLauncher }),
   consumeLaunchMode: () => set({ launchMode: null }),
   setBusy: (busy) => set({ busy }),
   setSessions: (sessions) => set({ sessions }),
@@ -338,7 +376,7 @@ export const useAssistantStore = create<AssistantState>((set) => ({
     })),
 }));
 
-export function createEmptyAssistantSession(contextTitle: string, provenance?: AssistantSessionProvenance): AssistantSession {
+export function createEmptyAssistantSession(contextTitle: string, provenance?: AssistantSessionProvenance, brainstorming?: { bookId: string }): AssistantSession {
   const timestamp = new Date().toISOString();
   return {
     schemaVersion: 1,
@@ -347,6 +385,7 @@ export function createEmptyAssistantSession(contextTitle: string, provenance?: A
     contextTitle,
     updatedAt: timestamp,
     contentRevision: 0,
+    ...(brainstorming ? { mode: "brainstorming" as const, bookId: brainstorming.bookId } : {}),
     messages: [],
     attachments: [],
     archive: emptyAssistantSessionArchive(),
@@ -356,6 +395,18 @@ export function createEmptyAssistantSession(contextTitle: string, provenance?: A
     compactedMessageCount: 0,
     ...(provenance ? { provenance } : {}),
     quarantinedActions: [],
+  };
+}
+
+/** The end of Brainstorming: the Copilot's chat comes back, and the Brainstorming one stays in the history of its book. */
+function withoutBrainstorming(state: AssistantState): Partial<AssistantState> {
+  const current = state.currentSession;
+  if (!state.brainstorming && current?.mode !== "brainstorming") return {};
+  return {
+    brainstorming: null,
+    copilotSession: null,
+    // While Brainstorming lasts the panel holds its chat, or none while it opens it: either way the Copilot's chat is the one that comes back.
+    currentSession: !current || current.mode === "brainstorming" ? state.copilotSession : current,
   };
 }
 

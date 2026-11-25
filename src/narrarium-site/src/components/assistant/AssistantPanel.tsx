@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { chooseBranch } from "@/branches/memoryEdits";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -39,6 +39,7 @@ import {
   type AssistantAttachment,
   type AssistantFileUpdate,
   type AssistantMessage,
+  type AssistantSession,
   type AssistantSessionMeta,
 } from "@/assistant/store";
 import { appendAssistantNote, applyParagraphRewrite, compactAssistantSession, runAssistantPrompt } from "@/assistant/service";
@@ -184,6 +185,12 @@ async function outlineWorkingCopy(book: BookEntry, branch: string) {
   return { read: (paths: readonly string[]) => outlineFilesAt(source, paths), commit: source.commit };
 }
 
+// Brainstorming's own parts (the Copilot's mode on the Synopsis page): loaded the first time the panel is in that mode, and only the Synopsis page enters it.
+const brainstormParts = () => import("@/components/assistant/brainstorm/BrainstormPanelParts");
+const BrainstormIdentity = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormIdentity })));
+const BrainstormBack = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormBack })));
+const BrainstormEmpty = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormEmpty })));
+
 export function AssistantPanel() {
   const { t } = useTranslation();
   const location = useLocation();
@@ -262,6 +269,8 @@ export function AssistantPanel() {
     busy,
     setBusy,
   } = useAssistantStore();
+  // Brainstorming, the Copilot's mode on the Synopsis page: its own chats, of its book only, and only its own tools (`@/assistant/brainstorm`).
+  const brainstorming = useAssistantStore((state) => state.brainstorming);
   activeBookIdRef.current = bookId;
   activeBranchRef.current = branch;
   activePathnameRef.current = location.pathname;
@@ -454,6 +463,40 @@ export function AssistantPanel() {
     return () => clearTimeout(timer);
   }, [currentSession, user, accessToken, toast, autosaveRetry]);
 
+  // A chat that leaves the panel without the panel's own switch (Brainstorming starts or ends from the page, or from the launcher) is saved as it is.
+  const previousSessionRef = useRef(currentSession);
+  useEffect(() => {
+    const previous = previousSessionRef.current;
+    previousSessionRef.current = currentSession;
+    if (!previous || previous.id === currentSession?.id) return;
+    const fingerprint = assistantSessionSaveFingerprint(previous);
+    if (savedSessionFingerprintsRef.current.get(previous.id) === fingerprint) return;
+    void saveLocalChatSession(previous).then(() => {
+      savedSessionFingerprintsRef.current.set(previous.id, fingerprint);
+      const state = useAssistantStore.getState();
+      state.setSessions(upsertAssistantSessionMeta(state.sessions, previous, { fileId: previous.id }));
+    }).catch(() => undefined);
+  }, [currentSession]);
+
+  // Brainstorming opens the latest chat of its book, or a new one, once the list of the chats is read.
+  const brainstormingBookId = brainstorming?.bookId;
+  const needsBrainstormChat = Boolean(brainstorming) && !currentSession;
+  useEffect(() => {
+    if (!brainstormingBookId || !needsBrainstormChat) return;
+    let active = true;
+    void refreshAssistantSessionIndex(localWorkspaceScope()).catch(() => undefined).then(async () => {
+      const state = useAssistantStore.getState();
+      if (!active || state.brainstorming?.bookId !== brainstormingBookId || state.currentSession) return;
+      const latest = state.sessions.find((session) => session.mode === "brainstorming" && session.bookId === brainstormingBookId);
+      const loaded = latest ? await loadLocalChatSession(latest.fileId ?? latest.id).catch(() => null) : null;
+      const now = useAssistantStore.getState();
+      if (!active || now.brainstorming?.bookId !== brainstormingBookId || now.currentSession) return;
+      now.setCurrentSession(loaded ?? createEmptyAssistantSession(now.brainstorming.title, undefined, { bookId: brainstormingBookId }));
+      setActiveTab("chat");
+    });
+    return () => { active = false; };
+  }, [brainstormingBookId, needsBrainstormChat]);
+
   useEffect(() => {
     if (!currentSession || busy || assistantSessionCompactionTarget(currentSession) === null) return;
     const sourceSession = currentSession;
@@ -521,20 +564,23 @@ export function AssistantPanel() {
 
   function ensureSession() {
     const existing = useAssistantStore.getState().currentSession;
+    const brainstormingNow = useAssistantStore.getState().brainstorming;
     if (existing) {
       const safe = invalidateAssistantSecretContext(existing, directSecretPath(route));
       if (safe !== existing) {
         setCurrentSession(safe);
         return safe;
       }
-      if (!existing.provenance && !existing.messages.length && sessionContext) {
+      if (!existing.provenance && !existing.messages.length && sessionContext && existing.mode !== "brainstorming") {
         const bound = { ...existing, provenance: sessionContext };
         setCurrentSession(bound);
         return bound;
       }
       return existing;
     }
-    const next = createEmptyAssistantSession(contextLabel, sessionContext);
+    const next = brainstormingNow
+      ? createEmptyAssistantSession(brainstormingNow.title, undefined, { bookId: brainstormingNow.bookId })
+      : createEmptyAssistantSession(contextLabel, sessionContext);
     setCurrentSession(next);
     return next;
   }
@@ -699,9 +745,20 @@ export function AssistantPanel() {
   async function newChat() {
     cancelSessionOperations();
     if (!await flushCurrentSessionBeforeSwitch()) return;
-    setCurrentSession(createEmptyAssistantSession(contextLabel, sessionContext));
+    const brainstormingNow = useAssistantStore.getState().brainstorming;
+    setCurrentSession(brainstormingNow
+      ? createEmptyAssistantSession(brainstormingNow.title, undefined, { bookId: brainstormingNow.bookId })
+      : createEmptyAssistantSession(contextLabel, sessionContext));
     setActiveTab("chat");
     setOpen(true);
+  }
+
+  /** «Back to Copilot»: Brainstorming's chat is saved and stays in the history of its book, and the Copilot's comes back as it was. */
+  async function backToCopilot() {
+    cancelSessionOperations();
+    if (!await flushCurrentSessionBeforeSwitch()) return;
+    useAssistantStore.getState().stopBrainstorming();
+    setActiveTab("chat");
   }
 
   function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
@@ -1423,6 +1480,7 @@ export function AssistantPanel() {
       }
     };
     try {
+      if (session.mode === "brainstorming") return await askBrainstorming(trimmed, session, controller.signal, ownsRequest, accountScope);
       const booksState = useBooksStore.getState();
       const routeContext = await loadWriterContext(location.pathname, settings, settings.books, booksState.structures, booksState.workingBranches, branch);
       if (!ownsRequest()) return null;
@@ -1509,6 +1567,35 @@ export function AssistantPanel() {
         setBusy(false);
       }
     }
+  }
+
+  /**
+   * A request to Brainstorming: its own runner (loaded with its first request), with only its own tools and the Synopsis of its book as its context.
+   * None of the Copilot's tools, local commands or voice commands is reached from here.
+   */
+  async function askBrainstorming(prompt: string, session: AssistantSession, signal: AbortSignal, ownsRequest: () => boolean, accountScope: string | null): Promise<AssistantMessage | null> {
+    const book = session.bookId ? settings.books.find((entry) => entry.id === session.bookId) ?? null : null;
+    const userMessage: AssistantMessage = { id: crypto.randomUUID(), role: "user", text: prompt };
+    useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage] }));
+    setDraft("");
+    const { runBrainstormPrompt } = await import("@/assistant/brainstorm/runner");
+    const latest = useAssistantStore.getState().currentSession;
+    if (!ownsRequest() || !latest || latest.id !== session.id) return null;
+    const reply = await runBrainstormPrompt({
+      prompt,
+      settings,
+      book,
+      branch,
+      structure: book ? useBooksStore.getState().structures[book.id] : undefined,
+      history: latest.messages.filter((message) => message.id !== userMessage.id),
+      signal,
+      accountScope,
+    });
+    if (!ownsRequest()) return null;
+    const owned: AssistantMessage = { ...reply, branch, ...(reply.action ? { action: { ...reply.action, branch: reply.action.branch ?? branch } } : {}) };
+    useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, owned] }));
+    setRequestStatus("");
+    return owned;
   }
 
   async function tryHandleLocalVoiceTool(
@@ -2589,7 +2676,7 @@ export function AssistantPanel() {
   const messagesView = (
     <div className="space-y-4" role="log" aria-live="polite" aria-relevant="additions" aria-busy={busy} aria-label={t("assistant.chatLog")}>
       {!busy && currentSession?.messages.length ? <span className="sr-only" key={`message-announcement-${currentSession.messages[currentSession.messages.length - 1]?.id}`}>{currentSession.messages[currentSession.messages.length - 1]?.text}</span> : null}
-      {currentSession?.messages.length ? null : (
+      {currentSession?.messages.length ? null : brainstorming ? <Suspense fallback={null}><BrainstormEmpty /></Suspense> : (
         <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">{t("assistant.empty")}</div>
       )}
       {(currentSession?.messages ?? []).map((message, index) => (
@@ -2598,7 +2685,7 @@ export function AssistantPanel() {
             {message.role === "user" ? (
               <div className="rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm leading-6 text-primary-foreground shadow-sm whitespace-pre-wrap">{message.text}</div>
             ) : (
-              <div className="rounded-2xl rounded-bl-sm border bg-background px-4 py-3 shadow-sm">
+              <div className={brainstorming ? "rounded-2xl rounded-bl-sm border border-primary/50 bg-background px-4 py-3 shadow-sm" : "rounded-2xl rounded-bl-sm border bg-background px-4 py-3 shadow-sm"}>
                 <div className="doc-prose max-w-none text-sm leading-7" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(message.text) }} />
               </div>
             )}
@@ -2684,14 +2771,16 @@ export function AssistantPanel() {
     </div>
   );
 
+  // The Copilot lists its own chats; Brainstorming only the ones of its book.
+  const listedSessions = sessions.filter((session) => (brainstorming ? session.mode === "brainstorming" && session.bookId === brainstorming.bookId : session.mode !== "brainstorming"));
   const historyView = (
     <div className="space-y-2">
       <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => void newChat()}>
         <MessageSquarePlus className="mr-2 h-4 w-4" />{t("assistant.newChat")}
       </Button>
       {loadingSessions && <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("assistant.loadingChats")}</div>}
-      {!loadingSessions && sessions.length === 0 && <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">{t("assistant.noSavedChats")}</p>}
-      {sessions.map((session) => {
+      {!loadingSessions && listedSessions.length === 0 && <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">{t("assistant.noSavedChats")}</p>}
+      {listedSessions.map((session) => {
         const id = session.fileId ?? session.id;
         const active = (currentSession?.fileId ?? currentSession?.id) === id;
         return (
@@ -2712,17 +2801,23 @@ export function AssistantPanel() {
   );
 
   const panel = (
-    <div className="flex h-full min-h-0 flex-col bg-card">
+    <div className={brainstorming ? "brainstorm-accent flex h-full min-h-0 flex-col bg-card" : "flex h-full min-h-0 flex-col bg-card"} data-assistant-mode={brainstorming ? "brainstorming" : "copilot"}>
       <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><Ghost className="h-4 w-4" /></div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold leading-tight">{t("assistant.title")}</p>
-            <p className="truncate text-xs text-muted-foreground leading-tight">{contextLabel}</p>
+        {brainstorming ? (
+          <Suspense fallback={<span className="h-8 w-8" />}><BrainstormIdentity book={structures[brainstorming.bookId]?.title ?? bookEntryOf(brainstorming.bookId)?.name ?? ""} /></Suspense>
+        ) : (
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><Ghost className="h-4 w-4" /></div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold leading-tight">{t("assistant.title")}</p>
+              <p className="truncate text-xs text-muted-foreground leading-tight">{contextLabel}</p>
+            </div>
           </div>
-        </div>
+        )}
         <div className="flex items-center gap-1">
-          <Button variant={voiceMode ? "default" : "ghost"} size="icon" className="h-8 w-8" title={t("assistant.liveVoice")} onClick={toggleVoiceMode}><Ghost className="h-4 w-4" /></Button>
+          {brainstorming
+            ? <Suspense fallback={null}><BrainstormBack onBack={() => void backToCopilot()} /></Suspense>
+            : <Button variant={voiceMode ? "default" : "ghost"} size="icon" className="h-8 w-8" title={t("assistant.liveVoice")} onClick={toggleVoiceMode}><Ghost className="h-4 w-4" /></Button>}
           <Button variant="ghost" size="icon" className="h-8 w-8" title={fullScreen ? t("assistant.exitFullscreen") : t("assistant.fullscreen")} onClick={() => setFullScreen((value) => !value)}>{fullScreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}</Button>
           <Button variant="ghost" size="icon" className="h-8 w-8" title={t("assistant.close")} onClick={closeAssistant}><X className="h-4 w-4" /></Button>
         </div>
@@ -2730,20 +2825,21 @@ export function AssistantPanel() {
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "chat" | "history" | "autopilot")} className="flex min-h-0 flex-1 flex-col">
         <div className="border-b px-3 py-2">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className={brainstorming ? "grid w-full grid-cols-2" : "grid w-full grid-cols-3"}>
             <TabsTrigger value="chat"><Bot className="mr-1.5 h-3.5 w-3.5" />{t("assistant.tabChat")}</TabsTrigger>
             <TabsTrigger value="history"><History className="mr-1.5 h-3.5 w-3.5" />{t("assistant.tabHistory")}</TabsTrigger>
-            <TabsTrigger value="autopilot"><Plane className="mr-1.5 h-3.5 w-3.5" />{t("autopilot.title")}</TabsTrigger>
+            {!brainstorming && <TabsTrigger value="autopilot"><Plane className="mr-1.5 h-3.5 w-3.5" />{t("autopilot.title")}</TabsTrigger>}
           </TabsList>
         </div>
 
         {activeTab === "history" ? (
           <ScrollArea className="min-h-0 flex-1 px-3 py-3">{historyView}</ScrollArea>
-        ) : activeTab === "autopilot" ? (
+        ) : activeTab === "autopilot" && !brainstorming ? (
           <ScrollArea className="min-h-0 flex-1 px-3 py-3"><AutopilotAssistantTab onNavigate={closeAssistant} /></ScrollArea>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+              {!brainstorming && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" className="h-8 gap-1">
@@ -2766,6 +2862,7 @@ export function AssistantPanel() {
                   })}
                 </DropdownMenuContent>
               </DropdownMenu>
+              )}
               <Button type="button" variant="outline" size="sm" className="h-8 gap-1" title={t("assistant.newChat")} onClick={() => void newChat()}>
                 <MessageSquarePlus className="h-4 w-4" /><span className="hidden sm:inline">{t("assistant.newChat")}</span>
               </Button>
@@ -2782,19 +2879,28 @@ export function AssistantPanel() {
                 <DropdownMenuContent align="end" className="w-64">
                   <DropdownMenuLabel className="text-xs">{currentSession?.title ?? t("assistant.title")}</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => void saveCurrentChatAsNote({ mode: "full" })}>{t("assistant.saveFullChatToNote")}</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => void saveCurrentChatAsNote({ mode: "full", deleteAfter: true })}>{t("assistant.saveFullChatToNoteAndDelete")}</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => void saveCurrentChatAsNote({ mode: "reply-summary" })}>{t("assistant.saveReplySummaryToNote")}</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => void saveCurrentChatAsNote({ mode: "reply-summary", deleteAfter: true })}>{t("assistant.saveReplySummaryToNoteAndDelete")}</DropdownMenuItem>
-                  <DropdownMenuSeparator />
+                  {!brainstorming && (
+                    <>
+                      <DropdownMenuItem onSelect={() => void saveCurrentChatAsNote({ mode: "full" })}>{t("assistant.saveFullChatToNote")}</DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => void saveCurrentChatAsNote({ mode: "full", deleteAfter: true })}>{t("assistant.saveFullChatToNoteAndDelete")}</DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => void saveCurrentChatAsNote({ mode: "reply-summary" })}>{t("assistant.saveReplySummaryToNote")}</DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => void saveCurrentChatAsNote({ mode: "reply-summary", deleteAfter: true })}>{t("assistant.saveReplySummaryToNoteAndDelete")}</DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
                   <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "markdown", destination: "download" })}><Download className="mr-2 h-4 w-4" />{t("assistant.downloadChatMarkdown")}</DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "pdf", destination: "download" })}><Download className="mr-2 h-4 w-4" />{t("assistant.downloadChatPdf")}</DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "json", destination: "download" })}><Download className="mr-2 h-4 w-4" />{t("assistant.downloadChatJson")}</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "markdown", destination: "drive" })}><FileText className="mr-2 h-4 w-4" />{t("assistant.saveChatMarkdownToDrive")}</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "pdf", destination: "drive" })}><FileText className="mr-2 h-4 w-4" />{t("assistant.saveChatPdfToDrive")}</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "json", destination: "drive" })}><FileText className="mr-2 h-4 w-4" />{t("assistant.saveChatJsonToDrive")}</DropdownMenuItem>
+                  {!brainstorming && (
+                    <>
+                      <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "markdown", destination: "drive" })}><FileText className="mr-2 h-4 w-4" />{t("assistant.saveChatMarkdownToDrive")}</DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "pdf", destination: "drive" })}><FileText className="mr-2 h-4 w-4" />{t("assistant.saveChatPdfToDrive")}</DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => void exportCurrentChat({ format: "json", destination: "drive" })}><FileText className="mr-2 h-4 w-4" />{t("assistant.saveChatJsonToDrive")}</DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
+              {!brainstorming && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" className="ml-auto h-8 max-w-full shrink-0 text-xs text-muted-foreground">{t("assistant.contextInspector")}</Button>
@@ -2809,6 +2915,7 @@ export function AssistantPanel() {
                   </div>
                 </DropdownMenuContent>
               </DropdownMenu>
+              )}
             </div>
 
             {currentSession?.attachments.length ? (
@@ -2840,14 +2947,15 @@ export function AssistantPanel() {
                       void sendPrompt(draft);
                     }
                   }}
-                  placeholder={t("assistant.placeholder")}
+                  placeholder={brainstorming ? t("brainstorm.placeholder") : t("assistant.placeholder")}
                   className="min-h-[76px] resize-none"
                 />
                 <div className="flex items-center gap-1.5">
-                  <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0" title={t("assistant.attachFiles")} onClick={() => fileInputRef.current?.click()}><Paperclip className="h-4 w-4" /></Button>
+                  {!brainstorming && <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0" title={t("assistant.attachFiles")} onClick={() => fileInputRef.current?.click()}><Paperclip className="h-4 w-4" /></Button>}
                   <Button type="button" variant={listening ? "default" : "ghost"} size="icon" className="h-9 w-9 shrink-0" title={listening ? t("assistant.stopMic") : t("assistant.microphone")} onClick={() => void startSpeechToText()} disabled={busy || voiceMode}>
                     {listening ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                   </Button>
+                  {!brainstorming && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0" title={t("assistant.more")}><ChevronDown className="h-4 w-4" /></Button>
@@ -2868,6 +2976,7 @@ export function AssistantPanel() {
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+                  )}
                   <div className="ml-auto flex items-center gap-1.5">
                     {draft.trim() && <Button type="button" variant="ghost" size="sm" className="h-9" onClick={() => setDraft("")}>{t("assistant.clear")}</Button>}
                     <Button type="submit" size="sm" className="h-9" aria-label={t("assistant.send")} disabled={!draft.trim() || busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}<span className="ml-1.5 hidden sm:inline">{t("assistant.send")}</span></Button>
@@ -2975,7 +3084,7 @@ export function AssistantPanel() {
     <>
       <Dialog open={syncOpen} onOpenChange={setSyncOpen}><DialogContent hideCloseButton className="left-1/2 top-1/2 h-[90dvh] max-h-[90dvh] w-[96vw] max-w-none -translate-x-1/2 -translate-y-1/2 p-0 sm:w-[920px]"><DialogTitle className="sr-only">{t("assistant.syncTitle")}</DialogTitle><DialogDescription className="sr-only">{t("assistant.syncSubtitle")}</DialogDescription>{syncPanel}</DialogContent></Dialog>
       <Dialog open={Boolean(pendingDiffRevert)} onOpenChange={(next) => { if (!next && !busy) setPendingDiffRevert(null); }}><DialogContent><DialogTitle>{t("assistant.revertConfirmTitle")}</DialogTitle><DialogDescription>{t("assistant.revertConfirmDescription")}</DialogDescription>{pendingDiffRevert && <div className="space-y-2 text-sm"><p className="break-all font-mono font-medium">{pendingDiffRevert.file.filename}</p><p>{t("assistant.revertSource", { branch: pendingDiffRevert.sourceBranch })}</p><p>{t("assistant.revertDestination", { branch: pendingDiffRevert.destinationBranch })}</p><div className="flex justify-end gap-2 pt-3"><Button variant="outline" onClick={() => setPendingDiffRevert(null)} disabled={busy}>{t("assistant.cancel")}</Button><Button variant="destructive" onClick={() => void confirmDiffFileRevert()} disabled={busy}>{t("assistant.confirmRevert")}</Button></div></div>}</DialogContent></Dialog>
-      <Dialog open={open} onOpenChange={(next) => { if (!next) closeAssistant(); else setOpen(true); }}><DialogContent hideCloseButton bare onPointerDownOutside={(event) => event.preventDefault()} onInteractOutside={(event) => event.preventDefault()} onEscapeKeyDown={(event) => { event.preventDefault(); if (!hasOpenFloatingLayer()) closeAssistant(); }} className={voiceMode || fullScreen || isMobile ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden" : "bottom-6 right-6 h-[80dvh] max-h-[calc(100dvh-3rem)] w-[420px] max-w-[calc(100vw-3rem)] overflow-hidden"}><DialogTitle className="sr-only">{voiceMode ? t("assistant.liveVoice") : t("assistant.title")}</DialogTitle><DialogDescription className="sr-only">{voiceMode ? t("assistant.voiceDialogDescription") : t("assistant.copilotDialogDescription")}</DialogDescription><div role="status" aria-live="polite" aria-atomic="true" className="sr-only">{requestStatus}</div>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>
+      <Dialog open={open} onOpenChange={(next) => { if (!next) closeAssistant(); else setOpen(true); }}><DialogContent hideCloseButton bare onPointerDownOutside={(event) => event.preventDefault()} onInteractOutside={(event) => event.preventDefault()} onEscapeKeyDown={(event) => { event.preventDefault(); if (!hasOpenFloatingLayer()) closeAssistant(); }} className={voiceMode || fullScreen || isMobile ? "left-1/2 top-1/2 h-[96dvh] max-h-[96dvh] w-[98vw] max-w-none -translate-x-1/2 -translate-y-1/2 overflow-hidden" : "bottom-6 right-6 h-[80dvh] max-h-[calc(100dvh-3rem)] w-[420px] max-w-[calc(100vw-3rem)] overflow-hidden"}><DialogTitle className="sr-only">{voiceMode ? t("assistant.liveVoice") : brainstorming ? t("brainstorm.name") : t("assistant.title")}</DialogTitle><DialogDescription className="sr-only">{voiceMode ? t("assistant.voiceDialogDescription") : brainstorming ? t("brainstorm.dialogDescription") : t("assistant.copilotDialogDescription")}</DialogDescription><div role="status" aria-live="polite" aria-atomic="true" className="sr-only">{requestStatus}</div>{voiceMode ? liveVoicePanel : panel}</DialogContent></Dialog>
     </>
   );
 }

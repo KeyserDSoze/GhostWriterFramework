@@ -249,12 +249,12 @@ export async function loadLocalAssistantSession(sessionId: string): Promise<Assi
   return chat ? joinSession(chat, segments) : null;
 }
 
-export async function listLocalAssistantSessions(): Promise<Array<Pick<AssistantSession, "id" | "title" | "contextTitle" | "updatedAt" | "contentRevision"> & { fileId: string }>> {
+export async function listLocalAssistantSessions(): Promise<Array<Pick<AssistantSession, "id" | "title" | "contextTitle" | "updatedAt" | "contentRevision" | "mode" | "bookId"> & { fileId: string }>> {
   const db = await openDb();
   const tx = db.transaction("chats", "readonly");
   const chats = await requestValue(tx.objectStore("chats").getAll()) as StoredChat[];
   await transactionDone(tx);
-  return chats.map((chat) => ({ id: chat.id, fileId: chat.id, title: chat.title, contextTitle: chat.contextTitle, updatedAt: chat.updatedAt, contentRevision: chat.contentRevision }))
+  return chats.map((chat) => ({ id: chat.id, fileId: chat.id, title: chat.title, contextTitle: chat.contextTitle, updatedAt: chat.updatedAt, contentRevision: chat.contentRevision, ...(chat.mode === "brainstorming" ? { mode: chat.mode, bookId: chat.bookId } : {}) }))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 

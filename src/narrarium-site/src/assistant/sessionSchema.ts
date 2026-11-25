@@ -269,7 +269,13 @@ export function parseAssistantSession(value: unknown, byteLength?: number): Assi
   const sensitiveSecretPaths = raw.sensitiveSecretPaths === undefined ? [] : Array.isArray(raw.sensitiveSecretPaths) && raw.sensitiveSecretPaths.length <= 32
     ? raw.sensitiveSecretPaths.map((item, index) => repositoryPath(item, `sensitiveSecretPaths[${index}]`)).filter((path) => path.startsWith("secrets/"))
     : (() => { throw new AssistantSessionValidationError("sensitiveSecretPaths is invalid."); })();
-  return normalizeAssistantSession({ schemaVersion: 1, id: identifier(raw.id, "session.id"), title: text(raw.title, "session.title", 500), contextTitle: text(raw.contextTitle, "session.contextTitle", 500), updatedAt: timestamp(raw.updatedAt, "session.updatedAt"), contentRevision: contentRevision as number, messages: parsedMessages, attachments: parsedAttachments, losslessSegments: segments, losslessArchive: manifest, ...(raw.archive === undefined ? {} : { archive: parsedArchive }), compactSummary: raw.compactSummary === undefined ? parsedArchive.summary : text(raw.compactSummary, "session.compactSummary"), compactedMessageCount: legacyCount as number, ...(raw.provenance === undefined ? {} : { provenance: provenance(raw.provenance, "provenance") }), ...(raw.noteSaveOperation === undefined ? {} : { noteSaveOperation: operation(raw.noteSaveOperation) }), quarantinedActions, sensitiveSecretPaths });
+  return normalizeAssistantSession({ schemaVersion: 1, id: identifier(raw.id, "session.id"), title: text(raw.title, "session.title", 500), contextTitle: text(raw.contextTitle, "session.contextTitle", 500), updatedAt: timestamp(raw.updatedAt, "session.updatedAt"), contentRevision: contentRevision as number, ...sessionMode(raw), messages: parsedMessages, attachments: parsedAttachments, losslessSegments: segments, losslessArchive: manifest, ...(raw.archive === undefined ? {} : { archive: parsedArchive }), compactSummary: raw.compactSummary === undefined ? parsedArchive.summary : text(raw.compactSummary, "session.compactSummary"), compactedMessageCount: legacyCount as number, ...(raw.provenance === undefined ? {} : { provenance: provenance(raw.provenance, "provenance") }), ...(raw.noteSaveOperation === undefined ? {} : { noteSaveOperation: operation(raw.noteSaveOperation) }), quarantinedActions, sensitiveSecretPaths });
+}
+
+/** A chat of Brainstorming keeps its mode and its book; a mode this version does not know is a chat of the Copilot. */
+function sessionMode(raw: Record<string, unknown>): { mode?: "brainstorming"; bookId?: string } {
+  if (raw.mode !== "brainstorming") return {};
+  return { mode: "brainstorming", bookId: identifier(raw.bookId, "session.bookId") };
 }
 
 function parseLosslessSegments(values: unknown[], quarantine: AssistantQuarantinedAction[]): AssistantLosslessSegment[] {

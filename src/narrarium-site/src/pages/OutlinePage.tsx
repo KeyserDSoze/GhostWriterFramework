@@ -27,6 +27,7 @@ import { browserOutlineSource } from "@/outline/outlineSource";
 import { convertSynopsis, entryStatus, filterEntries, frozenChapterSlugs, isToldOutcome, missingNumbers, warningsByPath, writtenChapters, type ConvertedSynopsis, type StatusContext, type ToldOutcome } from "@/outline/outlineModel";
 import { useOutlineFocusStore } from "@/store/outlineFocusStore";
 import { useRegisterPageSave } from "@/store/saveStore";
+import { BrainstormPageButton, useBrainstormLauncher } from "@/components/assistant/brainstorm/BrainstormLauncher";
 
 /** The entries drawn at once: an outline has no maximum, and a book of 5000 chapters opens as fast as one of ten. */
 export const OUTLINE_PAGE_SIZE = 50;
@@ -273,6 +274,11 @@ export function OutlinePage() {
   const editDescription = useCallback((body: string) => editBook({ body }), [editBook]);
   const descriptionDialogs = useOutlineDescriptionAssist({ textareaRef: descriptionRef, value: description, onChange: editDescription, controller: assist, enabled: Boolean(editor.snapshot) });
 
+  // ─── Brainstorming, the Copilot's mode for the big design of this book ─────
+  const bookName = structure?.title || book?.name || "";
+  const brainstormTarget = useMemo(() => (source && bookId ? { bookId, title: t("brainstorm.sessionTitle", { book: bookName }) } : null), [source, bookId, bookName, t]);
+  useBrainstormLauncher(bookId, brainstormTarget);
+
   if (error && !structure) return <BookStructureErrorAlert error={error} reload={reloadStructure} />;
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 
@@ -288,7 +294,7 @@ export function OutlinePage() {
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-5">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
+        <div className="min-w-0 sm:flex-1">
           <h1 className="flex items-center gap-2 font-serif text-3xl font-semibold tracking-tight"><ListTree className="h-6 w-6 text-primary" aria-hidden="true" />{t("outline.title")}</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{t("outline.intro")}</p>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -302,7 +308,9 @@ export function OutlinePage() {
             {editor.undo && <Button size="sm" variant="outline" onClick={() => void editor.undoLast()} disabled={busy}><Undo2 className="h-4 w-4" aria-hidden="true" />{t("outline.actions.undo")}</Button>}
           </div>
         </div>
-        <div className="flex flex-wrap gap-2 sm:shrink-0 sm:justify-end">
+        {/* The actions take at most half the width, a line each when they need it, so that the introduction keeps its lines. */}
+        <div className="flex flex-wrap gap-2 sm:max-w-[50%] sm:justify-end">
+          <BrainstormPageButton target={brainstormTarget} />
           {editor.dirty && (
             <Button onClick={() => void editor.saveAll()} disabled={busy}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}{t("outline.actions.saveAll")}

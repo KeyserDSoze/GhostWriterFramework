@@ -47,6 +47,7 @@ export function upsertAssistantSessionMeta(
     contextTitle: session.contextTitle,
     updatedAt: session.updatedAt,
     contentRevision: session.contentRevision,
+    ...(session.mode ? { mode: session.mode, bookId: session.bookId } : {}),
   };
   return [next, ...sessions.filter((entry) => entry.id !== session.id && entry.fileId !== handle.fileId)];
 }

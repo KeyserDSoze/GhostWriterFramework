@@ -121,6 +121,25 @@
   }
 }
 
+/*
+ * Brainstorming's accent, the Copilot's mode on the Synopsis page: inside it the primary colour and the focus ring are an orange that keeps the
+ * contrast the theme's own primary keeps (test/brainstormAccent.test.mjs): its label 4.5:1 on it, it 4.5:1 as text on the page and the card, the
+ * ring 3:1 against them, in both themes.
+ */
+@layer base {
+  .brainstorm-accent {
+    --primary: 17 88% 40%;
+    --primary-foreground: 0 0% 100%;
+    --ring: 17 88% 40%;
+  }
+
+  .dark .brainstorm-accent {
+    --primary: 27 96% 61%;
+    --primary-foreground: 13 81% 15%;
+    --ring: 27 96% 61%;
+  }
+}
+
 @layer base {
   * {
     @apply border-border;
