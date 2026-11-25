@@ -1,12 +1,12 @@
 import { redactSecrets } from "../ai/redact.js";
 import { endpointOrigin } from "../ai/request.js";
-import { AiFallbackBlockedError, AiProviderError, AiPromptTooLargeError, AiReplyRejectedError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, TRANSPORT_TAIL_CHARACTERS, type AiStreamEnd, type AiTimeoutPhase } from "../ai/types.js";
+import { AiFallbackBlockedError, AiProviderError, AiPromptTooLargeError, AiReplyRejectedError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, TRANSPORT_TAIL_CHARACTERS, type AiLeftOutReason, type AiStreamEnd, type AiTimeoutPhase, type AiUnusableWhy } from "../ai/types.js";
 import { isBookConflictError } from "../book/store.js";
 import { FrontmatterError } from "../markdown/frontmatter.js";
 import { GITHUB_CONFLICT_CODE } from "../server/protocol.js";
 import { StructuredReplyError } from "../util/json.js";
 import { clipText } from "../util/text.js";
-import { AUTOPILOT_ERROR_KINDS, type AutopilotErrorDetail, type AutopilotErrorKind, type AutopilotTransportDetail } from "./types.js";
+import { AUTOPILOT_ERROR_KINDS, MAX_ROUTE_STEPS, type AutopilotErrorDetail, type AutopilotErrorKind, type AutopilotRouteStep, type AutopilotTransportDetail } from "./types.js";
 
 /** Characters of one text of an error's detail (a model, a provider, an integration): they are names, not messages. */
 const MAX_DETAIL_CHARACTERS = 160;
@@ -163,6 +163,71 @@ function transportDetailOf(transport: unknown, partialText: unknown, partialCoun
   return says ? detail : undefined;
 }
 
+const ROUTE_OUTCOMES: ReadonlyArray<AutopilotRouteStep["outcome"]> = ["ok", "failed", "timeout", "cancelled", "left-out"];
+const LEFT_OUT_REASONS: readonly AiLeftOutReason[] = ["unusable", "no-tool-calls", "boundary", "context-window", "budget", "not-acknowledged", "out-of-time"];
+const UNUSABLE_WHYS: readonly AiUnusableWhy[] = ["integration-missing", "provider-unsupported", "model-missing", "task-not-allowed"];
+/** The most characters of what a provider said that a step of a route keeps. */
+const MAX_STEP_MESSAGE_CHARACTERS = 240;
+/** The most tokens a step can say a prompt or a window has: far above any window, so that a number from a file is never bigger. */
+const MAX_STEP_TOKENS = 100_000_000;
+
+function wholeNumber(value: unknown, max: number): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? Math.round(value) : undefined;
+}
+
+/** What a provider said, for a step of a route: on one line, without a credential, short. */
+function stepMessage(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = clipText(redactSecrets(clipText(value, MAX_STEP_MESSAGE_CHARACTERS * 4)).replace(/\s+/g, " ").trim(), MAX_STEP_MESSAGE_CHARACTERS).trim();
+  return text || undefined;
+}
+
+/** One step of a route, from what an error of the engine's client carries or from a detail read from a file: only the known fields that are valid, no credential in any of them. */
+function routeStepOf(value: unknown): AutopilotRouteStep | undefined {
+  const source = record(value);
+  const position = wholeNumber(source.position, 99);
+  const model = shortText(source.model);
+  const outcome = ROUTE_OUTCOMES.find((entry) => entry === source.outcome);
+  if (position === undefined || !model || !outcome) return undefined;
+  const integrationId = shortText(source.integrationId) ?? "";
+  const endpoint = endpointOrigin(source.endpoint);
+  const status = httpStatus(source.status);
+  const durationMs = wholeNumber(source.durationMs, MAX_TIMEOUT_MS);
+  const message = stepMessage(source.message);
+  const phase = timeoutPhase(source.timeoutPhase);
+  const timeoutMs = timeoutMilliseconds(source.timeoutMs);
+  const leftOut = LEFT_OUT_REASONS.find((entry) => entry === source.leftOut);
+  const why = UNUSABLE_WHYS.find((entry) => entry === source.why);
+  const promptTokens = wholeNumber(source.promptTokens, MAX_STEP_TOKENS);
+  const windowTokens = wholeNumber(source.windowTokens, MAX_STEP_TOKENS);
+  return {
+    position,
+    integrationId,
+    integrationName: shortText(source.integrationName) ?? integrationId,
+    provider: shortText(source.provider) ?? "",
+    model,
+    outcome,
+    ...(endpoint ? { endpoint } : {}),
+    ...(status !== undefined ? { status } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(message ? { message } : {}),
+    ...(phase ? { timeoutPhase: phase } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(source.routing === true ? { routing: true } : {}),
+    ...(leftOut ? { leftOut } : {}),
+    ...(why ? { why } : {}),
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(windowTokens !== undefined ? { windowTokens } : {}),
+  };
+}
+
+/** The route of a failed call as a detail keeps it: every step that is valid, in order, at most `MAX_ROUTE_STEPS`. `undefined` when none is. */
+function routeDetailOf(value: unknown): AutopilotRouteStep[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const steps = value.slice(0, MAX_ROUTE_STEPS).map(routeStepOf).filter((step): step is AutopilotRouteStep => step !== undefined);
+  return steps.length ? steps : undefined;
+}
+
 function detailOf(error: unknown): AutopilotErrorDetail {
   const source = record(error);
   const target = record(source.target);
@@ -182,6 +247,8 @@ function detailOf(error: unknown): AutopilotErrorDetail {
   const githubConflicts = source.code === GITHUB_CONFLICT_CODE ? conflictFiles(source.total) : undefined;
   // What the transport saw of a call that failed after the provider answered, and how much of the reply had arrived.
   const transport = transportDetailOf(source.transport, source.partialText);
+  // Every candidate of the route of the call, the ones asked and the ones left out: the fields above are the last one's.
+  const route = routeDetailOf(source.route);
   return {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
@@ -193,6 +260,7 @@ function detailOf(error: unknown): AutopilotErrorDetail {
     ...(phase ? { timeoutPhase: phase } : {}),
     ...(githubConflicts !== undefined ? { githubConflicts } : {}),
     ...(transport ? { transport } : {}),
+    ...(route ? { route } : {}),
   };
 }
 
@@ -260,6 +328,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
   const phase = timeoutPhase(source.timeoutPhase);
   const githubConflicts = conflictFiles(source.githubConflicts);
   const transport = transportDetailOf(source.transport, undefined, record(source.transport).partialCharacters);
+  const route = routeDetailOf(source.route);
   const detail: AutopilotErrorDetail = {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
@@ -273,6 +342,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
     ...(phase ? { timeoutPhase: phase } : {}),
     ...(githubConflicts !== undefined ? { githubConflicts } : {}),
     ...(transport ? { transport } : {}),
+    ...(route ? { route } : {}),
   };
   return Object.keys(detail).length ? detail : undefined;
 }

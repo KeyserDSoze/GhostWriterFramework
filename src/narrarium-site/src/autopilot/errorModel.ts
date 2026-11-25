@@ -1,4 +1,4 @@
-import { AUTOPILOT_ERROR_KINDS, redactSecrets, type AutopilotActivity, type AutopilotErrorDetail, type AutopilotErrorKind, type AutopilotRetryInfo, type AutopilotStateSummary, type AutopilotTaskKind } from "narrarium-engine";
+import { AUTOPILOT_ERROR_KINDS, redactSecrets, type AutopilotActivity, type AutopilotErrorDetail, type AutopilotErrorKind, type AutopilotRetryInfo, type AutopilotRouteStep, type AutopilotStateSummary, type AutopilotTaskKind } from "narrarium-engine";
 import { filesInError } from "@/autopilot/stopReason";
 
 export { formatLimit } from "@/lib/formatLimit";
@@ -154,16 +154,32 @@ export interface TimeoutNote {
   phase: "start" | "idle" | "total";
   /** How long the deadline was, in milliseconds, when the engine says it. */
   ms?: number;
+  /**
+   * The deadline was the routing time that was left (the author's «Total routing time», less what the candidates before this one took), not a limit of the call: it can be raised, which the
+   * four hours that no call may pass cannot.
+   */
+  routing?: boolean;
 }
 
 const TIMEOUT_PHASES = ["start", "idle", "total"] as const;
+
+/** The steps of the route of the call that failed, in the order the author wrote it; none when the engine did not say (a failure of an older engine, or of a step that asked no model). */
+export function routeOf(detail: AutopilotErrorDetail): AutopilotRouteStep[] {
+  return Array.isArray(detail.route) ? detail.route : [];
+}
+
+/** Whether the route says more than the facts of the last candidate do: there were several candidates, or one was left out. */
+export const routeTellsMore = (route: readonly AutopilotRouteStep[]): boolean => route.length > 1 || route.some((step) => step.outcome === "left-out");
 
 /** The deadline that ran out, as the engine says it: the phase, and how long it was when that is said too. A length alone does not say which limit it was. */
 export function timeoutOf(detail: AutopilotErrorDetail): TimeoutNote | null {
   const phase = TIMEOUT_PHASES.find((entry) => entry === detail.timeoutPhase);
   if (!phase) return null;
   const ms = detail.timeoutMs;
-  return typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? { phase, ms } : { phase };
+  // Only the last candidate that was asked timed out for good: its step says whether the time it had was the routing time that was left.
+  const asked = routeOf(detail).filter((step) => step.outcome !== "left-out");
+  const routing = asked[asked.length - 1]?.routing === true;
+  return { phase, ...(typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? { ms } : {}), ...(routing ? { routing: true as const } : {}) };
 }
 
 /** How many whole seconds the provider asked to wait (`Retry-After`), rounded up so that it never reads shorter than what was asked; `null` when it asked for nothing. */
@@ -178,17 +194,20 @@ export type ErrorFact =
 
 const clean = (value: unknown): string | undefined => (typeof value === "string" && value.trim() ? value.trim() : undefined);
 
-/** Where it happened, as the engine says it, in the order a person looks for it. The integration is named by what the settings call it, and by its id when they do not know it. */
-export function errorFacts(detail: AutopilotErrorDetail, integrationName?: (id: string) => string | undefined): ErrorFact[] {
+/**
+ * Where it happened, as the engine says it, in the order a person looks for it. The integration is named by what the settings call it, and by its id when they do not know it. The endpoint, the model, the
+ * provider and the integration are those of the last candidate that was asked, which is not the only one when the route says more (`withRoute`): the route lists them all, and they are left out here.
+ */
+export function errorFacts(detail: AutopilotErrorDetail, integrationName?: (id: string) => string | undefined, withRoute = false): ErrorFact[] {
   const facts: ErrorFact[] = [];
   const endpoint = clean(detail.endpoint);
-  if (endpoint) facts.push({ key: "endpoint", value: endpoint });
+  if (endpoint && !withRoute) facts.push({ key: "endpoint", value: endpoint });
   const model = clean(detail.model);
-  if (model) facts.push({ key: "model", value: model });
+  if (model && !withRoute) facts.push({ key: "model", value: model });
   const provider = clean(detail.provider);
-  if (provider) facts.push({ key: "provider", value: provider });
+  if (provider && !withRoute) facts.push({ key: "provider", value: provider });
   const integration = clean(detail.integration);
-  if (integration) facts.push({ key: "integration", value: integrationName?.(integration) ?? integration });
+  if (integration && !withRoute) facts.push({ key: "integration", value: integrationName?.(integration) ?? integration });
   if (typeof detail.status === "number" && Number.isFinite(detail.status)) facts.push({ key: "status", value: String(detail.status) });
   if (typeof detail.attempt === "number" && typeof detail.retries === "number") facts.push({ key: "attempt", attempt: detail.attempt, retries: detail.retries });
   return facts;
@@ -202,6 +221,21 @@ export interface DiagnosticsInput {
   at: Date;
   /** What the settings call the integration, when they know it. */
   integrationName?: string;
+}
+
+/** One step of the route, as a line of the text that is copied: who it is, and how it ended or why it was left out. English, closed words and figures, and what the provider said cleaned of credentials. */
+function routeLine(step: AutopilotRouteStep): string {
+  const who = `${step.integrationName || step.integrationId || "?"}${step.integrationId && step.integrationId !== step.integrationName ? ` (${step.integrationId})` : ""} ${step.model}`;
+  if (step.outcome === "left-out") {
+    const numbers = step.leftOut === "context-window" ? ` (the prompt is about ${step.promptTokens ?? "?"} tokens, the window leaves about ${step.windowTokens ?? "?"})` : step.why ? ` (${step.why})` : "";
+    return `${step.position + 1}. ${who}: left out, ${step.leftOut ?? "unknown reason"}${numbers}`;
+  }
+  const how = [
+    step.outcome === "timeout" ? `timed out${step.timeoutPhase ? ` (${step.timeoutPhase}${step.routing ? ", the routing time that was left" : ""}${step.timeoutMs !== undefined ? `, ${step.timeoutMs} ms` : ""})` : ""}` : step.outcome,
+    step.status !== undefined ? `HTTP ${step.status}` : "",
+    step.durationMs !== undefined ? `${step.durationMs} ms` : "",
+  ].filter(Boolean).join(", ");
+  return `${step.position + 1}. ${who}: ${how}${step.message ? ` - ${scrub(step.message)}` : ""}`;
 }
 
 const MESSAGE_CHARACTERS = 600;
@@ -253,6 +287,8 @@ export function diagnosticsText({ source, appVersion, engineVersion, host, at, i
   if (integration) lines.push(`Integration: ${integrationName ? `${integrationName} (${integration})` : integration}`);
   if (typeof detail.attempt === "number" && typeof detail.retries === "number") lines.push(`Retry: ${detail.attempt} of ${detail.retries}`);
   if (detail.transport) lines.push(...transportLines(detail.transport));
+  const route = routeOf(detail);
+  if (route.length) lines.push("Route, in the order of the router:", ...route.map((step) => `  ${routeLine(step)}`));
   if (source.retry) lines.push(`Next attempt: ${source.retry.at}`);
   if (source.message) lines.push(`Message: ${scrub(source.message)}`);
   return lines.join("\n");

@@ -104,8 +104,11 @@ export interface AiPort {
 }
 
 export class AiUnavailableError extends Error {
-  constructor(readonly capability: string) {
-    super(`No AI model is configured for the "${capability}" task. Configure an integration in the AI router.`);
+  /** The targets of the route that cannot be called, when the author wrote one and none of them can (see `AiRouteStep`). */
+  route?: AiRouteStep[];
+
+  constructor(readonly capability: string, message?: string) {
+    super(message ?? `No AI model is configured for the "${capability}" task. Configure an integration in the AI router.`);
     this.name = "AiUnavailableError";
   }
 }
@@ -133,6 +136,53 @@ export interface AiTimeoutDetails {
   ms: number;
   /** The provider timeout the integration asked for, when the call raised it to the minimum (`MIN_REQUEST_TIMEOUT_MS`). */
   raisedFrom?: number;
+  /**
+   * The limit was not the call's own but the routing time that was left (`maxTotalDurationMs`, the author's «Maximum total duration», less what the earlier candidates of the call took):
+   * only a candidate after the first is held to it, and only it makes the deadline `total` shorter than the four hours that no call may pass.
+   */
+  routing?: boolean;
+}
+
+/**
+ * Why a candidate of a route was not asked: its target cannot be called at all (`unusable`), "Tools only" skips a model without tool calls (`no-tool-calls`), the privacy policy keeps content in the
+ * primary's account (`boundary`), the prompt does not fit the model's context window (`context-window`), the routing limits of tokens or cost were reached (`budget`), the author did not acknowledge
+ * sending content to another account (`not-acknowledged`) or the routing time was used up (`out-of-time`).
+ */
+export type AiLeftOutReason = "unusable" | "no-tool-calls" | "boundary" | "context-window" | "budget" | "not-acknowledged" | "out-of-time";
+
+/** Why a target the author wrote in a route cannot be called: its integration is gone, its provider cannot run chat here, its model is not in the integration, or the model is not allowed this task. */
+export type AiUnusableWhy = "integration-missing" | "provider-unsupported" | "model-missing" | "task-not-allowed";
+
+/**
+ * What became of one candidate of the route of a call: it was asked (and how it ended) or it was left out (and why). The route is the author's, in the order they wrote it: `position` 0 is the
+ * primary, and a candidate that the router could not use or the plan left out has its place in it, so that the primary that did not answer is never taken for the one that did. Names are the author's
+ * and are cleaned of credentials; nothing here is a key or the text of a request or a reply. A host keeps it on the error of a call that failed (`AiProviderError.route`) and in its records.
+ */
+export interface AiRouteStep {
+  position: number;
+  integrationId: string;
+  integrationName: string;
+  provider: string;
+  model: string;
+  outcome: "ok" | "failed" | "timeout" | "cancelled" | "left-out";
+  /** The origin of the integration's address (never a path or a query). */
+  endpoint?: string;
+  /** The HTTP status the provider answered, when it did. */
+  status?: number;
+  /** How long the attempt took, in milliseconds. Absent for a candidate that was left out. */
+  durationMs?: number;
+  /** What the provider or the engine said, cleaned of credentials and cut short. Absent for a candidate that was left out. */
+  message?: string;
+  /** For a timeout: which deadline ran out and how long it was, and whether it was the routing time that was left. */
+  timeoutPhase?: AiTimeoutPhase;
+  timeoutMs?: number;
+  routing?: boolean;
+  /** For a candidate that was left out: why, and the numbers that say it. */
+  leftOut?: AiLeftOutReason;
+  why?: AiUnusableWhy;
+  /** `context-window`: the tokens the prompt needs (as estimated before sending) and what the model's window leaves for it. */
+  promptTokens?: number;
+  windowTokens?: number;
 }
 
 /**
@@ -210,6 +260,11 @@ export interface AiProviderErrorDetails {
   timedOut?: boolean;
   /** Which deadline ran out, for a request that timed out. */
   timeout?: AiTimeoutDetails;
+  /**
+   * Every candidate of the route of the call that failed, in the order the author wrote it: the ones that were asked and how each ended, the ones that were left out and why. Set by the engine's client
+   * on the error it ends with, so that a host does not take the last candidate for the only one.
+   */
+  route?: AiRouteStep[];
 }
 
 /** The most characters of a reply that stopped halfway that an error keeps (`AiProviderErrorDetails.partialText`). */
@@ -234,6 +289,7 @@ export class AiProviderError extends Error {
   transient?: boolean;
   timedOut?: boolean;
   timeout?: AiTimeoutDetails;
+  route?: AiRouteStep[];
 
   constructor(message: string, readonly status?: number, readonly retryable = false, details: AiProviderErrorDetails = {}) {
     super(message);

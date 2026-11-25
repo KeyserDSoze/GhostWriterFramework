@@ -15,6 +15,7 @@ import {
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
 import { acknowledgeCrossBoundaryFallback, type BoundaryCandidate } from "@/assistant/fallbackDisclosure";
+import { pageEnding } from "@/autopilot/localRuns";
 import { GITHUB_MODELS_BASE } from "@/config/githubModels";
 import { chatDelta, useCostsStore } from "@/costs/costsStore";
 import { flattenLlmContent, useLlmDebugStore } from "@/debug/llmDebugStore";
@@ -110,6 +111,19 @@ export interface BrowserAiOptions {
 }
 
 /**
+ * The settings of a run of this tab: the tab's own, and the routing that another tab of this browser saved after this one loaded (see `settingsForRun`). The code that reads the device is loaded
+ * with the first call, not with the page; a device that cannot be read leaves the settings of the tab.
+ */
+async function settingsOfRun(): Promise<AppSettings> {
+  try {
+    const { settingsForRun } = await import("@/autopilot/savedAiSettings");
+    return await settingsForRun();
+  } catch {
+    return useSettingsStore.getState().settings;
+  }
+}
+
+/**
  * The engine's `AiPort` in the browser: the same client as the personal server (`createFetchAi`), so a book gets the
  * same requests and the same outcomes in either host. The browser adds only what is its own: the account the call
  * belongs to, the debug panel, the costs, and the author's confirmation before content goes to another account.
@@ -120,7 +134,7 @@ export interface BrowserAiOptions {
 export function createBrowserAi(options: BrowserAiOptions = {}): AiPort {
   return {
     async complete(request: AiRequest): Promise<AiResponse> {
-      const settings = options.settings ?? useSettingsStore.getState().settings;
+      const settings = options.settings ?? await settingsOfRun();
       const picked = pickAiRuntimeConfig(settings);
       const config = options.configure ? options.configure(picked, request) : picked;
       const debugEntries = new Map<string, string>();
@@ -129,6 +143,8 @@ export function createBrowserAi(options: BrowserAiOptions = {}): AiPort {
         const ai = createFetchAi(config, {
           fetch: (input, init) => fetch(input, init),
           githubModelsBaseUrl: GITHUB_MODELS_BASE,
+          // A page that is reloaded or closed has its requests cut by the browser: that is not a failure of the provider, and the prompt must not go on to the fallback.
+          interrupted: pageEnding,
           onAttempt: (attempt) => {
             debugEntries.set(attempt.attemptId, openDebugEntry(attempt, request.json !== undefined, options.route));
           },

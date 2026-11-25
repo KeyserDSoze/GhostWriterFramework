@@ -7,9 +7,9 @@ import { resolveDeadlines, startClock, timeoutMessage, type DeadlineClock, type 
 import { redactSecrets } from "./redact.js";
 import { effectiveAiBase, endpointOrigin, type AiReasoningEffort, type ChatRequest } from "./request.js";
 import type { AiCandidate } from "./router.js";
-import { candidateBoundary, planAttempts, type PlannedAttempt } from "./routing.js";
+import { candidateBoundary, leftOutStep, planAttempts, sortedRoute, type PlannedAttempt } from "./routing.js";
 import { isEmptyToolArguments, splitReasoningBlock, structuredFromReply } from "./structured.js";
-import { AiFallbackBlockedError, AiProviderError, AiReplyRejectedError, AiStreamInterruptedError, MAX_PARTIAL_CHARACTERS, TRANSPORT_TAIL_CHARACTERS, type AiMessage, type AiPort, type AiProviderErrorDetails, type AiRequest, type AiResponse, type AiStreamEnd, type AiTimeoutPhase, type AiTransportDiagnostics, type AiUsage } from "./types.js";
+import { AiFallbackBlockedError, AiProviderError, AiReplyRejectedError, AiStreamInterruptedError, MAX_PARTIAL_CHARACTERS, TRANSPORT_TAIL_CHARACTERS, type AiMessage, type AiPort, type AiProviderErrorDetails, type AiRequest, type AiResponse, type AiRouteStep, type AiStreamEnd, type AiTimeoutPhase, type AiTransportDiagnostics, type AiUsage } from "./types.js";
 
 // The deadlines of a call: how long a provider has to begin answering, the least it is given, and the most a call may take.
 export { DEFAULT_REQUEST_TIMEOUT_MS, MIN_REQUEST_TIMEOUT_MS, TOTAL_REQUEST_CAP_MS } from "./deadlines.js";
@@ -100,6 +100,12 @@ export interface FetchAiAttempt {
    * marked as without tool calls. Absent when none was skipped; the same list on every attempt of the call.
    */
   skipped?: Array<{ model: string; reason: "no-tool-calls" }>;
+  /**
+   * Every candidate of the route that this call does not ask, each with its place in the route and why (see `AiRouteStep`): the targets that cannot be called, the fallbacks the
+   * privacy policy keeps back, the models whose context window cannot hold the prompt, the ones the routing limits cut, and the models "Tools only" skips. What is known when this attempt is sent
+   * (a fallback that the author did not acknowledge is added to the attempts after it). Absent when nothing was left out.
+   */
+  leftOut?: AiRouteStep[];
   /**
    * What this attempt does not do that the configuration asked, because of what the model declares or says: a thinking level that is not sent to a
    * model that does not reason or whose thinking parameter is `none`, a stream that is not asked of a model that does not stream. In English, for a debug panel; absent when there is nothing to say.
@@ -195,6 +201,11 @@ export interface FetchAiOptions {
   /** An attempt ended, whether it worked or not: for costs and debug panels. Never breaks the call. */
   onAttemptEnd?: (end: FetchAiAttemptEnd) => void;
   /**
+   * Whether the host is ending (a browser page that is being reloaded or closed). A request that fails while it is true failed because its host went away, not because its provider did: the
+   * attempt is closed as cancelled and the call ends with that failure, and the next candidate is not asked (it would be sent the whole prompt, and billed, by a host that is no longer there).
+   */
+  interrupted?: () => boolean;
+  /**
    * With `fallbackDisclosure.requireAcknowledgement`, asked before content goes to a fallback in another account than
    * the one it went to so far. Return `true` to allow it; anything else, or a host without this hook, keeps the content
    * where it is. Throw to cancel the whole call.
@@ -248,7 +259,9 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
       let lastSent = plan.primary;
       let tried = 0;
       let outOfTime = false;
-      for (const attempt of plan.attempts) {
+      /** What became of every candidate of the route, as far as this call has gone: what the plan left out, and each attempt as it ends. */
+      const steps: AiRouteStep[] = [...plan.leftOut];
+      for (const [at, attempt] of plan.attempts.entries()) {
         request.signal?.throwIfAborted();
         const { candidate } = attempt;
         const integration = candidate.integration;
@@ -256,6 +269,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
         // The first candidate runs for its own timeout whatever the total; the others start only while time remains.
         if (tried > 0 && maxTotal !== undefined && maxTotal - (Date.now() - startedAt) <= 0) {
           outOfTime = true;
+          for (const rest of plan.attempts.slice(at)) steps.push(leftOutStep(rest.candidate, rest.index, "out-of-time", secrets, options.githubModelsBaseUrl));
           break;
         }
         if (config.fallbackDisclosure?.requireAcknowledgement && candidateBoundary(candidate) !== candidateBoundary(lastSent)) {
@@ -270,6 +284,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           }
           if (!accepted) {
             blocked.push({ candidate, from: lastSent, asked: Boolean(options.acknowledgeFallback) });
+            steps.push(leftOutStep(candidate, attempt.index, "not-acknowledged", secrets, options.githubModelsBaseUrl));
             continue;
           }
         }
@@ -292,6 +307,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           ...(attempt.built?.thinking ? { thinking: attempt.built.thinking } : {}),
           ...(attempt.built?.reasoningParameter ? { reasoningParameter: attempt.built.reasoningParameter } : {}),
           ...(skipped.length ? { skipped: skipped.map((entry) => ({ ...entry })) } : {}),
+          ...(steps.some((step) => step.outcome === "left-out") ? { leftOut: sortedRoute(steps.filter((step) => step.outcome === "left-out")).map((step) => ({ ...step })) } : {}),
           ...(attempt.built?.notes?.length ? { notes: [...attempt.built.notes] } : {}),
         };
         notify(options.onAttempt, attemptReport);
@@ -320,15 +336,18 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           notify(request.onAttemptEnd, endReport);
           return withSpent(response, spent);
         } catch (error) {
-          const cancelled = Boolean(request.signal?.aborted) && isAbortError(error);
+          // A host that is ending (a page that is reloaded) cancelled the request as much as the author did: its failure is not the provider's, and the prompt goes to no other candidate.
+          const interrupted = options.interrupted?.() === true;
+          const cancelled = (Boolean(request.signal?.aborted) && isAbortError(error)) || interrupted;
           const failedReport = failedAttempt(identity, error, cancelled, deadlines.startMs, Date.now() - attemptStarted, secrets, replyTrace(trace, Boolean(request.json)));
           notify(options.onAttemptEnd, failedReport);
           notify(request.onAttemptEnd, failedReport);
           if (cancelled) throw error;
+          const origin = endpointOrigin(effectiveAiBase(integration, options.githubModelsBaseUrl));
           if (error instanceof AiProviderError && !error.target) {
-            const origin = endpointOrigin(effectiveAiBase(integration, options.githubModelsBaseUrl));
             error.target = { provider: integration.provider, model: candidate.model, integrationId: integration.id, ...(origin ? { endpoint: origin } : {}) };
           }
+          steps.push(triedStep(attempt, failedReport, error, origin, secrets));
           addSpent(spent, error);
           lastError = error;
           notify(request.onText, "");
@@ -338,6 +357,11 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
       const notes: string[] = [];
       if (plan.excludedByBoundary > 0) notes.push(`Fallbacks in other accounts were not tried because "Never send fallback content outside the primary account" (fallbackDisclosure.sameBoundaryOnly) is on.`);
       for (const entry of plan.skipped) notes.push(redactSecrets(`Skipped "${entry.candidate.model}" in "${entry.candidate.integration.name}": it is marked as without tool calls and "Tools only" is on.`, secrets));
+      for (const step of plan.leftOut) {
+        if (step.leftOut === "context-window") notes.push(`Skipped "${step.model}" in "${step.integrationName}": the prompt (about ${step.promptTokens} tokens) does not fit its context window (${step.windowTokens} tokens are left for the prompt).`);
+        else if (step.leftOut === "budget") notes.push(`Not tried: "${step.model}" in "${step.integrationName}": the routing limits of tokens or cost (maxTokenAttempts, maxEstimatedCost) were reached.`);
+        else if (step.leftOut === "unusable") notes.push(`Not tried: "${step.model}" in "${step.integrationName}" cannot be called (${UNUSABLE_WORDS[step.why ?? "model-missing"]}).`);
+      }
       if (blocked.length) {
         const names = [...new Set(blocked.map((entry) => `"${entry.candidate.integration.name}"`))].join(", ");
         const from = `"${blocked[0].from.integration.name}"`;
@@ -346,6 +370,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           : `The fallback ${names} was not used: it is in another account than ${from}, "Ask before sending content to another account" (fallbackDisclosure.requireAcknowledgement) is on and this host cannot ask. To change it, open the AI settings and turn it off, or add a fallback in the same account as the primary.`);
       }
       if (outOfTime) notes.push(`Fallbacks were not tried: the total routing time (maxTotalDurationMs, ${Math.round((plan.limits.maxTotalDurationMs ?? 0) / 1000)} s) was used up.`);
+      const route = sortedRoute(steps);
       if (lastError instanceof AiProviderError) {
         lastError.usage = spent.usage ?? lastError.usage;
         lastError.cost = spent.cost ?? lastError.cost;
@@ -353,11 +378,47 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
         if (spent.costKnown === false) lastError.costKnown = false;
         if (spent.retryAfterMs !== undefined) lastError.retryAfterMs = Math.max(lastError.retryAfterMs ?? 0, spent.retryAfterMs);
         if (notes.length) lastError.message = `${lastError.message}${/[.!?]$/.test(lastError.message) ? "" : "."} ${notes.join(" ")}`;
+        lastError.route = route;
         throw lastError;
       }
-      if (lastError instanceof Error) throw lastError;
-      throw notes.length ? new AiFallbackBlockedError(notes.join(" ")) : new AiProviderError("All AI candidates failed.");
+      if (lastError instanceof Error) throw Object.assign(lastError, { route });
+      const none = notes.length ? new AiFallbackBlockedError(notes.join(" ")) : new AiProviderError("All AI candidates failed.");
+      none.route = route;
+      throw none;
     },
+  };
+}
+
+/** What a target of the route that cannot be called says of itself, in the words of the notes of a failed call. */
+const UNUSABLE_WORDS: Record<NonNullable<AiRouteStep["why"]>, string> = {
+  "integration-missing": "its integration is no longer there",
+  "provider-unsupported": "its provider cannot run chat tasks here",
+  "model-missing": "the model is not in the integration",
+  "task-not-allowed": "the model is not allowed for this task",
+};
+
+/** The most characters of what a provider said that a step of a route keeps. */
+const MAX_STEP_MESSAGE_CHARACTERS = 240;
+
+/** The step that says how an attempt ended, from the report of its end (whose words are already cleaned of credentials). */
+function triedStep(attempt: PlannedAttempt, end: FetchAiAttemptEnd, error: unknown, endpoint: string | undefined, secrets: readonly string[]): AiRouteStep {
+  const integration = attempt.candidate.integration;
+  const timeout = error instanceof AiProviderError ? error.timeout : undefined;
+  const message = (end.error ?? "").replace(/\s+/g, " ").trim();
+  return {
+    position: attempt.index,
+    integrationId: redactSecrets(integration.id, secrets),
+    integrationName: redactSecrets(integration.name, secrets),
+    provider: integration.provider,
+    model: redactSecrets(attempt.candidate.model, secrets),
+    outcome: end.outcome === "cancelled" ? "cancelled" : end.failureKind === "timeout" ? "timeout" : "failed",
+    ...(endpoint ? { endpoint } : {}),
+    ...(end.status !== undefined ? { status: end.status } : {}),
+    durationMs: end.durationMs,
+    ...(message ? { message: message.length > MAX_STEP_MESSAGE_CHARACTERS ? `${message.slice(0, MAX_STEP_MESSAGE_CHARACTERS - 1)}…` : message } : {}),
+    ...(end.failureKind === "timeout" && end.timeoutPhase ? { timeoutPhase: end.timeoutPhase } : {}),
+    ...(end.failureKind === "timeout" && end.timeoutMs !== undefined ? { timeoutMs: end.timeoutMs } : {}),
+    ...(timeout?.routing ? { routing: true } : {}),
   };
 }
 
@@ -1019,7 +1080,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       ...(answering ? details({}, "timeout") : {}),
       transient: true,
       timedOut: true,
-      timeout: { phase: expired.phase, ms: expired.ms, ...(expired.phase === "start" && deadlines.raisedFrom !== undefined ? { raisedFrom: deadlines.raisedFrom } : {}) },
+      timeout: { phase: expired.phase, ms: expired.ms, ...(expired.phase === "start" && deadlines.raisedFrom !== undefined ? { raisedFrom: deadlines.raisedFrom } : {}), ...(deadlines.routingMs !== undefined && expired.ms === deadlines.routingMs ? { routing: true } : {}) },
     },
   );
   const reportProgress = (): void => {

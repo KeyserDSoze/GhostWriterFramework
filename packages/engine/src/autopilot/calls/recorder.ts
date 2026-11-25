@@ -14,6 +14,7 @@ import {
   type AiCallHost,
   type AiCallRecord,
   type AiCallRequestInfo,
+  type AiCallSkip,
   type AiCallStatus,
   type AiCallTextInfo,
   type AiCallUsage,
@@ -442,6 +443,18 @@ export class CallRecorder {
           }
         : null,
       partialCharacters: number(attempt.partialCharacters),
+      ...(attempt.skip ? { skip: this.cleanSkip(attempt.skip) } : {}),
+    };
+  }
+
+  private cleanSkip(skip: AiCallSkip): AiCallSkip {
+    const promptTokens = number(skip.promptTokens);
+    const windowTokens = number(skip.windowTokens);
+    return {
+      reason: skip.reason,
+      ...(skip.why ? { why: skip.why } : {}),
+      ...(promptTokens !== null ? { promptTokens } : {}),
+      ...(windowTokens !== null ? { windowTokens } : {}),
     };
   }
 

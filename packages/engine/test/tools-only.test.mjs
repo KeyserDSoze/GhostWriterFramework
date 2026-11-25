@@ -107,7 +107,11 @@ test("(a) when no model can call a function nothing is sent: a final error names
   assert.match(error.message, /Nothing was sent/);
   assert.equal(calls.length, 0);
   assert.equal(attempts.length, 0, "no attempt was made");
-  assert.deepEqual(classifyAutopilotError(error), { kind: "config", detail: {} });
+  // The route says which candidates were left out and why: both, in the order the author wrote them, with no attempt among them.
+  const classified = classifyAutopilotError(error);
+  assert.equal(classified.kind, "config");
+  assert.deepEqual(classified.detail.route.map((step) => [step.position, step.integrationName, step.model, step.outcome, step.leftOut]), [[0, "Alpha", "alpha-model", "left-out", "no-tool-calls"], [1, "Beta", "beta-model", "left-out", "no-tool-calls"]]);
+  assert.deepEqual(Object.keys(classified.detail), ["route"], "nothing else is known of a call that sent nothing");
 });
 
 test("(a) only the models of this call are named, and a request without a function (prose) uses a model without tool calls as it always did", async () => {

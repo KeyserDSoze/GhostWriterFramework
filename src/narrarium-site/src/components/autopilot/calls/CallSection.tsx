@@ -8,7 +8,9 @@ import { useNow } from "@/autopilot/hooks";
 import { PHONE_SCREENS } from "@/autopilot/liveText";
 import { callElementId } from "@/components/autopilot/calls/anchors";
 import { useCallsView } from "@/components/autopilot/calls/callsView";
-import { costWords, errorWords, failedAttempts, modelOf, timesOf, transportFacts, useOf } from "@/components/autopilot/calls/callFacts";
+import { askedAttempts, costWords, errorWords, failedAttempts, leftOutAttempts, modelOf, timesOf, transportFacts, useOf } from "@/components/autopilot/calls/callFacts";
+import { leftOutReason } from "@/autopilot/routeWords";
+import { useSettingsStore } from "@/store/settingsStore";
 import { PromptPane, ResponsePane } from "@/components/autopilot/calls/CallPanes";
 import { TARGET } from "@/components/autopilot/calls/ui";
 import { Button } from "@/components/ui/button";
@@ -35,10 +37,18 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
   );
 }
 
+/** What the settings call an integration of a record, by its id: the name the author gave it, and nothing when this device does not know it (a record of a personal server, an integration that is gone). */
+function useIntegrationName(): (id: string | null | undefined) => string | undefined {
+  const integrations = useSettingsStore((state) => state.settings.aiIntegrations);
+  return (id) => (id ? integrations.find((entry) => entry.id === id)?.name : undefined);
+}
+
 /** What a call asked, of which model, how it went, when and for how long, what it sent and received, what it used and cost. In words and figures. */
 function CallFacts({ record, now }: { record: AiCallRecord; now: number }) {
   const { t } = useTranslation();
-  const { model, provider } = modelOf(record);
+  const integrationName = useIntegrationName();
+  const { model, provider, integrationId } = modelOf(record);
+  const where = integrationName(integrationId) ?? provider;
   const use = useOf(record);
   const { tookMs, firstWordsMs } = timesOf(record, now);
   const { request } = record;
@@ -48,7 +58,7 @@ function CallFacts({ record, now }: { record: AiCallRecord; now: number }) {
     <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
       <Fact term={t("autopilot.calls.call.asked")}>{record.label || taskLabel(t, record.task, record.chapter ?? undefined)}</Fact>
       {record.capability && <Fact term={t("autopilot.calls.call.for")}>{t(`settings.capability.${record.capability}`, { defaultValue: record.capability })}</Fact>}
-      {model && <Fact term={t("autopilot.calls.call.model")}>{provider ? `${model} (${provider})` : model}</Fact>}
+      {model && <Fact term={t("autopilot.calls.call.model")}>{where ? `${model} (${where})` : model}</Fact>}
       <Fact term={t("autopilot.calls.call.status")}>{t(`autopilot.calls.status.${record.status}`)}{record.response.partial ? ` · ${t("autopilot.calls.call.partial")}` : ""}</Fact>
       <Fact term={t("autopilot.calls.call.started")}>{formatDateTime(record.timing.startedAt)}</Fact>
       {tookMs !== null && <Fact term={t("autopilot.calls.call.took")}>{formatDuration(tookMs)}</Fact>}
@@ -66,12 +76,13 @@ function CallFacts({ record, now }: { record: AiCallRecord; now: number }) {
 /** The attempts of a call that did not work: who answered, how it ended, and what the transport saw, as figures. */
 function FailedAttempts({ record }: { record: AiCallRecord }) {
   const { t } = useTranslation();
+  const integrationName = useIntegrationName();
   const failed = failedAttempts(record);
   if (failed.length === 0) return null;
   return (
     <ul className="space-y-1.5" data-failed-attempts>
       {failed.map((attempt) => {
-        const head = [t("autopilot.calls.attemptFacts.title", { number: attempt.index }), attempt.provider, attempt.model, t(`autopilot.calls.attemptFacts.outcome.${attempt.outcome}`), typeof attempt.durationMs === "number" ? formatDuration(attempt.durationMs) : ""].filter(Boolean).join(" · ");
+        const head = [t("autopilot.calls.attemptFacts.title", { number: attempt.index }), integrationName(attempt.integrationId) ?? attempt.provider, attempt.model, t(`autopilot.calls.attemptFacts.outcome.${attempt.outcome}`), typeof attempt.durationMs === "number" ? formatDuration(attempt.durationMs) : ""].filter(Boolean).join(" · ");
         const facts = transportFacts(t, attempt);
         const error = errorWords(t, attempt);
         return (
@@ -87,6 +98,28 @@ function FailedAttempts({ record }: { record: AiCallRecord }) {
         );
       })}
     </ul>
+  );
+}
+
+/** The candidates of the route that the call did not ask, each with why: a primary whose window cannot hold the prompt is not taken for one that was asked and failed. */
+function LeftOut({ record }: { record: AiCallRecord }) {
+  const { t } = useTranslation();
+  const integrationName = useIntegrationName();
+  const left = leftOutAttempts(record);
+  if (left.length === 0) return null;
+  return (
+    <div className="space-y-1" data-left-out-box>
+      <p className="text-xs font-medium">{t("autopilot.route.leftOutTitle")}</p>
+      <ul className="space-y-1" data-left-out>
+        {left.map((attempt) => (
+          <li key={attempt.index} className="rounded-md border-l-2 border-amber-500/60 bg-amber-500/5 px-2 py-1.5 text-xs">
+            <span className="font-medium">{t("autopilot.route.target", { integration: integrationName(attempt.integrationId) ?? attempt.provider ?? attempt.integrationId ?? "?", model: attempt.model ?? "?" })}</span>
+            {" — "}
+            {t("autopilot.route.leftOut", { reason: leftOutReason(t, { reason: attempt.skip?.reason, why: attempt.skip?.why, promptTokens: attempt.skip?.promptTokens, windowTokens: attempt.skip?.windowTokens }) })}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -110,6 +143,7 @@ function CallBody({ source, bookId, record, raw, announce, liveActivityId, now }
   return (
     <div className="min-w-0 space-y-3">
       <CallFacts record={record} now={now} />
+      <LeftOut record={record} />
       <FailedAttempts record={record} />
       <PromptPane source={source} bookId={bookId} record={record} raw={raw} announce={announce} field="system" />
       <PromptPane source={source} bookId={bookId} record={record} raw={raw} announce={announce} field="user" />
@@ -178,6 +212,8 @@ export const CallSection = memo(function CallSection({ source, bookId, record, o
   const now = useNow(1000, running);
   const phone = useMediaQuery(PHONE_SCREENS);
   const { model } = modelOf(record);
+  const asked = askedAttempts(record).length;
+  const leftOut = leftOutAttempts(record).length;
   const { tookMs } = timesOf(record, now);
   const element = useRef<HTMLElement>(null);
   const header = useRef<HTMLButtonElement>(null);
@@ -190,7 +226,8 @@ export const CallSection = memo(function CallSection({ source, bookId, record, o
     `${t(`autopilot.calls.status.${record.status}`)}${record.response.partial ? ` · ${t("autopilot.calls.call.partial")}` : ""}`,
     tookMs !== null ? formatDuration(tookMs) : "",
     answer ? t("autopilot.calls.call.received", { size: formatBytes(answer.storedBytes) }) : running ? t("autopilot.calls.call.nothingYet") : "",
-    record.attempts.length > 1 ? t("autopilot.calls.call.attempts", { count: record.attempts.length, value: formatCount(record.attempts.length) }) : "",
+    asked > 1 ? t("autopilot.calls.call.attempts", { count: asked, value: formatCount(asked) }) : "",
+    leftOut > 0 ? t("autopilot.calls.call.leftOut", { count: leftOut, value: formatCount(leftOut) }) : "",
   ].filter(Boolean).join(" · ");
 
   // A link to this call: the section comes into sight under the band and takes the focus, once (a jump, never a smooth scroll). On a phone the sheet

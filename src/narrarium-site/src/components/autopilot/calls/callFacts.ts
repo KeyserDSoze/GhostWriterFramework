@@ -26,13 +26,20 @@ export function useOf(record: Pick<AiCallRecord, "attempts">): CallUse {
   return { tokens, cost, currency };
 }
 
-/** The model of a call: the one of its last attempt that says one, with its provider. */
-export function modelOf(record: Pick<AiCallRecord, "attempts">): { model: string | null; provider: string | null } {
-  for (let index = record.attempts.length - 1; index >= 0; index -= 1) {
-    const attempt = record.attempts[index];
-    if (attempt.model) return { model: attempt.model, provider: attempt.provider };
+/** The attempts that were asked: every one of the record but the candidates of the route that were left out (`skipped`), which asked nothing. */
+export const askedAttempts = (record: Pick<AiCallRecord, "attempts">): AiCallAttempt[] => record.attempts.filter((attempt) => attempt.outcome !== "skipped");
+
+/** The candidates of the route that the call left out, each with why (`skip`), in the order of the route. */
+export const leftOutAttempts = (record: Pick<AiCallRecord, "attempts">): AiCallAttempt[] => record.attempts.filter((attempt) => attempt.outcome === "skipped");
+
+/** The model of a call: the one of its last attempt that was asked and says one, with its provider and its integration. */
+export function modelOf(record: Pick<AiCallRecord, "attempts">): { model: string | null; provider: string | null; integrationId: string | null } {
+  const asked = askedAttempts(record);
+  for (let index = asked.length - 1; index >= 0; index -= 1) {
+    const attempt = asked[index];
+    if (attempt.model) return { model: attempt.model, provider: attempt.provider, integrationId: attempt.integrationId };
   }
-  return { model: null, provider: null };
+  return { model: null, provider: null, integrationId: null };
 }
 
 const time = (iso: string | null | undefined) => {
@@ -49,8 +56,8 @@ export function timesOf(record: Pick<AiCallRecord, "timing">, now: number): { to
   return { tookMs: Math.max(0, ended - started), firstWordsMs: first === null ? null : Math.max(0, first - started) };
 }
 
-/** The attempts that did not work, whose transport is told in figures. */
-export const failedAttempts = (record: Pick<AiCallRecord, "attempts">): AiCallAttempt[] => record.attempts.filter((attempt) => attempt.outcome !== "ok");
+/** The attempts that did not work, whose transport is told in figures (a candidate that was left out is no attempt: `leftOutAttempts`). */
+export const failedAttempts = (record: Pick<AiCallRecord, "attempts">): AiCallAttempt[] => record.attempts.filter((attempt) => attempt.outcome !== "ok" && attempt.outcome !== "skipped");
 
 /** The responses of a call that have text, by the number the record gives their text, each with the attempt that wrote it. */
 export function textAttemptsOf(record: Pick<AiCallRecord, "attempts">): Array<{ number: number; attempt: AiCallAttempt }> {

@@ -368,7 +368,14 @@ test("through the engine's own client the kind and the detail are the real ones:
   const unauthorised = await realRun(async () => failBody(401));
   assert.equal(unauthorised.state.status, "error");
   assert.equal(unauthorised.state.lastError.errorKind, "auth");
-  assert.deepEqual(unauthorised.state.lastError.errorDetail, { status: 401, endpoint: ORIGIN, model: "gpt-test", provider: "openai", integration: "main" });
+  // The last candidate is what the fields say; the route says every candidate of the call, here the only one, as it was asked (its duration is the clock's).
+  const { route: unauthorisedRoute, ...unauthorisedDetail } = unauthorised.state.lastError.errorDetail;
+  assert.deepEqual(unauthorisedDetail, { status: 401, endpoint: ORIGIN, model: "gpt-test", provider: "openai", integration: "main" });
+  assert.equal(unauthorisedRoute.length, 1);
+  const { durationMs, message, ...askedOnly } = unauthorisedRoute[0];
+  assert.deepEqual(askedOnly, { position: 0, integrationId: "main", integrationName: "Main", provider: "openai", model: "gpt-test", outcome: "failed", endpoint: ORIGIN, status: 401 });
+  assert.equal(typeof durationMs, "number");
+  assert.match(message, /HTTP 401/);
   assert.deepEqual(unauthorised.summary.lastError.detail, unauthorised.state.lastError.errorDetail);
 
   const limited = await realRun(async () => failBody(429, "Rate limit reached."));
@@ -383,7 +390,9 @@ test("through the engine's own client the kind and the detail are the real ones:
     throw new TypeError("fetch failed");
   });
   assert.equal(away.state.lastError.errorKind, "network");
-  assert.deepEqual(away.state.lastError.errorDetail, { endpoint: ORIGIN, model: "gpt-test", provider: "openai", integration: "main", attempt: 3, retries: 3 }, "no status: nothing answered");
+  const { route: awayRoute, ...awayDetail } = away.state.lastError.errorDetail;
+  assert.deepEqual(awayDetail, { endpoint: ORIGIN, model: "gpt-test", provider: "openai", integration: "main", attempt: 3, retries: 3 }, "no status: nothing answered");
+  assert.deepEqual(awayRoute.map((step) => [step.position, step.outcome, step.status]), [[0, "failed", undefined]], "and the step of the route has none either");
 
   const hang = (_url, init) => new Promise((_resolve, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }));
   const slow = await realRun(hang, { requestTimeoutMs: 20 });

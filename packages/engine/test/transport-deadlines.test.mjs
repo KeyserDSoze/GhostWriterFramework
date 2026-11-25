@@ -365,7 +365,7 @@ test("a later candidate runs for the time the routing limit leaves, which no min
   await settle();
   assert.equal(outcome.done, true);
   assert.ok(outcome.error instanceof AiProviderError);
-  assert.deepEqual(outcome.error.timeout, { phase: "total", ms: 150 });
+  assert.deepEqual(outcome.error.timeout, { phase: "total", ms: 150, routing: true }, "the limit was the routing time that was left, not one of the call's own");
   assert.match(outcome.error.message, /^openai muse-glimmer-30b: request timed out: /);
   assert.match(outcome.error.message, /150 ms left of the total routing time \(maxTotalDurationMs\)/);
 });

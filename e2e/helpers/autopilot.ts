@@ -15,23 +15,41 @@ export const WORKSPACE_ID = "e2e-workspace";
 export const ACCOUNT_IDENTITY = `workspace:${WORKSPACE_ID}`;
 export const KEY = "e2e-plain-key-9f8a7b6c5d4e";
 
+/** One request that reached a provider: who got it, the model the request names, and the function (or `prose`) it asked for. */
+export interface StubCall {
+  provider: string;
+  model: string;
+  tool: string;
+}
+
+/** How a provider answers: whole (after `delayMs`), with an HTTP error at once, or only after `ms` (a provider that is too slow to be waited for). */
+export type StubBehavior = { kind: "ok" } | { kind: "error"; status: number; message: string } | { kind: "slow"; ms: number };
+
 export interface StubProvider {
   server: Server;
   url: string;
   /** How many requests arrived, and the function (or `prose`) each asked for. */
   readonly requests: number;
   readonly asked: string[];
+  /** Every request that arrived, in order. */
+  readonly calls: StubCall[];
   /** Milliseconds every answer waits before it is sent: the time a step takes. */
   delayMs: number;
+  /** How it answers from now on. */
+  behavior: StubBehavior;
   close(): Promise<void>;
 }
 
-/** An OpenAI-compatible provider that answers every autopilot schema with the engine's own fake, `delayMs` after the request arrives. */
-export async function startProvider(options: { delayMs?: number; chapters?: number; scenes?: number; words?: number } = {}): Promise<StubProvider> {
+/**
+ * An OpenAI-compatible provider that answers every autopilot schema with the engine's own fake, `delayMs` after the request arrives. With `name` and a shared
+ * `timeline`, the requests of several providers are put in one list in the order they arrived: what a routing spec reads to say which provider was asked first.
+ */
+export async function startProvider(options: { delayMs?: number; chapters?: number; scenes?: number; words?: number; name?: string; timeline?: StubCall[]; behavior?: StubBehavior } = {}): Promise<StubProvider> {
   const { createFakeAutopilotAi } = await engineModule("testing/index.js");
   const fake = createFakeAutopilotAi({ reviewVerdict: () => "approve", scenes: options.scenes ?? 1, words: options.words ?? 120, chapters: options.chapters ?? 1 });
   const asked: string[] = [];
-  const state = { delayMs: options.delayMs ?? 0 };
+  const calls: StubCall[] = [];
+  const state = { delayMs: options.delayMs ?? 0, behavior: options.behavior ?? ({ kind: "ok" } as StubBehavior) };
   const server = createServer(async (request, response) => {
     response.setHeader("access-control-allow-origin", "*");
     response.setHeader("access-control-allow-headers", "*");
@@ -39,13 +57,22 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
     if (request.method !== "POST") { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ data: [] })); return; }
     let raw = "";
     for await (const piece of request) raw += piece;
-    const body = JSON.parse(raw) as { messages?: Array<{ role: string; content: unknown }>; tools?: Array<{ function: { name: string } }> };
+    const body = JSON.parse(raw) as { model?: string; messages?: Array<{ role: string; content: unknown }>; tools?: Array<{ function: { name: string } }> };
     const text = (content: unknown) => (typeof content === "string" ? content : "");
     const system = text(body.messages?.find((message) => message.role === "system")?.content);
     const user = text([...(body.messages ?? [])].reverse().find((message) => message.role === "user")?.content);
     const tool = body.tools?.[0]?.function;
     asked.push(tool?.name ?? "prose");
-    if (state.delayMs) await new Promise((wait) => setTimeout(wait, state.delayMs));
+    const call: StubCall = { provider: options.name ?? "stub", model: body.model ?? "", tool: tool?.name ?? "prose" };
+    calls.push(call);
+    options.timeline?.push(call);
+    if (state.behavior.kind === "error") {
+      response.writeHead(state.behavior.status, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: state.behavior.message, type: "invalid_request_error" } }));
+      return;
+    }
+    const wait = state.behavior.kind === "slow" ? state.behavior.ms : state.delayMs;
+    if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
     const answer = await fake.complete({ system, user, label: "e2e", ...(tool ? { json: { name: tool.name } } : {}) } as never);
     if (response.destroyed) return;
     response.writeHead(200, { "content-type": "application/json" });
@@ -57,8 +84,11 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
     get requests() { return asked.length; },
     asked,
+    calls,
     get delayMs() { return state.delayMs; },
     set delayMs(value: number) { state.delayMs = value; },
+    get behavior() { return state.behavior; },
+    set behavior(value: StubBehavior) { state.behavior = value; },
     close: () => new Promise<void>((closed) => { server.closeAllConnections(); server.close(() => closed()); }),
   };
 }
@@ -80,13 +110,53 @@ export interface SeedBook {
   files: Record<string, string>;
 }
 
+/** The tasks of the text router: what a model has to be tagged with to be asked for one, and the rows of its table. */
+export const TEXT_TASKS = ["default", "editor-actions", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director"];
+
+const libraryOf = (books: readonly SeedBook[]) => ({
+  ui: { language: "en", theme: "light" },
+  repository: { autoFetchOnOpen: false, autoFetchIntervalMinutes: 0, autoPullWhenClean: false },
+  books: books.map((book) => ({ id: book.id, storageMode: "local-only", localRepositoryId: book.repo, owner: "", repo: "", name: book.name, tokenIndex: null, activeBranch: `local:${book.repo}`, addedAt: "2026-11-20T00:00:00.000Z" })),
+});
+
 export function settingsOf(providerUrl: string, books: readonly SeedBook[]) {
-  const capabilities = ["default", "editor-actions", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director"];
   return {
-    ui: { language: "en", theme: "light" },
-    repository: { autoFetchOnOpen: false, autoFetchIntervalMinutes: 0, autoPullWhenClean: false },
-    books: books.map((book) => ({ id: book.id, storageMode: "local-only", localRepositoryId: book.repo, owner: "", repo: "", name: book.name, tokenIndex: null, activeBranch: `local:${book.repo}`, addedAt: "2026-11-20T00:00:00.000Z" })),
-    aiIntegrations: [{ id: "fake-ai", name: "Fake AI", provider: "openai", endpoint: providerUrl, apiKey: KEY, streamMode: "off", chatModels: [{ id: "fake-model", name: "fake-model", capabilities, supportsToolCalls: true, supportsStreaming: false }] }],
+    ...libraryOf(books),
+    aiIntegrations: [{ id: "fake-ai", name: "Fake AI", provider: "openai", endpoint: providerUrl, apiKey: KEY, streamMode: "off", chatModels: [{ id: "fake-model", name: "fake-model", capabilities: TEXT_TASKS, supportsToolCalls: true, supportsStreaming: false }] }],
+  };
+}
+
+/** An integration of a routing spec: one OpenAI-compatible endpoint (a stub provider) with one model that every text task may use. */
+export interface RoutedIntegration {
+  id: string;
+  name: string;
+  model: string;
+  url: string;
+  /** The context window of its model, in tokens: absent, the model has none declared. */
+  window?: number;
+}
+
+/**
+ * Two integrations and a route for every text task: the primary (`first`) and its one fallback (`second`), the way the Router writes them.
+ * `maxTotalDurationMs` is the routing time a fallback has (the Router's «Maximum total duration»), and `extra` is merged into the settings.
+ */
+export function routedSettingsOf(first: RoutedIntegration, second: RoutedIntegration, books: readonly SeedBook[], options: { maxTotalDurationMs?: number; extra?: Record<string, unknown> } = {}) {
+  const integration = (entry: RoutedIntegration) => ({
+    id: entry.id,
+    name: entry.name,
+    provider: "openai",
+    endpoint: entry.url,
+    apiKey: KEY,
+    streamMode: "off",
+    chatModels: [{ id: entry.model, name: entry.model, capabilities: TEXT_TASKS, supportsToolCalls: true, supportsStreaming: false, ...(entry.window ? { maxInputTokens: entry.window } : {}) }],
+  });
+  const target = (entry: RoutedIntegration) => ({ integrationId: entry.id, model: entry.model });
+  return {
+    ...libraryOf(books),
+    aiIntegrations: [integration(first), integration(second)],
+    taskRouting: Object.fromEntries(TEXT_TASKS.map((task) => [task, { primary: target(first), fallbacks: [target(second)] }])),
+    routingExecution: { maxCandidates: 4, maxTotalDurationMs: options.maxTotalDurationMs ?? 180_000, maxTokenAttempts: 200_000, maxEstimatedCost: 5 },
+    ...(options.extra ?? {}),
   };
 }
 
@@ -94,7 +164,7 @@ export function settingsOf(providerUrl: string, books: readonly SeedBook[]) {
  * The signed-in local workspace, its settings, and the books of this browser in their local repositories, before the app starts; the Google reads
  * the settings load with. A request to the real OpenAI (the integration without its endpoint) fails the spec where it happens, with that reason.
  */
-export async function seed(target: Page | BrowserContext, settings: ReturnType<typeof settingsOf>, books: readonly SeedBook[], options: { recordingOff?: string[]; marker?: string } = {}): Promise<{ openAi: string[] }> {
+export async function seed(target: Page | BrowserContext, settings: ReturnType<typeof settingsOf> | ReturnType<typeof routedSettingsOf>, books: readonly SeedBook[], options: { recordingOff?: string[]; marker?: string } = {}): Promise<{ openAi: string[] }> {
   const openAi: string[] = [];
   await target.route("https://api.openai.com/**", (route) => { openAi.push(route.request().url()); return route.fulfill({ status: 599, json: { error: { message: "The spec's integration has no endpoint: the request went to api.openai.com." } } }); });
   await target.route("https://www.googleapis.com/**", async (route) => {
@@ -125,7 +195,7 @@ export async function seed(target: Page | BrowserContext, settings: ReturnType<t
     if (recordingOff.length) window.localStorage.setItem("narrarium.aiCalls.recording.v1", JSON.stringify(recordingOff));
     const keyOf = encodeURIComponent(`${user.provider}:${user.providerAccountId}`);
     window.localStorage.setItem(`narrarium-settings-cache-v2:${keyOf}`, JSON.stringify({ schemaVersion: 2, accountScope: `${user.provider}:${user.providerAccountId}`, baseRevision: "1", base: settings }));
-    window.sessionStorage.setItem(`narrarium-settings-credentials-v1:${keyOf}`, JSON.stringify({ defaultGitHubToken: "", extraGitHubTokens: [], azureOpenAIApiKey: "", integrationApiKeys: { "fake-ai": settings.aiIntegrations[0].apiKey }, deepSearchApiKeys: { braveApiKey: "", tavilyApiKey: "" }, bookTokens: {} }));
+    window.sessionStorage.setItem(`narrarium-settings-credentials-v1:${keyOf}`, JSON.stringify({ defaultGitHubToken: "", extraGitHubTokens: [], azureOpenAIApiKey: "", integrationApiKeys: Object.fromEntries(settings.aiIntegrations.map((entry) => [entry.id, entry.apiKey])), deepSearchApiKeys: { braveApiKey: "", tavilyApiKey: "" }, bookTokens: {} }));
     window.localStorage.setItem("narrarium-account-continuity-v1", JSON.stringify({ version: 1, accounts: { google: { version: 1, provider: "google", providerAccountId: user.providerAccountId, normalizedEmail: user.email, displayName: user.name, picture: user.picture, createdAt: 1704067200000, lastSeen: now } } }));
     window.sessionStorage.setItem("narrarium-auth-session-v1", JSON.stringify({ version: 1, state: { accessToken: "e2e-google-token", accessTokenExpiry: now + 3_600_000, provider: user.provider, providerAccountId: user.providerAccountId } }));
 

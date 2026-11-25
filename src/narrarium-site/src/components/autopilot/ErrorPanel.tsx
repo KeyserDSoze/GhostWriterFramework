@@ -8,11 +8,13 @@ import { ConnectionCheck } from "@/components/autopilot/ConnectionCheck";
 import { GithubConflictsAction } from "@/components/autopilot/GithubConflictsAction";
 import { ErrorFiles } from "@/components/autopilot/StopNotices";
 import { KindIcon } from "@/components/autopilot/KindIcon";
+import { RouteTrail } from "@/components/autopilot/RouteTrail";
+import { ServerAiNote } from "@/components/autopilot/ServerAiNote";
 import { APP_VERSION } from "@/config/version";
 import { transportBadges } from "@/debug/attemptBadges";
 import { githubConflictsOfError, githubConflictsSettled } from "@/autopilot/githubConflicts";
 import { useBookAutopilotView, useNow } from "@/autopilot/hooks";
-import { diagnosticsText, errorActions, errorFacts, failureSource, formatCountdown, formatLimit, offersConnectionCheck, retryAfterSeconds, secondsLeft, timeoutOf, type ErrorFact, type FailureSource, type TimeoutNote } from "@/autopilot/errorModel";
+import { diagnosticsText, errorActions, errorFacts, failureSource, formatCountdown, formatLimit, offersConnectionCheck, retryAfterSeconds, routeOf, routeTellsMore, secondsLeft, timeoutOf, type ErrorFact, type FailureSource, type TimeoutNote } from "@/autopilot/errorModel";
 import { taskLabel } from "@/autopilot/format";
 import { autopilotSettingsHref } from "@/autopilot/pageRoute";
 import { RETRY_SERVER_VERSION, mayPassWithTime, notBeforeText, retryEndOf, retryWaitOf, serverHasRetry, type RetryWait } from "@/autopilot/retry";
@@ -108,9 +110,9 @@ function TransportDetails({ transport }: { transport: AutopilotErrorDetail["tran
 }
 
 /** Where it happened, in the words of the engine and the app: the step by its kind (its title is in the history), then what the engine knows of the call. */
-function Facts({ source, integrationName }: { source: FailureSource; integrationName: (id: string) => string | undefined }) {
+function Facts({ source, integrationName, withRoute }: { source: FailureSource; integrationName: (id: string) => string | undefined; withRoute: boolean }) {
   const { t } = useTranslation();
-  const facts = errorFacts(source.detail, integrationName);
+  const facts = errorFacts(source.detail, integrationName, withRoute);
   // A retry the summary says and the failure does not (a failure of an older engine, a step not in the log yet) is told all the same.
   if (source.retry && !facts.some((fact) => fact.key === "attempt")) facts.push({ key: "attempt", attempt: source.retry.attempt, retries: source.retry.retries });
   // In a wait of «Retry later» the quick retries are used up, and the restarts are counted apart: two counters, with two names.
@@ -144,8 +146,19 @@ function Facts({ source, integrationName }: { source: FailureSource; integration
  */
 function TimeoutNotice({ note }: { note: TimeoutNote }) {
   const { t, i18n } = useTranslation();
+  const language = i18n.resolvedLanguage ?? i18n.language;
   const what = t(`autopilot.failure.timeout.what.${note.phase}`);
-  const limit = note.ms === undefined ? t("autopilot.failure.timeout.limitNoTime", { what }) : t("autopilot.failure.timeout.limit", { what, time: formatLimit(note.ms, i18n.resolvedLanguage ?? i18n.language) });
+  // The routing time that was left is the author's «Total routing time» less what the candidates before took: it can be raised, and it is not the limit that no request may pass.
+  if (note.routing && note.ms !== undefined) {
+    return (
+      <p data-error-timeout data-error-timeout-routing className="text-sm">
+        <span className="font-medium">{t("autopilot.failure.timeout.limitRouting", { time: formatLimit(note.ms, language) })}.</span>{" "}
+        {t("autopilot.failure.timeout.routingChange")}{" "}
+        <Link className="font-medium underline underline-offset-4" to="/app/settings/ai-router">{t("autopilot.failure.timeout.openRouter")}</Link>
+      </p>
+    );
+  }
+  const limit = note.ms === undefined ? t("autopilot.failure.timeout.limitNoTime", { what }) : t("autopilot.failure.timeout.limit", { what, time: formatLimit(note.ms, language) });
   return (
     <p data-error-timeout className="text-sm">
       <span className="font-medium">{limit}.</span>{" "}
@@ -248,6 +261,9 @@ function FailurePanel({ bookId, control, actions, wait }: FailurePanelProps) {
   const resolved = githubConflicts !== null && githubConflictsSettled(source.at, view.server?.lastSync);
   const offered = errorActions(kind, { configurationBlocks, githubConflict: githubConflicts !== null && !resolved });
   const timeout = kind === "timeout" ? timeoutOf(source.detail) : null;
+  // Every candidate of the route of the call that failed, when there is more to say than the last one: the primary that failed at once is not the one the facts name.
+  const route = routeOf(source.detail);
+  const showRoute = routeTellsMore(route);
   const retryAfter = retryAfterSeconds(source.detail);
   const retryLabel = t("autopilot.failure.actions.retry");
   const integrationId = source.detail.integration;
@@ -302,7 +318,8 @@ function FailurePanel({ bookId, control, actions, wait }: FailurePanelProps) {
         </p>
       )}
       {source.repeats > 1 && <p className="text-sm font-medium">{t("autopilot.failure.repeats", { count: source.repeats })}</p>}
-      <Facts source={source} integrationName={integrationName} />
+      <Facts source={source} integrationName={integrationName} withRoute={showRoute} />
+      {showRoute && <RouteTrail route={route} integrationName={integrationName} />}
       {timeout && <TimeoutNotice note={timeout} />}
       {retryAfter !== null && <p data-error-retry-after className="text-sm font-medium">{t("autopilot.failure.retryAfter", { time: formatCountdown(retryAfter, language) })}</p>}
       {source.retry && <Countdown at={source.retry.at} notBefore={notBefore} />}
@@ -359,6 +376,7 @@ function FailurePanel({ bookId, control, actions, wait }: FailurePanelProps) {
           <Link className="font-medium underline underline-offset-4" to={settingsLink}>{t("autopilot.retry.suggestLink")}</Link>
         </p>
       )}
+      {host === "server" && offered.integrations && <ServerAiNote />}
       {checked && <ConnectionCheck key={failureKey} integration={checked} hostedOnServer={host === "server"} />}
       {source.ended && offered.retry === "hidden" && <p data-error-retry-hint className="text-xs text-muted-foreground">{t("autopilot.failure.config.retryHint")}</p>}
       {!WORDS_ARE_THE_POINT.has(kind) && source.message && (

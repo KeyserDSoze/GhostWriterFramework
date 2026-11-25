@@ -1,4 +1,4 @@
-import { AiProviderError, AiStreamInterruptedError, type AiResponse, type AiTransportDiagnostics } from "../../ai/types.js";
+import { AiProviderError, AiStreamInterruptedError, type AiResponse, type AiRouteStep, type AiTransportDiagnostics } from "../../ai/types.js";
 import type { FetchAiAttempt, FetchAiAttemptEnd } from "../../ai/fetch-client.js";
 import { isAbortError } from "../../util/abort.js";
 import type { AutopilotTaskKind } from "../types.js";
@@ -139,8 +139,11 @@ export class CallRecording {
   readonly systemBytes: number;
   readonly userBytes: number;
   private readonly startedMs: number;
-  private readonly open = new Map<string, { index: number; start: FetchAiAttempt; texts: number }>();
-  private readonly reports: AttemptReport[] = [];
+  private readonly open = new Map<string, { index: number; position: number; start: FetchAiAttempt; texts: number }>();
+  /** The attempts that ended, each with the place of its candidate in the route. */
+  private readonly reports: Array<{ position: number; report: AttemptReport }> = [];
+  /** The candidates of the route that the call left out, as the last attempt that began knew them. */
+  private leftOut: AiRouteStep[] = [];
   private hooked = false;
   private index = 0;
   private result: CallEndInfo | null = null;
@@ -167,7 +170,8 @@ export class CallRecording {
   readonly onAttempt = (attempt: FetchAiAttempt): void => {
     this.hooked = true;
     this.index += 1;
-    this.open.set(attempt.attemptId, { index: this.index, start: attempt, texts: this.recorder.textAttempts });
+    this.open.set(attempt.attemptId, { index: this.index, position: attempt.index, start: attempt, texts: this.recorder.textAttempts });
+    if (attempt.leftOut) this.leftOut = attempt.leftOut;
   };
 
   readonly onAttemptEnd = (end: FetchAiAttemptEnd): void => {
@@ -175,7 +179,7 @@ export class CallRecording {
     if (!started) return;
     this.open.delete(end.attemptId);
     const textAttempt = this.recorder.textAttempts > started.texts ? this.recorder.textAttempts : null;
-    this.reports.push(reportOf(started.index, started.start, end, textAttempt));
+    this.reports.push({ position: started.position, report: reportOf(started.index, started.start, end, textAttempt) });
   };
 
   /**
@@ -184,12 +188,23 @@ export class CallRecording {
    */
   end(status: Exclude<AiCallStatus, "running">, outcome: { response?: AiResponse; error?: unknown } = {}): CallEndInfo {
     if (this.result) return this.result;
-    const attempts = this.hooked ? this.reports : this.synthesize(outcome.response, outcome.error);
+    const attempts = this.withLeftOut(this.hooked ? this.reports : this.synthesize(outcome.response, outcome.error).map((report) => ({ position: report.index - 1, report })), outcome.error);
     const durationMs = this.now().getTime() - this.startedMs;
     this.recorder.finish(status, attempts).catch(() => undefined);
     const characters = this.recorder.responseCharacters;
-    this.result = { callId: this.callId, status, attempts: attempts.length, characters, storedBytes: this.recorder.storedBytes, partial: status !== "ok" && characters > 0, dropped: this.recorder.dropped, durationMs };
+    this.result = { callId: this.callId, status, attempts: attempts.filter((attempt) => attempt.outcome !== "skipped").length, characters, storedBytes: this.recorder.storedBytes, partial: status !== "ok" && characters > 0, dropped: this.recorder.dropped, durationMs };
     return this.result;
+  }
+
+  /**
+   * The attempts of the call with the candidates it left out, in the place each has in the route and numbered from 1 in that order. The error of a call that failed has the whole route (what
+   * was left out after the last attempt began too: the routing time that ran out); a call that worked has what its last attempt knew.
+   */
+  private withLeftOut(asked: ReadonlyArray<{ position: number; report: AttemptReport }>, error: unknown): AttemptReport[] {
+    const route = error && typeof error === "object" ? (error as { route?: unknown }).route : undefined;
+    const known = Array.isArray(route) ? (route as AiRouteStep[]).filter((step) => step?.outcome === "left-out") : this.leftOut;
+    const all = [...asked, ...known.map((step) => ({ position: step.position, report: skippedReport(step) }))].sort((left, right) => left.position - right.position);
+    return all.map(({ report }, at) => ({ ...report, index: at + 1 }));
   }
 
   private synthesize(response: AiResponse | undefined, error: unknown): AttemptReport[] {
@@ -261,6 +276,39 @@ function errorOf(error: unknown): AiCallError {
   const failure = error instanceof Error ? error : new Error(String(error));
   const provider = error instanceof AiProviderError ? error : undefined;
   return { name: failure.name, message: failure.message, status: provider?.status ?? null, transient: provider?.transient === true, timedOut: provider?.timedOut === true };
+}
+
+/** A candidate of the route that the call did not ask, as an attempt of the record: no duration, no usage, no error, and the reason. */
+function skippedReport(step: AiRouteStep): AttemptReport {
+  return {
+    index: 0,
+    textAttempt: null,
+    provider: step.provider || null,
+    model: step.model || null,
+    integrationId: step.integrationId || null,
+    endpoint: step.endpoint ?? null,
+    stream: false,
+    tools: false,
+    firstByteMs: null,
+    durationMs: null,
+    outcome: "skipped",
+    finishReason: null,
+    reasoningCharacters: null,
+    usage: null,
+    usageKnown: null,
+    cost: null,
+    costKnown: null,
+    currency: null,
+    transport: null,
+    error: null,
+    partialCharacters: null,
+    skip: {
+      reason: step.leftOut ?? "unusable",
+      ...(step.why ? { why: step.why } : {}),
+      ...(step.promptTokens !== undefined ? { promptTokens: step.promptTokens } : {}),
+      ...(step.windowTokens !== undefined ? { windowTokens: step.windowTokens } : {}),
+    },
+  };
 }
 
 function reportOf(index: number, start: FetchAiAttempt, end: FetchAiAttemptEnd, textAttempt: number | null): AttemptReport {

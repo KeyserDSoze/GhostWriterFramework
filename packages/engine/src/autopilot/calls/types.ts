@@ -1,3 +1,4 @@
+import type { AiLeftOutReason, AiUnusableWhy } from "../../ai/types.js";
 import type { AutopilotTaskKind, AutopilotTransportDetail } from "../types.js";
 
 /**
@@ -51,8 +52,21 @@ export type AiCallHost = "browser" | "server";
 /** The state of a call. `running` until it ends; the others are final. `partial` on the record says that its text stopped halfway. */
 export type AiCallStatus = "running" | "ok" | "failed" | "interrupted" | "aborted";
 
-/** How one provider attempt ended. `timeout` is a deadline that ran out (`start`, `idle` or `total`). */
-export type AiCallAttemptOutcome = "ok" | "failed" | "interrupted" | "aborted" | "timeout";
+/**
+ * How one provider attempt ended. `timeout` is a deadline that ran out (`start`, `idle` or `total`). `skipped` is no attempt at all: a candidate of the route that the call did not ask,
+ * with the reason in `skip` (it has no duration, no usage and no error).
+ */
+export type AiCallAttemptOutcome = "ok" | "failed" | "interrupted" | "aborted" | "timeout" | "skipped";
+
+/** Why a candidate of the route was not asked, and the numbers that say it (see `AiRouteStep`). */
+export interface AiCallSkip {
+  reason: AiLeftOutReason;
+  /** `unusable`: why the target the author wrote cannot be called. */
+  why?: AiUnusableWhy;
+  /** `context-window`: the tokens the prompt needs (as estimated before sending) and what the model's window leaves for it. */
+  promptTokens?: number;
+  windowTokens?: number;
+}
 
 /** The state of the task that holds calls. `stopped` is a task the author or the autopilot stopped. */
 export type AiCallTaskStatus = "running" | "done" | "failed" | "stopped";
@@ -110,7 +124,8 @@ export interface AiCallError {
 export const AI_CALL_ERROR_CHARACTERS = 500;
 
 /**
- * One provider attempt of a call. The index is the attempt in order, from 1. `textAttempt` says which response of the call holds its text (the
+ * One provider attempt of a call. The index is the attempt in order, from 1, counting the candidates of the route that were left out (`outcome` `skipped`, with `skip`)
+ * in the place they have in the route. `textAttempt` says which response of the call holds its text (the
  * recorder numbers the responses it saw, from 1; an attempt with no text has none), and `text` is that response's size, filled by the recorder.
  * `endpoint` is the origin of the provider's address (`https://api.openai.com`), never a path, a query or a key. `reasoningCharacters` is the
  * count of the reasoning, never its words.
@@ -139,6 +154,8 @@ export interface AiCallAttempt {
   transport: AutopilotTransportDetail | null;
   error: AiCallError | null;
   partialCharacters: number | null;
+  /** For a candidate that was left out (`outcome` `skipped`): why. Absent from every attempt that was asked, and from the records of an engine that did not say. */
+  skip?: AiCallSkip;
 }
 
 /** The times of a call. `firstTextAt` is null when no text arrived. */

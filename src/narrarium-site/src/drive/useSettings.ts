@@ -8,6 +8,7 @@ import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { useClipboardStore } from "@/clipboard/clipboardStore";
 import { useCostsStore } from "@/costs/costsStore";
 import { changedSettingsKeys, loadCachedSettingsForHydration } from "@/drive/settingsCache";
+import { noteAiSettingsSaved } from "@/store/aiSettingsBaseline";
 import { useSettingsStore, LOCAL_SETTINGS_SOURCE_SCHEMA_VERSION } from "@/store/settingsStore";
 import { accountIdentity } from "@/auth/accountIdentity";
 import { useAuthStore } from "@/store/authStore";
@@ -119,6 +120,7 @@ export function useSettings() {
         });
       }
       await saveLocalAccountSettings(useSettingsStore.getState().settings);
+      noteAiSettingsSaved(useSettingsStore.getState().settings);
       store.setCloudLoaded(true);
       store.setCloudReconciled(true);
       store.setSyncStatus("idle");

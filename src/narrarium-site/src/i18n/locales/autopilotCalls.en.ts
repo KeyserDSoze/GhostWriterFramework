@@ -54,6 +54,8 @@ const autopilotCallsEn = {
         partial: "partial",
         attempts_one: "{{value}} attempt",
         attempts_other: "{{value}} attempts",
+        leftOut_one: "{{value}} candidate left out",
+        leftOut_other: "{{value}} candidates left out",
         received: "{{size}} received",
         nothingYet: "nothing received yet",
         asked: "Asked",

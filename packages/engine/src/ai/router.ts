@@ -1,4 +1,5 @@
 import { normalizeReasoningParameter, normalizeThinking, type AiChatModelConfig, type AiIntegrationConfig, type AiPricingConfig, type AiReasoningParameter, type AiRouteTarget, type AiRuntimeConfig, type AiThinking } from "./config.js";
+import type { AiUnusableWhy } from "./types.js";
 
 export interface AiCandidate {
   integration: AiIntegrationConfig;
@@ -53,12 +54,15 @@ function candidate(integration: AiIntegrationConfig, model: AiChatModelConfig, t
   };
 }
 
-function fromTarget(config: AiRuntimeConfig, target: AiRouteTarget, capability: string): AiCandidate | null {
+/** What a target the author wrote is: a candidate that can be called, or the reason why it cannot (its integration is gone, its provider cannot chat here, its model is not in the integration, the model is not allowed the task). */
+function resolveTarget(config: AiRuntimeConfig, target: AiRouteTarget, capability: string): { candidate: AiCandidate } | { unusable: AiUnusableWhy } {
   const integration = config.aiIntegrations.find((entry) => entry.id === target.integrationId);
-  if (!integration || integration.provider === "m365_copilot") return null;
+  if (!integration) return { unusable: "integration-missing" };
+  if (integration.provider === "m365_copilot") return { unusable: "provider-unsupported" };
   const model = integrationChatModels(integration).find((entry) => entry.name === target.model.trim());
-  if (!model || !supports(model, capability)) return null;
-  return candidate(integration, model, target);
+  if (!model) return { unusable: "model-missing" };
+  if (!supports(model, capability)) return { unusable: "task-not-allowed" };
+  return { candidate: candidate(integration, model, target) };
 }
 
 function writingIntegration(config: AiRuntimeConfig): AiIntegrationConfig | undefined {
@@ -74,44 +78,76 @@ function pick(integration: AiIntegrationConfig, capability: string): AiChatModel
   return models.find((model) => model.capabilities.includes(capability)) ?? models.find((model) => model.capabilities.includes("default"));
 }
 
+/** One place of the route of a task: the candidate that stands in it, or the target of the author that cannot be called and why. */
+export interface AiRouteEntry {
+  /** The place in the route as the author wrote it: the primary is 0, then the fallbacks in order. A task with no route written has the order the router chose. */
+  position: number;
+  candidate?: AiCandidate;
+  /** The target as the author wrote it, for a route that is written. */
+  target?: AiRouteTarget;
+  unusable?: AiUnusableWhy;
+}
+
 /**
- * Ordered models to try for a capability, with the same rules as the web app's router:
- * an explicit route (primary + fallbacks) is used alone; otherwise models tagged with the
- * capability, then the default writing integration, then any `default` model.
+ * The route of a task place by place, with the rules of the web app's router: an explicit route (primary + fallbacks) is used alone, and a target of it that cannot
+ * be called keeps its place with the reason (`unusable`), so that the one that is called instead is never taken for the primary; otherwise models tagged with the
+ * capability, then the default writing integration, then any `default` model. At most `maxCandidates` candidates (the same one twice counts once), and the entries
+ * that cannot be called do not count.
  */
-export function resolveAiCandidates(config: AiRuntimeConfig, capability: string): AiCandidate[] {
+export function describeAiRoute(config: AiRuntimeConfig, capability: string): AiRouteEntry[] {
   const limit = Math.max(1, Math.min(8, config.routingExecution?.maxCandidates ?? config.maxCandidates ?? 4));
   const route = config.taskRouting?.[capability];
   const seen = new Set<string>();
-  const output: AiCandidate[] = [];
-  const push = (entry: AiCandidate | null) => {
+  const entries: AiRouteEntry[] = [];
+  let usable = 0;
+  const push = (position: number, entry: AiCandidate | null, target?: AiRouteTarget) => {
     if (!entry || entry.integration.provider === "m365_copilot") return;
     const key = `${entry.integration.id}::${entry.model}`;
-    if (seen.has(key)) return;
+    if (seen.has(key) || usable >= limit) return;
     seen.add(key);
-    output.push(entry);
+    usable += 1;
+    entries.push({ position, candidate: entry, ...(target ? { target } : {}) });
   };
   if (route && (route.primary || route.fallbacks?.length)) {
-    for (const target of [...(route.primary ? [route.primary] : []), ...(route.fallbacks ?? [])]) push(fromTarget(config, target, capability));
-    return output.slice(0, limit);
+    [...(route.primary ? [route.primary] : []), ...(route.fallbacks ?? [])].forEach((target, position) => {
+      const found = resolveTarget(config, target, capability);
+      if ("unusable" in found) entries.push({ position, target, unusable: found.unusable });
+      else push(position, found.candidate, target);
+    });
+    return entries;
   }
+  const chosen: AiCandidate[] = [];
+  const add = (entry: AiCandidate | null) => {
+    if (!entry || entry.integration.provider === "m365_copilot") return;
+    if (chosen.some((other) => other.integration.id === entry.integration.id && other.model === entry.model)) return;
+    chosen.push(entry);
+  };
   if (capability === "review") {
     const review = config.aiIntegrations.find((entry) => entry.id === config.defaultReviewIntegrationId);
     const model = review ? pick(review, "review") : undefined;
-    if (review && model) push(candidate(review, model));
+    if (review && model) add(candidate(review, model));
   }
   for (const integration of config.aiIntegrations) {
     const exact = integrationChatModels(integration).find((model) => model.capabilities.includes(capability));
-    if (exact) push(candidate(integration, exact));
+    if (exact) add(candidate(integration, exact));
   }
   const preferred = writingIntegration(config);
   const preferredModel = preferred ? pick(preferred, capability) : undefined;
-  if (preferred && preferredModel) push(candidate(preferred, preferredModel));
+  if (preferred && preferredModel) add(candidate(preferred, preferredModel));
   for (const integration of config.aiIntegrations) {
     const model = pick(integration, capability);
-    if (model) push(candidate(integration, model));
+    if (model) add(candidate(integration, model));
   }
-  return output.slice(0, limit);
+  chosen.slice(0, limit).forEach((entry, position) => entries.push({ position, candidate: entry }));
+  return entries;
+}
+
+/**
+ * Ordered models to try for a capability (`describeAiRoute` without the targets that cannot be called): an explicit route (primary + fallbacks) is used alone;
+ * otherwise models tagged with the capability, then the default writing integration, then any `default` model.
+ */
+export function resolveAiCandidates(config: AiRuntimeConfig, capability: string): AiCandidate[] {
+  return describeAiRoute(config, capability).flatMap((entry) => (entry.candidate ? [entry.candidate] : []));
 }
 
 export function hasAiCandidates(config: AiRuntimeConfig, capability: string): boolean {

@@ -54,6 +54,8 @@ const autopilotCallsIt = {
         partial: "parziale",
         attempts_one: "{{value}} tentativo",
         attempts_other: "{{value}} tentativi",
+        leftOut_one: "{{value}} candidato escluso",
+        leftOut_other: "{{value}} candidati esclusi",
         received: "{{size}} ricevuti",
         nothingYet: "ancora nulla ricevuto",
         asked: "Richiesta",

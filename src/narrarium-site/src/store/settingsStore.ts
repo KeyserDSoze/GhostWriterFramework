@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { AppSettings, DEFAULT_SETTINGS } from "@/types/settings";
 import { SETTINGS_CACHE_SCHEMA_VERSION, assertOfflineSettingsReplacementAllowed } from "@/drive/settingsCache";
+import { noteAiSettingsSaved, resetAiSettingsBaseline } from "@/store/aiSettingsBaseline";
 
 export const CLOUD_SETTINGS_SOURCE_SCHEMA_VERSION = 1;
 export const LOCAL_SETTINGS_SOURCE_SCHEMA_VERSION = 1;
@@ -69,6 +70,9 @@ export const useSettingsStore = create<SettingsState>()(
         if (state.accountGeneration !== load.accountGeneration || state.accountIdentity !== load.accountIdentity) {
           throw new Error("Trusted settings load is stale for the current account.");
         }
+        // What was loaded from the device is what the device holds: the routing a run compares with the one another tab may have saved since. Settings that did not come from it say nothing of it.
+        if (load.source.kind === "local") noteAiSettingsSaved(settings);
+        else resetAiSettingsBaseline();
         return { settings, cloudLoaded: true };
       }),
       patchSettings: (patch) => set((s) => {

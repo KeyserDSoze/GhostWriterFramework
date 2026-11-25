@@ -27,6 +27,7 @@ import { DeepSearchSettingsBody } from "@/components/settings/DeepSearchSettings
 import { CopilotToolsSettingsBody } from "@/components/settings/CopilotToolsSettingsBody";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 import { clearFallbackAcknowledgements } from "@/assistant/fallbackDisclosure";
+import { RouterRunNote } from "@/components/settings/router/RouterRunNote";
 import { RouterSections } from "@/components/settings/router/RouterSections";
 import { ToolsOnlyField } from "@/components/settings/router/ToolsOnlyField";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
@@ -991,6 +992,7 @@ function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; p
 
   return (
     <div className="space-y-4">
+      <RouterRunNote settings={settings} />
       <ToolsOnlyField settings={settings} patchSettings={patchSettings} />
       <details className="rounded-lg border border-layer bg-card [&[open]>summary_.chev]:rotate-90">
         <summary className="flex cursor-pointer list-none items-center gap-2 p-3 [&::-webkit-details-marker]:hidden">

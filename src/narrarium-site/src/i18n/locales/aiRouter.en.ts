@@ -5,6 +5,7 @@ const aiRouterEn = {
       title: "Routing options",
       description: "Privacy of fallbacks and execution limits",
     },
+    runNote: "An autopilot is running in this tab. A change you make here applies to its next call in this tab, even before it is saved. Save it to keep it after a reload and to apply it to a run in another tab of this browser.",
     sections: {
       text: {
         title: "Text (chat)",

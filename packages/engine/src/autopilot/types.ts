@@ -1,4 +1,4 @@
-import type { AiStreamEnd, AiTimeoutPhase, AiUsage } from "../ai/types.js";
+import type { AiRouteStep, AiStreamEnd, AiTimeoutPhase, AiUsage } from "../ai/types.js";
 import type { AiCallDropReason, AiCallStatus } from "./calls/types.js";
 import type { ChapterFreezeAuthor, FrozenChapterChanges } from "../book/freeze.js";
 
@@ -554,6 +554,15 @@ export interface AutopilotTransportDetail {
   partialCharacters?: number;
 }
 
+/**
+ * What became of one candidate of the route of the call that failed, as the detail of an error keeps it (`AiRouteStep`): the ones that were asked, with how each ended and how long it took, and the
+ * ones that were left out, with why. In the order the author wrote the route, the primary first.
+ */
+export type AutopilotRouteStep = AiRouteStep;
+
+/** The most steps of a route that the detail of an error keeps: far above what a route has (`maxCandidates` is at most 8), so that a detail read from a file is never bigger. */
+export const MAX_ROUTE_STEPS = 12;
+
 /** Where an error happened. Short, and never a secret: `endpoint` is the origin of the provider's address, never a path or a query. */
 export interface AutopilotErrorDetail {
   /** The HTTP status the provider answered, when it answered. */
@@ -584,6 +593,11 @@ export interface AutopilotErrorDetail {
   githubConflicts?: number;
   /** For a call to a model that failed after the provider answered: what the transport saw of it (see `AutopilotTransportDetail`). Absent when no response arrived. */
   transport?: AutopilotTransportDetail;
+  /**
+   * Every candidate of the route of the call that failed, in the order the author wrote it (see `AutopilotRouteStep`). `model`, `provider`, `integration` and `endpoint` above are those of the
+   * last candidate that was asked, which is not the only one: the primary may have failed at once and the fallback after it. Absent from an engine that did not say.
+   */
+  route?: AutopilotRouteStep[];
 }
 
 /**

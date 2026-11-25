@@ -1,9 +1,9 @@
 import { likelyMessageTokens, likelyTextTokens, resolveModelTokenBudgets } from "./budget.js";
 import type { AiRuntimeConfig } from "./config.js";
 import { redactSecrets } from "./redact.js";
-import { buildChatRequest, type ChatRequest } from "./request.js";
-import { resolveAiCandidates, type AiCandidate } from "./router.js";
-import { AiPromptTooLargeError, AiProviderError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, type AiRequest } from "./types.js";
+import { buildChatRequest, effectiveAiBase, endpointOrigin, type ChatRequest } from "./request.js";
+import { describeAiRoute, type AiCandidate, type AiRouteEntry } from "./router.js";
+import { AiPromptTooLargeError, AiProviderError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, type AiLeftOutReason, type AiRequest, type AiRouteStep } from "./types.js";
 
 /** What a fallback's privacy boundary is: the integration (one provider account). Same as the web app's `candidateBoundary`. */
 export function candidateBoundary(candidate: Pick<AiCandidate, "integration">): string {
@@ -32,7 +32,7 @@ export interface AttemptEstimate {
 /** A candidate with the request it would be sent and what that attempt would use at most. */
 export interface PlannedAttempt {
   candidate: AiCandidate;
-  /** Position in the route's order: 0 is the primary. */
+  /** Position in the route as the author wrote it: 0 is the primary (a target that cannot be called keeps its place). */
   index: number;
   /** `null` when the integration cannot be called (the attempt fails with `buildError`). */
   built: ChatRequest | null;
@@ -45,7 +45,7 @@ export interface PlannedAttempt {
 /** A candidate that will not be asked, and why: with "Tools only" on, a structured request skips a model marked as without tool calls. */
 export interface SkippedAttempt {
   candidate: AiCandidate;
-  /** Position in the route's order: 0 is the primary. */
+  /** Position in the route as the author wrote it: 0 is the primary. */
   index: number;
   reason: "no-tool-calls";
 }
@@ -59,6 +59,37 @@ export interface AttemptPlan {
   excludedByBoundary: number;
   /** Candidates left out because "Tools only" is on and they are marked as without tool calls; empty for a request without a function. */
   skipped: SkippedAttempt[];
+  /**
+   * Everything of the route that the plan leaves out, each with its place in the route and why (see `AiRouteStep`): the targets that cannot be called, the fallbacks the privacy policy
+   * keeps back, the models "Tools only" skips, the ones whose context window cannot hold the prompt and the ones the routing limits cut. In the order of the route.
+   */
+  leftOut: AiRouteStep[];
+}
+
+/** The step that says a candidate was left out: who it is, and why (`extra` has the numbers). Names are cleaned of the credentials of the configuration. */
+export function leftOutStep(candidate: AiCandidate, position: number, reason: AiLeftOutReason, secrets: readonly string[], githubModelsBaseUrl?: string, extra: Partial<AiRouteStep> = {}): AiRouteStep {
+  const endpoint = endpointOrigin(effectiveAiBase(candidate.integration, githubModelsBaseUrl));
+  return {
+    position,
+    integrationId: redactSecrets(candidate.integration.id, secrets),
+    integrationName: redactSecrets(candidate.integration.name, secrets),
+    provider: candidate.integration.provider,
+    model: redactSecrets(candidate.model, secrets),
+    outcome: "left-out",
+    ...(endpoint ? { endpoint } : {}),
+    leftOut: reason,
+    ...extra,
+  };
+}
+
+/** The route of a failed plan, in the order the author wrote it: what a host puts on the error it ends with. */
+export function sortedRoute(steps: readonly AiRouteStep[]): AiRouteStep[] {
+  return [...steps].sort((left, right) => left.position - right.position);
+}
+
+function withRoute<E extends Error>(error: E, steps: readonly AiRouteStep[]): E {
+  if (steps.length) (error as E & { route?: AiRouteStep[] }).route = sortedRoute(steps);
+  return error;
 }
 
 export function routingLimits(config: AiRuntimeConfig): RoutingLimits {
@@ -74,36 +105,76 @@ function estimateAttempt(candidate: AiCandidate, inputTokens: number, outputLimi
   };
 }
 
+/** The step that says a target of the route cannot be called at all: who it is as far as the configuration knows it, and why. */
+function unusableStep(entry: AiRouteEntry, config: AiRuntimeConfig, secrets: readonly string[], githubModelsBaseUrl?: string): AiRouteStep {
+  const target = entry.target;
+  const integration = config.aiIntegrations.find((candidate) => candidate.id === target?.integrationId);
+  const endpoint = integration ? endpointOrigin(effectiveAiBase(integration, githubModelsBaseUrl)) : undefined;
+  return {
+    position: entry.position,
+    integrationId: redactSecrets(target?.integrationId ?? "", secrets),
+    integrationName: redactSecrets(integration?.name ?? target?.integrationId ?? "", secrets),
+    provider: integration?.provider ?? "",
+    model: redactSecrets(target?.model ?? "", secrets),
+    outcome: "left-out",
+    ...(endpoint ? { endpoint } : {}),
+    leftOut: "unusable",
+    ...(entry.unusable ? { why: entry.unusable } : {}),
+  };
+}
+
+/** What the author reads when a route is written and none of its targets can be called. */
+function unusableMessage(capability: string, steps: readonly AiRouteStep[]): string {
+  const why: Record<NonNullable<AiRouteStep["why"]>, string> = {
+    "integration-missing": "its integration is no longer there",
+    "provider-unsupported": "its provider cannot run chat tasks here",
+    "model-missing": "the model is not in the integration",
+    "task-not-allowed": "the model is not allowed for this task",
+  };
+  const list = steps.map((step) => `"${step.model}" in "${step.integrationName}" (${step.why ? why[step.why] : "it cannot be called"})`).join("; ");
+  return `No model of the route of the "${capability}" task can be called: ${list}. Fix the route in the AI router or the models in AI Integrations. Nothing was sent.`;
+}
+
 /**
- * The candidates a call will try, in order, with the request each would get: the route's order, minus the fallbacks the
+ * The candidates a call will try, in order, with the request each would get: the route's order, minus the targets that cannot be called, minus the fallbacks the
  * privacy policy excludes, minus (for a structured request, with "Tools only" on, which is the default) the models marked as without
  * tool calls, minus the candidates whose context window cannot hold the prompt (a prompt is never cut),
  * kept while the estimated attempts stay within the token and cost limits. A prompt no window holds, a first attempt
  * that alone exceeds the limits, or a route where no model can call a function, is refused before anything is sent.
  * The privacy policy is applied to the whole route first, so a primary that is skipped is still the account content is meant to stay in.
+ * Whatever is left out has its place in the route and its reason in `leftOut`, and in the `route` of the error when nothing is left to ask: a candidate is never dropped without a word.
  */
 export function planAttempts(config: AiRuntimeConfig, request: AiRequest, githubModelsBaseUrl?: string): AttemptPlan {
-  const resolved = resolveAiCandidates(config, request.capability);
-  if (!resolved.length) throw new AiUnavailableError(request.capability);
+  const entries = describeAiRoute(config, request.capability);
+  const resolved = entries.flatMap((entry) => (entry.candidate ? [entry.candidate] : []));
+  const secrets = config.aiIntegrations.map((integration) => integration.apiKey);
+  const leftOut: AiRouteStep[] = entries.filter((entry) => entry.unusable).map((entry) => unusableStep(entry, config, secrets, githubModelsBaseUrl));
+  if (!resolved.length) {
+    const unavailable = new AiUnavailableError(request.capability, leftOut.length ? redactSecrets(unusableMessage(request.capability, leftOut), secrets) : undefined);
+    throw withRoute(unavailable, leftOut);
+  }
+  const positions = new Map<AiCandidate, number>(entries.flatMap((entry) => (entry.candidate ? [[entry.candidate, entry.position] as [AiCandidate, number]] : [])));
+  const place = (candidate: AiCandidate): number => positions.get(candidate) ?? 0;
   const limits = routingLimits(config);
   const inBoundary = applySameBoundaryPolicy(config, resolved);
+  for (const candidate of resolved) if (!inBoundary.includes(candidate)) leftOut.push(leftOutStep(candidate, place(candidate), "boundary", secrets, githubModelsBaseUrl));
   const toolsOnly = config.toolsOnly !== false && Boolean(request.json);
   const skipped: SkippedAttempt[] = [];
   const allowed = inBoundary.filter((candidate) => {
     if (!toolsOnly || candidate.supportsToolCalls !== false) return true;
-    skipped.push({ candidate, index: resolved.indexOf(candidate), reason: "no-tool-calls" });
+    skipped.push({ candidate, index: place(candidate), reason: "no-tool-calls" });
+    leftOut.push(leftOutStep(candidate, place(candidate), "no-tool-calls", secrets, githubModelsBaseUrl));
     return false;
   });
   if (!allowed.length) {
-    const secrets = config.aiIntegrations.map((integration) => integration.apiKey);
-    throw new AiToolsRequiredError(
+    throw withRoute(new AiToolsRequiredError(
       redactSecrets(toolsRequiredMessage(skipped), secrets),
       skipped.map((entry) => redactSecrets(entry.candidate.model, secrets)),
       skipped.map((entry) => ({ integration: entry.candidate.integration.id, model: redactSecrets(entry.candidate.model, secrets) })),
-    );
+    ), leftOut);
   }
   const planned: PlannedAttempt[] = allowed.map((candidate) => {
-    const index = resolved.indexOf(candidate);
+    const index = place(candidate);
     try {
       const built = buildChatRequest(candidate, request, { githubModelsBaseUrl });
       const tools = built.useTools ? likelyTextTokens(JSON.stringify(built.body.tools)) + 8 : 0;
@@ -122,31 +193,33 @@ export function planAttempts(config: AiRuntimeConfig, request: AiRequest, github
     if (attempt.inputTokens <= available) return true;
     largestBudget = Math.max(largestBudget, available);
     estimated = Math.max(estimated, attempt.inputTokens);
+    leftOut.push(leftOutStep(attempt.candidate, attempt.index, "context-window", secrets, githubModelsBaseUrl, { promptTokens: attempt.inputTokens, windowTokens: available }));
     return false;
   });
   if (!fitting.length) {
-    throw new AiPromptTooLargeError(
+    throw withRoute(new AiPromptTooLargeError(
       `The prompt (about ${estimated} tokens) is larger than the context window configured for every model routed to this task (largest input budget: ${largestBudget} tokens, after the output reserve and a 5% safety margin). Nothing was sent. Raise the models' context window ("maxInputTokens") if they support more, or route this task to a model with a larger context window.`,
       estimated,
       largestBudget,
-    );
+    ), leftOut);
   }
 
   const attempts: PlannedAttempt[] = [];
   let tokens = 0;
   let cost = 0;
-  for (const attempt of fitting) {
+  for (const [at, attempt] of fitting.entries()) {
     const overTokens = limits.maxTokenAttempts !== undefined && tokens + attempt.estimate.tokens > limits.maxTokenAttempts;
     const overCost = limits.maxEstimatedCost !== undefined && cost + attempt.estimate.cost > limits.maxEstimatedCost;
     if (overTokens || overCost) {
-      if (!attempts.length) throw new AiRoutingBudgetError("The first routing candidate exceeds the configured token-attempt or estimated-cost budget (maxTokenAttempts, maxEstimatedCost). Nothing was sent.");
+      for (const rest of fitting.slice(at)) leftOut.push(leftOutStep(rest.candidate, rest.index, "budget", secrets, githubModelsBaseUrl));
+      if (!attempts.length) throw withRoute(new AiRoutingBudgetError("The first routing candidate exceeds the configured token-attempt or estimated-cost budget (maxTokenAttempts, maxEstimatedCost). Nothing was sent."), leftOut);
       break;
     }
     attempts.push(attempt);
     tokens += attempt.estimate.tokens;
     cost += attempt.estimate.cost;
   }
-  return { attempts, primary: resolved[0], limits, excludedByBoundary: resolved.length - inBoundary.length, skipped };
+  return { attempts, primary: resolved[0], limits, excludedByBoundary: resolved.length - inBoundary.length, skipped, leftOut: sortedRoute(leftOut) };
 }
 
 function toolsRequiredMessage(skipped: readonly SkippedAttempt[]): string {

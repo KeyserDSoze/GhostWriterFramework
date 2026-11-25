@@ -145,6 +145,32 @@ export async function loadLocalAccountSnapshot(): Promise<LocalAccountSnapshot |
   };
 }
 
+/** What `loadSavedSettings` reads: the snapshot that holds the settings, and the settings (`null` when the caller already knew that snapshot). */
+export interface SavedSettingsRead {
+  snapshotId: string;
+  settings: AppSettings | null;
+}
+
+/**
+ * The settings that the account has saved on this device, read on their own: not its chats, nor the segments of them. They are what another tab of this browser saved, which this one has
+ * not loaded. `since` is the snapshot the caller already knows: while the store still holds it nothing more is read. `null` when no account data is saved or the store cannot be read: a caller that
+ * only wants to be current goes on with the settings it has.
+ */
+export async function loadSavedSettings(since?: string): Promise<SavedSettingsRead | null> {
+  try {
+    const db = await openDb();
+    const tx = db.transaction(["meta", "core"], "readonly");
+    const meta = await requestValue(tx.objectStore("meta").get(CURRENT_KEY)) as StoredMeta | undefined;
+    const snapshotId = meta?.manifest.snapshotId;
+    if (!snapshotId) return null;
+    if (snapshotId === since) return { snapshotId, settings: null };
+    const core = await requestValue(tx.objectStore("core").get(CURRENT_KEY)) as StoredCore | undefined;
+    return core?.settings ? { snapshotId, settings: core.settings } : null;
+  } catch {
+    return null;
+  }
+}
+
 async function updateCore(patch: Partial<Pick<StoredCore, "settings" | "costs" | "clipboard">>): Promise<AccountSyncManifest> {
   const db = await openDb();
   const tx = db.transaction(["meta", "core"], "readwrite");

@@ -5,6 +5,7 @@ const aiRouterIt = {
       title: "Opzioni di instradamento",
       description: "Riservatezza dei fallback e limiti di esecuzione",
     },
+    runNote: "In questa scheda lavora un autopilot. Una modifica fatta qui vale per la sua prossima chiamata in questa scheda, anche prima di essere salvata. Salvala per mantenerla dopo un ricaricamento e per applicarla a un'esecuzione in un'altra scheda di questo browser.",
     sections: {
       text: {
         title: "Testo (chat)",
