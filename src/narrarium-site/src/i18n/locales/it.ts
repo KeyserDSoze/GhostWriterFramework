@@ -24,7 +24,7 @@ const it = {
     groupTools: "Strumenti",
     autopilotLive: "In diretta",
     autopilotSettings: "Configurazione",
-    outline: "Scaletta",
+    outline: "Sinossi",
     canon: "Canone",
     currentChapter: "Capitolo corrente",
     chapterOverview: "Panoramica capitolo",
@@ -2456,9 +2456,9 @@ const it = {
         output: "Nuovo file markdown di canone",
       },
       "edit-outline": {
-        name: "Modifica la Scaletta",
-        description: "Propone modifiche alla Scaletta (idea del libro, voci dei capitoli, aggiunte, spostamenti, eliminazioni). Nulla è scritto finché non applichi.",
-        output: "Proposta per la Scaletta",
+        name: "Modifica la Sinossi",
+        description: "Propone modifiche alla Sinossi (idea del libro, voci dei capitoli, aggiunte, spostamenti, eliminazioni). Nulla è scritto finché non applichi.",
+        output: "Proposta per la Sinossi",
       },
       "create-script": {
         name: "Crea script",

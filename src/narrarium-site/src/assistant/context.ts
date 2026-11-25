@@ -396,7 +396,7 @@ export function buildContextTitle(
   switch (route.kind) {
     case "book": return structure?.title ?? "Book";
     case "book-dashboard": return "Book dashboard";
-    case "book-outline": return "Outline";
+    case "book-outline": return "Synopsis";
     case "book-autopilot": return "Autopilot";
     case "book-autopilot-settings": return "Autopilot configuration";
     case "book-director": return "Director";
@@ -448,7 +448,7 @@ export function buildContextSummary(
   switch (route.kind) {
     case "book": return `Book context for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-dashboard": return `Dashboard for ${structure?.title ?? book?.name ?? "book"}.`;
-    case "book-outline": return `Outline (Scaletta) of ${structure?.title ?? book?.name ?? "book"}: the idea of the book (outline/book.md, its description) and one entry per chapter (outline/chapters/<NNN>.md) with a hypothetical title, what happens and its ghostwriter. The autopilot follows it as binding.`;
+    case "book-outline": return `Synopsis (the outline) of ${structure?.title ?? book?.name ?? "book"}: the idea of the book (outline/book.md, its description) and one entry per chapter (outline/chapters/<NNN>.md) with a hypothetical title, what happens and its ghostwriter. The autopilot follows it as binding.`;
     case "book-autopilot": return `Autopilot of ${structure?.title ?? book?.name ?? "book"}, live: what it is doing, its history, its plan and the author's permanent rules.`;
     case "book-autopilot-settings": return `Autopilot configuration for ${structure?.title ?? book?.name ?? "book"}: the brief, how it reviews and publishes the book, the author's permanent rules and the profiles it uses.`;
     case "book-director": return `Director profile and opinions for ${structure?.title ?? book?.name ?? "book"}.`;

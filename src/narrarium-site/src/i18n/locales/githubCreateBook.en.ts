@@ -27,7 +27,7 @@ const githubCreateBookEn = {
         },
         checklist: {
           title: "What will be created",
-          book: "The book: the canon files, notes and the outline of the size you chose, the default ghostwriter and the simulated readers.",
+          book: "The book: the canon files, notes and the Synopsis of the size you chose, the default ghostwriter and the simulated readers.",
           reader: "The reader: a site (Astro) that shows the book, with the scripts to export an EPUB and a manuscript.",
           assistants: "The instructions for the writing assistants (OpenCode, Claude, Copilot) and the VS Code settings.",
           workflow: "The GitHub Pages workflow, in a second step: it needs a token that may write workflow files.",

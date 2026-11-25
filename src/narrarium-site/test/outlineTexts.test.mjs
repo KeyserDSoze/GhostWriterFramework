@@ -27,19 +27,20 @@ test("the Outline speaks both languages, with the same texts and the same placeh
   }
 });
 
-test("the Italian of the Outline is written in Italian, not copied from English", () => {
+test("the Italian of the Synopsis is written in Italian, not copied from English", () => {
   // The words that are the same in both languages: the name of a profile and a label of one word.
   const same = new Set(["outline.entry.ghostwriterLabel"]);
   const italian = new Map(italianTexts());
   const copied = englishTexts().filter(([key, value]) => !same.has(key) && italian.get(key) === value).map(([key]) => key);
   assert.deepEqual(copied, []);
-  assert.equal(outlineIt.outline.title, "Scaletta");
-  assert.equal(outlineEn.outline.title, "Outline");
+  // Changed on purpose: the Outline (Scaletta) is called the Synopsis (Sinossi) wherever the author reads it; its folder is still `outline/`.
+  assert.equal(outlineIt.outline.title, "Sinossi");
+  assert.equal(outlineEn.outline.title, "Synopsis");
 });
 
-test("the app entry carries only the menu label of the Outline: its page brings the rest", () => {
-  assert.equal(en.nav.outline, "Outline");
-  assert.equal(it.nav.outline, "Scaletta");
+test("the app entry carries only the menu label of the Synopsis: its page brings the rest", () => {
+  assert.equal(en.nav.outline, "Synopsis");
+  assert.equal(it.nav.outline, "Sinossi");
   assert.equal("outline" in en, false);
   assert.equal("outline" in it, false);
   const page = readFileSync(new URL("../src/pages/OutlinePage.tsx", import.meta.url), "utf8");

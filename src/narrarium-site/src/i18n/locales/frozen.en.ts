@@ -32,8 +32,8 @@ const frozenEn = {
       "review-and-update": "Review and update the book from this change",
       "review-only": "Only a review of the chapter",
       "mark-reviewed": "Mark as reviewed",
-      "rewrite-to-outline": "Rewrite the chapter to follow the Outline",
-      "keep-text": "Keep the text, update only the Outline",
+      "rewrite-to-outline": "Rewrite the chapter to follow the Synopsis",
+      "keep-text": "Keep the text, update only the Synopsis",
     },
     actionHelp: {
       "review-and-update": "The director reads the chapter again and the autopilot updates the later chapters that no longer fit. Your text is not rewritten.",

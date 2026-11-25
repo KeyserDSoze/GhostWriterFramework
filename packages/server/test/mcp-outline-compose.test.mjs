@@ -141,7 +141,7 @@ test("S9 compose: the text of an entry that exists is replaced only by someone w
   const made = await compose(files, [{ kind: "update", number: 9, title: "Nine", body: "nine" }]);
   assert.deepEqual([made.composed.created, made.composed.updated], [[9], []]);
   assert.ok(made.composed.warnings.some((warning) => warning.code === "gap"), "chapters 5 to 8 have no entry: the engine says so");
-  await assert.rejects(() => compose(files, [{ kind: "update", number: 9, body: "nine", expectedHash: h2 }]), refused("conflict", /^edits\[0\] \(update chapter 9\): chapter 9 has no entry now \(outline\/chapters\/009\.md\), so the hash you gave cannot be its: it was removed since you read it\. Read the outline again and retry\. Nothing was written\.$/));
+  await assert.rejects(() => compose(files, [{ kind: "update", number: 9, body: "nine", expectedHash: h2 }]), refused("conflict", /^edits\[0\] \(update chapter 9\): chapter 9 has no entry now \(outline\/chapters\/009\.md\), so the hash you gave cannot be its: it was removed since you read it\. Read the synopsis again and retry\. Nothing was written\.$/));
 
   // The same for removing.
   await assert.rejects(() => compose(files, [{ kind: "remove", number: 2 }]), refused("expected_hash_required", /outline\/chapters\/002\.md/));
@@ -282,7 +282,7 @@ test("S9 compose: every refusal of the engine is a ToolError with the code and t
   files.delete(entryPath(2));
   await assert.rejects(() => composeToolEdits(source, [{ kind: "update", number: 2, title: "x" }], ["default"]), refused("conflict", /^\[?The file changed since you read it \(outline\/chapters\/002\.md\): read it again and retry\. Nothing was written\.$/));
   // An edit of a chapter that has no entry names the tools that list the chapters, and the place of the edit in the call.
-  await assert.rejects(() => compose(four(), [{ kind: "update", number: 1, title: "x" }, { kind: "move", from: 9, to: 2 }]), refused("not_found", /^edits\[1\] \(move chapter 9 to 2\): the outline has no entry for chapter 9\. read_outline lists the chapters that have one\.$/));
+  await assert.rejects(() => compose(four(), [{ kind: "update", number: 1, title: "x" }, { kind: "move", from: 9, to: 2 }]), refused("not_found", /^edits\[1\] \(move chapter 9 to 2\): the synopsis has no entry for chapter 9\. read_outline lists the chapters that have one\.$/));
   // The book's own description names the other tool that gives its hash.
   await assert.rejects(() => compose(four(), [{ kind: "book", body: "New." }]), refused("expected_hash_required", /^edits\[0\] \(book\): a new description replaces a whole text, so pass the hash that read_outline gave for outline\/book\.md as expectedHash/));
   await assert.rejects(() => compose(four(), [{ kind: "remove", number: 3 }]), refused("expected_hash_required", /^edits\[0\] \(remove chapter 3\): an entry is removed only by someone who has read it, so pass the hash that read_outline_entry gave for outline\/chapters\/003\.md as expectedHash/));

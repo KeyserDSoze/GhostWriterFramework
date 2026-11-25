@@ -442,8 +442,8 @@ describe("the other states in Italian", () => {
     expect(region("Cosa ne pensano i lettori")).toHaveTextContent("Nessun lettore ha reagito al piano.");
     expect(within(region("Il voto del direttore")).getByRole("list", { name: "Le revisioni del piano fatte dal direttore" })).toHaveTextContent("Revisione 1");
     expect(approval()).toHaveTextContent("Il direttore l'ha approvato con 8/10 dopo 1 revisione.");
-    expect(await within(chapterOf(1)).findByText("Dalla tua Scaletta", undefined, { timeout: 5000 })).toBeInTheDocument();
-    expect(await within(chapterOf(2)).findByText("Scaletta scritta dall'autopilot", undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await within(chapterOf(1)).findByText("Dalla tua Sinossi", undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await within(chapterOf(2)).findByText("Sinossi scritta dall'autopilot", undefined, { timeout: 5000 })).toBeInTheDocument();
     view.unmount();
     seedWaiting({ plan: { approved: false, awaitingAuthor: false, revisionNotes: ["Capitolo 2 «The wall»: il muro crolla dopo."] } });
     render(<Page />);

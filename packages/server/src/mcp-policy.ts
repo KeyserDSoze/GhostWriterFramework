@@ -26,7 +26,7 @@ const FOLDERS: ReadonlySet<string> = new Set([
 const READ_ONLY_FOLDERS: Readonly<Record<string, string>> = {
   autopilot: "the autopilot's files change only through the autopilot tools.",
   conversations: "the exports of conversations are a record.",
-  outline: "the outline (the Scaletta) is changed with edit_outline, which makes every change as the author's, with the numbering and the checks of the engine: a file written by hand could break them, or name the autopilot as its author. read_outline and read_outline_entry read it, and give the hash that edit_outline needs.",
+  outline: "the synopsis (the outline, `outline/`) is changed with edit_outline, which makes every change as the author's, with the numbering and the checks of the engine: a file written by hand could break them, or name the autopilot as its author. read_outline and read_outline_entry read it, and give the hash that edit_outline needs.",
 };
 
 export type PathVerdict =

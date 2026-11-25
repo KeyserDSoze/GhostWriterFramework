@@ -119,8 +119,14 @@ const CHOICE_LABELS: Record<FrozenAction, { en: string; it: string }> = {
   "review-and-update": { en: "Review and update the book from this change", it: "Rivedi e aggiorna il libro da questa modifica" },
   "review-only": { en: "Only review the chapter", it: "Solo una review del capitolo" },
   "mark-reviewed": { en: "Mark as reviewed", it: "Segna come rivisto" },
-  "rewrite-to-outline": { en: "Rewrite the chapter to follow the outline", it: "Riscrivi il capitolo secondo la Scaletta" },
-  "keep-text": { en: "Keep the text, update only the outline", it: "Tieni il testo, aggiorna solo la Scaletta" },
+  "rewrite-to-outline": { en: "Rewrite the chapter to follow the synopsis", it: "Riscrivi il capitolo secondo la Sinossi" },
+  "keep-text": { en: "Keep the text, update only the synopsis", it: "Tieni il testo, aggiorna solo la Sinossi" },
+};
+
+/** The labels these actions had while the Synopsis was called the outline (the Scaletta): an answer that still says them chooses the same action. */
+const FORMER_CHOICE_LABELS: Partial<Record<FrozenAction, readonly string[]>> = {
+  "rewrite-to-outline": ["Rewrite the chapter to follow the outline", "Riscrivi il capitolo secondo la Scaletta"],
+  "keep-text": ["Keep the text, update only the outline", "Tieni il testo, aggiorna solo la Scaletta"],
 };
 
 /** The label of an action in the language of the book. */
@@ -160,7 +166,7 @@ export function frozenQuestion(item: FrozenWorkItem, others: FrozenWorkItem[], l
   const n = item.number;
   const question = item.kind === "frozen"
     ? text(language, `You changed chapter ${n}${quoted(item.title)}${frozenOn(item.change?.frozenAt, language)}. What should I do?`, `Hai modificato il capitolo ${n}${quoted(item.title)}${frozenOn(item.change?.frozenAt, language)}. Cosa faccio?`)
-    : text(language, `The outline of chapter ${n}${quoted(item.title)} changed, but the chapter is already written. What should I do?`, `La Scaletta del capitolo ${n}${quoted(item.title)} è cambiata, ma il capitolo è già scritto. Cosa faccio?`);
+    : text(language, `The synopsis of chapter ${n}${quoted(item.title)} changed, but the chapter is already written. What should I do?`, `La Sinossi del capitolo ${n}${quoted(item.title)} è cambiata, ma il capitolo è già scritto. Cosa faccio?`);
   const otherNumbers = [...new Set(others.map((other) => other.number).filter((number) => number !== n))];
   const context = [
     ...changedLines(item, language),
@@ -196,7 +202,7 @@ export function frozenQuestionMessage(question: DirectorQuestion, language: stri
   if (!frozen) return question.question;
   return frozen.kind === "frozen"
     ? text(language, `You changed chapter ${frozen.number}${frozenOn(frozen.frozenAt, language)}: choose what to do with it.`, `Hai modificato il capitolo ${frozen.number}${frozenOn(frozen.frozenAt, language)}: scegli cosa farne.`)
-    : text(language, `The outline of chapter ${frozen.number} changed after it was written: choose what to do with it.`, `La Scaletta del capitolo ${frozen.number} è cambiata dopo che era scritto: scegli cosa farne.`);
+    : text(language, `The synopsis of chapter ${frozen.number} changed after it was written: choose what to do with it.`, `La Sinossi del capitolo ${frozen.number} è cambiata dopo che era scritto: scegli cosa farne.`);
 }
 
 const comparable = (value: string) => value.normalize("NFC").replace(/[«»"“”'’]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -214,7 +220,7 @@ export function frozenAnswerAction(question: DirectorQuestion, answer: Pick<Ques
   if (raw) {
     const wanted = comparable(raw);
     for (const action of allowed) {
-      const labels = [action, CHOICE_LABELS[action].en, CHOICE_LABELS[action].it, ...(question.choices ?? []).filter((choice) => choice.id === action).map((choice) => choice.label)];
+      const labels = [action, CHOICE_LABELS[action].en, CHOICE_LABELS[action].it, ...(FORMER_CHOICE_LABELS[action] ?? []), ...(question.choices ?? []).filter((choice) => choice.id === action).map((choice) => choice.label)];
       if (labels.some((label) => comparable(label) === wanted)) return { action };
     }
   }
@@ -372,7 +378,7 @@ export function settleFrozenChanges(input: AutopilotState, settle: FrozenSettleI
         chapterNumber: item.number,
         title: item.kind === "frozen"
           ? text(language, `You changed chapter ${item.number}, which was frozen: I review it and update the book from your change`, `Hai modificato il capitolo ${item.number}, che era congelato: lo rivedo e aggiorno il libro dalla tua modifica`)
-          : text(language, `The outline of chapter ${item.number} changed: I rewrite the chapter to follow it`, `La Scaletta del capitolo ${item.number} è cambiata: riscrivo il capitolo per seguirla`),
+          : text(language, `The synopsis of chapter ${item.number} changed: I rewrite the chapter to follow it`, `La Sinossi del capitolo ${item.number} è cambiata: riscrivo il capitolo per seguirla`),
       });
     }
     waiting = waiting.filter((item) => item.kind === "outline" && item.imported);
@@ -392,7 +398,7 @@ export function settleFrozenChanges(input: AutopilotState, settle: FrozenSettleI
         chapterNumber: item.number,
         title: item.kind === "frozen"
           ? text(language, `You changed chapter ${item.number}${frozenOn(item.change?.frozenAt, language)}: it is not reviewed (frozen chapters are only noticed)`, `Hai modificato il capitolo ${item.number}${frozenOn(item.change?.frozenAt, language)}: non viene rivisto (i capitoli congelati sono solo segnalati)`)
-          : text(language, `The outline of chapter ${item.number} changed, but the chapter is already written: it is not rewritten`, `La Scaletta del capitolo ${item.number} è cambiata, ma il capitolo è già scritto: non viene riscritto`),
+          : text(language, `The synopsis of chapter ${item.number} changed, but the chapter is already written: it is not rewritten`, `La Sinossi del capitolo ${item.number} è cambiata, ma il capitolo è già scritto: non viene riscritto`),
         ...(item.change ? { detail: changedLines(item, language).join(" ") } : {}),
       });
     }
@@ -482,8 +488,8 @@ export function advancePendingReviews(state: AutopilotState, snapshot: BookSnaps
         chapterNumber: chapter.number,
         title: started.kind === "outline"
           ? revision
-            ? text(language, `Chapter ${chapter.number} rewritten to follow the new outline entry: now the later chapters are checked`, `Capitolo ${chapter.number} riscritto secondo la nuova voce della Scaletta: ora si controllano i capitoli successivi`)
-            : text(language, `Chapter ${chapter.number} follows the new outline entry`, `Il capitolo ${chapter.number} segue la nuova voce della Scaletta`)
+            ? text(language, `Chapter ${chapter.number} rewritten to follow the new synopsis entry: now the later chapters are checked`, `Capitolo ${chapter.number} riscritto secondo la nuova voce della Sinossi: ora si controllano i capitoli successivi`)
+            : text(language, `Chapter ${chapter.number} follows the new synopsis entry`, `Il capitolo ${chapter.number} segue la nuova voce della Sinossi`)
           : revision
             ? text(language, `Chapter ${chapter.number} reviewed after your change: now the later chapters are checked`, `Capitolo ${chapter.number} rivisto dopo la tua modifica: ora si controllano i capitoli successivi`)
             : text(language, `Chapter ${chapter.number} reviewed after your change, and frozen again`, `Capitolo ${chapter.number} rivisto dopo la tua modifica, e congelato di nuovo`),

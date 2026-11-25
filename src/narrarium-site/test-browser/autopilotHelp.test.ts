@@ -96,8 +96,8 @@ describe.each<Language>(["en", "it"])("the help of the autopilot (%s)", (languag
     const help = helpOf(language);
     expect(help).toContain(language === "en" ? "## What to expect from a run" : "## Cosa aspettarsi da una corsa");
     const said = language === "en"
-      ? ["rounds of review", "Director", "thinking before it answers", "billed again", "retries", "no price", "your own computer", "learned from the steps", "personal server", "AI Router", "Add chapters", "Outline"]
-      : ["giri di revisione", "Direttore", "ragionare prima di rispondere", "fatturato di nuovo", "nuovi tentativi", "senza prezzo", "tuo computer", "si impara dai passi", "server personale", "Router AI", "Aggiungi capitoli", "Scaletta"];
+      ? ["rounds of review", "Director", "thinking before it answers", "billed again", "retries", "no price", "your own computer", "learned from the steps", "personal server", "AI Router", "Add chapters", "Synopsis"]
+      : ["giri di revisione", "Direttore", "ragionare prima di rispondere", "fatturato di nuovo", "nuovi tentativi", "senza prezzo", "tuo computer", "si impara dai passi", "server personale", "Router AI", "Aggiungi capitoli", "Sinossi"];
     expect(said.filter((word) => !help.includes(word))).toEqual([]);
     // The guide says that a size never writes the director, and that a book that never ran has no empty card.
     expect(help).toMatch(language === "en" ? /file is not touched/ : /file non viene toccato/);
@@ -113,8 +113,8 @@ describe.each<Language>(["en", "it"])("the help of the autopilot (%s)", (languag
     const t = i18n.getFixedT(language);
     expect(section).toContain(`**${t("autopilot.approval.rest.title")}**`);
     const said = language === "en"
-      ? ["as it is now and not from the numbers of the brief", "only the chapters still to write", "rounds of review your director allows", "your Outline", "personal server", "just before it is written", "never the book", "announces nothing", "Not known", "Not estimated", "the steps of the planning already count", "shown once", "made again"]
-      : ["così com'è ora e non sui numeri del brief", "solo i capitoli ancora da scrivere", "giri di revisione che il tuo direttore permette", "la tua Scaletta", "server personale", "subito prima di scriverlo", "mai il libro", "non annuncia nulla", "Non noto", "Non stimato", "i passi della pianificazione contano già", "una volta sola", "rifatto"];
+      ? ["as it is now and not from the numbers of the brief", "only the chapters still to write", "rounds of review your director allows", "your Synopsis", "personal server", "just before it is written", "never the book", "announces nothing", "Not known", "Not estimated", "the steps of the planning already count", "shown once", "made again"]
+      : ["così com'è ora e non sui numeri del brief", "solo i capitoli ancora da scrivere", "giri di revisione che il tuo direttore permette", "la tua Sinossi", "server personale", "subito prima di scriverlo", "mai il libro", "non annuncia nulla", "Non noto", "Non stimato", "i passi della pianificazione contano già", "una volta sola", "rifatto"];
     expect(said.filter((phrase) => !section.includes(phrase))).toEqual([]);
     // The part about the estimate tells where the same estimate is on the screen of the plan, and the screen of the plan where the estimate of the form is.
     expect(help.slice(help.indexOf(language === "en" ? "## What to expect from a run" : "## Cosa aspettarsi da una corsa"), from)).toContain(language === "en" ? "at the end of the plan that waits for you" : "in fondo al piano che aspetta te");

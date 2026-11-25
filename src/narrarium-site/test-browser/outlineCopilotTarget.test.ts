@@ -35,6 +35,15 @@ describe("which «chapter» the author means", () => {
     expect(resolveChapterReference("add that Mira loses the key to that chapter", route("book-outline"))).toEqual({ target: "outline", reason: "page" });
   });
 
+  it("is the outline wherever its page's name is said, the Synopsis or the Sinossi, as it is under its former names", () => {
+    expect(resolveChapterReference("nella Sinossi sposta il capitolo 5 dopo il 7", route("chapter"))).toEqual({ target: "outline", reason: "named" });
+    expect(resolveChapterReference("in the synopsis, move chapter 5 after 7", route("paragraph"))).toEqual({ target: "outline", reason: "named" });
+    expect(resolveChapterReference("Synopses: add chapter 4", route("book-dashboard"))).toEqual({ target: "outline", reason: "named" });
+    expect(resolveChapterReference("nella scaletta sposta il capitolo 5 dopo il 7", route("chapter"))).toEqual({ target: "outline", reason: "named" });
+    const instruction = chapterTargetInstruction(route("chapter"));
+    for (const word of ["«synopsis»", "«sinossi»", "«outline»", "«scaletta»"]) expect(instruction).toContain(word);
+  });
+
   it("asks which one when the request on an outline page speaks of scenes or prose, and follows the written chapter when it is named", () => {
     expect(resolveChapterReference("riscrivi la scena 2 del capitolo 3", route("book-outline"))).toEqual({ target: "ask", reason: "both" });
     expect(resolveChapterReference("rewrite the prose of chapter 3", route("book-autopilot"))).toEqual({ target: "ask", reason: "both" });

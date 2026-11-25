@@ -9,7 +9,7 @@ const mcpBookPageIt = {
     lead: "Ogni libro sul tuo server personale può avere il suo indirizzo MCP, /mcp/<nome>. Un assistente che vi si collega può leggere il libro e, solo se lo consenti, modificarlo e guidare il suo autopilot, con strumenti simili a quelli del Copilot di Narrarium.",
     use: {
       title: "A cosa serve",
-      body: "Lavora su un libro dall'assistente che già usi: ChatGPT, Claude.ai, Claude Code, Cursor o VS Code. Può leggere capitoli, scene, canone e la Scaletta e vedere cosa sta facendo l'autopilot; con il tuo permesso può anche modificare il libro e guidare l'autopilot.",
+      body: "Lavora su un libro dall'assistente che già usi: ChatGPT, Claude.ai, Claude Code, Cursor o VS Code. Può leggere capitoli, scene, canone e la Sinossi e vedere cosa sta facendo l'autopilot; con il tuo permesso può anche modificare il libro e guidare l'autopilot.",
     },
     start: {
       title: "Come si attiva",
@@ -21,11 +21,11 @@ const mcpBookPageIt = {
       title: "Cosa può fare un assistente",
       read: {
         name: "Leggere il libro",
-        text: "Capitoli, scene, canone, file, la Scaletta e cosa sta facendo l'autopilot. Non può cambiare nulla.",
+        text: "Capitoli, scene, canone, file, la Sinossi e cosa sta facendo l'autopilot. Non può cambiare nulla.",
       },
       write: {
         name: "Modificare il libro",
-        text: "Creare e modificare capitoli, scene, canone, file e la Scaletta. Ogni modifica è un commit git che puoi annullare.",
+        text: "Creare e modificare capitoli, scene, canone, file e la Sinossi. Ogni modifica è un commit git che puoi annullare.",
       },
       run: {
         name: "Controllare l'autopilot",

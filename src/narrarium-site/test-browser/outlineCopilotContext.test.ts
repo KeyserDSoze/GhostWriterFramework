@@ -22,7 +22,7 @@ afterEach(() => useOutlineFocusStore.setState({ bookId: null, number: null }));
 describe("the Copilot on the Outline page", () => {
   it("is told where it is", () => {
     const route = { kind: "book-outline", bookId: "book" } as const;
-    expect(buildContextTitle(route, structure as never, null, null)).toBe("Outline");
+    expect(buildContextTitle(route, structure as never, null, null)).toBe("Synopsis");
     expect(buildContextSummary(route, book, structure as never, null, null)).toMatch(/outline\/chapters/);
   });
 

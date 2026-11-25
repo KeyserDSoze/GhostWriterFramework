@@ -64,7 +64,7 @@ export async function outlinePlanStatus(outline: OutlineReader, state: Autopilot
         tone: "warning",
         code: "outlineWarnings",
         chapterNumber: current.number,
-        title: text(language, `The outline of chapter ${current.number} cannot be read: the plan keeps what it had`, `La Scaletta del capitolo ${current.number} non si legge: il piano resta com'era`),
+        title: text(language, `The synopsis of chapter ${current.number} cannot be read: the plan keeps what it had`, `La Sinossi del capitolo ${current.number} non si legge: il piano resta com'era`),
         detail: outline.warnings().filter((warning) => warning.path === entry.path).map((warning) => warning.message).join("\n") || entry.path,
       });
     } else if (entry && entry.contentDigest !== current.outlineDigest && !(entry.intact && !current.outlineDigest)) {
@@ -83,7 +83,7 @@ export async function outlinePlanStatus(outline: OutlineReader, state: Autopilot
         tone: "warning",
         code: "outlineWarnings",
         chapterNumber: chapter.number,
-        title: text(language, `The outline of chapter ${chapter.number} cannot be read: nothing changes until you correct it`, `La Scaletta del capitolo ${chapter.number} non si legge: non cambia nulla finché non la correggi`),
+        title: text(language, `The synopsis of chapter ${chapter.number} cannot be read: nothing changes until you correct it`, `La Sinossi del capitolo ${chapter.number} non si legge: non cambia nulla finché non la correggi`),
         detail: outline.warnings().filter((warning) => warning.path === entry.path).map((warning) => warning.message).join("\n") || entry.path,
       });
       continue;
@@ -100,8 +100,8 @@ export async function outlinePlanStatus(outline: OutlineReader, state: Autopilot
       code: entry ? "outlineChangedWhileWriting" : "outlineRemovedWritten",
       chapterNumber: chapter.number,
       title: entry
-        ? text(language, `The outline of chapter ${chapter.number} changed while the chapter is being written: you will decide what to do once it is closed`, `La Scaletta del capitolo ${chapter.number} è cambiata mentre il capitolo è in scrittura: deciderai cosa fare quando sarà chiuso`)
-        : text(language, `Chapter ${chapter.number} is no longer in the outline, but it is already written: it stays in the book`, `Il capitolo ${chapter.number} non è più nella Scaletta, ma è già scritto: resta nel libro`),
+        ? text(language, `The synopsis of chapter ${chapter.number} changed while the chapter is being written: you will decide what to do once it is closed`, `La Sinossi del capitolo ${chapter.number} è cambiata mentre il capitolo è in scrittura: deciderai cosa fare quando sarà chiuso`)
+        : text(language, `Chapter ${chapter.number} is no longer in the synopsis, but it is already written: it stays in the book`, `Il capitolo ${chapter.number} non è più nella Sinossi, ma è già scritto: resta nel libro`),
     });
   }
   return { changed, written, notes };

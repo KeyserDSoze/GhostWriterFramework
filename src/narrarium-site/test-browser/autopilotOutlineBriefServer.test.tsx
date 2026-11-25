@@ -113,7 +113,7 @@ describe("a personal server older than the length of the book from its Scaletta"
     onServer(OLD_SERVER_INFO);
     await renderWithScaletta(<Page />);
     expect(screen.getByRole("alert")).toHaveTextContent(t("autopilot.errors.outlineBriefUnsupported", { version: "0.1.13" }));
-    expect(alertText()).toMatch(/Scaletta/);
+    expect(alertText()).toMatch(/Sinossi/);
     expect(alertText()).toMatch(/Impostazioni → Server personale/);
     expect(resumeButton()).toBeDisabled();
   });

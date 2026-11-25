@@ -66,7 +66,7 @@ test("book route titles and summaries describe the actual page", () => {
     ["/app/books/book/assets", "Book assets", "Assets"],
     ["/app/books/book/ghostwriters", "Ghostwriters", "Ghostwriters"],
     ["/app/books/book/evaluation-style", "Evaluation Style", "evaluation style"],
-    ["/app/books/book/outline", "Outline", "Outline"],
+    ["/app/books/book/outline", "Synopsis", "Synopsis"],
     ["/app/books/book/autopilot", "Autopilot", "Autopilot"],
     ["/app/books/book/director", "Director", "Director"],
   ];

@@ -172,7 +172,7 @@ describe.each<Language>(["en", "it"])("the entry of a frozen chapter on the Outl
     await open({ chapters: 2, frozen: [1], plan: [planned(1), planned(2)] });
     edit(1);
     const note = t("outline.written.ask", { count: 1, numbers: ["1"] });
-    expect(note).toContain(language === "en" ? "the autopilot will ask you whether to rewrite" : "l'autopilot ti chiederà se riscrivere il capitolo secondo la Scaletta");
+    expect(note).toContain(language === "en" ? "the autopilot will ask you whether to rewrite" : "l'autopilot ti chiederà se riscrivere il capitolo secondo la Sinossi");
     expect(within(entryOf(1)).getByText(note)).toBeInTheDocument();
     expect(saveButton(1)).toHaveAccessibleDescription(note);
     fireEvent.click(saveButton(1));

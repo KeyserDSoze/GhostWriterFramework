@@ -119,12 +119,12 @@ export function estimateTexts(italian: boolean) {
       }
       if (facts.outlineWords > 0) {
         lines.push(italian
-          ? `La scaletta pesa ${count(facts.outlineWords)} parole.`
-          : `The outline weighs ${count(facts.outlineWords)} words.`);
+          ? `La Sinossi pesa ${count(facts.outlineWords)} parole.`
+          : `The synopsis weighs ${count(facts.outlineWords)} words.`);
       }
       lines.push(italian
-        ? "Le pause, i budget e le opzioni che non cambiano quello che si chiede ai modelli (pausa dopo il piano o dopo ogni capitolo, capitoli per corsa, riempimento della scaletta) non cambiano i numeri."
-        : "The pauses, the budgets and the options that do not change what is asked of the models (pause after the plan or after each chapter, chapters per run, filling the outline) do not change the numbers.");
+        ? "Le pause, i budget e le opzioni che non cambiano quello che si chiede ai modelli (pausa dopo il piano o dopo ogni capitolo, capitoli per corsa, riempimento della Sinossi) non cambiano i numeri."
+        : "The pauses, the budgets and the options that do not change what is asked of the models (pause after the plan or after each chapter, chapters per run, filling the synopsis) do not change the numbers.");
       return lines;
     },
   };

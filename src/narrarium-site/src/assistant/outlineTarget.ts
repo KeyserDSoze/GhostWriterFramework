@@ -2,8 +2,8 @@
  * «Chapter» means two things in Narrarium: the chapter of the book (its folder, its text) and the entry of the outline (the Scaletta,
  * `outline/chapters/<NNN>.md`, the plan of the chapter). Which one the author means depends on where they are, and this module says it once,
  * for the Copilot's instructions and for its routing: on the Outline page and on the autopilot's pages (live and settings) «chapter N» and
- * «that chapter» are the entry N of the outline; on every other page of a book they are the chapter of the book; the words «scaletta» and
- * «outline» always mean the outline; and when a request on an outline page speaks of the written text, the Copilot asks which one.
+ * «that chapter» are the entry N of the outline; on every other page of a book they are the chapter of the book; the words «sinossi»,
+ * «synopsis», «scaletta» and «outline» always mean the outline (the Synopsis page); and when a request on an outline page speaks of the written text, the Copilot asks which one.
  */
 
 export type ChapterTargetMode = "outline" | "chapter" | "none";
@@ -20,7 +20,7 @@ export function chapterTargetMode(route: { kind: string }): ChapterTargetMode {
 }
 
 /** The outline named in a request, in either language. */
-const OUTLINE_WORDS = /(?<![\p{L}\p{N}])(?:scalett[ae]|outlines?)(?![\p{L}\p{N}])/iu;
+const OUTLINE_WORDS = /(?<![\p{L}\p{N}])(?:sinossi|synops[ie]s|scalett[ae]|outlines?)(?![\p{L}\p{N}])/iu;
 /** A chapter named in a request: «capitolo 3», «chapter 3», «quel capitolo», «this chapter». */
 const CHAPTER_WORDS = /(?<![\p{L}\p{N}])(?:capitol[oi]|chapters?)(?![\p{L}\p{N}])/iu;
 /** The written chapter named as such: the way out of a doubt, on any page. */
@@ -46,7 +46,7 @@ export function resolveChapterReference(prompt: string, route: { kind: string })
 export function chapterTargetInstruction(route: { kind: string }): string {
   const mode = chapterTargetMode(route);
   if (mode === "none") return "";
-  const shared = "The outline (the Scaletta) is the author's chapter-by-chapter plan of the book: outline/book.md holds the idea of the book (its description, the pitch), and outline/chapters/<NNN>.md one entry per chapter with a hypothetical title, what happens and its ghostwriter. The words «outline» and «scaletta» always mean it, on any page.";
+  const shared = "The Synopsis (the outline) is the author's chapter-by-chapter plan of the book: outline/book.md holds the idea of the book (its description, the pitch), and outline/chapters/<NNN>.md one entry per chapter with a hypothetical title, what happens and its ghostwriter. The words «synopsis», «sinossi», «outline» and «scaletta» always mean it, on any page.";
   return mode === "outline"
     ? `WHICH CHAPTER: ${shared} On this page «chapter N», «this chapter» and «that chapter» mean entry N of the outline (outline/chapters/<NNN>.md), not the chapter's written text: change only the outline, unless the author says «the written chapter» or «the chapter's text». If it is unclear whether the author means the entry of the outline or the written chapter, ask which one before changing anything.`
     : `WHICH CHAPTER: ${shared} On this page «chapter N» means the chapter of the book (its folder under chapters/, its text and files), not its entry of the outline. If it is unclear whether the author means the written chapter or its entry of the outline, ask which one before changing anything.`;

@@ -466,7 +466,7 @@ test("S9: edit_outline is called with the arguments the schema it publishes desc
     for (const [key, property] of Object.entries(edits.items.properties)) assert.ok(property.description?.length > 20, `${key} is described for a model that does not know the engine`);
     assert.deepEqual(edits.items.properties.ghostwriter.type, ["string", "null"], "null takes the ghostwriter away, in the standard words of JSON Schema");
     for (const word of ["ONE commit", "expectedHash", "write_file", "order"]) assert.ok(tool.description.includes(word), `the description says ${word}`);
-    assert.match(tool.description, /never write the outline's files with write_file/i);
+    assert.match(tool.description, /never write the synopsis's files with write_file/i);
     for (const name of ["read_outline", "read_outline_entry"]) {
       const reading = tools.find((candidate) => candidate.name === name);
       assert.deepEqual([reading.annotations.readOnlyHint, reading.annotations.destructiveHint, reading.annotations.idempotentHint, reading.annotations.openWorldHint], [true, false, true, false], name);
@@ -669,12 +669,12 @@ test("S9: an entry that an edit deletes for a chapter that is written is not a c
     const closed = done(await edit(rpc, { kind: "remove", number: 1, renumber: true, expectedHash: await hashOfEntry(1) }));
     assert.deepEqual(closed.notes, [
       "Chapters 1 and 2 are already written: the autopilot will ask the author whether to rewrite them to follow the new entries or keep their text.",
-      "The entry of chapter 3 is no longer in the outline: the chapter stays in the book, and the autopilot only says it.",
+      "The entry of chapter 3 is no longer in the synopsis: the chapter stays in the book, and the autopilot only says it.",
     ]);
 
     // The last entry is deleted: its chapter stays, and nobody is asked.
     const last = done(await edit(rpc, { kind: "remove", number: 2, expectedHash: await hashOfEntry(2) }));
-    assert.deepEqual(last.notes, ["The entry of chapter 2 is no longer in the outline: the chapter stays in the book, and the autopilot only says it."]);
+    assert.deepEqual(last.notes, ["The entry of chapter 2 is no longer in the synopsis: the chapter stays in the book, and the autopilot only says it."]);
 
     // A new entry for a chapter that has none is a change, decided as the setting says.
     await client.updateAutopilotOptions("b", { frozenEdits: "auto" });
@@ -703,7 +703,7 @@ test("S9: the entry of a chapter that is being written says that the autopilot d
       assert.equal(entry.afterChange, "This chapter is being written. If this entry changes, the autopilot will say it and decide what to do once the chapter is closed.");
       const edited = done(await edit(rpc, { kind: "update", number: 1, title: "The author's new title" }));
       assert.deepEqual(edited.notes, ["Chapter 1 is being written: the autopilot will say the change and decide about it once it is closed."]);
-      assert.deepEqual(done(await edit(rpc, { kind: "remove", number: 1, expectedHash: edited.entries[0].hash })).notes, ["The entry of chapter 1 is no longer in the outline: the chapter stays in the book, and the autopilot only says it."]);
+      assert.deepEqual(done(await edit(rpc, { kind: "remove", number: 1, expectedHash: edited.entries[0].hash })).notes, ["The entry of chapter 1 is no longer in the synopsis: the chapter stays in the book, and the autopilot only says it."]);
     }, { ai });
   } finally {
     ai.release();

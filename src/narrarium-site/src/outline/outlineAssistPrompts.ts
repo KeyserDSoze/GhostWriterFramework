@@ -59,7 +59,7 @@ function languageRule(language: string): string {
 /** «Develop this chapter»: events and key points consistent with the description, the nearby entries and the canon, keeping what the entry says. */
 export function developMessages(context: OutlineAssistContext): LlmMessage[] {
   return [
-    { role: "system", content: `You help an author plan a book in Narrarium. You develop one entry of the book's outline (the Scaletta). ${PLAN_RULES} Keep every event, name and fact the entry already has; add what makes the chapter work (the events that lead from the previous chapter to the next, the turning point, who is there and what changes), consistent with the description of the book, the nearby chapters and the canon, never contradicting them, and do not reveal what the nearby chapters keep for later. ${languageRule(context.language)} Return only the new text of the entry.` },
+    { role: "system", content: `You help an author plan a book in Narrarium. You develop one entry of the book's outline (the Synopsis). ${PLAN_RULES} Keep every event, name and fact the entry already has; add what makes the chapter work (the events that lead from the previous chapter to the next, the turning point, who is there and what changes), consistent with the description of the book, the nearby chapters and the canon, never contradicting them, and do not reveal what the nearby chapters keep for later. ${languageRule(context.language)} Return only the new text of the entry.` },
     { role: "user", content: `${currentRequest(`Develop the entry of chapter ${context.number}.`)}\n\n${untrustedData("repository_content", contextBlock(context))}` },
   ];
 }
@@ -74,7 +74,7 @@ export type OutlineCheck = z.infer<typeof checkOutputSchema>;
 /** «Check against the canon and the nearby chapters»: the inconsistencies, and a corrected text only when one is needed. */
 export function checkMessages(context: OutlineAssistContext): LlmMessage[] {
   return [
-    { role: "system", content: `You check one entry of a book's outline (the Scaletta) in Narrarium. ${PLAN_RULES} Find what does not hold: contradictions with the canon, with the description of the book or with the nearby chapters; events out of order; characters, places or objects that cannot be there; a reveal that comes too early. Each issue is one short sentence that names what clashes with what. When the entry has issues, also write a corrected text of the entry that keeps everything else; when it has none, return no issues and an empty revised text. ${languageRule(context.language)} Return ONLY JSON: {"issues":["…"],"revised":"…"}.` },
+    { role: "system", content: `You check one entry of a book's outline (the Synopsis) in Narrarium. ${PLAN_RULES} Find what does not hold: contradictions with the canon, with the description of the book or with the nearby chapters; events out of order; characters, places or objects that cannot be there; a reveal that comes too early. Each issue is one short sentence that names what clashes with what. When the entry has issues, also write a corrected text of the entry that keeps everything else; when it has none, return no issues and an empty revised text. ${languageRule(context.language)} Return ONLY JSON: {"issues":["…"],"revised":"…"}.` },
     { role: "user", content: `${currentRequest(`Check the entry of chapter ${context.number}.`)}\n\n${untrustedData("repository_content", contextBlock(context))}` },
   ];
 }
@@ -82,7 +82,7 @@ export function checkMessages(context: OutlineAssistContext): LlmMessage[] {
 /** «Improve» on an entry (or on the selected part of it): clearer and more concrete, still a plan. */
 export function improveMessages(context: OutlineAssistContext, selection: string | null): LlmMessage[] {
   return [
-    { role: "system", content: `You improve the text of one entry of a book's outline (the Scaletta) in Narrarium. ${PLAN_RULES} Make the selected text clearer and more concrete, keep every event, name and fact, invent nothing that the description or the nearby chapters contradict. ${languageRule(context.language)} Return only the improved text${selection ? " of the selection" : ""}.` },
+    { role: "system", content: `You improve the text of one entry of a book's outline (the Synopsis) in Narrarium. ${PLAN_RULES} Make the selected text clearer and more concrete, keep every event, name and fact, invent nothing that the description or the nearby chapters contradict. ${languageRule(context.language)} Return only the improved text${selection ? " of the selection" : ""}.` },
     { role: "user", content: `${currentRequest(selection ? "Improve the selected text of the entry." : "Improve the text of the entry.")}\n\n${untrustedData("repository_content", `${contextBlock(context)}${selection ? `\n\nSELECTED TEXT:\n${selection}` : ""}`)}` },
   ];
 }
@@ -90,7 +90,7 @@ export function improveMessages(context: OutlineAssistContext, selection: string
 /** «Summarize» an entry (or the selected part of it) into a few sentences. */
 export function summarizeMessages(context: OutlineAssistContext, selection: string | null): LlmMessage[] {
   return [
-    { role: "system", content: `You summarize the text of one entry of a book's outline (the Scaletta) in Narrarium into two or three concise sentences that keep the events that matter. ${languageRule(context.language)} Return only the summary.` },
+    { role: "system", content: `You summarize the text of one entry of a book's outline (the Synopsis) in Narrarium into two or three concise sentences that keep the events that matter. ${languageRule(context.language)} Return only the summary.` },
     { role: "user", content: `${currentRequest("Summarize the text of the entry.")}\n\n${untrustedData("repository_content", selection ?? context.body)}` },
   ];
 }
@@ -103,8 +103,8 @@ export function completeOutlineRequest(settings: AppSettings, messages: LlmMessa
 /** «Improve» and «Summarize» on the description of the book. */
 export function descriptionMessages(kind: "improve" | "summarize", input: { language: string; bookTitle: string; body: string; selection: string | null }): LlmMessage[] {
   const task = kind === "improve"
-    ? "Improve the selected text of the rough description of a book (the head of its outline, the Scaletta): clearer and more concrete, keeping every fact. Return only the improved text."
-    : "Summarize the rough description of a book (the head of its outline, the Scaletta) into a few concise sentences. Return only the summary.";
+    ? "Improve the selected text of the rough description of a book (the head of its outline, the Synopsis): clearer and more concrete, keeping every fact. Return only the improved text."
+    : "Summarize the rough description of a book (the head of its outline, the Synopsis) into a few concise sentences. Return only the summary.";
   return [
     { role: "system", content: `You help an author plan a book in Narrarium. ${task} ${languageRule(input.language)}` },
     { role: "user", content: `${currentRequest(kind === "improve" ? "Improve the description of the book." : "Summarize the description of the book.")}\n\n${untrustedData("repository_content", `BOOK: ${input.bookTitle}\n\nDESCRIPTION:\n${input.body}${input.selection ? `\n\nSELECTED TEXT:\n${input.selection}` : ""}`)}` },

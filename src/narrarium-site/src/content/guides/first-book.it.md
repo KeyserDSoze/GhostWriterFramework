@@ -46,7 +46,7 @@ Apri **I miei libri → Aggiungi libro**.
 
 Una nuova repository contiene gli stessi file di un libro fatto con lo starter del framework (`create-narrarium-book`):
 
-- il libro: file del canone, appunti, plot, la scaletta della misura scelta, il ghostwriter predefinito e i lettori simulati;
+- il libro: file del canone, appunti, plot, la Sinossi della misura scelta, il ghostwriter predefinito e i lettori simulati;
 - il lettore: un sito Astro che mostra il libro, con gli script per esportare un EPUB e un manoscritto;
 - le istruzioni per gli assistenti di scrittura (OpenCode, Claude, Copilot) e le impostazioni di VS Code;
 - il **workflow di GitHub Pages**, inviato come secondo commit a parte.

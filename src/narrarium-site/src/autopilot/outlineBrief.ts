@@ -36,7 +36,7 @@ function readOnlyStoreOf(files: ReadonlyArray<{ path: string; content: string; h
       return file ? { path, content: file.content, hash: file.hash ?? "" } : null;
     },
     commit: async () => {
-      throw new Error("The brief is read here, not written: the Scaletta saves it.");
+      throw new Error("The brief is read here, not written: the Synopsis page saves it.");
     },
   };
 }

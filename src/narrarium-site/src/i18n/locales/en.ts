@@ -24,7 +24,7 @@ const en = {
     groupTools: "Tools",
     autopilotLive: "Live",
     autopilotSettings: "Configuration",
-    outline: "Outline",
+    outline: "Synopsis",
     canon: "Canon",
     currentChapter: "Current chapter",
     chapterOverview: "Chapter overview",

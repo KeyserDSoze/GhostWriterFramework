@@ -305,7 +305,7 @@ describe("the review, the save and the reset", () => {
 });
 
 describe("a Scaletta with no chapters", () => {
-  const EMPTY = "The Scaletta has no chapters: add them before you start.";
+  const EMPTY = "The Synopsis has no chapters: add them before you start.";
   const emptyScaletta = () => { mocks.local = new MemoryBookStore({ "director.md": "---\nname: Ada\n---\nThe vision.\n", "outline/book.md": serializeOutlineBook({ body: IDEA, origin: "author" }), "outline/_brief.md": serializeOutlineBrief({ genre: "", audience: "", wordsPerScene: 1400, synopsis: "" }) }); };
 
   it("says why the autopilot cannot start, in the overview with a way to the Scaletta, and the start is off with the same reason", async () => {

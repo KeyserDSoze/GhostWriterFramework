@@ -46,7 +46,7 @@ Open **My Books → Add Book**.
 
 A new repository holds the same files as a book made with the framework's own starter (`create-narrarium-book`):
 
-- the book: canon files, notes, plot, the outline of the size you chose, the default ghostwriter and the simulated readers;
+- the book: canon files, notes, plot, the synopsis of the size you chose, the default ghostwriter and the simulated readers;
 - the reader: an Astro site that shows the book, with the scripts to export an EPUB and a manuscript;
 - the instructions for the writing assistants (OpenCode, Claude, Copilot) and the VS Code settings;
 - the **GitHub Pages workflow**, sent as a second commit on its own.

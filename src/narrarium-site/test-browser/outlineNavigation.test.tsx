@@ -17,8 +17,8 @@ afterEach(async () => {
   await i18n.changeLanguage("en");
 });
 
-describe("the Outline in the menu of a book", () => {
-  it.each<["en" | "it", string]>([["en", "Outline"], ["it", "Scaletta"]])("is right after the dashboard, in %s", async (language, label) => {
+describe("the Synopsis in the menu of a book", () => {
+  it.each<["en" | "it", string]>([["en", "Synopsis"], ["it", "Sinossi"]])("is right after the dashboard, in %s", async (language, label) => {
     await i18n.changeLanguage(language);
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, books: [BOOK], ui: { ...DEFAULT_SETTINGS.ui, language } } });
     render(<MemoryRouter initialEntries={["/app/books/book-1/outline"]}><Sidebar /></MemoryRouter>);

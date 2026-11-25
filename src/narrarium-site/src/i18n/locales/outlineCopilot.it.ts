@@ -3,8 +3,8 @@ const outlineCopilotIt = {
   outline: {
     copilot: {
       deleted: "eliminata",
-      deletes: "Questa voce della Scaletta viene eliminata.",
-      applyTogether: "Le modifiche alla Scaletta si applicano tutte insieme, in un solo commit.",
+      deletes: "Questa voce della Sinossi viene eliminata.",
+      applyTogether: "Le modifiche alla Sinossi si applicano tutte insieme, in un solo commit.",
     },
   },
 };

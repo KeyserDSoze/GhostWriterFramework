@@ -322,7 +322,7 @@ const updateCanonEntry: McpTool = {
 const writeFileTool: McpTool = {
   name: "write_file",
   title: "Write a file",
-  description: "Writes a text file of the book that no other tool is for (notes, plot, guidelines, resumes…), as one commit. A file that exists is replaced only with expectedHash, the hash that read_file gave: a file that changed since is never overwritten. A new file needs no hash. Not for the outline (the `outline/` folder: it is changed with edit_outline, and write_file refuses it), for hidden files and folders, for the autopilot's own files or for anything outside the book's folders; chapters, scenes and canon have their own tools. A chapter.md written here keeps the chapter's freeze (`frozen`) as it is: only the app and the autopilot freeze a chapter.",
+  description: "Writes a text file of the book that no other tool is for (notes, plot, guidelines, resumes…), as one commit. A file that exists is replaced only with expectedHash, the hash that read_file gave: a file that changed since is never overwritten. A new file needs no hash. Not for the synopsis (the `outline/` folder: it is changed with edit_outline, and write_file refuses it), for hidden files and folders, for the autopilot's own files or for anything outside the book's folders; chapters, scenes and canon have their own tools. A chapter.md written here keeps the chapter's freeze (`frozen`) as it is: only the app and the autopilot freeze a chapter.",
   scope: "write",
   annotations: UPDATE,
   inputSchema: shape({

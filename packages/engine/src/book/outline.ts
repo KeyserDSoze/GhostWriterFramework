@@ -252,7 +252,7 @@ function gapWarning(numbers: number[]): OutlineWarning | null {
   if (!ranges.length) return null;
   const listed = ranges.slice(0, LISTED_GAPS).join(", ");
   const more = ranges.length > LISTED_GAPS ? ` and ${ranges.length - LISTED_GAPS} more runs` : "";
-  return { code: "gap", message: `outline: chapters ${listed}${more} have no entry; the autopilot plans them freely, between the entries around them.` };
+  return { code: "gap", message: `synopsis: chapters ${listed}${more} have no entry; the autopilot plans them freely, between the entries around them.` };
 }
 
 /**
@@ -277,7 +277,7 @@ export async function parseOutline(files: ReadonlyArray<{ path: string; content:
     if (!file.path.startsWith(`${OUTLINE_DIRECTORY}/`)) continue;
     const parsed = parseOutlineChapterPath(file.path);
     if (!parsed) {
-      warnings.push({ code: "not-an-entry", path: file.path, message: `${file.path} is not an entry of the outline: an entry is outline/chapters/<number>.md, as outline/chapters/${formatOrdinal(1)}.md.` });
+      warnings.push({ code: "not-an-entry", path: file.path, message: `${file.path} is not an entry of the synopsis: an entry is outline/chapters/<number>.md, as outline/chapters/${formatOrdinal(1)}.md.` });
       continue;
     }
     const same = byNumber.get(parsed.number) ?? [];
@@ -464,7 +464,7 @@ export function outlineChanges(input: OutlineChangesInput): OutlineChangesResult
       const from = positiveNumber(edit.from, "the chapter to move");
       const to = positiveNumber(edit.to, "the position");
       if (!byNumber.has(from)) {
-        warnings.push({ code: "not-found", number: from, message: `outline: chapter ${from} has no entry to move.` });
+        warnings.push({ code: "not-found", number: from, message: `synopsis: chapter ${from} has no entry to move.` });
         return { changes: [], warnings };
       }
       if (from === to) return { changes: [], warnings };
@@ -479,7 +479,7 @@ export function outlineChanges(input: OutlineChangesInput): OutlineChangesResult
     case "remove": {
       const number = positiveNumber(edit.number, "the chapter to remove");
       if (!byNumber.has(number)) {
-        warnings.push({ code: "not-found", number, message: `outline: chapter ${number} has no entry to remove.` });
+        warnings.push({ code: "not-found", number, message: `synopsis: chapter ${number} has no entry to remove.` });
         return { changes: [], warnings };
       }
       placements = entries.filter((entry) => entry.number !== number).map((entry) => ({ number: edit.renumber && entry.number > number ? entry.number - 1 : entry.number, entry }));

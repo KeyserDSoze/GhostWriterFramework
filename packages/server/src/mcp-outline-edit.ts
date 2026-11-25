@@ -160,19 +160,19 @@ function toolErrorOf(error: OutlineComposeError, edits: readonly OutlineToolEdit
   const label = error.subject === "book" ? "the description of the book" : `chapter ${error.number}`;
   switch (error.code) {
     case "not_found":
-      return new ToolError("not_found", `${where}: the outline has no entry for chapter ${error.number}. read_outline lists the chapters that have one.`);
+      return new ToolError("not_found", `${where}: the synopsis has no entry for chapter ${error.number}. read_outline lists the chapters that have one.`);
     case "expected_hash_required": {
       const replaces = edit?.kind === "remove" ? "an entry is removed only by someone who has read it" : edit?.kind === "book" ? "a new description replaces a whole text" : "a new text replaces a whole text";
       const readWith = edit?.kind === "book" ? "read_outline" : "read_outline_entry";
       return new ToolError("expected_hash_required", `${where}: ${replaces}, so pass the hash that ${readWith} gave for ${error.path} as expectedHash: that way a change made meanwhile is never overwritten. Read it first with ${readWith}.`);
     }
     case "conflict":
-      if (error.reason === "removed") return new ToolError("conflict", `${where}: ${label} has no entry now (${error.path}), so the hash you gave cannot be its: it was removed since you read it. Read the outline again and retry. Nothing was written.`);
+      if (error.reason === "removed") return new ToolError("conflict", `${where}: ${label} has no entry now (${error.path}), so the hash you gave cannot be its: it was removed since you read it. Read the synopsis again and retry. Nothing was written.`);
       if (error.reason === "made-in-series") return new ToolError("conflict", `${where}: ${label} is a new entry made by an earlier edit of this call, so the hash you gave (of an entry you read) is not its: the numbers of a series count the edits before them. Nothing was written.`);
       if (error.reason === "changed") return new ToolError("conflict", `${where}: the file changed since you read it (${error.path}): read it again and retry. Nothing was written.`);
       return conflictError(error.path ?? "the file");
     case "too_many_files":
-      return new ToolError("too_many_files", `This change would touch at least ${error.count} files of the outline, and one call may touch at most ${error.limit}: ask the author to make it in the Narrarium app (the Outline page, where it can be undone), or make it in smaller steps. Nothing was written.`);
+      return new ToolError("too_many_files", `This change would touch at least ${error.count} files of the synopsis, and one call may touch at most ${error.limit}: ask the author to make it in the Narrarium app (the Synopsis page, where it can be undone), or make it in smaller steps. Nothing was written.`);
     case "too_many_edits":
       return invalid(`A call makes at most ${error.limit} edits: send the rest in another call.`);
     default:

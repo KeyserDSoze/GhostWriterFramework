@@ -2060,7 +2060,7 @@ async function proposeMultiFileUpdates(input: PromptInput & { book: BookEntry; b
   const proposed = parsed.updates as AssistantFileUpdate[];
   const outsideOutline = proposed.filter((entry) => !isOutlineFolder(entry.path));
   const outlineNote = outsideOutline.length < proposed.length
-    ? (promptIsItalian(input.prompt, input.settings) ? "La Scaletta si modifica con «Modifica la Scaletta» (Edit the Outline): chiedimelo nominando la Scaletta, per esempio «nella Scaletta, …»." : "The outline is changed with «Edit the Outline»: ask me again naming the outline, for example «in the outline, …».")
+    ? (promptIsItalian(input.prompt, input.settings) ? "La Sinossi si modifica con «Modifica la Sinossi» (Edit the Synopsis): chiedimelo nominando la Sinossi, per esempio «nella Sinossi, …»." : "The synopsis is changed with «Edit the Synopsis»: ask me again naming the synopsis, for example «in the synopsis, …».")
     : "";
   if (!outsideOutline.length) return makeAssistantMessage("assistant", outlineNote);
   const updates = await keepChapterFreezes(input, outsideOutline);
@@ -2093,16 +2093,16 @@ function isOutlineFolder(path: string): boolean {
 
 /** Whether a request is written in Italian, for the words of the Copilot that are not the model's. */
 function promptIsItalian(prompt: string, settings: AppSettings): boolean {
-  if (/(?<![\p{L}])(?:capitol[oi]|scalett[ae]|scen[ae]|aggiungi|sposta|elimina|riscrivi|cambia|nel|nella|della|dopo|prima|che|cosa|il|la|una?)(?![\p{L}])/iu.test(prompt)) return true;
-  if (/(?<![\p{L}])(?:chapter|outline|the|move|add|delete|rewrite|change|after|before|what|in)(?![\p{L}])/iu.test(prompt)) return false;
+  if (/(?<![\p{L}])(?:capitol[oi]|sinossi|scalett[ae]|scen[ae]|aggiungi|sposta|elimina|riscrivi|cambia|nel|nella|della|dopo|prima|che|cosa|il|la|una?)(?![\p{L}])/iu.test(prompt)) return true;
+  if (/(?<![\p{L}])(?:chapter|synopsis|outline|the|move|add|delete|rewrite|change|after|before|what|in)(?![\p{L}])/iu.test(prompt)) return false;
   return settings.ui.language === "it";
 }
 
 /** On an outline page, a request that speaks of scenes or prose: the Copilot asks which chapter is meant before doing anything. */
 function whichChapterMessage(prompt: string, settings: AppSettings): AssistantMessage {
   return makeAssistantMessage("assistant", promptIsItalian(prompt, settings)
-    ? "Intendi la voce della Scaletta (il piano del capitolo: titolo ipotetico, cosa succede, ghostwriter) o il capitolo scritto, con il suo testo? Dimmi «nella Scaletta» oppure «nel testo del capitolo» e procedo."
-    : "Do you mean the entry of the outline (the plan of the chapter: hypothetical title, what happens, ghostwriter) or the written chapter, with its text? Say «in the outline» or «in the chapter's text» and I will go on.");
+    ? "Intendi la voce della Sinossi (il piano del capitolo: titolo ipotetico, cosa succede, ghostwriter) o il capitolo scritto, con il suo testo? Dimmi «nella Sinossi» oppure «nel testo del capitolo» e procedo."
+    : "Do you mean the entry of the synopsis (the plan of the chapter: hypothetical title, what happens, ghostwriter) or the written chapter, with its text? Say «in the synopsis» or «in the chapter's text» and I will go on.");
 }
 
 /**

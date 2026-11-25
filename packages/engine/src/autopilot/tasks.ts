@@ -316,8 +316,8 @@ function outlineGhostwriter(ctx: TaskContext, entry: OutlineChapterEntry | undef
   const italian = isItalian(ctx.language);
   ctx.insight(
     "warning",
-    italian ? `La Scaletta del capitolo ${entry.number} indica il ghostwriter «${slug}», che non esiste: lo scrive quello del libro` : `The outline of chapter ${entry.number} names the ghostwriter «${slug}», which does not exist: the book's ghostwriter writes it`,
-    italian ? `Crea ghostwriters/${slug}.md, oppure correggi la voce della Scaletta.` : `Create ghostwriters/${slug}.md, or correct the entry of the outline.`,
+    italian ? `La Sinossi del capitolo ${entry.number} indica il ghostwriter «${slug}», che non esiste: lo scrive quello del libro` : `The synopsis of chapter ${entry.number} names the ghostwriter «${slug}», which does not exist: the book's ghostwriter writes it`,
+    italian ? `Crea ghostwriters/${slug}.md, oppure correggi la voce della Sinossi.` : `Create ghostwriters/${slug}.md, or correct the entry of the synopsis.`,
     { code: "outlineGhostwriter", chapterNumber: entry.number, ghostwriter: slug },
   );
   return undefined;
@@ -1156,12 +1156,12 @@ async function runReplan(ctx: TaskContext): Promise<TaskResult> {
     if (stubHash && !written) changes.push({ path: stubPath, content: null, expectedHash: stubHash });
     ctx.insight(
       "warning",
-      italian ? `Il capitolo ${number} non è più nella Scaletta: esce dal piano` : `Chapter ${number} is no longer in the outline: it leaves the plan`,
-      italian ? "I capitoli successivi mantengono il loro numero: rinumera la Scaletta se vuoi chiudere il vuoto." : "The following chapters keep their number: renumber the outline if you want to close the gap.",
+      italian ? `Il capitolo ${number} non è più nella Sinossi: esce dal piano` : `Chapter ${number} is no longer in the synopsis: it leaves the plan`,
+      italian ? "I capitoli successivi mantengono il loro numero: rinumera la Sinossi se vuoi chiudere il vuoto." : "The following chapters keep their number: renumber the synopsis if you want to close the gap.",
       { code: "outlineRemoved", chapterNumber: number },
     );
     changes.push(await planFileChange(ctx));
-    return { changes: compact(changes), summary: italian ? `Il capitolo ${number} è uscito dal piano: la sua voce della Scaletta è stata cancellata.` : `Chapter ${number} left the plan: its entry of the outline was deleted.` };
+    return { changes: compact(changes), summary: italian ? `Il capitolo ${number} è uscito dal piano: la sua voce della Sinossi è stata cancellata.` : `Chapter ${number} left the plan: its entry of the synopsis was deleted.` };
   }
 
   const [view, design, resume] = await Promise.all([authorOutline(ctx), readBody(ctx.store, STORY_DESIGN_FILE, 2500), storySoFar(ctx, number, 4000)]);
@@ -1220,7 +1220,7 @@ async function runReplan(ctx: TaskContext): Promise<TaskResult> {
   changes.push(await planFileChange(ctx));
   ctx.insight(
     "info",
-    italian ? `Hai cambiato la Scaletta del capitolo ${number}: lo ripianifico` : `You changed the outline of chapter ${number}: I am planning it again`,
+    italian ? `Hai cambiato la Sinossi del capitolo ${number}: lo ripianifico` : `You changed the synopsis of chapter ${number}: I am planning it again`,
     `${number}. ${title}${chapter.summary ? ` — ${chapter.summary}` : ""}`,
     { code: "outlineChanged", chapterNumber: number },
   );

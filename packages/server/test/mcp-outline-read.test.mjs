@@ -137,7 +137,7 @@ test("S9: a long list of warnings is cut and counted, and a book without an outl
     const stray = done(await rpc.call("read_outline"));
     assert.deepEqual([stray.entries, stray.total, stray.book, stray.outline], [[], 0, null, { entries: 0, lastNumber: 0 }]);
     assert.deepEqual(stray.warnings.map((warning) => [warning.code, warning.path]), [["not-an-entry", "outline/act-one.md"]], "the old file the fixture has is not an entry, and is said");
-    assert.match(stray.message, /no outline yet[^]*edit_outline/);
+    assert.match(stray.message, /no synopsis yet[^]*edit_outline/);
     await client.commitFiles("glass", [{ path: "outline/act-one.md", content: null }], "no outline at all");
     const empty = done(await rpc.call("read_outline"));
     assert.deepEqual([empty.entries, empty.book, empty.warnings, empty.nextOffset], [[], null, [], null]);

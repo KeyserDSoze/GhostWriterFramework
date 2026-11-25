@@ -269,3 +269,19 @@ test("nothing happens for a change the engine does not follow: a chapter the pla
   assert.equal(await observe(changed, planless, 2), "none", "the engine: no plan");
   assert.equal(changeOfWritten(planless, 2), "none");
 });
+
+test("an answer that says the label an action had when the Synopsis was called the outline (the Scaletta) chooses the same action", () => {
+  const question = { id: "outline-2-x", kind: "outline-change", question: "", context: "", options: [], choices: [] };
+  for (const [label, action] of [
+    ["Rewrite the chapter to follow the synopsis", "rewrite-to-outline"],
+    ["Riscrivi il capitolo secondo la Sinossi", "rewrite-to-outline"],
+    ["Keep the text, update only the synopsis", "keep-text"],
+    ["Tieni il testo, aggiorna solo la Sinossi", "keep-text"],
+    ["Rewrite the chapter to follow the outline", "rewrite-to-outline"],
+    ["Riscrivi il capitolo secondo la Scaletta", "rewrite-to-outline"],
+    ["Keep the text, update only the outline", "keep-text"],
+    ["Tieni il testo, aggiorna solo la Scaletta", "keep-text"],
+  ]) assert.deepEqual(engine.frozenAnswerAction(question, { choice: label }), { action }, label);
+  assert.equal(engine.frozenActionLabel("rewrite-to-outline", "en"), "Rewrite the chapter to follow the synopsis", "the label it has now");
+  assert.equal(engine.frozenActionLabel("keep-text", "it"), "Tieni il testo, aggiorna solo la Sinossi", "the label it has now");
+});

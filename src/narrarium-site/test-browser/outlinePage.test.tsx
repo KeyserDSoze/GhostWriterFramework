@@ -242,7 +242,7 @@ describe.each<Language>(["en", "it"])("the page in %s", (language) => {
   it("is in the language of the app", async () => {
     await act(async () => { await i18n.changeLanguage(language); });
     await open({ [outlineChapterPath(1)]: author(1, "Uno", "Mira.") });
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(language === "it" ? "Scaletta" : "Outline");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(language === "it" ? "Sinossi" : "Synopsis");
     expect(bodyField(1)).toBeInTheDocument();
   });
 });

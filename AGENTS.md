@@ -44,7 +44,7 @@ Narrarium MCP already auto-refreshes `plot.md` and the resume files after final 
 - A frozen chapter (a `frozen` record in its `chapter.md`) that was changed after it was approved must never be ignored: ask the author whether to review it (autopilot: `frozenStatus` / `resolveFrozenChange`).
 - Treat `guidelines/`, `drafts/`, `plot.md`, `conversations/`, `resumes/`, `evaluations/`, and `secrets/` as first-class context, not optional notes.
 - Treat `director.md` (the director profile: the author's stand-in) and `evaluations/director/` as first-class context when judging or revising prose.
-- `outline/` (the Scaletta: `outline/book.md` and one `outline/chapters/<NNN>.md` per chapter, with hypothetical title, what happens and ghostwriter) is the author's chapter-by-chapter plan of the book: the autopilot follows it as binding and only fills the entries that are missing (`origin: autopilot`). It is not `plot.md`, which is generated: to change the plan, change the outline.
+- `outline/` (the Synopsis, «Sinossi», once called the Scaletta: `outline/book.md` and one `outline/chapters/<NNN>.md` per chapter, with hypothetical title, what happens and ghostwriter) is the author's chapter-by-chapter plan of the book: the autopilot follows it as binding and only fills the entries that are missing (`origin: autopilot`). It is not `plot.md`, which is generated: to change the plan, change the outline.
 - `autopilot/state.json`, `autopilot/activity.json`, and `autopilot/plan.md` belong to the autopilot. Read them for context, but do not edit them while an autopilot run is active; change the autopilot through its interventions instead.
 
 ## Historical or factual content
@@ -81,4 +81,4 @@ Narrarium MCP already auto-refreshes `plot.md` and the resume files after final 
   - `narrarium-server`
 - Autopilot, director, simulated readers, and personal-server sync live once in `packages/engine` (`narrarium-engine`). The web app and `narrarium-server` only provide adapters (book store, AI port); never duplicate that logic in either host.
 - Every AI call of the web app, the Copilot included, goes through the engine's client (`createFetchAi`, in the site through `createBrowserAi`): streaming, the three deadlines, thinking and the debug and cost records are the engine's. Never add a second path with its own SDK or timers.
-- A series of edits of the Outline is composed by the engine (`composeOutlineEdits`), and what happens when the entry of a written chapter changes is `changeOfWritten`: the site and the server call them and never copy them.
+- A series of edits of the Synopsis (`outline/`) is composed by the engine (`composeOutlineEdits`), and what happens when the entry of a written chapter changes is `changeOfWritten`: the site and the server call them and never copy them.

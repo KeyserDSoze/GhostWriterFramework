@@ -128,7 +128,7 @@ export function outlineEditMessages(input: { prompt: string; route: { kind: stri
     {
       role: "system",
       content: [
-        "You edit the outline (the Scaletta) of a book in Narrarium on behalf of the author, turning their request into edits of it.",
+        "You edit the Synopsis (the outline) of a book in Narrarium on behalf of the author, turning their request into edits of it.",
         "An entry is a plan in plain text: a hypothetical title, what happens in the chapter (not prose, no dialogue) and, optionally, the slug of the ghostwriter that writes it (null: the book's own).",
         "An update replaces only the fields it gives: when you change what happens, give the whole new text, keeping every event the entry already has unless the request removes it.",
         "Edits: {\"kind\":\"update\",\"number\":3,\"title\":\"…\",\"body\":\"…\",\"ghostwriter\":\"slug\"|null}; {\"kind\":\"append\",\"title\":\"…\",\"body\":\"…\"}; {\"kind\":\"insert\",\"at\":4,\"title\":\"…\",\"body\":\"…\"} (the entries from 4 on move one number up); {\"kind\":\"move\",\"from\":5,\"to\":7}; {\"kind\":\"remove\",\"number\":4,\"renumber\":false}; {\"kind\":\"book\",\"title\":\"…\",\"body\":\"…\"} (the working title and the description).",
@@ -198,16 +198,16 @@ export function describeOutlineEdits(steps: readonly OutlineSeriesStep[], before
       case "update": {
         const parts = step.fields.map(fieldName).join(", ");
         return step.created
-          ? (italian ? `Nella Scaletta nasce la voce del capitolo ${step.number}.` : `The outline gets an entry for chapter ${step.number}.`)
-          : (italian ? `Nella Scaletta cambia ${named(step.number, step.origin)}: ${parts}.` : `In the outline, ${named(step.number, step.origin)} changes: ${parts}.`);
+          ? (italian ? `Nella Sinossi nasce la voce del capitolo ${step.number}.` : `The synopsis gets an entry for chapter ${step.number}.`)
+          : (italian ? `Nella Sinossi cambia ${named(step.number, step.origin)}: ${parts}.` : `In the synopsis, ${named(step.number, step.origin)} changes: ${parts}.`);
       }
-      case "append": return italian ? `Un nuovo capitolo ${step.number} in fondo alla Scaletta.` : `A new chapter ${step.number} at the end of the outline.`;
-      case "insert": return italian ? `Un nuovo capitolo ${step.at} nella Scaletta: i successivi slittano di un posto.` : `A new chapter ${step.at} in the outline: the following chapters move one number up.`;
-      case "move": return italian ? `Nella Scaletta ${named(step.from, step.origin)} diventa il capitolo ${step.to}.` : `In the outline, ${named(step.from, step.origin)} becomes chapter ${step.to}.`;
+      case "append": return italian ? `Un nuovo capitolo ${step.number} in fondo alla Sinossi.` : `A new chapter ${step.number} at the end of the synopsis.`;
+      case "insert": return italian ? `Un nuovo capitolo ${step.at} nella Sinossi: i successivi slittano di un posto.` : `A new chapter ${step.at} in the synopsis: the following chapters move one number up.`;
+      case "move": return italian ? `Nella Sinossi ${named(step.from, step.origin)} diventa il capitolo ${step.to}.` : `In the synopsis, ${named(step.from, step.origin)} becomes chapter ${step.to}.`;
       case "remove": return italian
-        ? `${named(step.number, step.origin).replace(/^il/, "Il")} esce dalla Scaletta${step.renumber ? ": i successivi risalgono di un posto" : ": i successivi mantengono il loro numero"}.`
-        : `${named(step.number, step.origin).replace(/^chapter/, "Chapter")} leaves the outline${step.renumber ? ": the following chapters move one number down" : ": the following chapters keep their numbers"}.`;
-      default: return italian ? "Cambia l'idea del libro nella Scaletta." : "The idea of the book in the outline changes.";
+        ? `${named(step.number, step.origin).replace(/^il/, "Il")} esce dalla Sinossi${step.renumber ? ": i successivi risalgono di un posto" : ": i successivi mantengono il loro numero"}.`
+        : `${named(step.number, step.origin).replace(/^chapter/, "Chapter")} leaves the synopsis${step.renumber ? ": the following chapters move one number down" : ": the following chapters keep their numbers"}.`;
+      default: return italian ? "Cambia l'idea del libro nella Sinossi." : "The idea of the book in the synopsis changes.";
     }
   });
 }
@@ -238,21 +238,21 @@ export async function outlineEditMessage(input: {
   });
   const message = (text: string): AssistantMessage => ({ id: crypto.randomUUID(), role: "assistant", text });
   if (!proposal.changes.length) {
-    return message(proposal.summary || (italian ? "Per questa richiesta nella Scaletta non c'è niente da cambiare." : "There is nothing to change in the outline for this request."));
+    return message(proposal.summary || (italian ? "Per questa richiesta nella Sinossi non c'è niente da cambiare." : "There is nothing to change in the synopsis for this request."));
   }
   if (proposal.changes.length > MAX_OUTLINE_PROPOSAL_FILES) {
     return {
       ...message(italian
-        ? `Questa modifica tocca ${proposal.changes.length} voci della Scaletta: falla nella pagina Scaletta, dove puoi anche annullarla.`
-        : `This change touches ${proposal.changes.length} entries of the outline: make it on the Outline page, where you can also undo it.`),
-      action: { kind: "navigate", to: `/app/books/${encodeURIComponent(input.book.id)}/outline`, label: italian ? "Scaletta" : "Outline" },
+        ? `Questa modifica tocca ${proposal.changes.length} voci della Sinossi: falla nella pagina Sinossi, dove puoi anche annullarla.`
+        : `This change touches ${proposal.changes.length} entries of the synopsis: make it on the Synopsis page, where you can also undo it.`),
+      action: { kind: "navigate", to: `/app/books/${encodeURIComponent(input.book.id)}/outline`, label: italian ? "Sinossi" : "Synopsis" },
     };
   }
   const lines = describeOutlineEdits(proposal.steps, proposal.before, italian);
   const warnings = proposal.warnings.filter((warning) => warning.code !== "gap").map((warning) => `- ⚠ ${warning.message}`);
   const updates: AssistantFileUpdate[] = proposal.changes.map((change) => {
     const number = /^outline\/chapters\/(\d+)\.md$/.exec(change.path)?.[1];
-    const label = number ? (italian ? `Capitolo ${Number(number)} della Scaletta` : `Chapter ${Number(number)} of the outline`) : (italian ? "Descrizione del libro" : "Description of the book");
+    const label = number ? (italian ? `Capitolo ${Number(number)} della Sinossi` : `Chapter ${Number(number)} of the synopsis`) : (italian ? "Descrizione del libro" : "Description of the book");
     return { path: change.path, content: change.content, reason: change.content === null ? `${label}: ${italian ? "eliminata" : "deleted"}` : label };
   });
   const provenance: AssistantActionProvenance = {

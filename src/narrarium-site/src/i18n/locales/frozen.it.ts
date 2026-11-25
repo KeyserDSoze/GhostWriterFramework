@@ -32,8 +32,8 @@ const frozenIt = {
       "review-and-update": "Rivedi e aggiorna il libro da questa modifica",
       "review-only": "Solo una review del capitolo",
       "mark-reviewed": "Segna come rivisto",
-      "rewrite-to-outline": "Riscrivi il capitolo secondo la Scaletta",
-      "keep-text": "Tieni il testo, aggiorna solo la Scaletta",
+      "rewrite-to-outline": "Riscrivi il capitolo secondo la Sinossi",
+      "keep-text": "Tieni il testo, aggiorna solo la Sinossi",
     },
     actionHelp: {
       "review-and-update": "Il direttore rilegge il capitolo e l'autopilot aggiorna i capitoli successivi che non tornano più. Il tuo testo non viene riscritto.",

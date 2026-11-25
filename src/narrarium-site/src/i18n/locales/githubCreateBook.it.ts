@@ -27,7 +27,7 @@ const githubCreateBookIt = {
         },
         checklist: {
           title: "Cosa verrà creato",
-          book: "Il libro: i file del canone, gli appunti e la scaletta della misura scelta, il ghostwriter predefinito e i lettori simulati.",
+          book: "Il libro: i file del canone, gli appunti e la Sinossi della misura scelta, il ghostwriter predefinito e i lettori simulati.",
           reader: "Il lettore: un sito (Astro) che mostra il libro, con gli script per esportare un EPUB e un manoscritto.",
           assistants: "Le istruzioni per gli assistenti di scrittura (OpenCode, Claude, Copilot) e le impostazioni di VS Code.",
           workflow: "Il workflow di GitHub Pages, in un secondo passaggio: serve un token che possa scrivere i file dei workflow.",

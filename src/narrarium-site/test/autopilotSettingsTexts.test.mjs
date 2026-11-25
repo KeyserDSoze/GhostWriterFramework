@@ -38,8 +38,8 @@ test("the labels of the menu are in the always-loaded catalogue, in both languag
     }
     assert.equal(get(autopilotEn, key), undefined, `${key} is not repeated in the lazily loaded catalogue`);
   }
-  assert.deepEqual(MENU.map((key) => get(it, key)), ["Libro", "Profili", "Strumenti", "In diretta", "Configurazione", "Scaletta"]);
-  assert.deepEqual(MENU.map((key) => get(en, key)), ["Book", "Profiles", "Tools", "Live", "Configuration", "Outline"]);
+  assert.deepEqual(MENU.map((key) => get(it, key)), ["Libro", "Profili", "Strumenti", "In diretta", "Configurazione", "Sinossi"]);
+  assert.deepEqual(MENU.map((key) => get(en, key)), ["Book", "Profiles", "Tools", "Live", "Configuration", "Synopsis"]);
   assert.equal(get(it, "nav.bookOverview"), "Panoramica");
   assert.equal(get(en, "nav.bookOverview"), "Overview");
 });

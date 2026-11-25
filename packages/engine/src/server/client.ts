@@ -228,7 +228,7 @@ export class NarrariumServerClient {
    */
   private async assertOutlineBriefSupported(info: ServerInfo): Promise<void> {
     if (!serverHasOutlineBrief(info)) {
-      throw new ServerRequestError(`This personal server is too old to take the length of the book from its outline (it does not announce the feature autopilot-outline-brief): it would plan the default number of chapters and ignore the outline. Update the server, then start the autopilot again.`, 501, "feature_unavailable");
+      throw new ServerRequestError(`This personal server is too old to take the length of the book from its synopsis (it does not announce the feature autopilot-outline-brief): it would plan the default number of chapters and ignore the synopsis. Update the server, then start the autopilot again.`, 501, "feature_unavailable");
     }
   }
 

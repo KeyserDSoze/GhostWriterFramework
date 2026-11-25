@@ -155,12 +155,12 @@ export function describeTask(kind: AutopilotTaskKind, language: string, params: 
       return params.outline === "removed"
         ? {
           title: text(language, `Taking chapter ${c}${quoted(chapter?.title)} out of the plan`, `Il capitolo ${c}${quoted(chapter?.title)} esce dal piano`),
-          reason: text(language, "You deleted its entry of the outline, and nothing of it is written yet.", "Hai cancellato la sua voce della Scaletta, e non ne è ancora scritto nulla."),
+          reason: text(language, "You deleted its entry of the synopsis, and nothing of it is written yet.", "Hai cancellato la sua voce della Sinossi, e non ne è ancora scritto nulla."),
           next: text(language, "Go on with the next chapter: its number does not change.", "Proseguire con il capitolo successivo: il suo numero non cambia."),
         }
         : {
-          title: text(language, `Planning chapter ${c}${quoted(chapter?.title)} again from your outline`, `Nuova pianificazione del capitolo ${c}${quoted(chapter?.title)} dalla tua Scaletta`),
-          reason: text(language, "You changed its entry of the outline: its plan follows the new entry, and its scenes are planned again.", "Hai cambiato la sua voce della Scaletta: il suo piano segue la voce nuova, e le sue scene si ripianificano."),
+          title: text(language, `Planning chapter ${c}${quoted(chapter?.title)} again from your synopsis`, `Nuova pianificazione del capitolo ${c}${quoted(chapter?.title)} dalla tua Sinossi`),
+          reason: text(language, "You changed its entry of the synopsis: its plan follows the new entry, and its scenes are planned again.", "Hai cambiato la sua voce della Sinossi: il suo piano segue la voce nuova, e le sue scene si ripianificano."),
           next: text(language, `Plan the scenes of chapter ${c}.`, `Pianificare le scene del capitolo ${c}.`),
         };
     case "scenes":
@@ -698,7 +698,7 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
 
   // The length of the book is its chapters in the outline: with none, there is nothing to plan, and the author writes them first.
   if (!state.plan?.approved && bookChapters(ctx.outline) === 0) {
-    return { kind: "stop", status: "paused", message: italian ? "La Scaletta non ha capitoli: scrivi i capitoli nella Scaletta, poi riprendi." : "The outline has no chapters: write the chapters in the Scaletta, then resume." };
+    return { kind: "stop", status: "paused", message: italian ? "La Sinossi non ha capitoli: scrivi i capitoli nella Sinossi, poi riprendi." : "The synopsis has no chapters: write the chapters in the Synopsis, then resume." };
   }
 
   if (!state.concept.done) return { kind: "task", task: descriptor("concept", "concept", ctx) };

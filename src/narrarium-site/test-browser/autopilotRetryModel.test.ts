@@ -141,8 +141,8 @@ describe("the feed and the timeline", () => {
 
   it("say the outline of a chapter that changed while it is written, and of a written one that left it, with the number of the chapter", async () => {
     await i18n.changeLanguage("it");
-    expect(presentFeedEvent(i18n.getFixedT(null), insight({ code: "outlineChangedWhileWriting", tone: "info", chapterNumber: 4 }))?.text).toBe("La Scaletta del capitolo 4 è cambiata mentre è in scrittura: deciderai quando sarà chiuso.");
-    expect(presentFeedEvent(i18n.getFixedT(null), insight({ code: "outlineRemovedWritten", tone: "info", chapterNumber: 6 }))?.text).toBe("Il capitolo 6 non è più nella Scaletta, ma è già scritto: resta nel libro.");
+    expect(presentFeedEvent(i18n.getFixedT(null), insight({ code: "outlineChangedWhileWriting", tone: "info", chapterNumber: 4 }))?.text).toBe("La Sinossi del capitolo 4 è cambiata mentre è in scrittura: deciderai quando sarà chiuso.");
+    expect(presentFeedEvent(i18n.getFixedT(null), insight({ code: "outlineRemovedWritten", tone: "info", chapterNumber: 6 }))?.text).toBe("Il capitolo 6 non è più nella Sinossi, ma è già scritto: resta nel libro.");
     expect(presentFeedEvent(i18n.getFixedT(null), insight({ code: "longRetryWait", waitMs: 90 * 60_000, cycle: 2, cycles: 3 }))?.text).toBe("Il passo non è riuscito dopo i tentativi ravvicinati: riprovo tra 1 ora e 30 minuti (ripartenza 2 di 3).");
   });
 

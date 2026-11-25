@@ -3,8 +3,8 @@ const outlineCopilotEn = {
   outline: {
     copilot: {
       deleted: "deleted",
-      deletes: "This entry of the outline is deleted.",
-      applyTogether: "The changes to the outline are applied together, in one commit.",
+      deletes: "This entry of the synopsis is deleted.",
+      applyTogether: "The changes to the synopsis are applied together, in one commit.",
     },
   },
 };
