@@ -179,6 +179,20 @@ const annotationsEn = {
       aria_other: "{{count}} annotations to review in {{title}}",
       chip: "Annotations",
     },
+    settings: {
+      cardTitle: "Annotation tags",
+      cardDescription: "The tags you give to the passages you mark in the reader, for every book: their mark and the instruction for the AI.",
+      intro: "Every book has the built-in tags and these, and can have tags of its own (made in the reader or in the list of a chapter). A tag's description is also the instruction for the AI when it works on an annotation with that tag.",
+      builtinTitle: "Built-in tags",
+      builtinDescription: "In every book, in your language. They cannot be changed.",
+      customTitle: "Tags for every book",
+      customDescription: "Saved in your account data, so every device has them.",
+      empty: "No tag of your own yet.",
+      add: "New tag",
+      moveUp: "Move «{{name}}» up",
+      moveDown: "Move «{{name}}» down",
+      deleteConfirm: "Delete the tag «{{name}}» from every book? The annotations with this tag keep their passage and their note, and show «Removed tag» until you give them another. You can save the settings or leave without saving to keep it.",
+    },
   },
 };
 

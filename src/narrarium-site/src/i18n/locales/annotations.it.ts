@@ -179,6 +179,20 @@ const annotationsIt = {
       aria_other: "{{count}} annotazioni da rivedere in {{title}}",
       chip: "Annotazioni",
     },
+    settings: {
+      cardTitle: "Etichette delle annotazioni",
+      cardDescription: "Le etichette che dai ai passaggi che segni nel reader, per ogni libro: il loro segno e l'istruzione per l'AI.",
+      intro: "Ogni libro ha le etichette predefinite e queste, e può averne di sue (create nel reader o nell'elenco di un capitolo). La descrizione di un'etichetta è anche l'istruzione per l'AI quando lavora su un'annotazione con quell'etichetta.",
+      builtinTitle: "Etichette predefinite",
+      builtinDescription: "In ogni libro, nella tua lingua. Non si possono modificare.",
+      customTitle: "Etichette per ogni libro",
+      customDescription: "Salvate nei dati del tuo account, così ogni dispositivo le ha.",
+      empty: "Ancora nessuna etichetta tua.",
+      add: "Nuova etichetta",
+      moveUp: "Sposta «{{name}}» in alto",
+      moveDown: "Sposta «{{name}}» in basso",
+      deleteConfirm: "Eliminare l'etichetta «{{name}}» da ogni libro? Le annotazioni con questa etichetta conservano il passaggio e la nota, e mostrano «Etichetta rimossa» finché non ne dai loro un'altra. Puoi salvare le impostazioni, o uscire senza salvare per tenerla.",
+    },
   },
 };
 

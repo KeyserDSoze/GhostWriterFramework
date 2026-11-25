@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, Bot, ChevronRight, Cloud, CloudOff, Coins, Download, Github, Loader2, Mic, Plug, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
+import { ArrowRight, Bot, ChevronRight, Cloud, CloudOff, Coins, Download, Github, Highlighter, Loader2, Mic, Plug, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,8 @@ import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
 import { CostCurrencyField } from "@/components/settings/CostCurrencyField";
 import { CostSettingsBody } from "@/components/settings/CostSettingsBody";
 import "@/i18n/costs";
+import { AnnotationTagsSettingsBody } from "@/components/settings/AnnotationTagsSettingsBody";
+import "@/i18n/annotations";
 
 /** How long the bar of the settings says that a save is done before it goes away. */
 const SAVED_NOTICE_MS = 4000;
@@ -257,6 +259,7 @@ export function SettingsPage() {
           <SettingsCard href="/app/settings/repository" title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/server" title={t("personalServer.title")} description={t("personalServer.description")} icon={<Server className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/costs" title={t("settings.costSettings.title")} description={t("settings.costSettings.description")} icon={<Coins className="h-5 w-5" />} />
+          <SettingsCard href="/app/settings/annotations" title={t("annotations.settings.cardTitle")} description={t("annotations.settings.cardDescription")} icon={<Highlighter className="h-5 w-5" />} />
         </div>
       ) : section === "ai-integrations" ? (
         // The two AI pages share one mounted SettingsPage (router.tsx): keyed, so nothing of one carries over to the other.
@@ -325,6 +328,8 @@ export function SettingsPage() {
         <fieldset className="min-w-0 space-y-3" aria-describedby={offline ? "offline-settings-explanation" : undefined} key="costs">
           <Section title={t("settings.costSettings.title")} description={t("settings.costSettings.description")} icon={<Coins className="h-4 w-4 shrink-0" />} defaultOpen><CostSettingsBody /></Section>
         </fieldset>
+      ) : section === "annotations" ? (
+        <Section title={t("annotations.settings.cardTitle")} description={t("annotations.settings.cardDescription")} icon={<Highlighter className="h-4 w-4 shrink-0" />} defaultOpen><AnnotationTagsSettingsBody settings={settings} patchSettings={patchSettings} /></Section>
       ) : (
         <Section title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen><RepositorySettingsBody settings={settings} patchSettings={patchSettings} /></Section>
       )}
@@ -341,7 +346,7 @@ export function SettingsPage() {
   );
 }
 
-function currentSettingsSection(pathname: string): "home" | "ai-integrations" | "ai-router" | "deep-search" | "tools" | "github" | "speech" | "repository" | "server" | "costs" {
+function currentSettingsSection(pathname: string): "home" | "ai-integrations" | "ai-router" | "deep-search" | "tools" | "github" | "speech" | "repository" | "server" | "costs" | "annotations" {
   if (/\/app\/settings\/ai-integrations$/.test(pathname)) return "ai-integrations";
   if (/\/app\/settings\/ai-router$/.test(pathname)) return "ai-router";
   if (/\/app\/settings\/deep-search$/.test(pathname)) return "deep-search";
@@ -351,6 +356,7 @@ function currentSettingsSection(pathname: string): "home" | "ai-integrations" | 
   if (/\/app\/settings\/repository$/.test(pathname)) return "repository";
   if (/\/app\/settings\/server$/.test(pathname)) return "server";
   if (/\/app\/settings\/costs$/.test(pathname)) return "costs";
+  if (/\/app\/settings\/annotations$/.test(pathname)) return "annotations";
   return "home";
 }
 
@@ -364,6 +370,7 @@ function settingsSectionMeta(t: ReturnType<typeof useTranslation>["t"], section:
   if (section === "repository") return { title: t("repoSettings.title"), description: t("repoSettings.description") };
   if (section === "server") return { title: t("personalServer.title"), description: t("personalServer.description") };
   if (section === "costs") return { title: t("settings.costSettings.title"), description: t("settings.costSettings.description") };
+  if (section === "annotations") return { title: t("annotations.settings.cardTitle"), description: t("annotations.settings.cardDescription") };
   return { title: t("settings.title"), description: t("settings.description") };
 }
 

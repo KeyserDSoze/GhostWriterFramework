@@ -61,6 +61,7 @@ describe("Settings home", () => {
       "/app/settings/repository",
       "/app/settings/server",
       "/app/settings/costs",
+      "/app/settings/annotations",
     ]);
   });
 

@@ -10,6 +10,7 @@ const shellEn = {
   },
   nav: {
     annotations: "Annotations",
+    annotationTags: "Annotation tags",
   },
   shell: {
     navMenu: "Navigation menu",

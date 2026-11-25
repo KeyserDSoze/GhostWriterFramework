@@ -22,6 +22,7 @@ const SETTINGS_ENTRIES = [
   "/app/settings/repository",
   "/app/settings/server",
   "/app/settings/costs",
+  "/app/settings/annotations",
 ];
 
 async function open(menu: "desktop" | "mobile", path: string, language: Language = "en") {

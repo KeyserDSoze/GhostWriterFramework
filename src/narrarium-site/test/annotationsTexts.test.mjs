@@ -38,3 +38,17 @@ test("the shortcut that annotates is in the list of the keyboard shortcuts, in b
   assert.ok(italian.get("shortcuts.items.annotate")?.trim());
   assert.notEqual(italian.get("shortcuts.items.annotate"), english.get("shortcuts.items.annotate"));
 });
+
+test("the guide of the reader says, in both languages, how to annotate, with the names the app shows", async () => {
+  const { readFileSync } = await import("node:fs");
+  const read = (name) => readFileSync(new URL(`../src/content/guides/${name}`, import.meta.url), "utf8");
+  const guides = [
+    { name: "reader-export.en.md", locale: annotationsEn, words: ["## Annotations", "**⌥⌘A**", "**Ctrl+Alt+M**", "To rewrite", "Don't like it", "Inconsistency", "To expand", "Keep it", `Settings › ${annotationsEn.annotations.settings.cardTitle}`, "never dropped", "to review (open or later)", "`annotations/`", "local commit", "never published in the online reader", "public"] },
+    { name: "reader-export.it.md", locale: annotationsIt, words: ["## Annotazioni", "**⌥⌘A**", "**Ctrl+Alt+M**", "Da riscrivere", "Non mi piace", "Incoerenza", "Da espandere", "Da tenere", `Impostazioni › ${annotationsIt.annotations.settings.cardTitle}`, "non viene mai persa", "da rivedere (aperte o più tardi)", "`annotations/`", "commit locale", "mai pubblicate nel reader online", "pubblico"] },
+  ];
+  for (const { name, locale, words } of guides) {
+    const text = read(name);
+    assert.ok(locale.annotations.annotate && text.includes(`**${locale.annotations.annotate}**`), `${name}: the name of the action`);
+    for (const word of words) assert.ok(text.includes(word), `${name}: ${word}`);
+  }
+});

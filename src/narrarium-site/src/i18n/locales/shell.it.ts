@@ -10,6 +10,7 @@ const shellIt = {
   },
   nav: {
     annotations: "Annotazioni",
+    annotationTags: "Etichette delle annotazioni",
   },
   shell: {
     navMenu: "Menu di navigazione",
