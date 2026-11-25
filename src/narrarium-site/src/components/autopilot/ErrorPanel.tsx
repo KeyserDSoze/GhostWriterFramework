@@ -41,6 +41,7 @@ const RETRY_LATER_HASH = "autopilot-retry";
 const FACT_LABEL: Record<ErrorFact["key"], string> = {
   endpoint: "autopilot.failure.facts.endpoint",
   apiVersion: "autopilot.failure.facts.apiVersion",
+  protocol: "autopilot.failure.facts.protocol",
   model: "autopilot.failure.facts.model",
   provider: "autopilot.failure.facts.provider",
   integration: "autopilot.failure.facts.integration",
@@ -89,10 +90,10 @@ function Countdown({ at, notBefore }: { at: string; notBefore?: string | null })
  * What the connection did, for the technical details: how much of the reply arrived, when the last piece did, how the stream ended, whether the provider reported the tokens, the request it
  * calls the call, how much of the reply was kept, and the end of what arrived (words of the model: they are on this screen, and never in the text that is copied).
  */
-function TransportDetails({ transport }: { transport: AutopilotErrorDetail["transport"] }) {
+function TransportDetails({ transport, protocol }: { transport: AutopilotErrorDetail["transport"]; protocol?: AutopilotErrorDetail["protocol"] }) {
   const { t, i18n } = useTranslation();
   if (!transport) return null;
-  const badges = transportBadges(transport, true, i18n.resolvedLanguage ?? i18n.language, "autopilot.failure.transport");
+  const badges = transportBadges(transport, true, i18n.resolvedLanguage ?? i18n.language, "autopilot.failure.transport", protocol);
   if (!badges.length && !transport.tail && !transport.partialCharacters) return null;
   return (
     <div data-error-transport className="mt-2 space-y-1">
@@ -123,7 +124,7 @@ function Facts({ source, integrationName, withRoute }: { source: FailureSource; 
   if (source.step) rows.push({ key: "step", label: t("autopilot.failure.facts.step"), value: taskLabel(t, source.step.task, source.step.chapterNumber) });
   for (const fact of facts) {
     const label = fact.key === "attempt" && longTerm ? t("autopilot.retry.facts.quick") : t(FACT_LABEL[fact.key]);
-    rows.push({ key: fact.key, label, value: fact.key === "attempt" ? t("autopilot.failure.facts.attemptOf", { attempt: fact.attempt, retries: fact.retries }) : fact.value });
+    rows.push({ key: fact.key, label, value: fact.key === "attempt" ? t("autopilot.failure.facts.attemptOf", { attempt: fact.attempt, retries: fact.retries }) : fact.key === "protocol" ? t("autopilot.failure.facts.protocolResponses") : fact.value });
   }
   if (longTerm) {
     const value = longTerm.cycles === null ? t("autopilot.retry.facts.restartOf", { context: "unlimited", cycle: longTerm.cycle }) : t("autopilot.retry.facts.restartOf", { cycle: longTerm.cycle, cycles: longTerm.cycles });
@@ -392,7 +393,7 @@ function FailurePanel({ bookId, control, actions, wait }: FailurePanelProps) {
         <details className="text-xs">
           <summary className="inline-flex min-h-6 cursor-pointer items-center rounded-sm font-medium underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{t("autopilot.failure.actions.details")}</summary>
           <p className="mt-1 whitespace-pre-wrap break-words rounded-md bg-muted/60 p-2 font-mono">{source.message}</p>
-          <TransportDetails transport={source.detail.transport} />
+          <TransportDetails transport={source.detail.transport} protocol={source.detail.protocol} />
         </details>
       )}
     </PanelSection>

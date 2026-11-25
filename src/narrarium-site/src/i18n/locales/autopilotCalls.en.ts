@@ -97,6 +97,7 @@ const autopilotCallsEn = {
       },
       attemptFacts: {
         apiVersion: "API version {{version}}",
+        protocolResponses: "Responses API",
         title: "Attempt {{number}}",
         outcome: {
           ok: "done",

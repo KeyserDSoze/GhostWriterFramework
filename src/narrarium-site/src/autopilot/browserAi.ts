@@ -58,6 +58,7 @@ function openDebugEntry(attempt: FetchAiAttempt, structured: boolean, route?: Br
     stream: attempt.stream,
     streamMode: attempt.streamMode,
     ...(attempt.apiVersion ? { apiVersion: attempt.apiVersion } : {}),
+    ...(attempt.protocol ? { protocol: attempt.protocol } : {}),
     toolsOnly: attempt.toolsOnly,
     ...(attempt.thinking ? { thinking: attempt.thinking } : {}),
     ...(attempt.thinkingWhy ? { thinkingWhy: attempt.thinkingWhy } : {}),

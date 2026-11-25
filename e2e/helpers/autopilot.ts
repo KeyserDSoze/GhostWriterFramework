@@ -21,6 +21,8 @@ export interface StubCall {
   model: string;
   tool: string;
   thinking?: string;
+  /** Only for a request to the Responses API (`/responses`): what its address and its body say, so that a spec reads how the model was asked. */
+  responses?: { path: string; query: string; auth: string; store: unknown; stream: unknown; toolChoice: unknown; toolForm: "flat" | "nested" | "none"; strict: unknown; maxOutputTokens: unknown; inputRoles: string[] };
 }
 
 /**
@@ -46,11 +48,53 @@ export interface StubProvider {
   close(): Promise<void>;
 }
 
+const USAGE_OF_RESPONSES = { input_tokens: 100, input_tokens_details: { cached_tokens: 0 }, output_tokens: 50, output_tokens_details: { reasoning_tokens: 20 }, total_tokens: 150 };
+
+/** The events of the Responses API, as the documentation of Azure OpenAI describes them: a reasoning item that shows nothing, then the text or the call of a function in pieces, then the tokens. */
+async function answerResponses(response: import("node:http").ServerResponse, reply: { stream: boolean; tool?: string; answer: { text: string; json?: unknown }; gapMs: number }): Promise<void> {
+  const args = reply.tool ? JSON.stringify(reply.answer.json) : "";
+  const reasoning = { id: "rs_1", type: "reasoning", content: [], encrypted_content: "<ENCRYPTED>", summary: [] };
+  const output = reply.tool
+    ? { id: "fc_1", type: "function_call", status: "completed", call_id: "call_1", name: reply.tool, arguments: args }
+    : { id: "msg_1", type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", annotations: [], text: reply.answer.text }] };
+  const done = { id: "resp_1", object: "response", status: "completed", model: "fake-model", output: [reasoning, output], usage: USAGE_OF_RESPONSES, error: null, incomplete_details: null };
+  if (!reply.stream) {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(done));
+    return;
+  }
+  response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+  const send = (event: { type: string; [key: string]: unknown }) => response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+  send({ type: "response.created", response: { ...done, status: "in_progress", output: [], usage: null } });
+  send({ type: "response.output_item.added", output_index: 0, item: reasoning });
+  send({ type: "response.output_item.done", output_index: 0, item: reasoning });
+  const whole = reply.tool ? args : reply.answer.text;
+  // About twenty pieces however long the reply is; the first ones come `gapMs` apart so that a page can be seen to read them as they come.
+  const size = Math.max(8, Math.ceil(whole.length / 20));
+  const pieces = Array.from({ length: Math.ceil(whole.length / size) }, (_, at) => whole.slice(at * size, (at + 1) * size));
+  if (reply.tool) send({ type: "response.output_item.added", output_index: 1, item: { ...output, status: "in_progress", arguments: "" } });
+  else send({ type: "response.output_item.added", output_index: 1, item: { ...output, status: "in_progress", content: [] } });
+  for (const [at, delta] of pieces.entries()) {
+    if (response.destroyed) return;
+    if (reply.gapMs && at < 8) await new Promise((resolve) => setTimeout(resolve, reply.gapMs));
+    if (reply.tool) send({ type: "response.function_call_arguments.delta", output_index: 1, item_id: "fc_1", delta });
+    else send({ type: "response.output_text.delta", output_index: 1, content_index: 0, item_id: "msg_1", delta });
+  }
+  if (reply.tool) send({ type: "response.function_call_arguments.done", output_index: 1, item_id: "fc_1", arguments: args });
+  else send({ type: "response.output_text.done", output_index: 1, content_index: 0, item_id: "msg_1", text: whole });
+  send({ type: "response.output_item.done", output_index: 1, item: output });
+  send({ type: "response.completed", response: done });
+  response.end();
+}
+
 /**
  * An OpenAI-compatible provider that answers every autopilot schema with the engine's own fake, `delayMs` after the request arrives. With `name` and a shared
  * `timeline`, the requests of several providers are put in one list in the order they arrived: what a routing spec reads to say which provider was asked first.
+ * It also plays the Responses API at `/responses` (any path that ends with it): the same answers, told as the events of that API when the request streams, `pieceGapMs` apart
+ * for the first pieces of a reply (so that a page can be seen to read it as it comes), and as one JSON body when it does not. A model that refuses thinking with tools refuses it
+ * on Chat Completions only, as the providers of those models do.
  */
-export async function startProvider(options: { delayMs?: number; chapters?: number; scenes?: number; words?: number; name?: string; timeline?: StubCall[]; behavior?: StubBehavior } = {}): Promise<StubProvider> {
+export async function startProvider(options: { delayMs?: number; chapters?: number; scenes?: number; words?: number; name?: string; timeline?: StubCall[]; behavior?: StubBehavior; pieceGapMs?: number } = {}): Promise<StubProvider> {
   const { createFakeAutopilotAi } = await engineModule("testing/index.js");
   const fake = createFakeAutopilotAi({ reviewVerdict: () => "approve", scenes: options.scenes ?? 1, words: options.words ?? 120, chapters: options.chapters ?? 1 });
   const asked: string[] = [];
@@ -63,13 +107,27 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
     if (request.method !== "POST") { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ data: [] })); return; }
     let raw = "";
     for await (const piece of request) raw += piece;
-    const body = JSON.parse(raw) as { model?: string; reasoning_effort?: string; messages?: Array<{ role: string; content: unknown }>; tools?: Array<{ function: { name: string } }> };
-    const text = (content: unknown) => (typeof content === "string" ? content : "");
-    const system = text(body.messages?.find((message) => message.role === "system")?.content);
-    const user = text([...(body.messages ?? [])].reverse().find((message) => message.role === "user")?.content);
-    const tool = body.tools?.[0]?.function;
+    const body = JSON.parse(raw) as {
+      model?: string; reasoning_effort?: string; stream?: unknown; store?: unknown; tool_choice?: unknown; max_output_tokens?: unknown; reasoning?: { effort?: string };
+      messages?: Array<{ role: string; content: unknown }>; input?: Array<{ role: string; content: unknown }>; tools?: Array<{ type?: string; name?: string; strict?: unknown; function?: { name: string } }>;
+    };
+    const address = new URL(request.url ?? "/", "http://stub");
+    const responses = address.pathname.endsWith("/responses");
+    // The words of a message: a text, or the parts of the Responses API (`input_text`).
+    const text = (content: unknown): string => (typeof content === "string" ? content : Array.isArray(content) ? content.map((part) => (typeof part?.text === "string" ? part.text : "")).join("") : "");
+    const messages = responses ? body.input : body.messages;
+    const system = text(messages?.find((message) => message.role === "system" || message.role === "developer")?.content);
+    const user = text([...(messages ?? [])].reverse().find((message) => message.role === "user")?.content);
+    const tool = responses ? (body.tools?.[0]?.name ? { name: body.tools[0].name } : undefined) : body.tools?.[0]?.function;
+    const level = responses ? body.reasoning?.effort : body.reasoning_effort;
     asked.push(tool?.name ?? "prose");
-    const call: StubCall = { provider: options.name ?? "stub", model: body.model ?? "", tool: tool?.name ?? "prose", ...(body.reasoning_effort ? { thinking: body.reasoning_effort } : {}) };
+    const call: StubCall = {
+      provider: options.name ?? "stub",
+      model: body.model ?? "",
+      tool: tool?.name ?? "prose",
+      ...(level ? { thinking: level } : {}),
+      ...(responses ? { responses: { path: address.pathname, query: address.search, auth: String(request.headers["api-key"] ? "api-key" : request.headers.authorization ? "bearer" : "none"), store: body.store, stream: body.stream, toolChoice: body.tool_choice, toolForm: body.tools?.length ? (body.tools[0].function ? "nested" : "flat") : "none", strict: body.tools?.[0]?.strict, maxOutputTokens: body.max_output_tokens, inputRoles: (body.input ?? []).map((message) => message.role) } } : {}),
+    };
     calls.push(call);
     options.timeline?.push(call);
     if (state.behavior.kind === "error") {
@@ -77,9 +135,8 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
       response.end(JSON.stringify({ error: { message: state.behavior.message, type: state.behavior.type ?? "invalid_request_error", ...(state.behavior.param ? { param: state.behavior.param } : {}), ...(state.behavior.code ? { code: state.behavior.code } : {}) } }));
       return;
     }
-    if (state.behavior.kind === "refuse-thinking-with-tools" && tool) {
+    if (state.behavior.kind === "refuse-thinking-with-tools" && tool && !responses) {
       const accepts = state.behavior.accepts ?? "omit";
-      const level = body.reasoning_effort;
       const takes = accepts === "omit" ? !level || level === "none" : accepts === "none" ? level === "none" : false;
       if (!takes) {
         response.writeHead(400, { "content-type": "application/json" });
@@ -93,6 +150,10 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
     const answer = await fake.complete({ system, user, label: "e2e", ...(tool ? { json: { name: tool.name } } : {}) } as never);
     if (response.destroyed) return;
+    if (responses) {
+      await answerResponses(response, { stream: body.stream === true, tool: tool?.name, answer, gapMs: options.pieceGapMs ?? 0 });
+      return;
+    }
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ id: "cmpl-1", object: "chat.completion", model: "fake-model", usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }, choices: [{ index: 0, finish_reason: tool ? "tool_calls" : "stop", message: tool ? { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: tool.name, arguments: JSON.stringify(answer.json) } }] } : { role: "assistant", content: answer.text } }] }));
   });
@@ -154,6 +215,10 @@ export interface RoutedIntegration {
   window?: number;
   /** The thinking level of the integration (`low`, `medium`, `high`, `xhigh` or `automatic`): absent, none is chosen. */
   thinking?: string;
+  /** What is merged into its model (a protocol, an address, a price, streaming back on), for the specs that ask for them. */
+  modelEntry?: Record<string, unknown>;
+  /** What is merged into the integration (a provider, a version, streaming back on). */
+  integrationEntry?: Record<string, unknown>;
 }
 
 /**
@@ -169,7 +234,8 @@ export function routedSettingsOf(first: RoutedIntegration, second: RoutedIntegra
     apiKey: KEY,
     streamMode: "off",
     ...(entry.thinking ? { thinking: entry.thinking } : {}),
-    chatModels: [{ id: entry.model, name: entry.model, capabilities: TEXT_TASKS, supportsToolCalls: true, supportsStreaming: false, ...(entry.window ? { maxInputTokens: entry.window } : {}) }],
+    ...(entry.integrationEntry ?? {}),
+    chatModels: [{ id: entry.model, name: entry.model, capabilities: TEXT_TASKS, supportsToolCalls: true, supportsStreaming: false, ...(entry.window ? { maxInputTokens: entry.window } : {}), ...(entry.modelEntry ?? {}) }],
   });
   const target = (entry: RoutedIntegration) => ({ integrationId: entry.id, model: entry.model });
   return {
@@ -290,6 +356,8 @@ export interface AutopilotFacts {
   steps: string[];
   /** The steps that succeeded, as `task:chapter:scene`. */
   done: string[];
+  /** What the state counted of the run: the calls, their tokens and what they cost. */
+  stats: { aiCalls: number; inputTokens: number; outputTokens: number; cost: number; usageUnknownCalls?: number; costUnknownCalls?: number } | null;
 }
 
 /** What the book's local repository says of its autopilot: its state and the log of its steps. */
@@ -302,7 +370,7 @@ export const autopilotFacts = (page: Page, repo: string) => page.evaluate((repo)
       const files = (all.result as Array<{ repoId: string; path: string; text: string }>).filter((entry) => entry.repoId.endsWith(`::local:${repo}`));
       db.close();
       try {
-        const state = JSON.parse(files.find((entry) => entry.path === "autopilot/state.json")?.text ?? "null") as { status: string; phase: string; lastError?: unknown } | null;
+        const state = JSON.parse(files.find((entry) => entry.path === "autopilot/state.json")?.text ?? "null") as { status: string; phase: string; lastError?: unknown; stats?: { aiCalls: number; inputTokens: number; outputTokens: number; cost: number; usageUnknownCalls?: number; costUnknownCalls?: number } } | null;
         const log = JSON.parse(files.find((entry) => entry.path === "autopilot/activity.json")?.text ?? "{\"activities\":[]}") as { activities: Array<{ task: string; status: string; chapterNumber?: number; sceneNumber?: number }> };
         resolveFacts(state ? {
           status: state.status,
@@ -310,6 +378,7 @@ export const autopilotFacts = (page: Page, repo: string) => page.evaluate((repo)
           lastError: state.lastError ?? null,
           steps: log.activities.map((entry) => `${entry.task}:${entry.status}`),
           done: log.activities.filter((entry) => entry.status === "succeeded").map((entry) => `${entry.task}:${entry.chapterNumber ?? ""}:${entry.sceneNumber ?? ""}`),
+          stats: state.stats ?? null,
         } : null);
       } catch { resolveFacts(null); }
     };

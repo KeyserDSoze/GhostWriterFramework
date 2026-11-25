@@ -8,6 +8,7 @@ const debugAttemptEn = {
       streaming: "Streaming",
       notStreaming: "Not streaming",
       apiVersion: "API version: {{version}}",
+      protocolResponses: "Responses API",
       thinking: "Thinking: {{level}}",
       thinkingNotSentTools: "Thinking: not sent (tools)",
       thinkingNoneTools: "Thinking: none (tools)",
@@ -26,6 +27,8 @@ const debugAttemptEn = {
       end: {
         done: "Stream: closed by the provider with [DONE]",
         closed: "Stream: closed by the provider without [DONE]",
+        doneResponses: "Stream: ended by the provider with its last event",
+        closedResponses: "Stream: closed by the provider before its last event",
         reset: "Stream: the connection was lost",
         error: "Stream: the provider reported an error",
         timeout: "Stream: a time limit ran out",

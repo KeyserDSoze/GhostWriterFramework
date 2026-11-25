@@ -9,7 +9,9 @@ import { Input } from "@/components/ui/input";
 import { SecretInput } from "@/components/ui/secret-input";
 import { PersonalServerSettingsBody } from "@/components/settings/PersonalServerSettingsBody";
 import { IntegrationRequestFields } from "@/components/settings/IntegrationRequestFields";
+import { normalizeEndpointUrl } from "narrarium-engine";
 import { ModelApiVersionField, apiVersionLooksValid, inheritedApiVersion } from "@/components/settings/ModelApiVersionField";
+import { ModelRequestFields, protocolOf, type ModelRequestPatch } from "@/components/settings/ModelRequestFields";
 import { NoThinkingWithToolsField } from "@/components/settings/NoThinkingWithToolsField";
 import { ReasoningParameterField } from "@/components/settings/ReasoningParameterField";
 import { EndpointTools } from "@/components/settings/endpoint/EndpointTools";
@@ -699,6 +701,14 @@ function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onCh
   function patchModel(id: string, patch: Partial<ChatModel>) {
     onChange(models.map((m) => (m.id === id ? { ...m, ...patch } : m)));
   }
+  /** The protocol and the address of a model as the editor says them: a field it does not say is not set (no key with no value is kept). */
+  function setModelRequest(id: string, request: ModelRequestPatch) {
+    onChange(models.map((m) => {
+      if (m.id !== id) return m;
+      const { apiProtocol: _protocol, endpointUrl: _address, ...rest } = m;
+      return { ...rest, ...request };
+    }));
+  }
   function toggleCapability(id: string, capability: ChatCapability) {
     onChange(models.map((m) => {
       if (m.id !== id) return m;
@@ -782,6 +792,7 @@ function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onCh
           <p id={`${id}-thinking-parameter-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.thinkingParameterHint")}</p>
           <p id={`${id}-no-thinking-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.noThinkingWithToolsHint")}</p>
           {provider === "azure_openai" && <p id={`${id}-api-version-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.modelApiVersionHint")}</p>}
+          <p id={`${id}-request-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.modelRequestHint")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {provider === "github_models" && (
@@ -844,7 +855,7 @@ function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onCh
                 </div>
               )}
               {provider === "azure_openai" && (
-                <ModelApiVersionField model={model} inherited={inheritedApiVersion({ apiVersion })} hintId={`${id}-api-version-hint`} onChange={(next) => patchModel(model.id, { apiVersion: next })} />
+                <ModelApiVersionField model={model} inherited={inheritedApiVersion({ apiVersion })} hintId={`${id}-api-version-hint`} ignored={Boolean(normalizeEndpointUrl(model.endpointUrl))} onChange={(next) => patchModel(model.id, { apiVersion: next })} />
               )}
               <TokenLimitField label={t("settings.maxInputTokens")} value={model.maxInputTokens} onChange={(v) => patchModel(model.id, { maxInputTokens: v })} />
               <TokenLimitField label={t("settings.maxOutputTokens")} value={model.maxOutputTokens} onChange={(v) => patchModel(model.id, { maxOutputTokens: v })} />
@@ -853,7 +864,8 @@ function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onCh
                 <Switch id={`${id}-${model.id}-tools`} aria-describedby={`${id}-tools-hint`} checked={model.supportsToolCalls !== false} onCheckedChange={(supportsToolCalls) => patchModel(model.id, { supportsToolCalls })} />
               </div>
               <ReasoningParameterField model={model} hintId={`${id}-thinking-parameter-hint`} onChange={(reasoningParameter) => patchModel(model.id, { reasoningParameter })} />
-              <NoThinkingWithToolsField model={model} hintId={`${id}-no-thinking-hint`} onChange={(noThinkingWithTools) => patchModel(model.id, { noThinkingWithTools })} />
+              <NoThinkingWithToolsField model={model} hintId={`${id}-no-thinking-hint`} unused={protocolOf(model) === "responses"} onChange={(noThinkingWithTools) => patchModel(model.id, { noThinkingWithTools })} />
+              <ModelRequestFields model={model} integration={{ provider, endpoint, apiVersion }} hintId={`${id}-request-hint`} onChange={(request) => setModelRequest(model.id, request)} />
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
               {CHAT_CAPABILITIES.map((capability) => {

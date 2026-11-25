@@ -9,19 +9,23 @@ import type { ChatModel } from "@/types/settings";
  * its requests with tools without a level (its requests without tools keep theirs). The author sets it, and the page sets it when the provider says so (`model-learned`): the row shows it either way,
  * and the author can turn it off. What is stored is `true` when it is ticked by hand, `"none"` when the engine learned that the model takes `none` and no request without a level (the box is ticked for either), and
  * nothing when it is off. `hintId` is the paragraph of the card that explains the setting once for all its
- * models. The label names the model for a screen reader, hidden from the eye (the row shows it above).
+ * models. The label names the model for a screen reader, hidden from the eye (the row shows it above). `unused`: the model is asked through the Responses API, which takes a thinking level and function tools
+ * together, so a setting that is on is kept but has no effect; the box says so and does not lose what was set (a box that is off has nothing to say).
  */
-export function NoThinkingWithToolsField({ model, hintId, onChange }: { model: ChatModel; hintId: string; onChange: (value: true | undefined) => void }) {
+export function NoThinkingWithToolsField({ model, hintId, unused = false, onChange }: { model: ChatModel; hintId: string; unused?: boolean; onChange: (value: true | undefined) => void }) {
   const { t } = useTranslation();
   const id = useId();
   const on = model.noThinkingWithTools === true || model.noThinkingWithTools === "none";
   return (
-    <div data-no-thinking-with-tools={on ? "on" : "off"} className="flex items-start gap-2 rounded-md border px-3 py-2 sm:col-span-3">
-      <input id={id} type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 accent-primary" checked={on} aria-describedby={hintId} onChange={(event) => onChange(event.target.checked ? true : undefined)} />
-      <Label htmlFor={id} className="text-xs">
-        {t("settings.noThinkingWithTools")}
-        {model.name.trim() && <>{" "}<span className="sr-only">— {model.name}</span></>}
-      </Label>
+    <div data-no-thinking-with-tools={on ? "on" : "off"} data-no-thinking-unused={unused && on ? "" : undefined} className="flex items-start gap-2 rounded-md border px-3 py-2 sm:col-span-3">
+      <input id={id} type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 accent-primary" checked={on} aria-describedby={unused && on ? `${hintId} ${id}-unused` : hintId} onChange={(event) => onChange(event.target.checked ? true : undefined)} />
+      <div className="grid gap-1">
+        <Label htmlFor={id} className="text-xs">
+          {t("settings.noThinkingWithTools")}
+          {model.name.trim() && <>{" "}<span className="sr-only">— {model.name}</span></>}
+        </Label>
+        {unused && on && <p id={`${id}-unused`} className="text-xs text-muted-foreground">{t("settings.noThinkingWithToolsUnused")}</p>}
+      </div>
     </div>
   );
 }

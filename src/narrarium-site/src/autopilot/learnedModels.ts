@@ -62,6 +62,47 @@ export function withNoThinkingWithTools(settings: AppSettings, integrationId: st
   return changed ? { ...settings, aiIntegrations } : null;
 }
 
+/** The settings with the model that the integration lists under that name asked through the Responses API (`true`) or back through Chat Completions (`false`: the key is taken out); `null` when there is no such model or it is so already. */
+export function withResponsesApi(settings: AppSettings, integrationId: string, model: string, responses: boolean): AppSettings | null {
+  let changed = false;
+  const aiIntegrations = settings.aiIntegrations.map((integration) => {
+    if (integration.id !== integrationId) return integration;
+    let touched = false;
+    const chatModels = (integration.chatModels ?? []).map((entry) => {
+      if (entry.name !== model || (entry.apiProtocol === "responses") === responses) return entry;
+      touched = true;
+      const { apiProtocol: _previous, ...rest } = entry;
+      return responses ? { ...rest, apiProtocol: "responses" as const } : rest;
+    });
+    if (touched) changed = true;
+    return touched ? { ...integration, chatModels } : integration;
+  });
+  return changed ? { ...settings, aiIntegrations } : null;
+}
+
+/** The providers whose models can be asked through the Responses API at an address that Narrarium builds (GitHub Models has none: its models are asked through Chat Completions). */
+export function providerHasResponsesApi(provider: string | undefined): boolean {
+  return provider === "azure_openai" || provider === "openai";
+}
+
+/**
+ * The author's choice in the notice of a model that refused thinking with tools: the model is asked through the Responses API from now on. It is kept in the settings of this browser like any change of them
+ * (the next call reads them), and it is the only thing it does: the address of the Responses API is built from the integration (the engine's `modelRequestTarget`), and the flag that turned thinking off with
+ * tools stays in the model's row, unused while the model is on the Responses API. `false` when the model is not in the settings, is on the Responses API already, or the settings cannot be changed now (the browser
+ * is offline: the settings of the AI integrations are not changed then).
+ */
+export function chooseResponsesApi(integrationId: string, model: string): boolean {
+  const next = withResponsesApi(useSettingsStore.getState().settings, integrationId, model, true);
+  if (!next) return false;
+  try {
+    useSettingsStore.getState().patchSettings({ aiIntegrations: next.aiIntegrations });
+  } catch {
+    return false;
+  }
+  void saveSettingsNow().catch(() => undefined);
+  return true;
+}
+
 /** What the engine tells of a model it learned about: the learning of a call, or the `model-learned` event of the autopilot (which says `responses` itself). */
 export interface LearnedModelInput {
   integrationId: string;

@@ -4,7 +4,7 @@ import { formatLimit } from "@/lib/formatLimit";
 
 /** One fact about how an attempt was asked, or what came back: a text of the app with its figures, which the panel says in words. */
 export interface AttemptBadge {
-  id: "request" | "stream" | "apiVersion" | "thinking" | "reasoningParameter" | "called" | "skipped" | "firstByte" | "toolsOnly" | "limits" | "received" | "lastChunk" | "streamEnd" | "finishReason" | "usage" | "requestId" | "providerStatus" | "providerType" | "providerParam" | "providerCode";
+  id: "request" | "stream" | "apiVersion" | "protocol" | "thinking" | "reasoningParameter" | "called" | "skipped" | "firstByte" | "toolsOnly" | "limits" | "received" | "lastChunk" | "streamEnd" | "finishReason" | "usage" | "requestId" | "providerStatus" | "providerType" | "providerParam" | "providerCode";
   key: string;
   params?: Record<string, string>;
 }
@@ -24,6 +24,7 @@ export function attemptBadges(entry: LlmDebugEntry, language?: string): AttemptB
   // What was read once the reply is in; what was asked until then.
   const streaming = entry.streamed ?? entry.stream;
   if (streaming !== undefined) badges.push({ id: "stream", key: streaming ? "debug.attempt.streaming" : "debug.attempt.notStreaming" });
+  if (entry.protocol === "responses") badges.push({ id: "protocol", key: "debug.attempt.protocolResponses" });
   if (entry.apiVersion) badges.push({ id: "apiVersion", key: "debug.attempt.apiVersion", params: { version: entry.apiVersion } });
   if (entry.thinking === "none" && entry.thinkingWhy === "tools") badges.push({ id: "thinking", key: "debug.attempt.thinkingNoneTools" });
   else if (entry.thinking) badges.push({ id: "thinking", key: "debug.attempt.thinking", params: { level: entry.thinking } });
@@ -42,7 +43,7 @@ export function attemptBadges(entry: LlmDebugEntry, language?: string): AttemptB
       ? { id: "limits", key: "debug.attempt.limitsRaised", params: { ...figures, from: formatLimit(raisedFrom, language) } }
       : { id: "limits", key: "debug.attempt.limits", params: figures });
   }
-  if (entry.transport) badges.push(...transportBadges(entry.transport, entry.status === "error", language));
+  if (entry.transport) badges.push(...transportBadges(entry.transport, entry.status === "error", language, "debug.attempt", entry.protocol));
   // What the provider answered when it refused the request, as its own short words (its message is redacted in this history, like every error).
   const refused = entry.providerError;
   if (refused && entry.status === "error") {
@@ -63,9 +64,9 @@ export type TransportTextScope = "debug.attempt" | "autopilot.failure.transport"
 /**
  * What the transport saw of a call, in the facts the panels say: for a call that failed, how much arrived, when the last piece did, how the stream ended, how the provider ended the reply, whether it
  * reported the tokens and the id of the request; for one that worked, only that the tokens were not reported (its figures are then an estimate). The history of the debug panel and the error
- * panel of the autopilot say it the same way. Only what the transport has is there.
+ * panel of the autopilot say it the same way. Only what the transport has is there. `protocol`: the request was made through the Responses API, which has no `[DONE]` to tell how a stream ended by.
  */
-export function transportBadges(transport: LlmDebugTransport, failed: boolean, language?: string, scope: TransportTextScope = "debug.attempt"): AttemptBadge[] {
+export function transportBadges(transport: LlmDebugTransport, failed: boolean, language?: string, scope: TransportTextScope = "debug.attempt", protocol?: "responses"): AttemptBadge[] {
   const badges: AttemptBadge[] = [];
   const status = String(transport.status ?? "—");
   if (failed && transport.bytes !== undefined) {
@@ -76,7 +77,8 @@ export function transportBadges(transport: LlmDebugTransport, failed: boolean, l
   if (failed && transport.lastChunkAfterMs !== undefined && transport.silentMs !== undefined) {
     badges.push({ id: "lastChunk", key: `${scope}.lastChunk`, params: { after: formatLimit(transport.lastChunkAfterMs, language), silent: formatLimit(transport.silentMs, language) } });
   }
-  if (failed && transport.end) badges.push({ id: "streamEnd", key: `${scope}.end.${transport.end}` });
+  // The Responses API has no [DONE]: its stream ends with its last event, and the words for how it ended say so.
+  if (failed && transport.end) badges.push({ id: "streamEnd", key: `${scope}.end.${protocol === "responses" && (transport.end === "done" || transport.end === "closed") ? `${transport.end}Responses` : transport.end}` });
   if (failed && transport.finishReason) badges.push({ id: "finishReason", key: `${scope}.finishReason`, params: { reason: transport.finishReason } });
   // The tokens say something when the provider did not report them: that is what makes the figures of the call an estimate.
   if (transport.usageReceived !== undefined && (failed || !transport.usageReceived)) {

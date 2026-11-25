@@ -189,7 +189,7 @@ export function retryAfterSeconds(detail: AutopilotErrorDetail): number | null {
 }
 
 export type ErrorFact =
-  | { key: "endpoint" | "apiVersion" | "model" | "provider" | "integration" | "status"; value: string }
+  | { key: "endpoint" | "apiVersion" | "protocol" | "model" | "provider" | "integration" | "status"; value: string }
   | { key: "attempt"; attempt: number; retries: number };
 
 const clean = (value: unknown): string | undefined => (typeof value === "string" && value.trim() ? value.trim() : undefined);
@@ -201,7 +201,9 @@ const clean = (value: unknown): string | undefined => (typeof value === "string"
 export function errorFacts(detail: AutopilotErrorDetail, integrationName?: (id: string) => string | undefined, withRoute = false): ErrorFact[] {
   const facts: ErrorFact[] = [];
   const endpoint = clean(detail.endpoint);
-  if (endpoint && !withRoute) facts.push({ key: "endpoint", value: endpoint });
+  // The path is the path of the address that a model has of its own: with the origin, it says where the request went.
+  if (endpoint && !withRoute) facts.push({ key: "endpoint", value: `${endpoint}${clean(detail.path) ?? ""}` });
+  if (detail.protocol === "responses" && !withRoute) facts.push({ key: "protocol", value: detail.protocol });
   const apiVersion = clean(detail.apiVersion);
   if (apiVersion && !withRoute) facts.push({ key: "apiVersion", value: apiVersion });
   const model = clean(detail.model);
@@ -227,7 +229,7 @@ export interface DiagnosticsInput {
 
 /** One step of the route, as a line of the text that is copied: who it is, and how it ended or why it was left out. English, closed words and figures, and what the provider said cleaned of credentials. */
 function routeLine(step: AutopilotRouteStep): string {
-  const who = `${step.integrationName || step.integrationId || "?"}${step.integrationId && step.integrationId !== step.integrationName ? ` (${step.integrationId})` : ""} ${step.model}${step.apiVersion ? ` [api-version ${step.apiVersion}]` : ""}`;
+  const who = `${step.integrationName || step.integrationId || "?"}${step.integrationId && step.integrationId !== step.integrationName ? ` (${step.integrationId})` : ""} ${step.model}${step.protocol === "responses" ? " [Responses API]" : ""}${step.apiVersion ? ` [api-version ${step.apiVersion}]` : ""}${step.path && step.endpoint ? ` [${step.endpoint}${step.path}]` : ""}`;
   if (step.outcome === "left-out") {
     const numbers = step.leftOut === "context-window" ? ` (the prompt is about ${step.promptTokens ?? "?"} tokens, the window leaves about ${step.windowTokens ?? "?"})` : step.why ? ` (${step.why})` : "";
     return `${step.position + 1}. ${who}: left out, ${step.leftOut ?? "unknown reason"}${numbers}`;
@@ -302,7 +304,8 @@ export function diagnosticsText({ source, appVersion, engineVersion, host, at, i
   if (source.repeats > 1) lines.push(`Failed in a row: ${source.repeats}`);
   if (typeof detail.status === "number") lines.push(`HTTP status: ${detail.status}`);
   if (detail.body) lines.push(...providerLines(detail.body));
-  if (clean(detail.endpoint)) lines.push(`Endpoint: ${clean(detail.endpoint)}`);
+  if (clean(detail.endpoint)) lines.push(`Endpoint: ${clean(detail.endpoint)}${clean(detail.path) ?? ""}`);
+  if (detail.protocol === "responses") lines.push("Protocol: Responses API");
   if (clean(detail.apiVersion)) lines.push(`API version: ${clean(detail.apiVersion)}`);
   if (clean(detail.model)) lines.push(`Model: ${clean(detail.model)}`);
   if (clean(detail.provider)) lines.push(`Provider: ${clean(detail.provider)}`);

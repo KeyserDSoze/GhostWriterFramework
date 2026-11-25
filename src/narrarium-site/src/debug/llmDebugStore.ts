@@ -59,6 +59,8 @@ export interface LlmDebugEntry {
   streamMode?: "auto" | "off";
   /** The API version the request carried (Azure OpenAI's `api-version`, or `v1`): a short word, nothing else. */
   apiVersion?: string;
+  /** The request was made through the Responses API (absent: Chat Completions). One word, and never an address: the store keeps no address of where a request went. */
+  protocol?: "responses";
   /** The level that was sent (`none`: the model was sent `reasoning_effort: "none"`); absent when none was. */
   thinking?: "low" | "medium" | "high" | "xhigh" | "none";
   /** Why a level that was chosen was not sent, when the request is what decided it: it carried function tools and the model refuses a level with them. */
@@ -171,6 +173,7 @@ const PROVIDER_WORD = /^[A-Za-z0-9_.:/[\]-]{1,80}$/;
 /** The engine says where the level went only when it went as the argument of the chat template: the other two ways say nothing, so nothing else is kept. */
 const REASONING_PARAMETERS = new Set(["chat_template_kwargs.reasoning_strength"]);
 const STREAM_MODES = new Set(["auto", "off"]);
+const PROTOCOLS = new Set(["responses"]);
 const TIMEOUT_PHASES = new Set(["start", "idle", "total"]);
 const MAX_SKIPPED_MODELS = 8;
 const MAX_MODEL_NAME = 120;
@@ -248,6 +251,7 @@ function attemptFields(entry: LlmDebugEntry): Partial<LlmDebugEntry> {
     stream: flag(entry.stream),
     streamMode: word(entry.streamMode, STREAM_MODES),
     apiVersion: typeof entry.apiVersion === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(entry.apiVersion) ? entry.apiVersion : undefined,
+    protocol: word(entry.protocol, PROTOCOLS),
     thinking: word(entry.thinking, THINKING),
     thinkingWhy: word(entry.thinkingWhy, THINKING_WHY),
     reasoningParameter: word(entry.reasoningParameter, REASONING_PARAMETERS),
@@ -270,7 +274,7 @@ function storageErrorMessage(error: unknown, fallback: string): string {
 }
 
 export function redactLlmDebugEntry(entry: LlmDebugEntry): LlmDebugEntry {
-  const { structured: _s, tools: _t, stream: _st, streamMode: _sm, apiVersion: _av, thinking: _th, thinkingWhy: _tw, reasoningParameter: _rp, toolsOnly: _to, skipped: _sk, timeouts: _ti, streamed: _sd, firstByteMs: _fb, toolCalled: _tc, timeoutPhase: _tp, providerError: _pe, transport: _tr, ...rest } = entry;
+  const { structured: _s, tools: _t, stream: _st, streamMode: _sm, apiVersion: _av, protocol: _pr, thinking: _th, thinkingWhy: _tw, reasoningParameter: _rp, toolsOnly: _to, skipped: _sk, timeouts: _ti, streamed: _sd, firstByteMs: _fb, toolCalled: _tc, timeoutPhase: _tp, providerError: _pe, transport: _tr, ...rest } = entry;
   return {
     ...rest,
     ...attemptFields(entry),

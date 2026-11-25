@@ -1,5 +1,5 @@
 import { resolveGitHubCredentialValue, type ResolvedGitHubCredential } from "@/github/githubCredentialRuntime";
-import type { AutopilotPresetId } from "narrarium-engine";
+import type { AiApiProtocol, AutopilotPresetId } from "narrarium-engine";
 
 // ─── Azure OpenAI ────────────────────────────────────────────────────────────
 
@@ -44,6 +44,9 @@ export const THINKING_LEVELS: readonly ThinkingLevel[] = ["automatic", "low", "m
  */
 export const REASONING_PARAMETERS = ["reasoning_effort", "chat_template_kwargs.reasoning_strength", "none"] as const;
 export type ReasoningParameter = (typeof REASONING_PARAMETERS)[number];
+
+/** How a model's requests are made: Chat Completions (what a model that says nothing gets) or the Responses API. The engine says which there are (`AI_API_PROTOCOLS`). */
+export type ApiProtocol = AiApiProtocol;
 
 /** A concrete integration+model target the router points a task at. */
 export interface RoutingTarget {
@@ -109,6 +112,16 @@ export interface ChatModel {
    * its models that do not name one), else the engine's default. `effectiveApiVersion` of the engine says which is used.
    */
   apiVersion?: string;
+  /**
+   * How this model's requests are made (see `ApiProtocol`): absent or `chat-completions`, Chat Completions, as always; `responses`, the Responses API, which takes a thinking level and function tools together.
+   * It is the author's word and is never set by itself: the page only offers it (in the notice of a model that refused thinking with tools, and for an address that ends with `/responses`).
+   */
+  apiProtocol?: ApiProtocol;
+  /**
+   * The address this model's requests go to, used exactly as it was written (its query included), for a gateway whose address is not the one built from the integration: an http or https address with no user name
+   * or password, and no key in it (it is saved with the settings, and travels to a personal server). Absent: the address is built from the integration. While it is set, the API versions are not used for this model.
+   */
+  endpointUrl?: string;
   /** Provider-specific tier label. Currently populated from GitHub Models rate_limit_tier. */
   tier?: string;
   /** Total model context window; prompt budgeting reserves output and a safety margin within it. */

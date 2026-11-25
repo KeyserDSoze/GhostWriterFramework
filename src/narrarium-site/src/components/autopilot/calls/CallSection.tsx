@@ -89,7 +89,7 @@ function FailedAttempts({ record }: { record: AiCallRecord }) {
         return (
           <li key={attempt.index} className="space-y-0.5 rounded-md border-l-2 border-red-500/60 bg-red-500/5 px-2 py-1.5 text-xs">
             <p className="font-medium">{head}</p>
-            {(attempt.endpoint || attempt.apiVersion) && <p className="break-all text-muted-foreground">{[attempt.endpoint, attempt.apiVersion ? t("autopilot.calls.attemptFacts.apiVersion", { version: attempt.apiVersion }) : ""].filter(Boolean).join(" · ")}</p>}
+            {(attempt.endpoint || attempt.apiVersion || attempt.protocol) && <p className="break-all text-muted-foreground">{[attempt.endpoint, attempt.protocol === "responses" ? t("autopilot.calls.attemptFacts.protocolResponses") : "", attempt.apiVersion ? t("autopilot.calls.attemptFacts.apiVersion", { version: attempt.apiVersion }) : ""].filter(Boolean).join(" · ")}</p>}
             {facts.length > 0 && <p className="tabular-nums text-muted-foreground">{facts.join(" · ")}</p>}
             {error && <p className="break-words text-destructive [overflow-wrap:anywhere]">{error}</p>}
             {attempt.error?.body && <ProviderWords body={attempt.error.body} scope="autopilot.calls.provider" className="pt-0.5" />}

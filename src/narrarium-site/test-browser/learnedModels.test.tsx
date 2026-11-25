@@ -18,7 +18,7 @@ import { setFallbackAcknowledgementAccountScope } from "@/assistant/fallbackDisc
 import { describeAiFailure } from "@/assistant/aiFailure";
 import { createBrowserAi } from "@/autopilot/browserAi";
 import { LearnedModelNotices } from "@/components/autopilot/LearnedModelNotices";
-import { learnedKey, rememberLearnedModel, useLearnedModelsStore, withNoThinkingWithTools } from "@/autopilot/learnedModels";
+import { chooseResponsesApi, learnedKey, providerHasResponsesApi, rememberLearnedModel, useLearnedModelsStore, withNoThinkingWithTools, withResponsesApi } from "@/autopilot/learnedModels";
 import { autopilotRuntime } from "@/autopilot/runtime";
 import { presentFeedEvent } from "@/autopilot/format";
 import { migrateSettings } from "@/drive/cloudSettingsClient";
@@ -204,7 +204,7 @@ describe("gpt-6.2-sol, which takes function tools on the Responses API only", ()
     const failure = await ai.complete(STRUCTURED).then(() => null, (error: { body?: AiErrorBody; message: string }) => error);
     expect(fake.calls.map(levelOf)).toEqual(["high", undefined, "none"]);
     expect(failure?.body).toMatchObject({ status: 400, message: "Unsupported value: 'reasoning_effort' does not support 'none' with this model.", param: "reasoning_effort" });
-    expect(failure?.message).toMatch(/Narrarium asked again without a thinking level and with "none", and the model still refuses function tools on this endpoint: the provider says to use \/v1\/responses for them\.$/);
+    expect(failure?.message).toMatch(/Narrarium asked again without a thinking level and with "none", and the model still refuses function tools on this endpoint: the provider says to use \/v1\/responses for them\. Set the "API protocol" of the model to "Responses API" in AI Integrations to use them\.$/);
     expect(flagOf(model)).toBeUndefined();
     expect(useLearnedModelsStore.getState().notices).toHaveLength(0);
     expect(mocks.toast).not.toHaveBeenCalled();
@@ -417,13 +417,18 @@ describe("what a run on the personal server learned", () => {
 });
 
 describe.each(LANGUAGES)("the notice [%s]", (language: Language) => {
-  const notice = (responses: boolean) => useLearnedModelsStore.setState({ notices: [{ key: learnedKey("gw", "gpt-6-luna"), integrationId: "gw", integrationName: "AzureOpenAi-GW", model: "gpt-6-luna", body: OWNER_BODY, responses, off: "omit", at: 1 }] });
+  const notice = (responses: boolean, model = "gpt-6-luna") => useLearnedModelsStore.setState({ notices: [{ key: learnedKey("gw", model), integrationId: "gw", integrationName: "AzureOpenAi-GW", model, body: OWNER_BODY, responses, off: "omit", at: 1 }] });
+  /** The settings that hold the model of the notice: an Azure OpenAI integration, as the owner's gateway is. */
+  const settings = (models: Array<Record<string, unknown>> = [{ id: "m1", name: "gpt-6-luna", capabilities: ["default"], noThinkingWithTools: true }], provider = "azure_openai") => useSettingsStore.setState({
+    settings: { ...DEFAULT_SETTINGS, aiIntegrations: [{ id: "gw", name: "AzureOpenAi-GW", provider, endpoint: "https://gw.openai.azure.com", apiKey: "k", chatModels: models }] as unknown as AppSettings["aiIntegrations"] },
+  });
   const show = async () => {
     await i18n.changeLanguage(language);
     return render(<MemoryRouter><LearnedModelNotices /></MemoryRouter>);
   };
 
-  it("says what was done, the provider's own words as fields, and the two ways out in plain words, the Responses API first", async () => {
+  it("says what was done, the provider's own words as fields, and the two ways out in plain words, the Responses API first, with the button that takes it", async () => {
+    settings();
     notice(true);
     await show();
     const card = document.querySelector("[data-learned-model]") as HTMLElement;
@@ -437,24 +442,120 @@ describe.each(LANGUAGES)("the notice [%s]", (language: Language) => {
     expect(within(card).getByText(t("autopilot.learned.waysTitle"))).toBeInTheDocument();
     const ways = Array.from(card.querySelectorAll("[data-learned-way]")).map((way) => [way.getAttribute("data-learned-way"), way.textContent]);
     expect(ways).toEqual([["responses", t("autopilot.learned.wayResponses")], ["no-thinking", t("autopilot.learned.wayOff")]]);
+    const buttons = Array.from(card.querySelectorAll("a, button")).map((control) => control.textContent);
+    expect(buttons, "the Responses API is the first of the actions").toEqual([t("autopilot.learned.useResponses", { model: "gpt-6-luna" }), t("autopilot.learned.openSettings"), t("autopilot.learned.dismiss")]);
     expect(within(card).getByRole("link", { name: t("autopilot.learned.openSettings") })).toHaveAttribute("href", "/app/settings/ai-integrations");
   });
 
-  it("says only what was done when the provider's words do not tell to use the Responses API", async () => {
+  it("shows both ways also when the provider's words do not tell to use the Responses API: the way is offered for any provider that has it, and the words of the provider are what mark the card", async () => {
+    settings();
     notice(false);
     await show();
     const card = document.querySelector("[data-learned-model]") as HTMLElement;
     expect(card).not.toHaveAttribute("data-learned-responses");
-    expect(within(card).getByText(t("autopilot.learned.doneTitle"))).toBeInTheDocument();
-    expect(Array.from(card.querySelectorAll("[data-learned-way]")).map((way) => way.getAttribute("data-learned-way"))).toEqual(["no-thinking"]);
+    expect(Array.from(card.querySelectorAll("[data-learned-way]")).map((way) => way.getAttribute("data-learned-way"))).toEqual(["responses", "no-thinking"]);
+    expect(within(card).getByRole("button", { name: t("autopilot.learned.useResponses", { model: "gpt-6-luna" }) })).toBeInTheDocument();
+  });
+
+  it("says only what was done, and offers nothing, for a provider that has no Responses API, a model the settings do not have and an integration that is gone", async () => {
+    for (const [provider, models] of [["github_models", [{ id: "m1", name: "gpt-6-luna", capabilities: ["default"] }]], ["azure_openai", [{ id: "m2", name: "another", capabilities: ["default"] }]]] as const) {
+      settings([...models], provider);
+      notice(false);
+      const view = await show();
+      const card = document.querySelector("[data-learned-model]") as HTMLElement;
+      expect(card.querySelector("[data-learned-use-responses]"), provider).toBeNull();
+      expect(within(card).getByText(t("autopilot.learned.doneTitle"))).toBeInTheDocument();
+      expect(Array.from(card.querySelectorAll("[data-learned-way]")).map((way) => way.getAttribute("data-learned-way"))).toEqual(["no-thinking"]);
+      view.unmount();
+    }
+    useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+    notice(false);
+    await show();
+    expect(document.querySelector("[data-learned-use-responses]")).toBeNull();
+  });
+
+  it("the button sets the model to the Responses API, in the settings of this browser and saved, touches nothing else, and the card says what changed, with the reader's place on it", async () => {
+    settings([{ id: "m1", name: "gpt-6-luna", capabilities: ["default"], noThinkingWithTools: "none", apiVersion: "2024-10-21" }, { id: "m2", name: "gpt-6.2-sol", capabilities: ["default"] }]);
+    notice(true);
+    await show();
+    const button = screen.getByRole("button", { name: t("autopilot.learned.useResponses", { model: "gpt-6-luna" }) });
+    button.focus();
+    fireEvent.click(button);
+    const models = useSettingsStore.getState().settings.aiIntegrations[0].chatModels!;
+    expect(models[0]).toMatchObject({ name: "gpt-6-luna", apiProtocol: "responses", noThinkingWithTools: "none", apiVersion: "2024-10-21" });
+    expect("apiProtocol" in models[1], "only the model of the notice").toBe(false);
+    expect("endpointUrl" in models[0], "no address of its own: the engine builds it from the integration").toBe(false);
+    const card = document.querySelector("[data-learned-model]") as HTMLElement;
+    expect(card).toHaveAttribute("data-learned-on-responses");
+    expect(within(card).getByRole("heading")).toHaveTextContent(t("autopilot.learned.titleResponses", { model: "gpt-6-luna" }));
+    expect(card.querySelector("[data-learned-done-responses]")).toHaveTextContent(t("autopilot.learned.doneResponses", { model: "gpt-6-luna" }));
+    expect(card.querySelector("[data-learned-done-responses]")).toHaveFocus();
+    expect(card.querySelector("[data-learned-way]"), "the ways are said as done now").toBeNull();
+    expect(card.querySelector("[data-learned-use-responses]")).toBeNull();
+    expect(card.querySelector("[data-provider-words]"), "the provider's words stay").not.toBeNull();
+    expect(within(card).queryByRole("alert")).toBeNull();
+    // Saved like any change of the settings: the same settings, as the device holds them, carry the protocol.
+    await waitFor(() => expect(useSettingsStore.getState().syncStatus).not.toBe("saving"));
+  });
+
+  it("a model that is on the Responses API already is told so, with nothing to press", async () => {
+    settings([{ id: "m1", name: "gpt-6-luna", capabilities: ["default"], apiProtocol: "responses" }]);
+    notice(true);
+    await show();
+    const card = document.querySelector("[data-learned-model]") as HTMLElement;
+    expect(card.querySelector("[data-learned-done-responses]")).toHaveTextContent(t("autopilot.learned.doneResponses", { model: "gpt-6-luna" }));
+    expect(card.querySelector("[data-learned-use-responses]")).toBeNull();
+  });
+
+  it("says in words, and as an alert, when the setting could not be changed (the browser is offline), and keeps the button", async () => {
+    settings();
+    notice(true);
+    await show();
+    const patch = vi.spyOn(useSettingsStore.getState(), "patchSettings").mockImplementation(() => { throw new Error("offline"); });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: t("autopilot.learned.useResponses", { model: "gpt-6-luna" }) }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(t("autopilot.learned.responsesFailed"));
+      expect(screen.getByRole("button", { name: t("autopilot.learned.useResponses", { model: "gpt-6-luna" }) })).toBeInTheDocument();
+      expect(useSettingsStore.getState().settings.aiIntegrations[0].chatModels![0].apiProtocol).toBeUndefined();
+    } finally {
+      patch.mockRestore();
+    }
   });
 
   it("goes away when it is dismissed, and is not there when there is nothing to say", async () => {
+    settings();
     notice(true);
     const view = await show();
     fireEvent.click(screen.getByRole("button", { name: t("autopilot.learned.dismiss") }));
     expect(document.querySelector("[data-learned-model]")).toBeNull();
     expect(view.container).toBeEmptyDOMElement();
+  });
+});
+
+describe("the choice of the Responses API", () => {
+  it("is made on the model of that name in that integration only, and undone by taking the key out", () => {
+    const fixture = gateway();
+    const settings = settingsFor(fixture, "gpt-6-luna");
+    const on = withResponsesApi(settings, "gw", "gpt-6.2-sol", true)!;
+    expect(on.aiIntegrations[0].chatModels!.map((model) => model.apiProtocol)).toEqual([undefined, "responses", undefined]);
+    expect(withResponsesApi(on, "gw", "gpt-6.2-sol", true), "it is so already").toBeNull();
+    const off = withResponsesApi(on, "gw", "gpt-6.2-sol", false)!;
+    expect("apiProtocol" in off.aiIntegrations[0].chatModels![1]).toBe(false);
+    expect(withResponsesApi(settings, "gw", "gpt-6.2-sol", false), "nothing to undo").toBeNull();
+    expect(withResponsesApi(settings, "other", "gpt-6.2-sol", true)).toBeNull();
+    expect(withResponsesApi(settings, "gw", "no-such-model", true)).toBeNull();
+  });
+
+  it("is offered for the providers that have the Responses API: Azure OpenAI and the OpenAI-compatible ones, and not GitHub Models", () => {
+    expect([providerHasResponsesApi("azure_openai"), providerHasResponsesApi("openai"), providerHasResponsesApi("github_models"), providerHasResponsesApi("m365_copilot"), providerHasResponsesApi(undefined)]).toEqual([true, true, false, false, false]);
+  });
+
+  it("changes nothing for a model that is not in the settings", () => {
+    useSettingsStore.setState({ settings: settingsFor(gateway(), "gpt-6-luna") });
+    expect(chooseResponsesApi("gw", "no-such-model")).toBe(false);
+    expect(chooseResponsesApi("gw", "gpt-6-luna")).toBe(true);
+    expect(chooseResponsesApi("gw", "gpt-6-luna"), "so already").toBe(false);
+    expect(modelsOf()[0].apiProtocol).toBe("responses");
   });
 });
 
