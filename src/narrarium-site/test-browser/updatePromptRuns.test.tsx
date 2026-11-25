@@ -12,6 +12,7 @@ import { provideUpdateRunsView, UpdatePrompt } from "@/components/layout/UpdateP
 import { UpdatePromptRuns } from "@/components/layout/UpdatePromptRuns";
 import { RouteErrorFallback } from "@/components/layout/RouteErrorFallback";
 import { setLocalRuns } from "@/autopilot/localRuns";
+import { setAutoResume } from "@/autopilot/resume";
 import { useAppUpdateStore } from "@/store/appUpdateStore";
 
 const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options) as string;
@@ -55,11 +56,11 @@ describe("the prompt of a new version", () => {
     expect(document.querySelector("[data-update-runs]")).toBeNull();
   });
 
-  it("says that updating stops the autopilots that run here, and offers to update when they finish", () => {
+  it("says that updating stops the autopilots that run here, that they resume by themselves, and offers to update when they finish", () => {
     const worker = waitingWorker();
     act(() => setLocalRuns(["glass", "tide"]));
     render(<UpdatePrompt />);
-    expect(document.querySelector("[data-update-runs]")).toHaveTextContent(t("autopilot.update.runsStop", { count: 2 }));
+    expect(document.querySelector("[data-update-runs]")).toHaveTextContent(t("autopilot.update.runsStopResume", { count: 2 }));
     expect(screen.queryByRole("button", { name: t("pwa.updateAndViewChanges") })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: t("autopilot.update.later", { count: 2 }) }));
     expect(useAppUpdateStore.getState().promptOpen).toBe(false);
@@ -67,9 +68,10 @@ describe("the prompt of a new version", () => {
     expect(mocks.toast).toHaveBeenCalledWith({ title: t("autopilot.update.scheduled", { count: 2 }) });
   });
 
-  it("says it in Italian too", async () => {
+  it("says that a run whose resume is off on this device stops for good, in Italian too", async () => {
     await i18n.changeLanguage("it");
     waitingWorker();
+    setAutoResume("glass", false);
     act(() => setLocalRuns(["glass"]));
     render(<UpdatePrompt />);
     expect(document.querySelector("[data-update-runs]")).toHaveTextContent("L'autopilot sta lavorando in questo browser su 1 libro: aggiornare ora lo ferma.");

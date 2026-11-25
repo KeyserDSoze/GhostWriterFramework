@@ -18,6 +18,7 @@ import type { BookStructure } from "@/types/book";
 import { bookStorageMode, type BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
 import { OUTLINE_BRIEF_NOTICE_ID } from "@/autopilot/outlineBrief";
+import { autoResumeOn, setAutoResume } from "@/autopilot/resume";
 import "@/i18n/autopilotCallsSettings";
 
 // The tab of the AI calls is a chunk of its own: nothing of it is loaded until the tab is drawn.
@@ -96,6 +97,9 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
   const { t } = useTranslation();
   const github = bookStorageMode(book) === "github";
   const host = book.autopilotHost === "server" ? "server" : "browser";
+  // «Resume by itself after a restart» of this browser: a choice of this device, on unless the author turned it off, saved at once.
+  const [browserResume, setBrowserResume] = useState(() => autoResumeOn(book.id));
+  useEffect(() => { setBrowserResume(autoResumeOn(book.id)); }, [book.id]);
   const fresh = !state;
   const initial = useMemo<AutopilotOptions>(() => state
     ? state.options
@@ -298,6 +302,7 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
           running={running}
           waitingLong={waitingLong}
           autoResume={autoResume ? { on: resumeOn, onChange: (on) => patchOptions({ resumeAfterRestart: on }) } : undefined}
+          browserResume={host === "browser" ? { on: browserResume, onChange: (on) => { setAutoResume(book.id, on); setBrowserResume(on); } } : undefined}
         />
       ),
     },

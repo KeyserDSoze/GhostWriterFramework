@@ -72,6 +72,11 @@ export interface RetryLaterCardProps {
    * It is locked when the card is, and it can change while a run goes on.
    */
   autoResume?: { on: boolean; onChange: (on: boolean) => void };
+  /**
+   * «Resume by itself after a restart» of an autopilot that runs in this browser (none for a book that runs on the server): a choice of this device,
+   * on unless the author turns it off, which applies at once. It is never locked: it says what the next start of the app does.
+   */
+  browserResume?: { on: boolean; onChange: (on: boolean) => void };
 }
 
 const ID = "autopilot-retry";
@@ -83,7 +88,7 @@ const ID = "autopilot-retry";
  * on, and the page says beforehand what turning it off does to a run that waits for it. A personal server that does not have it shows it off, and says why.
  * Last, for a personal server that has it, «Resume after a restart»: a switch, off unless the author turns it on, with what it does in one line next to it.
  */
-export const RetryLaterCard = forwardRef<RetryLaterCardHandle, RetryLaterCardProps>(function RetryLaterCard({ form, onChange, locked, unsupported, running, waitingLong, autoResume }, ref) {
+export const RetryLaterCard = forwardRef<RetryLaterCardHandle, RetryLaterCardProps>(function RetryLaterCard({ form, onChange, locked, unsupported, running, waitingLong, autoResume, browserResume }, ref) {
   const { t } = useTranslation();
   const minutesRef = useRef<HTMLInputElement>(null);
   const cyclesRef = useRef<HTMLInputElement>(null);
@@ -223,6 +228,21 @@ export const RetryLaterCard = forwardRef<RetryLaterCardHandle, RetryLaterCardPro
             disabled={locked}
             aria-describedby={`${ID}-restart-hint`}
             onCheckedChange={autoResume.onChange}
+          />
+        </div>
+      )}
+      {browserResume && (
+        <div className="flex items-start justify-between gap-3 border-t pt-3">
+          <div className="min-w-0 space-y-1">
+            <Label htmlFor={`${ID}-browser-restart`} className="text-sm font-medium">{t("autopilot.config.browserResume.label")}</Label>
+            <p id={`${ID}-browser-restart-hint`} className="text-xs text-muted-foreground">{t("autopilot.config.browserResume.hint")}</p>
+          </div>
+          <Switch
+            id={`${ID}-browser-restart`}
+            className="mt-0.5"
+            checked={browserResume.on}
+            aria-describedby={`${ID}-browser-restart-hint`}
+            onCheckedChange={browserResume.onChange}
           />
         </div>
       )}

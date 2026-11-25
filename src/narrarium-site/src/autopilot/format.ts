@@ -1,6 +1,7 @@
 import i18next, { type TFunction } from "i18next";
 import type { AutopilotActivity, AutopilotEvent, AutopilotStateSummary, AutopilotStatus, AutopilotTaskKind, DirectorQuestion, InsightTone } from "narrarium-engine";
 import type { BookSyncStatus } from "@/autopilot/store";
+import { useSettingsStore } from "@/store/settingsStore";
 
 export type FeedTone = InsightTone;
 
@@ -202,8 +203,18 @@ function callsStoreText(t: TFunction, event: Extract<Notice, { type: "insight" }
   return reason ? t("autopilot.insight.callsStoreFailed", { reason, defaultValue: event.title }) : t("autopilot.insight.callsStoreFailed", { context: "noReason", defaultValue: event.title });
 }
 
+/**
+ * A run resumed by itself after a restart: by the personal server when it started again, or by this browser when the page was opened again (the
+ * engine's words say the server): the book's host says which.
+ */
+function resumedText(t: TFunction, event: Notice): string {
+  const book = useSettingsStore.getState().settings.books.find((entry) => entry.id === event.bookId);
+  return t("autopilot.insight.resumedAfterRestart", { ...(book && book.autopilotHost !== "server" ? { context: "browser" } : {}), defaultValue: event.title });
+}
+
 function noticeText(t: TFunction, event: Notice): string {
   if (!event.code) return event.title;
+  if (event.type === "insight" && event.code === "resumedAfterRestart") return resumedText(t, event);
   if (event.type === "insight" && event.code === "failureRetry") return retryText(t, event);
   if (event.type === "insight" && event.code === "callsStoreFailed") return callsStoreText(t, event);
   if (event.type === "insight" && (event.code === "longRetryWait" || event.code === "longRetryExhausted")) return retryLaterText(t, event);

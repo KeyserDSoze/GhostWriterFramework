@@ -3,10 +3,13 @@ import {
   AutopilotSession,
   ServerRequestError,
   pickAiRuntimeConfig,
+  readStoredAutopilot,
   remoteBookStore,
+  resolveAiCandidates,
   runnerActivity,
   serverHasCalls,
   syncBookStores,
+  type AiPort,
   type AskDirectorResult,
   type AutopilotEvent,
   type AutopilotLiveOptions,
@@ -37,7 +40,8 @@ import { setAutopilotHost } from "@/autopilot/host";
 import { AutopilotOperationBusyError, BookOperations, type AutopilotOperationKind } from "@/autopilot/operations";
 import { copyServerCalls, ensureCallsHost } from "@/autopilot/calls/host";
 import { isRecording } from "@/autopilot/calls/recording";
-import { setLocalRuns } from "@/autopilot/localRuns";
+import { pageEnding, setLocalRuns } from "@/autopilot/localRuns";
+import { autoResumeOn, decideResume, forgetRun, interruptedRuns, noteResume, recentResumes, rememberRun, rememberStep, type ResumeDecision, type ResumeIntent } from "@/autopilot/resume";
 import { wireBrowserCalls } from "@/autopilot/calls/wire";
 import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
 import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
@@ -130,6 +134,21 @@ const HANDOVER_LOCK_WAIT_MS = 150;
 
 function settings() {
   return useSettingsStore.getState().settings;
+}
+
+/** What the app did with a run that was interrupted: resumed it, waits to, or leaves it to the author (and why); `error` when its start failed. */
+export interface ResumeReport {
+  intent: ResumeIntent;
+  decision: ResumeDecision;
+  error?: string;
+}
+
+/** The writing AI of the autopilot is configured, with the credentials its first model needs: without them a resumed run would only fail. */
+function autopilotAiReady(): boolean {
+  const [first] = resolveAiCandidates(pickAiRuntimeConfig(settings()), "autopilot");
+  if (!first) return false;
+  const integration = first.integration;
+  return integration.provider === "openai" || integration.provider === "azure_openai" ? Boolean(integration.apiKey?.trim()) : true;
 }
 
 export function findBook(bookId: string): BookEntry {
@@ -332,6 +351,20 @@ export class BrowserAutopilotRuntime {
     this.handovers = new HandoverCoordinator(this.handoverPorts(), env.handover);
   }
 
+  /**
+   * The AI of a run of this page. When the page ends (a reload, an update, a tab or a browser closed) the browser aborts the call in flight: that
+   * failure does not answer, so the engine does not record the step as failed, and the step is the resumed run's to do again. A call the engine
+   * abandons itself (a pause «now») ends as always, before and after.
+   */
+  private aiOfPage(ai: AiPort): AiPort {
+    return {
+      complete: (request) => ai.complete(request).catch((error: unknown) => {
+        if (!pageEnding() || request.signal?.aborted) throw error;
+        return new Promise<never>((_, reject) => request.signal?.addEventListener("abort", () => reject(error), { once: true }));
+      }),
+    };
+  }
+
   private locks(): LockManager | undefined {
     return this.env.locks ? this.env.locks() : locks();
   }
@@ -416,7 +449,7 @@ export class BrowserAutopilotRuntime {
     const session = new AutopilotSession({
       bookId: book.id,
       store: createBrowserBookStore(book, branch),
-      ai: createBrowserAi(),
+      ai: this.aiOfPage(createBrowserAi()),
       host: "browser",
       hostLabel: browserLabel(),
       hostId: localDeviceId(),
@@ -433,10 +466,16 @@ export class BrowserAutopilotRuntime {
     });
     // The store, and the copies to the place the author chose, are made ready with the session: a task that ends is queued for them by the store itself.
     void ensureCallsHost();
+    const scope = currentRepositoryScopeIdentity();
     const unsubscribe = session.subscribe((event) => {
+      // What a run says while its page ends is not shown here or in the other tabs, and changes nothing of what resumes it.
+      if (pageEnding()) return;
       const title = bookTitle(book.id);
       useAutopilotStore.getState().ingest(event, title);
       shareAutopilotEvent(event, title);
+      // What the app needs to resume the run if the page ends while it goes on: what it does now, and that it is over (paused, stopped, done).
+      if (event.type === "task-started") rememberStep(scope, book.id, event.activity.title);
+      else if (event.type === "run-ended") forgetRun(scope, book.id);
       this.afterEvent(book.id, event, true);
     });
     this.sessions.set(book.id, { key, session, unsubscribe });
@@ -600,7 +639,7 @@ export class BrowserAutopilotRuntime {
     if (summary) useAutopilotStore.setState((state) => ({ summaries: { ...state.summaries, [bookId]: summary } }));
   }
 
-  start(bookId: string, options: StartOptions & { force?: boolean } = {}): Promise<void> {
+  start(bookId: string, options: StartOptions & { force?: boolean; afterRestart?: boolean } = {}): Promise<void> {
     return this.operations.run(bookId, "start", () => this.startNow(bookId, options));
   }
 
@@ -609,11 +648,12 @@ export class BrowserAutopilotRuntime {
     return this.start(bookId, { limits: kind === "step" ? { steps: 1 } : { chapters: 1 } });
   }
 
-  private async startNow(bookId: string, options: StartOptions & { force?: boolean }): Promise<void> {
+  private async startNow(bookId: string, startOptions: StartOptions & { force?: boolean; afterRestart?: boolean }): Promise<void> {
     const book = findBook(bookId);
     if (autopilotHostOf(book) === "server") {
       // Check the server before the book's changes are handed to it, and before a limit is asked of one that would not stop at it.
       const { info } = await this.requireServer();
+      const { afterRestart: _local, ...options } = startOptions;
       const { limits, ...unlimited } = options;
       const limited = hasRunLimit(limits);
       if (limited && !serverHasQuickControls(info)) throw new AutopilotControlsUnsupportedError();
@@ -623,6 +663,7 @@ export class BrowserAutopilotRuntime {
       this.applySnapshot(bookId, await client.startAutopilot(book.id, limited ? options : unlimited));
       return;
     }
+    const options = startOptions;
     const session = this.localSession(book, resolveBookBranch(book));
     if (session.running) throw new AutopilotBusyError(browserLabel());
     const lockManager = this.locks();
@@ -639,11 +680,68 @@ export class BrowserAutopilotRuntime {
           reject(error);
           return;
         }
+        // This browser runs the book from now on, until the run ends: a page that ends meanwhile resumes it when the app starts again.
+        if (session.running) rememberRun({ bookId: book.id, scope: currentRepositoryScopeIdentity(), since: new Date().toISOString() });
         resolve();
         await session.waitForIdle();
       }).catch(reject);
     });
     await this.refresh(bookId);
+  }
+
+  /**
+   * Resume the runs of this account that this browser was running when the page ended (a reload, an update of the app, a browser closed or
+   * crashed), each in the tab that gets the book's lock, for the books whose autopilot resumes by itself here (on unless the author turned it
+   * off on this device). The rules are `decideResume`'s: never a run the author paused or stopped, nor one another tab or host runs; a wait while
+   * the device is offline; the author told why when the working copy or the AI is missing, or after three resumes in ten minutes. A run that
+   * resumes goes on from what the book saved (a step is saved whole or not at all), and says that it was resumed.
+   */
+  async resumeInterrupted(): Promise<ResumeReport[]> {
+    const scope = currentRepositoryScopeIdentity();
+    const reports: ResumeReport[] = [];
+    for (const intent of interruptedRuns(scope)) reports.push(await this.resumeOne(intent, scope));
+    return reports;
+  }
+
+  private async resumeOne(intent: ResumeIntent, scope: string): Promise<ResumeReport> {
+    const book = settings().books.find((entry) => entry.id === intent.bookId) ?? null;
+    const host = book ? autopilotHostOf(book) : null;
+    let state: { status: string; ownRunner: boolean } | null = null;
+    let workingCopy = false;
+    let heldElsewhere = false;
+    if (book && host === "browser") {
+      const branch = resolveBookBranch(book);
+      heldElsewhere = await this.lockHeldElsewhere(book.id);
+      workingCopy = Boolean(await getExistingLocalBookStructure(book.id, book.owner, book.repo, branch, scope).catch(() => null));
+      if (workingCopy && !heldElsewhere) {
+        // The state as the book saved it: the session's snapshot shows a run of this host that nobody runs as paused («Interrupted»), which it is
+        // to the author, while here it is the run to resume.
+        const session = this.localSession(book, branch);
+        const stored = await readStoredAutopilot(createBrowserBookStore(book, branch)).catch(() => null);
+        const runner = stored?.state?.runner ?? null;
+        state = stored?.state ? { status: stored.state.status, ownRunner: Boolean(runner && session.isOwnRunner(runner)) } : null;
+      }
+    }
+    const decision = decideResume({
+      host,
+      autoResume: autoResumeOn(intent.bookId),
+      online: typeof navigator === "undefined" || navigator.onLine !== false,
+      settingsReady: useSettingsStore.getState().cloudLoaded,
+      state,
+      heldElsewhere,
+      workingCopy,
+      aiReady: autopilotAiReady(),
+      resumes: recentResumes(scope, intent.bookId, Date.now()).length,
+    });
+    if (decision.kind === "skip" && decision.forget) forgetRun(scope, intent.bookId);
+    if (decision.kind !== "resume") return { intent, decision };
+    noteResume(scope, intent.bookId, Date.now());
+    try {
+      await this.start(intent.bookId, { afterRestart: true });
+      return { intent, decision };
+    } catch (error) {
+      return { intent, decision, error: describeAutopilotError(error) };
+    }
   }
 
   /**
@@ -667,9 +765,20 @@ export class BrowserAutopilotRuntime {
     if (session?.running) {
       if (mode === "cancel") session.cancelPause();
       else session.pause(mode);
+      this.notePause(book.id, mode);
       return;
     }
     if (await this.lockHeldElsewhere(book.id)) await this.relay(book.id, mode === "cancel" ? { type: "cancel-pause" } : { type: "pause", mode });
+  }
+
+  /**
+   * A run the author asks to pause is never resumed by itself, even when the page ends before the step it finishes: the intent goes at once, and
+   * comes back if the author takes the pause back.
+   */
+  private notePause(bookId: string, mode: PauseCommand): void {
+    const scope = currentRepositoryScopeIdentity();
+    if (mode === "cancel") rememberRun({ bookId, scope, since: new Date().toISOString() });
+    else forgetRun(scope, bookId);
   }
 
   /**
@@ -981,8 +1090,13 @@ export class BrowserAutopilotRuntime {
     if (!session?.running) return;
     try {
       let result: boolean | undefined;
-      if (command.type === "pause") session.pause(command.mode);
-      else if (command.type === "cancel-pause") session.cancelPause();
+      if (command.type === "pause") {
+        session.pause(command.mode);
+        this.notePause(bookId, command.mode);
+      } else if (command.type === "cancel-pause") {
+        session.cancelPause();
+        this.notePause(bookId, "cancel");
+      }
       else if (command.type === "retry-now") result = session.retryNow();
       else if (command.type === "update-options") await session.updateOptions(command.options);
       else if (command.type === "resolve-frozen") await session.resolveFrozenChange(command.number, command.action, command.options);

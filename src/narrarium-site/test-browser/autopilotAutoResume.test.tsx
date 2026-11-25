@@ -165,3 +165,40 @@ describe("«Resume after a restart» in the configuration", () => {
     expect(t("autopilot.config.autoResume.hint")).toMatch(/tre volte al giorno/);
   });
 });
+
+// «Resume by itself after a restart» of this browser: the same pattern, for a book whose autopilot runs here. A choice of this device, on unless the
+// author turns it off, which applies at once (nothing waits for «Save»): it says what the next start of the app does with an interrupted run.
+describe("«Resume by itself after a restart» of this browser in the configuration", () => {
+  const browserLabel = () => t("autopilot.config.browserResume.label");
+  afterEach(() => localStorage.removeItem("narrarium.autopilot.autoResumeOff.v1"));
+
+  it("is a switch of the «Retries» card for a book of this browser, on by default, described by its line, and saved on this device at once", async () => {
+    seedRun({ status: "paused" });
+    await renderWithScaletta(<Page />);
+    const control = card().getByRole("switch", { name: browserLabel() });
+    expect(control).toBeChecked();
+    expect(control).toBeEnabled();
+    expect(control).toHaveAccessibleDescription(t("autopilot.config.browserResume.hint"));
+    fireEvent.click(control);
+    expect(control).not.toBeChecked();
+    expect(JSON.parse(localStorage.getItem("narrarium.autopilot.autoResumeOff.v1") ?? "[]")).toEqual(["book-1"]);
+    expect(mocks.runtime.configure).not.toHaveBeenCalled();
+    fireEvent.click(control);
+    expect(JSON.parse(localStorage.getItem("narrarium.autopilot.autoResumeOff.v1") ?? "[]")).toEqual([]);
+  });
+
+  it("is not there for a book that the personal server runs, which has its own", async () => {
+    onServer();
+    await renderWithScaletta(<Page />);
+    expect(card().queryByRole("switch", { name: browserLabel() })).toBeNull();
+    expect(card().getByRole("switch", { name: label() })).toBeInTheDocument();
+  });
+
+  it("is in Italian when the app is", async () => {
+    await i18n.changeLanguage("it");
+    seedRun({ status: "paused" });
+    await renderWithScaletta(<Page />);
+    fireEvent.click(screen.getByRole("tab", { name: "Nuovi tentativi" }));
+    expect(screen.getByRole("switch", { name: "Riprendi da solo dopo un riavvio" })).toHaveAccessibleDescription(/Una corsa che hai messo in pausa o fermato non viene mai ripresa/);
+  });
+});

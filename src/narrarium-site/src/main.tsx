@@ -1,3 +1,5 @@
+// First: its listener of `pagehide` must be the first one of the page (see `pageEnding`).
+import "@/autopilot/localRuns";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";

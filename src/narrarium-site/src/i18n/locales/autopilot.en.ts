@@ -208,9 +208,24 @@ const autopilotEn = {
     },
     tabs: { label: "Sections of the page", overview: "Overview", timeline: "Timeline", plan: "Plan", rules: "Rules" },
     danger: { title: "Danger zone", description: "Forget the autopilot's plan, history and rules. Chapters, scenes and canon stay untouched." },
+    resume: {
+      resumed: "Autopilot resumed after the restart",
+      resumedStep: "«{{book}}» goes on: {{step}}",
+      resumedBook: "«{{book}}» goes on from where it stopped.",
+      offline: "The autopilot of «{{book}}» resumes by itself as soon as this device is back online.",
+      notResumed: "The autopilot of «{{book}}» was not resumed",
+      failed: "The autopilot of «{{book}}» could not be resumed",
+      reason: {
+        "no-working-copy": "Its working copy is not on this device. Open the book to download it, then start the autopilot again.",
+        "no-ai": "The AI it writes with is not configured on this device, or its key is missing. Check the AI settings, then start it again.",
+        "crash-loop": "It stopped three times in ten minutes: start it again yourself when you are ready.",
+      },
+    },
     update: {
       runsStop_one: "The autopilot is running in this browser for 1 book: updating now stops it.",
       runsStop_other: "The autopilot is running in this browser for {{count}} books: updating now stops them.",
+      runsStopResume_one: "Updating stops the autopilot running in this browser; it will resume by itself.",
+      runsStopResume_other: "Updating stops {{count}} autopilots running in this browser; they will resume by themselves.",
       now: "Update now",
       later_one: "Update when it finishes",
       later_other: "Update when they finish",
@@ -545,6 +560,7 @@ const autopilotEn = {
       longRetryOff: "“Retry later” was turned off while the step waited: the autopilot stopped.",
       serverShutdown: "Paused because the server stopped.",
       resumedAfterRestart: "Resumed by itself after the server restarted.",
+      resumedAfterRestart_browser: "Resumed by itself after the page was opened again.",
       callsStoreFailed: "The messages of this run could not be saved ({{reason}}). The run goes on, but they will not be kept.",
       callsStoreFailed_noReason: "The messages of this run could not be saved. The run goes on, but they will not be kept.",
     },
@@ -740,6 +756,10 @@ const autopilotEn = {
         running: "It can change while the autopilot runs: new values count from the next restart. Turning it off while the autopilot waits to retry stops it with the error.",
         waitingNow: "The autopilot is waiting to retry now: if you turn “Retry later” off and save, it stops with the error.",
         oldServer: "Your personal server is older than {{version}} and does not have “Retry later”: update it to choose this.",
+      },
+      browserResume: {
+        label: "Resume by itself after a restart",
+        hint: "On this device: if the page reloads, the app updates or the browser closes while the autopilot runs here, it resumes by itself when the app opens again, at most three times in ten minutes. A run you paused or stopped is never resumed. It applies at once.",
       },
       autoResume: {
         label: "Resume by itself after a server restart",

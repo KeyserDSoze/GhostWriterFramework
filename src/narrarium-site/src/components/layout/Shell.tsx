@@ -41,6 +41,7 @@ import { scheduleAccountSync } from "@/account/accountSync";
 import { LazyPartBoundary } from "@/components/layout/LazyPartBoundary";
 import { provideUpdateRunsView } from "@/components/layout/UpdatePrompt";
 import { UpdatePromptRuns } from "@/components/layout/UpdatePromptRuns";
+import { useAutoResume } from "@/autopilot/useAutoResume";
 
 const AssistantPanel = lazy(() =>
   withAutopilotTranslations(() => import("@/components/assistant/AssistantPanel"))().then((module) => ({ default: module.AssistantPanel })),
@@ -86,6 +87,8 @@ export function Shell() {
   useGlobalShortcuts();
   useDirtyNavigationGuard(t("common.unsavedNavigationConfirm"));
   useRewriteDatabaseBlockedNotification();
+  // The autopilots this browser was running when the page ended start again by themselves, once the settings are loaded.
+  useAutoResume();
 
   useEffect(() => { void hydrateConnections().then(() => scheduleAccountSync(250)); }, [hydrateConnections]);
 

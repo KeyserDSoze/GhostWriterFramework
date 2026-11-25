@@ -208,9 +208,24 @@ const autopilotIt = {
     },
     tabs: { label: "Sezioni della pagina", overview: "Panoramica", timeline: "Cronologia", plan: "Piano", rules: "Regole" },
     danger: { title: "Zona pericolosa", description: "Dimentica piano, cronologia e regole dell'autopilot. Capitoli, scene e canone restano invariati." },
+    resume: {
+      resumed: "Autopilot ripreso dopo il riavvio",
+      resumedStep: "«{{book}}» continua: {{step}}",
+      resumedBook: "«{{book}}» continua da dove si era fermato.",
+      offline: "L'autopilot di «{{book}}» riprende da solo appena questo dispositivo torna online.",
+      notResumed: "L'autopilot di «{{book}}» non è stato ripreso",
+      failed: "Non è stato possibile riprendere l'autopilot di «{{book}}»",
+      reason: {
+        "no-working-copy": "La sua copia di lavoro non è su questo dispositivo. Apri il libro per scaricarla, poi avvia di nuovo l'autopilot.",
+        "no-ai": "L'IA con cui scrive non è configurata su questo dispositivo, o manca la sua chiave. Controlla le impostazioni dell'IA, poi avvialo di nuovo.",
+        "crash-loop": "Si è fermato tre volte in dieci minuti: avvialo di nuovo tu quando sei pronto.",
+      },
+    },
     update: {
       runsStop_one: "L'autopilot sta lavorando in questo browser su 1 libro: aggiornare ora lo ferma.",
       runsStop_other: "L'autopilot sta lavorando in questo browser su {{count}} libri: aggiornare ora li ferma.",
+      runsStopResume_one: "L'aggiornamento ferma l'autopilot in esecuzione in questo browser; riprenderà da solo.",
+      runsStopResume_other: "L'aggiornamento ferma {{count}} autopilot in esecuzione in questo browser; riprenderanno da soli.",
       now: "Aggiorna ora",
       later_one: "Aggiorna quando finisce",
       later_other: "Aggiorna quando finiscono",
@@ -545,6 +560,7 @@ const autopilotIt = {
       longRetryOff: "«Riprova più tardi» è stato spento mentre il passo aspettava: l'autopilot si è fermato.",
       serverShutdown: "In pausa perché il server si è fermato.",
       resumedAfterRestart: "Ripreso da solo dopo il riavvio del server.",
+      resumedAfterRestart_browser: "Ripreso da solo dopo la riapertura della pagina.",
       callsStoreFailed: "Non è stato possibile salvare i messaggi di questa esecuzione ({{reason}}). L'esecuzione prosegue, ma i messaggi non verranno conservati.",
       callsStoreFailed_noReason: "Non è stato possibile salvare i messaggi di questa esecuzione. L'esecuzione prosegue, ma i messaggi non verranno conservati.",
     },
@@ -740,6 +756,10 @@ const autopilotIt = {
         running: "Si può cambiare anche mentre l'autopilot lavora: i nuovi valori contano dalla prossima ripartenza. Spegnerlo mentre l'autopilot aspetta di riprovare lo ferma con l'errore.",
         waitingNow: "L'autopilot sta aspettando di riprovare: se spegni «Riprova più tardi» e salvi, si ferma con l'errore.",
         oldServer: "Il tuo server personale è più vecchio della {{version}} e non ha «Riprova più tardi»: aggiornalo per sceglierlo.",
+      },
+      browserResume: {
+        label: "Riprendi da solo dopo un riavvio",
+        hint: "Su questo dispositivo: se la pagina si ricarica, l'app si aggiorna o il browser si chiude mentre l'autopilot lavora qui, riprende da solo quando riapri l'app, al massimo tre volte in dieci minuti. Una corsa che hai messo in pausa o fermato non viene mai ripresa. Vale subito.",
       },
       autoResume: {
         label: "Riprendi da solo dopo un riavvio del server",

@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/use-toast";
+import { autoResumeOn } from "@/autopilot/resume";
 import { localRuns, subscribeLocalRuns } from "@/autopilot/localRuns";
 import { applyUpdateNow } from "@/pwa";
 import { useAppUpdateStore } from "@/store/appUpdateStore";
@@ -26,12 +27,14 @@ export function updateWhenRunsFinish(): void {
 }
 
 /**
- * What the prompt of a new version says and offers while autopilots run in this tab (see `provideUpdateRunsView`): updating now stops them, or the
- * update waits for them to finish. Its texts come with the autopilot, which is loaded whenever one runs.
+ * What the prompt of a new version says and offers while autopilots run in this tab (see `provideUpdateRunsView`): updating now stops them, and
+ * they resume by themselves after the reload unless the author turned that off for one of them on this device; or the update waits for them to
+ * finish. Its texts come with the autopilot, which is loaded whenever one runs.
  */
 export function UpdatePromptRuns({ runs }: { runs: readonly string[] }) {
   const { t } = useTranslation();
   const count = runs.length;
+  const resume = runs.every((bookId) => autoResumeOn(bookId));
   const later = () => {
     updateWhenRunsFinish();
     toast({ title: t("autopilot.update.scheduled", { count }) });
@@ -39,7 +42,7 @@ export function UpdatePromptRuns({ runs }: { runs: readonly string[] }) {
   return (
     <>
       <p data-update-runs className="relative rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200">
-        {t("autopilot.update.runsStop", { count })}
+        {t(resume ? "autopilot.update.runsStopResume" : "autopilot.update.runsStop", { count })}
       </p>
       <div className="relative flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
         <Button variant="outline" onClick={() => void applyUpdateNow(false)}>

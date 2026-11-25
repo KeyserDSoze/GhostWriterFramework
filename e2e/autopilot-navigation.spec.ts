@@ -129,7 +129,7 @@ test("a page of an older version, whose files are gone after a deployment, says 
   const alert = page.locator("[data-route-error]");
   await expect(alert).toContainText("This page runs an older version");
   const prompt = page.getByRole("dialog", { name: "New version available" });
-  await expect(prompt).toContainText("The autopilot is running in this browser for 1 book: updating now stops it.");
+  await expect(prompt).toContainText("Updating stops the autopilot running in this browser; it will resume by itself.");
   await prompt.getByRole("button", { name: "Update when it finishes" }).click();
   await expect(prompt).toBeHidden();
   await expect(page.getByRole("link", { name: "All books" }).first()).toBeVisible();
