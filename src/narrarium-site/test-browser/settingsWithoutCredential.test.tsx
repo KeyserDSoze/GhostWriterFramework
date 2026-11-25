@@ -61,7 +61,9 @@ describe.each(["en", "it"] as const)("the working branch of a GitHub book withou
     expect(screen.getByRole("button", { name: t("bookSettings.loadRemoteBranches") })).toBeDisabled();
     fireEvent.change(screen.getByRole("textbox", { name: t("bookSettings.createBranch") }), { target: { value: "fresh-start" } });
     expect(screen.getByRole("button", { name: t("bookSettings.createBranch") })).toBeDisabled();
-    await waitFor(() => expect(optionNames(screen.getByRole("combobox", { name: t("bookSettings.activeBranch") }))).toEqual(expect.arrayContaining(["chapter-nine", "main"])));
+    // Polled, not followed: opening the list to read it changes the page, and a wait that runs again at every change of the page would run
+    // again without end before the branches of this device arrive, never letting them arrive.
+    await vi.waitFor(() => expect(optionNames(screen.getByRole("combobox", { name: t("bookSettings.activeBranch") }))).toEqual(expect.arrayContaining(["chapter-nine", "main"])));
     fireEvent.click(screen.getByRole("link", { name: t("localFirst.connectGitHub") }));
     expect(screen.getByTestId("where")).toHaveTextContent("/app/settings/github");
     expect(network.requests).toEqual([]);
