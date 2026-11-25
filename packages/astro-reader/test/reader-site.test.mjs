@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -20,6 +20,34 @@ let bookRoot;
 let italianRoot;
 const builds = {};
 
+/**
+ * The annotations of the in-app reader are saved in the book (annotations/, the site's format): they are the author's notes, and the online reader
+ * never publishes them, in a public build or in a protected one.
+ */
+const ANNOTATION_MARKER = "ANNOTATIONMARKER";
+async function addAnnotations(root) {
+  await mkdir(path.join(root, "annotations", "chapters"), { recursive: true });
+  await writeFile(path.join(root, "annotations", "chapters", "001-lanterns-over-water.yml"), [
+    "version: 1",
+    "chapter: chapter:001-lanterns-over-water",
+    "annotations:",
+    "  - id: a-mi4k2x1a-7f3k9q",
+    "    paragraph: paragraph:001-lanterns-over-water:001-the-quay-at-dusk",
+    "    quote: the lanterns of the quay burned green",
+    "    prefix: 'QUAYMARKER '",
+    "    suffix: ' and nobody looked up.'",
+    "    offset: 11",
+    "    tag: rewrite",
+    `    comment: ${ANNOTATION_MARKER} the colour is too easy`,
+    "    status: open",
+    "    createdAt: 2026-11-25T10:00:00.000Z",
+    "    updatedAt: 2026-11-25T10:00:00.000Z",
+    "    createdOnDevice: d-1a2b3c4d",
+    "",
+  ].join("\n"));
+  await writeFile(path.join(root, "annotations", "tags.yml"), ["version: 1", "tags:", "  - id: pace-k3x9", `    name: ${ANNOTATION_MARKER} pace`, "    description: The pace slows here.", "    mark: { underline: dotted, color: sky, icon: clock }", ""].join("\n"));
+}
+
 async function filesOf(dir, prefix = "") {
   const entries = await readdir(path.join(dir, prefix), { withFileTypes: true });
   const files = [];
@@ -38,6 +66,7 @@ async function readAll(dir) {
 test.before(async () => {
   bookRoot = await mkdtemp(path.join(os.tmpdir(), "narrarium-reader-site-"));
   await createSampleBook(bookRoot, { extraParagraphs: 10 });
+  await addAnnotations(bookRoot);
   builds.public = await buildReaderSite({ bookRoot, name: "public" });
   builds.protected = await buildReaderSite({ bookRoot, name: "protected", env: { READER_PASSWORD_SECRETS: "READER_PASSWORD_001,READER_PASSWORD_002", NARRARIUM_READER_SECRETS: SECRETS_JSON } });
   builds.revoked = await buildReaderSite({ bookRoot, name: "revoked", env: { READER_PASSWORD_SECRETS: "READER_PASSWORD_001", NARRARIUM_READER_SECRETS: SECRETS_JSON } });
@@ -103,6 +132,17 @@ test("a protected build publishes only the shell, version.json and encrypted fil
     const json = JSON.parse(await openBundle(unlocked.key, await readFile(path.join(dir, version.bundle.path))));
     assert.equal(json.chapters[0].scenes[0].title, MARKERS.sceneTitles[0]);
   }
+});
+
+test("the annotations of the book are never published: no file of a public build holds them, nor the bundle of a protected one", async () => {
+  for (const { file, bytes } of await readAll(builds.public.outDir)) assert.ok(bytes.indexOf(Buffer.from(ANNOTATION_MARKER)) < 0, `${file} holds an annotation`);
+  const files = await filesOf(builds.public.outDir);
+  assert.ok(!files.some((file) => /annotation/i.test(file)), "no published path is about annotations");
+  const version = JSON.parse(await readFile(path.join(builds.protected.outDir, "version.json"), "utf8"));
+  const unlocked = await unwrapContentKey(PASSWORDS.first, version.protection);
+  const bundle = await openBundle(unlocked.key, await readFile(path.join(builds.protected.outDir, version.bundle.path)));
+  assert.ok(bundle.includes("QUAYMARKER"), "the bundle was opened");
+  assert.ok(!bundle.includes(ANNOTATION_MARKER), "the protected bundle holds an annotation");
 });
 
 test("a password removed from the list does not open the next build", async () => {

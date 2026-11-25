@@ -5,6 +5,7 @@ import {
   buildParagraphAuditPath,
 } from "@/narrarium/auditPaths";
 import { isRewriteOperationManifestPath } from "@/narrarium/rewriteOperationPaths";
+import { isAnnotationsPath } from "@/annotations/paths";
 import { chapterTitleFromSlug, compareChapterFolders } from "@/lib/chapterSlug";
 import { generatedNameLabel } from "@/lib/fallbackTitle";
 import {
@@ -2529,6 +2530,11 @@ export interface RemoteTreeFile {
   blob?: Blob;
   baseSha: string;
   size: number;
+  /**
+   * A text kept on this device on top of the remote one, as a change still to publish: the merge of the two copies of a file of annotations that both
+   * changed (the sync commits and pushes it in the same run). The remote text is the file's base.
+   */
+  localText?: string;
 }
 
 function localFileVersion(file: LocalRepositoryFile): string {
@@ -2661,6 +2667,14 @@ export async function applyRemoteMergeAtomically(input: {
   const now = new Date().toISOString();
   const prepared = await Promise.all(input.writes.map(async (write): Promise<LocalRepositoryFile> => {
     const currentHash = write.kind === "text" ? await sha256Text(write.text ?? "") : await hashBlob(write.blob ?? new Blob());
+    if (write.kind === "text" && write.localText !== undefined) {
+      const localHash = await sha256Text(write.localText);
+      return {
+        key: fileKey(input.repoId, write.path), repoId: input.repoId, path: write.path, kind: "text",
+        text: write.localText, baseSha: write.baseSha, baseHash: currentHash, currentHash: localHash,
+        status: localHash === currentHash ? "clean" : "modified", committed: false, size: utf8Bytes(write.localText), updatedAt: now,
+      };
+    }
     return {
       key: fileKey(input.repoId, write.path), repoId: input.repoId, path: write.path, kind: write.kind,
       text: write.text, blob: write.blob, baseSha: write.baseSha, baseHash: currentHash, currentHash,
@@ -3190,6 +3204,10 @@ export async function buildLocalBookStructure(meta: LocalRepositoryMeta): Promis
       .filter((file) => isRewriteOperationManifestPath(file.path))
       .map((file) => ({ path: file.path, sha: file.baseSha ?? file.currentHash, size: file.size, content: file.kind === "text" ? file.text : undefined })),
     auditFiles,
+    annotationFiles: files
+      .filter((file) => file.kind === "text" && isAnnotationsPath(file.path))
+      .map((file) => ({ path: file.path, sha: file.currentHash, size: file.size, content: file.text ?? "" }))
+      .sort((left, right) => left.path.localeCompare(right.path)),
     researchFiles: allPaths
       .filter((p) => /^research\/[^/]+\.md$/.test(p))
       .map((p) => {

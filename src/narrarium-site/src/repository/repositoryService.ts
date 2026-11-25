@@ -67,6 +67,7 @@ import { fetchRepositoryBlobBytes } from "@/repository/repositoryBlobTransport";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { buildInitialBookFiles } from "@/narrarium/bookScaffold";
 import { REPOSITORY_LOCK_PREFIX } from "@/branches/locks";
+import { isAnnotationsPath } from "@/annotations/paths";
 
 const TEXT_EXTENSIONS = new Set(["md", "markdown", "txt", "json", "yaml", "yml", "toml", "csv", "html", "css", "js", "ts", "tsx"]);
 
@@ -1272,7 +1273,7 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
     const remoteBytes = new Map<string, Uint8Array>();
     const transferMeter = new RepositoryByteMeter("transfer", await repositoryTransferAllowance());
     const deletes: string[] = [];
-    const writes: Array<{ path: string; sha: string; bytes: Uint8Array; kind: "text" | "binary" }> = [];
+    const writes: Array<{ path: string; sha: string; bytes: Uint8Array; kind: "text" | "binary"; localText?: string }> = [];
     const seenResolutions = new Set<string>();
     let staleChoices = false;
     for (const path of new Set([...localByPath.keys(), ...remoteByPath.keys()])) {
@@ -1315,6 +1316,15 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
           if (remoteHash === local.currentHash) {
             writes.push({ path, sha: remoteSha, bytes, kind: local.kind });
             continue;
+          }
+          // The annotations changed on two devices: their two copies merge entry by entry (the newer one wins), and the merge is published by this sync.
+          if (local.kind === "text" && isAnnotationsPath(path)) {
+            const { mergeAnnotationTexts } = await import("@/annotations/format");
+            const merged = mergeAnnotationTexts(path, local.text ?? "", new TextDecoder().decode(bytes));
+            if (merged !== null) {
+              writes.push({ path, sha: remoteSha, bytes, kind: "text", localText: merged });
+              continue;
+            }
           }
         } else if (!remoteSha && local?.status === "deleted") {
           deletes.push(path);
@@ -1363,7 +1373,7 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
       remoteHeadSha,
       expectedFiles: localFiles,
       deletes,
-      writes: writes.map(({ path, sha, bytes, kind }) => ({ path, kind, text: kind === "text" ? new TextDecoder().decode(bytes) : undefined, blob: kind === "binary" ? new Blob([bytesToArrayBuffer(bytes)]) : undefined, baseSha: sha, size: bytes.byteLength })),
+      writes: writes.map(({ path, sha, bytes, kind, localText }) => ({ path, kind, text: kind === "text" ? new TextDecoder().decode(bytes) : undefined, blob: kind === "binary" ? new Blob([bytesToArrayBuffer(bytes)]) : undefined, baseSha: sha, size: bytes.byteLength, ...(localText !== undefined ? { localText } : {}) })),
     });
     pulled = deletes.length + writes.length;
     await addLocalRepoLog(meta.id, scope, "pull", `Sync pulled ${pulled} remote files and kept ${keptLocal} non-conflicting local files`);

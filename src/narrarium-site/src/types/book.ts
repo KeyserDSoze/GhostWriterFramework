@@ -142,6 +142,11 @@ export interface BookStructure {
   operationManifestFiles: BookFile[];
   /** Markdown files below audit/ */
   auditFiles: BookFile[];
+  /**
+   * The files of the annotations (`annotations/chapters/<chapter>.yml` and `annotations/tags.yml`) with their text, as the working copy had them when
+   * the structure was read. Absent in a structure that did not read them.
+   */
+  annotationFiles?: BookFile[];
   /** research/*.md files */
   researchFiles: ResearchFile[];
   /** notes/*.md quick personal notes */

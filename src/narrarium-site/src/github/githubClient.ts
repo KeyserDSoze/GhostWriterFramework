@@ -10,6 +10,7 @@ import {
   extractParagraphSlug,
 } from "@/narrarium/auditPaths";
 import { isRewriteOperationManifestPath } from "@/narrarium/rewriteOperationPaths";
+import { annotationsChapterPath } from "@/annotations/paths";
 import { chapterSlugWithoutNumber, chapterTitleFromSlug, compareChapterFolders } from "@/lib/chapterSlug";
 import { generatedNameLabel, renumberedTitle } from "@/lib/fallbackTitle";
 import { classifyRepositoryError, isRepositoryError, isRepositoryNotFoundError, optionalRepositoryRead, RepositoryError } from "@/repository/repositoryError";
@@ -1567,6 +1568,8 @@ export async function reorderChaptersInBook(
       if (path === `evaluations/chapters/${oldSlug}.md`) return `evaluations/chapters/${newSlug}.md`;
       if (path === `state/chapters/${oldSlug}.md`) return `state/chapters/${newSlug}.md`;
       if (path === `evaluations/readers/summaries/chapters/${oldSlug}.md`) return `evaluations/readers/summaries/chapters/${newSlug}.md`;
+      // The annotations of the chapter go with it; the references to its scenes inside are rewritten with every other text file.
+      if (path === annotationsChapterPath(oldSlug)) return annotationsChapterPath(newSlug);
     }
     return null;
   };

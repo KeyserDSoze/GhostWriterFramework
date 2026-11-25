@@ -80,6 +80,10 @@ research/
   wikipedia/
     en/
     it/
+annotations/
+  tags.yml
+  chapters/
+    001-chapter-title.yml
 assets/
   book/
   characters/
@@ -123,6 +127,67 @@ Every applied rewrite has a regular Git-tracked operation directory under `opera
 Each successfully generated paragraph is committed and pushed with its `generated` snapshot and updated manifest. Chapter rewrites make one routed generation call per paragraph in chapter order; incomplete operations remain `failed`, `cancelled`, or `conflict` and retain the list of successfully modified files.
 
 Rollback is targeted, never a branch reset. A draft is restored only when its current SHA-256 matches the operation's applied hash, unless the caller explicitly selects force-restore for that file. Conflicts may instead keep the current file or cancel rollback. Restored files and the final manifest status are written in one commit and push. Chapter and paragraph renames/reorders move these operation trees and rewrite stored target references; `doctorBook()` reports malformed paths, missing manifests, and operations whose source target no longer exists.
+
+## Annotations
+
+The reader of the app lets the author mark a passage, tag it and add a note. The annotations are saved in the book, so they work offline in the working copy and travel with the book's sync like any other file:
+
+- `annotations/chapters/<chapter-slug>.yml`: the annotations of one chapter, one entry per marked passage
+- `annotations/tags.yml`: the tags made for this book (the built-in tags live in the app, the tags for every book in the author's account settings)
+
+They are the author's notes about the book, not the book: plain YAML without frontmatter, outside every folder `validateBook()`, `doctorBook()` and `searchBook()` read, never published by the online reader (public or protected), and not part of the context the engine builds for the autopilot. A book whose repository is public on GitHub makes its annotations public there; the app says so once per book.
+
+```yaml
+# Annotations of this chapter, written by Narrarium: one entry per marked passage, sorted by id. Do not rename this file by hand.
+
+version: 1
+chapter: chapter:001-the-gate
+annotations:
+  - id: a-mi4k2x1a-7f3k9q
+    paragraph: paragraph:001-the-gate:001-opening
+    quote: the color of old steel
+    prefix: "The gate stood open beneath a sky "
+    suffix: . Mara waited by the wall, countin
+    offset: 34
+    tag: rewrite
+    comment: Too familiar an image.
+    status: open
+    createdAt: 2026-11-25T10:00:00.000Z
+    updatedAt: 2026-11-25T10:00:00.000Z
+    createdOnDevice: d-1a2b3c4d
+  - id: a-mi4k3abc-zz9q1x
+    deletedAt: 2026-11-26T09:00:00.000Z
+    updatedAt: 2026-11-26T09:00:00.000Z
+```
+
+- `id`: stable for the life of the annotation, `a-<creation time in base 36>-<random>`; entries are sorted by id, so the file lists them in the order they were made and an edit changes only the lines of its entry
+- `paragraph`: the scene, as the canonical reference `paragraph:<chapter>:<scene>`, which renaming and reordering scenes and chapters rewrite like every other reference of the book; reordering chapters moves the file with its chapter
+- `quote`, `prefix`, `suffix`, `offset`: where the passage is, in the plain text of the scene as the reader shows it (every run of white space one space, blocks separated by a space): the exact text, up to 32 characters before and after it, and where it started (the W3C Web Annotation TextQuoteSelector and TextPositionSelector)
+- `tag`: the id of a tag: `rewrite`, `dislike`, `inconsistency`, `expand`, `keep` (built-in), or of a tag of `annotations/tags.yml` or of the account; an annotation whose tag no longer exists keeps its passage and note and shows as a removed tag
+- `comment`: the author's note (may be empty); `status`: `open`, `later`, `handled` or `dismissed`
+- `createdAt`, `updatedAt`: ISO 8601 UTC; `createdOnDevice`: an opaque short tag of the device that made it (never the device's own id)
+
+When the scene changes, the app finds the passage again: verbatim at its place (exact), verbatim elsewhere in the scene or in another scene of the chapter, chosen by its surroundings when it is there more than once (moved), approximately or between its unchanged surroundings (edited), or not at all (orphaned: the annotation keeps its quote and stays listed; it is never dropped). The file is not rewritten to follow the text: an annotation found elsewhere is written at its new place the next time the author changes it.
+
+Two devices can change the same file between two syncs: the sync merges the two copies entry by entry instead of asking which one to keep. Every entry of either copy is kept; of an entry changed on both, the one with the later `updatedAt` wins, a deletion winning a tie. A deleted annotation leaves a tombstone (its id and dates, none of its text) so that the other device does not bring it back; tombstones older than 90 days are dropped when the app writes the file. Fields a version does not know are kept as they are, at every level, and a file with a `version` higher than the app knows is read and never written.
+
+`annotations/tags.yml` lists the tags of the book with the same rules (sorted by id, `updatedAt`, tombstones with `deletedAt`):
+
+```yaml
+version: 1
+tags:
+  - id: slow-pace-k3x9
+    name: Slow pace
+    description: The scene slows down here. Cut what does not move it forward, keep the voice.
+    mark:
+      underline: dotted
+      color: sky
+      icon: clock
+    createdAt: 2026-11-25T10:00:00.000Z
+    updatedAt: 2026-11-25T10:00:00.000Z
+```
+
+The `description` of a tag says what it means and is also the instruction for the AI when it works on an annotation with that tag. The `mark` is how the reader draws it: an underline (`wavy`, `double`, `dashed`, `dotted`, `solid`), an icon and a colour, never the colour alone. A value of the mark that a version does not know (one that a newer version added) is drawn as the mark of a removed tag and written back as it was while the author does not change that part of the mark.
 
 ## Markdown frontmatter
 
