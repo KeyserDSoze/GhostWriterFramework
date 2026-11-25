@@ -37,6 +37,7 @@ import { setAutopilotHost } from "@/autopilot/host";
 import { AutopilotOperationBusyError, BookOperations, type AutopilotOperationKind } from "@/autopilot/operations";
 import { copyServerCalls, ensureCallsHost } from "@/autopilot/calls/host";
 import { isRecording } from "@/autopilot/calls/recording";
+import { setLocalRuns } from "@/autopilot/localRuns";
 import { wireBrowserCalls } from "@/autopilot/calls/wire";
 import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
 import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
@@ -500,6 +501,9 @@ export class BrowserAutopilotRuntime {
 
   private onLocalRunChanged(): void {
     const running = this.anyLocalRunning();
+    // What the update of the app and a page that cannot load must know before they reload the document.
+    const runs = [...this.sessions].filter(([, entry]) => entry.session.running).map(([bookId]) => bookId);
+    setLocalRuns(runs);
     if (running && !this.unloadGuard) {
       this.unloadGuard = true;
       window.addEventListener("beforeunload", this.beforeUnload);

@@ -38,6 +38,9 @@ import { withAutopilotTranslations } from "@/i18n/autopilot";
 import { useAuthStore } from "@/store/authStore";
 import { useConnectionStore } from "@/account/connectionStore";
 import { scheduleAccountSync } from "@/account/accountSync";
+import { LazyPartBoundary } from "@/components/layout/LazyPartBoundary";
+import { provideUpdateRunsView } from "@/components/layout/UpdatePrompt";
+import { UpdatePromptRuns } from "@/components/layout/UpdatePromptRuns";
 
 const AssistantPanel = lazy(() =>
   withAutopilotTranslations(() => import("@/components/assistant/AssistantPanel"))().then((module) => ({ default: module.AssistantPanel })),
@@ -48,6 +51,9 @@ const AutopilotDock = lazy(() =>
 const AskDirectorDialog = lazy(() =>
   withAutopilotTranslations(() => import("@/components/director/AskDirectorDialog"))().then((module) => ({ default: module.AskDirectorDialog })),
 );
+
+// What the prompt of a new version says while autopilots run in this tab comes with the shell, where every run starts: the entry does not carry it.
+provideUpdateRunsView(UpdatePromptRuns);
 
 export function Shell() {
   const { load, resolveOfflineConflict } = useSettings();
@@ -64,6 +70,11 @@ export function Shell() {
   const autopilotDockOpen = useAutopilotStore((s) => s.dockOpen);
   const autopilotPageDockOpen = useAutopilotStore((s) => s.pageDockOpen);
   const askDirectorOpen = useAskDirectorStore((s) => Boolean(s.request));
+  // The live panel that cannot be loaded closes, and the page goes on: its launcher stays, and the runs with it.
+  const closeDock = () => {
+    useAutopilotStore.getState().setDockOpen(false);
+    useAutopilotStore.getState().setPageDockOpen(false);
+  };
   const personalServerUrl = settings.personalServer?.url ?? "";
   const personalServerToken = settings.personalServer?.token ?? "";
   const personalServerFingerprint = settings.personalServer?.fingerprint ?? "";
@@ -197,15 +208,15 @@ export function Shell() {
       <FloatingLayers>
         <FloatingActions />
         <AssistantLauncher />
-        {(autopilotDockOpen || autopilotPageDockOpen) && <Suspense fallback={null}><AutopilotDock /></Suspense>}
+        {(autopilotDockOpen || autopilotPageDockOpen) && <LazyPartBoundary onError={closeDock}><Suspense fallback={null}><AutopilotDock /></Suspense></LazyPartBoundary>}
       </FloatingLayers>
       <GlobalContextMenu />
       <LlmDebugPanel />
       <GenerateDiffDialog />
       <FeedbackRewriteWorkflowDialog />
       <OnboardingDialog />
-      {askDirectorOpen && <Suspense fallback={null}><AskDirectorDialog /></Suspense>}
-      {assistantOpen && <Suspense fallback={<span className="sr-only" role="status">{t("common.loading")}</span>}><AssistantPanel /></Suspense>}
+      {askDirectorOpen && <LazyPartBoundary onError={() => useAskDirectorStore.getState().close()}><Suspense fallback={null}><AskDirectorDialog /></Suspense></LazyPartBoundary>}
+      {assistantOpen && <LazyPartBoundary onError={() => useAssistantStore.getState().setOpen(false)}><Suspense fallback={<span className="sr-only" role="status">{t("common.loading")}</span>}><AssistantPanel /></Suspense></LazyPartBoundary>}
 
       <MobileNavDrawer />
       <QuickSwitchDialog open={quickOpen} onOpenChange={setQuickOpen} />

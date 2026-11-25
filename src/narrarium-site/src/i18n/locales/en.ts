@@ -784,6 +784,8 @@ const en = {
     updateDescription: "Install the new version now, or update and open the complete list of changes.",
     updateOnly: "Update",
     updateAndViewChanges: "Update and view all changes",
+    staleDescription: "This page runs an older version: what you open from now on may not load. Reload to use the new one.",
+    reloadNow: "Reload now",
     updateMenu: "Update",
     installTitle: "Install Narrarium",
     installDescription: "Add Narrarium to your home screen for a full-screen app experience.",

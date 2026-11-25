@@ -208,6 +208,15 @@ const autopilotIt = {
     },
     tabs: { label: "Sezioni della pagina", overview: "Panoramica", timeline: "Cronologia", plan: "Piano", rules: "Regole" },
     danger: { title: "Zona pericolosa", description: "Dimentica piano, cronologia e regole dell'autopilot. Capitoli, scene e canone restano invariati." },
+    update: {
+      runsStop_one: "L'autopilot sta lavorando in questo browser su 1 libro: aggiornare ora lo ferma.",
+      runsStop_other: "L'autopilot sta lavorando in questo browser su {{count}} libri: aggiornare ora li ferma.",
+      now: "Aggiorna ora",
+      later_one: "Aggiorna quando finisce",
+      later_other: "Aggiorna quando finiscono",
+      scheduled_one: "Narrarium si aggiornerà appena l'autopilot avrà finito.",
+      scheduled_other: "Narrarium si aggiornerà appena gli autopilot avranno finito.",
+    },
     dock: {
       latest: "Ultimi eventi",
       all: "Vedi l'attività di tutti i libri",

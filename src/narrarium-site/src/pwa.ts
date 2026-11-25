@@ -10,6 +10,8 @@ import {
   patchNotesPhysicalUrl,
 } from "@/pwaUpdateIntent";
 import { triggerCurrentSave } from "@/store/saveStore";
+import { localRuns } from "@/autopilot/localRuns";
+import { noteStaleChunk } from "@/lib/staleBuild";
 
 const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -25,6 +27,9 @@ function reportWaitingWorker(worker: ServiceWorker, fallbackVersion: string) {
   useAppUpdateStore.getState().setAvailable(worker, workerVersion(worker, fallbackVersion));
 }
 
+/** The author asked for the update in this tab: the new version taking over reloads it even while an autopilot runs here (they were told). */
+let updateRequested = false;
+
 export async function activateAvailableUpdate(openPatchNotes: boolean): Promise<boolean> {
   const { worker, version } = useAppUpdateStore.getState();
   if (!worker) return false;
@@ -32,7 +37,19 @@ export async function activateAvailableUpdate(openPatchNotes: boolean): Promise<
   const targetVersion = version ?? workerVersion(worker, APP_VERSION);
   if (openPatchNotes) createUpdateDestinationIntent(targetVersion);
   else clearUpdateDestinationIntentThrough(targetVersion);
+  updateRequested = true;
   worker.postMessage({ type: "SKIP_WAITING" });
+  return true;
+}
+
+/**
+ * The update the author chose: the new version that waits takes over (and the page reloads with it), or, when it already took over or the page only
+ * learnt that it is out of date (a part of it could not be loaded), the page reloads. What is being edited is saved first.
+ */
+export async function applyUpdateNow(openPatchNotes = false): Promise<boolean> {
+  if (useAppUpdateStore.getState().worker) return activateAvailableUpdate(openPatchNotes);
+  if (!await triggerCurrentSave()) return false;
+  window.location.reload();
   return true;
 }
 
@@ -63,12 +80,22 @@ interface BrowserLocation {
   reload(): void;
 }
 
+/**
+ * A new version took over the app. This tab reloads to run it, unless an autopilot runs here and the author did not ask for the update in this tab
+ * (another tab's update, the first installation): a reload would stop the run, so the page only says that it is out of date, and reloads when the
+ * author chooses (`deferred`).
+ */
 export function handleServiceWorkerControllerChange(
   baseUrl: string,
   browserLocation: BrowserLocation = window.location,
   targetVersion = useAppUpdateStore.getState().version ?? APP_VERSION,
   tabStorage: Storage = sessionStorage,
-): "patch-notes" | "reload" | "ignored" {
+  runsHere: () => boolean = () => localRuns().length > 0,
+): "patch-notes" | "reload" | "ignored" | "deferred" {
+  if (!updateRequested && runsHere()) {
+    useAppUpdateStore.getState().setStale();
+    return "deferred";
+  }
   const intent = migrateLegacyUpdateDestinationIntent(targetVersion, Date.now(), tabStorage);
   if (intent) {
     if (!beginUpdateDestinationNavigation(tabStorage)) return "ignored";
@@ -82,6 +109,8 @@ export function handleServiceWorkerControllerChange(
 
 export function registerServiceWorker() {
   migrateLegacyUpdateDestinationIntent(APP_VERSION);
+  // A part of the app that Vite could not preload (the files of this version are gone after a deployment): the page says that it is out of date.
+  window.addEventListener("vite:preloadError", (event) => { noteStaleChunk((event as Event & { payload?: unknown }).payload); });
   if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return;
 
   navigator.serviceWorker.addEventListener("controllerchange", () => {

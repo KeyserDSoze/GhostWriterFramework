@@ -15,8 +15,12 @@ const forbidden = ["e2e-google-token", "e2e-google-user", "E2E builds use a dete
 // costs the other routes only its route object, a few dozen bytes. Going over a limit is a finding, not a chore: look at what grew; if the growth is
 // wanted, raise the limit in the same commit to the new size plus the same margin, and say why next to it.
 // Set when the pages moved out of the entry (on 0.94.0): entry 401_552/130_526, initial graph 639_596/208_627 raw/gzip bytes.
-const INITIAL_ENTRY_RAW_BUDGET = 406_000;
-const INITIAL_ENTRY_GZIP_BUDGET = 132_000;
+// The entry was raised on 0.110.0, at 406_725/132_220: a page of an older version, whose files are gone after a deployment, says that a new version
+// is available in the shell instead of failing whole, and neither an update of the app nor that page reloads the tab over an autopilot that runs
+// in it (src/lib/staleBuild.ts, src/autopilot/localRuns.ts, the update prompt, the error of a route). That has to be in the entry, because the
+// files that would carry it are the old version's, the ones that are gone. What the prompt says while autopilots run comes with the shell.
+const INITIAL_ENTRY_RAW_BUDGET = 411_000;
+const INITIAL_ENTRY_GZIP_BUDGET = 134_000;
 const INITIAL_GRAPH_RAW_BUDGET = 646_000;
 const INITIAL_GRAPH_GZIP_BUDGET = 211_000;
 // The text of each document is a chunk of its own (its source ends in `.md?raw`), loaded when the document is opened: the largest one has a limit of

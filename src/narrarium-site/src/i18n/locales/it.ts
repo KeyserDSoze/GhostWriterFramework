@@ -784,6 +784,8 @@ const it = {
     updateDescription: "Installa la nuova versione ora oppure aggiornala e apri subito l'elenco completo delle novità.",
     updateOnly: "Aggiorna",
     updateAndViewChanges: "Aggiorna e vedi tutti i cambiamenti",
+    staleDescription: "Questa pagina usa una versione precedente: ciò che apri da ora potrebbe non caricarsi. Ricarica per usare quella nuova.",
+    reloadNow: "Ricarica ora",
     updateMenu: "Aggiornamento",
     installTitle: "Installa Narrarium",
     installDescription: "Aggiungi Narrarium alla schermata Home per usarla come un'app a schermo intero.",

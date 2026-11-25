@@ -208,6 +208,15 @@ const autopilotEn = {
     },
     tabs: { label: "Sections of the page", overview: "Overview", timeline: "Timeline", plan: "Plan", rules: "Rules" },
     danger: { title: "Danger zone", description: "Forget the autopilot's plan, history and rules. Chapters, scenes and canon stay untouched." },
+    update: {
+      runsStop_one: "The autopilot is running in this browser for 1 book: updating now stops it.",
+      runsStop_other: "The autopilot is running in this browser for {{count}} books: updating now stops them.",
+      now: "Update now",
+      later_one: "Update when it finishes",
+      later_other: "Update when they finish",
+      scheduled_one: "Narrarium will update as soon as the autopilot finishes.",
+      scheduled_other: "Narrarium will update as soon as the autopilots finish.",
+    },
     dock: {
       latest: "Latest events",
       all: "See every book's activity",

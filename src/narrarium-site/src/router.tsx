@@ -15,6 +15,8 @@ const component = <T extends Record<string, unknown>, K extends keyof T>(loader:
   return { Component: () => <><span className="sr-only" data-route-ready={String(name)} /><RouteComponent /></> };
 };
 const routeError = <RouteErrorFallback />;
+/** A page of the app that cannot be shown is shown so in the shell, which stays: the sidebar, the live panel and the autopilots that run in this tab. */
+const appRouteError = <RouteErrorFallback inShell />;
 
 /**
  * One loader for several routes gives them one page component, so React keeps the page mounted when the author moves
@@ -62,7 +64,7 @@ export const router = createBrowserRouter([
   { errorElement: routeError, lazy: component(() => import("@/routes/AuthProvidersRoute"), "AuthProvidersRoute"), children: [
     { path: "/login", lazy: component(() => import("@/components/auth/LoginScreen"), "LoginScreen") },
     { path: "/auth/github/callback", lazy: component(() => import("@/pages/GitHubOAuthCallbackPage"), "GitHubOAuthCallbackPage") },
-    { path: "/app", lazy: appShell, children: [
+    { path: "/app", lazy: appShell, children: [{ errorElement: appRouteError, children: [
       { index: true, element: <Navigate to="books" replace /> },
       { path: "books", lazy: component(() => import("@/pages/BooksPage"), "BooksPage") },
       { path: "books/add", lazy: appPage("AddBookPage") },
@@ -114,7 +116,7 @@ export const router = createBrowserRouter([
       { path: "docs", lazy: appPage("AppDocsPage", "AppDocsIndexPage") },
       { path: "docs/:docSlug", lazy: appPage("AppDocsPage", "AppDocPage") },
       { path: "*", lazy: appPage("AppNotFoundPage") },
-    ] },
+    ] }] },
   ] },
   { path: "/bms", element: <Navigate to="/app" replace /> },
   { path: "/bms/*", element: <Navigate to="/app" replace /> },
