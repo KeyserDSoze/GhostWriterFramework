@@ -1,4 +1,7 @@
-/** Testi del guscio su un telefono (il menu a cassetto) e della barra di salvataggio delle impostazioni, caricati con il guscio dell'app (vedi `@/i18n/shell`). */
+/**
+ * Testi del guscio su un telefono (il menu a cassetto), della barra di salvataggio delle impostazioni e del pulsante dell'autopilot (quanti autopilot
+ * sono in esecuzione e quanti aspettano l'autore), caricati con il guscio dell'app (vedi `@/i18n/shell`).
+ */
 const shellIt = {
   shell: {
     navMenu: "Menu di navigazione",
@@ -9,6 +12,12 @@ const shellIt = {
     saving: "Salvataggio…",
     saved: "Tutte le modifiche salvate",
     failed: "Non salvato: {{reason}}",
+  },
+  autopilot: {
+    launcherRunning_one: "{{count}} autopilot in esecuzione",
+    launcherRunning_other: "{{count}} autopilot in esecuzione",
+    launcherAttention_one: "{{count}} ti aspetta",
+    launcherAttention_other: "{{count}} ti aspettano",
   },
 };
 

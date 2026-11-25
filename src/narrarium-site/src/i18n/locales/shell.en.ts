@@ -1,4 +1,7 @@
-/** Texts of the shell on a phone (the menu drawer) and of the save bar of the settings, bundled with the app shell (see `@/i18n/shell`): the public pages do not download them. */
+/**
+ * Texts of the shell on a phone (the menu drawer), of the save bar of the settings and of the autopilot launcher (how many autopilots run, and how
+ * many wait for the author), bundled with the app shell (see `@/i18n/shell`): the public pages do not download them.
+ */
 const shellEn = {
   shell: {
     navMenu: "Navigation menu",
@@ -9,6 +12,12 @@ const shellEn = {
     saving: "Saving…",
     saved: "All changes saved",
     failed: "Not saved: {{reason}}",
+  },
+  autopilot: {
+    launcherRunning_one: "{{count}} autopilot running",
+    launcherRunning_other: "{{count}} autopilots running",
+    launcherAttention_one: "{{count}} needs you",
+    launcherAttention_other: "{{count}} need you",
   },
 };
 

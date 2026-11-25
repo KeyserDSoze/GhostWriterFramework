@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
 import { emptyView, useAutopilotStore, type BookAutopilotView } from "@/autopilot/store";
 
+export { useNow } from "@/autopilot/useNow";
+
 /** The autopilot view of a book (snapshot, server summary, sync), kept fresh by the runtime. */
 export function useBookAutopilotView(bookId: string | undefined): BookAutopilotView {
   const view = useAutopilotStore((state) => (bookId ? state.views[bookId] : undefined));
@@ -40,16 +42,4 @@ export function useElapsed(since: string | undefined): number {
   }, [since]);
   const start = since ? Date.parse(since) : Number.NaN;
   return Number.isFinite(start) ? Math.max(0, now - start) : 0;
-}
-
-/** The current time, refreshed every `intervalMs` while `enabled`: for what reads "4 minutes ago". */
-export function useNow(intervalMs: number, enabled = true): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!enabled) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
-    return () => window.clearInterval(timer);
-  }, [intervalMs, enabled]);
-  return now;
 }

@@ -2,9 +2,16 @@ import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Plane, Search, Server } from "lucide-react";
+import { runnerActivity } from "narrarium-engine";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { BookCard } from "@/components/autopilot/hub/BookCard";
+import { BookCard, HubStatus } from "@/components/autopilot/hub/BookCard";
+import { HostChip } from "@/components/autopilot/band/parts";
+import type { ActiveBook } from "@/autopilot/activeBooks";
+import { activityTitle } from "@/autopilot/format";
+import { autopilotLiveHref } from "@/autopilot/pageRoute";
+import { latestSummary } from "@/autopilot/summary";
+import { useActiveBooks } from "@/autopilot/useActiveBooks";
 import { LiveAnnouncer } from "@/components/autopilot/live/LiveControls";
 import { HubFeed } from "@/components/autopilot/hub/HubFeed";
 import { HUB_FILTER_FROM, filterBooks, hubRank, hubStateOf, orderBooks, type HubRank } from "@/autopilot/hubModel";
@@ -73,6 +80,7 @@ export function AutopilotHubPage() {
   const allIds = useMemo(() => books.map((book) => book.id), [books]);
   const nameOf = useCallback((id: string) => books.find((book) => book.id === id)?.name, [books]);
   const shown = filtering && query.trim() ? filterBooks(ordered, query) : ordered;
+  const active = useActiveBooks({ summarize: latestSummary, runnerActivity });
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -90,6 +98,8 @@ export function AutopilotHubPage() {
           )}
         </Link>
       </div>
+
+      {active.length > 0 && <ActiveNow books={active} />}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]">
         <section ref={setCardsColumn} aria-labelledby={`${filterId}-books`} className="min-w-0 space-y-3">
@@ -127,5 +137,31 @@ export function AutopilotHubPage() {
       </div>
       <LiveAnnouncer bookIds={allIds} nameOf={nameOf} />
     </div>
+  );
+}
+
+/**
+ * The books whose autopilot is active now, in one row above the cards: what runs on another book than the one the author works on is seen at a
+ * glance, each with its state in words, its name, where it runs and the step it does, and each the way to that book's page.
+ */
+function ActiveNow({ books }: { books: ActiveBook[] }) {
+  const { t } = useTranslation();
+  const titleId = useId();
+  return (
+    <section aria-labelledby={titleId} data-hub-active={books.length} className="rounded-2xl border border-layer bg-card p-3 shadow-sm sm:p-4">
+      <h2 id={titleId} className="text-sm font-semibold">{t("autopilot.hub.activeTitle", { count: books.length })}</h2>
+      <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+        {books.map((book) => (
+          <li key={book.id} className="min-w-0">
+            <Link to={autopilotLiveHref(book.id)} className="flex min-h-11 flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border px-3 py-2 text-sm transition hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <HubStatus state={book.state} />
+              <span className="min-w-0 break-words font-semibold">{book.name}</span>
+              <HostChip host={book.host} />
+              {book.step && <span className="min-w-0 basis-full break-words text-xs text-muted-foreground">{activityTitle(t, book.step)}</span>}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

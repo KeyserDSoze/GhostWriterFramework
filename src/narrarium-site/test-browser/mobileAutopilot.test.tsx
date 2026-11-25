@@ -51,6 +51,9 @@ function screenOf(kind: "phone" | "computer") {
 
 const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 
+// Changed on purpose (0.110.0): the name of the launcher says which autopilots run and how many wait ("Show what the autopilot is doing: 1 autopilot running (…)"): it is found by the words it starts with.
+const launcherName = () => new RegExp(`^${t("autopilot.openDock")}`);
+
 beforeAll(async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   await loadAutopilotTranslations();
@@ -150,7 +153,7 @@ describe("the mini-player on a phone", () => {
     screenOf("phone");
     seedRun({ ...RUNNING, dockOpen: false });
     app();
-    const launcher = screen.getByRole("button", { name: t("autopilot.openDock") });
+    const launcher = screen.getByRole("button", { name: launcherName() });
     launcher.focus();
     fireEvent.click(launcher);
     await flush();
@@ -166,7 +169,7 @@ describe("the mini-player on a phone", () => {
     screenOf("phone");
     seedRun({ ...RUNNING, dockOpen: false });
     const router = app();
-    fireEvent.click(screen.getByRole("button", { name: t("autopilot.openDock") }));
+    fireEvent.click(screen.getByRole("button", { name: launcherName() }));
     await flush();
     expect(sheet()).not.toBeNull();
     await act(async () => { await router.navigate(-1); });

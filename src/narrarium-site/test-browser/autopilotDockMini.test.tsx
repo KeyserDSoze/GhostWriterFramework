@@ -43,6 +43,11 @@ function show(path: string, tab: "live" | "book", launcher = false) {
   return render(<Dock path={path} launcher={launcher} />);
 }
 
+// Changed on purpose (0.110.0): the name of the launcher says which autopilots run and how many wait ("Show what the autopilot is doing: 1 autopilot running (…)"): it is found by the words it starts with.
+const launcherName = () => new RegExp(`^${t("autopilot.openDock")}`);
+// Changed on purpose (0.110.0): the “Live” tab has a card for every book whose autopilot is active above the feed; the feed is what is left.
+const feedItems = (panel: HTMLElement) => within(panel).queryAllByRole("listitem").filter((item) => !item.closest("[data-dock-active]"));
+
 beforeAll(async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   await loadAutopilotTranslations();
@@ -80,7 +85,7 @@ describe("the live panel on the pages of the autopilot", () => {
     freezeClock();
     seedRun(RUNNING);
     render(<Dock path="/app/books/book-1/autopilot" launcher />);
-    const reopen = screen.getByRole("button", { name: t("autopilot.openDock") });
+    const reopen = screen.getByRole("button", { name: launcherName() });
     // A small button: an icon, without the title of the step that the band of the page already says.
     expect(reopen.textContent?.trim()).toBe("");
     expect(screen.queryByText(LIVE.title)).not.toBeInTheDocument();
@@ -98,7 +103,7 @@ describe("the live panel on the pages of the autopilot", () => {
   it("keeps the launcher as it was, with the step in words, on the other pages", () => {
     seedRun({ ...RUNNING, dockOpen: false });
     render(<Dock path="/app/books/book-1" launcher />);
-    expect(screen.getByRole("button", { name: t("autopilot.openDock") })).toHaveTextContent(LIVE.title);
+    expect(screen.getByRole("button", { name: launcherName() })).toHaveTextContent(LIVE.title);
   });
 });
 
@@ -149,7 +154,7 @@ describe("the live panel as a mini-player", () => {
   it("does not announce it when it is brought back on the page of the autopilot: the band of the page says it, and only one place of the screen speaks", () => {
     seedRun({ ...RUNNING, dockOpen: false });
     show("/app/books/book-1/autopilot", "book", true);
-    fireEvent.click(screen.getByRole("button", { name: t("autopilot.openDock") }));
+    fireEvent.click(screen.getByRole("button", { name: launcherName() }));
     expect(within(open()).getByText(LIVE.title).closest('[role="status"], [aria-live]')).toBeNull();
   });
 
@@ -164,7 +169,7 @@ describe("the live panel, tab “Live”: the feed of every book, in short", () 
   it("shows the last events only, one line each, without the long texts", () => {
     seedRun({ ...RUNNING, ...finished(40) });
     show("/app/books/book-1", "live");
-    const items = within(open()).getAllByRole("listitem");
+    const items = feedItems(open());
     expect(items.length).toBeGreaterThan(0);
     expect(items.length).toBeLessThanOrEqual(12);
     for (const item of items) expect(item.querySelector(".truncate"), item.textContent ?? "").not.toBeNull();
@@ -204,14 +209,14 @@ describe("the live panel, tab “Live”: the feed of every book, in short", () 
       act(() => { useAutopilotStore.getState().setPageDockOpen(true); });
       show("/app/books/book-1/autopilot", "live");
       expect(within(open()).getByText(t("autopilot.dock.pageLists"))).toBeInTheDocument();
-      expect(within(open()).queryAllByRole("listitem")).toHaveLength(0);
+      expect(feedItems(open())).toHaveLength(0);
     });
 
     it("leaves out everything on the page of all the books, which lists every event", () => {
       withOtherBook();
       show("/app/autopilot", "live");
       expect(within(open()).getByText(t("autopilot.dock.pageListsAll"))).toBeInTheDocument();
-      expect(within(open()).queryAllByRole("listitem")).toHaveLength(0);
+      expect(feedItems(open())).toHaveLength(0);
     });
 
     it("lists them as ever on the pages that do not", () => {

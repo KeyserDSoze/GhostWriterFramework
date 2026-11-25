@@ -220,6 +220,8 @@ const autopilotIt = {
     dock: {
       latest: "Ultimi eventi",
       all: "Vedi l'attività di tutti i libri",
+      activeTitle: "Libri con l'autopilot attivo ({{count}})",
+      openBook: "Apri l'autopilot di «{{book}}»",
       pageLists: "Questa pagina elenca gli eventi di questo libro. Qui compaiono quelli degli altri libri.",
       pageListsAll: "Questa pagina elenca gli eventi di tutti i libri.",
     },
@@ -1167,6 +1169,7 @@ const autopilotIt = {
       filterNone: "Nessun libro ha questo nel titolo.",
       serverUpdate: "Aggiornamento {{version}} disponibile",
       books: "Libri",
+      activeTitle: "Attivi adesso ({{count}})",
       noBooks: "Nessun libro nella tua libreria.",
       open: "Apri",
       server: "Server personale",

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, ChevronDown, ExternalLink, Loader2, Plane, Trash2, X } from "lucide-react";
+import { runnerActivity } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useBackGestureClose } from "@/components/layout/historyStep";
@@ -9,7 +10,10 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { parseAppRoute } from "@/assistant/context";
 import { useBookAutopilotView, useAutopilotRefresh } from "@/autopilot/hooks";
-import { isAutopilotLivePage, isAutopilotPage, autopilotSettingsHref } from "@/autopilot/pageRoute";
+import { isAutopilotLivePage, isAutopilotPage, autopilotLiveHref, autopilotSettingsHref } from "@/autopilot/pageRoute";
+import type { ActiveBook } from "@/autopilot/activeBooks";
+import { useActiveBooks } from "@/autopilot/useActiveBooks";
+import { latestSummary } from "@/autopilot/summary";
 import { useTextDetail } from "@/autopilot/useLiveText";
 import { LastDone } from "@/components/autopilot/live/LastDone";
 import { LiveAnnouncer, TextDetailToggle } from "@/components/autopilot/live/LiveControls";
@@ -21,7 +25,7 @@ import { useUiStore } from "@/store/uiStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { AutopilotFeed } from "@/components/autopilot/AutopilotFeed";
 import { useBandModel } from "@/components/autopilot/AutopilotControlBand";
-import { FrozenChangesChip, ProgressBars, StatusMessage, StatusPill, StepNow } from "@/components/autopilot/band/parts";
+import { FrozenChangesChip, HostChip, ProgressBars, StatusMessage, StatusPill, StepNow } from "@/components/autopilot/band/parts";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
@@ -186,18 +190,22 @@ function useKeyboardInset(): number {
 }
 
 /**
- * The “Live” tab: the last events of every book, in one line each. Without a book in the page (and so without the other tab) it also has the mini-player of the book in
- * focus (the one that runs, else the one that was active last), with the name of the book always on it; with several books to choose from the author picks which one.
+ * The “Live” tab: a card for every book whose autopilot is active (it runs or waits to try again, it waits for the author, it was paused lately),
+ * wherever it runs, each with its name, its host, its state, the step it does with its time (and the wait before a retry), its commands and the
+ * way to its page; then the last events of every book, in one line each. With no book active and no book in the page it has the mini-player of the
+ * book in focus (the one that was active last), with the name of the book always on it; with several books to choose from the author picks which one.
  */
 function DockLivePanel({ announce, showBook, onPage, pageBook }: { announce: boolean; showBook: boolean; onPage: "book" | "all" | null; pageBook: string | undefined }) {
   const { t } = useTranslation();
   const { focus, candidates, choose } = useFocusBook();
-  useAutopilotRefresh(focus?.id);
+  const active = useActiveBooks({ summarize: latestSummary, runnerActivity });
+  useAutopilotRefresh(active.length ? undefined : focus?.id);
   // A page of the autopilot lists the events itself (the timeline of the book, the feed of every book): the panel does not say them again.
   const pageLists = onPage === "all" ? t("autopilot.dock.pageListsAll") : null;
   return (
     <div className="space-y-3">
-      {!showBook && focus && (
+      {active.length > 0 && <ActiveBooks books={active} announce={announce} />}
+      {active.length === 0 && !showBook && focus && (
         <MiniPlayer
           bookId={focus.id}
           announce={announce}
@@ -242,6 +250,45 @@ function FocusSelector({ focusId, candidates, onChoose }: { focusId: string; can
   );
 }
 
+/**
+ * The books whose autopilot is active, a card each, told apart at a glance by their names (each a heading, and the way to the book's page), their
+ * hosts and their states. One polite voice for all of them, which names the book of what it says: the cards themselves are never read out.
+ */
+function ActiveBooks({ books, announce }: { books: ActiveBook[]; announce: boolean }) {
+  const { t } = useTranslation();
+  const titleId = useId();
+  const names = useRef(new Map<string, string>());
+  names.current = new Map(books.map((book) => [book.id, book.name]));
+  const nameOf = useCallback((id: string) => names.current.get(id), []);
+  return (
+    <section aria-labelledby={titleId} className="space-y-2" data-dock-active={books.length}>
+      <h3 id={titleId} className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t("autopilot.dock.activeTitle", { count: books.length })}</h3>
+      <ul className="space-y-2">
+        {books.map((book) => (
+          <li key={book.id} data-dock-book={book.id}>
+            <ActiveBookCard book={book} />
+          </li>
+        ))}
+      </ul>
+      {announce && <LiveAnnouncer bookIds={books.map((book) => book.id)} nameOf={nameOf} />}
+    </section>
+  );
+}
+
+function ActiveBookCard({ book }: { book: ActiveBook }) {
+  const { t } = useTranslation();
+  useAutopilotRefresh(book.id);
+  const heading = (
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+      <h4 className="min-w-0 max-w-full text-sm font-semibold">
+        <Link to={autopilotLiveHref(book.id)} aria-label={t("autopilot.dock.openBook", { book: book.name })} className="break-words underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{book.name}</Link>
+      </h4>
+      <HostChip host={book.host} />
+    </div>
+  );
+  return <MiniPlayer bookId={book.id} announce={false} compact heading={heading} />;
+}
+
 /** The “This book” tab: the mini-player of the book of the page. */
 function DockBookPanel({ bookId, announce }: { bookId: string; announce: boolean }) {
   useAutopilotRefresh(bookId);
@@ -253,11 +300,12 @@ function DockBookPanel({ bookId, announce }: { bookId: string; announce: boolean
  * the problems of a profile, the error), and its commands. A book that never started has the way to its configuration, where it starts. `announce` says
  * whether the step is read out as it changes: not when the page of the autopilot is on the screen and does it already.
  */
-function MiniPlayer({ bookId, announce, heading }: { bookId: string; announce: boolean; heading?: ReactNode }) {
+function MiniPlayer({ bookId, announce, heading, compact = false }: { bookId: string; announce: boolean; heading?: ReactNode; compact?: boolean }) {
   const { t } = useTranslation();
   const [detail] = useTextDetail();
-  // The text and the last steps are the page's business where the page shows the run (the panel brought back there does not say them twice).
-  const text = detail === "full" && announce;
+  // The text and the last steps are the page's business where the page shows the run (the panel brought back there does not say them twice), and
+  // the card of one book among several keeps to its state, its step and its commands (the events of every book are under the cards).
+  const text = detail === "full" && announce && !compact;
   const view = useBookAutopilotView(bookId);
   const bookName = useSettingsStore((state) => state.settings.books.find((book) => book.id === bookId)?.name);
   const model = useBandModel(bookId);
@@ -278,7 +326,7 @@ function MiniPlayer({ bookId, announce, heading }: { bookId: string; announce: b
       </div>
       {model && (model.running ? <StepNow bookId={bookId} compact announce={announce} wait={model.wait} countdown /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null)}
       {text && model?.running && !model.wait && <StreamLines bookId={bookId} />}
-      {model && <ProgressBars summary={model.summary} scenes={false} context={t("autopilot.dockTitle")} />}
+      {model && !compact && <ProgressBars summary={model.summary} scenes={false} context={t("autopilot.dockTitle")} />}
       {text && <LastDone bookId={bookId} />}
       {announce && <LiveAnnouncer bookIds={[bookId]} />}
       {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} compact hintId={profileHintId} />}
@@ -292,7 +340,7 @@ function MiniPlayer({ bookId, announce, heading }: { bookId: string; announce: b
           <span><span className="font-medium">{questionHeading(t, summary.question)}:</span> {summary.question.question}</span>
         </Link>
       )}
-      <QuickCommands bookId={bookId} variant="dock" heading={null} profileHintId={profileHintId} />
+      <QuickCommands bookId={bookId} variant="dock" heading={null} profileHintId={profileHintId} condensed={compact} />
       {!model && (
         <Button asChild size="sm">
           <Link to={autopilotSettingsHref(bookId)}>{t("autopilot.actions.start")}</Link>

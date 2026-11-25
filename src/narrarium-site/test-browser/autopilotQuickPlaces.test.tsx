@@ -37,7 +37,7 @@ function Page({ path = "/app/books/book-1/autopilot", withDock = false }: { path
   );
 }
 
-const bringBackTheDock = () => fireEvent.click(screen.getByRole("button", { name: t("autopilot.openDock") }));
+const bringBackTheDock = () => fireEvent.click(screen.getByRole("button", { name: launcherName() }));
 
 // The live panel is looked at on the page of the book: on the pages of the autopilot it keeps out of the way.
 function Dock({ path = "/app/books/book-1" }: { path?: string }) {
@@ -46,6 +46,9 @@ function Dock({ path = "/app/books/book-1" }: { path?: string }) {
 
 const groups = () => [...document.querySelectorAll<HTMLElement>("[data-quick-commands]")];
 const controlNames = (root: HTMLElement) => [...root.querySelectorAll("button, a[href]")].map((element) => element.getAttribute("aria-label") ?? element.textContent?.trim() ?? "");
+
+// Changed on purpose (0.110.0): the name of the launcher says which autopilots run and how many wait ("Show what the autopilot is doing: 1 autopilot running (…)"): it is found by the words it starts with.
+const launcherName = () => new RegExp(`^${t("autopilot.openDock")}`);
 
 beforeAll(async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
@@ -176,9 +179,14 @@ describe("the live panel, tab “Live”", () => {
     expect(screen.queryByRole("button", { name: /^Book:|^Libro:/ })).not.toBeInTheDocument();
   });
 
-  it("has no bar in the feed of a book's page: the bar is in the other tab, and the feed is only the feed", () => {
+  // Changed on purpose (0.110.0): the “Live” tab has a card for every book whose autopilot is active, the book of the page included, with its bar;
+  // the feed under the cards is only the feed.
+  it("has the card of the running book of the page, with its bar, above a feed that is only the feed", () => {
     render(<Dock />);
-    expect(document.querySelectorAll("[data-quick-commands]")).toHaveLength(0);
+    const bars = [...document.querySelectorAll("[data-quick-commands]")];
+    expect(bars).toHaveLength(1);
+    expect(bars[0].closest("[data-dock-book]")).toHaveAttribute("data-dock-book", "book-1");
+    expect(screen.getByRole("group", { name: quickGroupName("dock") })).toBeInTheDocument();
     expect(screen.getByText(t("autopilot.feedEmpty"))).toBeInTheDocument();
   });
 
@@ -198,27 +206,20 @@ describe("the live panel, tab “Live”", () => {
     expect(within(screen.getByRole("region", { name: t("autopilot.dockTitle") })).getByText(LOCAL_BOOK.name)).toBeVisible();
   });
 
-  it("lets the author choose which book to command when several run, and always says which one it is", async () => {
+  // Changed on purpose (0.110.0): with several books running there is no book to choose any more: each has a card of its own, with its bar.
+  it("has a card for each book that runs, each bar named after its book, and nothing to choose", async () => {
     const running = (book: BookEntry): ServerBookSummary => ({ bookId: book.id, title: book.name, storage: { kind: "local" }, hasGithubToken: false, ready: true, revision: "r", autopilot: null, running: true, lastSync: null });
     useSettingsStore.setState({ settings: { ...useSettingsStore.getState().settings, books: [LOCAL_BOOK, OTHER] } });
     const state = useAutopilotStore.getState();
     useAutopilotStore.setState({ server: { ...state.server, books: [running(LOCAL_BOOK), running(OTHER)] }, views: { ...state.views, [OTHER.id]: { ...emptyView(OTHER.id), snapshot: { bookId: OTHER.id, state: state.views["book-1"].snapshot!.state, activities: [], live: null, running: true, host: null } } } });
     render(<Dock path="/app/books" />);
 
-    const selector = screen.getByRole("button", { name: new RegExp(`^${t("autopilot.quick.bookLabel", { name: "" }).replace(/\s+$/, "")}`) });
-    expect(selector).toHaveTextContent(/The (Glass Harbor|Second Book)/);
-    const first = selector.textContent!.includes(LOCAL_BOOK.name) ? LOCAL_BOOK : OTHER;
-    const second = first === LOCAL_BOOK ? OTHER : LOCAL_BOOK;
-    expect(screen.getByRole("group", { name: quickGroupName("dock", first) })).toBeInTheDocument();
-
-    openMenu(selector);
-    const radios = screen.getAllByRole("menuitemradio");
-    expect(radios).toHaveLength(2);
-    for (const radio of radios) expect(radio).toHaveTextContent(t("autopilot.quick.bookRunning"));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: new RegExp(second.name) }));
-    await waitFor(() => expect(screen.getByRole("group", { name: quickGroupName("dock", second) })).toBeInTheDocument());
-    expect(screen.queryByRole("group", { name: quickGroupName("dock", first) })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: t("autopilot.quick.bookLabel", { name: second.name }) })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: new RegExp(`^${t("autopilot.quick.bookLabel", { name: "" }).replace(/\s+$/, "")}`) })).not.toBeInTheDocument();
+    for (const book of [LOCAL_BOOK, OTHER]) {
+      const card = document.querySelector(`[data-dock-book="${book.id}"]`) as HTMLElement;
+      expect(within(card).getByRole("link", { name: t("autopilot.dock.openBook", { book: book.name }) })).toBeInTheDocument();
+      expect(within(card).getByRole("group", { name: quickGroupName("dock", book) })).toBeInTheDocument();
+    }
   });
 
   it("refreshes the book it commands, as the tab of the book does, so that its state is there to read", async () => {

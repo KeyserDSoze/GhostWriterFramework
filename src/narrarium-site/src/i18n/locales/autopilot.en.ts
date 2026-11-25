@@ -220,6 +220,8 @@ const autopilotEn = {
     dock: {
       latest: "Latest events",
       all: "See every book's activity",
+      activeTitle: "Books with the autopilot active ({{count}})",
+      openBook: "Open the autopilot of «{{book}}»",
       pageLists: "This page lists the events of this book. The events of the other books appear here.",
       pageListsAll: "This page lists the events of every book.",
     },
@@ -1128,6 +1130,7 @@ const autopilotEn = {
     hub: {
       serverUpdate: "Update {{version}} available",
       books: "Books",
+      activeTitle: "Active now ({{count}})",
       noBooks: "No books in your library yet.",
       open: "Open",
       server: "Personal server",

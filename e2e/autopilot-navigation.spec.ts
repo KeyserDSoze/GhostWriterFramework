@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { autopilotFacts, bookFiles, openApp, seed, settingsOf, startAutopilot, startProvider, waitForAiSettings, waitForAutopilot, type SeedBook, type StubProvider } from "./helpers/autopilot";
 
 // In-app navigation never reloads the page, and the autopilot that runs in this browser goes on: the links of the live panel (every book's activity,
-// the page of the autopilot, a step of the book), the launcher and the switch to another book.
+// a book's card, the page of the autopilot), the launcher, the row of the active books on the page of every book and the switch to another book.
 // A page of an older version, whose files the site no longer has after a deployment, says that a new version is available and leaves the reload to
 // the author, without stopping the run. Every check reads a mark left on the document (a reload loses it) and the run's own state and requests.
 
@@ -58,7 +58,7 @@ async function openPanel(page: Page): Promise<void> {
   await expect(page.getByRole("region", { name: "Autopilot live" }).or(page.getByRole("dialog", { name: "Autopilot live" }))).toBeVisible();
 }
 
-test("the links of the live panel, the launcher and the switch to another book never reload the page, and the run goes on", async ({ page }) => {
+test("the links of the live panel, the launcher, the row of the active books and the switch to another book never reload the page, and the run goes on", async ({ page }) => {
   const { openAi, loads } = await runningBook(page);
 
   // The switch to another book: the library, then the book.
@@ -67,14 +67,31 @@ test("the links of the live panel, the launcher and the switch to another book n
   await expect(page).toHaveURL(new RegExp(`/app/books/${TIDE.id}$`));
   await stillRunning(page, loads, "another book");
 
-  // The launcher opens the live panel, from the other book too.
+  // The launcher says the run of the other book, and opens the live panel; its “Live” tab has the card of the book that runs.
+  await expect(launcher(page)).toHaveAccessibleName(/1 autopilot running \(The Glass Harbor\)/);
   await openPanel(page);
   await page.getByRole("tab", { name: "Live" }).click();
+  await expect(page.locator("[data-dock-book='book-glass']")).toBeVisible();
 
-  // «See every book's activity»: the page of every book.
+  // «See every book's activity»: the page of every book, with the row of the active ones.
   await page.getByRole("link", { name: "See every book's activity" }).click();
   await expect(page).toHaveURL(/\/app\/autopilot$/);
+  await expect(page.locator("[data-hub-active]")).toContainText(GLASS.name);
   await stillRunning(page, loads, "every book's activity");
+
+  // The row of the active books leads to the autopilot of the book.
+  await page.locator("[data-hub-active]").getByRole("link").filter({ hasText: GLASS.name }).click();
+  await expect(page).toHaveURL(new RegExp(`/app/books/${GLASS.id}/autopilot$`));
+  await stillRunning(page, loads, "the row of the active books");
+
+  // From the other book again: the card of the running book in the panel leads to its autopilot.
+  await page.getByRole("link", { name: "All books" }).first().click();
+  await page.getByRole("link", { name: TIDE.name }).first().click();
+  await openPanel(page);
+  await page.getByRole("tab", { name: "Live" }).click();
+  await page.getByRole("link", { name: `Open the autopilot of «${GLASS.name}»` }).click();
+  await expect(page).toHaveURL(new RegExp(`/app/books/${GLASS.id}/autopilot$`));
+  await stillRunning(page, loads, "the card of the book");
 
   // «Open the autopilot page» of the panel, from the other book.
   await page.getByRole("link", { name: "All books" }).first().click();
