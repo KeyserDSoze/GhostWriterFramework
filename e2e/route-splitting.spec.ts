@@ -12,8 +12,11 @@ async function requestedScripts(page: Page, path: string): Promise<string[]> {
   return [...new Set(scripts)].sort();
 }
 
+/** The name of a chunk without its content hash: a hash can spell anything (one read «ZIP»), and only the name says what the chunk holds. */
+const chunkName = (script: string) => script.replace(/-[A-Za-z0-9_-]{8}\.js$/, ".js");
+
 function expectNoFeatureChunks(scripts: string[], forbidden: RegExp): void {
-  expect(scripts.filter((script) => forbidden.test(script))).toEqual([]);
+  expect(scripts.filter((script) => forbidden.test(chunkName(script)))).toEqual([]);
 }
 
 test("the public home loads only the core and lightweight home route", async ({ page }) => {
