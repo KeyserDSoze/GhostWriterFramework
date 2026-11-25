@@ -216,6 +216,15 @@ export function budgetUse(stats: Pick<AutopilotStats, "cost" | "inputTokens" | "
 }
 
 /**
+ * What the step that runs has spent so far, as the activity carries it: the one place the cost line asks, so that whatever tells the spend of a step before it ends (the costs
+ * dashboard's ledger) changes this and nothing else. The engine says what a step cost when it ends (`cost` and `usage` of the finished activity), and nothing before: for a step that
+ * runs it is `null`, and the line shows only the total. A figure is never worked out here: no cost of a step that did not say one, and none for a model with no price.
+ */
+export function stepSpendOf(activity: Pick<AutopilotActivity, "cost"> | null | undefined): { cost: number } | null {
+  return typeof activity?.cost === "number" && Number.isFinite(activity.cost) && activity.cost > 0 ? { cost: activity.cost } : null;
+}
+
+/**
  * How the page of the autopilot is laid out for the width it has: `wide` has two columns, `tabs` has tabs and the whole band, `compact`
  * has tabs, a band of two rows and the actions in a bar at the bottom. A width that is not known is a wide one.
  */

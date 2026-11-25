@@ -1,7 +1,7 @@
 import { useMemo, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { AutopilotActivity, AutopilotState, AutopilotStateSummary, AutopilotStatus } from "narrarium-engine";
-import { chapterCycle, type ChapterCycle } from "@/autopilot/bandModel";
+import { chapterCycle, stepSpendOf, type ChapterCycle } from "@/autopilot/bandModel";
 import { planReviewMode } from "@/autopilot/planApprovalModel";
 import { useBookAutopilotView } from "@/autopilot/hooks";
 import { retryWaitOf, type RetryWait } from "@/autopilot/retry";
@@ -9,6 +9,7 @@ import { useAutopilotStore } from "@/autopilot/store";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useAutopilotControl, type AutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useTextDetail } from "@/autopilot/useLiveText";
+import { AttemptNow } from "@/components/autopilot/band/Attempt";
 import { CycleList, FrozenChangesChip, HostChip, PhaseList, PreviewLine, ProgressBars, SignalAge, StatusMessage, StatusPill, StepElapsed, StepNow, UsageLine } from "@/components/autopilot/band/parts";
 import { LastDone } from "@/components/autopilot/live/LastDone";
 import { LiveAnnouncer, TextDetailToggle } from "@/components/autopilot/live/LiveControls";
@@ -39,6 +40,8 @@ export interface BandModel {
   message: string | null;
   /** The wait before the next attempt of a step that failed, while the run waits: the same object for as long as the summary is. */
   wait: RetryWait | null;
+  /** What the step that runs has spent so far, when the activity says it (`stepSpendOf`); `null` for a step that has not told, which is every step until it ends. */
+  stepSpend: { cost: number } | null;
 }
 
 /** The model of the band of a book, or `null` while its autopilot has no state. */
@@ -52,6 +55,7 @@ export function useBandModel(bookId: string): BandModel | null {
   const state = view.snapshot?.state ?? null;
   const cycle = useMemo(() => chapterCycle(state, liveActivity), [state, liveActivity]);
   const wait = useMemo(() => retryWaitOf(summary), [summary]);
+  const stepSpend = useMemo(() => stepSpendOf(liveActivity), [liveActivity]);
   if (!summary) return null;
 
   const status = summary.status;
@@ -76,6 +80,7 @@ export function useBandModel(bookId: string): BandModel | null {
     currency: summary.stats.currency ?? costCurrency,
     message: !quiet && summary.message ? summary.message : null,
     wait,
+    stepSpend,
   };
 }
 
@@ -150,11 +155,13 @@ export function AutopilotControlBand({ bookId, variant = "full", commands }: Aut
           <div className={cn("gap-4 p-3 sm:p-4", full ? "grid grid-cols-[minmax(0,1fr)_auto]" : "space-y-3")}>
             <div className="min-w-0 space-y-3">
               {statusRow}
-              {running ? <StepNow bookId={bookId} showPreview={full} wait={model.wait} /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null}
+              {running ? <StepNow bookId={bookId} showPreview={full} wait={model.wait} model={!full} /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null}
               <ProgressBars summary={summary} />
               {full && summary.progress.chapters > 0 && <PhaseList summary={summary} />}
               {full && model.cycle && <CycleList cycle={model.cycle} />}
-              {full && !completed && <UsageLine summary={summary} options={model.state?.options ?? null} currency={model.currency} />}
+              {/* Which model the step asks now, beside what it costs: the two lines that say where the money goes. */}
+              {full && running && !model.wait && <AttemptNow bookId={bookId} className="-mb-1.5" />}
+              {full && !completed && <UsageLine summary={summary} options={model.state?.options ?? null} currency={model.currency} step={model.stepSpend} />}
               {!commands && lastDone}
             </div>
             {commands && <div className={cn("min-w-0", full ? "max-w-[22rem] space-y-3" : "border-t pt-3")}>{commands}{lastDone}</div>}
@@ -188,7 +195,7 @@ export function AutopilotBandDetails({ bookId, variant }: { bookId: string; vari
       {compact && <ProgressBars summary={summary} chapters={false} />}
       {summary.progress.chapters > 0 && <PhaseList summary={summary} />}
       {model.cycle && <CycleList cycle={model.cycle} />}
-      {!completed && <UsageLine summary={summary} options={model.state?.options ?? null} currency={model.currency} />}
+      {!completed && <UsageLine summary={summary} options={model.state?.options ?? null} currency={model.currency} step={model.stepSpend} />}
     </div>
   );
 }

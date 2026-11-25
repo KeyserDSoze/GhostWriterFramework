@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createAutopilotState, type AutopilotActivity, type AutopilotFinalReview, type AutopilotState, type PlannedChapter } from "narrarium-engine";
-import { bandPhases, budgetUse, chapterCycle, closedChapterToRead, cycleItems, finalReviewOf, finalVerdict, stageOfTask, workedSince, workedTime } from "@/autopilot/bandModel";
+import { bandPhases, budgetUse, chapterCycle, closedChapterToRead, cycleItems, finalReviewOf, finalVerdict, stageOfTask, stepSpendOf, workedSince, workedTime } from "@/autopilot/bandModel";
 import { chapter, planOf } from "./helpers/autopilotFixtures";
 
 const T0 = "2026-11-21T10:00:00.000Z";
@@ -320,5 +320,17 @@ describe("how much of the budget is used", () => {
 
   it("works without the options of the state (the page has only the summary at first)", () => {
     expect(budgetUse(stats, null)).toEqual({ cost: { value: 2.5, limit: null, ratio: null }, tokens: { value: 75_000, limit: null, ratio: null } });
+  });
+});
+
+describe("what the step that runs has spent", () => {
+  it("is what the activity says, and nothing when it says nothing: a figure is never worked out here (the engine says what a step cost when it ends)", () => {
+    expect(stepSpendOf({ cost: 0.0123 })).toEqual({ cost: 0.0123 });
+    expect(stepSpendOf({})).toBeNull();
+    expect(stepSpendOf({ cost: 0 })).toBeNull();
+    expect(stepSpendOf({ cost: Number.NaN })).toBeNull();
+    expect(stepSpendOf({ cost: -1 })).toBeNull();
+    expect(stepSpendOf(null)).toBeNull();
+    expect(stepSpendOf(undefined)).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 import { act } from "@testing-library/react";
 import { vi } from "vitest";
-import { DEFAULT_OPTIONS, type AutopilotActivity, type AutopilotEvent, type AutopilotPhase, type AutopilotState, type AutopilotStats, type ChapterReview, type PlannedChapter } from "narrarium-engine";
+import { DEFAULT_OPTIONS, type AutopilotActivity, type AutopilotAttemptInfo, type AutopilotEvent, type AutopilotPhase, type AutopilotState, type AutopilotStats, type ChapterReview, type PlannedChapter } from "narrarium-engine";
 import { useAutopilotStore } from "@/autopilot/store";
 import { longPlan, planOf } from "./autopilotFixtures";
 import { LOCAL_BOOK, T0, seedBar, type BarSeed } from "./quickCommands";
@@ -27,7 +27,7 @@ export interface RunSeed extends BarSeed {
   stats?: Partial<AutopilotStats>;
   activities?: AutopilotActivity[];
   /** The step that runs now, with the text it streams. */
-  live?: { activity: AutopilotActivity; characters?: number; preview?: string } | null;
+  live?: { activity: AutopilotActivity; characters?: number; preview?: string; trying?: AutopilotAttemptInfo } | null;
   feed?: AutopilotEvent[];
 }
 
@@ -48,8 +48,8 @@ export function seedRun(seed: RunSeed = {}) {
   useAutopilotStore.setState((store) => {
     const view = store.views[id];
     return {
-      views: { ...store.views, [id]: { ...view, snapshot: { ...view.snapshot!, activities: seed.activities ?? [], live: seed.live ? { activity: seed.live.activity, characters: seed.live.characters ?? 0, preview: seed.live.preview ?? "" } : null } } },
-      live: { [id]: seed.live ? { activity: seed.live.activity, characters: seed.live.characters ?? 0, preview: seed.live.preview ?? "" } : null },
+      views: { ...store.views, [id]: { ...view, snapshot: { ...view.snapshot!, activities: seed.activities ?? [], live: seed.live ? { activity: seed.live.activity, characters: seed.live.characters ?? 0, preview: seed.live.preview ?? "", ...(seed.live.trying ? { trying: seed.live.trying } : {}) } : null } } },
+      live: { [id]: seed.live ? { activity: seed.live.activity, characters: seed.live.characters ?? 0, preview: seed.live.preview ?? "", ...(seed.live.trying ? { trying: seed.live.trying } : {}) } : null },
       feed: (seed.feed ?? []).map((event) => ({ event, bookTitle: seeded.book.name })),
     };
   });

@@ -418,6 +418,12 @@ export class BrowserAutopilotRuntime {
       case "server-reconnected":
         if (this.stream && this.followsAs(data.stream, "follower")) this.afterReconnect(this.stream);
         break;
+      case "live-request": {
+        // A tab that opened while this one runs the book wants what the step shows: the live part, with the candidate the call asks (events only tell what changes).
+        const live = this.sessions.get(data.bookId)?.session.running ? useAutopilotStore.getState().live[data.bookId] : null;
+        if (live) this.post({ kind: "live", bookId: data.bookId, live });
+        break;
+      }
       case "synced":
         useAutopilotStore.getState().patchView(data.bookId, { sync: data.sync });
         if (data.sync.uploaded + data.sync.downloaded > 0) void this.reloadStructure(data.bookId);
@@ -624,6 +630,8 @@ export class BrowserAutopilotRuntime {
       const snapshot = await session.snapshot();
       const busyInAnotherTab = !session.running && snapshot.state?.status === "running" && session.isOwnRunner(snapshot.state.runner) && await this.lockHeldElsewhere(book.id);
       useAutopilotStore.getState().patchView(bookId, { snapshot, loading: false, error: null, busyInAnotherTab });
+      // The step that tab runs is shown from its own events on: what it is doing now is asked of it, so that a tab that opens in the middle of a step does not wait for the next one.
+      if (busyInAnotherTab) this.post({ kind: "live-request", bookId });
       return snapshot;
     } catch (error) {
       useAutopilotStore.getState().patchView(bookId, { loading: false, error: describeAutopilotError(error) });

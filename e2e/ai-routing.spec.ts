@@ -7,7 +7,8 @@ import { KEY, bookFiles, openApp, routedSettingsOf, seed, startAutopilot, startP
 //
 // What the router says has to be what runs: a change applies to the very next call of the run of this tab, and, once saved, to the run of any tab and to the run that resumes after a reload.
 // When the primary is not the one that answered, the page says so: every attempt of a failed step in the order it was made, with the integration, the model, how it ended and how long it
-// took, and every candidate that the plan left out, with the reason.
+// took, and every candidate that the plan left out, with the reason. And while a step runs, the band, the live panel and the card of the step say which candidate its call asks now (the
+// primary, or the fallback it went on to, with the thinking and the request it is), as soon as the request is sent and before the provider answers.
 
 test.use({ serviceWorkers: "block" });
 
@@ -25,6 +26,9 @@ interface Providers {
   windowA?: number;
   /** The routing time a fallback has. */
   maxTotalDurationMs?: number;
+  /** The thinking level of the integration of A and of B: absent, none is chosen. */
+  thinkingA?: string;
+  thinkingB?: string;
 }
 
 interface Run {
@@ -49,7 +53,7 @@ async function begin(page: Page, options: Providers = {}): Promise<Run> {
   const b = await startProvider({ name: "B", timeline, delayMs, ...(options.b ? { behavior: options.b } : {}) });
   open.push(a, b);
   const books: SeedBook[] = [{ ...BOOK, files: await bookFiles(IDEA) }];
-  const settings = routedSettingsOf({ ...FIRST, url: a.url, window: options.windowA }, { ...SECOND, url: b.url }, books, { maxTotalDurationMs: options.maxTotalDurationMs });
+  const settings = routedSettingsOf({ ...FIRST, url: a.url, window: options.windowA, thinking: options.thinkingA }, { ...SECOND, url: b.url, thinking: options.thinkingB }, books, { maxTotalDurationMs: options.maxTotalDurationMs });
   // The context seeds every page of the spec: the run's tab and the second tab of the specs that open one.
   const { openAi } = await seed(page.context(), settings, books);
   // Leaving a page whose autopilot runs asks first: the reload of the spec is accepted, as the author would.
@@ -226,4 +230,100 @@ test("a candidate that the plan leaves out is said with its reason, in the recor
   await expect(left.first()).toContainText(FIRST.model);
   await expect(left.first()).toContainText("context window");
   await expect(view).toContainText(`${SECOND.model} (${SECOND.name})`);
+});
+
+/** The line of the band that says which candidate the step asks now. */
+const bandLine = (page: Page) => page.locator("[data-autopilot-band] [data-band-attempt]");
+
+test("the band says the primary first, with its integration and its thinking, before its answer has come", async ({ page }) => {
+  // A page with room for the whole band (the cost line and the history beside the step): the line is beside the cost.
+  await page.setViewportSize({ width: 1700, height: 1000 });
+  // A answers after eight seconds: the request is on its way for the whole of the check.
+  const run = await begin(page, { delayMs: 8000, thinkingA: "high" });
+  await expect.poll(() => run.timeline.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  const line = bandLine(page);
+  await expect(line).toBeVisible({ timeout: 4000 });
+  await expect(line.locator("[data-attempt-badge]")).toHaveText("Primary");
+  await expect(line.locator("[data-attempt-model]")).toHaveText(FIRST.model);
+  await expect(line.locator("[data-attempt-integration]")).toHaveText(FIRST.name);
+  await expect(line.locator("[data-attempt-thinking]")).toHaveText("Thinking: High");
+  await expect(line.locator("[data-attempt-count]")).toHaveCount(0);
+  await expect(line).not.toHaveAttribute("data-attempt-fallback");
+  expect(order(run), "the line was there before the provider answered: only the primary was asked").toBe("A");
+  // It sits right before the cost line, and the card of the step in the history says it too.
+  await expect(page.locator("[data-autopilot-band] [data-band-attempt] + [data-band-usage]")).toBeVisible();
+  await expect(page.locator("[data-timeline-live] [data-band-attempt]")).toContainText(FIRST.model);
+});
+
+test("when the primary fails the band says the fallback at once: its model, its integration, its thinking and the request it is, while it is still answering", async ({ page }) => {
+  await page.setViewportSize({ width: 1700, height: 1000 });
+  const run = await begin(page, {
+    a: { kind: "error", status: 404, message: "The model `model-a` does not exist or you do not have access to it." },
+    b: { kind: "slow", ms: 20_000 },
+    thinkingA: "high",
+  });
+  const line = bandLine(page);
+  await expect(line.locator("[data-attempt-badge]")).toHaveText("Fallback 1", { timeout: 30_000 });
+  await expect(line.locator("[data-attempt-model]")).toHaveText(SECOND.model);
+  await expect(line.locator("[data-attempt-integration]")).toHaveText(SECOND.name);
+  // The fallback has no level chosen: nothing is sent, and the line says so instead of the primary's.
+  await expect(line.locator("[data-attempt-thinking]")).toHaveText("Thinking: automatic");
+  await expect(line.locator("[data-attempt-count]")).toHaveText("attempt 2/2");
+  await expect(line).toHaveAttribute("data-attempt-fallback");
+  // The words and the arrow say it, not the colour alone.
+  await expect(line.locator("[data-attempt-badge] svg")).toHaveCount(1);
+  expect(order(run), "the primary was asked first and failed, then the fallback, which has not answered").toMatch(/^AB$/);
+  await expect(page.locator("[data-timeline-live] [data-band-attempt]")).toContainText("Fallback 1");
+});
+
+test("a page that is reloaded says the candidate of the run it resumes as soon as the request is sent, before the provider answers", async ({ page }) => {
+  const run = await begin(page, {
+    a: { kind: "error", status: 404, message: "The model `model-a` does not exist or you do not have access to it." },
+    b: { kind: "slow", ms: 25_000 },
+    thinkingA: "high",
+  });
+  const line = bandLine(page);
+  await expect(line.locator("[data-attempt-badge]")).toHaveText("Fallback 1", { timeout: 30_000 });
+  const before = run.timeline.length;
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.getByText("Autopilot resumed after the restart", { exact: true })).toBeVisible({ timeout: 30_000 });
+  // The page that resumes asks again: the primary, which fails at once, then the fallback, which is slow for another 25 seconds.
+  await expect.poll(() => run.timeline.length, { timeout: 30_000, message: "the resumed run asks the AI again" }).toBeGreaterThan(before + 1);
+  await expect(bandLine(page).locator("[data-attempt-badge]")).toHaveText("Fallback 1", { timeout: 5000 });
+  await expect(bandLine(page).locator("[data-attempt-model]")).toHaveText(SECOND.model);
+  await expect(bandLine(page).locator("[data-attempt-count]")).toHaveText("attempt 2/2");
+});
+
+test("a tab opened in the middle of the step says the candidate at once, whichever tab runs the book", async ({ page }) => {
+  const run = await begin(page, {
+    a: { kind: "error", status: 404, message: "The model `model-a` does not exist or you do not have access to it." },
+    b: { kind: "slow", ms: 25_000 },
+  });
+  await expect(bandLine(page).locator("[data-attempt-badge]")).toHaveText("Fallback 1", { timeout: 30_000 });
+  const before = run.timeline.length;
+
+  // The run belongs to the first tab; the second opens now, while the fallback is still answering, and is told what the first one shows.
+  const second = await page.context().newPage();
+  second.on("dialog", (dialog) => { void dialog.accept(); });
+  await second.goto(`app/books/${BOOK.id}/autopilot`, { waitUntil: "domcontentloaded" });
+  await expect(bandLine(second).locator("[data-attempt-badge]")).toHaveText("Fallback 1", { timeout: 10_000 });
+  await expect(bandLine(second).locator("[data-attempt-model]")).toHaveText(SECOND.model);
+  await expect(bandLine(second).locator("[data-attempt-integration]")).toHaveText(SECOND.name);
+  expect(run.timeline.length, "no new request was made for it: the second tab only asked the first").toBe(before);
+});
+
+test("after «Swap with…» the live panel says that the model the run asks now is the new primary", async ({ page }) => {
+  const run = await begin(page, { delayMs: 1500, thinkingA: "high", thinkingB: "low" });
+  await expect.poll(() => run.timeline.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  await openRouter(page);
+  await swap(page);
+  await expect.poll(() => order(run), { timeout: 30_000, message: "the run asks B after the swap" }).toMatch(/B/);
+  // On a page that is not the autopilot's the live panel has the card of the book: the primary is now B, with its own thinking.
+  await page.getByRole("button", { name: /^Show what the autopilot is doing/ }).click();
+  const card = page.locator("[data-dock-book] [data-band-attempt]");
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  await expect(card.locator("[data-attempt-badge]")).toHaveText("Primary");
+  await expect(card.locator("[data-attempt-model]")).toHaveText(SECOND.model);
+  await expect(card.locator("[data-attempt-integration]")).toHaveText(SECOND.name);
+  await expect(card.locator("[data-attempt-thinking]")).toHaveText("Thinking: Low");
 });

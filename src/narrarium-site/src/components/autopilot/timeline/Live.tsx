@@ -1,6 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
+import { AttemptNow } from "@/components/autopilot/band/Attempt";
 import { ModelAnswering } from "@/components/autopilot/band/parts";
 import { cutAtTop } from "@/components/autopilot/live/StreamLines";
 import { taskElementId } from "@/autopilot/liveText";
@@ -14,7 +15,7 @@ import { cn } from "@/lib/utils";
  * band says them, once. It follows the store by itself, so that the list under it is not drawn again for every chunk of text, and it is not a live
  * region: nothing in it is read out as it comes.
  *
- * It is there for as long as a step runs, with the anchor of the step (`#task-<id>`): the lines of the mini-player, of the band and of the page of every
+ * It says which candidate of the AI Router the step asks now (`AttemptNow`). It is there for as long as a step runs, with the anchor of the step (`#task-<id>`): the lines of the mini-player, of the band and of the page of every
  * book lead here, and it takes the focus they send. The text is in it when there is more of it than the band above it shows (`shownAbove`). When the step it holds is over while it has the focus, `onFocusLost` says so, and the timeline gives
  * the focus to the step's row, which takes its place. Under it, the messages the step exchanges with the AI, behind a button; when the step is over
  * with them open, `onCallsLost` says so, and the row opens on them.
@@ -70,6 +71,7 @@ export const TimelineLive = memo(function TimelineLive({ bookId, shownAbove = 0,
         <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />
         {t("autopilot.timeline.live")}
       </p>
+      <AttemptNow bookId={bookId} />
       {activity.reason && <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground/80">{t("autopilot.why")}:</span> {activity.reason}</p>}
       {activity.next && <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground/80">{t("autopilot.next")}:</span> {activity.next}</p>}
       {text && (

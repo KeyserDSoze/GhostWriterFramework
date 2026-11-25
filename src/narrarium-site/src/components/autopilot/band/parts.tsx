@@ -9,6 +9,7 @@ import { STATUS_BADGE, activityTitle, formatAgo, formatBytes, formatCost, format
 import { waitLineText, type RetryWait } from "@/autopilot/retry";
 import { lastSignalAt, useAutopilotStore } from "@/autopilot/store";
 import { useTextDetail } from "@/autopilot/useLiveText";
+import { AttemptNow } from "@/components/autopilot/band/Attempt";
 import { StreamLines } from "@/components/autopilot/live/StreamLines";
 import { cn } from "@/lib/utils";
 
@@ -154,9 +155,10 @@ function WaitText({ wait }: { wait: RetryWait }) {
  * What the autopilot does now: the title of the step, where in the book it is and how long it has gone on, as the one status of the band that is
  * announced (it changes when the step does). It follows the activity of the store, which stays the same object while the text streams. While the run
  * waits to try a failed step again (`wait`) it says so in one line: which retry, or which restart and not before when. `countdown` adds the time left
- * of a quick wait, in a timer of its own, where nothing else says it (the mini-player: on the page the error panel counts down).
+ * of a quick wait, in a timer of its own, where nothing else says it (the mini-player: on the page the error panel counts down). Under the title, the candidate of the
+ * AI Router that the call asks now (`AttemptNow`), unless `model` is off: the band keeps it beside the cost.
  */
-export const StepNow = memo(function StepNow({ bookId, compact = false, showPreview = true, announce = true, hideElapsed = false, wait = null, countdown = false }: { bookId: string; compact?: boolean; showPreview?: boolean; announce?: boolean; hideElapsed?: boolean; wait?: RetryWait | null; countdown?: boolean }) {
+export const StepNow = memo(function StepNow({ bookId, compact = false, showPreview = true, announce = true, hideElapsed = false, wait = null, countdown = false, model = true }: { bookId: string; compact?: boolean; showPreview?: boolean; announce?: boolean; hideElapsed?: boolean; wait?: RetryWait | null; countdown?: boolean; model?: boolean }) {
   const { t } = useTranslation();
   const activity = useAutopilotStore((state) => state.live[bookId]?.activity ?? null);
   const step = wait ? null : activity;
@@ -172,6 +174,7 @@ export const StepNow = memo(function StepNow({ bookId, compact = false, showPrev
         {step && !hideElapsed && <ElapsedTime since={step.startedAt} />}
         {wait && countdown && !wait.long && <WaitLeft at={wait.at} />}
       </div>
+      {model && !wait && <AttemptNow bookId={bookId} compact={compact} />}
       {!compact && showPreview && !wait && <NowText bookId={bookId} />}
       {!wait && <ModelAnswering bookId={bookId} short={compact} />}
     </div>
@@ -286,9 +289,10 @@ export const CycleList = memo(function CycleList({ cycle }: { cycle: ChapterCycl
 
 /**
  * What it costs and how much it uses, in one line: the cost against the budget (a bar when there is one), the tokens, the calls, and the notices of the
- * calls the totals cannot be sure of. The reasons for those notices are one click away, so that the line stays a line.
+ * calls the totals cannot be sure of. The reasons for those notices are one click away, so that the line stays a line. While a step runs, `step` is what it has spent so
+ * far beside the total, when the activity says it (`stepSpendOf`: the engine says it once the step ends, so today there is none to show).
  */
-export const UsageLine = memo(function UsageLine({ summary, options, currency, className }: { summary: AutopilotStateSummary; options: AutopilotOptions | null; currency: string | undefined; className?: string }) {
+export const UsageLine = memo(function UsageLine({ summary, options, currency, className, step = null }: { summary: AutopilotStateSummary; options: AutopilotOptions | null; currency: string | undefined; className?: string; step?: { cost: number } | null }) {
   const { t } = useTranslation();
   const { stats } = summary;
   const use = budgetUse(stats, options);
@@ -301,6 +305,7 @@ export const UsageLine = memo(function UsageLine({ summary, options, currency, c
         <span className="font-semibold tabular-nums">
           {use.cost.limit !== null ? t("autopilot.band.usage.costOf", { value: formatCost(use.cost.value, currency), budget: formatCost(use.cost.limit, currency) }) : formatCost(use.cost.value, currency)}
         </span>
+        {step && <span data-band-step-cost className="tabular-nums text-muted-foreground">({t("autopilot.band.usage.step", { value: formatCost(step.cost, currency) })})</span>}
         {use.cost.limit !== null && use.cost.ratio !== null && <ProgressBar label={t("autopilot.band.usage.costBar")} now={use.cost.value} max={use.cost.limit} valueText={t("autopilot.band.usage.costOf", { value: formatCost(use.cost.value, currency), budget: formatCost(use.cost.limit, currency) })} className="w-16" thin />}
       </span>
       <span className="inline-flex items-center gap-2">

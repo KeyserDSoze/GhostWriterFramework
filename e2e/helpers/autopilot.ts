@@ -134,6 +134,8 @@ export interface RoutedIntegration {
   url: string;
   /** The context window of its model, in tokens: absent, the model has none declared. */
   window?: number;
+  /** The thinking level of the integration (`low`, `medium`, `high`, `xhigh` or `automatic`): absent, none is chosen. */
+  thinking?: string;
 }
 
 /**
@@ -148,6 +150,7 @@ export function routedSettingsOf(first: RoutedIntegration, second: RoutedIntegra
     endpoint: entry.url,
     apiKey: KEY,
     streamMode: "off",
+    ...(entry.thinking ? { thinking: entry.thinking } : {}),
     chatModels: [{ id: entry.model, name: entry.model, capabilities: TEXT_TASKS, supportsToolCalls: true, supportsStreaming: false, ...(entry.window ? { maxInputTokens: entry.window } : {}) }],
   });
   const target = (entry: RoutedIntegration) => ({ integrationId: entry.id, model: entry.model });

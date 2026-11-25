@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { applyLiveProgress, normalizeLive, startLive } from "narrarium-engine";
+import { applyLiveAttempt, applyLiveProgress, normalizeLive, startLive } from "narrarium-engine";
 import type { AutopilotEvent, AutopilotLive, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, FrozenAction, FrozenChangeKind, InterventionInput, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
 import type { HandoverPlan, HandoverSide } from "@/autopilot/handover";
 import type { BookOperation } from "@/autopilot/operations";
@@ -69,10 +69,10 @@ export interface FeedEntry {
 }
 
 /**
- * What the panels show of the step that runs: the engine's live part (`AutopilotLive`), changed by the engine's one rule (`applyLiveProgress`), as the
- * session's `snapshot().live` is. The text of a call (its prose, or the JSON of a structured reply, `json`) never goes back to nothing until the call
- * ends, its count never goes down within an attempt, the bytes of a structured reply say «answering» only while it has no text, and a new call of
- * the step starts from nothing.
+ * What the panels show of the step that runs: the engine's live part (`AutopilotLive`), changed by the engine's one rule (`applyLiveProgress`, and
+ * `applyLiveAttempt` for the candidate of the route that the call asks, `trying`), as the session's `snapshot().live` is. The text of a call (its prose, or the
+ * JSON of a structured reply, `json`) never goes back to nothing until the call ends, its count never goes down within an attempt, the bytes of a structured
+ * reply say «answering» only while it has no text, and a new call of the step starts from nothing.
  */
 export type LivePreview = AutopilotLive;
 
@@ -120,6 +120,8 @@ interface AutopilotStoreState {
   setWhereIntent: (intent: WhereIntent | null) => void;
   patchView: (bookId: string, patch: Partial<BookAutopilotView>) => void;
   ingest: (event: AutopilotEvent, bookTitle: string) => void;
+  /** What another tab that runs the book says of its step (the live part, read as any live part from elsewhere): kept only while this tab follows no step of the book. */
+  seedLive: (bookId: string, live: unknown) => void;
   setServer: (patch: Partial<ServerConnectionState>) => void;
   clearFeed: () => void;
 }
@@ -155,7 +157,7 @@ function initialDockOpen(): boolean {
  * part, so that what it writes is shown again at once and the events that follow go on from it. Nothing when the panels follow a step already, when
  * the snapshot says nothing runs, or when the events said that step ended.
  */
-function liveFromSnapshot(state: Pick<AutopilotStoreState, "live" | "feed">, bookId: string, snapshot: AutopilotSnapshot | null): LivePreview | null {
+function liveFromSnapshot(state: Pick<AutopilotStoreState, "live" | "feed">, bookId: string, snapshot: Pick<AutopilotSnapshot, "running" | "live"> | null): LivePreview | null {
   if (!snapshot?.running || state.live[bookId]) return null;
   const live = normalizeLive(snapshot.live);
   if (!live || live.activity.status !== "running") return null;
@@ -221,10 +223,11 @@ export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
   ingest: (event, bookTitle) => set((state) => {
     signals.set(event.bookId, Date.now());
     if (event.type === "run-ended") runEnds.set(event.bookId, { status: event.status, message: event.message ?? null, ...(event.code ? { code: event.code } : {}), at: Date.now() });
-    if (event.type === "task-progress") {
+    // What a call is writing, and which candidate of the route it asks, only change the live part: neither is an entry of the feed.
+    if (event.type === "task-progress" || event.type === "call-attempt") {
       const current = state.live[event.bookId];
       if (!current || current.activity.id !== event.activityId) return {};
-      const next = applyLiveProgress(current, event);
+      const next = event.type === "call-attempt" ? applyLiveAttempt(current, event) : applyLiveProgress(current, event);
       return next === current ? {} : { live: { ...state.live, [event.bookId]: next } };
     }
     if (event.type === "state") return { summaries: { ...state.summaries, [event.bookId]: event.state } };
@@ -233,6 +236,10 @@ export const useAutopilotStore = create<AutopilotStoreState>()((set) => ({
     else if (event.type === "task-finished" || event.type === "run-ended") live = { ...live, [event.bookId]: null };
     const duplicate = state.feed.some((entry) => entry.event.bookId === event.bookId && entry.event.seq === event.seq && entry.event.at === event.at);
     return { live, feed: duplicate ? state.feed : [...state.feed, { event, bookTitle }].slice(-MAX_FEED) };
+  }),
+  seedLive: (bookId, value) => set((state) => {
+    const seeded = liveFromSnapshot(state, bookId, { running: true, live: value as LivePreview | null });
+    return seeded ? { live: { ...state.live, [bookId]: seeded } } : {};
   }),
   setServer: (patch) => set((state) => ({ server: { ...state.server, ...patch } })),
   clearFeed: () => set({ feed: [] }),
@@ -300,6 +307,9 @@ export type AutopilotChannelMessage =
   | { kind: "server-state-request"; stream: string }
   | { kind: "server-reconnect"; stream: string }
   | { kind: "server-reconnected"; stream: string }
+  /** A tab that opened while another one runs the book asks what it shows of the step (the candidate of the route the call asks included): the tab that runs the book answers with `live`. */
+  | { kind: "live-request"; bookId: string }
+  | { kind: "live"; bookId: string; live: LivePreview }
   | { kind: "synced"; bookId: string; sync: BookSyncStatus };
 
 /** The bits of `BroadcastChannel` the runtime uses. */
@@ -316,6 +326,7 @@ export function autopilotChannel(): BroadcastChannel | null {
   channel?.addEventListener("message", (message: MessageEvent<AutopilotChannelMessage>) => {
     const data = message.data;
     if (data?.kind === "event" && data.event && typeof data.event.bookId === "string") useAutopilotStore.getState().ingest(data.event, data.bookTitle);
+    else if (data?.kind === "live" && typeof data.bookId === "string") useAutopilotStore.getState().seedLive(data.bookId, data.live);
   });
   return channel;
 }

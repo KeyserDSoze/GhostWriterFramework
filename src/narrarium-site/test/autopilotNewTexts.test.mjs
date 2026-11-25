@@ -185,8 +185,9 @@ test("the texts of the control band, the tabs, the danger zone and the mini-play
     assert.deepEqual(placeholders(get(autopilotIt, key)), placeholders(get(autopilotEn, key)), key);
   }
   for (const tree of trees) assert.deepEqual(leaves(get(autopilotIt, tree), tree).sort(), leaves(get(autopilotEn, tree), tree).sort(), `${tree}: the same texts in both languages`);
-  // A name and its context (“Chapters approved — Autopilot live”) is only a form to fill in, and reads the same in both languages.
-  const forms = new Set(["autopilot.band.named"]);
+  // A name and its context (“Chapters approved — Autopilot live”) is only a form to fill in, and reads the same in both languages. So do the words of the router that the Italian interface
+  // keeps as they are, with the number or the level to fill in: «Fallback 1» and «Thinking: High» (the AI Router says «Imposta prima il fallback 1» and «Thinking per …»).
+  const forms = new Set(["autopilot.band.named", "autopilot.band.attempt.fallback", "autopilot.band.attempt.thinking"]);
   const same = keys.filter((key) => !forms.has(key) && get(autopilotIt, key) === get(autopilotEn, key) && get(autopilotEn, key).length > 12);
   assert.deepEqual(same, [], "texts copied from English");
 });

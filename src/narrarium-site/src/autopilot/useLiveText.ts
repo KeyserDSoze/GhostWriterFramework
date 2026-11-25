@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AutopilotActivity } from "narrarium-engine";
+import { candidateKey, fallbackSentence } from "@/autopilot/attemptModel";
 import { activityTitle } from "@/autopilot/format";
 import { LAST_DONE, PoliteAnnouncer, STREAM_THROTTLE_MS, latestFinished, listenToLiveVoice } from "@/autopilot/liveText";
 import { useAutopilotStore, type LivePreview } from "@/autopilot/store";
@@ -104,9 +105,10 @@ export function useLastDone(bookId: string, limit = LAST_DONE): AutopilotActivit
 }
 
 /**
- * What the polite status of a surface says about the autopilot of some books: that a step is answering, that its answer is complete (with its
- * characters) and the step done, or that it failed or was cancelled. At most one message every ten seconds (`PoliteAnnouncer`); never the text
- * that streams. `nameOf` names the book of each message, where several books are followed (the page of every book).
+ * What the polite status of a surface says about the autopilot of some books: that a step is answering, that a call went on to a fallback (once for each fallback of a
+ * step: the primary is the usual, and a status that said it at every call would never stop), that its answer is complete (with its characters) and the step done, or that it
+ * failed or was cancelled. At most one message every ten seconds (`PoliteAnnouncer`); never the text that streams. `nameOf` names the book of each message, where several
+ * books are followed (the page of every book).
  */
 export function useStreamAnnouncements(bookIds: readonly string[], nameOf?: (bookId: string) => string | undefined): string {
   const { t, i18n } = useTranslation();
@@ -124,6 +126,8 @@ export function useStreamAnnouncements(bookIds: readonly string[], nameOf?: (boo
       reset = setTimeout(() => setMessage(text), 60);
     }, undefined, () => performance.now());
     const answered = new Set<string>();
+    // The fallback each step was last said to go on to.
+    const fallbacks = new Map<string, string>();
     // The most each step has written in one of its calls: a step whose last call is short (the summary of the scene it wrote) is said with what it wrote.
     const written = new Map<string, number>();
     const say = (bookId: string, text: string) => {
@@ -139,6 +143,7 @@ export function useStreamAnnouncements(bookIds: readonly string[], nameOf?: (boo
         if (now) written.set(now.activity.id, Math.max(written.get(now.activity.id) ?? 0, now.characters));
         if (before && (!now || now.activity.id !== before.activity.id)) {
           answered.delete(before.activity.id);
+          fallbacks.delete(before.activity.id);
           const characters = Math.max(written.get(before.activity.id) ?? 0, before.characters);
           written.delete(before.activity.id);
           const finished = [...state.feed].reverse().find((entry) => entry.event.bookId === bookId && entry.event.type === "task-finished" && entry.event.activity.id === before.activity.id)?.event;
@@ -157,6 +162,10 @@ export function useStreamAnnouncements(bookIds: readonly string[], nameOf?: (boo
         if (now && !answered.has(now.activity.id) && (now.characters > 0 || now.bytes !== undefined)) {
           answered.add(now.activity.id);
           announcer.push(say(bookId, t("autopilot.liveText.say.answering")), 1);
+        }
+        if (now?.trying?.fallback && now.trying !== before?.trying && fallbacks.get(now.activity.id) !== candidateKey(now.trying)) {
+          fallbacks.set(now.activity.id, candidateKey(now.trying));
+          announcer.push(say(bookId, fallbackSentence(t, now.trying)), 2);
         }
       }
     });

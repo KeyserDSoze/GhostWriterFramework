@@ -59,6 +59,11 @@ describe("the doc of the autopilot says what the page does with what the engine 
     for (const word of ["task-progress", "The model is answering", "shows the JSON of its reply as it streams", "applyLiveProgress", "callSeq"]) expect(doc, word).toContain(word);
   });
 
+  it("says which candidate of the router the step asks now: the event, the rule that every host follows, the line, where it is, what an older host shows and the polite status", () => {
+    const page = section("Where it runs");
+    for (const word of ["call-attempt", "live.trying", "applyLiveAttempt", "AttemptNow", "Primary", "Fallback N", "Thinking: not sent", "attempt 2/3", "live-request", "seedLive", "stepSpendOf", "no placeholder and no error", "once for each fallback"]) expect(page, word).toContain(word);
+  });
+
   it("says that the verdict of a round and the beginning of the working time come from the engine, with a fallback", () => {
     for (const word of ["rounds[].verdict", "stats.workedMsSince"]) expect(doc, word).toContain(word);
   });
