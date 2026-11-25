@@ -3,7 +3,7 @@ const REDACTED = "[redacted]";
 
 const BEARER = /\bBearer\s+[A-Za-z0-9._~+/=-]{6,}/gi;
 const CREDENTIAL_ASSIGNMENT = /(\b(?:api[-_ ]?key|x-api-key|apikey|authorization|access[-_]?token|client[-_]?secret)\b["']?\s*[:=]\s*["']?)(?:Bearer\s+)?[^\s"',;}&]{3,}/gi;
-const QUERY_CREDENTIAL = /([?&](?:api[-_]?key|apikey|key|access[-_]?token|token|auth)=)[^&\s"']+/gi;
+const QUERY_CREDENTIAL = /([?&](?:api[-_]?key|apikey|key|access[-_]?token|token|auth|sig|signature|sas|x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature)=)[^&\s"']+/gi;
 const SECRET_KEY = /\bsk-[A-Za-z0-9_-]{8,}/g;
 const GITHUB_TOKEN = /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g;
 const GOOGLE_KEY = /\bAIza[0-9A-Za-z_-]{30,}/g;

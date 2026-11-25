@@ -1,4 +1,4 @@
-import { normalizeReasoningParameter, normalizeThinking, type AiChatModelConfig, type AiIntegrationConfig, type AiPricingConfig, type AiReasoningParameter, type AiRouteTarget, type AiRuntimeConfig, type AiThinking } from "./config.js";
+import { normalizeReasoningParameter, normalizeThinking, type AiChatModelConfig, type AiNoThinkingWithTools, type AiIntegrationConfig, type AiPricingConfig, type AiReasoningParameter, type AiRouteTarget, type AiRuntimeConfig, type AiThinking } from "./config.js";
 import type { AiUnusableWhy } from "./types.js";
 
 export interface AiCandidate {
@@ -15,6 +15,8 @@ export interface AiCandidate {
   supportsVision?: boolean;
   /** How the model's thinking level is sent (see `AiChatModelConfig.reasoningParameter`); absent when the model does not say: `reasoning_effort`. */
   reasoningParameter?: AiReasoningParameter;
+  /** The model refuses thinking when the request carries tools, and how it is asked then (see `AiChatModelConfig.noThinkingWithTools`): configured, or learned by a call of this host. */
+  noThinkingWithTools?: AiNoThinkingWithTools;
   /** The model's own API version (see `AiChatModelConfig.apiVersion`); absent: its integration's. `effectiveApiVersion(candidate.integration, candidate)` says which is used. */
   apiVersion?: string;
   /**
@@ -53,6 +55,7 @@ function candidate(integration: AiIntegrationConfig, model: AiChatModelConfig, t
     ...(typeof model.supportsReasoning === "boolean" ? { supportsReasoning: model.supportsReasoning } : {}),
     ...(typeof model.supportsVision === "boolean" ? { supportsVision: model.supportsVision } : {}),
     ...(reasoningParameter ? { reasoningParameter } : {}),
+    ...(model.noThinkingWithTools === true || model.noThinkingWithTools === "none" ? { noThinkingWithTools: model.noThinkingWithTools } : {}),
     ...(apiVersion ? { apiVersion } : {}),
     ...(thinking ? { thinking } : {}),
   };

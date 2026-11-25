@@ -17,7 +17,7 @@ const BOOK = "b";
 const KEY = "zzkey-7f3a91c2b8d44e0f9a1b";
 /** A quarter of the engine's own pace (4 s for the first retry, 12 s for the second…), with no jitter: the first retry waits 750 ms, and the Retry-After of the provider counts a quarter as well. */
 const PACE = { retryDelayMs: 1000, random: () => 0 };
-const ALLOWED_DETAIL = ["attempt", "endpoint", "integration", "model", "provider", "retries", "retryAfterMs", "route", "status"];
+const ALLOWED_DETAIL = ["attempt", "body", "endpoint", "integration", "model", "provider", "retries", "retryAfterMs", "route", "status"];
 
 const stateText = (server, file = "state.json") => readFile(path.join(server.data.bookDirectory(BOOK), "autopilot", file), "utf8");
 const succeeded = (activities) => activities.filter((activity) => activity.status === "succeeded");
@@ -158,7 +158,9 @@ test("S5: a failed attempt that is retried says its kind and where it happened, 
     assert.equal(activity.errorKind, "rate_limit");
     // The fields are those of the last candidate the call asked, which here is the only one: the route (engine 0.1.17) says it as the step it was.
     const { route, ...fields } = activity.errorDetail;
-    assert.deepEqual(fields, { status: 429, endpoint: origin, model: "gpt-test", provider: "openai", integration: "p", ...(retryAfter[index] === undefined ? {} : { retryAfterMs: retryAfter[index] }), attempt: 1, retries: 3 }, "the retry it belongs to is the first of three, and the Retry-After of the provider is there when it gave one");
+    // What the provider answered (engine 0.1.19), in its own words with the key it quoted taken out.
+    const body = { status: 429, shape: "openai", message: "Rate limit reached for the key [redacted]: slow down." };
+    assert.deepEqual(fields, { status: 429, endpoint: origin, body, model: "gpt-test", provider: "openai", integration: "p", ...(retryAfter[index] === undefined ? {} : { retryAfterMs: retryAfter[index] }), attempt: 1, retries: 3 }, "the retry it belongs to is the first of three, and the Retry-After of the provider is there when it gave one");
     assert.deepEqual(route.map((step) => [step.position, step.integrationId, step.integrationName, step.model, step.outcome, step.status]), [[0, "p", "Local provider", "gpt-test", "failed", 429]], "the one candidate that was asked, as it ended");
     assert.equal(JSON.stringify(route).includes(KEY), false, "no key in the route");
     assert.ok(AUTOPILOT_ERROR_KINDS.includes(activity.errorKind));
@@ -289,7 +291,9 @@ test("S5: an error that ends the run puts its kind and detail in `lastError`, in
   assert.equal(snapshot.state.status, "error");
   // The fields are the last candidate's, and the route (engine 0.1.17) is every candidate that was asked: here the one, as it ended.
   const { route, ...fields } = snapshot.state.lastError.errorDetail;
-  assert.deepEqual(fields, { status: 401, endpoint: origin, model: "gpt-test", provider: "openai", integration: "p" }, "the detail says only the origin of the address; a failure that is never retried has no retry in it");
+  // What the provider answered (engine 0.1.19), in its own words with the key it quoted taken out.
+  const body = { status: 401, shape: "openai", message: "Incorrect API key provided: [redacted]. You can find your API key at https://platform.openai.com/account/api-keys.", type: "invalid_request_error", code: "invalid_api_key" };
+  assert.deepEqual(fields, { status: 401, endpoint: origin, body, model: "gpt-test", provider: "openai", integration: "p" }, "the detail says only the origin of the address; a failure that is never retried has no retry in it");
   assert.deepEqual(route.map((step) => [step.position, step.integrationId, step.model, step.outcome, step.status, step.endpoint]), [[0, "p", "gpt-test", "failed", 401, origin]], "the route has the only candidate, with the origin too");
   const detail = { ...fields, route };
   assert.notEqual(url, origin, "the provider's address has a path (/v1) …");

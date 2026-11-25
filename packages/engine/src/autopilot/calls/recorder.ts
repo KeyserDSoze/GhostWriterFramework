@@ -1,4 +1,5 @@
 import type { AutopilotTaskKind, AutopilotTransportDetail } from "../types.js";
+import { clipWithEllipsis, normalizeErrorBody } from "../../ai/provider-error.js";
 import { redactSecrets } from "../../ai/redact.js";
 import type { AiCallStore } from "./port.js";
 import { cutHead, endsWithHighSurrogate, suffixStart, utf8Length } from "./utf8.js";
@@ -437,10 +438,11 @@ export class CallRecorder {
       error: attempt.error
         ? {
             name: this.short(attempt.error.name) ?? "Error",
-            message: clip(this.redact(attempt.error.message ?? ""), AI_CALL_ERROR_CHARACTERS),
+            message: clipWithEllipsis(this.redact(attempt.error.message ?? ""), AI_CALL_ERROR_CHARACTERS),
             status: number(attempt.error.status),
             transient: attempt.error.transient === true,
             timedOut: attempt.error.timedOut === true,
+            ...(normalizeErrorBody(attempt.error.body, (value) => this.redact(value)) ? { body: normalizeErrorBody(attempt.error.body, (value) => this.redact(value)) } : {}),
           }
         : null,
       partialCharacters: number(attempt.partialCharacters),

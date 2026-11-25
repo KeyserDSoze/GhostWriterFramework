@@ -1,5 +1,11 @@
 export type AiProviderKind = "azure_openai" | "openai" | "github_models" | "m365_copilot";
 
+/**
+ * How a model is asked without thinking when the request carries function tools (`AiChatModelConfig.noThinkingWithTools`): `true` leaves the level out of the request (a model of the GPT-5.6 family still
+ * reasons then), `"none"` sends `reasoning_effort: "none"` (the GPT-6 models that take function tools on Chat Completions refuse a request that leaves the level out, and take `none`).
+ */
+export type AiNoThinkingWithTools = true | "none";
+
 /** The Azure OpenAI API version used when an integration does not name one. */
 export const DEFAULT_AZURE_API_VERSION = "2024-10-21";
 
@@ -51,6 +57,12 @@ export interface AiChatModelConfig {
    * `suggestedReasoningParameter` says what the documented sources know of a model name; the engine never applies it by itself.
    */
   reasoningParameter?: AiReasoningParameter;
+  /**
+   * The model refuses a thinking level when the request carries function tools («Function tools with reasoning_effort are not supported for gpt-6-luna…»): a request with tools is asked without thinking,
+   * and a request without tools keeps its level. `true` leaves the level out of the request; `"none"` sends `reasoning_effort: "none"`, for a model that refuses a request with tools that leaves it out
+   * (the GPT-6 models that take function tools on Chat Completions do). The author sets it, and the engine learns it from the refusal (`AiModelMemory`) when the provider says so. Any other value is no value.
+   */
+  noThinkingWithTools?: AiNoThinkingWithTools;
   /**
    * The API version this model's requests carry (Azure OpenAI's `api-version`): each deployment may need its own. Absent or empty: the integration's `apiVersion`, else
    * `DEFAULT_AZURE_API_VERSION`. `effectiveApiVersion` is the one place that says which is used; it only has an effect for an Azure OpenAI integration.
@@ -271,6 +283,7 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
         ...(typeof model.supportsReasoning === "boolean" ? { supportsReasoning: model.supportsReasoning } : {}),
         ...(typeof model.supportsVision === "boolean" ? { supportsVision: model.supportsVision } : {}),
         ...reasoningParameterOf(model.reasoningParameter),
+        ...(model.noThinkingWithTools === true || model.noThinkingWithTools === "none" ? { noThinkingWithTools: model.noThinkingWithTools } : {}),
         ...(text(model.apiVersion) ? { apiVersion: text(model.apiVersion) } : {}),
         maxInputTokens: positive(model.maxInputTokens),
         maxOutputTokens: positive(model.maxOutputTokens),
@@ -348,6 +361,8 @@ export interface RedactedAiModel {
   supportsVision?: boolean;
   /** How the thinking level reaches the model, when the model says (absent: `reasoning_effort`). */
   reasoningParameter?: AiReasoningParameter;
+  /** Whether the model refuses thinking when the request carries tools, and how it is asked then (see `AiChatModelConfig.noThinkingWithTools`); absent: it does not, as far as is known. */
+  noThinkingWithTools?: AiNoThinkingWithTools;
   /** The API version of the model, when it names its own (Azure OpenAI): absent, it takes the integration's. */
   apiVersion?: string;
   maxInputTokens?: number;
@@ -400,6 +415,7 @@ function redactedModel(model: AiChatModelConfig): RedactedAiModel {
     ...(supportsReasoning !== undefined ? { supportsReasoning } : {}),
     ...(supportsVision !== undefined ? { supportsVision } : {}),
     ...reasoningParameterOf(model.reasoningParameter),
+    ...(model.noThinkingWithTools === true || model.noThinkingWithTools === "none" ? { noThinkingWithTools: model.noThinkingWithTools } : {}),
     ...(text(model.apiVersion) ? { apiVersion: text(model.apiVersion) } : {}),
     ...(maxInputTokens !== undefined ? { maxInputTokens } : {}),
     ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),

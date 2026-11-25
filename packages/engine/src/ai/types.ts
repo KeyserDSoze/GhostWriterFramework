@@ -1,4 +1,6 @@
 import type { FetchAiAttempt, FetchAiAttemptEnd } from "./fetch-client.js";
+import type { AiModelLearning, AiModelMemory } from "./memory.js";
+import type { AiErrorBody } from "./provider-error.js";
 
 /** Function-calling schema used to request structured output. */
 export interface AiJsonSchema {
@@ -79,6 +81,10 @@ export interface AiRequest {
   onAttempt?: (attempt: FetchAiAttempt) => void;
   /** An attempt of this call ended, worked or not (the client's `onAttemptEnd`, for this call only). Never part of what is sent. */
   onAttemptEnd?: (end: FetchAiAttemptEnd) => void;
+  /** What the host remembers of its models between calls (see `AiModelMemory`): the client applies it to the request and tells it what a refusal teaches. Never part of what is sent. */
+  memory?: AiModelMemory;
+  /** This call learned something about a model (see `AiModelLearning`): said once, when the call learns it. Never part of what is sent. */
+  onLearned?: (learning: AiModelLearning) => void;
 }
 
 export interface AiResponse {
@@ -177,6 +183,8 @@ export interface AiRouteStep {
   durationMs?: number;
   /** What the provider or the engine said, cleaned of credentials and cut short. Absent for a candidate that was left out. */
   message?: string;
+  /** What the provider answered, in its own words (message, type, param, code and the status), when it refused the request: the whole of what `message` shortens. */
+  body?: AiErrorBody;
   /** For a timeout: which deadline ran out and how long it was, and whether it was the routing time that was left. */
   timeoutPhase?: AiTimeoutPhase;
   timeoutMs?: number;
@@ -232,6 +240,8 @@ export interface AiTransportDiagnostics {
 
 /** What a failed attempt already cost: the provider may bill a reply the engine rejects. */
 export interface AiProviderErrorDetails {
+  /** What the provider answered, in its own words: the status, and the message, type, param and code of its error (see `AiErrorBody`). Present on the failure of an HTTP request that was refused. */
+  body?: AiErrorBody;
   /** Where the request went. Set by the engine's client on the errors of the candidates it tried. */
   target?: AiErrorTarget;
   /** What the transport saw of the failed call (see `AiTransportDiagnostics`). */
@@ -275,6 +285,7 @@ export interface AiProviderErrorDetails {
 export const MAX_PARTIAL_CHARACTERS = 200_000;
 
 export class AiProviderError extends Error {
+  body?: AiErrorBody;
   target?: AiErrorTarget;
   transport?: AiTransportDiagnostics;
   partialText?: string;

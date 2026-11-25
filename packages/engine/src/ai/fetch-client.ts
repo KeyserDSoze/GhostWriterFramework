@@ -5,7 +5,9 @@ import { likelyTextTokens } from "./budget.js";
 import type { AiPricingConfig, AiRuntimeConfig, AiStreamMode } from "./config.js";
 import { resolveDeadlines, startClock, timeoutMessage, type DeadlineClock, type ExpiredDeadline, type ResolvedDeadlines } from "./deadlines.js";
 import { redactSecrets } from "./redact.js";
-import { attemptThinking, effectiveAiBase, endpointOrigin, type AiAttemptThinking, type AiReasoningEffort, type ChatRequest } from "./request.js";
+import type { AiModelLearning, AiModelMemory } from "./memory.js";
+import { describeErrorBody, errorBodyOfObject, parseErrorBody, refusesThinkingWithTools, suggestsResponsesApi, type AiErrorBody } from "./provider-error.js";
+import { attemptThinking, buildChatRequest, canSendNone, effectiveAiBase, endpointOrigin, type AiAttemptThinking, type AiReasoningEffort, type AiThinkingWhy, type ChatRequest } from "./request.js";
 import type { AiCandidate } from "./router.js";
 import { candidateBoundary, leftOutStep, planAttempts, sortedRoute, type PlannedAttempt } from "./routing.js";
 import { isEmptyToolArguments, splitReasoningBlock, structuredFromReply } from "./structured.js";
@@ -102,9 +104,11 @@ export interface FetchAiAttempt {
   /** "Tools only" was in force for this call: `false` only when the configuration turned it off. */
   toolsOnly: boolean;
   /** The thinking level the request carries: as `reasoning_effort`, or as the chat-template argument when `reasoningParameter` says so. Absent when none is sent (`automatic` sends nothing). */
-  thinking?: AiReasoningEffort;
+  thinking?: AiReasoningEffort | "none";
   /** What the request does of the thinking level in three words: the level that is sent, `automatic` (none chosen: the model decides) or `not-sent` (a level is chosen and the model does not take it). */
   thinkingMode: AiAttemptThinking;
+  /** Why a level that was chosen is not sent, when this request is what decided it: `tools`, the request carries function tools and the model refuses a level with them (set, or learned). Absent otherwise. */
+  thinkingWhy?: AiThinkingWhy;
   /** Where the level went, when it went in the chat-template argument (`chat_template_kwargs.reasoning_strength`, the model's "Thinking parameter"). Absent: it went as `reasoning_effort`, or no level was sent. */
   reasoningParameter?: "chat_template_kwargs.reasoning_strength";
   /**
@@ -147,6 +151,8 @@ export interface FetchAiAttemptEnd {
   text?: string;
   /** Why the attempt failed: the provider's message, already cleaned of credentials. */
   error?: string;
+  /** What the provider answered when it refused the request, in its own words: the status and the message, type, param and code of its error (see `AiErrorBody`). Absent for a failure that is not an answer. */
+  errorBody?: AiErrorBody;
   failureKind?: "timeout" | "cancelled" | "provider";
   status?: number;
   retryAfterMs?: number;
@@ -212,6 +218,10 @@ export interface FetchAiOptions {
   onAttempt?: (attempt: FetchAiAttempt) => void;
   /** An attempt ended, whether it worked or not: for costs and debug panels. Never breaks the call. */
   onAttemptEnd?: (end: FetchAiAttemptEnd) => void;
+  /** What this client's host remembers of its models between calls (see `AiModelMemory`); a call may bring its own (`AiRequest.memory`), which wins. */
+  memory?: AiModelMemory;
+  /** A call of this client learned something about a model (see `AiModelLearning`): said once, when it is learned. Never breaks the call. */
+  onLearned?: (learning: AiModelLearning) => void;
   /**
    * Whether the host is ending (a browser page that is being reloaded or closed). A request that fails while it is true failed because its host went away, not because its provider did: the
    * attempt is closed as cancelled and the call ends with that failure, and the next candidate is not asked (it would be sent the whole prompt, and billed, by a host that is no longer there).
@@ -261,6 +271,8 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
     async complete(request: AiRequest): Promise<AiResponse> {
       let startedAt = Date.now();
       const secrets = config.aiIntegrations.map((integration) => integration.apiKey);
+      // What the client's host remembers of its models applies to every call it makes, unless the call brings its own memory.
+      if (options.memory && !request.memory) request = { ...request, memory: options.memory };
       const plan = planAttempts(config, request, options.githubModelsBaseUrl);
       const skipped = plan.skipped.map((entry) => ({ model: entry.candidate.model, reason: entry.reason }));
       const decisions = new Map<string, boolean>();
@@ -273,103 +285,147 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
       let outOfTime = false;
       /** What became of every candidate of the route, as far as this call has gone: what the plan left out, and each attempt as it ends. */
       const steps: AiRouteStep[] = [...plan.leftOut];
-      for (const [at, attempt] of plan.attempts.entries()) {
+      /** The candidates asked so far: a candidate that is asked again (without a thinking level) is still one. */
+      let askedCandidates = 0;
+      for (const [at, planned] of plan.attempts.entries()) {
         request.signal?.throwIfAborted();
-        const { candidate } = attempt;
-        const integration = candidate.integration;
+        let attempt = planned;
+        const integration = planned.candidate.integration;
         const maxTotal = plan.limits.maxTotalDurationMs;
         // The first candidate runs for its own timeout whatever the total; the others start only while time remains.
-        if (tried > 0 && maxTotal !== undefined && maxTotal - (Date.now() - startedAt) <= 0) {
+        if (askedCandidates > 0 && maxTotal !== undefined && maxTotal - (Date.now() - startedAt) <= 0) {
           outOfTime = true;
           for (const rest of plan.attempts.slice(at)) steps.push(leftOutStep(rest.candidate, rest.index, "out-of-time", secrets, options.githubModelsBaseUrl));
           break;
         }
-        if (config.fallbackDisclosure?.requireAcknowledgement && candidateBoundary(candidate) !== candidateBoundary(lastSent)) {
-          const pair = `${candidateBoundary(lastSent)}>${candidateBoundary(candidate)}`;
+        if (config.fallbackDisclosure?.requireAcknowledgement && candidateBoundary(planned.candidate) !== candidateBoundary(lastSent)) {
+          const pair = `${candidateBoundary(lastSent)}>${candidateBoundary(planned.candidate)}`;
           let accepted = decisions.get(pair);
           if (accepted === undefined) {
             const asking = Date.now();
-            accepted = options.acknowledgeFallback ? (await options.acknowledgeFallback(fallbackTarget(lastSent), fallbackTarget(candidate), { capability: request.capability, label: request.label })) === true : false;
+            accepted = options.acknowledgeFallback ? (await options.acknowledgeFallback(fallbackTarget(lastSent), fallbackTarget(planned.candidate), { capability: request.capability, label: request.label })) === true : false;
             // The time a person takes to decide is not the call's time.
             startedAt += Date.now() - asking;
             decisions.set(pair, accepted);
           }
           if (!accepted) {
-            blocked.push({ candidate, from: lastSent, asked: Boolean(options.acknowledgeFallback) });
-            steps.push(leftOutStep(candidate, attempt.index, "not-acknowledged", secrets, options.githubModelsBaseUrl));
+            blocked.push({ candidate: planned.candidate, from: lastSent, asked: Boolean(options.acknowledgeFallback) });
+            steps.push(leftOutStep(planned.candidate, planned.index, "not-acknowledged", secrets, options.githubModelsBaseUrl));
             continue;
           }
         }
-        // The first candidate runs for its own deadlines whatever the total; a later one runs for the routing time that is left.
-        const deadlines = resolveDeadlines(integration, options, tried > 0 && maxTotal !== undefined ? maxTotal - (Date.now() - startedAt) : undefined);
+        // The first candidate runs for its own deadlines whatever the total; a later one runs for the routing time that is left (and the same candidate asked again runs for what its first request had).
+        const routingLeft = askedCandidates > 0 && maxTotal !== undefined ? () => maxTotal - (Date.now() - startedAt) : undefined;
+        /** The ways this candidate was asked without thinking, in order, because the provider refuses a level when the request carries function tools (see `nextWithoutThinking`). */
+        const withoutThinking: Array<"omit" | "none"> = [];
+        /** What its requests carried of the thinking, so far: the level (`level`), none of it (`omit`) or `none`: a way is never asked twice. */
+        const sent = new Set<string>();
+        /** What the provider said the first time it refused: what a model that then answers is learned from. */
+        let refusedWith: AiErrorBody | undefined;
+        for (;;) {
+          const { candidate } = attempt;
+          const deadlines = resolveDeadlines(integration, options, routingLeft?.());
 
-        const identity = { attemptId: randomId("attempt"), label: request.label, capability: request.capability, provider: integration.provider, model: candidate.model, integrationId: integration.id, index: attempt.index };
-        const attemptReport: FetchAiAttempt = {
-          ...identity,
-          integrationName: redactSecrets(integration.name, secrets),
-          candidates: plan.attempts.length + plan.leftOut.length,
-          attempt: tried + 1,
-          attempts: plan.attempts.length,
-          // Copies: a listener can never change what is sent.
-          messages: reportedMessages(attempt.built, request),
-          ...(attempt.built?.outputLimit ? { maxOutputTokens: attempt.built.outputLimit } : {}),
-          ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}),
-          stream: attempt.built?.stream ?? false,
-          tools: attempt.built?.useTools ?? false,
-          endpoint: effectiveAiBase(integration, options.githubModelsBaseUrl),
-          timeoutMs: deadlines.startMs,
-          timeouts: { startMs: deadlines.startMs, idleMs: deadlines.idleMs, capMs: deadlines.capMs, ...(deadlines.raisedFrom !== undefined ? { raised: { from: deadlines.raisedFrom } } : {}) },
-          streamMode: integration.streamMode === "off" ? "off" : "auto",
-          toolsOnly: config.toolsOnly !== false,
-          ...(attempt.built?.thinking ? { thinking: attempt.built.thinking } : {}),
-          thinkingMode: attemptThinking(candidate),
-          ...(attempt.built?.reasoningParameter ? { reasoningParameter: attempt.built.reasoningParameter } : {}),
-          ...(skipped.length ? { skipped: skipped.map((entry) => ({ ...entry })) } : {}),
-          ...(steps.some((step) => step.outcome === "left-out") ? { leftOut: sortedRoute(steps.filter((step) => step.outcome === "left-out")).map((step) => ({ ...step })) } : {}),
-          ...(attempt.built?.notes?.length ? { notes: [...attempt.built.notes] } : {}),
-        };
-        notify(options.onAttempt, attemptReport);
-        notify(request.onAttempt, attemptReport);
-        const attemptStarted = Date.now();
-        const trace: AttemptTrace = { startedAt: attemptStarted, streamed: false, toolSeen: false };
-        lastSent = candidate;
-        tried += 1;
-        try {
-          if (!attempt.built) throw attempt.buildError;
-          const response = await callCandidate(config, attempt, attempt.built, request, options, deadlines, secrets, trace, refusals);
-          const endReport: FetchAiAttemptEnd = {
+          const identity = { attemptId: randomId("attempt"), label: request.label, capability: request.capability, provider: integration.provider, model: candidate.model, integrationId: integration.id, index: attempt.index };
+          const attemptReport: FetchAiAttempt = {
             ...identity,
-            outcome: "ok",
-            usage: response.usage,
-            usageKnown: response.usageKnown ?? false,
-            cost: response.cost,
-            costKnown: response.costKnown ?? false,
-            currency: response.currency,
-            text: response.text,
-            ...replyTrace(trace, Boolean(request.json)),
-            ...(trace.transport ? { transport: trace.transport } : {}),
-            durationMs: Date.now() - attemptStarted,
+            integrationName: redactSecrets(integration.name, secrets),
+            candidates: plan.attempts.length + plan.leftOut.length,
+            attempt: tried + 1,
+            attempts: plan.attempts.length,
+            // Copies: a listener can never change what is sent.
+            messages: reportedMessages(attempt.built, request),
+            ...(attempt.built?.outputLimit ? { maxOutputTokens: attempt.built.outputLimit } : {}),
+            ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}),
+            stream: attempt.built?.stream ?? false,
+            tools: attempt.built?.useTools ?? false,
+            endpoint: effectiveAiBase(integration, options.githubModelsBaseUrl),
+            timeoutMs: deadlines.startMs,
+            timeouts: { startMs: deadlines.startMs, idleMs: deadlines.idleMs, capMs: deadlines.capMs, ...(deadlines.raisedFrom !== undefined ? { raised: { from: deadlines.raisedFrom } } : {}) },
+            streamMode: integration.streamMode === "off" ? "off" : "auto",
+            toolsOnly: config.toolsOnly !== false,
+            ...(attempt.built?.thinking ? { thinking: attempt.built.thinking } : {}),
+            thinkingMode: attemptThinking(candidate, attempt.built?.useTools ?? false),
+            ...(attempt.built?.thinkingWhy ? { thinkingWhy: attempt.built.thinkingWhy } : {}),
+            ...(attempt.built?.reasoningParameter ? { reasoningParameter: attempt.built.reasoningParameter } : {}),
+            ...(skipped.length ? { skipped: skipped.map((entry) => ({ ...entry })) } : {}),
+            ...(steps.some((step) => step.outcome === "left-out") ? { leftOut: sortedRoute(steps.filter((step) => step.outcome === "left-out")).map((step) => ({ ...step })) } : {}),
+            ...(attempt.built?.notes?.length ? { notes: [...attempt.built.notes] } : {}),
           };
-          notify(options.onAttemptEnd, endReport);
-          notify(request.onAttemptEnd, endReport);
-          return withSpent(response, spent);
-        } catch (error) {
-          // A host that is ending (a page that is reloaded) cancelled the request as much as the author did: its failure is not the provider's, and the prompt goes to no other candidate.
-          const interrupted = options.interrupted?.() === true;
-          const cancelled = (Boolean(request.signal?.aborted) && isAbortError(error)) || interrupted;
-          const failedReport = failedAttempt(identity, error, cancelled, deadlines.startMs, Date.now() - attemptStarted, secrets, replyTrace(trace, Boolean(request.json)));
-          notify(options.onAttemptEnd, failedReport);
-          notify(request.onAttemptEnd, failedReport);
-          if (cancelled) throw error;
-          const origin = endpointOrigin(effectiveAiBase(integration, options.githubModelsBaseUrl));
-          if (error instanceof AiProviderError && !error.target) {
-            error.target = { provider: integration.provider, model: candidate.model, integrationId: integration.id, ...(origin ? { endpoint: origin } : {}), ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}) };
+          notify(options.onAttempt, attemptReport);
+          notify(request.onAttempt, attemptReport);
+          const attemptStarted = Date.now();
+          const trace: AttemptTrace = { startedAt: attemptStarted, streamed: false, toolSeen: false };
+          lastSent = candidate;
+          tried += 1;
+          if (withoutThinking.length === 0) askedCandidates += 1;
+          sent.add(attempt.built?.thinking === "none" ? "none" : attempt.built?.thinking ? "level" : "omit");
+          try {
+            if (!attempt.built) throw attempt.buildError;
+            const response = await callCandidate(config, attempt, attempt.built, request, options, deadlines, secrets, trace, refusals);
+            const endReport: FetchAiAttemptEnd = {
+              ...identity,
+              outcome: "ok",
+              usage: response.usage,
+              usageKnown: response.usageKnown ?? false,
+              cost: response.cost,
+              costKnown: response.costKnown ?? false,
+              currency: response.currency,
+              text: response.text,
+              ...replyTrace(trace, Boolean(request.json)),
+              ...(trace.transport ? { transport: trace.transport } : {}),
+              durationMs: Date.now() - attemptStarted,
+            };
+            notify(options.onAttemptEnd, endReport);
+            notify(request.onAttemptEnd, endReport);
+            // The model answered when it was asked without thinking: that is what is learned of it, once. A model that no way answered is learned nothing of.
+            if (refusedWith && withoutThinking.length) {
+              const learning: AiModelLearning = { kind: "no-thinking-with-tools", integrationId: integration.id, integrationName: redactSecrets(integration.name, secrets), model: candidate.model, off: withoutThinking[withoutThinking.length - 1], body: refusedWith };
+              try {
+                request.memory?.learn(learning);
+              } catch {
+                // A host's memory must never break a call.
+              }
+              notify(request.onLearned, learning);
+              notify(options.onLearned, learning);
+            }
+            return withSpent(response, spent);
+          } catch (error) {
+            // A host that is ending (a page that is reloaded) cancelled the request as much as the author did: its failure is not the provider's, and the prompt goes to no other candidate.
+            const interrupted = options.interrupted?.() === true;
+            const cancelled = (Boolean(request.signal?.aborted) && isAbortError(error)) || interrupted;
+            const failedReport = failedAttempt(identity, error, cancelled, deadlines.startMs, Date.now() - attemptStarted, secrets, replyTrace(trace, Boolean(request.json)));
+            notify(options.onAttemptEnd, failedReport);
+            notify(request.onAttemptEnd, failedReport);
+            if (cancelled) throw error;
+            const origin = endpointOrigin(effectiveAiBase(integration, options.githubModelsBaseUrl));
+            if (error instanceof AiProviderError && !error.target) {
+              error.target = { provider: integration.provider, model: candidate.model, integrationId: integration.id, ...(origin ? { endpoint: origin } : {}), ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}) };
+            }
+            steps.push(triedStep(attempt, failedReport, error, origin, secrets));
+            addSpent(spent, error);
+            lastError = error;
+            notify(request.onText, "");
+            notify(request.onStructuredText, "");
+            // A provider that refuses a thinking level because the request carries function tools is asked again without it, and if that is refused too, with `none` (the GPT-6 models take no request with
+            // tools that leaves the level out): each way once. The model is remembered by the way that answers, so that every later request with tools is asked that way (a request without tools keeps its
+            // level). Every request stays in the trail as the failed attempt it was, with the provider's words.
+            const next = nextWithoutThinking(candidate, attempt.built, error, sent);
+            if (next) {
+              const asked = { ...candidate, noThinkingWithTools: next === "none" ? ("none" as const) : (true as const) };
+              try {
+                attempt = { ...attempt, candidate: asked, built: buildChatRequest(asked, request, { githubModelsBaseUrl: options.githubModelsBaseUrl }) };
+              } catch {
+                break;
+              }
+              withoutThinking.push(next);
+              if (!refusedWith) refusedWith = (error as AiProviderError).body;
+              continue;
+            }
+            // Asked every way, and refused every time: the provider's last words are the error, with what was tried, and where the provider says function tools are taken.
+            if (withoutThinking.length && error instanceof AiProviderError) error.message = redactSecrets(`${error.message}${/[.!?]$/.test(error.message) ? "" : "."} ${refusedEveryWay(withoutThinking, refusedWith)}`, secrets);
+            break;
           }
-          steps.push(triedStep(attempt, failedReport, error, origin, secrets));
-          addSpent(spent, error);
-          lastError = error;
-          notify(request.onText, "");
-          notify(request.onStructuredText, "");
         }
       }
       const notes: string[] = [];
@@ -419,6 +475,23 @@ const UNUSABLE_WORDS: Record<NonNullable<AiRouteStep["why"]>, string> = {
 const MAX_STEP_MESSAGE_CHARACTERS = 240;
 
 /** The step that says how an attempt ended, from the report of its end (whose words are already cleaned of credentials). */
+/**
+ * How a candidate is asked next, when its provider refused the request because it carries function tools together with a thinking level («Function tools with reasoning_effort are not supported…»), or
+ * `undefined` when there is no way left: without a level first (a model of the GPT-5.6 family still reasons then), then with `none` (the GPT-6 models refuse a request with tools that leaves the level out,
+ * and take `none`), each way once (`sent` says which were put on the wire, the first request included), and `none` only for a model that takes its level in `reasoning_effort`. A refusal of the value of the
+ * level («does not support 'none' with this model») is not this: that model takes function tools on the Responses API only.
+ */
+function nextWithoutThinking(candidate: AiCandidate, built: ChatRequest | null, error: unknown, sent: ReadonlySet<string>): "omit" | "none" | undefined {
+  if (!(error instanceof AiProviderError) || !built?.useTools || !refusesThinkingWithTools(error.body)) return undefined;
+  return (["omit", "none"] as const).find((way) => !sent.has(way) && (way !== "none" || canSendNone(candidate)));
+}
+
+/** What an error says after a model was asked every way without thinking and refused function tools each time: what was tried, and, when the provider says it, where the tools are taken. */
+function refusedEveryWay(tried: readonly ("omit" | "none")[], first: AiErrorBody | undefined): string {
+  const how = tried.includes("none") ? "without a thinking level and with \"none\"" : "without a thinking level";
+  return `Narrarium asked again ${how}, and the model still refuses function tools on this endpoint${suggestsResponsesApi(first) ? ": the provider says to use /v1/responses for them" : ""}.`;
+}
+
 function triedStep(attempt: PlannedAttempt, end: FetchAiAttemptEnd, error: unknown, endpoint: string | undefined, secrets: readonly string[]): AiRouteStep {
   const integration = attempt.candidate.integration;
   const timeout = error instanceof AiProviderError ? error.timeout : undefined;
@@ -433,6 +506,7 @@ function triedStep(attempt: PlannedAttempt, end: FetchAiAttemptEnd, error: unkno
     ...(endpoint ? { endpoint } : {}),
     ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}),
     ...(end.status !== undefined ? { status: end.status } : {}),
+    ...(end.errorBody ? { body: end.errorBody } : {}),
     durationMs: end.durationMs,
     ...(message ? { message: message.length > MAX_STEP_MESSAGE_CHARACTERS ? `${message.slice(0, MAX_STEP_MESSAGE_CHARACTERS - 1)}…` : message } : {}),
     ...(end.failureKind === "timeout" && end.timeoutPhase ? { timeoutPhase: end.timeoutPhase } : {}),
@@ -522,6 +596,7 @@ function failedAttempt(identity: Pick<FetchAiAttemptEnd, "attemptId" | "label" |
     failureKind: cancelled ? "cancelled" : timedOut ? "timeout" : "provider",
     ...(provider?.status !== undefined ? { status: provider.status } : {}),
     ...(provider?.retryAfterMs !== undefined ? { retryAfterMs: provider.retryAfterMs } : {}),
+    ...(provider?.body ? { errorBody: provider.body } : {}),
     ...(timedOut ? { timeoutMs: provider?.timeout?.ms ?? timeoutMs } : {}),
     ...(timedOut && provider?.timeout ? { timeoutPhase: provider.timeout.phase } : {}),
     ...reply,
@@ -598,45 +673,38 @@ function thinkingRemedy(model: string, sent: SentThinking): string {
   return `Set "Thinking parameter" of the model "${model}" in AI Integrations to ${other} or to "none" (no level is sent), or set thinking to "Automatic" for this task in the AI Router, or for the integration "${sent.integration}" in AI Integrations.`;
 }
 
-/** The error of a response that is not OK. `sent` says where the level went when the request carried a thinking level: a refusal of that parameter is then said in the author's words. */
+/**
+ * The error of a response that is not OK: what the provider answered, read as its words (`AiErrorBody`: the status, the message, the type, the parameter and the code of its error, or its text when it is no
+ * known shape, or only the status when it said nothing), whole, and never cut but with an ellipsis. `sent` says where the level went when the request carried a thinking level: a refusal of that parameter is
+ * then said in the author's words too.
+ */
 async function providerError(response: Response, provider: string, model: string, redact: (text: string) => string, sent?: SentThinking): Promise<AiProviderError> {
-  let detail = "";
-  /** The parameter the provider says it refuses, when its error object names one. */
-  let param = "";
+  let text = "";
   try {
-    const text = await response.text();
-    const raw = redact(text.length > 50_000 ? text.slice(0, 50_000) : text).slice(0, 2000);
-    try {
-      const parsed = JSON.parse(raw) as { error?: { message?: unknown; param?: unknown } | string; message?: unknown; param?: unknown };
-      const message = typeof parsed.error === "string" ? parsed.error : parsed.error?.message ?? parsed.message;
-      const refused = typeof parsed.error === "object" && parsed.error ? parsed.error.param : parsed.param;
-      if (typeof refused === "string") param = refused;
-      detail = typeof message === "string" ? message : raw;
-    } catch {
-      // A gateway in front of the provider answers with a page of its own (Cloudflare's 524, an nginx 502): its title says what it is, its markup says nothing.
-      const page = /^\s*<(?:!doctype\s+html|html)\b/i.test(raw) ? /<title[^>]*>([^<]{1,200})<\/title>/i.exec(raw)?.[1]?.replace(/\s+/g, " ").trim() : undefined;
-      detail = /^\s*<(?:!doctype\s+html|html)\b/i.test(raw) ? `an HTML page from a gateway or a proxy${page ? ` ("${page}")` : ""}, not an answer of the provider` : raw;
-    }
+    text = await response.text();
   } catch {
-    detail = response.statusText;
+    text = response.statusText ?? "";
   }
   const status = response.status;
+  const body = parseErrorBody(status, text, redact);
+  const said = describeErrorBody(body);
   const retryable = status === 408 || status === 409 || status === 429 || status >= 500;
   const retryAfterMs = status === 429 || status === 503 ? parseRetryAfter(response.headers?.get?.("retry-after")) : undefined;
-  const said = `HTTP ${status}${detail ? ` — ${detail.replace(/\s+/g, " ").slice(0, 400)}` : ""}`;
-  // A level was sent and the provider refuses the parameter: the same request would be refused again, so it is no use to repeat it.
-  if (sent !== undefined && (status === 400 || status === 422) && THINKING_PARAMETER.test(`${detail} ${param}`)) {
+  // A level was sent and the provider refuses the parameter: the same request would be refused again, so it is no use to repeat it. (A level refused only because the request carries function tools is not
+  // this: that request is asked again without it, and the provider's own words are all there is to say.)
+  if (sent !== undefined && (status === 400 || status === 422) && THINKING_PARAMETER.test(`${body.message ?? body.raw ?? ""} ${body.param ?? ""}`) && !refusesThinkingWithTools(body)) {
     return new AiProviderError(
       redact(`${provider} ${model}: the model does not accept a thinking level (${said}). Nothing was applied. ${thinkingRemedy(model, sent)}`),
       status,
       false,
+      { body },
     );
   }
   return new AiProviderError(
     redact(`${provider} ${model}: ${said}`),
     status,
     retryable,
-    { ...(TRANSIENT_STATUSES.has(status) ? { transient: true } : {}), ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) },
+    { body, ...(TRANSIENT_STATUSES.has(status) ? { transient: true } : {}), ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) },
   );
 }
 
@@ -857,10 +925,11 @@ function streamError(value: unknown, label: string, details: AiProviderErrorDeta
   const words = [source?.type, source?.code, source?.status].filter((entry): entry is string => typeof entry === "string").join(" ");
   const permanent = (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429) || PERMANENT_STREAM_ERROR.test(words);
   const transient = !permanent && ((status !== undefined && TRANSIENT_STATUSES.has(status)) || TRANSIENT_STREAM_ERROR.test(`${message} ${words}`));
-  const detail = redact(message || (source && Object.keys(source).length ? JSON.stringify(source) : "no details")).replace(/\s+/g, " ").slice(0, 400);
+  const body = errorBodyOfObject(value, status ?? 200, redact);
+  const detail = body ? describeErrorBody(body).replace(/^HTTP \d+(?:, no body| — )?/, "") || "no details" : "no details";
   const said = redact(`${label}: the provider reported an error during the reply — ${detail}`);
-  if (started && !permanent) return new AiStreamInterruptedError(said, "provider-error", status, details);
-  return new AiProviderError(said, status, !permanent, { ...details, ...(transient ? { transient: true } : {}) });
+  if (started && !permanent) return new AiStreamInterruptedError(said, "provider-error", status, { ...details, ...(body ? { body } : {}) });
+  return new AiProviderError(said, status, !permanent, { ...details, ...(body ? { body } : {}), ...(transient ? { transient: true } : {}) });
 }
 
 /**
@@ -1227,7 +1296,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       requestId = requestIdOf(response.headers);
       if (response.ok) break;
       trace.firstByteMs ??= elapsed();
-      const failure = await clock.guard(providerError(response, integration.provider, model, redact, built.thinking ? { integration: integration.name, parameter: built.reasoningParameter ?? "reasoning_effort" } : undefined));
+      const failure = await clock.guard(providerError(response, integration.provider, model, redact, built.thinking && built.thinkingWhy !== "tools" ? { integration: integration.name, parameter: built.reasoningParameter ?? "reasoning_effort" } : undefined));
       failure.transport = transport();
       // A provider that refuses `stream_options` is asked again, at once, without it, and is not asked it again: its replies carry no token count, which is then an estimate.
       if (usageRequested && refusesUsageOption(failure, label)) {

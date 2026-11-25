@@ -1,5 +1,5 @@
 import { likelyMessageTokens, likelyTextTokens, resolveModelTokenBudgets } from "./budget.js";
-import type { AiRuntimeConfig } from "./config.js";
+import type { AiNoThinkingWithTools, AiRuntimeConfig } from "./config.js";
 import { redactSecrets } from "./redact.js";
 import { buildChatRequest, effectiveAiBase, endpointOrigin, type ChatRequest } from "./request.js";
 import { describeAiRoute, type AiCandidate, type AiRouteEntry } from "./router.js";
@@ -173,8 +173,12 @@ export function planAttempts(config: AiRuntimeConfig, request: AiRequest, github
       skipped.map((entry) => ({ integration: entry.candidate.integration.id, model: redactSecrets(entry.candidate.model, secrets) })),
     ), leftOut);
   }
-  const planned: PlannedAttempt[] = allowed.map((candidate) => {
-    const index = place(candidate);
+  const planned: PlannedAttempt[] = allowed.map((entry) => {
+    const index = place(entry);
+    // What the host has learned of the model (see `AiModelMemory`) is applied as if the author had set it: a model known to refuse thinking with tools is not sent a level with them.
+    const remembered = request.memory?.noThinkingWithTools(entry.integration.id, entry.model);
+    const how: AiNoThinkingWithTools | undefined = remembered === "none" || entry.noThinkingWithTools === "none" ? "none" : entry.noThinkingWithTools ?? remembered;
+    const candidate = how !== entry.noThinkingWithTools ? { ...entry, noThinkingWithTools: how } : entry;
     try {
       const built = buildChatRequest(candidate, request, { githubModelsBaseUrl });
       const tools = built.useTools ? likelyTextTokens(JSON.stringify(built.body.tools)) + 8 : 0;

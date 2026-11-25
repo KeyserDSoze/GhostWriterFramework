@@ -126,7 +126,7 @@ const CHAT_TEMPLATE_PARAMETER = "chat_template_kwargs.reasoning_strength" satisf
  * the chat template, `chat_template_kwargs: { reasoning_strength: <level> }`, merged with the arguments the body already has (the object that was there is
  * not changed, and a value that is not a set of arguments is replaced); `reasoning_effort` is then not sent. `none` puts nothing in the body.
  */
-export function applyReasoningLevel(body: Record<string, unknown>, parameter: AiReasoningParameter | undefined, level: AiReasoningEffort): void {
+export function applyReasoningLevel(body: Record<string, unknown>, parameter: AiReasoningParameter | undefined, level: AiReasoningEffort | "none"): void {
   if (parameter === "none") return;
   if (parameter === CHAT_TEMPLATE_PARAMETER) {
     const existing = body.chat_template_kwargs;
@@ -181,10 +181,23 @@ export function reasoningEffortOf(candidate: Pick<AiCandidate, "integration"> & 
  * What a request does of the thinking level, as a panel says it: the level that is sent; `automatic` when none is chosen (nothing is sent, and the model
  * uses its own default); `not-sent` when a level is chosen and the model does not take it (it is declared as not reasoning, or its thinking parameter is `none`).
  */
-export type AiAttemptThinking = AiReasoningEffort | "automatic" | "not-sent";
+export type AiAttemptThinking = AiReasoningEffort | "none" | "automatic" | "not-sent";
 
-/** The thinking of the request a candidate gets (see `AiAttemptThinking`): the one rule of what is sent (`reasoningEffortOf`), told in three words. */
-export function attemptThinking(candidate: Pick<AiCandidate, "integration"> & Partial<Pick<AiCandidate, "thinking" | "supportsReasoning" | "reasoningParameter">>): AiAttemptThinking {
+/** Why the level of a request is not the one that was chosen, when it is the request that decides: it carries function tools, and the model is set (or was learned) not to think with them. */
+export type AiThinkingWhy = "tools";
+
+/** Whether `reasoning_effort: "none"` can be sent to a candidate: it takes its level in `reasoning_effort`, and is not declared as one that does not reason. */
+export function canSendNone(candidate: Partial<Pick<AiCandidate, "supportsReasoning" | "reasoningParameter">>): boolean {
+  return candidate.supportsReasoning !== false && (candidate.reasoningParameter === undefined || candidate.reasoningParameter === "reasoning_effort");
+}
+
+/**
+ * The thinking of the request a candidate gets (see `AiAttemptThinking`): the one rule of what is sent (`reasoningEffortOf`, and, for a model that refuses a level when the request carries function tools,
+ * none: the level left out, or `none` sent), told in a few words. `tools`: the request carries function tools (a forced function, a loop of tool calls).
+ */
+export function attemptThinking(candidate: Pick<AiCandidate, "integration"> & Partial<Pick<AiCandidate, "thinking" | "supportsReasoning" | "reasoningParameter" | "noThinkingWithTools">>, tools = false): AiAttemptThinking {
+  if (tools && candidate.noThinkingWithTools === "none" && canSendNone(candidate)) return "none";
+  if (tools && candidate.noThinkingWithTools) return requestedEffort(candidate) ? "not-sent" : "automatic";
   return reasoningEffortOf(candidate) ?? (requestedEffort(candidate) ? "not-sent" : "automatic");
 }
 
@@ -201,8 +214,10 @@ export interface ChatRequest {
   outputLimit?: number;
   /** The API version the request carries (Azure OpenAI: the `api-version` of its address, or `v1`); absent for a provider that has none. */
   apiVersion?: string;
-  /** The thinking level the body carries, as `reasoning_effort` or, when `reasoningParameter` says so, as the chat-template argument; absent when none is sent. */
-  thinking?: AiReasoningEffort;
+  /** The thinking level the body carries, as `reasoning_effort` or, when `reasoningParameter` says so, as the chat-template argument (`none`: sent for a model that takes no other with function tools); absent when none is sent. */
+  thinking?: AiReasoningEffort | "none";
+  /** Why the level is not the one that was chosen, when the request is what decided it (`tools`: it carries function tools and the model refuses the level, or any, with them). Absent otherwise. */
+  thinkingWhy?: AiThinkingWhy;
   /** Where the level went, when it went in the chat-template argument (`chat_template_kwargs.reasoning_strength`). Absent: it went as `reasoning_effort`, or no level was sent. */
   reasoningParameter?: "chat_template_kwargs.reasoning_strength";
   /**
@@ -226,7 +241,7 @@ export interface ChatRequestOptions {
  * Pure: it calls nothing and changes nothing. Throws only when the integration cannot be called at all.
  */
 export function buildChatRequest(
-  candidate: Pick<AiCandidate, "integration" | "model"> & Partial<Pick<AiCandidate, "underlyingModel" | "supportsToolCalls" | "supportsStreaming" | "supportsReasoning" | "reasoningParameter" | "apiVersion" | "maxOutputTokens" | "thinking">>,
+  candidate: Pick<AiCandidate, "integration" | "model"> & Partial<Pick<AiCandidate, "underlyingModel" | "supportsToolCalls" | "supportsStreaming" | "supportsReasoning" | "reasoningParameter" | "noThinkingWithTools" | "apiVersion" | "maxOutputTokens" | "thinking">>,
   request: Pick<AiRequest, "system" | "user" | "messages" | "json" | "maxOutputTokens" | "outputBoost" | "temperature" | "onText">,
   options: ChatRequestOptions = {},
 ): ChatRequest {
@@ -247,10 +262,18 @@ export function buildChatRequest(
     ...completionTokenLimit(integration.provider, model, outputLimit, candidate.underlyingModel, apiVersion),
   };
   if (request.temperature !== undefined && !isReasoningModel(integration.provider, model, candidate.underlyingModel)) body.temperature = request.temperature;
-  const thinking = reasoningEffortOf(candidate);
+  // A model that refuses a level when the request carries function tools is sent none with them, or `none` when it takes no request without a level (it keeps the level for a request without tools).
+  const off = useTools ? candidate.noThinkingWithTools : undefined;
+  const sendNone = off === "none" && canSendNone(candidate);
+  const thinking: AiReasoningEffort | "none" | undefined = sendNone ? "none" : off ? undefined : reasoningEffortOf(candidate);
   if (thinking) applyReasoningLevel(body, candidate.reasoningParameter, thinking);
   const asked = requestedEffort(candidate);
-  if (asked && !thinking) {
+  const noThinkingWithTools = Boolean(off) && (sendNone || Boolean(asked));
+  if (sendNone) {
+    notes.push(`${asked ? `The thinking level "${asked}" was replaced by "none"` : `The level "none" was sent`}: "${model}" refuses function tools with a thinking level and without one, and takes "none" (noThinkingWithTools).`);
+  } else if (asked && off) {
+    notes.push(`The thinking level "${asked}" was not sent: "${model}" refuses a thinking level when the request carries function tools (noThinkingWithTools), and this one does.`);
+  } else if (asked && !thinking) {
     notes.push(candidate.reasoningParameter === "none"
       ? `The thinking level "${asked}" was not sent: "${model}" has its thinking parameter set to "none".`
       : `The thinking level "${asked}" was not sent: "${model}" is declared as not reasoning (supportsReasoning is off).`);
@@ -272,6 +295,7 @@ export function buildChatRequest(
     ...(apiVersion ? { apiVersion } : {}),
     ...(outputLimit ? { outputLimit } : {}),
     ...(thinking ? { thinking } : {}),
+    ...(noThinkingWithTools ? { thinkingWhy: "tools" as const } : {}),
     ...(thinking && candidate.reasoningParameter === CHAT_TEMPLATE_PARAMETER ? { reasoningParameter: CHAT_TEMPLATE_PARAMETER } : {}),
     ...(notes.length ? { notes } : {}),
   };

@@ -369,10 +369,15 @@ test("through the engine's own client the kind and the detail are the real ones:
   assert.equal(unauthorised.state.status, "error");
   assert.equal(unauthorised.state.lastError.errorKind, "auth");
   // The last candidate is what the fields say; the route says every candidate of the call, here the only one, as it was asked (its duration is the clock's).
-  const { route: unauthorisedRoute, ...unauthorisedDetail } = unauthorised.state.lastError.errorDetail;
+  const { route: unauthorisedRoute, body: unauthorisedBody, ...unauthorisedDetail } = unauthorised.state.lastError.errorDetail;
   assert.deepEqual(unauthorisedDetail, { status: 401, endpoint: ORIGIN, model: "gpt-test", provider: "openai", integration: "main" });
+  // What the provider said, in its own words, is in the detail beside the facts (the key it quoted is not).
+  assert.equal(unauthorisedBody.status, 401);
+  assert.equal(unauthorisedBody.shape, "openai");
+  assert.ok(unauthorisedBody.message.length > 0);
   assert.equal(unauthorisedRoute.length, 1);
-  const { durationMs, message, ...askedOnly } = unauthorisedRoute[0];
+  const { durationMs, message, body: stepBody, ...askedOnly } = unauthorisedRoute[0];
+  assert.deepEqual(stepBody, unauthorisedBody, "each step of the route has the words of its own attempt");
   assert.deepEqual(askedOnly, { position: 0, integrationId: "main", integrationName: "Main", provider: "openai", model: "gpt-test", outcome: "failed", endpoint: ORIGIN, status: 401 });
   assert.equal(typeof durationMs, "number");
   assert.match(message, /HTTP 401/);

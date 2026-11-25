@@ -33,6 +33,7 @@ export function normalizeAttempt(value: unknown): AutopilotAttemptInfo | undefin
     provider: word(source.provider) ?? "",
     model,
     thinking: thinking as AutopilotAttemptInfo["thinking"],
+    ...(source.thinkingWhy === "tools" ? { thinkingWhy: "tools" as const } : {}),
     streamMode: source.streamMode === "off" ? "off" : "auto",
   };
 }
@@ -49,6 +50,7 @@ export function attemptInfoOf(report: FetchAiAttempt): AutopilotAttemptInfo | un
     provider: report.provider,
     model: report.model,
     thinking: report.thinkingMode,
+    thinkingWhy: report.thinkingWhy,
     streamMode: report.streamMode,
   });
 }

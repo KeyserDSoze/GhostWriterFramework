@@ -1,3 +1,4 @@
+import { normalizeErrorBody } from "../ai/provider-error.js";
 import { redactSecrets } from "../ai/redact.js";
 import { endpointOrigin } from "../ai/request.js";
 import { AiFallbackBlockedError, AiProviderError, AiPromptTooLargeError, AiReplyRejectedError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, TRANSPORT_TAIL_CHARACTERS, type AiLeftOutReason, type AiStreamEnd, type AiTimeoutPhase, type AiUnusableWhy } from "../ai/types.js";
@@ -198,6 +199,7 @@ function routeStepOf(value: unknown): AutopilotRouteStep | undefined {
   const integrationId = shortText(source.integrationId) ?? "";
   const endpoint = endpointOrigin(source.endpoint);
   const apiVersion = versionOf(source.apiVersion);
+  const body = normalizeErrorBody(source.body, redactSecrets);
   const status = httpStatus(source.status);
   const durationMs = wholeNumber(source.durationMs, MAX_TIMEOUT_MS);
   const message = stepMessage(source.message);
@@ -217,6 +219,7 @@ function routeStepOf(value: unknown): AutopilotRouteStep | undefined {
     ...(endpoint ? { endpoint } : {}),
     ...(apiVersion ? { apiVersion } : {}),
     ...(status !== undefined ? { status } : {}),
+    ...(body ? { body } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
     ...(message ? { message } : {}),
     ...(phase ? { timeoutPhase: phase } : {}),
@@ -242,6 +245,7 @@ function detailOf(error: unknown): AutopilotErrorDetail {
   const status = httpStatus(source.status);
   const endpoint = endpointOrigin(target.endpoint ?? source.endpoint);
   const apiVersion = versionOf(target.apiVersion ?? source.apiVersion);
+  const body = normalizeErrorBody(source.body, redactSecrets);
   const model = shortText(source.model) ?? shortText(target.model);
   const provider = shortText(source.provider) ?? shortText(target.provider);
   const integration = shortText(source.integrationId) ?? shortText(target.integrationId);
@@ -262,6 +266,7 @@ function detailOf(error: unknown): AutopilotErrorDetail {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
     ...(apiVersion ? { apiVersion } : {}),
+    ...(body ? { body } : {}),
     ...(model ? { model } : {}),
     ...(provider ? { provider } : {}),
     ...(integration ? { integration } : {}),
@@ -329,6 +334,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
   const status = httpStatus(source.status);
   const endpoint = endpointOrigin(source.endpoint);
   const apiVersion = versionOf(source.apiVersion);
+  const body = normalizeErrorBody(source.body, redactSecrets);
   const model = shortText(source.model);
   const provider = shortText(source.provider);
   const integration = shortText(source.integration);
@@ -344,6 +350,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
     ...(apiVersion ? { apiVersion } : {}),
+    ...(body ? { body } : {}),
     ...(model ? { model } : {}),
     ...(provider ? { provider } : {}),
     ...(integration ? { integration } : {}),

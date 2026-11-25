@@ -28,6 +28,7 @@ import {
   type FrozenWorkItem,
 } from "./frozen.js";
 import { readBrief } from "./brief.js";
+import { createModelMemory, type AiModelMemory } from "../ai/memory.js";
 import { applyLiveAttempt, applyLiveProgress, startLive } from "./live.js";
 import { outlinePlanStatus, type OutlineWrittenChange } from "./outline-check.js";
 import { advanceState } from "./planner.js";
@@ -105,6 +106,11 @@ export interface AutopilotSessionConfig {
   hostLabel: string;
   /** Stable identity of this host (device or server id). Without it the label identifies the host. */
   hostId?: string;
+  /**
+   * What this host remembers of its models between calls (see `AiModelMemory`): the session gives it to every call of its runs, so that what a call learns (a provider that refuses thinking when the request carries
+   * tools) is known to the next one at once, in a server as in a browser. Without it the session keeps its own, for as long as it lives (`snapshot().learned` lists what it learned).
+   */
+  memory?: AiModelMemory;
   /**
    * Whether a run recorded by this same host is alive outside this session (for example in
    * another tab of the same browser). Without it, such a run is treated as interrupted.
@@ -210,6 +216,8 @@ export class AutopilotSession {
   private events: AutopilotEvent[] = [];
   private readonly listeners = new Set<AutopilotListener>();
   private live: AutopilotSnapshot["live"] = null;
+  /** What the session has learned about its models: given to every call of its runs. */
+  private readonly memory: AiModelMemory;
   private readonly now: () => Date;
   /** The latest `state` event, whoever emitted it: what a heartbeat event repeats with a fresh heartbeat. */
   private summary: AutopilotStateSummary | null = null;
@@ -224,6 +232,7 @@ export class AutopilotSession {
 
   constructor(private readonly config: AutopilotSessionConfig) {
     this.now = config.now ?? (() => new Date());
+    this.memory = config.memory ?? createModelMemory();
   }
 
   get bookId(): string {
@@ -368,6 +377,7 @@ export class AutopilotSession {
       summary: state ? this.summarize(state) : null,
       activities,
       live: this.live,
+      ...(this.memory.learned.length ? { learned: [...this.memory.learned] } : {}),
       running,
       host: running ? this.config.host : state?.status === "running" ? state.runner?.host ?? null : null,
       ...(stored.corrupt ? { stateError: { code: "state_corrupt" as const, message: new AutopilotStateCorruptError(stored.corrupt).message } } : {}),
@@ -415,6 +425,7 @@ export class AutopilotSession {
       bookId: this.config.bookId,
       store: this.config.store,
       ai: this.config.ai,
+      memory: this.memory,
       host: this.config.host,
       hostLabel: this.config.hostLabel,
       hostId: this.config.hostId,

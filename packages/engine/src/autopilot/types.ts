@@ -1,6 +1,8 @@
 import type { AiRouteStep, AiStreamEnd, AiTimeoutPhase, AiUsage } from "../ai/types.js";
 import type { AiStreamMode } from "../ai/config.js";
-import type { AiAttemptThinking } from "../ai/request.js";
+import type { AiModelLearning } from "../ai/memory.js";
+import type { AiErrorBody } from "../ai/provider-error.js";
+import type { AiAttemptThinking, AiThinkingWhy } from "../ai/request.js";
 import type { AiCallDropReason, AiCallStatus } from "./calls/types.js";
 import type { ChapterFreezeAuthor, FrozenChapterChanges } from "../book/freeze.js";
 
@@ -571,6 +573,11 @@ export interface AutopilotErrorDetail {
   status?: number;
   /** The origin (`https://api.openai.com`) of the integration that was called. */
   endpoint?: string;
+  /**
+   * What the provider answered when it refused the request, in its own words (see `AiErrorBody`): the status, the message, the type, the parameter and the code of its error, or its text when it was no known shape.
+   * That of the last candidate that was asked; `route[].body` has each one's. Absent when no provider answered, and from an engine that did not say.
+   */
+  body?: AiErrorBody;
   /** The API version the request carried (Azure OpenAI's `api-version`, or `v1`): the model's own, else its integration's. Absent for a provider that has none, and from an engine that did not say. */
   apiVersion?: string;
   model?: string;
@@ -788,7 +795,8 @@ export type AutopilotMessageCode =
   | "retrySkipped"
   | "serverShutdown"
   | "resumedAfterRestart"
-  | "callsStoreFailed";
+  | "callsStoreFailed"
+  | "modelLearned";
 
 /**
  * Which candidate of the route a call asks now, and how: what the `call-attempt` event says and `AutopilotLive.trying` keeps, so that a client shows it as the request is sent. Only
@@ -812,6 +820,8 @@ export interface AutopilotAttemptInfo {
   model: string;
   /** What the request does of the thinking level: the level that is sent, `automatic` (none is chosen, the model decides) or `not-sent` (one is chosen and the model does not take it). */
   thinking: AiAttemptThinking;
+  /** Why a level that was chosen is not sent, when the request decided it: `tools`, the request carries function tools and the model refuses a level with them (set, or learned). Absent otherwise, and from a host that does not say it. */
+  thinkingWhy?: AiThinkingWhy;
   /** What the integration says about streaming. */
   streamMode: AiStreamMode;
 }
@@ -845,6 +855,11 @@ export interface AutopilotAttemptInfo {
  * `streamMode`. It names its call as `task-progress` does and is said whether or not the book keeps records; a call that goes on to its fallback says the next one, which replaces it. Never a prompt, a reply or
  * a key. A client follows it with `applyLiveAttempt`, as `snapshot().live` does (`live.trying`): it stays until the next call says its own or the step ends, and a host older than this one never says it, so a
  * client shows nothing for it. It is kept in the replay of the session, like `call-started`.
+ * `model-learned` says what a call learned about a model from the way its provider refused it, and what the engine now remembers for the session (see `AiModelLearning`): `learned` is `no-thinking-with-tools` (the provider
+ * refuses a thinking level when the request carries function tools: the call was asked again without the level, or with `none` when that is refused too, and every later request with tools to that model is asked the way
+ * that answered), the integration and the model, `off` (`omit`: the level is left out; `none`: `reasoning_effort: "none"` is sent), `body` (what the provider said the first time, in its own words) and `responses` (its
+ * words tell to use the Responses API, `/v1/responses`, instead). A host that keeps settings persists it as the model's `noThinkingWithTools` (`true` for `omit`, `"none"` for `none`); a
+ * `modelLearned` insight says it in words, with the two ways out, and `snapshot().learned` lists what the session has learned, for a client that connects later. It is kept in the replay of the session.
  * A `callsStoreFailed` insight says that the records of the AI calls could not be kept (the store is full or failed): the run goes on without them.
  * The insights about the outline carry the chapter they are about (`chapterNumber`) and, for a ghostwriter the outline names that does
  * not exist, its slug (`ghostwriter`), so that a client can say them in its language.
@@ -854,11 +869,12 @@ export type AutopilotEventBody =
   | { type: "run-ended"; runId: string; status: AutopilotStatus; message?: string | null; code?: AutopilotMessageCode }
   | { type: "task-started"; activity: AutopilotActivity }
   | { type: "task-progress"; activityId: string; characters: number; preview: string; bytes?: number; callId?: string; callSeq?: number; kind?: "json" }
+  | { type: "model-learned"; activityId?: string; learned: AiModelLearning["kind"]; integrationId: string; integrationName: string; model: string; off: AiModelLearning["off"]; body: AiErrorBody; responses: boolean }
   | { type: "call-started"; activityId: string; callId: string; seq: number; label: string; capability: string; structured: boolean; systemBytes: number; userBytes: number }
   | ({ type: "call-attempt"; activityId: string; callId?: string; callSeq?: number } & AutopilotAttemptInfo)
   | { type: "call-ended"; activityId: string; callId: string; status: AiCallStatus; attempts: number; characters: number; storedBytes: number; partial: boolean; durationMs: number; dropped: AiCallDropReason | null }
   | { type: "task-finished"; activity: AutopilotActivity }
-  | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode; attempt?: number; retries?: number; waitMs?: number; cycle?: number; cycles?: number | null; chapterNumber?: number; ghostwriter?: string }
+  | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode; attempt?: number; retries?: number; waitMs?: number; cycle?: number; cycles?: number | null; chapterNumber?: number; ghostwriter?: string; model?: string }
   | { type: "state"; state: AutopilotStateSummary }
   | { type: "sync"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode };
 
@@ -971,6 +987,8 @@ export interface AutopilotSnapshot {
   activities: AutopilotActivity[];
   /** Activity currently running with what its model is writing, if any (see `AutopilotLive` and `task-progress`). */
   live: AutopilotLive | null;
+  /** What this session has learned about its models (see `AiModelLearning`), in the order it learned it: a client that connects later persists what it did not hear. Absent from an older host. */
+  learned?: AiModelLearning[];
   running: boolean;
   host: "browser" | "server" | null;
   /**

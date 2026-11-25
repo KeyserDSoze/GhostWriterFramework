@@ -1,3 +1,4 @@
+import type { AiErrorBody } from "../../ai/provider-error.js";
 import type { AiLeftOutReason, AiUnusableWhy } from "../../ai/types.js";
 import type { AutopilotTaskKind, AutopilotTransportDetail } from "../types.js";
 
@@ -113,15 +114,17 @@ export interface AiCallUsage {
 /** A cleaned error of one provider attempt: its words are redacted and short, and it never carries a key or a URL. */
 export interface AiCallError {
   name: string;
-  /** At most `AI_CALL_ERROR_CHARACTERS` characters, redacted. */
+  /** At most `AI_CALL_ERROR_CHARACTERS` characters, redacted, with an ellipsis where it was cut. */
   message: string;
   status: number | null;
   transient: boolean;
   timedOut: boolean;
+  /** What the provider answered when it refused the request, in its own words (see `AiErrorBody`): the status, the message, the type, the param and the code of its error. Absent when it answered nothing, and from the records of an engine that did not say. */
+  body?: AiErrorBody;
 }
 
-/** The most characters of an error message that a record keeps. */
-export const AI_CALL_ERROR_CHARACTERS = 500;
+/** The most characters of an error message that a record keeps: room for the whole of what a provider said (`MAX_ERROR_MESSAGE_CHARACTERS`) and the words around it. */
+export const AI_CALL_ERROR_CHARACTERS = 2400;
 
 /**
  * One provider attempt of a call. The index is the attempt in order, from 1, counting the candidates of the route that were left out (`outcome` `skipped`, with `skip`)

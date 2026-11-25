@@ -343,6 +343,7 @@ function reportOf(index: number, start: FetchAiAttempt, end: FetchAiAttemptEnd, 
           status: end.status ?? null,
           transient: end.failureKind === "timeout" || end.status === 429 || (end.status ?? 0) >= 500,
           timedOut: end.failureKind === "timeout",
+          ...(end.errorBody ? { body: end.errorBody } : {}),
         }
       : null,
     partialCharacters: failed ? end.replyCharacters ?? end.partialText?.length ?? null : null,

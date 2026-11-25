@@ -16,6 +16,8 @@ import { isItalian, languageCode, tail, truncate } from "../util/text.js";
 import { RunCalls, schemaHashOf, statusOf, type CallEndInfo } from "./calls/run-calls.js";
 import type { AiCallStore } from "./calls/port.js";
 import type { AiCallStatus, AiCallTaskStatus } from "./calls/types.js";
+import type { AiModelLearning, AiModelMemory } from "../ai/memory.js";
+import { describeErrorBody, suggestsResponsesApi } from "../ai/provider-error.js";
 import { attemptInfoOf } from "./attempt.js";
 import { autopilotErrorFields } from "./errors.js";
 import { readBrief } from "./brief.js";
@@ -83,6 +85,8 @@ export interface AutopilotRunConfig {
   bookId: string;
   store: BookStore;
   ai: AiPort;
+  /** What the session remembers of its models between calls (see `AiModelMemory`), given to every call: the models that a provider was learned to refuse a thinking level with tools. */
+  memory?: AiModelMemory;
   host: "browser" | "server";
   hostLabel: string;
   /** Stable identity of the host, recorded with the runner. */
@@ -370,6 +374,28 @@ function callsStoreFailedTitle(italian: boolean, error: unknown): string {
   const full = error instanceof Error && (error.name === "AiCallDiskFullError" || error.name === "QuotaExceededError");
   if (full) return italian ? "Non c'è spazio per le registrazioni delle chiamate AI: la registrazione si ferma per questa corsa." : "There is no room to keep the AI call records: recording stops for this run.";
   return italian ? "Non è stato possibile conservare le registrazioni delle chiamate AI: la registrazione si ferma per questa corsa." : "The AI call records could not be kept: recording stops for this run.";
+}
+
+/**
+ * The notice of a model that was learned to refuse thinking when the request carries tools, in the language of the book: what was done (thinking is off for the requests with tools, for this model only), the
+ * words of the provider as it wrote them, and the two ways out in plain words: the Responses API first when the provider's words tell to use it, then turning thinking off (which is what was done).
+ */
+function modelLearnedNotice(learning: AiModelLearning, responses: boolean, italian: boolean): { title: string; detail: string } {
+  const said = describeErrorBody(learning.body);
+  const none = learning.off === "none";
+  const where = italian ? "Si può cambiare nelle impostazioni del modello (Integrazioni AI)." : "This can be changed in the settings of the model (AI Integrations).";
+  if (italian) {
+    const done = `Narrarium ha disattivato il thinking per le richieste con i tool, solo per questo modello${none ? " (chiede con reasoning_effort «none», l'unico valore che il modello accetta con i tool)" : ""}; le richieste senza tool lo mantengono.`;
+    return {
+      title: `${learning.model}: il thinking è disattivato quando si usano i tool; lo ha detto il provider`,
+      detail: `Il provider ha risposto: ${said}. ${responses ? "Dice di usare l'API Responses per questo modello (/v1/responses) oppure di disattivare il thinking quando si usano i tool. " : ""}${done} ${where}`,
+    };
+  }
+  const done = `Narrarium turned thinking off for the requests that carry tools, for this model only${none ? " (it asks with reasoning_effort «none», the one value the model takes with them)" : ""}; requests without tools keep their thinking.`;
+  return {
+    title: `${learning.model}: thinking is turned off when tools are used; the provider said so`,
+    detail: `The provider answered: ${said}. ${responses ? "It says to use the Responses API for this model (/v1/responses) or to turn thinking off when tools are used. " : ""}${done} ${where}`,
+  };
 }
 
 function describeError(error: unknown): string {
@@ -921,6 +947,13 @@ export class AutopilotRun {
     this.stepController.abort(abortError("Interrupted by an author intervention."));
   }
 
+  /** A call learned something about a model: said as an event for a host to persist, and as an insight for the author (the words of the provider, and the two ways out). */
+  private learned(activityId: string, learning: AiModelLearning, italian: boolean): void {
+    const responses = suggestsResponsesApi(learning.body);
+    this.emit({ type: "model-learned", activityId, learned: learning.kind, integrationId: learning.integrationId, integrationName: learning.integrationName, model: learning.model, off: learning.off, body: learning.body, responses });
+    this.emit({ type: "insight", activityId, tone: "warning", code: "modelLearned", model: learning.model, ...modelLearnedNotice(learning, responses, italian) });
+  }
+
   private emit(event: AutopilotEventBody): void {
     try {
       this.config.emit(event);
@@ -1336,6 +1369,9 @@ export class AutopilotRun {
                 const trying = attemptInfoOf(attempt);
                 if (trying) this.emit({ type: "call-attempt", activityId: activity.id, ...callId, ...trying });
               },
+              // What a refusal teaches about a model is remembered by the session, and said: to a host that keeps settings (`model-learned`), and to the author, in words (the insight).
+              ...(this.config.memory ? { memory: this.config.memory } : {}),
+              onLearned: (learning) => this.learned(activity.id, learning, italian),
               ...(call ? { onAttemptEnd: call.onAttemptEnd } : {}),
               ...(boost > 1 ? { outputBoost: boost } : {}),
             });

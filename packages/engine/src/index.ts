@@ -32,6 +32,8 @@ export * from "./ai/structured.js";
 export * from "./ai/request.js";
 export * from "./ai/routing.js";
 export * from "./ai/fetch-client.js";
+export * from "./ai/memory.js";
+export * from "./ai/provider-error.js";
 export * from "./ai/catalog.js";
 export * from "./ai/catalog-fetch.js";
 export * from "./ai/probe.js";
