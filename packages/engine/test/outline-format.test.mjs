@@ -95,6 +95,22 @@ test("the name wins over the frontmatter, and what is odd is a warning, never an
   assert.match(gap.message, /2-3|5-6/);
 });
 
+test("the notes of Brainstorming are a file of the outline that is never an entry, like the brief", async () => {
+  assert.equal(engine.OUTLINE_BRAINSTORM_FILE, "outline/brainstorm.md");
+  const notes = "# Brainstorming\n\n## 2026-11-25 10:00\n\n- The harbor tells the story.\n";
+  const outline = await engine.parseOutline(files({
+    "outline/book.md": "---\ntype: outline\nid: outline:book\n---\n\nA harbor of glass.\n",
+    "outline/brainstorm.md": notes,
+    "outline/_brief.md": "---\ntype: outline-brief\nid: outline:brief\n---\n",
+    "outline/chapters/001.md": entryText({ number: 1, title: "One", body: "One." }),
+    "outline/stray.md": "Not an entry.",
+  }));
+  assert.deepEqual(outline.chapters.map((entry) => entry.number), [1]);
+  assert.deepEqual(outline.warnings.map((warning) => [warning.code, warning.path]), [["not-an-entry", "outline/stray.md"]], "only a file that is nothing of the outline is a warning");
+  const index = engine.outlineIndex([["outline/brainstorm.md", "h1"], ["outline/chapters/001.md", "h2"]]);
+  assert.deepEqual(index.chapters.map((entry) => entry.path), ["outline/chapters/001.md"]);
+});
+
 test("an entry whose YAML cannot be read keeps its text, is the author's, and says where the problem is", async () => {
   const outline = await engine.parseOutline(files({ "outline/chapters/001.md": "---\ntitle: [unclosed\norigin: autopilot\n---\n\nMira arrives at night.\n" }));
   const [entry] = outline.chapters;

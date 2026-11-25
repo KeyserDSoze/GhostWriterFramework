@@ -24,8 +24,8 @@ test("Brainstorming speaks both languages, with the same texts and the same plac
 });
 
 test("the Italian of Brainstorming is written in Italian, not copied from English", () => {
-  // Its name is the same word in both languages, and so is the title of its chats.
-  const same = new Set(["brainstorm.name", "brainstorm.open", "brainstorm.sessionTitle"]);
+  // Its name is the same word in both languages, and so is the title of its chats; «file» is Italian too.
+  const same = new Set(["brainstorm.name", "brainstorm.open", "brainstorm.sessionTitle", "brainstorm.proposal.files_one"]);
   const italian = new Map(leaves(brainstormIt));
   assert.deepEqual(leaves(brainstormEn).filter(([key, value]) => !same.has(key) && italian.get(key) === value).map(([key]) => key), []);
   assert.equal(brainstormIt.brainstorm.back, "Torna al Copilot");

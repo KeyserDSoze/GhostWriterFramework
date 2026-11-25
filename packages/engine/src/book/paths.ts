@@ -29,6 +29,11 @@ export const OUTLINE_CHAPTERS_DIRECTORY = "outline/chapters";
  * underscore and it is not `outline/chapters/<NNN>.md`: it is never an entry, and no outline tool counts or moves it.
  */
 export const OUTLINE_BRIEF_FILE = "outline/_brief.md";
+/**
+ * The notes of Brainstorming, the Copilot's mode on the Synopsis page of the app: the decisions the author saved from a brainstorm, one dated
+ * section after the other. Like the brief it is a file of the outline that is never an entry: no outline tool counts, moves or warns about it.
+ */
+export const OUTLINE_BRAINSTORM_FILE = "outline/brainstorm.md";
 
 /** The file of the outline entry of a chapter: `outline/chapters/007.md`, `outline/chapters/1500.md`. */
 export function outlineChapterPath(number: number): string {

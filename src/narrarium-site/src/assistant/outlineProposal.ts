@@ -69,16 +69,19 @@ const fields = {
 };
 const number = z.number().int().min(1).max(1_000_000);
 
+/** One edit of the outline as a model writes it (the engine's edits, with the entry's fields inline). */
+export const modelOutlineEditSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("update"), number, ...fields }),
+  z.object({ kind: z.literal("append"), ...fields }),
+  z.object({ kind: z.literal("insert"), at: number, ...fields }),
+  z.object({ kind: z.literal("move"), from: number, to: number }),
+  z.object({ kind: z.literal("remove"), number, renumber: z.boolean().optional() }),
+  z.object({ kind: z.literal("book"), title: z.string().max(400).nullable().optional(), body: z.string().max(40_000).optional() }),
+]);
+
 export const outlineEditSchema = z.object({
   summary: z.string().max(4_000).default(""),
-  edits: z.array(z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("update"), number, ...fields }),
-    z.object({ kind: z.literal("append"), ...fields }),
-    z.object({ kind: z.literal("insert"), at: number, ...fields }),
-    z.object({ kind: z.literal("move"), from: number, to: number }),
-    z.object({ kind: z.literal("remove"), number, renumber: z.boolean().optional() }),
-    z.object({ kind: z.literal("book"), title: z.string().max(400).nullable().optional(), body: z.string().max(40_000).optional() }),
-  ])).max(60),
+  edits: z.array(modelOutlineEditSchema).max(60),
 });
 
 export type ModelOutlineEdits = z.infer<typeof outlineEditSchema>;
@@ -177,7 +180,12 @@ export async function proposeOutlineEdit(input: {
     summary = answer.summary.trim();
     edits = toOutlineEdits(answer.edits);
   }
-  const composed = edits.length ? await composeOutlineEdits(composerSource(before), edits, composeOptions(input.ghostwriters)) : null;
+  return composeOutlineProposal(before, edits, input.ghostwriters, summary);
+}
+
+/** A series of edits on the outline as it is (`before`), as the engine composes it into the files of one commit: nothing is written. */
+export async function composeOutlineProposal(before: OutlineSnapshot, edits: OutlineEdit[], ghostwriters: readonly string[], summary = ""): Promise<OutlineProposal> {
+  const composed = edits.length ? await composeOutlineEdits(composerSource(before), edits, composeOptions(ghostwriters)) : null;
   const changes = composed?.changes ?? [];
   const sourceRevisions = Object.fromEntries(changes.map((change) => [change.path, before.files.get(change.path)?.hash ?? null]));
   return { summary, edits, steps: composed?.steps ?? [], changes, warnings: composed?.warnings ?? [], before, sourceRevisions };
@@ -227,7 +235,6 @@ export async function outlineEditMessage(input: {
   ghostwriters: readonly string[];
   complete: (messages: LlmMessage[], schema: typeof outlineEditSchema) => Promise<ModelOutlineEdits>;
 }): Promise<AssistantMessage> {
-  const { italian } = input;
   const proposal = await proposeOutlineEdit({
     prompt: input.prompt,
     route: input.route,
@@ -236,6 +243,15 @@ export async function outlineEditMessage(input: {
     ghostwriters: input.ghostwriters,
     complete: (messages) => input.complete(messages, outlineEditSchema),
   });
+  return outlineProposalMessage(proposal, input);
+}
+
+/**
+ * A proposal as a message of the chat: its lines, one for each edit, and the files it changes, applied all together after the author confirms (where
+ * the Synopsis page saves). Nothing to change, or more files than a proposal may change (the page does those, where they can be undone), is said instead.
+ */
+export function outlineProposalMessage(proposal: OutlineProposal, input: { italian: boolean; book: BookEntry; branch: string }): AssistantMessage {
+  const { italian } = input;
   const message = (text: string): AssistantMessage => ({ id: crypto.randomUUID(), role: "assistant", text });
   if (!proposal.changes.length) {
     return message(proposal.summary || (italian ? "Per questa richiesta nella Sinossi non c'è niente da cambiare." : "There is nothing to change in the synopsis for this request."));

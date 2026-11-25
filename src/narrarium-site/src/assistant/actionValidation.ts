@@ -34,8 +34,8 @@ function safePath(path: unknown): path is string {
   return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.split("/").includes("..") && !path.includes("\\");
 }
 
-/** The files of the outline (the Scaletta): its description and its entries. */
-export const OUTLINE_FILE = /^outline\/(?:book\.md|chapters\/\d+\.md)$/;
+/** The files of the outline (the Synopsis): its description, its entries and the notes of Brainstorming. */
+export const OUTLINE_FILE = /^outline\/(?:book\.md|brainstorm\.md|chapters\/\d+\.md)$/;
 /** Files a proposal may change. An edit of the outline moves entries (inserting one shifts the ones after it), so it may touch more of them. */
 const MAX_FILE_UPDATES = 8;
 const MAX_OUTLINE_UPDATES = 100;

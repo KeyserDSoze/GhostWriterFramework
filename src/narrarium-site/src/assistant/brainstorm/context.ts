@@ -1,4 +1,4 @@
-import { chapterFilePath, clipMiddle, parseMarkdown, type AutopilotState, type ParsedOutline } from "narrarium-engine";
+import { chapterFilePath, clipMiddle, parseMarkdown, type AutopilotState, type ParsedOutline, type PlannedChapter } from "narrarium-engine";
 import { OUTLINE_BRIEF_FILE } from "@/autopilot/outlineBrief";
 import { frozenChapterSlugs, snapshotOf, writtenChapters, type OutlineSnapshot } from "@/outline/outlineModel";
 import { browserOutlineSource, type OutlineSource } from "@/outline/outlineSource";
@@ -44,6 +44,8 @@ export interface BrainstormContext {
   brief: { genre: string; audience: string; plot: string } | null;
   written: BrainstormWrittenChapter[];
   canon: BrainstormCanonName[];
+  /** The ghostwriters of the book (their slugs): an entry may name one of them. */
+  ghostwriters: string[];
   state: AutopilotState | null;
   source: OutlineSource;
 }
@@ -56,10 +58,10 @@ export async function loadBrainstormContext(input: { book: BookEntry; branch: st
   const [files, state] = await Promise.all([source.files(), source.readState().catch(() => null)]);
   const synopsis = await snapshotOf(files);
   const written = [...writtenChapters(input.structure?.chapters ?? [])].sort(([left], [right]) => left - right);
-  const chapterFiles = await source.readFiles(written.slice(0, READ_CHAPTERS).map(([, chapter]) => chapterFilePath(chapter.slug))).catch(() => []);
-  const byPath = new Map(chapterFiles.map((file) => [file.path, file.content]));
+  const chapterFiles = await source.readFiles(written.slice(0, READ_CHAPTERS).map(([, chapter]) => chapterFilePath(chapter.slug))).catch((): Array<{ path: string; content: string }> => []);
+  const byPath = new Map<string, string>(chapterFiles.map((file): [string, string] => [file.path, file.content]));
   const frozen = frozenChapterSlugs(chapterFiles);
-  const planned = new Map((state?.plan?.chapters ?? []).map((chapter) => [chapter.number, chapter]));
+  const planned = new Map<number, PlannedChapter>((state?.plan?.chapters ?? []).map((chapter): [number, PlannedChapter] => [chapter.number, chapter]));
   return {
     book: input.book,
     branch: input.branch,
@@ -78,6 +80,7 @@ export async function loadBrainstormContext(input: { book: BookEntry; branch: st
       return { number, slug: chapter.slug, title: chapter.title, summary: summaryOf(byPath.get(chapterFilePath(chapter.slug))) || plan?.summary || "", states };
     }),
     canon: canonNames(input.structure),
+    ghostwriters: (input.structure?.ghostwriters ?? []).map((ghostwriter) => ghostwriter.slug),
     state,
     source,
   };
@@ -117,7 +120,7 @@ function canonNames(structure: BookStructure | undefined): BrainstormCanonName[]
 
 // ─── The context as the model reads it ──────────────────────────────────────
 
-/** How much of each part the model reads at once. */
+/** How much of each part the model reads at once; the tools read the rest, one entry or one chapter at a time. */
 const LIMITS = { description: 4_000, entries: 32_000, entry: 1_500, titles: 600, written: 12_000, summary: 600, canon: 400 };
 
 function entryLines(outline: ParsedOutline): string {
@@ -137,7 +140,7 @@ function entryLines(outline: ParsedOutline): string {
   }
   return [
     `CHAPTER ENTRIES OF THE SYNOPSIS (${entries.length}; the number is the chapter):\n${whole.join("\n\n") || "(none yet)"}`,
-    titles.length ? `MORE ENTRIES (titles only):\n${titles.join("\n")}${entries.length - whole.length > titles.length ? `\n… and ${entries.length - whole.length - titles.length} more` : ""}` : "",
+    titles.length ? `MORE ENTRIES (titles only; read_synopsis_entry reads one whole):\n${titles.join("\n")}${entries.length - whole.length > titles.length ? `\n… and ${entries.length - whole.length - titles.length} more` : ""}` : "",
   ].filter(Boolean).join("\n\n");
 }
 
@@ -148,7 +151,7 @@ function writtenLines(written: readonly BrainstormWrittenChapter[]): string {
   for (const chapter of written) {
     const line = `${chapter.number}. ${chapter.title || chapter.slug} [${chapter.states.join(", ")}]${chapter.summary ? `: ${clipMiddle(chapter.summary, LIMITS.summary)}` : ""}`;
     if (room - line.length < 0) {
-      lines.push(`… and ${written.length - lines.length} more`);
+      lines.push(`… and ${written.length - lines.length} more (read_chapter_summary reads one)`);
       break;
     }
     lines.push(line);
@@ -163,7 +166,7 @@ function canonLines(canon: readonly BrainstormCanonName[]): string {
     const names = canon.filter((entry) => entry.section === section).map((entry) => entry.name);
     return names.length ? `${section}: ${names.slice(0, LIMITS.canon).join(", ")}${names.length > LIMITS.canon ? ", …" : ""}` : "";
   }).filter(Boolean);
-  return `CANON (names only):\n${bySection.join("\n")}`;
+  return `CANON (names only; read_canon_entry reads one):\n${bySection.join("\n")}`;
 }
 
 /** Everything Brainstorming knows of the book, as the data of its request. */
@@ -177,6 +180,7 @@ export function brainstormContextText(context: BrainstormContext): string {
     context.brief && (context.brief.genre || context.brief.audience || context.brief.plot)
       ? `BRIEF: genre ${context.brief.genre || "(none)"}; audience ${context.brief.audience || "(none)"}${context.brief.plot ? `\nChapter-by-chapter plot of the brief (where the entries say nothing):\n${clipMiddle(context.brief.plot, LIMITS.description)}` : ""}`
       : "",
+    `GHOSTWRITERS OF THE BOOK (slugs an entry may name; none: the book's own writes it): ${context.ghostwriters.join(", ") || "(none)"}`,
     entryLines(outline),
     writtenLines(context.written),
     canonLines(context.canon),

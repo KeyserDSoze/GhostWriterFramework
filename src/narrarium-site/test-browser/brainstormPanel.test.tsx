@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
+import { BookConflictError, sha256Hex, type BookFileChange } from "narrarium-engine";
 
 const mocks = vi.hoisted(() => ({
   chats: new Map<string, unknown>(),
@@ -8,6 +9,10 @@ const mocks = vi.hoisted(() => ({
   runAssistantPrompt: vi.fn(),
   runBrainstormPrompt: vi.fn(),
   saved: vi.fn(),
+  files: new Map<string, string>(),
+  state: null as unknown,
+  commit: vi.fn(),
+  refresh: vi.fn(),
 }));
 
 vi.mock("@/assistant/service", () => ({ appendAssistantNote: vi.fn(), applyParagraphRewrite: vi.fn(), compactAssistantSession: vi.fn(async ({ session }) => session), runAssistantPrompt: mocks.runAssistantPrompt }));
@@ -21,6 +26,17 @@ vi.mock("@/assistant/chatLocal", () => ({
 }));
 vi.mock("@/assistant/context", async (original) => ({ ...await original<typeof import("@/assistant/context")>(), loadWriterContext: vi.fn(async () => ({ title: "Synopsis", summary: "", loadedFilePaths: [], availableFiles: [], relevantFiles: [], route: { kind: "book-outline", bookId: "book" }, book: null, structure: null, branchReady: true })) }));
 vi.mock("@/github/useWorkingBranch", () => ({ useWorkingBranch: () => ({ branch: "main", ready: true, ensuring: false }) }));
+// The book's working copy, where the Synopsis page saves: one local commit, checked against the files as they were read.
+vi.mock("@/outline/outlineSource", async (original) => ({
+  ...await original<typeof import("@/outline/outlineSource")>(),
+  browserOutlineSource: () => ({
+    files: async () => Promise.all([...mocks.files].map(async ([path, content]) => ({ path, content, hash: await sha256Hex(content) }))),
+    commit: mocks.commit,
+    readState: async () => mocks.state,
+    readFiles: async () => [],
+  }),
+}));
+vi.mock("@/assistant/mutationRefresh", async (original) => ({ ...await original<typeof import("@/assistant/mutationRefresh")>(), refreshBookAfterMutation: mocks.refresh }));
 
 import { AssistantPanel } from "@/components/assistant/AssistantPanel";
 import { AssistantLauncher } from "@/components/assistant/AssistantLauncher";
@@ -53,6 +69,20 @@ beforeEach(() => {
   mocks.runAssistantPrompt.mockReset();
   mocks.runBrainstormPrompt.mockReset().mockImplementation(async () => ({ id: "idea", role: "assistant", text: "What if the harbor is the narrator?" }));
   mocks.saved.mockReset();
+  mocks.files = new Map();
+  mocks.state = null;
+  mocks.refresh.mockReset().mockResolvedValue(undefined);
+  mocks.commit.mockReset().mockImplementation(async (changes: BookFileChange[]) => {
+    for (const change of changes) {
+      const current = mocks.files.get(change.path);
+      const hash = current === undefined ? null : await sha256Hex(current);
+      if (change.expectedHash !== undefined && change.expectedHash !== hash) throw new BookConflictError(`File changed since it was read: ${change.path}`, change.path);
+    }
+    for (const change of changes) {
+      if (change.content === null) mocks.files.delete(change.path);
+      else mocks.files.set(change.path, change.content);
+    }
+  });
   useAuthStore.setState({ user: { provider: "google", providerAccountId: "writer-id", email: "writer@example.com", name: "Writer", picture: "" }, accessToken: "token", accessTokenExpiry: Date.now() + 60_000 });
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, books: [{ id: "book", owner: "", repo: "", name: "The Glass Harbor", tokenIndex: null, storageMode: "local-only", localRepositoryId: "repo", activeBranch: "local:repo", addedAt: "2026-11-21T00:00:00.000Z" }] } });
   useUiStore.setState({ floatingHidden: false });
@@ -158,5 +188,82 @@ describe("Brainstorming's launcher", () => {
     page.rerender(<MemoryRouter><AssistantLauncher /></MemoryRouter>);
     await waitFor(() => expect(screen.queryByRole("button", { name: "brainstorm.open" })).toBeNull());
     expect(useAssistantStore.getState().brainstorming, "the Copilot is the Copilot again everywhere else").toBeNull();
+  });
+});
+
+const entry = (number: number, title: string, body: string) => `---\ntype: outline-chapter\nnumber: ${number}\ntitle: ${title}\norigin: author\n---\n\n${body}\n`;
+const KEY = entry(2, "The key", "Mira finds the key.");
+const VAULT = entry(3, "The vault", "Mira opens the vault.");
+const scene = { number: 1, title: "A scene", goal: "", beats: [], characters: [], status: "reviewed", revisions: 0 };
+
+async function proposalChat() {
+  const session = createEmptyAssistantSession(TARGET.title, undefined, { bookId: "book" });
+  session.messages = [
+    { id: "ask", role: "user", text: "Open with the vault" },
+    {
+      id: "proposal", role: "assistant", text: "In the synopsis, chapter 3 «The vault» becomes chapter 2.",
+      action: {
+        kind: "apply-file-updates", bookId: "book", toolId: "edit-outline", owner: "", repo: "", branch: "main",
+        updates: [{ path: "outline/chapters/002.md", content: entry(2, "The vault", "Mira opens the vault."), reason: "Chapter 2 of the synopsis" }, { path: "outline/chapters/003.md", content: entry(3, "The key", "Mira finds the key."), reason: "Chapter 3 of the synopsis" }],
+        sourceRevisions: { "outline/chapters/002.md": await sha256Hex(KEY), "outline/chapters/003.md": await sha256Hex(VAULT) },
+        sourceRevision: "unused", generatedAt: new Date().toISOString(),
+      },
+    },
+  ];
+  return session;
+}
+
+describe("a proposal of Brainstorming", () => {
+  beforeEach(() => {
+    mocks.files = new Map([["outline/chapters/002.md", KEY], ["outline/chapters/003.md", VAULT]]);
+    // Chapter 2 is written and closed: the autopilot will ask the author whether to rewrite it. Chapter 3 is not written: it is planned again.
+    mocks.state = { options: { frozenEdits: "ask" }, plan: { approved: true, chapters: [
+      { number: 2, title: "The key", slug: "002-the-key", summary: "", goal: "", pov: [], keyEvents: [], reveals: [], status: "done", scenes: [scene], outlineDigest: "0123456789abcdef" },
+      { number: 3, title: "The vault", slug: "003-the-vault", summary: "", goal: "", pov: [], keyEvents: [], reveals: [], status: "planned", scenes: [], outlineDigest: "0123456789abcdef" },
+    ] } };
+  });
+
+  it("says what the autopilot will do and shows every difference before anything is applied, asks once more, then applies where the Synopsis page saves, and undoes", async () => {
+    useAssistantStore.getState().startBrainstorming(TARGET);
+    useAssistantStore.setState({ currentSession: await proposalChat() });
+    panel();
+    const card = await screen.findByRole("region", { name: "brainstorm.proposal.title" });
+    await waitFor(() => expect(card.querySelector('[data-outcome="ask"]')).not.toBeNull());
+    expect(card.querySelector('[data-outcome="ask"]')!.textContent).toBe("outline.written.ask");
+    expect(card.querySelector('[data-outcome="replan"]')!.textContent).toBe("brainstorm.proposal.outcome.replan");
+    expect(within(card).getAllByText(/Mira opens the vault\./).length, "the difference of each file").toBeGreaterThan(0);
+    expect(mocks.commit).not.toHaveBeenCalled();
+
+    fireEvent.click(within(card).getByRole("button", { name: /brainstorm\.proposal\.apply/ }));
+    const dialog = await screen.findByRole("dialog", { name: "brainstorm.proposal.confirmTitle" });
+    expect(dialog.className).toContain("brainstorm-accent");
+    expect(within(dialog).getByText("outline.written.ask")).toBeInTheDocument();
+    expect(mocks.commit, "nothing is applied before the author confirms").not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "brainstorm.proposal.confirm" }));
+    await waitFor(() => expect(mocks.commit).toHaveBeenCalledTimes(1));
+    expect(mocks.commit.mock.calls[0][0]).toEqual([
+      { path: "outline/chapters/002.md", content: entry(2, "The vault", "Mira opens the vault."), expectedHash: await sha256Hex(KEY) },
+      { path: "outline/chapters/003.md", content: entry(3, "The key", "Mira finds the key."), expectedHash: await sha256Hex(VAULT) },
+    ]);
+    expect(mocks.files.get("outline/chapters/002.md")).toContain("The vault");
+    expect(await within(card).findByText("brainstorm.proposal.applied")).toBeInTheDocument();
+
+    fireEvent.click(within(card).getByRole("button", { name: /brainstorm\.proposal\.undo/ }));
+    await waitFor(() => expect(mocks.commit).toHaveBeenCalledTimes(2));
+    expect(mocks.files.get("outline/chapters/002.md")).toBe(KEY);
+    expect(mocks.files.get("outline/chapters/003.md")).toBe(VAULT);
+  });
+
+  it("starts from a suggestion: it fills in the request, which the author sends or changes", async () => {
+    useAssistantStore.getState().startBrainstorming(TARGET);
+    panel();
+    const starters = await screen.findByRole("region", { name: "brainstorm.starters.label" });
+    expect(starters.querySelectorAll("[data-brainstorm-starter^='start.']")).toHaveLength(4);
+    expect(starters.querySelectorAll("[data-brainstorm-starter^='change.']")).toHaveLength(6);
+    fireEvent.click(within(starters).getByRole("button", { name: "brainstorm.starters.change.middle.label" }));
+    const composer = screen.getByPlaceholderText("brainstorm.placeholder") as HTMLTextAreaElement;
+    expect(composer.value).toBe("brainstorm.starters.change.middle.prompt");
+    expect(document.activeElement).toBe(composer);
+    expect(mocks.runBrainstormPrompt, "nothing is sent until the author sends it").not.toHaveBeenCalled();
   });
 });

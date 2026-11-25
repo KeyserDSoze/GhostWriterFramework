@@ -190,6 +190,7 @@ const brainstormParts = () => import("@/components/assistant/brainstorm/Brainsto
 const BrainstormIdentity = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormIdentity })));
 const BrainstormBack = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormBack })));
 const BrainstormEmpty = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormEmpty })));
+const BrainstormProposal = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormProposal })));
 
 export function AssistantPanel() {
   const { t } = useTranslation();
@@ -205,6 +206,7 @@ export function AssistantPanel() {
   const { user, accessToken } = useAuthStore();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const speechRecognitionRef = useRef<any>(null);
@@ -2676,7 +2678,7 @@ export function AssistantPanel() {
   const messagesView = (
     <div className="space-y-4" role="log" aria-live="polite" aria-relevant="additions" aria-busy={busy} aria-label={t("assistant.chatLog")}>
       {!busy && currentSession?.messages.length ? <span className="sr-only" key={`message-announcement-${currentSession.messages[currentSession.messages.length - 1]?.id}`}>{currentSession.messages[currentSession.messages.length - 1]?.text}</span> : null}
-      {currentSession?.messages.length ? null : brainstorming ? <Suspense fallback={null}><BrainstormEmpty /></Suspense> : (
+      {currentSession?.messages.length ? null : brainstorming ? <Suspense fallback={null}><BrainstormEmpty onPick={(prompt) => { setDraft(prompt); composerRef.current?.focus(); }} /></Suspense> : (
         <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">{t("assistant.empty")}</div>
       )}
       {(currentSession?.messages ?? []).map((message, index) => (
@@ -2713,7 +2715,12 @@ export function AssistantPanel() {
                 <Button size="sm" onClick={() => void applyBranchSwitch(index)} disabled={busy || !isAssistantActionEnabled(message.action)}><GitBranch className="mr-1 h-4 w-4" />{t("assistant.applyBranch")}</Button>
               </div>
             )}
-            {message.action?.kind === "apply-file-updates" && (
+            {(message.action?.kind === "apply-file-updates" || message.action?.kind === "undo-file-updates") && brainstorming && (
+              <Suspense fallback={null}>
+                <BrainstormProposal action={message.action} book={bookEntryOf(message.action.bookId)} branch={branch} busy={busy} enabled={isAssistantActionEnabled(message.action)} onApply={() => void applySelectedFileUpdates(index)} onUndo={() => void undoFileUpdates(index)} />
+              </Suspense>
+            )}
+            {message.action?.kind === "apply-file-updates" && !brainstorming && (
               <div className="mt-2 rounded-xl border bg-muted/30 p-3 text-xs">
                 <p className="mb-2 font-medium">{t("assistant.proposedChanges")}</p>
                 <div className="space-y-2">
@@ -2750,7 +2757,7 @@ export function AssistantPanel() {
                 </div>
               </div>
             )}
-            {message.action?.kind === "undo-file-updates" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.undoChanges")}</Button></div>}
+            {message.action?.kind === "undo-file-updates" && !brainstorming && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.undoChanges")}</Button></div>}
             {message.action?.kind === "apply-paragraph-rewrite" && (
               <>
                 <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>
@@ -2939,6 +2946,7 @@ export function AssistantPanel() {
             <div className="border-t p-3">
               <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void sendPrompt(draft); }}>
                 <Textarea
+                  ref={composerRef}
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
                   onKeyDown={(event) => {
