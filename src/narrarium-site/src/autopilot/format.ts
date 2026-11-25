@@ -1,6 +1,8 @@
 import i18next, { type TFunction } from "i18next";
 import type { AutopilotActivity, AutopilotEvent, AutopilotStateSummary, AutopilotStatus, AutopilotTaskKind, DirectorQuestion, InsightTone } from "narrarium-engine";
 import type { BookSyncStatus } from "@/autopilot/store";
+import { formatAmount } from "@/costs/money";
+import { moneyContextNow } from "@/costs/useMoney";
 import { useSettingsStore } from "@/store/settingsStore";
 
 export type FeedTone = InsightTone;
@@ -97,13 +99,13 @@ export function formatCount(value: number): string {
   return new Intl.NumberFormat(locale(), { notation: value >= 100_000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value);
 }
 
+/**
+ * An amount of money that is `currency` (the currency it was recorded in; absent: the setting's), written by the one formatter of the app (`costs/money.ts`)
+ * with the settings as they are now: in the currency of the setting when it is that one or has an exchange rate to it, else in its own. Nothing is «—».
+ * A component that shows it follows the settings with `useMoney`, so that a change of the currency or of a rate shows at once.
+ */
 export function formatCost(value: number | undefined, currency: string | undefined): string {
-  if (!value) return "—";
-  try {
-    return new Intl.NumberFormat(locale(), { style: "currency", currency: currency || "USD", maximumFractionDigits: value < 1 ? 4 : 2 }).format(value);
-  } catch {
-    return `${value.toFixed(value < 1 ? 4 : 2)} ${currency ?? ""}`.trim();
-  }
+  return formatAmount(value ?? 0, currency, { ...moneyContextNow(), locale: locale() }, { zero: "dash" });
 }
 
 /** "Writing · Chapters approved: 1/3 · Words: 4,200"; once completed the status badge already says so. */

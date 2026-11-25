@@ -37,6 +37,8 @@ import { RouterRunNote } from "@/components/settings/router/RouterRunNote";
 import { RouterSections } from "@/components/settings/router/RouterSections";
 import { ToolsOnlyField } from "@/components/settings/router/ToolsOnlyField";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
+import { CostRatesEditor } from "@/components/settings/CostRatesEditor";
+import "@/i18n/costs";
 
 /** How long the bar of the settings says that a save is done before it goes away. */
 const SAVED_NOTICE_MS = 4000;
@@ -136,6 +138,8 @@ export function SettingsPage() {
   const [newToken, setNewToken] = useState("");
   const [newIntegration, setNewIntegration] = useState<AIIntegration>(() => createBlankIntegration());
   const currencyId = useId();
+  // The currency the person chose here: the change says at once what it changes (the unit of the prices from now on, never what was recorded).
+  const [currencyChosen, setCurrencyChosen] = useState<string | null>(null);
 
   useEffect(() => {
     setDefaultToken(settings.defaultGitHubToken);
@@ -273,7 +277,7 @@ export function SettingsPage() {
               <DefaultIntegrationSelectors integrations={aiIntegrations} defaultWriting={defaultWriting} defaultReview={defaultReview} onWritingChange={(id) => patchAi({ defaultWritingIntegrationId: id })} onReviewChange={(id) => patchAi({ defaultReviewIntegrationId: id })} />
               <div className="grid gap-2 sm:max-w-xs">
                 <Label htmlFor={currencyId}>{t("settings.costCurrency")}</Label>
-                <Select value={settings.costCurrency || "USD"} onValueChange={(value) => patchSettings({ costCurrency: value })}>
+                <Select value={settings.costCurrency || "USD"} onValueChange={(value) => { setCurrencyChosen(value); patchSettings({ costCurrency: value }); }}>
                   <SelectTrigger id={currencyId} aria-describedby={`${currencyId}-hint`}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {COST_CURRENCIES.map((currency) => (
@@ -284,7 +288,9 @@ export function SettingsPage() {
                   </SelectContent>
                 </Select>
                 <p id={`${currencyId}-hint`} className="text-xs text-muted-foreground">{t("settings.costCurrencyHint")}</p>
+                {currencyChosen !== null && currencyChosen === settings.costCurrency && <p role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">{t("settings.costCurrencyChanged", { currency: settings.costCurrency || "USD" })}</p>}
               </div>
+              <CostRatesEditor currency={settings.costCurrency || "USD"} rates={settings.costRates} onChange={(costRates) => patchSettings({ costRates })} />
               {aiIntegrations.length === 0 && <p className="text-sm text-muted-foreground">{t("settings.noIntegrations")}</p>}
               <div className="grid gap-3">{aiIntegrations.map((integration) => <IntegrationAccordion key={integration.id} integration={integration}><IntegrationEditor integration={integration} onChange={(patch) => updateIntegration(integration.id, patch)} onRemove={() => removeIntegration(integration.id)} credentialsDisabled={false} /></IntegrationAccordion>)}</div>
               <Separator />
@@ -567,6 +573,7 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
   const usesApiKey = integration.provider !== "m365_copilot";
   const usesEndpoint = integration.provider !== "m365_copilot" && !isGithub;
   const usesMedia = integration.provider !== "m365_copilot" && !isGithub;
+  const unit = usePriceUnit();
 
   return (
     <div className="rounded-2xl border bg-card p-4">
@@ -665,18 +672,18 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
       {usesMedia && (
         <details className="mt-3 rounded-lg border bg-muted/20 p-3">
           <summary className="cursor-pointer py-1 text-sm font-medium [@media(pointer:coarse)]:py-3">{t("costs.mediaPricingTitle")}</summary>
-          <p className="mt-1 text-xs text-muted-foreground">{t("costs.mediaPricingHint")}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t("costs.mediaPricingHint", { currency: unit })}</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            <PriceField label={t("costs.priceTts")} value={integration.pricing?.ttsPerMChar} onChange={(v) => onChange({ pricing: { ...integration.pricing, ttsPerMChar: v } })} />
-            <PriceField label={t("costs.priceStt")} value={integration.pricing?.sttPerHour} onChange={(v) => onChange({ pricing: { ...integration.pricing, sttPerHour: v } })} />
+            <PriceField label={t("costs.priceTts", { unit })} value={integration.pricing?.ttsPerMChar} onChange={(v) => onChange({ pricing: { ...integration.pricing, ttsPerMChar: v } })} />
+            <PriceField label={t("costs.priceStt", { unit })} value={integration.pricing?.sttPerHour} onChange={(v) => onChange({ pricing: { ...integration.pricing, sttPerHour: v } })} />
           </div>
           <p className="mt-3 text-xs font-medium text-muted-foreground">{t("costs.imageTokenPricing")}</p>
           <div className="mt-1 grid gap-2 sm:grid-cols-3">
-            <PriceField label={t("costs.priceImgInputText")} value={integration.pricing?.imageInputTextPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageInputTextPerMTok: v } })} />
-            <PriceField label={t("costs.priceImgCachedText")} value={integration.pricing?.imageCachedInputTextPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageCachedInputTextPerMTok: v } })} />
-            <PriceField label={t("costs.priceImgInputImage")} value={integration.pricing?.imageInputImagePerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageInputImagePerMTok: v } })} />
-            <PriceField label={t("costs.priceImgCachedImage")} value={integration.pricing?.imageCachedInputImagePerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageCachedInputImagePerMTok: v } })} />
-            <PriceField label={t("costs.priceImgOutput")} value={integration.pricing?.imageOutputPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageOutputPerMTok: v } })} />
+            <PriceField label={t("costs.priceImgInputText", { unit })} value={integration.pricing?.imageInputTextPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageInputTextPerMTok: v } })} />
+            <PriceField label={t("costs.priceImgCachedText", { unit })} value={integration.pricing?.imageCachedInputTextPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageCachedInputTextPerMTok: v } })} />
+            <PriceField label={t("costs.priceImgInputImage", { unit })} value={integration.pricing?.imageInputImagePerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageInputImagePerMTok: v } })} />
+            <PriceField label={t("costs.priceImgCachedImage", { unit })} value={integration.pricing?.imageCachedInputImagePerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageCachedInputImagePerMTok: v } })} />
+            <PriceField label={t("costs.priceImgOutput", { unit })} value={integration.pricing?.imageOutputPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageOutputPerMTok: v } })} />
           </div>
         </details>
       )}
@@ -692,6 +699,7 @@ function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onCh
   const [loadingCatalog, setLoadingCatalog] = useState(false);
   const [remoteModels, setRemoteModels] = useState<OpenAICompatibleModel[]>([]);
   const [selectedRemoteModel, setSelectedRemoteModel] = useState("");
+  const unit = usePriceUnit();
 
   useEffect(() => {
     setRemoteModels([]);
@@ -887,10 +895,11 @@ function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onCh
             </div>
             <details className="mt-2 rounded-md border bg-muted/20 p-2">
               <summary className="cursor-pointer py-1 text-xs font-medium [@media(pointer:coarse)]:py-3">{t("costs.chatPricingTitle")}</summary>
+              <p className="mt-1 text-xs text-muted-foreground">{t("costs.chatPricingHint", { currency: unit })}</p>
               <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                <PriceField label={t("costs.priceInput")} value={model.pricing?.inputPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, inputPerMTok: v } })} />
-                <PriceField label={t("costs.priceCached")} value={model.pricing?.cachedPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, cachedPerMTok: v } })} />
-                <PriceField label={t("costs.priceOutput")} value={model.pricing?.outputPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, outputPerMTok: v } })} />
+                <PriceField label={t("costs.priceInput", { unit })} value={model.pricing?.inputPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, inputPerMTok: v } })} />
+                <PriceField label={t("costs.priceCached", { unit })} value={model.pricing?.cachedPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, cachedPerMTok: v } })} />
+                <PriceField label={t("costs.priceOutput", { unit })} value={model.pricing?.outputPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, outputPerMTok: v } })} />
               </div>
             </details>
           </div>
@@ -898,6 +907,11 @@ function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onCh
       </div>
     </div>
   );
+}
+
+/** The unit the prices are entered in: the currency of the settings, as it is now (a change of it shows in every label at once). */
+function usePriceUnit(): string {
+  return useSettingsStore((store) => (store.settings.costCurrency || "USD").trim().toUpperCase());
 }
 
 function PriceField({ label, value, onChange }: { label: string; value: number | undefined; onChange: (v: number | undefined) => void }) {

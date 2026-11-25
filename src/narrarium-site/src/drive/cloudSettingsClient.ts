@@ -6,6 +6,7 @@ import { ensureGoogleAppFolder, listVerifiedGoogleAppFolders, selectCanonicalGoo
 import { assertCloudReadAllowed, beginCloudWrite, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
 import { ensureMicrosoftAppMarker, graphPath, ONE_DRIVE_APP_FOLDER, verifyMicrosoftAppFolder } from "@/drive/microsoftAppFolder";
 import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
+import { normalizeRates } from "@/costs/rates";
 
 export class TokenExpiredError extends Error {
   constructor() {
@@ -411,6 +412,10 @@ export function migrateSettingsWithDiagnostics(raw: unknown): { settings: AppSet
   // «Tools only» is a flag, and anything else is no value (the engine ignores it too): it is never turned off by accident, and it is not made up.
   if (typeof settings.aiToolsOnly !== "boolean") delete settings.aiToolsOnly;
   if (typeof settings.githubPreferConnection !== "boolean") delete settings.githubPreferConnection;
+  // The exchange rates for the display of costs: the valid ones, and no key at all without them (settings that never had any read as they were).
+  const costRates = normalizeRates(source.costRates);
+  if (costRates.length) settings.costRates = costRates;
+  else delete settings.costRates;
   return { settings, diagnostics };
 }
 

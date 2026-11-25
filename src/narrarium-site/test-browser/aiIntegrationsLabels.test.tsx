@@ -67,8 +67,8 @@ describe("AI Integrations: every field is found by its label", () => {
     change(screen.getByLabelText(t("settings.underlyingModel")), "o3-mini");
     change(screen.getByLabelText(t("settings.maxInputTokens")), "128000");
     change(screen.getByLabelText(t("settings.maxOutputTokens")), "16000");
-    change(screen.getByLabelText(t("costs.priceInput")), "2.5");
-    change(screen.getByLabelText(t("costs.priceTts")), "15");
+    change(screen.getByLabelText(t("costs.priceInput", { unit: "USD" })), "2.5");
+    change(screen.getByLabelText(t("costs.priceTts", { unit: "USD" })), "15");
     const toolCalls = screen.getByRole("switch", { name: t("settings.forcedToolCalls") });
     expect(toolCalls).toBeChecked();
     fireEvent.click(toolCalls);

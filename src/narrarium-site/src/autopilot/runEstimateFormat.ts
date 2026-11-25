@@ -5,6 +5,8 @@
  * given: the app's, which is not always the browser's.
  */
 
+import { formatMoney as formatMoneyOf } from "@/costs/money";
+
 export interface Range {
   min: number;
   max: number;
@@ -103,14 +105,9 @@ export function formatTokens(value: number, locale: string): string {
   return formatter(locale, { notation: "compact", compactDisplay: "long", maximumSignificantDigits: FIGURES }).format(positive(value));
 }
 
-/** Money with its currency at two significant figures; a currency the platform does not know is written as the author wrote it. */
+/** Money with its currency at two significant figures (an estimate), by the one formatter of the app; a currency the platform does not know is written as the author wrote it. */
 export function formatMoney(value: number, currency: string, locale: string): string {
-  const amount = positive(value);
-  try {
-    return formatter(locale, { style: "currency", currency, maximumSignificantDigits: FIGURES }).format(amount);
-  } catch {
-    return `${formatter(locale, { maximumSignificantDigits: FIGURES }).format(amount)} ${currency}`;
-  }
+  return formatMoneyOf(positive(value), currency, { locale, significant: FIGURES });
 }
 
 /** A duration with the unit that fits: minutes under an hour and a half, hours under two days, days after: «45 min», «1.5 hr», «2 days». */

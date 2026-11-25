@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { useElapsed } from "@/autopilot/hooks";
 import { TONE_BORDER, TONE_TEXT, STATUS_BADGE, activityTitle, formatClock, formatDuration, presentFeedEvent } from "@/autopilot/format";
 import { useAutopilotStore, type LivePreview } from "@/autopilot/store";
+import { useMoney } from "@/costs/useMoney";
 import { useSettingsStore } from "@/store/settingsStore";
 import { cn } from "@/lib/utils";
 
@@ -75,7 +76,8 @@ export function AutopilotFeed({ bookId, exceptBook, showBook = false, limit = 20
   const feed = useAutopilotStore((state) => state.feed);
   const live = useAutopilotStore((state) => state.live);
   const books = useSettingsStore((state) => state.settings.books);
-  const currency = useSettingsStore((state) => state.settings.costCurrency);
+  // The money of an event is written with the settings as they are now (`useMoney` follows them, a change shows at once).
+  const currency = useMoney().display;
   const titles = useMemo(() => new Map(books.map((book) => [book.id, book.name])), [books]);
   const entries = useMemo(() => feed
     .filter((entry) => (bookId ? entry.event.bookId === bookId : titles.has(entry.event.bookId)) && entry.event.bookId !== exceptBook && entry.event.type !== "task-started")

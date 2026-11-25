@@ -20,7 +20,7 @@ import { autopilotLiveHref, autopilotSettingsHref } from "@/autopilot/pageRoute"
 import { useAutopilotStore } from "@/autopilot/store";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useTextDetail } from "@/autopilot/useLiveText";
-import { useSettingsStore } from "@/store/settingsStore";
+import { useMoney } from "@/costs/useMoney";
 import type { BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
 
@@ -87,7 +87,7 @@ export const BookCard = memo(function BookCard({ book }: { book: BookEntry }) {
   const view = useBookAutopilotView(book.id);
   const control = useAutopilotControl(book.id);
   const runningStep = useAutopilotStore((store) => store.live[book.id]?.activity ?? null);
-  const costCurrency = useSettingsStore((store) => store.settings.costCurrency);
+  const money = useMoney();
   const summary = control.summary;
   const state = view.snapshot?.state ?? null;
   const pending = !view.snapshot && !view.error;
@@ -99,7 +99,7 @@ export const BookCard = memo(function BookCard({ book }: { book: BookEntry }) {
   const host = book.autopilotHost === "server" ? "server" : "browser";
   const named = (label: string) => t("autopilot.quick.named", { label, context: book.name });
   const liveHref = autopilotLiveHref(book.id);
-  const currency = summary?.stats.currency ?? costCurrency;
+  const currency = summary?.stats.currency ?? money.display;
   const use = summary ? budgetUse(summary.stats, state?.options) : null;
   const error = summary?.status === "error" ? summary.lastError : null;
   // With «Show the text» the card says what the step is writing and the last steps that are over, which take the place of the last step and when.

@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useMoney } from "@/costs/useMoney";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
@@ -192,7 +193,9 @@ function ResearchDetail({
   const [llmOverride, setLlmOverride] = useState("");
   const abortRef = useRef<AbortController | null>(null);
 
-  const currency = settings.costCurrency || "USD";
+  // The cost of a research is a number in the currency the settings had when it ran: it is written with the one formatter, followed live.
+  const money = useMoney();
+  const currency = money.display;
 
   useEffect(() => {
     let active = true;
@@ -333,9 +336,7 @@ function ResearchDetail({
                 {frontmatter.intents?.length ? <span>{t("research.intentLabel")}: {frontmatter.intents.join(", ")}</span> : null}
                 {frontmatter.relatedEntityId && <span>{t("research.relatedEntity")}: {frontmatter.relatedEntityId}</span>}
                 <span className="font-medium text-foreground">
-                  {t("research.cost")}: {costValue !== undefined
-                    ? new Intl.NumberFormat(undefined, { style: "currency", currency: currency.trim() || "USD", maximumFractionDigits: 4 }).format(costValue)
-                    : new Intl.NumberFormat(undefined, { style: "currency", currency: currency.trim() || "USD", maximumFractionDigits: 4 }).format(0)}
+                  {t("research.cost")}: {money.amount(costValue ?? 0, currency)}
                 </span>
               </p>
               <div className="mt-3 rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
@@ -473,7 +474,8 @@ function NewResearchForm({
   const [intentConfirmSelection, setIntentConfirmSelection] = useState<ResearchIntent[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
-  const currency = settings.costCurrency || "USD";
+  const money = useMoney();
+  const currency = money.display;
   const internetConfigured = Boolean(settings.deepSearch.braveApiKey.trim() || settings.deepSearch.tavilyApiKey.trim());
 
   useEffect(() => { if (initialQuery) setQuery(initialQuery); }, [initialQuery]);
@@ -535,7 +537,7 @@ function NewResearchForm({
       const unavailableLine = result.unavailableSummary.length ? ` · ${t("research.unavailableIntents", { intents: result.unavailableSummary.join(", ") })}` : "";
       toast({
         title: result.title,
-        description: `${t("research.cost")}: ${new Intl.NumberFormat(undefined, { style: "currency", currency: currency.trim() || "USD", maximumFractionDigits: 4 }).format(result.cost)} · ${t("research.providersUsedShort", { providers: providerLine })}${unavailableLine}`,
+        description: `${t("research.cost")}: ${money.amount(result.cost, currency)} · ${t("research.providersUsedShort", { providers: providerLine })}${unavailableLine}`,
       });
       onDone(result.slug, result.cost);
     } catch (err) {
@@ -669,6 +671,7 @@ export function DeepResearchPage() {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const { settings } = useSettingsStore();
+  const money = useMoney();
   const { branch } = useWorkingBranch(bookId);
   const { book, structure, loading, error, reload } = useBookStructure(bookId);
   const token = book ? resolveWorkingCopyToken(book, settings) : "";
@@ -793,7 +796,7 @@ export function DeepResearchPage() {
               <span className="min-w-0 flex-1 truncate">{researchListTitle(f, searchIndex[f.slug])}</span>
               {lastRunCosts[f.slug] !== undefined && (
                 <Badge variant="outline" className="shrink-0 font-mono">
-                  {new Intl.NumberFormat(undefined, { style: "currency", currency: (settings.costCurrency || "USD").trim(), maximumFractionDigits: 4 }).format(lastRunCosts[f.slug])}
+                  {money.amount(lastRunCosts[f.slug], money.display)}
                 </Badge>
               )}
               <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />

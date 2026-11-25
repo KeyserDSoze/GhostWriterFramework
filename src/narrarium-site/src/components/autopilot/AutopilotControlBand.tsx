@@ -15,6 +15,7 @@ import { LastDone } from "@/components/autopilot/live/LastDone";
 import { LiveAnnouncer, TextDetailToggle } from "@/components/autopilot/live/LiveControls";
 import { StreamLines } from "@/components/autopilot/live/StreamLines";
 import { useReserveSpace } from "@/hooks/useReserveSpace";
+import { useMoney } from "@/costs/useMoney";
 import { useSettingsStore } from "@/store/settingsStore";
 import { cn } from "@/lib/utils";
 
@@ -49,7 +50,8 @@ export function useBandModel(bookId: string): BandModel | null {
   const control = useAutopilotControl(bookId);
   const view = useBookAutopilotView(bookId);
   const book = useSettingsStore((store) => store.settings.books.find((entry) => entry.id === bookId));
-  const costCurrency = useSettingsStore((store) => store.settings.costCurrency);
+  // Followed live: a change of the currency or of a rate in the settings shows at once in what the band says of the costs.
+  const money = useMoney();
   const liveActivity = useAutopilotStore((store) => store.live[bookId]?.activity ?? null);
   const summary = control.summary;
   const state = view.snapshot?.state ?? null;
@@ -77,7 +79,7 @@ export function useBandModel(bookId: string): BandModel | null {
     running: control.running,
     completed: status === "completed",
     cycle,
-    currency: summary.stats.currency ?? costCurrency,
+    currency: summary.stats.currency ?? money.display,
     message: !quiet && summary.message ? summary.message : null,
     wait,
     stepSpend,

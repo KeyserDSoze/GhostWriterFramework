@@ -146,23 +146,30 @@ export interface ChatModel {
   pricing?: AIPricing;
 }
 
-/** Optional unit prices (EUR) used to track spend. Token prices are per 1,000,000 tokens. */
+/** «1 `from` is `rate` `to`»: an exchange rate for the display of costs (`AppSettings.costRates`). Codes of three capital letters. */
+export interface CostExchangeRate {
+  from: string;
+  to: string;
+  rate: number;
+}
+
+/** Optional unit prices used to track spend, in the currency of the settings (`AppSettings.costCurrency`). Token prices are per 1,000,000 tokens. */
 export interface AIPricing {
-  /** EUR per 1M input tokens (chat) */
+  /** Per 1M input tokens (chat) */
   inputPerMTok?: number;
-  /** EUR per 1M cached input tokens (chat) */
+  /** Per 1M cached input tokens (chat) */
   cachedPerMTok?: number;
-  /** EUR per 1M output tokens (chat) */
+  /** Per 1M output tokens (chat) */
   outputPerMTok?: number;
-  /** Token-based image pricing (gpt-image style), EUR per 1M tokens */
+  /** Token-based image pricing (gpt-image style), per 1M tokens */
   imageInputTextPerMTok?: number;
   imageCachedInputTextPerMTok?: number;
   imageInputImagePerMTok?: number;
   imageCachedInputImagePerMTok?: number;
   imageOutputPerMTok?: number;
-  /** EUR per 1M TTS characters */
+  /** Per 1M TTS characters */
   ttsPerMChar?: number;
-  /** EUR per hour of STT audio */
+  /** Per hour of STT audio */
   sttPerHour?: number;
 }
 
@@ -701,8 +708,16 @@ export interface AppSettings {
    * and a reply in text instead of the call is refused. Absent means on; it is stored as a flag when the author switches it, and anything else is dropped.
    */
   aiToolsOnly?: boolean;
-  /** Currency symbol/code used for cost display (e.g. "USD", "EUR", "GBP"). Default: "USD". */
+  /**
+   * The currency of the prices and of every display of costs (e.g. "USD", "EUR", "GBP"). Default: "USD". Prices are entered in it, so a call is priced in the currency it
+   * had when the call was made: changing it changes the unit of the prices from then on and how costs are shown at once, never what was recorded (see `costs/money.ts`).
+   */
   costCurrency: string;
+  /**
+   * Exchange rates the person gave, used only to show costs recorded in another currency in `costCurrency` (marked «≈» and «converted at …»): never to record, never to price.
+   * Absent: costs in other currencies are shown in their own, as subtotals. An older client keeps the field as it is.
+   */
+  costRates?: CostExchangeRate[];
   ui: {
     language: "en" | "it";
     theme: "light" | "dark" | "system";

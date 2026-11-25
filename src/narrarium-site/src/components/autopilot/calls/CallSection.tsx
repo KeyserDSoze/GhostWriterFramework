@@ -9,6 +9,7 @@ import { PHONE_SCREENS } from "@/autopilot/liveText";
 import { callElementId } from "@/components/autopilot/calls/anchors";
 import { useCallsView } from "@/components/autopilot/calls/callsView";
 import { askedAttempts, costWords, errorWords, failedAttempts, leftOutAttempts, modelOf, timesOf, transportFacts, useOf } from "@/components/autopilot/calls/callFacts";
+import { useMoney } from "@/costs/useMoney";
 import { leftOutReason } from "@/autopilot/routeWords";
 import { useSettingsStore } from "@/store/settingsStore";
 import { PromptPane, ResponsePane } from "@/components/autopilot/calls/CallPanes";
@@ -47,6 +48,8 @@ function useIntegrationName(): (id: string | null | undefined) => string | undef
 /** What a call asked, of which model, how it went, when and for how long, what it sent and received, what it used and cost. In words and figures. */
 function CallFacts({ record, now }: { record: AiCallRecord; now: number }) {
   const { t } = useTranslation();
+  // The cost of the call follows the currency and the rates of the settings as they are now.
+  useMoney();
   const integrationName = useIntegrationName();
   const { model, provider, integrationId } = modelOf(record);
   const where = integrationName(integrationId) ?? provider;
