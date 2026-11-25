@@ -120,6 +120,7 @@ export function GitHubCreateResult({ result, onOpenBook, reader }: GitHubCreateR
   const reset = rateLimit?.resetAt ? new Date(rateLimit.resetAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) : undefined;
   const workflowKey = result.workflow === "done" ? "done" : result.workflow === "held" ? "held" : result.workflow === "not-allowed" ? "notAllowed" : rateLimit ? "rateLimit" : workflowFile ? "skipped" : "none";
   const branch = result.warnings.some((warning) => warning.code === "branch-not-main");
+  const defaultBranchNotSet = result.warnings.some((warning) => warning.code === "default-branch-not-set");
   const planHint = result.pages === "manual" && result.private;
   const showPagesSteps = result.pages !== "enabled";
   const needsWorkflowPermission = result.workflow === "not-allowed" || (result.workflow === "skipped" && Boolean(workflowFile));
@@ -137,6 +138,7 @@ export function GitHubCreateResult({ result, onOpenBook, reader }: GitHubCreateR
         <li>{workflowKey === "notAllowed" && result.tokenKind === "app" ? t("github.createBook.app.workflowNotAllowed") : t(`github.createBook.result.workflow.${workflowKey}`, { reset })}</li>
         <li>{t(`github.createBook.result.pages.${result.pages}`, { url })}</li>
         {branch && <li>{t("github.createBook.result.branch", { branch: result.defaultBranch })}</li>}
+        {defaultBranchNotSet && <li>{t("github.createBook.result.defaultBranchNotSet", { branch: result.defaultBranch })}</li>}
       </ul>
       <div className="flex flex-wrap gap-2">
         <Button type="button" className={TARGET} onClick={onOpenBook}>{t("github.createBook.result.openBook")}</Button>

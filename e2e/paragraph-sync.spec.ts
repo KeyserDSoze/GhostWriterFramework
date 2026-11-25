@@ -50,11 +50,12 @@ function requestPath(event: RequestEvent): string {
   return decodeURIComponent(new URL(event.url).pathname);
 }
 
-function installDeterministicNetworkMocks(page: Page, options: { credential?: boolean } = {}): { events: RequestEvent[]; headRequests: string[]; headRequestsByPhase: Record<RequestPhase, string[]>; blobDownloads: string[]; contentDownloads: string[]; unexpected: UnexpectedRequest[]; setPhase: (phase: RequestPhase) => void; setSettingsStalled: (stalled: boolean) => void; setCredential: (credential: boolean) => void } {
+function installDeterministicNetworkMocks(page: Page, options: { credential?: boolean } = {}): { events: RequestEvent[]; headRequests: string[]; headRequestsByPhase: Record<RequestPhase, string[]>; branchLists: Array<{ ifNoneMatch?: string; status: number }>; blobDownloads: string[]; contentDownloads: string[]; unexpected: UnexpectedRequest[]; setPhase: (phase: RequestPhase) => void; setSettingsStalled: (stalled: boolean) => void; setCredential: (credential: boolean) => void } {
   let credential = options.credential ?? true;
   const events: RequestEvent[] = [];
   const headRequests: string[] = [];
   const headRequestsByPhase: Record<RequestPhase, string[]> = { opening: [], sync: [], reload: [] };
+  const branchLists: Array<{ ifNoneMatch?: string; status: number }> = [];
   const blobDownloads: string[] = [];
   const contentDownloads: string[] = [];
   const unexpected: UnexpectedRequest[] = [];
@@ -147,7 +148,17 @@ function installDeterministicNetworkMocks(page: Page, options: { credential?: bo
       return;
     }
     if (method === "GET" && /\/repos\/KeyserDSoze\/Jesus\/branches$/i.test(path)) {
-      await route.fulfill({ json: [{ name: "main", commit: { sha: "head-main" }, protected: true }, { name: "test2", commit: { sha: remoteHead }, protected: false }] });
+      // GitHub's list of branches, with its ETag: the same list asked again with it answers 304.
+      const etag = `W/"e2e-branches-${remoteHead}"`;
+      const headers = { etag, "access-control-expose-headers": "ETag, Link, X-RateLimit-Remaining, X-RateLimit-Reset", "x-ratelimit-remaining": "4999", "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 3600) };
+      const ifNoneMatch = request.headers()["if-none-match"];
+      if (ifNoneMatch === etag) {
+        branchLists.push({ ifNoneMatch, status: 304 });
+        await route.fulfill({ status: 304, headers });
+        return;
+      }
+      branchLists.push({ ifNoneMatch, status: 200 });
+      await route.fulfill({ json: [{ name: "main", commit: { sha: "head-main" }, protected: true }, { name: "test2", commit: { sha: remoteHead }, protected: false }], headers });
       return;
     }
     if (method === "GET" && /\/git\/commits\//.test(path)) {
@@ -198,7 +209,7 @@ function installDeterministicNetworkMocks(page: Page, options: { credential?: bo
     await route.fulfill({ status: 500, json: { message: `Unexpected GitHub request: ${method} ${path}` } });
   });
 
-  return { events, headRequests, headRequestsByPhase, blobDownloads, contentDownloads, unexpected, setPhase: (next) => { phase = next; }, setSettingsStalled: (stalled) => { settingsStalled = stalled; }, setCredential: (next) => { credential = next; } };
+  return { events, headRequests, headRequestsByPhase, branchLists, blobDownloads, contentDownloads, unexpected, setPhase: (next) => { phase = next; }, setSettingsStalled: (stalled) => { settingsStalled = stalled; }, setCredential: (next) => { credential = next; } };
 }
 
 async function installSeed(page: Page, options: { credential?: boolean; workingCopy?: boolean } = {}): Promise<void> {
@@ -565,18 +576,22 @@ test("authenticated route families survive direct navigation and refresh", async
   }
 });
 
-test("auto-fetch on open checks the head of the remote branch once when a linked book is opened, and reads no content", async ({ page }) => {
-  // The seeded settings turn "Auto-fetch on open" on and the periodic check off.
+test("the automatic sync lists the branches of GitHub once when a linked book is opened, asks again with the ETag, and reads no content", async ({ page }) => {
+  // The seeded settings are those of an older version ("Auto-fetch on open", no periodic check): the automatic sync runs on opening and on focus.
   const network = installDeterministicNetworkMocks(page);
   await installSeed(page);
   await page.goto(`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001`);
   await expect(page.getByRole("button", { name: "Edit paragraph" })).toBeVisible({ timeout: 15_000 });
-  await expect.poll(() => network.headRequests.length).toBe(1);
+  await expect.poll(() => network.branchLists.length).toBe(1);
   await page.waitForTimeout(1500);
-  expect(network.headRequests).toHaveLength(1);
+  expect(network.branchLists).toEqual([{ ifNoneMatch: undefined, status: 200 }]);
+  // The branch did not move: nothing else is asked of it.
+  expect(network.headRequests).toEqual([]);
   await page.reload();
   await expect(page.getByRole("button", { name: "Edit paragraph" })).toBeVisible({ timeout: 15_000 });
-  await expect.poll(() => network.headRequests.length).toBe(2);
+  await expect.poll(() => network.branchLists.length).toBe(2);
+  expect(network.branchLists[1]).toEqual({ ifNoneMatch: 'W/"e2e-branches-head-test2"', status: 304 });
+  expect(network.headRequests).toEqual([]);
   expect(network.blobDownloads).toEqual([]);
   expect(network.contentDownloads).toEqual([]);
   expect(network.unexpected).toEqual([]);

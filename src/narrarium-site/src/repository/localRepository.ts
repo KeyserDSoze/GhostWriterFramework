@@ -130,6 +130,11 @@ export interface LocalRepositoryMeta {
   /** Last repository-scoped commit order allocated transactionally. */
   nextCommitOrder?: number;
   accountScope?: string;
+  /**
+   * A branch created on this device and not on GitHub yet: publishing it makes the branch at `headSha` (the commit of GitHub its copy started from, the
+   * one of `base`), then pushes its changes like those of any branch. Cleared once GitHub has it.
+   */
+  pendingBranch?: { base: string; headSha: string; createdAt: string };
 }
 
 export interface LocalRepositoryFile {
@@ -723,6 +728,33 @@ export async function createLocalRepositoryClone(
     tx.oncomplete = () => resolve(created!);
     tx.onerror = () => reject(validationError ?? tx.error);
     tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local clone creation was aborted."));
+  });
+}
+
+/** A file put in a working copy that a clone operation owns (`@/repository/localBranchCopy` makes a branch copy this way). */
+export async function putClonedLocalFile(repoIdValue: string, scope: RepositoryOperationScope, file: Omit<LocalRepositoryFile, "key" | "repoId">, cloneOperationId: string): Promise<void> {
+  await putScopedLocalFile(repoIdValue, scope, { ...file, key: fileKey(repoIdValue, file.path), repoId: repoIdValue }, cloneOperationId);
+}
+
+/** GitHub has the branch now: the copy is an ordinary working copy of it. */
+export async function clearPendingBranch(repoIdValue: string, scope: RepositoryOperationScope): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = guardedWriteTransaction(db, "repositories", repoIdValue);
+    const store = tx.objectStore("repositories");
+    let validationError: Error | null = null;
+    const request = store.get(repoIdValue);
+    request.onsuccess = () => {
+      try {
+        const repository = validateRepositoryOperation(request.result as LocalRepositoryMeta | undefined, scope);
+        const { pendingBranch: _pending, ...rest } = repository;
+        store.put({ ...rest, updatedAt: new Date().toISOString() });
+      } catch (error) { validationError = error as Error; tx.abort(); }
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(validationError ?? tx.error);
+    tx.onabort = () => reject(validationError ?? tx.error ?? new Error("Local repository update was aborted."));
   });
 }
 
@@ -2265,6 +2297,12 @@ export async function createLocalCommit(
     tx.onabort = () => reject(validationError ?? transactionError(tx) ?? new Error("Local commit transaction aborted."));
   });
   return commit!;
+}
+
+/** One local commit of a working copy, pushed or not. */
+export async function getLocalCommit(repoIdValue: string, commitId: string): Promise<LocalCommit | null> {
+  const commit = (await allFromIndex<LocalCommit>("commits", "repoId", repoIdValue)).find((entry) => entry.id === commitId);
+  return commit ?? null;
 }
 
 export async function listUnpushedLocalCommits(repoIdValue: string): Promise<LocalCommit[]> {

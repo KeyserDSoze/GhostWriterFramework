@@ -9,6 +9,7 @@ import {
   applyCloneRepairAtomically,
   claimLocalRepositoryRepair,
   claimLegacyLocalRepositoryMigration,
+  clearPendingBranch,
   classifyLegacyLocalRepositoryMigration,
   createLocalRepositoryClone,
   applyRemoteMergeAtomically,
@@ -65,6 +66,7 @@ import { RepositoryByteMeter, RepositoryLimitExceededError, REPOSITORY_TRANSFER_
 import { fetchRepositoryBlobBytes } from "@/repository/repositoryBlobTransport";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { buildInitialBookFiles } from "@/narrarium/bookScaffold";
+import { REPOSITORY_LOCK_PREFIX } from "@/branches/locks";
 
 const TEXT_EXTENSIONS = new Set(["md", "markdown", "txt", "json", "yaml", "yml", "toml", "csv", "html", "css", "js", "ts", "tsx"]);
 
@@ -72,7 +74,8 @@ function tokenHealthTarget(input: Pick<ExactRepositoryTarget, "accountIdentity" 
   return { accountIdentity: input.accountIdentity, token: input.token, owner: input.owner, repo: input.repo, branch: input.branch };
 }
 
-function trackedOctokit(token: string, target?: Pick<ExactRepositoryTarget, "accountIdentity" | "owner" | "repo" | "branch">): Octokit {
+/** The internals exported below (`export async function …Leased`, the lease, the scope) are for `@/repository/branchSync`, which loads with the branch sync. */
+export function trackedOctokit(token: string, target?: Pick<ExactRepositoryTarget, "accountIdentity" | "owner" | "repo" | "branch">): Octokit {
   return createTrackedGitHubClient(token, target);
 }
 
@@ -199,7 +202,7 @@ export function invalidateRepositoryEnsureOperations(epoch: number, accountIdent
   }
 }
 
-async function withRepositoryMutationLease<T>(repoId: string, run: () => Promise<T>): Promise<T> {
+export async function withRepositoryMutationLease<T>(repoId: string, run: () => Promise<T>): Promise<T> {
   const previous = repositoryMutationQueues.get(repoId) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolve) => { release = resolve; });
@@ -214,7 +217,7 @@ async function withRepositoryMutationLease<T>(repoId: string, run: () => Promise
     if (typeof indexedDB !== "undefined") durableLease = await acquireRepositoryMutationLease(repoId);
     heartbeat = setInterval(() => { void heartbeatRepositoryMutationLease(durableLease!); }, 5_000);
     if (typeof navigator !== "undefined" && navigator.locks) {
-      return await navigator.locks.request(`narrarium-repository-${repoId}`, { mode: "exclusive" }, run);
+      return await navigator.locks.request(`${REPOSITORY_LOCK_PREFIX}${repoId}`, { mode: "exclusive" }, run);
     }
     return await run();
   } finally {
@@ -225,7 +228,7 @@ async function withRepositoryMutationLease<T>(repoId: string, run: () => Promise
   }
 }
 
-function operationScope(target: ExactRepositoryTarget): RepositoryOperationScope {
+export function operationScope(target: ExactRepositoryTarget): RepositoryOperationScope {
   const scope = captureRepositoryOperationScope();
   if (scope.accountIdentity !== target.accountIdentity) throw new Error("Local repository account identity is not current.");
   return scope;
@@ -253,7 +256,7 @@ async function diagnostic(input: {
   }).catch(() => undefined);
 }
 
-async function exactLocalRepository(target: ExactRepositoryTarget, scope = operationScope(target), options: { allowIncomplete?: boolean } = {}): Promise<LocalRepositoryMeta> {
+export async function exactLocalRepository(target: ExactRepositoryTarget, scope = operationScope(target), options: { allowIncomplete?: boolean } = {}): Promise<LocalRepositoryMeta> {
   assertRepositoryOperationScopeCurrent(scope);
   if (!target.accountIdentity || target.accountIdentity !== currentRepositoryScopeIdentity()) throw new Error("Local repository account identity is not current.");
   const meta = target.repoId
@@ -302,6 +305,30 @@ async function withLifecycleHeartbeat<T>(repoId: string, scope: RepositoryOperat
   const timer = window.setInterval(() => { void heartbeatRepositoryLifecycleLease(repoId, scope, operationId).catch(() => undefined); }, 10_000);
   try { return await run(); }
   finally { window.clearInterval(timer); }
+}
+
+/** The bytes of a file of a working copy, as GitHub has them when the file is clean. */
+async function localFileBytes(file: LocalRepositoryFile): Promise<Uint8Array> {
+  return file.kind === "text" ? new TextEncoder().encode(file.text ?? "") : new Uint8Array(await (file.blob ?? new Blob()).arrayBuffer());
+}
+
+/**
+ * The files of the other copies of a book on this device (its other branches) that are exactly a blob of GitHub, by blob: clean, not committed, with the
+ * blob they came from. A clone or a pull takes these instead of downloading them again. Only the blobs asked for are kept.
+ */
+async function reusableLocalBlobs(input: { bookId: string; owner: string; repo: string; accountIdentity: string; excludeRepoId: string }, wanted: ReadonlySet<string>): Promise<Map<string, LocalRepositoryFile>> {
+  const found = new Map<string, LocalRepositoryFile>();
+  if (!wanted.size || !input.owner || !input.repo) return found;
+  const same = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
+  const copies = (await listLocalRepositoriesByBook(input.bookId, input.accountIdentity).catch(() => []))
+    .filter((row) => row.id !== input.excludeRepoId && row.cloneComplete === true && same(row.owner, input.owner) && same(row.repo, input.repo));
+  for (const copy of copies) {
+    for (const file of await listAllLocalFiles(copy.id)) {
+      if (file.baseSha && wanted.has(file.baseSha) && !found.has(file.baseSha) && file.status === "clean" && !file.committed) found.set(file.baseSha, file);
+    }
+    if (found.size === wanted.size) break;
+  }
+  return found;
 }
 
 export async function ensureLocalBookStructure(input: {
@@ -406,11 +433,14 @@ async function ensureLocalBookStructureOnce(input: {
   let done = 0;
   const transferMeter = new RepositoryByteMeter("transfer", transferAllowance);
   input.onProgress?.({ done, total: blobs.length, phase: "cloning" });
+  // The files another branch of the book already has here, unchanged, are not downloaded again: a new branch costs only what differs.
+  const reusable = await reusableLocalBlobs({ bookId: input.bookId, owner: input.book.owner, repo: input.book.repo, accountIdentity: input.accountIdentity, excludeRepoId: meta.id }, new Set(blobs.map((blob) => blob.sha).filter((sha): sha is string => Boolean(sha))));
   try {
     await withLifecycleHeartbeat(meta.id, scope, cloneOperationId, async () => {
     await mapLimit(blobs, 5, async (blob) => {
       if (!blob.sha) throw new Error(`Remote tree entry has no immutable blob SHA: ${blob.path}`);
-      const bytes = await fetchBlobBytesForRepository(input.token, input.book.owner, input.book.repo, blob.path, blob.sha, transferMeter, signal);
+      const local = reusable.get(blob.sha);
+      const bytes = local ? await localFileBytes(local) : await fetchBlobBytesForRepository(input.token, input.book.owner, input.book.repo, blob.path, blob.sha, transferMeter, signal);
       assertRepositoryAggregateBytes(bytes.byteLength, "transfer", await repositoryTransferAllowance());
       if (isTextPath(blob.path)) {
         await putCleanLocalFileScoped({ repoId: meta.id, path: blob.path, kind: "text", text: new TextDecoder().decode(bytes), baseSha: blob.sha, size: bytes.byteLength }, scope, cloneOperationId);
@@ -542,6 +572,8 @@ export async function attachLocalBookToGitHub(input: {
     createIfMissing: input.createRepository !== false,
     pages: input.pages,
     beforeWorkflow: input.beforeWorkflow,
+    // The branch the book had on this device: a repository made now or empty gets it as its default branch; one with history keeps its own.
+    branch: input.book.localBranchName?.trim() || "main",
     commitMessage: "Initialize Narrarium book from local workspace",
     signal: input.signal,
     onProgress: input.onProgress,
@@ -835,7 +867,7 @@ export async function fetchRemoteStatus(input: ExactRepositoryTarget & { token: 
   }
 }
 
-async function resolveRemoteChangeState(octokit: Octokit, meta: LocalRepositoryMeta, signal?: AbortSignal): Promise<RemoteChangeState> {
+export async function resolveRemoteChangeState(octokit: Octokit, meta: LocalRepositoryMeta, signal?: AbortSignal): Promise<RemoteChangeState> {
   signal?.throwIfAborted();
   const ref = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, request: { signal } });
   const remoteHeadSha = ref.data.object.sha;
@@ -885,7 +917,7 @@ export async function pullRemoteChanges(input: ExactRepositoryTarget & {
   return withRepositoryMutationLease(selected.id, async () => pullRemoteChangesLeased(await exactLocalRepository(input, scope), input, scope));
 }
 
-async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRepositoryTarget & {
+export async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRepositoryTarget & {
   token: string;
   mode?: "safe" | "remote-wins";
   confirmed?: boolean;
@@ -933,6 +965,8 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
   const transferMeter = new RepositoryByteMeter("transfer", await repositoryTransferAllowance());
   let updated = localFiles.filter((file) => !remoteByPath.has(file.path)).length;
   input.onProgress?.({ done: 0, total: remoteByPath.size, phase: "cloning" });
+  const ownByPath = new Map(localFiles.map((file) => [file.path, file]));
+  const reusable = await reusableLocalBlobs({ bookId: meta.bookId, owner: meta.owner, repo: meta.repo, accountIdentity: input.accountIdentity, excludeRepoId: meta.id }, new Set([...remoteByPath].filter(([path, sha]) => ownByPath.get(path)?.baseSha !== sha).map(([, sha]) => sha)));
   for (const [path, blobSha] of remoteByPath) {
     input.signal?.throwIfAborted();
     const local = localFiles.find((file) => file.path === path);
@@ -940,7 +974,8 @@ async function pullRemoteChangesLeased(meta: LocalRepositoryMeta, input: ExactRe
     if (local?.baseSha === blobSha && local.status === "clean" && !local.committed) {
       bytes = local.kind === "text" ? new TextEncoder().encode(local.text ?? "") : new Uint8Array(await (local.blob ?? new Blob()).arrayBuffer());
     } else {
-      bytes = await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, blobSha, transferMeter, input.signal);
+      const sibling = reusable.get(blobSha);
+      bytes = sibling ? await localFileBytes(sibling) : await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, blobSha, transferMeter, input.signal);
       updated += 1;
     }
     const kind = isTextPath(path) ? "text" as const : "binary" as const;
@@ -1001,6 +1036,42 @@ export class AmbiguousLocalPushError extends Error {
   }
 }
 
+/** GitHub already has a branch of this name with another history: nothing was published, and nothing was overwritten. */
+export class BranchNameTakenError extends Error {
+  readonly code = "BRANCH_NAME_TAKEN";
+  constructor(readonly branch: string, readonly remoteHeadSha: string) {
+    super(`A branch named ${branch} is already on GitHub with other changes.`);
+    this.name = "BranchNameTakenError";
+  }
+}
+
+/**
+ * A branch made on this device gets to GitHub, under the lease of its copy: created at the commit it started from, or found there already at that commit (made
+ * by an earlier try). At another commit it is someone else's branch of the same name: `BranchNameTakenError`, and nothing is written. Then it is an ordinary
+ * working copy: its changes are pushed like those of any branch.
+ */
+export async function publishPendingBranchLeased(meta: LocalRepositoryMeta, octokit: Octokit, scope: RepositoryOperationScope, signal?: AbortSignal): Promise<void> {
+  const pending = meta.pendingBranch;
+  if (!pending) return;
+  const request = { request: { signal } };
+  const existing = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, ...request }).then((ref) => ref.data.object.sha, (error: unknown) => {
+    if ((error as { status?: unknown }).status === 404) return null;
+    throw classifyRepositoryError(error, "read");
+  });
+  if (existing && existing !== pending.headSha) throw new BranchNameTakenError(meta.branch, existing);
+  if (!existing) {
+    try {
+      await octokit.rest.git.createRef({ owner: meta.owner, repo: meta.repo, ref: `refs/heads/${meta.branch}`, sha: pending.headSha, ...request });
+    } catch (error) {
+      const now = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}`, ...request }).then((ref) => ref.data.object.sha, () => null);
+      if (!now) throw classifyRepositoryError(error, "create");
+      if (now !== pending.headSha) throw new BranchNameTakenError(meta.branch, now);
+    }
+  }
+  await clearPendingBranch(meta.id, scope);
+  await addLocalRepoLog(meta.id, scope, "push", `Published branch ${meta.branch} at ${pending.headSha.slice(0, 7)}`);
+}
+
 export async function pushLocalCommits(input: PushLocalCommitsInput): Promise<PushResult> {
   input.signal?.throwIfAborted();
   const scope = operationScope(input);
@@ -1035,7 +1106,7 @@ export async function pushLocalCommits(input: PushLocalCommitsInput): Promise<Pu
   }
 }
 
-async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLocalCommitsInput, scope: RepositoryOperationScope): Promise<PushResult> {
+export async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: PushLocalCommitsInput, scope: RepositoryOperationScope): Promise<PushResult> {
   input.signal?.throwIfAborted();
   if (meta.remoteKind === "none") throw new Error("This book is local-only. Connect it to GitHub before pushing.");
   const dirty = await listDirtyLocalFiles(meta.id);
@@ -1181,6 +1252,11 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
   try {
   const pendingBeforeSync = await listUnpushedLocalCommits(meta.id);
   const octokit = trackedOctokit(input.token, input);
+  // A branch made on this device is published first; then it syncs like any other.
+  if (meta.pendingBranch) {
+    await publishPendingBranchLeased(meta, octokit, scope);
+    meta = await exactLocalRepository(input, scope);
+  }
   const { remoteHeadSha, changed: remoteChanged } = await resolveRemoteChangeState(octokit, meta);
   let pulled = 0;
   let keptLocal = 0;
@@ -1335,7 +1411,7 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
   } catch (error) {
     const classified = classifyRepositoryError(error, "compare");
     await markLocalRepositoryRemoteFailure(meta.id, scope, meta.remoteHeadSha, classified.kind, previous).catch(() => undefined);
-    throw error instanceof RepositoryOwnershipChangedError || error instanceof RepositorySyncConflictError || error instanceof RepositorySyncChoiceStaleError || classified.kind === "unknown" ? error : classified;
+    throw error instanceof RepositoryOwnershipChangedError || error instanceof RepositorySyncConflictError || error instanceof RepositorySyncChoiceStaleError || error instanceof BranchNameTakenError || classified.kind === "unknown" ? error : classified;
   }
 }
 

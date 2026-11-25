@@ -20,7 +20,6 @@ import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { sameRepositorySyncTarget, triggerCurrentRepositorySync, useRegisterRepositorySync, useRepositorySyncStore } from "@/store/repositorySyncStore";
 import { speakText, type SpeechController } from "@/assistant/speech";
 import { useToast } from "@/components/ui/use-toast";
-import { ToastAction } from "@/components/ui/toast";
 import { useSettings } from "@/drive/useSettings";
 import { parseAppRoute } from "@/assistant/context";
 import { effectiveRemoteStatus, getLocalRepositoryStatusSnapshot, listUnpushedLocalCommits } from "@/repository/localRepository";
@@ -40,9 +39,10 @@ import { KeyboardShortcutsDialog } from "@/components/layout/KeyboardShortcutsDi
 import { SyncStatusIndicator } from "@/components/layout/SyncStatusIndicator";
 import { triggerCurrentSave } from "@/store/saveStore";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
-import { githubRemoteAvailability, useGitHubRemoteAvailability } from "@/github/remoteAvailability";
+import { useGitHubRemoteAvailability } from "@/github/remoteAvailability";
 import "@/i18n/localFirst";
-import { adoptRememberedBranches, recordOpenedBranch } from "@/branches/memory";
+import { adoptRememberedBranches, bookAutoSyncMode, recordOpenedBranch } from "@/branches/memory";
+import { useBranchAutoSync } from "@/branches/useBranchAutoSync";
 import { setOpenBook } from "@/branches/openBook";
 
 // The repository status is opened from its menu or from a page: its code and its texts load then, not with the shell of every page.
@@ -56,10 +56,6 @@ function initials(name: string | undefined): string {
     .slice(0, 2)
     .map((w) => w[0].toUpperCase())
     .join("");
-}
-
-function remoteChangedNoticeKey(bookId: string, remoteHeadSha: string): string {
-  return `narrarium-remote-changed-${bookId}-${remoteHeadSha}`;
 }
 
 export function ownsCompletedSpeechController(current: SpeechController | null, completed: SpeechController, currentGeneration: number, completedGeneration: number): boolean {
@@ -92,7 +88,6 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const location = useLocation();
   const speechRef = useRef<SpeechController | null>(null);
   const speechGenerationRef = useRef(0);
-  const fetchedOnOpen = useRef<string | null>(null);
   const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
   const [repoDialogLoaded, setRepoDialogLoaded] = useState(false);
@@ -203,45 +198,15 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [cloneProgress, currentAccountIdentity, currentBook, currentBookId, currentBookIsLocal, currentBranch, settings.ui.language, t, toast]);
 
-  useEffect(() => {
-    if (!currentBook) fetchedOnOpen.current = null;
-    if (!currentBook || bookStorageMode(currentBook) === "local-only") return;
-    const intervalMinutes = settings.repository.autoFetchIntervalMinutes;
-    const onOpen = settings.repository.autoFetchOnOpen && fetchedOnOpen.current !== currentBook.id;
-    if (!onOpen && (!intervalMinutes || intervalMinutes <= 0)) return;
-    const token = resolveBookToken(currentBook, settings);
-    const tick = async () => {
-      if (githubRemoteAvailability(currentBook, token) !== "ready") return;
-      try {
-        if (!repositoryTarget) return;
-        const result = await fetchRemoteStatus({ ...repositoryTarget, token });
-        if (result.changed && settings.repository.autoPullWhenClean) await pullRemoteChanges({ ...repositoryTarget, token }).catch(() => undefined);
-        else if (result.changed) {
-          const key = remoteChangedNoticeKey(currentBook.id, result.remoteHeadSha);
-          if (!sessionStorage.getItem(key)) {
-            sessionStorage.setItem(key, "1");
-            toast({
-              title: t("repoStatus.remoteBehindTitle"),
-              description: t("repoStatus.remoteBehindDescription"),
-              action: currentBook
-                ? <ToastAction altText={t("repoStatus.syncNow")} onClick={() => { void triggerCurrentRepositorySync(); }}>{t("repoStatus.syncNow")}</ToastAction>
-                : undefined,
-            });
-          }
-        }
-      } catch {
-        // Background sync is opportunistic; keep local editing uninterrupted.
-      }
-    };
-    // "Auto-fetch on open": one light check of the remote head when a book is opened, the same check the periodic one makes.
-    if (onOpen && repositoryTarget) {
-      fetchedOnOpen.current = currentBook.id;
-      void tick();
-    }
-    if (!intervalMinutes || intervalMinutes <= 0) return;
-    const timer = window.setInterval(() => void tick(), intervalMinutes * 60_000);
-    return () => window.clearInterval(timer);
-  }, [currentBook, currentBranch, settings]);
+  // The branches of a GitHub book sync by themselves, as its mode says (`@/branches/useBranchAutoSync`): on opening, on coming back to the window, and
+  // periodically if chosen; only what cannot lose or merge anything happens without the person.
+  useBranchAutoSync({
+    bookId: currentBook && !currentBookIsLocal ? currentBook.id : undefined,
+    loadedBranch,
+    ready: remote === "ready",
+    mode: currentBook ? bookAutoSyncMode(settings, currentBook) : "off",
+    onSyncNow: () => { void triggerCurrentRepositorySync(); },
+  });
 
   async function changeLanguage(code: "en" | "it") {
     await i18n.changeLanguage(code);

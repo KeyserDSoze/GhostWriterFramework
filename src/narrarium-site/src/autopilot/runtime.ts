@@ -1,3 +1,4 @@
+import { AUTOPILOT_LOCK_PREFIX } from "@/branches/locks";
 import {
   AutopilotBusyError,
   AutopilotSession,
@@ -116,7 +117,8 @@ export class AutopilotMoveBackError extends Error {
   }
 }
 
-const LOCK_PREFIX = "narrarium:autopilot:";
+/** Held for the whole of a run of a book: the automatic sync of the branches leaves the book alone meanwhile (`@/branches/autoSync`). */
+const LOCK_PREFIX = AUTOPILOT_LOCK_PREFIX;
 /** One lock per connection to the personal server: whoever holds it keeps the live connection for the whole browser. */
 const STREAM_LOCK_PREFIX = "narrarium:autopilot-stream:";
 const RELAY_TIMEOUT_MS = 4000;

@@ -1,6 +1,7 @@
 import type { BookEntry } from "@/types/settings";
 import { isUsableGitHubToken } from "@/github/remoteAvailability";
 import {
+  getLocalCommit,
   getLocalRepository,
   getLocalFile,
   listDirtyLocalFiles,
@@ -185,8 +186,8 @@ export async function commitAndPushTextFileMutation(input: {
   }
   if (local.remoteHeadSha !== input.expectedRemoteHeadSha) throw new RepositoryConflictError("The local working copy is based on a different remote head.");
   // A book kept on this device has nowhere to publish; without a GitHub credential (none, or one GitHub refused) or a connection the next sync publishes:
-  // the change stays a local commit.
-  const publish = input.push !== false && local.remoteKind !== "none" && isUsableGitHubToken(input.token)
+  // the change stays a local commit. So does a change of a branch made on this device that GitHub does not have yet: the sync publishes the two together.
+  const publish = input.push !== false && local.remoteKind !== "none" && !local.pendingBranch && isUsableGitHubToken(input.token)
     && (typeof navigator === "undefined" || navigator.onLine !== false);
   const writes = input.mutations.filter((mutation) => mutation.content !== undefined);
   const snapshots = await Promise.all(writes.map(async (mutation) => ({ path: mutation.path, file: await getLocalFile(local.id, mutation.path, operationScope) ?? null })));
@@ -278,6 +279,9 @@ export async function commitAndPushTextFileMutation(input: {
     }
     // GitHub out of reach, or the credential refused: the commit stays on this device, like any other local change, and the next sync publishes it.
     if (isRepositoryError(error, "network") || isRepositoryError(error, "credential-invalid") || isRepositoryError(error, "no-credential")) return { commitSha: localCommit.id, mode: "local" };
+    // The automatic sync of the branch may have published this very commit between its making and this push: it is on GitHub, so it is kept.
+    const published = await getLocalCommit(local.id, localCommit.id).catch(() => null);
+    if (published?.pushed) return { commitSha: published.remoteCommitSha ?? (await getLocalRepository(input.book.owner, input.book.repo, input.branch, operationScope))?.remoteHeadSha ?? localCommit.id, mode: "local" };
     await restoreLocalFilesAndDeleteCommit(local.id, operationScope, localCommit.id, snapshots);
     throw error;
   }

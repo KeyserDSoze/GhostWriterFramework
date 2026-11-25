@@ -159,6 +159,7 @@ const githubCreateBookEn = {
           skipped: "GitHub Pages was not turned on (you did not ask for it). You can do it later, as shown below.",
         },
         branch: "The default branch is «{{branch}}»; the workflow runs only on «main» or «master».",
+        defaultBranchNotSet: "The book is on the branch «{{branch}}», but it could not be made the default branch of the repository: you can choose it in the settings of the repository on GitHub.",
         openBook: "Open the book",
         openRepository: "Open the repository on GitHub",
         newTab: "(opens in a new tab)",

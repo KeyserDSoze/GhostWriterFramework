@@ -159,6 +159,7 @@ const githubCreateBookIt = {
           skipped: "GitHub Pages non è stato attivato (non l'hai chiesto). Puoi farlo dopo, come mostrato qui sotto.",
         },
         branch: "Il branch predefinito è «{{branch}}»; il workflow parte solo su «main» o «master».",
+        defaultBranchNotSet: "Il libro è sul branch «{{branch}}», ma non è stato possibile renderlo il branch predefinito del repository: puoi sceglierlo nelle impostazioni del repository su GitHub.",
         openBook: "Apri il libro",
         openRepository: "Apri la repository su GitHub",
         newTab: "(si apre in una nuova scheda)",

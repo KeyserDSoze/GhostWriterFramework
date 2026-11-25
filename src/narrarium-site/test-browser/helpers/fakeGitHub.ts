@@ -153,6 +153,11 @@ export function createFakeGitHub(options: FakeGitHubOptions = {}) {
       repo.refs.set(refKey(params.ref), params.sha);
       return { data: { ref: params.ref, object: { sha: params.sha } } };
     },
+    async deleteRef(params: any) {
+      const repo = needRepo(enter("git.deleteRef", params));
+      if (!repo.refs.delete(refKey(params.ref))) throw requestError(422, "Reference does not exist");
+      return { data: undefined };
+    },
     async updateRef(params: any) {
       const repo = needRepo(enter("git.updateRef", params));
       const name = refKey(params.ref);
@@ -223,6 +228,14 @@ export function createFakeGitHub(options: FakeGitHubOptions = {}) {
         if (repo.pages) throw requestError(409, "A GitHub Pages site already exists for this repository.");
         repo.pages = true;
         return { data: { build_type: params.build_type } };
+      },
+      async update(params: any) {
+        const repo = needRepo(enter("repos.update", params));
+        if (params.default_branch !== undefined) {
+          if (!repo.refs.has(`heads/${params.default_branch}`)) throw requestError(422, "Validation Failed");
+          repo.defaultBranch = params.default_branch;
+        }
+        return { data: describe(repo) };
       },
       async delete(params: any) {
         const repo = needRepo(enter("repos.delete", params));

@@ -485,3 +485,58 @@ describe("preflightBookRepository", () => {
     await expect(preflightBookRepository({ token: "ghp_test", octokit: fake.octokit })).rejects.toMatchObject({ code: "credential-invalid" });
   });
 });
+
+describe("createCompleteBookRepository: the branch name of a book kept on this device", () => {
+  it("is the branch, and the default branch, of a repository made now", async () => {
+    const fake = createFakeGitHub();
+    const result = await run(fake, { branch: "draft" });
+    expect(result).toMatchObject({ defaultBranch: "draft", workflow: "done", warnings: [] });
+    expect(fake.repo("ada", "book-glass-harbor")!.defaultBranch).toBe("draft");
+    expect([...fake.repo("ada", "book-glass-harbor")!.refs.keys()]).toEqual(["heads/draft"]);
+    expect(fake.calls.find((call) => call.name === "repos.update")!.params).toMatchObject({ owner: "ada", repo: "book-glass-harbor", default_branch: "draft" });
+    expect(fake.history("ada", "book-glass-harbor", "draft").map((commit) => commit.message)).toEqual(["Add the GitHub Pages workflow", "Initialize Narrarium book"]);
+  });
+
+  it("is the default branch of an empty repository too, made through the bootstrap commit, whose branch then goes", async () => {
+    const fake = createFakeGitHub({ emptyRepository: "tree" });
+    const result = await run(fake, { branch: "draft" });
+    expect(result).toMatchObject({ defaultBranch: "draft", firstCommitPath: "bootstrap", warnings: [{ code: "bootstrap-path" }] });
+    const repo = fake.repo("ada", "book-glass-harbor")!;
+    expect(repo.defaultBranch).toBe("draft");
+    expect([...repo.refs.keys()]).toEqual(["heads/draft"]);
+    expect(fake.history("ada", "book-glass-harbor", "draft")[1]).toMatchObject({ message: "Initialize Narrarium book", parents: [] });
+    expect(fake.calls.filter((call) => call.name === "git.deleteRef").map((call) => call.params.ref)).toEqual(["heads/main"]);
+  });
+
+  it("is the default branch of an existing repository without commits", async () => {
+    const fake = createFakeGitHub({ existing: [{ owner: "ada", name: "book-glass-harbor" }] });
+    const result = await run(fake, { branch: "draft", existing: "empty" });
+    expect(result).toMatchObject({ defaultBranch: "draft", createdRepository: false });
+    expect(fake.repo("ada", "book-glass-harbor")!.defaultBranch).toBe("draft");
+  });
+
+  it("never touches the branches or the default branch of a repository with history", async () => {
+    const fake = createFakeGitHub({ existing: [{ owner: "ada", name: "book-glass-harbor", withBranch: true }] });
+    const before = fake.history("ada", "book-glass-harbor").map((commit) => commit.sha);
+    const result = await run(fake, { branch: "draft", existing: "overwrite" });
+    expect(result.defaultBranch).toBe("main");
+    expect(fake.repo("ada", "book-glass-harbor")!.defaultBranch).toBe("main");
+    expect([...fake.repo("ada", "book-glass-harbor")!.refs.keys()]).toEqual(["heads/main"]);
+    expect(fake.count("repos.update") + fake.count("git.deleteRef")).toBe(0);
+    expect(fake.history("ada", "book-glass-harbor").map((commit) => commit.sha)).toEqual(expect.arrayContaining(before));
+  });
+
+  it("changes nothing when it is the branch GitHub would make anyway", async () => {
+    const fake = createFakeGitHub();
+    await run(fake, { branch: "main" });
+    expect(fake.count("repos.update")).toBe(0);
+  });
+
+  it("stays the book's branch, with a warning, when GitHub refuses to make it the default", async () => {
+    const fake = createFakeGitHub({ faults: [{ call: "repos.update", status: 403, message: "Must have admin rights to Repository." }] });
+    const result = await run(fake, { branch: "draft" });
+    expect(result.defaultBranch).toBe("draft");
+    expect(result.warnings).toEqual([{ code: "default-branch-not-set", status: 403 }]);
+    expect(fake.filesAt("ada", "book-glass-harbor", "draft")!.size).toBe(5);
+  });
+});

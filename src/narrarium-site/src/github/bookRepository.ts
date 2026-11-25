@@ -60,6 +60,7 @@ export interface BookRepositoryProgress { step: BookRepositoryStep; chunk?: numb
 export type BookRepositoryWarningCode =
   | "bootstrap-path"
   | "branch-not-main"
+  | "default-branch-not-set"
   | "workflow-not-allowed"
   | "workflow-failed"
   | "workflow-rate-limit"
@@ -337,6 +338,11 @@ export interface CreateCompleteBookRepositoryInput {
    * It is not run when the book has no workflow file.
    */
   beforeWorkflow?: (context: { octokit: Octokit; owner: string; repo: string; branch: string }) => Promise<void>;
+  /**
+   * The branch the book lands on when the repository is made now or has no commit (the local branch name of a book kept on this device): it becomes the
+   * default branch of the repository. A repository that has commits keeps its branches and its default branch: this is not used there.
+   */
+  branch?: string;
   commitMessage?: string;
   signal?: AbortSignal;
   onProgress?: (progress: BookRepositoryProgress) => void;
@@ -427,9 +433,14 @@ export async function createCompleteBookRepository(input: CreateCompleteBookRepo
   }
   target.owner = repository.owner;
   target.repo = repository.repo;
-  const branch = repository.defaultBranch;
+  // A repository without history (made now, empty, or holding only our bootstrap commit of an earlier try) takes the book's branch name.
+  const wanted = input.branch?.trim();
+  const named = Boolean(wanted && wanted !== repository.defaultBranch && (created || !parent || rewriteRoot));
+  const githubDefault = repository.defaultBranch;
+  const branch = named ? wanted! : repository.defaultBranch;
+  repository = { ...repository, defaultBranch: branch };
   const here = reference(repository, created);
-  if (branch !== "main" && branch !== "master") warnings.push({ code: "branch-not-main" });
+  if (branch !== "main" && branch !== "master" && !named) warnings.push({ code: "branch-not-main" });
 
   // First commit.
   progress({ step: "first-commit" });
@@ -439,7 +450,12 @@ export async function createCompleteBookRepository(input: CreateCompleteBookRepo
   let firstCommitPath: "direct" | "bootstrap" = "direct";
   try {
     const onChunk = (chunk: number, chunks: number) => progress({ step: "first-commit", chunk, chunks });
-    if (parent) {
+    if (parent && named) {
+      // Only our bootstrap commit of an earlier try is there: the book's branch is made beside it, and the bootstrap branch goes once it is the default.
+      const built = await buildCommit(target, mainFiles, { message, parents: [], onChunk });
+      await octokit.rest.git.createRef({ owner: target.owner, repo: target.repo, ref: `refs/heads/${branch}`, sha: built.commitSha, ...request(target) });
+      ({ commitSha: headSha, treeSha, shas } = built);
+    } else if (parent) {
       // Replacing a branch of a repository that is not empty: a commit on top of it with exactly these files.
       const built = await buildCommit(target, mainFiles, { message, parents: rewriteRoot ? [] : [parent], onChunk });
       await octokit.rest.git.updateRef({ owner: target.owner, repo: target.repo, ref: `heads/${branch}`, sha: built.commitSha, force: true, ...request(target) });
@@ -457,13 +473,27 @@ export async function createCompleteBookRepository(input: CreateCompleteBookRepo
         const readmeText = readme && "content" in readme ? readme.content : `# ${name}\n`;
         await octokit.rest.repos.createOrUpdateFileContents({ owner: target.owner, repo: target.repo, path: "README.md", message: BOOTSTRAP_MESSAGE, content: bytesToBase64(new TextEncoder().encode(readmeText)), ...request(target) });
         built ??= await buildCommit(target, mainFiles, { message, parents: [], onChunk });
-        await octokit.rest.git.updateRef({ owner: target.owner, repo: target.repo, ref: `heads/${branch}`, sha: built.commitSha, force: true, ...request(target) });
+        // The bootstrap commit is on GitHub's default branch: the book's own branch is made next to it, and the bootstrap branch goes below.
+        if (named) await octokit.rest.git.createRef({ owner: target.owner, repo: target.repo, ref: `refs/heads/${branch}`, sha: built.commitSha, ...request(target) });
+        else await octokit.rest.git.updateRef({ owner: target.owner, repo: target.repo, ref: `heads/${branch}`, sha: built.commitSha, force: true, ...request(target) });
       }
       ({ commitSha: headSha, treeSha, shas } = built);
     }
   } catch (error) {
     const failure = firstCommitFailure(error, here);
     throw new BookRepositoryError(failure.code, { status: failure.status, resetAt: failure.resetAt, reason: failure.reason, repository: failure.repository, detail: failure.detail, cause: failure.cause, tokenKind });
+  }
+  if (named) {
+    // The book's branch is the default branch of a repository that had no history. Not being able to say so leaves GitHub's default in place, and says it.
+    try {
+      await octokit.rest.repos.update({ owner: target.owner, repo: target.repo, default_branch: branch, ...request(target) });
+      // Only a branch of our bootstrap commit is removed, never a branch with the owner's history.
+      const bootstrap = await octokit.rest.git.getRef({ owner: target.owner, repo: target.repo, ref: `heads/${githubDefault}`, ...request(target) }).then((ref) => ref.data.object.sha, () => null);
+      const ours = bootstrap ? await octokit.rest.git.getCommit({ owner: target.owner, repo: target.repo, commit_sha: bootstrap, ...request(target) }).then((commit) => commit.data.message === BOOTSTRAP_MESSAGE && !commit.data.parents.length, () => false) : false;
+      if (ours) await octokit.rest.git.deleteRef({ owner: target.owner, repo: target.repo, ref: `heads/${githubDefault}`, ...request(target) }).catch(() => undefined);
+    } catch (error) {
+      warnings.push({ code: "default-branch-not-set", status: statusOf(error) });
+    }
   }
   const landed: Record<string, string> = { ...shas };
   let committedFiles = mainFiles.length;
