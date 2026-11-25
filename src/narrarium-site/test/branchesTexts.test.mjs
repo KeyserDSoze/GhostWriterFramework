@@ -10,6 +10,9 @@ import localFirstEn from "../src/i18n/locales/localFirst.en.ts";
 const leaves = (tree, prefix = "") => Object.entries(tree).flatMap(([key, value]) => (value && typeof value === "object" ? leaves(value, `${prefix}${key}.`) : [[`${prefix}${key}`, value]]));
 const placeholders = (text) => [...String(text).matchAll(/\{\{\s*(\w+)/g)].map((match) => match[1]).sort();
 
+/** The texts that are the same in both languages: a label between brackets. */
+const SAME_IN_BOTH = new Set(["branches.switcher.label"]);
+
 const bundles = [["branchesShell", shellEn, shellIt], ["branches", branchesEn, branchesIt]];
 
 for (const [name, en, it] of bundles) {
@@ -20,7 +23,7 @@ for (const [name, en, it] of bundles) {
       assert.ok(value.trim(), key);
       assert.ok(italian.get(key).trim(), `${key} (it)`);
       assert.deepEqual(placeholders(italian.get(key)), placeholders(value), `${key}: placeholders`);
-      assert.notEqual(italian.get(key), value, `${key}: not translated`);
+      if (!SAME_IN_BOTH.has(key)) assert.notEqual(italian.get(key), value, `${key}: not translated`);
     }
   });
 

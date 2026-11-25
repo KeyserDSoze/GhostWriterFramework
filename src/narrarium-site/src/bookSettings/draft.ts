@@ -1,5 +1,6 @@
 import { DEFAULT_AUDIT_SETTINGS, resolveBookAuditSettings, type AuditSettings, type BookEntry, type BookExportSettings } from "@/types/settings";
 import { applyExportDraft, exportDraftOfBook, isExportDraftDirty, type ExportDraft } from "@/bookSettings/exportDraft";
+import { branchNameProblem } from "@/branches/branchNames";
 
 export type TokenMode = "default" | "custom" | string;
 
@@ -14,6 +15,8 @@ export interface BookSettingsDraft {
   customTokenLabel: string;
   /** `__auto__` follows the personal working branch. */
   activeBranch: string;
+  /** The branch name of a book kept on this device (`main` unless the person chose another). */
+  localBranchName: string;
   presentation: BookPresentation;
   audit: AuditSettings;
   exportDraft: ExportDraft;
@@ -39,6 +42,7 @@ export function draftOfBook(book: BookEntry): BookSettingsDraft {
     customToken: book.bookToken ?? "",
     customTokenLabel: book.bookTokenLabel ?? "",
     activeBranch: book.activeBranch ?? AUTO_BRANCH,
+    localBranchName: book.localBranchName ?? "main",
     presentation: presentationOf(exportDraft.settings),
     audit: resolveBookAuditSettings(book),
     exportDraft,
@@ -52,6 +56,7 @@ export function isDraftDirty(draft: BookSettingsDraft, book: BookEntry): boolean
     || draft.customToken !== initial.customToken
     || draft.customTokenLabel !== initial.customTokenLabel
     || draft.activeBranch !== initial.activeBranch
+    || draft.localBranchName !== initial.localBranchName
     || JSON.stringify(draft.presentation) !== JSON.stringify(initial.presentation)
     || JSON.stringify(draft.audit) !== JSON.stringify(initial.audit)
     || isExportDraftDirty(draft.exportDraft, book);
@@ -70,9 +75,17 @@ export function applyDraft(book: BookEntry, draft: BookSettingsDraft): BookEntry
     // Picking another token for the book ends the move to the GitHub connection; saving without touching the token keeps it.
     useGitHubConnection: draft.tokenMode === initialTokenMode(book) ? book.useGitHubConnection : undefined,
     activeBranch: draft.activeBranch === AUTO_BRANCH ? undefined : draft.activeBranch,
+    // A name Git would refuse is not saved: the book keeps the one it had (the field says what is wrong with it).
+    localBranchName: localBranchNameOf(draft.localBranchName, book),
     exportSettings: { ...(exported.exportSettings ?? {}), ...draft.presentation },
     auditSettings: resolveBookAuditSettings({ ...book, auditSettings: draft.audit }),
   };
+}
+
+function localBranchNameOf(name: string, book: BookEntry): string | undefined {
+  const clean = name.trim();
+  if (branchNameProblem(clean)) return book.localBranchName;
+  return clean === "main" ? undefined : clean;
 }
 
 export const DEFAULT_AUDIT = DEFAULT_AUDIT_SETTINGS;

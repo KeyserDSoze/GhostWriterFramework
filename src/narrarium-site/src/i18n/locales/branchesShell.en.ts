@@ -12,6 +12,13 @@ const branchesShellEn = {
       "needs-github": "{{branch}}, the branch you worked on last on another device, is not on this device, and downloading it needs GitHub: this book stays on {{previous}}.",
       failed: "{{branch}}, the branch you worked on last on another device, could not be opened here: this book stays on {{previous}}.",
     },
+    trigger: {
+      label: "Branch {{branch}}{{state}}. Switch branch or create one",
+      pending: "not published",
+      off: "auto-sync off",
+      attention: "needs attention",
+      syncing: "syncing",
+    },
   },
 };
 

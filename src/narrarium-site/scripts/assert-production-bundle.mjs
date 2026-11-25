@@ -187,7 +187,10 @@ report.budgets.routes = {
   login: { rawBytes: 940_000, gzipBytes: 292_500 }, // 929_737/289_244
   // Raised in 0.107.0 by the same margin (it was 2_703_000/819_500 for 2_675_530/810_894): the store of the shell follows the text of the step that runs
   // by the engine's own rule (applyLiveProgress, a chunk of 1_568/614 bytes it shares with the autopilot), so that no panel can disagree with the engine.
-  appShell: { rawBytes: 2_718_000, gzipBytes: 829_000 }, // 2_690_427/819_920
+  // Raised in 0.112.0 by the same rule (it was 2_718_000/829_000; 0.110.0 and 0.111.0 brought the shell to 2_688_636/823_284): the branch of the book in
+  // the top bar, the triggers of the automatic sync of its branches and the memory of the branches that the settings load with, 18_437/5_690 bytes. The
+  // switcher, the sync itself (and GitHub's client with it), their texts and the settings of the branches load when they are used.
+  appShell: { rawBytes: 2_735_000, gzipBytes: 837_500 }, // 2_707_073/828_974
 };
 for (const [name, budget] of Object.entries(report.budgets.routes)) {
   const actual = routeGraphs[name];

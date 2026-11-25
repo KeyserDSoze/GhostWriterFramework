@@ -21,7 +21,7 @@ const bookSettingsTabsEn = {
       localBranch: "Local working branch",
       onlyOnDevice: "only on this device",
       publishedAs: "published as {{branch}} on GitHub",
-      branchOnConnect: "When you connect the book to GitHub its content is published on the repository's default branch, and from then on the working branch is a branch of that repository.",
+      branchOnConnect: "When you connect the book to GitHub, a new or empty repository gets this branch, with the book, as its default branch; a repository that already has commits keeps its branches and its default branch, where the book is published. From then on the working branch is a branch of that repository.",
     },
     tokenStatus: {
       appConnected: "Connected as {{user}} with the GitHub app.",

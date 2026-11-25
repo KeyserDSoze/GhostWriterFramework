@@ -16,7 +16,21 @@ Il Sync completo riconcilia le modifiche remote, preserva o committa il lavoro l
 
 ## Branch e pull request
 
-Ogni libro può scegliere un branch attivo. Copilot e i dialog Git possono elencare branch, cambiarli o crearli, mostrare diff e commit e aprire pull request.
+Il ramo del libro sullo schermo è nella barra in alto, accanto alla pillola della sincronizzazione. Apre il **selettore dei rami**: il ramo attuale e ciò che lo riguarda, ogni ramo su cui hai lavorato (i più recenti per primi) e gli altri rami che ha GitHub, da trovare scrivendo e da aprire con le frecce e Invio. Ogni ramo ha la sua copia di lavoro su questo dispositivo, quindi cambiare ramo non fa mai perdere nulla: il lavoro su un ramo resta su quel ramo.
+
+- **Un nuovo ramo è un'azione sola.** Il selettore propone un nome (`draft/<data di oggi>`); qualche parola diventa `feature/<le-tue-parole>`. Il ramo nasce su questo dispositivo dal ramo attuale, con quello che ha adesso, e si apre subito, anche senza GitHub. Viene pubblicato su GitHub dalla prossima sincronizzazione, o subito con **Pubblicalo subito su GitHub**. Se su GitHub c'è già un ramo con quel nome e altre modifiche, non viene pubblicato né sovrascritto nulla: creane uno con un altro nome.
+- **I rami ti seguono.** L'ultimo ramo su cui hai lavorato, e ogni ramo su cui hai lavorato, restano nei dati del tuo account (la copia che si sincronizza: Google Drive, OneDrive o `narrarium.settings`), solo nomi e date. Un altro dispositivo apre il libro sull'ultimo ramo che hai usato e lo dice; se quel ramo non è su GitHub (o non ancora) e non è su quel dispositivo, il libro resta sul ramo che aveva, e il messaggio nomina entrambi.
+- **Nella scheda GitHub** delle impostazioni del libro, **Rami e sincronizzazione automatica** mostra l'ultimo ramo e ogni ramo su cui hai lavorato. **Rinomina** dà a un ramo un nome solo in questo elenco, **Dimentica** lo toglie dall'elenco (il ramo su GitHub e la sua copia su questo dispositivo restano), e **Tieni sincronizzato** sceglie: con i più recenti, sempre, o mai da solo. Un libro tenuto su questo dispositivo ha un **Nome del ramo** (`main` se non ne scegli un altro): un repository creato per lui, o uno vuoto, lo riceve come ramo predefinito; un repository che ha già dei commit tiene i suoi rami.
+- Copilot e i dialog Git possono anche elencare branch, cambiarli o crearli, mostrare diff e commit e aprire pull request.
+
+## Sincronizzazione automatica
+
+Un libro su GitHub si sincronizza da solo, come scegli in **Impostazioni › Repository locali** per tutti i libri, e per ogni libro nel selettore e nella scheda GitHub: **Spenta**, **Quando il libro si apre e quando ci torni** (la scelta predefinita), o **Anche ogni 5 minuti**.
+
+- Fa solo ciò che non può perdere né unire nulla: porta le modifiche di GitHub in un ramo che non ha nulla da pubblicare, e pubblica le modifiche di questo dispositivo (con un commit con lo stesso messaggio di Sincronizza) solo se nel frattempo GitHub non è cambiato. Quando sono cambiati entrambi, non viene sovrascritto nulla: il pulsante e un messaggio lo dicono, e **Sincronizza ora** apre la sincronizzazione di sempre, che ti chiede dei file cambiati da entrambe le parti. Un ramo che GitHub non ha più non viene mai ricreato da solo.
+- Sincronizza prima il ramo sullo schermo, poi i quattro rami usati per ultimi e quelli che hai scelto di tenere sincronizzati (al massimo dieci). Un ramo su cui hai lavorato altrove viene portato su questo dispositivo, scaricando solo i file diversi da quelli delle copie già qui.
+- Fa a GitHub una domanda per libro ogni volta (l'elenco dei suoi rami), che non costa nulla del limite orario di GitHub quando non è cambiato niente. Vicino al limite sincronizza solo il ramo sullo schermo, e si ferma fino all'ora successiva. Aspetta mentre l'autopilota lavora sul libro nel browser (anche dopo un ricaricamento, finché l'autopilota non riprende da solo), non porta modifiche in una pagina che stai modificando, e porta soltanto modifiche mentre il tuo server personale lavora sul libro. Una sola scheda del browser sincronizza per tutte.
+- Senza una credenziale GitHub o offline non fa nulla, e il menu della pillola dice perché. Lo stesso menu dice quando è avvenuta l'ultima sincronizzazione automatica e che cosa ha fatto: cosa ha portato da GitHub, cosa ha pubblicato, niente da fare, o cosa richiede la tua attenzione.
 
 ## Due modi per accedere a GitHub
 

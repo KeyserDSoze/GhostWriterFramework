@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { chooseBranch } from "@/branches/memoryEdits";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -2149,11 +2150,8 @@ export function AssistantPanel() {
         await createBranchFromBase(token, book.owner, book.repo, action.baseBranch ?? "main", action.branchName, signal);
       }
       if (!ownsConfirmedMutation(operation)) return;
-      patchSettings({
-        books: settings.books.map((entry) =>
-          entry.id === book.id ? { ...entry, activeBranch: action.branchName } : entry,
-        ),
-      });
+      // The branch the Copilot opens is a choice of the person like any other: this device's branch, and the last one worked on everywhere.
+      patchSettings(chooseBranch(settings, book, action.branchName, new Date().toISOString()));
       await save();
       if (!ownsConfirmedMutation(operation)) return;
       clearBook(book.id);

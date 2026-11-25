@@ -21,7 +21,7 @@ const bookSettingsTabsIt = {
       localBranch: "Ramo di lavoro locale",
       onlyOnDevice: "solo su questo dispositivo",
       publishedAs: "pubblicato come {{branch}} su GitHub",
-      branchOnConnect: "Quando colleghi il libro a GitHub il suo contenuto viene pubblicato sul ramo predefinito del repository, e da allora il ramo di lavoro è un ramo di quel repository.",
+      branchOnConnect: "Quando colleghi il libro a GitHub, un repository nuovo o vuoto riceve questo ramo, con il libro, come ramo predefinito; un repository che ha già dei commit tiene i suoi rami e il suo ramo predefinito, dove il libro viene pubblicato. Da allora il ramo di lavoro è un ramo di quel repository.",
     },
     tokenStatus: {
       appConnected: "Connesso come {{user}} con la GitHub App.",

@@ -13,7 +13,8 @@ vi.mock("@octokit/rest", () => ({
 import { createFakeGitServer } from "./helpers/fakeGitServer";
 import { runBookSyncCycle, type AutoSyncHost } from "@/branches/autoSync";
 import { AUTOPILOT_LOCK_PREFIX, EDITING_LOCK_PREFIX, REPOSITORY_LOCK_PREFIX } from "@/branches/locks";
-import { bookBranchMemory, chooseBranch, keepBranchInSync, recordBranchUse, withBookBranchMemory } from "@/branches/memory";
+import { bookBranchMemory, recordBranchUse, withBookBranchMemory } from "@/branches/memory";
+import { chooseBranch, keepBranchInSync } from "@/branches/memoryEdits";
 import { useBranchSyncStore } from "@/branches/syncStore";
 import { forgetRun, rememberRun } from "@/autopilot/resume";
 import { mergeLocalDeviceSettings } from "@/account/dataProjection";

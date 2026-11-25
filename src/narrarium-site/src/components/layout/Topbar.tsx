@@ -25,7 +25,7 @@ import { parseAppRoute } from "@/assistant/context";
 import { effectiveRemoteStatus, getLocalRepositoryStatusSnapshot, listUnpushedLocalCommits } from "@/repository/localRepository";
 import { RepositorySyncConflictDialog } from "@/components/repository/RepositorySyncConflictDialog";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
-import { commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, RepositorySyncChoiceStaleError, RepositorySyncConflictError, syncFullRepository, type RepositorySyncConflictChoice, type RepositorySyncConflictResolution } from "@/repository/repositoryService";
+import { BranchNameTakenError, commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, RepositorySyncChoiceStaleError, RepositorySyncConflictError, syncFullRepository, type RepositorySyncConflictChoice, type RepositorySyncConflictResolution } from "@/repository/repositoryService";
 import { bookStorageMode, resolveBookToken } from "@/types/settings";
 import { emailToBranchName } from "@/github/githubClient";
 import { useTheme } from "./ThemeProvider";
@@ -43,10 +43,14 @@ import { useGitHubRemoteAvailability } from "@/github/remoteAvailability";
 import "@/i18n/localFirst";
 import { adoptRememberedBranches, bookAutoSyncMode, recordOpenedBranch } from "@/branches/memory";
 import { useBranchAutoSync } from "@/branches/useBranchAutoSync";
+import { BranchButton } from "@/components/branches/BranchButton";
 import { setOpenBook } from "@/branches/openBook";
 
 // The repository status is opened from its menu or from a page: its code and its texts load then, not with the shell of every page.
 const RepositoryStatusDialog = lazy(() => import("@/components/repository/RepositoryStatusDialog").then((module) => ({ default: module.RepositoryStatusDialog })));
+// The switcher of branches loads when it is opened, and what the automatic sync did when the menu of the pill opens: the top bar carries only the button.
+const BranchSwitcherDialog = lazy(() => import("@/components/branches/BranchSwitcherDialog").then((module) => ({ default: module.BranchSwitcherDialog })));
+const AutoSyncStatus = lazy(() => import("@/components/branches/AutoSyncStatus").then((module) => ({ default: module.AutoSyncStatus })));
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -89,6 +93,11 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const speechRef = useRef<SpeechController | null>(null);
   const speechGenerationRef = useRef(0);
   const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
+  // The branch on the screen was made on this device and is not on GitHub yet.
+  const [branchPending, setBranchPending] = useState(false);
+  const [branchDialogOpen, setBranchDialogOpen] = useState(false);
+  const [branchDialogLoaded, setBranchDialogLoaded] = useState(false);
+  if (branchDialogOpen && !branchDialogLoaded) setBranchDialogLoaded(true);
   const [repoDialogOpen, setRepoDialogOpen] = useState(false);
   const [repoDialogLoaded, setRepoDialogLoaded] = useState(false);
   if (repoDialogOpen && !repoDialogLoaded) setRepoDialogLoaded(true);
@@ -122,6 +131,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   });
   const readerSettingsState = route.kind === "reader" ? { returnTo: location.pathname } : undefined;
   const currentStructureLoaded = Boolean(currentStructure);
+  const autoSyncMode = currentBook ? bookAutoSyncMode(settings, currentBook) : "off";
 
   // Entering a book takes the branch chosen last on another device since it was open here; while it is on the screen, nothing moves it.
   useEffect(() => {
@@ -160,6 +170,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       if (!snapshot) { if (!cancelled) setRepoStatus({ label: t("repoStatus.notCloned"), tone: "offline" }); return; }
       const { meta: repo, status } = snapshot;
       if (cancelled) return;
+      setBranchPending(Boolean(repo.pendingBranch));
       // The local commits of a book kept on this device are its saved history: there is nowhere to push them, so they are not "ahead" of anything.
       if (currentBookIsLocal && status.dirty === 0) {
         setRepoStatus({ label: t("localFirst.pillLocalOnly"), tone: "clean" });
@@ -204,7 +215,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     bookId: currentBook && !currentBookIsLocal ? currentBook.id : undefined,
     loadedBranch,
     ready: remote === "ready",
-    mode: currentBook ? bookAutoSyncMode(settings, currentBook) : "off",
+    mode: autoSyncMode,
     onSyncNow: () => { void triggerCurrentRepositorySync(); },
   });
 
@@ -278,6 +289,12 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         toast({ title: t("repoStatus.conflictChoicesStale"), variant: "destructive" });
         return false;
       }
+      if (error instanceof BranchNameTakenError) {
+        // Its words load with the texts of the branches, not with the shell.
+        const branch = error.branch;
+        void import("@/i18n/branches").then(() => toast({ title: t("repoStatus.actionFailed"), description: t("branches.nameTaken", { branch }), variant: "destructive" }));
+        return false;
+      }
       toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(error, t), variant: "destructive" });
       return false;
     } finally {
@@ -344,7 +361,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         >
           <Menu className="h-5 w-5" />
         </Button>
-        <span className="hidden min-w-0 truncate font-semibold min-[360px]:block">Narrarium</span>
+        {/* On a phone the name of the app gives its room to the branch and the sync pill. */}
+        <span className="hidden min-w-0 truncate font-semibold min-[420px]:block">Narrarium</span>
       </div>
 
       <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2">
@@ -361,11 +379,15 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
             <span className="ml-1 text-xs text-muted-foreground">Ctrl+`</span>
           </Button>
         )}
+        {currentBook && !currentBookIsLocal && currentBranch && (
+          <BranchButton bookId={currentBook.id} branch={currentBranch} pending={branchPending} mode={autoSyncMode} onOpen={() => setBranchDialogOpen(true)} />
+        )}
         {currentBook && visibleRepoStatus.tone !== "none" && (
         <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
+                data-testid="repository-pill"
                 className={visibleRepoStatus.tone === "dirty"
                   ? `inline-flex min-w-0 items-center gap-1 rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-300${pendingCurrentObject.pending ? " motion-safe:animate-pulse" : ""}`
                   : visibleRepoStatus.tone === "ahead"
@@ -387,16 +409,24 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
                 <Button className="w-full" size="sm" disabled={!repositoryTarget || !!repoActionBusy} onClick={() => void triggerCurrentRepositorySync()}>{repoActionBusy === "sync" ? <RefreshCcw className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-1 h-4 w-4" />}{t("repoStatus.sync")}</Button>
               </div>
               <DropdownMenuSeparator />
+              {currentBook && !currentBookIsLocal && (
+                <>
+                  <div className="max-w-64 space-y-1 px-2 py-1.5 text-xs text-muted-foreground">
+                    <Suspense fallback={null}><AutoSyncStatus bookId={currentBook.id} mode={autoSyncMode} pending={branchPending} className="space-y-1" /></Suspense>
+                  </div>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onSelect={() => setRepoDialogOpen(true)}><Activity className="mr-2 h-4 w-4" />{t("repoStatus.viewStatus")}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setRepoDialogOpen(true)}><Eye className="mr-2 h-4 w-4" />{t("repoStatus.viewChangedFiles")}</DropdownMenuItem>
               <DropdownMenuSeparator />
               {remote !== "ready" && <DropdownMenuLabel id="repository-menu-github-hint" className="max-w-64 text-xs font-normal text-muted-foreground">{t(remote === "local" ? "localFirst.repositoryMenuLocal" : remote === "offline" ? "localFirst.repositoryMenuOffline" : "localFirst.repositoryMenuNoCredential")}</DropdownMenuLabel>}
               {remote === "no-credential" && <DropdownMenuItem onSelect={() => navigate("/app/settings/github")}><Github className="mr-2 h-4 w-4" />{t("localFirst.connectGitHub")}</DropdownMenuItem>}
-              <DropdownMenuItem disabled={remote !== "ready" || !!repoActionBusy} onSelect={() => void runRepoAction("fetch", async () => {
+              <DropdownMenuItem disabled={remote !== "ready" || branchPending || !!repoActionBusy} onSelect={() => void runRepoAction("fetch", async () => {
                 const result = await fetchRemoteStatus({ ...repositoryTarget!, token: currentToken });
                 return result.changed ? t("repoStatus.remoteChanged") : t("repoStatus.remoteUpToDate");
               })}><RefreshCcw className="mr-2 h-4 w-4" />{t("repoStatus.fetch")}</DropdownMenuItem>
-              <DropdownMenuItem disabled={remote !== "ready" || !!repoActionBusy} onSelect={() => void runRepoAction("pull", async () => {
+              <DropdownMenuItem disabled={remote !== "ready" || branchPending || !!repoActionBusy} onSelect={() => void runRepoAction("pull", async () => {
                 const result = await pullRemoteChanges({ ...repositoryTarget!, token: currentToken });
                 return t("repoStatus.pullDone", { count: result.updated });
               })}><GitPullRequest className="mr-2 h-4 w-4" />{t("repoStatus.pull")}</DropdownMenuItem>
@@ -543,6 +573,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         </DropdownMenu>
       </div>
       {repoDialogLoaded && <Suspense fallback={null}><RepositoryStatusDialog open={repoDialogOpen} onOpenChange={setRepoDialogOpen} book={currentBook} branch={currentBranch} settings={settings} /></Suspense>}
+      {branchDialogLoaded && currentBook && !currentBookIsLocal && currentBranch && <Suspense fallback={null}><BranchSwitcherDialog open={branchDialogOpen} onOpenChange={setBranchDialogOpen} book={currentBook} branch={currentBranch} pending={branchPending} remote={remote} token={currentToken} onSyncNow={() => { void triggerCurrentRepositorySync(); }} /></Suspense>}
       <RepositorySyncConflictDialog conflicts={syncConflict?.error.conflicts ?? []} busy={repoActionBusy === "sync"} onCancel={() => setSyncConflict(null)} onApply={applyConflictChoices} />
       <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </header>

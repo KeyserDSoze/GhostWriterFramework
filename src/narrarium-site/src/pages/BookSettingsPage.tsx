@@ -21,6 +21,7 @@ import { useBooksStore } from "@/store/booksStore";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { bookStorageMode, type BookEntry } from "@/types/settings";
 import { applyDraft, draftOfBook, isDraftDirty, type BookSettingsDraft } from "@/bookSettings/draft";
+import { chooseBranch } from "@/branches/memoryEdits";
 import { DEFAULT_BOOK_SETTINGS_TAB, bookSettingsHash, bookSettingsTabOfHash, bookSettingsTabState, type BookSettingsTab } from "@/bookSettings/tabs";
 
 interface Session { base: BookEntry; draft: BookSettingsDraft }
@@ -67,7 +68,13 @@ export function BookSettingsPage() {
     const latest = useSettingsStore.getState().settings.books.find((entry) => entry.id === bookId);
     if (!latest || !session) return false;
     const updated = applyDraft(latest, session.draft);
-    patchSettings({ books: useSettingsStore.getState().settings.books.map((entry) => (entry.id === latest.id ? updated : entry)) });
+    const current = useSettingsStore.getState().settings;
+    const books = current.books.map((entry) => (entry.id === latest.id ? updated : entry));
+    // A branch chosen here is this device's choice, and the last one worked on everywhere (`branchMemory`), like one opened from the switcher.
+    const at = new Date().toISOString();
+    patchSettings(updated.activeBranch === latest.activeBranch ? { books }
+      : updated.activeBranch ? chooseBranch({ ...current, books }, updated, updated.activeBranch, at)
+        : { books: books.map((entry) => (entry.id === latest.id ? { ...entry, activeBranchAt: at } : entry)) });
     try { await save(); } catch { return false; }
     clearBook(latest.id);
     toast({ title: t("bookSettings.settingsSaved") });

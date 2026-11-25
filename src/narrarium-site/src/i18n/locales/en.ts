@@ -206,12 +206,6 @@ const en = {
   repoSettings: {
     title: "Local repositories",
     description: "Configure local saving, remote checks, and IndexedDB working-copy sync.",
-    autoFetchOnOpen: "Auto-fetch on open",
-    autoFetchOnOpenHint: "Lightly check whether the remote branch changed when opening a book.",
-    autoFetchInterval: "Auto-fetch interval (minutes)",
-    autoFetchIntervalHint: "0 disables periodic background checks.",
-    autoPullWhenClean: "Auto-pull when clean",
-    autoPullWhenCleanHint: "Apply remote changes only when there are no local changes or commits.",
   },
   migration: {
     title: "Migration",

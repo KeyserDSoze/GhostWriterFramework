@@ -7,6 +7,7 @@ import { AttachToGitHubCard } from "@/components/book/settings/AttachToGitHubCar
 import { TokenSelectionCard } from "@/components/book/settings/TokenSelectionCard";
 import { TokenStatusCard } from "@/components/book/settings/TokenStatusCard";
 import { WorkingBranchCard } from "@/components/book/settings/WorkingBranchCard";
+import { BranchMemoryCard } from "@/components/book/settings/BranchMemoryCard";
 import { useAttachToGitHub } from "@/components/book/settings/useAttachToGitHub";
 import { useNavigate } from "react-router-dom";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -50,7 +51,7 @@ export function GitHubTab({ book, draft, patch, onGoToReader }: Props) {
     return (
       <>
         {result ?? <AttachToGitHubCard book={book} attach={attach} />}
-        <WorkingBranchCard book={book} activeBranch={draft.activeBranch} onActiveBranch={(activeBranch) => patch({ activeBranch })} />
+        <WorkingBranchCard book={book} activeBranch={draft.activeBranch} onActiveBranch={(activeBranch) => patch({ activeBranch })} localBranchName={draft.localBranchName} onLocalBranchName={(localBranchName) => patch({ localBranchName })} />
       </>
     );
   }
@@ -83,6 +84,7 @@ export function GitHubTab({ book, draft, patch, onGoToReader }: Props) {
       <Suspense fallback={null}><BookGitHubAccess book={book} /></Suspense>
       <TokenStatusCard book={book} branch={branch} />
       <WorkingBranchCard book={book} activeBranch={draft.activeBranch} onActiveBranch={(activeBranch) => patch({ activeBranch })} />
+      <BranchMemoryCard book={book} />
     </>
   );
 }

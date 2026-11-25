@@ -17,7 +17,8 @@ import {
   triggerRuns,
   type BranchFacts,
 } from "@/branches/autoSyncPolicy";
-import { recordBranchUse, keepBranchInSync } from "@/branches/memory";
+import { recordBranchUse } from "@/branches/memory";
+import { keepBranchInSync } from "@/branches/memoryEdits";
 import type { BookBranchMemory } from "@/types/settings";
 
 const NOW = Date.parse("2026-11-24T12:00:00.000Z");

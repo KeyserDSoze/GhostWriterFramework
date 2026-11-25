@@ -16,7 +16,21 @@ Full Sync reconciles remote changes, preserves or commits local work when possib
 
 ## Branches and pull requests
 
-Each book can select an active branch. Copilot and the Git dialogs can list branches, switch/create branches, inspect diffs and commits, and create pull requests.
+The branch of the book on the screen is in the top bar, next to the sync pill. It opens the **branch switcher**: the current branch and what concerns it, every branch you worked on (the newest first) and the other branches GitHub has, found by typing and opened with the arrows and Enter. Each branch keeps its own working copy on this device, so switching never loses anything: the work on a branch stays on that branch.
+
+- **A new branch is one action.** The switcher suggests a name (`draft/<today's date>`); a few words become `feature/<your-words>`. The branch is made on this device from the current one, with what it has now, and opens at once, also without GitHub. It is published on GitHub by the next sync, or at once with **Publish it on GitHub now**. If GitHub already has a branch with that name and other changes, nothing is published or overwritten: create one with another name.
+- **Branches follow you.** The branch you worked on last, and every branch you worked on, are kept in your account data (the copy that syncs: Google Drive, OneDrive or `narrarium.settings`), names and dates only. Another device opens the book on the branch you used last and says so; if that branch is not on GitHub (or not yet) and not on that device, the book stays on the branch it had, and the message names both.
+- **In the GitHub tab** of the book settings, **Branches and automatic sync** shows the last branch and every branch you worked on. **Rename** gives a branch a name in this list only, **Forget** takes it out of the list (the branch on GitHub and its copy on this device stay), and **Keep in sync** chooses: with the most recent, always, or never by itself. A book kept on this device has a **Name of the branch** (`main` unless you choose another): a repository made for it, or an empty one, gets it as its default branch; a repository that already has commits keeps its branches.
+- Copilot and the Git dialogs can also list branches, switch or create them, inspect diffs and commits, and create pull requests.
+
+## Automatic sync
+
+A GitHub book syncs by itself, as you choose in **Settings › Local repositories** for every book, and per book in the switcher and in the GitHub tab: **Off**, **When the book opens and when you come back to it** (the default), or **Also every 5 minutes**.
+
+- It only does what cannot lose or merge anything: it brings GitHub's changes into a branch that has nothing unpublished, and publishes this device's changes (committed with the same message as Sync) only when GitHub did not change meanwhile. When both changed, nothing is overwritten: the button and a message say so, and **Sync now** opens the usual sync, which asks you about any file changed on both sides. A branch GitHub no longer has is never made again by itself.
+- It syncs the branch on the screen first, then the four branches you used last and the ones you chose to keep in sync (ten at most). A branch you worked on elsewhere is brought to this device, downloading only the files that differ from the copies already here.
+- It asks GitHub one question per book each time (the list of its branches), which costs nothing of GitHub's hourly limit when nothing changed. Near the limit it syncs only the branch on the screen, and stops until the hour starts again. It waits while the autopilot runs the book in the browser (also after a reload, until the autopilot resumes by itself), does not bring changes into a page you are editing, and only brings changes while your personal server runs the book. One tab of the browser syncs for all the others.
+- Without a GitHub credential or offline it does nothing, and the menu of the pill says why. The same menu says when the last automatic sync happened and what it did: what it brought from GitHub, what it published, nothing to do, or what needs your attention.
 
 ## Two ways to sign in to GitHub
 

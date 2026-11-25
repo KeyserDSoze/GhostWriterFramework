@@ -121,7 +121,11 @@ test("rows of actions wrap at 320 px and a long word in a hint breaks instead of
 test("the top bar keeps its buttons on the screen with text at 200%: the name of the app and the status of the repository give up their room first", async () => {
   const topbar = await read("src/components/layout/Topbar.tsx");
   assert.match(topbar, /<div className="flex min-w-0 items-center gap-2 lg:hidden">/, "the group of the menu button can shrink");
-  assert.match(topbar, /<span className="hidden min-w-0 truncate font-semibold min-\[360px\]:block">Narrarium<\/span>/, "the name of the app is cut before a button is");
+  // Below 420 px the name of the app gives its room to the branch of the book and the sync pill.
+  assert.match(topbar, /<span className="hidden min-w-0 truncate font-semibold min-\[420px\]:block">Narrarium<\/span>/, "the name of the app is cut before a button is");
+  const branchButton = await read("src/components/branches/BranchButton.tsx");
+  assert.match(branchButton, /className="[^"]*\bshrink-0 sm:shrink\b[^"]*"/, "the branch button is an icon on a phone, never squeezed");
+  assert.match(branchButton, /<span className="hidden max-w-\[11rem\] truncate sm:inline">\{branch\}<\/span>/, "the name of the branch is cut before a button is");
   assert.match(topbar, /<span className="min-w-0 max-w-\[34vw\] truncate sm:max-w-none">\{visibleRepoStatus\.label\}<\/span>/, "the status of the repository is cut before a button is");
   for (const marker of ['aria-label={t("shell.openNav")}', 'aria-label={t("dossier.title")}']) assert.match(classesNear(topbar, marker), /\bshrink-0\b/, `${marker}: an icon button is never squeezed`);
   assert.match(topbar, /className="relative shrink-0 rounded-full"/, "the account button is never squeezed");

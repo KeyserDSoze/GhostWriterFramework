@@ -7,7 +7,6 @@ import { bookStorageMode, type AppSettings, type AutoSyncMode, type BookBranchMe
 
 /** The memory keeps at most this many branches of a book: beyond it the ones used longest ago are dropped (never the last working branch). */
 export const MAX_KNOWN_BRANCHES = 50;
-const MAX_LABEL = 60;
 
 export function branchMemoryKey(owner: string, repo: string): string {
   return `${owner}/${repo}`.toLowerCase();
@@ -30,7 +29,8 @@ function trimmed(branches: KnownBranchRecord[], keep: string | undefined): Known
   return current && !kept.includes(current) ? [...kept.slice(0, -1), current] : kept;
 }
 
-function changed(memory: BookBranchMemory | undefined, at: string, patch: Partial<BookBranchMemory>): BookBranchMemory {
+/** The memory with `patch`, dated `at`, its branches trimmed to the newest. */
+export function changed(memory: BookBranchMemory | undefined, at: string, patch: Partial<BookBranchMemory>): BookBranchMemory {
   const next = { knownBranches: [], ...memory, ...patch, updatedAt: at };
   return { ...next, knownBranches: trimmed(next.knownBranches, next.lastWorkingBranch) };
 }
@@ -44,45 +44,6 @@ export function recordBranchUse(memory: BookBranchMemory | undefined, branch: st
     knownBranches: [entry, ...known.filter((item) => item.name !== branch)],
     ...(options.current ? { lastWorkingBranch: branch, lastWorkingAt: at } : {}),
   });
-}
-
-/** Out of the list: only the memory changes, the branch on GitHub and its copy on this device stay. */
-export function forgetBranch(memory: BookBranchMemory | undefined, branch: string, at: string): BookBranchMemory {
-  const forgetsLast = memory?.lastWorkingBranch === branch;
-  const next = changed(memory, at, { knownBranches: (memory?.knownBranches ?? []).filter((entry) => entry.name !== branch) });
-  if (!forgetsLast) return next;
-  const { lastWorkingBranch: _branch, lastWorkingAt: _at, ...rest } = next;
-  return rest;
-}
-
-/** A name of the person's for the branch in the lists (empty: none). The branch keeps its name, on GitHub and here. */
-export function labelBranch(memory: BookBranchMemory | undefined, branch: string, label: string, at: string): BookBranchMemory {
-  const clean = label.replace(/\s+/g, " ").trim().slice(0, MAX_LABEL);
-  return changed(memory, at, {
-    knownBranches: (memory?.knownBranches ?? []).map((entry) => {
-      if (entry.name !== branch) return entry;
-      const { label: _label, ...rest } = entry;
-      return clean && clean !== branch ? { ...rest, label: clean } : rest;
-    }),
-  });
-}
-
-/** Whether a known branch is kept in sync automatically: always (`true`), never (`false`), or by how recently it was used (`undefined`). */
-export function keepBranchInSync(memory: BookBranchMemory | undefined, branch: string, sync: boolean | undefined, at: string): BookBranchMemory {
-  return changed(memory, at, {
-    knownBranches: (memory?.knownBranches ?? []).map((entry) => {
-      if (entry.name !== branch) return entry;
-      const { sync: _sync, ...rest } = entry;
-      return sync === undefined ? rest : { ...rest, sync };
-    }),
-  });
-}
-
-/** The automatic sync of one book; `undefined` follows the default of the settings. */
-export function setBookAutoSync(memory: BookBranchMemory | undefined, mode: AutoSyncMode | undefined, at: string): BookBranchMemory {
-  const next = changed(memory, at, {});
-  const { autoSync: _mode, ...rest } = next;
-  return mode ? { ...rest, autoSync: mode } : rest;
 }
 
 /** The settings patch that replaces the memory of one book. */
@@ -154,16 +115,6 @@ export function revertAdoptedBranch(book: BookEntry): BookEntry {
   return adoptedFrom ? { ...rest, activeBranch: adoptedFrom } : rest;
 }
 
-/** This device chose `branch` for the book now: its own choice, and the memory's (the same instant, so that neither moves the other). */
-export function chooseBranch(settings: AppSettings, book: BookEntry, branch: string, at: string, options: { createdHere?: boolean } = {}): Pick<AppSettings, "books" | "branchMemory"> {
-  const books = settings.books.map((entry) => {
-    if (entry.id !== book.id) return entry;
-    const { adoptedFrom: _from, ...rest } = entry;
-    return { ...rest, activeBranch: branch, activeBranchAt: at };
-  });
-  if (bookStorageMode(book) !== "github" || !book.owner || !book.repo) return { books, branchMemory: settings.branchMemory };
-  return { books, ...withBookBranchMemory(settings, book, (memory) => recordBranchUse(memory, branch, at, { current: true, createdHere: options.createdHere })) };
-}
 
 /**
  * A branch opened here that the memory does not know yet is recorded (the memory's working branch too, when it has none): the other devices learn of it.

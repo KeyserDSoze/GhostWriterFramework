@@ -21,7 +21,9 @@ import { fetchGitHubModelsCatalog, type GitHubCatalogModel } from "@/github/gith
 import { fetchOpenAICompatibleModels, type OpenAICompatibleModel } from "@/ai/openaiModelsCatalog";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
-import { CHAT_CAPABILITIES, DEFAULT_SETTINGS, type AIIntegration, type AIProviderType, type AppSettings, type ChatCapability, type ChatModel } from "@/types/settings";
+import { CHAT_CAPABILITIES, DEFAULT_SETTINGS, type AIIntegration, type AIProviderType, type AppSettings, type AutoSyncMode, type ChatCapability, type ChatModel } from "@/types/settings";
+import { defaultAutoSyncMode } from "@/branches/memory";
+import "@/i18n/branches";
 import { reconcileTaskRouting, routingIssues } from "@/assistant/router";
 import { DeepSearchSettingsBody } from "@/components/settings/DeepSearchSettingsBody";
 import { CopilotToolsSettingsBody } from "@/components/settings/CopilotToolsSettingsBody";
@@ -434,30 +436,19 @@ function SpeechCardBody({ settings, patchSettings }: { settings: AppSettings; pa
 function RepositorySettingsBody({ settings, patchSettings }: { settings: AppSettings; patchSettings: (patch: Partial<AppSettings>) => void }) {
   const { t } = useTranslation();
   const repo = settings.repository;
-  const patchRepo = (patch: Partial<AppSettings["repository"]>) => patchSettings({ repository: { ...repo, ...patch } });
+  // The switches of older versions stay in the data for the clients that still read them; the mode replaces them here.
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
-        <div>
-          <p className="text-sm font-medium">{t("repoSettings.autoFetchOnOpen")}</p>
-          <p className="text-xs text-muted-foreground">{t("repoSettings.autoFetchOnOpenHint")}</p>
-        </div>
-        <Switch checked={repo.autoFetchOnOpen} onCheckedChange={(checked) => patchRepo({ autoFetchOnOpen: checked })} />
-      </div>
-      <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[1fr_160px] sm:items-center">
-        <div>
-          <p className="text-sm font-medium">{t("repoSettings.autoFetchInterval")}</p>
-          <p className="text-xs text-muted-foreground">{t("repoSettings.autoFetchIntervalHint")}</p>
-        </div>
-        <Input type="number" min="0" step="1" value={repo.autoFetchIntervalMinutes} onChange={(event) => patchRepo({ autoFetchIntervalMinutes: Math.max(0, Math.floor(Number(event.target.value) || 0)) })} />
-      </div>
-      <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
-        <div>
-          <p className="text-sm font-medium">{t("repoSettings.autoPullWhenClean")}</p>
-          <p className="text-xs text-muted-foreground">{t("repoSettings.autoPullWhenCleanHint")}</p>
-        </div>
-        <Switch checked={repo.autoPullWhenClean} onCheckedChange={(checked) => patchRepo({ autoPullWhenClean: checked })} />
-      </div>
+    <div className="grid gap-2 rounded-lg border p-3">
+      <Label htmlFor="repository-auto-sync">{t("branches.settings.globalLabel")}</Label>
+      <Select value={defaultAutoSyncMode(repo)} onValueChange={(value) => patchSettings({ repository: { ...repo, autoSync: value as AutoSyncMode } })}>
+        <SelectTrigger id="repository-auto-sync" className="w-full max-w-sm"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="off">{t("branches.settings.mode.off")}</SelectItem>
+          <SelectItem value="open-focus">{t("branches.settings.mode.open-focus")}</SelectItem>
+          <SelectItem value="periodic">{t("branches.settings.mode.periodic")}</SelectItem>
+        </SelectContent>
+      </Select>
+      <p className="text-xs text-muted-foreground">{t("branches.settings.globalHint")}</p>
     </div>
   );
 }

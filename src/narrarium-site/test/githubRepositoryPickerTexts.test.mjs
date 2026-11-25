@@ -50,9 +50,16 @@ test("the texts are not in the catalogue of the app entry and only the picker's 
 });
 
 test("the list is a combobox with a listbox: roles, the active option, a label, a live region for the count, and targets a finger can hit", async () => {
-  const combobox = await read("src/components/book/RepositoryCombobox.tsx");
-  for (const expected of [/role="combobox"/, /aria-expanded=\{expanded\}/, /aria-controls=\{listId\}/, /aria-autocomplete="list"/, /aria-activedescendant=/, /role="listbox"/, /role="option"/, /<Label htmlFor=\{inputId\}>/, /role="status" aria-live="polite"/, /\[@media\(pointer:coarse\)\]:h-11/, /min-h-11/]) assert.match(combobox, expected);
-  for (const key of ["ArrowDown", "ArrowUp", "Home", "End", "Enter", "Escape"]) assert.ok(combobox.includes(`"${key}"`), `${key} is handled`);
+  // The keyboard and the ARIA of the combobox are the shared primitive's (`use-list-combobox`), which the picker draws with.
+  const component = await read("src/components/book/RepositoryCombobox.tsx");
+  const primitive = await read("src/components/ui/use-list-combobox.ts");
+  assert.match(component, /useListCombobox\(/);
+  assert.match(component, /\{\.\.\.combobox\.inputProps\}/);
+  assert.match(component, /\{\.\.\.combobox\.optionProps\(index\)\}/);
+  for (const expected of [/role: "combobox"/, /"aria-expanded": expanded/, /"aria-controls": listId/, /"aria-autocomplete": "list"/, /"aria-activedescendant":/, /role: "option"/]) assert.match(primitive, expected);
+  for (const expected of [/role="listbox"/, /<Label htmlFor=\{inputId\}>/, /role="status" aria-live="polite"/, /\[@media\(pointer:coarse\)\]:h-11/, /min-h-11/]) assert.match(component, expected);
+  for (const key of ["ArrowDown", "ArrowUp", "Home", "End", "Enter", "Escape"]) assert.ok(primitive.includes(`"${key}"`), `${key} is handled`);
+  const combobox = component;
   assert.match(combobox, /<ChevronDown aria-hidden="true"/, "the icons are decoration");
   const picker = await read("src/components/book/GitHubRepositoryPicker.tsx");
   assert.match(picker, /<fieldset[^>]*>\s*<legend/, "the two modes are a group with a legend");

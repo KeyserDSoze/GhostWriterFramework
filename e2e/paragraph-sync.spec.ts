@@ -50,7 +50,7 @@ function requestPath(event: RequestEvent): string {
   return decodeURIComponent(new URL(event.url).pathname);
 }
 
-function installDeterministicNetworkMocks(page: Page, options: { credential?: boolean } = {}): { events: RequestEvent[]; headRequests: string[]; headRequestsByPhase: Record<RequestPhase, string[]>; branchLists: Array<{ ifNoneMatch?: string; status: number }>; blobDownloads: string[]; contentDownloads: string[]; unexpected: UnexpectedRequest[]; setPhase: (phase: RequestPhase) => void; setSettingsStalled: (stalled: boolean) => void; setCredential: (credential: boolean) => void } {
+function installDeterministicNetworkMocks(page: Page, options: { credential?: boolean } = {}): { events: RequestEvent[]; headRequests: string[]; headRequestsByPhase: Record<RequestPhase, string[]>; branchLists: Array<{ ifNoneMatch?: string; status: number }>; otherRefs: Map<string, string>; blobDownloads: string[]; contentDownloads: string[]; unexpected: UnexpectedRequest[]; setPhase: (phase: RequestPhase) => void; setSettingsStalled: (stalled: boolean) => void; setCredential: (credential: boolean) => void } {
   let credential = options.credential ?? true;
   const events: RequestEvent[] = [];
   const headRequests: string[] = [];
@@ -61,6 +61,8 @@ function installDeterministicNetworkMocks(page: Page, options: { credential?: bo
   const unexpected: UnexpectedRequest[] = [];
   let phase: RequestPhase = "opening";
   let remoteHead = INITIAL_HEAD;
+  /** The branches made by the app during a test (the switcher's new branches), by name. */
+  const otherRefs = new Map<string, string>();
   let settingsStalled = false;
   const stalledSettings = new Promise<never>(() => undefined);
 
@@ -158,7 +160,31 @@ function installDeterministicNetworkMocks(page: Page, options: { credential?: bo
         return;
       }
       branchLists.push({ ifNoneMatch, status: 200 });
-      await route.fulfill({ json: [{ name: "main", commit: { sha: "head-main" }, protected: true }, { name: "test2", commit: { sha: remoteHead }, protected: false }], headers });
+      await route.fulfill({ json: [{ name: "main", commit: { sha: "head-main" }, protected: true }, { name: "test2", commit: { sha: remoteHead }, protected: false }, ...[...otherRefs].map(([name, sha]) => ({ name, commit: { sha }, protected: false }))], headers });
+      return;
+    }
+    // A branch made by the app: GitHub has it once it was created (POST /git/refs), and its head moves with its pushes.
+    const otherRef = /\/git\/refs?\/heads\/(.+)$/.exec(path)?.[1];
+    if (otherRef && otherRef !== "test2" && otherRef !== "main") {
+      if (method === "GET") {
+        const sha = otherRefs.get(otherRef);
+        if (sha) await route.fulfill({ json: { ref: `refs/heads/${otherRef}`, object: { type: "commit", sha } } });
+        else await route.fulfill({ status: 404, json: { message: "Not Found" } });
+        return;
+      }
+      if (method === "PATCH") {
+        const sha = `head-${otherRef}-pushed`;
+        otherRefs.set(otherRef, sha);
+        await route.fulfill({ json: { ref: `refs/heads/${otherRef}`, object: { sha } } });
+        return;
+      }
+    }
+    if (method === "POST" && /\/git\/refs$/.test(path)) {
+      const body = JSON.parse(request.postData() ?? "{}") as { ref?: string; sha?: string };
+      const name = body.ref?.replace(/^refs\/heads\//, "") ?? "";
+      if (!name || otherRefs.has(name) || name === "test2" || name === "main") { await route.fulfill({ status: 422, json: { message: "Reference already exists" } }); return; }
+      otherRefs.set(name, body.sha ?? "");
+      await route.fulfill({ status: 201, json: { ref: body.ref, object: { type: "commit", sha: body.sha } } });
       return;
     }
     if (method === "GET" && /\/git\/commits\//.test(path)) {
@@ -209,7 +235,7 @@ function installDeterministicNetworkMocks(page: Page, options: { credential?: bo
     await route.fulfill({ status: 500, json: { message: `Unexpected GitHub request: ${method} ${path}` } });
   });
 
-  return { events, headRequests, headRequestsByPhase, branchLists, blobDownloads, contentDownloads, unexpected, setPhase: (next) => { phase = next; }, setSettingsStalled: (stalled) => { settingsStalled = stalled; }, setCredential: (next) => { credential = next; } };
+  return { events, headRequests, headRequestsByPhase, branchLists, otherRefs, blobDownloads, contentDownloads, unexpected, setPhase: (next) => { phase = next; }, setSettingsStalled: (stalled) => { settingsStalled = stalled; }, setCredential: (next) => { credential = next; } };
 }
 
 async function installSeed(page: Page, options: { credential?: boolean; workingCopy?: boolean } = {}): Promise<void> {
@@ -594,6 +620,57 @@ test("the automatic sync lists the branches of GitHub once when a linked book is
   expect(network.headRequests).toEqual([]);
   expect(network.blobDownloads).toEqual([]);
   expect(network.contentDownloads).toEqual([]);
+  expect(network.unexpected).toEqual([]);
+});
+
+test("the branch switcher of the top bar makes a branch on this device in one action, the next sync publishes it, and the branches stay apart", async ({ page }) => {
+  test.setTimeout(120_000);
+  const network = installDeterministicNetworkMocks(page);
+  await installSeed(page);
+  await page.goto(`app/books/${BOOK_ID}/chapters/001-the-arrival/paragraphs/001`);
+  await expect(page.getByRole("button", { name: "Edit paragraph" })).toBeVisible({ timeout: 15_000 });
+  await expect.poll(() => network.branchLists.length).toBeGreaterThan(0);
+
+  // The branch of the book is in the top bar, next to the sync pill; it opens the switcher, whose field has the focus.
+  await page.getByRole("button", { name: /^Branch test2\./ }).click();
+  const switcher = page.getByRole("dialog", { name: "Branches" });
+  await expect(switcher).toBeVisible();
+  await expect(switcher.getByRole("combobox", { name: "Find a branch" })).toBeFocused();
+  await expect(switcher.getByRole("option", { name: /^test2/ })).toHaveAttribute("aria-current", "true");
+
+  // A new branch is one action: a few words become its name; it is made on this device from what test2 has, and opens at once.
+  await switcher.getByRole("textbox", { name: "Name of the new branch" }).fill("A darker ending");
+  await expect(switcher.getByText("It will be called feature/a-darker-ending.")).toBeVisible();
+  await switcher.getByRole("button", { name: "Create branch" }).click();
+  await expect(switcher).toBeHidden();
+  await expect(page.getByRole("status").filter({ hasText: "Created the branch feature/a-darker-ending" }).first()).toBeVisible();
+
+  // The next sync (the branch was just opened) publishes it at the commit it started from: nothing is forced, and test2 is not touched.
+  await expect.poll(() => network.otherRefs.get("feature/a-darker-ending"), { timeout: 15_000 }).toBe("head-test2");
+  const branchButton = page.getByRole("button", { name: /^Branch feature\/a-darker-ending/ });
+  await expect(branchButton).toBeVisible();
+  await expect(branchButton).not.toHaveAccessibleName(/not published/, { timeout: 15_000 });
+  const created = network.events.filter((event) => event.method === "POST" && /\/git\/refs$/.test(requestPath(event)));
+  expect(created.map((event) => JSON.parse(event.body ?? "{}"))).toEqual([{ ref: "refs/heads/feature/a-darker-ending", sha: "head-test2" }]);
+  expect(network.events.filter((event) => event.method === "PATCH" && /\/git\/refs\/heads\/test2$/.test(requestPath(event)))).toEqual([]);
+
+  // The menu of the pill says what the automatic sync did, and when.
+  await page.getByTestId("repository-pill").click();
+  await expect(page.getByRole("menu").getByText(/^Last automatic sync (now|\d+ (second|minute)s? ago): published the new branch\.$/)).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // Back to test2 from the keyboard; then the automatic sync of the book is switched off in the same place, and said plainly.
+  await branchButton.click();
+  await expect(switcher).toBeVisible();
+  await switcher.getByRole("combobox", { name: "Find a branch" }).fill("test2");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: /^Branch test2\./ })).toBeVisible();
+  await page.getByRole("button", { name: /^Branch test2\./ }).click();
+  await switcher.getByRole("switch", { name: "Automatic sync of this book" }).click();
+  await expect(switcher.getByTestId("auto-sync-off")).toHaveText("Automatic sync is off for this book");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "Branch test2, auto-sync off. Switch branch or create one" })).toBeVisible();
   expect(network.unexpected).toEqual([]);
 });
 

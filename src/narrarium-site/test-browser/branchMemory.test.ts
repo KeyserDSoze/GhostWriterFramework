@@ -1,23 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  MAX_KNOWN_BRANCHES,
-  adoptRememberedBranches,
-  bookAutoSyncMode,
-  bookBranchMemory,
-  branchMemoryKey,
-  chooseBranch,
-  defaultAutoSyncMode,
-  forgetBranch,
-  keepBranchInSync,
-  labelBranch,
-  mergeBranchMemories,
-  recordBranchUse,
-  recordOpenedBranch,
-  rememberedBranchToAdopt,
-  revertAdoptedBranch,
-  setBookAutoSync,
-  settleAdoptedBranch,
-} from "@/branches/memory";
+import { MAX_KNOWN_BRANCHES, adoptRememberedBranches, bookAutoSyncMode, bookBranchMemory, branchMemoryKey, defaultAutoSyncMode, mergeBranchMemories, recordBranchUse, recordOpenedBranch, rememberedBranchToAdopt, revertAdoptedBranch, settleAdoptedBranch } from "@/branches/memory";
+import { chooseBranch, forgetBranch, keepBranchInSync, labelBranch, setBookAutoSync } from "@/branches/memoryEdits";
 import { DEFAULT_SETTINGS, type AppSettings, type BookBranchMemory, type BookEntry } from "@/types/settings";
 
 const T1 = "2026-11-20T10:00:00.000Z";

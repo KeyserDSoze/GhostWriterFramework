@@ -19,11 +19,16 @@ import { currentRepositoryScopeIdentity } from "@/repository/repositoryOperation
 import "@/i18n/localFirst";
 import { AUTO_BRANCH } from "@/bookSettings/draft";
 import { workingBranchState } from "@/bookSettings/branchState";
+import { branchNameProblem } from "@/branches/branchNames";
+import "@/i18n/branches";
 
 interface Props {
   book: BookEntry;
   activeBranch: string;
   onActiveBranch: (branch: string) => void;
+  /** A book kept on this device: the name of its branch, which a new or empty repository gets as its default branch. */
+  localBranchName?: string;
+  onLocalBranchName?: (name: string) => void;
 }
 
 /**
@@ -32,7 +37,7 @@ interface Props {
  * The branches with a working copy on this device are always offered: they open without GitHub. Listing GitHub's and making one need GitHub, and without it
  * (no credential, one GitHub refused, offline) the card says why instead of doing nothing.
  */
-export function WorkingBranchCard({ book, activeBranch, onActiveBranch }: Props) {
+export function WorkingBranchCard({ book, activeBranch, onActiveBranch, localBranchName, onLocalBranchName }: Props) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const settings = useSettingsStore((state) => state.settings);
@@ -47,6 +52,7 @@ export function WorkingBranchCard({ book, activeBranch, onActiveBranch }: Props)
   const [newBranchName, setNewBranchName] = useState("");
   const autoBranch = workingBranches[book.id] ?? structure?.defaultBranch ?? "main";
   const state = workingBranchState({ storageMode: book.storageMode, activeBranch: activeBranch === AUTO_BRANCH ? undefined : activeBranch }, autoBranch);
+  const localProblem = localBranchName === undefined ? null : branchNameProblem(localBranchName.trim());
 
   useEffect(() => {
     if (bookStorageMode(book) !== "github") return undefined;
@@ -94,10 +100,17 @@ export function WorkingBranchCard({ book, activeBranch, onActiveBranch }: Props)
       <CardContent className="space-y-4">
         <p role="status" className="rounded-md border bg-muted/30 p-3 text-sm" data-testid="working-branch-state">
           {state.kind === "device"
-            ? <><strong>{t("bookSettings.tabs.localBranch")}</strong> — {t("bookSettings.tabs.onlyOnDevice")}</>
+            ? <><strong>{t("bookSettings.tabs.localBranch")}</strong> «{localBranchName?.trim() || "main"}» — {t("bookSettings.tabs.onlyOnDevice")}</>
             : <><strong>{state.branch}</strong> — {t("bookSettings.tabs.publishedAs", { branch: state.branch })}</>}
         </p>
-        {state.kind === "device" && <p className="text-xs text-muted-foreground">{t("bookSettings.tabs.branchOnConnect")}</p>}
+        {state.kind === "device" && onLocalBranchName && (
+          <div className="grid gap-2">
+            <Label htmlFor="book-local-branch">{t("branches.local.label")}</Label>
+            <Input id="book-local-branch" className="max-w-sm" value={localBranchName ?? "main"} autoComplete="off" spellCheck={false} aria-invalid={Boolean(localProblem) || undefined} aria-describedby="book-local-branch-hint" onChange={(event) => onLocalBranchName(event.target.value)} />
+            {localProblem && <p className="text-xs text-destructive" role="alert">{t(`branches.switcher.create.problems.${localProblem}`)}</p>}
+          </div>
+        )}
+        {state.kind === "device" && <p id="book-local-branch-hint" className="text-xs text-muted-foreground">{t("bookSettings.tabs.branchOnConnect")}</p>}
         {bookStorageMode(book) === "github" && (
           <>
             {remote === "offline" && <p className="text-xs text-muted-foreground">{t("localFirst.branchesOffline")}</p>}

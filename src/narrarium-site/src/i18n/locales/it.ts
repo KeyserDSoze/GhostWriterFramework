@@ -206,12 +206,6 @@ const it = {
   repoSettings: {
     title: "Repository locali",
     description: "Configura salvataggio locale, controlli remoti e sincronizzazione della working copy IndexedDB.",
-    autoFetchOnOpen: "Auto-fetch all'apertura",
-    autoFetchOnOpenHint: "Controlla in modo leggero se il branch remoto è cambiato quando apri un libro.",
-    autoFetchInterval: "Intervallo auto-fetch (minuti)",
-    autoFetchIntervalHint: "0 disabilita i controlli periodici in background.",
-    autoPullWhenClean: "Auto-pull se pulito",
-    autoPullWhenCleanHint: "Applica modifiche remote solo quando non hai modifiche o commit locali.",
   },
   migration: {
     title: "Migrazione",

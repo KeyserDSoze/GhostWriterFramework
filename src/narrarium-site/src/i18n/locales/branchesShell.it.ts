@@ -12,6 +12,13 @@ const branchesShellIt = {
       "needs-github": "{{branch}}, il ramo su cui hai lavorato per ultimo su un altro dispositivo, non è su questo dispositivo, e per scaricarlo serve GitHub: il libro resta dov’era ({{previous}}).",
       failed: "{{branch}}, il ramo su cui hai lavorato per ultimo su un altro dispositivo, non si è potuto aprire qui: il libro resta dov’era ({{previous}}).",
     },
+    trigger: {
+      label: "Ramo {{branch}}{{state}}. Cambia ramo o creane uno",
+      pending: "non pubblicato",
+      off: "sincronizzazione automatica spenta",
+      attention: "da controllare",
+      syncing: "in sincronizzazione",
+    },
   },
 };
 
