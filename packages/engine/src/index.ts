@@ -30,6 +30,7 @@ export * from "./ai/budget.js";
 export * from "./ai/redact.js";
 export * from "./ai/structured.js";
 export * from "./ai/request.js";
+export * from "./ai/responses.js";
 export * from "./ai/routing.js";
 export * from "./ai/fetch-client.js";
 export * from "./ai/memory.js";

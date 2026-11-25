@@ -1,0 +1,4 @@
+# Streams of the Responses API
+
+- `owner-capture.request.json` and `owner-capture.sse` are what the owner captured from the Azure portal's playground (`POST https://oai-gw-002.openai.azure.com/openai/responses?api-version=2025-04-01-preview`, 200 OK, model `gpt-5.2`, thinking `low`). The structure of the stream is verbatim; the `encrypted_content` of the reasoning item is shortened to `<ENCRYPTED>`, and the `content_filters` block (which the capture shortened to a placeholder) is a realistic, shortened one.
+- The other streams that `responses-stream.test.mjs` serves (a forced function in pieces, parallel calls, a refusal, an incomplete response, a failed response, an error in the middle of a stream) are made in the test from the event shapes that the Azure and OpenAI documentation describe. They are reasoned from the documentation and have not been captured from a deployment.

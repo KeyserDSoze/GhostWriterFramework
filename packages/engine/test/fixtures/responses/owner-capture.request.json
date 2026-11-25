@@ -1,0 +1,1 @@
+{"stream":true,"max_output_tokens":6553,"reasoning":{"effort":"low"},"input":[{"role":"developer","content":[{"type":"input_text","text":"You are an AI assistant that helps people find information."}]},{"role":"user","content":[{"type":"input_text","text":"rispondi solo con ok"}]}],"text":{"format":{"type":"text"}},"model":"gpt-5.2"}

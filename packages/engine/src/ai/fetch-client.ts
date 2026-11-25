@@ -7,6 +7,7 @@ import { resolveDeadlines, startClock, timeoutMessage, type DeadlineClock, type 
 import { redactSecrets } from "./redact.js";
 import type { AiModelLearning, AiModelMemory } from "./memory.js";
 import { describeErrorBody, errorBodyOfObject, parseErrorBody, refusesThinkingWithTools, suggestsResponsesApi, type AiErrorBody } from "./provider-error.js";
+import { ResponsesStreamReader, responseAsChat } from "./responses.js";
 import { attemptThinking, buildChatRequest, canSendNone, effectiveAiBase, endpointOrigin, type AiAttemptThinking, type AiReasoningEffort, type AiThinkingWhy, type ChatRequest } from "./request.js";
 import type { AiCandidate } from "./router.js";
 import { candidateBoundary, leftOutStep, planAttempts, sortedRoute, type PlannedAttempt } from "./routing.js";
@@ -648,11 +649,11 @@ function parseRetryAfter(value: string | null | undefined): number | undefined {
 const TRANSIENT_STATUSES = new Set([408, 429, 502, 503, 504, 520, 521, 522, 523, 524]);
 /**
  * What a refusal of the thinking parameter says: the name of the one that the level travels in, in the provider's message or in the `param` of its error
- * object (some providers say only `"param": "reasoning_effort"`): the OpenAI field, or the chat-template argument (`chat_template_kwargs`, `reasoning_strength`).
+ * object (some providers say only `"param": "reasoning_effort"`): the OpenAI field (`reasoning.effort` in the Responses API), or the chat-template argument (`chat_template_kwargs`, `reasoning_strength`).
  * Either name is a refusal of the level, whichever of the two was sent: a gateway may answer with the name of the one it translated it into, and the remedy is
  * the same setting.
  */
-const THINKING_PARAMETER = /reasoning[\s_-]?effort|reasoning[\s_-]?strength|chat[\s_-]?template[\s_-]?kwargs/i;
+const THINKING_PARAMETER = /reasoning[\s._-]?effort|reasoning[\s_-]?strength|chat[\s_-]?template[\s_-]?kwargs/i;
 
 /** Where a thinking level was sent, for the author who has to change it: the integration it was asked for, and the parameter it travelled in (`reasoning.effort` is the Responses API's). */
 interface SentThinking {
@@ -881,8 +882,8 @@ async function readJsonBody(response: Response, clock: DeadlineClock, onChunk: (
 
 const COMPLETE_REASONS = new Set(["stop", "tool_calls", "function_call", "end_turn", "stop_sequence", "tool_use", "eos"]);
 const TRUNCATED_REASONS = new Set(["length", "max_tokens", "max_output_tokens", "model_length", "context_length_exceeded"]);
-const FILTERED_REASONS = new Set(["content_filter", "safety", "blocked", "recitation", "prohibited_content"]);
-const FAILED_REASONS = new Set(["error", "failed", "abort", "aborted", "cancelled", "canceled"]);
+const FILTERED_REASONS = new Set(["content_filter", "safety", "blocked", "recitation", "prohibited_content", "refusal"]);
+const FAILED_REASONS = new Set(["error", "failed", "abort", "aborted", "cancelled", "canceled", "incomplete"]);
 
 export type FinishOutcome = "complete" | "truncated" | "filtered" | "failed" | "unexpected" | "incomplete";
 
@@ -901,8 +902,8 @@ export function classifyFinishReason(reason: string, ended: boolean): FinishOutc
   return ended ? "complete" : "unexpected";
 }
 
-const PERMANENT_STREAM_ERROR = /authenticat|unauthori[sz]ed|forbidden|permission|invalid[_ -]?(?:request|api[_ -]?key|argument|parameter)|bad[_ -]?request/i;
-const TRANSIENT_STREAM_ERROR = /overload|rate[_ -]?limit|too many requests|temporar|unavailable|busy|try again|time[ds]? ?out|capacity/i;
+const PERMANENT_STREAM_ERROR = /authenticat|unauthori[sz]ed|forbidden|permission|invalid[_ -]?(?:request|api[_ -]?key|argument|parameter)|bad[_ -]?request|user[_ -]?error/i;
+const TRANSIENT_STREAM_ERROR = /overload|rate[_ -]?limit|too[_ ]many[_ ]requests|temporar|unavailable|busy|try again|time[ds]? ?out|capacity/i;
 
 /**
  * A failure the provider reported inside the stream (`{"error": {...}}`, `{"error": "..."}`, or an `event: error`), or `null` when the
@@ -983,10 +984,16 @@ interface StreamedChunk {
   }>;
   usage?: unknown;
   error?: unknown;
+  /** The Responses API only (see `ResponsesChunk`): what the model refused with, the characters of reasoning the piece shows and the tokens the model spent reasoning. */
+  refusal?: string;
+  reasoningCharacters?: number;
+  reasoningTokens?: number;
 }
 
 /** What of the end of a stream is kept to cut the reported tail from: longer than the tail, so that a credential that the cut would divide has been replaced whole before it is. */
 const TAIL_WINDOW_CHARACTERS = TRANSPORT_TAIL_CHARACTERS * 3;
+/** The most characters of what a model refused with that an error shows. */
+const MAX_REFUSAL_CHARACTERS = 300;
 /** The headers in which a provider or its gateway puts the id of a request: it is what they look a call up by in their logs. */
 const REQUEST_ID_HEADERS = ["x-llmproxy-request-id", "x-request-id", "request-id", "x-ms-request-id", "apim-request-id"];
 /** The most addresses a set of refusals of `stream_options` keeps. */
@@ -1066,6 +1073,12 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
   let usage: AiUsage | undefined;
   let finishReason = "";
   let reasoningCharacters = 0;
+  /** The tokens the provider says the model spent reasoning, for a reasoning that is not shown (the Responses API): the characters of it that were seen are none. */
+  let reasoningTokens = 0;
+  /** What the model said when it refused to answer (the Responses API). */
+  let refusal = "";
+  /** The reply is read as the Responses API tells it: one reader per attempt, whose events become the chunks that Chat Completions has. */
+  const responsesReader = built.protocol === "responses" ? new ResponsesStreamReader() : undefined;
   /** The function calls of a streamed reply by their index, in the order they came. */
   const calls = new Map<number, FunctionCall>();
   /** The arguments of a call that came whole: in the message of a JSON reply, or in the last piece of a stream. */
@@ -1083,8 +1096,8 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
   let tailCharacters = 0;
   let status: number | undefined;
   let requestId: string | undefined;
-  /** The request that is answered asks the provider for the tokens of the stream (`stream_options.include_usage`). */
-  let usageRequested = Boolean(built.body.stream_options);
+  /** The request that is answered asks the provider for the tokens of the stream (`stream_options.include_usage`; the Responses API always ends its stream with them). */
+  let usageRequested = Boolean(responsesReader) || Boolean(built.body.stream_options);
   let lastProgressAt: number | undefined;
   let response: Response | undefined;
   /** Where the call is, to say what went wrong when something does. */
@@ -1206,7 +1219,10 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       chunk = { error: inner || data.trim() || "the provider sent an error event without details" };
     } else {
       if (parsed === undefined) return;
-      chunk = parsed as StreamedChunk;
+      // The Responses API tells its events by name, and a few of them are the reply: they become the chunks that the rest of this reads.
+      const read = responsesReader ? responsesReader.read(parsed, event) : parsed as StreamedChunk;
+      if (!read) return;
+      chunk = read;
     }
     if (!chunk || typeof chunk !== "object") return;
     if (chunk.error) {
@@ -1216,7 +1232,9 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
     const first = choices[0];
     const delta = first?.delta;
-    reasoningCharacters += reasoningLength(delta);
+    reasoningCharacters += reasoningLength(delta) + (chunk.reasoningCharacters ?? 0);
+    if (typeof chunk.reasoningTokens === "number") reasoningTokens = chunk.reasoningTokens;
+    if (chunk.refusal) refusal = chunk.refusal;
     if (reasoningCharacters > MAX_STREAM_REASONING_CHARACTERS) throw runaway(`the model's reasoning passed the safety limit of ${MAX_STREAM_REASONING_CHARACTERS / 1_000_000} million characters (a reasoning loop is likely)`);
     if (delta?.content) {
       text += delta.content;
@@ -1260,7 +1278,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
 
   // What is sent: an address that refused `stream_options` before is not asked it again.
   let body = built.body;
-  if (usageRequested && refusals.has(built.url)) {
+  if (usageRequested && !responsesReader && refusals.has(built.url)) {
     body = withoutUsageOption(body);
     usageRequested = false;
   }
@@ -1295,7 +1313,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       const failure = await clock.guard(providerError(response, integration.provider, model, redact, built.thinking && built.thinkingWhy !== "tools" ? { integration: integration.name, parameter: built.protocol === "responses" ? "reasoning.effort" : built.reasoningParameter ?? "reasoning_effort" } : undefined));
       failure.transport = transport();
       // A provider that refuses `stream_options` is asked again, at once, without it, and is not asked it again: its replies carry no token count, which is then an estimate.
-      if (usageRequested && refusesUsageOption(failure, label)) {
+      if (usageRequested && !responsesReader && refusesUsageOption(failure, label)) {
         if (refusals.size >= MAX_REMEMBERED_REFUSALS) refusals.delete(refusals.values().next().value as string);
         refusals.add(built.url);
         usageRequested = false;
@@ -1324,15 +1342,20 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     trace.streamed = streamed;
     if (streamed) {
       stage = "stream";
-      ended = await readEventStream(response, clock, hooks);
+      // A stream of Chat Completions ends with `[DONE]`; the Responses API has no such marker: its last event (`response.completed`, `response.incomplete` or `response.failed`) is the end.
+      ended = (await readEventStream(response, clock, hooks)) || Boolean(responsesReader?.finished);
       streamEnd = ended ? "done" : "closed";
     } else {
       stage = "json";
       trace.firstByteMs ??= elapsed();
-      const payload = await readJsonBody(response, clock, (count, decoded) => chunkArrived(count, decoded, "reply")) as {
+      const raw = await readJsonBody(response, clock, (count, decoded) => chunkArrived(count, decoded, "reply"));
+      const payload = (responsesReader ? responseAsChat(raw) : raw) as {
         choices?: Array<{ message?: { content?: string | null; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: Array<{ function?: { arguments?: string } }> }; finish_reason?: string | null }>;
         usage?: unknown;
         error?: unknown;
+        refusal?: string;
+        reasoningCharacters?: number;
+        reasoningTokens?: number;
       } | null;
       if (payload?.error) {
         const failure = streamError(payload.error, label, details(), redact, false);
@@ -1343,7 +1366,9 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
       wholeArguments = choice?.message?.tool_calls?.find((call) => typeof call.function?.arguments === "string")?.function?.arguments ?? "";
       if (Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length) trace.toolSeen = true;
       finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : "";
-      reasoningCharacters = reasoningLength(choice?.message);
+      reasoningCharacters = reasoningLength(choice?.message) + (payload?.reasoningCharacters ?? 0);
+      reasoningTokens = payload?.reasoningTokens ?? 0;
+      refusal = payload?.refusal ?? "";
       usage = normalizeUsage(payload?.usage);
       // A plain reply that came whole still reaches the listener of the text, once.
       if (!structured && text) notify(request.onText, text);
@@ -1365,7 +1390,16 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     if (outcome === "incomplete") throw new AiStreamInterruptedError(`${label}: the stream ended before the reply was complete.`, "ended", undefined, details());
     if (outcome === "unexpected") throw new AiStreamInterruptedError(`${label}: unexpected finish reason "${shown}" and the stream did not end with [DONE]: the reply may be incomplete.`, "ended", undefined, details());
     if (outcome === "failed") throw new AiStreamInterruptedError(`${label}: the provider ended the reply with the finish reason "${shown}".`, /abort|cancel/i.test(shown) ? "provider-abort" : "provider-error", undefined, details({}, "error"));
-    if (outcome === "filtered") throw new AiProviderError(`${label}: the provider filtered the reply content (${shown}).`, undefined, false, details());
+    if (outcome === "filtered") {
+      // A model that refuses says so in words of its own (the Responses API gives them apart from the text); they are shown as they are, cut short.
+      const said = redact(refusal).replace(/\s+/g, " ").trim();
+      throw new AiProviderError(
+        shown === "refusal" ? `${label}: the model refused to answer${said ? `: "${said.length > MAX_REFUSAL_CHARACTERS ? `${said.slice(0, MAX_REFUSAL_CHARACTERS)}…` : said}"` : ""}.` : `${label}: the provider filtered the reply content (${shown}).`,
+        undefined,
+        false,
+        details(),
+      );
+    }
     // Some local servers leave the reasoning in the content as a leading <think> block: it is not the reply.
     const inline = splitReasoningBlock(text);
     text = inline.reply;
@@ -1373,7 +1407,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     const toolArguments = callArguments();
     const answered = Boolean(text.trim() || toolArguments.trim());
     if (outcome === "truncated") {
-      const seen = !answered && reasoningCharacters > 0;
+      const seen = !answered && (reasoningCharacters > 0 || reasoningTokens > 0);
       // A model that is declared as reasoning and wrote nothing spent its limit on a reasoning that it does not show: the reply is cut the same way.
       const declared = !answered && !seen && candidate.supportsReasoning === true;
       const reasoned = seen || declared;
@@ -1384,7 +1418,7 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
         details({ truncated: true, ...(reasoned ? { reasoningOnly: true, ...(candidate.maxOutputTokens && (built.outputLimit ?? 0) >= candidate.maxOutputTokens ? { limitReached: true } : {}) } : {}) }),
       );
     }
-    if (!answered) throw new AiProviderError(`${label}: ${reasoningCharacters > 0 ? "the model finished after reasoning without a reply" : "the provider returned an empty reply"}.`, undefined, true, details());
+    if (!answered) throw new AiProviderError(`${label}: ${reasoningCharacters > 0 || reasoningTokens > 0 ? "the model finished after reasoning without a reply" : "the provider returned an empty reply"}.`, undefined, true, details());
 
     // Measured before the arguments of a function become the text of the reply: they are counted once.
     const measured = measure();
