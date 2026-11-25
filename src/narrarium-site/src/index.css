@@ -91,6 +91,16 @@
     --layer: 120 4% 85%;
     --ring: 174 76% 24%;
     --radius: 0.75rem;
+    /* The colours of the marks of the annotations (the underline and the icon): 3:1 or more against the page and the card (test/themeContrast.test.mjs).
+       A mark is never only its colour: it also has an underline style and an icon. */
+    --mark-amber: 26 90% 37%;
+    --mark-rose: 345 83% 41%;
+    --mark-violet: 263 70% 50%;
+    --mark-sky: 201 96% 32%;
+    --mark-emerald: 163 94% 24%;
+    --mark-orange: 17 88% 40%;
+    --mark-teal: 175 77% 26%;
+    --mark-slate: 215 19% 35%;
   }
 
   .dark {
@@ -118,6 +128,14 @@
     /* In the dark theme the edge of a floating layer is clearly visible against the page. */
     --layer: 186 10% 42%;
     --ring: 174 55% 60%;
+    --mark-amber: 43 96% 56%;
+    --mark-rose: 351 95% 71%;
+    --mark-violet: 255 92% 76%;
+    --mark-sky: 198 93% 60%;
+    --mark-emerald: 158 64% 52%;
+    --mark-orange: 27 96% 61%;
+    --mark-teal: 172 66% 50%;
+    --mark-slate: 215 20% 65%;
   }
 }
 
@@ -356,5 +374,96 @@
 
   .reader-entity-link {
     @apply rounded px-0.5 text-primary underline decoration-primary/40 decoration-dotted underline-offset-4 transition hover:bg-primary/10 hover:decoration-primary;
+  }
+
+  /* The marks of the annotations: an underline of the tag's style and colour over a light tint of it, and a button with the tag's icon after the passage. */
+  .reader-annotation,
+  .annotation-mark-sample {
+    color: inherit;
+    background-color: hsl(var(--annotation-hsl, var(--mark-slate)) / 0.14);
+    text-decoration-line: underline;
+    text-decoration-color: hsl(var(--annotation-hsl, var(--mark-slate)));
+    text-decoration-thickness: 2px;
+    text-underline-offset: 0.24em;
+    text-decoration-skip-ink: none;
+    border-radius: 2px;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    cursor: pointer;
+  }
+  .reader-annotation[data-annotation-overlap] {
+    background-color: hsl(var(--annotation-hsl, var(--mark-slate)) / 0.24);
+  }
+  .annotation-mark-sample {
+    cursor: inherit;
+  }
+  .annotation-mark-icon {
+    color: hsl(var(--annotation-hsl, var(--mark-slate)));
+  }
+  [data-mark-underline="wavy"] { text-decoration-style: wavy; }
+  [data-mark-underline="double"] { text-decoration-style: double; }
+  [data-mark-underline="dashed"] { text-decoration-style: dashed; }
+  [data-mark-underline="dotted"] { text-decoration-style: dotted; }
+  [data-mark-underline="solid"] { text-decoration-style: solid; }
+  [data-mark-color="amber"] { --annotation-hsl: var(--mark-amber); }
+  [data-mark-color="rose"] { --annotation-hsl: var(--mark-rose); }
+  [data-mark-color="violet"] { --annotation-hsl: var(--mark-violet); }
+  [data-mark-color="sky"] { --annotation-hsl: var(--mark-sky); }
+  [data-mark-color="emerald"] { --annotation-hsl: var(--mark-emerald); }
+  [data-mark-color="orange"] { --annotation-hsl: var(--mark-orange); }
+  [data-mark-color="teal"] { --annotation-hsl: var(--mark-teal); }
+  [data-mark-color="slate"] { --annotation-hsl: var(--mark-slate); }
+  .reader-annotation-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.35em;
+    height: 1.35em;
+    margin-inline-start: 0.12em;
+    vertical-align: 0.35em;
+    border-radius: 9999px;
+    color: hsl(var(--annotation-hsl, var(--mark-slate)));
+    background-color: hsl(var(--annotation-hsl, var(--mark-slate)) / 0.14);
+    text-indent: 0;
+    line-height: 1;
+  }
+  /* The last word of a passage and its icons do not break apart; the two pieces of a split mark read as one. */
+  .reader-annotation-tail {
+    white-space: nowrap;
+  }
+  .reader-annotation[data-mark-piece="head"] {
+    border-start-end-radius: 0;
+    border-end-end-radius: 0;
+  }
+  .reader-annotation[data-mark-piece="tail"] {
+    border-start-start-radius: 0;
+    border-end-start-radius: 0;
+  }
+  .reader-annotation-icon svg {
+    width: 0.8em;
+    height: 0.8em;
+  }
+  .reader-annotation-icon:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+  /* A finger needs a bigger target than the icon: the button grows around it without moving the text. */
+  @media (pointer: coarse) {
+    .reader-annotation-icon {
+      position: relative;
+    }
+    .reader-annotation-icon::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 44px;
+      height: 44px;
+      transform: translate(-50%, -50%);
+    }
+  }
+  /* The passage being annotated, while the focus is in the menu or the dialog (where the browser hides the selection). */
+  ::highlight(annotation-pending) {
+    background-color: hsl(var(--primary) / 0.22);
   }
 }

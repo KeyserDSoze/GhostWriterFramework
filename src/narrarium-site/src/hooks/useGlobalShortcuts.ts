@@ -55,7 +55,8 @@ export function useGlobalShortcuts() {
       }
 
       const mod = event.ctrlKey || event.metaKey;
-      if (!mod) return;
+      // None of these takes Alt: Ctrl+Alt+M annotates in the reader (src/annotations/shortcut.ts), and is not Ctrl+M.
+      if (!mod || event.altKey) return;
       const key = event.key.toLowerCase();
 
       // Ctrl/Cmd+S → save the active page (block the browser save dialog).

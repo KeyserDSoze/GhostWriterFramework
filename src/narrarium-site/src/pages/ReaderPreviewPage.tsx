@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { parseDocument } from "yaml";
 import { AlertCircle, BookOpen, Bookmark, BookmarkPlus, ChevronLeft, ChevronRight, Eye, EyeOff, Image as ImageIcon, Maximize2, Minimize2, Settings, Trash2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -21,6 +20,9 @@ import { paragraphSeparator, presentMetadata, type PresentedMetadata } from "@/e
 import { isApprovedRepositoryAssetPath, renderRepositoryMarkdownHtml } from "@/markdown/safeMarkdown";
 import { canDiscloseSecretBody, isSecretPath, secretAccessMapForRoute } from "@/assistant/secretPolicy";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
+import { extractMarkdownImages, normalizeReaderLineBreaks, splitMarkdown } from "@/narrarium/readerText";
+import { useReaderAnnotations } from "@/components/annotations/reader/useReaderAnnotations";
+import { sceneSlugOfPath, type ReaderScene } from "@/components/annotations/reader/useLocatedAnnotations";
 
 const PAGE_GAP = 32;
 
@@ -32,12 +34,6 @@ export function readerPaginationDirection(event: Pick<KeyboardEvent, "key" | "al
     if (target.isContentEditable || editable?.getAttribute("contenteditable") !== "false" && Boolean(editable) || Boolean(target.closest("input, textarea, select"))) return 0;
   }
   return event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
-}
-
-interface MarkdownParts {
-  frontmatter: string;
-  frontmatterRecord: Record<string, unknown>;
-  body: string;
 }
 
 interface ReaderImage {
@@ -98,6 +94,7 @@ export function ReaderPreviewPage() {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { bookId } = useParams<{ bookId: string }>();
+  const location = useLocation();
   const { settings, patchSettings } = useSettingsStore();
   const { save } = useSettings();
   const { book, structure, loading, error, reload } = useBookStructure(bookId);
@@ -209,9 +206,34 @@ export function ReaderPreviewPage() {
     });
   }
 
+  const annotationScenes = useMemo<ReaderScene[] | null>(() => (readerBook
+    ? readerBook.chapters.flatMap((entry) => entry.paragraphs.map((paragraph) => ({
+      chapterSlug: entry.chapter.slug,
+      chapterTitle: entry.chapter.title,
+      paragraphSlug: sceneSlugOfPath(paragraph.paragraph.path),
+      paragraphNumber: paragraph.paragraph.number,
+      paragraphTitle: paragraph.paragraph.title,
+      path: paragraph.paragraph.path,
+      html: paragraph.html,
+    })))
+    : null), [readerBook]);
+  const sceneByPath = useMemo(() => new Map((annotationScenes ?? []).map((scene) => [scene.path, scene])), [annotationScenes]);
+  const showAnnotations = readerSettings.showAnnotations !== false;
+  const annotations = useReaderAnnotations({
+    bookId,
+    scenes: annotationScenes,
+    flowRef,
+    show: showAnnotations,
+    onToggleShow: () => patchReaderSettings({ showAnnotations: !showAnnotations }),
+    currentChapter: currentPosition?.chapterSlug,
+    jumpToElement,
+    initialAnnotationId: (location.state as { annotationId?: unknown } | null)?.annotationId as string | undefined,
+  });
+
   useLayoutEffect(() => {
     recalculatePages();
-  }, [readerBook, readerSettings.fontFamily, readerSettings.fontSize, readerSettings.fullScreen, readerSettings.lineBreakMode, readerSettings.lineHeight, readerSettings.pageMargin]);
+    // The marks of the annotations add their buttons to the text: the pages are counted again when they change.
+  }, [readerBook, readerSettings.fontFamily, readerSettings.fontSize, readerSettings.fullScreen, readerSettings.lineBreakMode, readerSettings.lineHeight, readerSettings.pageMargin, annotations.marked]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -289,6 +311,13 @@ export function ReaderPreviewPage() {
 
   function handleReaderClick(event: React.MouseEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement;
+    if (annotations.handleClick(target)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    // A selection just made with the pointer ends with a click: it is for annotating or copying, not for turning the page.
+    if (window.getSelection()?.toString().trim()) return;
     const entityButton = target.closest("[data-reader-entity-path]") as HTMLElement | null;
     if (entityButton) {
       event.preventDefault();
@@ -302,6 +331,19 @@ export function ReaderPreviewPage() {
     if (target.closest("button,a,input,select,textarea,label")) return;
     const rect = event.currentTarget.getBoundingClientRect();
     go(event.clientX - rect.left > rect.width / 2 ? 1 : -1);
+  }
+
+  /** Turns to the page that shows `element` (a mark of an annotation, a control the keyboard reached). */
+  function jumpToElement(element: Element) {
+    const viewport = viewportRef.current;
+    if (!viewport || !pageWidth) return;
+    // The text is turned by a transform, never by scrolling: a focus that scrolled the viewport is undone first.
+    if (viewport.scrollLeft || viewport.scrollTop) {
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+    }
+    const delta = element.getBoundingClientRect().left - viewport.getBoundingClientRect().left;
+    setPageIndex((current) => Math.max(0, Math.min(pageCount - 1, current + Math.floor((delta + 1) / (pageWidth + PAGE_GAP)))));
   }
 
   function jumpToPosition(position: LogicalPosition) {
@@ -381,6 +423,7 @@ export function ReaderPreviewPage() {
         <div className="flex flex-wrap items-center justify-end gap-1">
           <Button variant="outline" size="sm" onClick={() => go(-1)} disabled={pageIndex <= 0}><ChevronLeft className="h-4 w-4" />{t("reader.previous")}</Button>
           <Button variant="outline" size="sm" onClick={() => go(1)} disabled={pageIndex >= pageCount - 1}>{t("reader.next")}<ChevronRight className="h-4 w-4" /></Button>
+          {annotations.headerControls}
           <Button variant="outline" size="sm" onClick={addBookmark}><BookmarkPlus className="mr-1 h-4 w-4" />{t("reader.addBookmark")}</Button>
           <Button variant="outline" size="sm" onClick={() => setBookmarksOpen(true)}><Bookmark className="mr-1 h-4 w-4" />{bookBookmarks.length}</Button>
           <Button asChild variant="outline" size="sm"><Link to="/app/reader-settings" state={{ returnTo: `/app/books/${book.id}/reader` }}><Settings className="mr-1 h-4 w-4" />{t("reader.settingsTitle")}</Link></Button>
@@ -420,7 +463,7 @@ export function ReaderPreviewPage() {
                   <Minimize2 className="h-4 w-4" />
                 </Button>
               )}
-              <div ref={viewportRef} className="h-full overflow-hidden">
+              <div ref={viewportRef} className="h-full overflow-hidden" onFocus={(event) => { if (event.target !== readingSurfaceRef.current) jumpToElement(event.target); }}>
               <article
                 ref={(element) => {
                   flowRef.current = element;
@@ -456,12 +499,14 @@ export function ReaderPreviewPage() {
                         data-reader-paragraph=""
                         data-chapter-slug={paragraph.chapterSlug}
                         data-paragraph-number={paragraph.paragraph.number}
+                        data-paragraph-slug={sceneSlugOfPath(paragraph.paragraph.path)}
                         data-text-length={paragraph.text.length}
                         className="reader-paragraph"
                       >
                         <ReaderMetadata entries={presentMetadata(paragraph.frontmatterRecord, presentationSettings?.metadataVisibility.paragraph ?? [])} />
                         {readerSettings.showFrontmatter && paragraph.frontmatter.trim() && <ReaderFrontmatter value={paragraph.frontmatter} />}
-                        <div className="doc-prose reader-prose" dangerouslySetInnerHTML={{ __html: paragraph.html }} />
+                        {annotations.sceneIndicator(sceneByPath.get(paragraph.paragraph.path))}
+                        <div className="doc-prose reader-prose" dangerouslySetInnerHTML={{ __html: annotations.marked.get(paragraph.paragraph.path) ?? paragraph.html }} />
                         {readerSettings.showImages && paragraph.images.length > 0 && <ReaderImages images={paragraph.images} />}
                         {paragraphIndex < entry.paragraphs.length - 1 && presentationSettings && paragraphSeparator(presentationSettings) && <div className="my-10 text-center text-xl tracking-[0.5em] text-muted-foreground">{paragraphSeparator(presentationSettings)}</div>}
                       </section>
@@ -479,6 +524,8 @@ export function ReaderPreviewPage() {
           </div>
         )}
       </div>
+
+      {annotations.overlays}
 
       <Dialog open={bookmarksOpen} onOpenChange={setBookmarksOpen}>
         <DialogContent className="max-h-[80dvh] overflow-auto sm:max-w-2xl">
@@ -664,48 +711,6 @@ async function renderReaderMarkdown(input: {
   return { html: linkedHtml, text: markdownToPlainText(readerBody), images };
 }
 
-function normalizeReaderLineBreaks(markdown: string, mode: ReaderSettings["lineBreakMode"]): string {
-  if (mode === "source") return markdown.trim();
-  const blocks = markdown.replace(/\r\n/g, "\n").split(/\n\s*\n+/);
-  const output: string[] = [];
-  const prose: string[] = [];
-
-  function flushProse() {
-    const text = prose.join(" ").replace(/\s+/g, " ").trim();
-    if (text) output.push(text);
-    prose.length = 0;
-  }
-
-  for (const block of blocks) {
-    const trimmed = block.trim();
-    if (!trimmed) continue;
-    if (isPreservedMarkdownBlock(trimmed)) {
-      flushProse();
-      output.push(trimmed);
-      continue;
-    }
-    const compact = trimmed.split("\n").map((line) => line.trim()).filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
-    if (!compact) continue;
-    if (mode === "dialogue" && isDialogueParagraph(compact)) {
-      flushProse();
-      output.push(compact);
-      continue;
-    }
-    prose.push(compact);
-  }
-  flushProse();
-  return output.join("\n\n").trim();
-}
-
-function isPreservedMarkdownBlock(block: string): boolean {
-  return /^(#{1,6}\s+|```|~~~|>\s+|[-*+]\s+|\d+\.\s+|---+$|\*\*\*+$)/m.test(block.trim());
-}
-
-function isDialogueParagraph(text: string): boolean {
-  const trimmed = text.trim();
-  return /^[«“"—–]/.test(trimmed);
-}
-
 async function loadEntityDetails(input: { entity: ReaderEntity; book: BookEntry; token: string; branch: string; objectUrls: string[] }): Promise<EntityDetails> {
   const raw = await loadFileContent(input.token, input.book.owner, input.book.repo, input.entity.path, input.branch);
   const parts = splitMarkdown(raw);
@@ -716,28 +721,6 @@ async function loadEntityDetails(input: { entity: ReaderEntity; book: BookEntry;
     frontmatterEntries: frontmatterEntries(parts.frontmatterRecord),
     imageUrl,
   };
-}
-
-function splitMarkdown(raw: string): MarkdownParts {
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return { frontmatter: "", frontmatterRecord: {}, body: raw.trim() };
-  let frontmatterRecord: Record<string, unknown> = {};
-  try {
-    const parsed = parseDocument(match[1]).toJSON();
-    if (parsed && typeof parsed === "object") frontmatterRecord = parsed as Record<string, unknown>;
-  } catch {
-    frontmatterRecord = {};
-  }
-  return { frontmatter: match[1] ?? "", frontmatterRecord, body: (match[2] ?? "").trim() };
-}
-
-function extractMarkdownImages(body: string, filePath: string): { body: string; images: Array<{ path: string; alt: string }> } {
-  const images: Array<{ path: string; alt: string }> = [];
-  const cleaned = body.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_full, alt: string, src: string) => {
-    if (isApprovedRepositoryAssetPath(src)) images.push({ path: resolveMarkdownAssetPath(src, filePath), alt });
-    return "";
-  });
-  return { body: cleaned, images };
 }
 
 export function collectReaderEntities(structure: BookStructure | undefined, chapter?: Chapter): ReaderEntity[] {
@@ -828,18 +811,6 @@ async function loadImageUrl(input: { token: string; book?: BookEntry; owner?: st
   const url = URL.createObjectURL(new Blob([bytesToArrayBuffer(bytes)], { type: imageMimeType(path) }));
   input.objectUrls.push(url);
   return { url, alt, path };
-}
-
-function resolveMarkdownAssetPath(src: string, filePath: string): string {
-  const clean = src.replace(/^['"]|['"]$/g, "");
-  if (!clean.startsWith(".")) return clean.replace(/^\/+/, "");
-  const parts = filePath.split("/").slice(0, -1);
-  for (const part of clean.split("/")) {
-    if (!part || part === ".") continue;
-    if (part === "..") parts.pop();
-    else parts.push(part);
-  }
-  return parts.join("/");
 }
 
 function frontmatterEntries(frontmatter: Record<string, unknown>): Array<{ key: string; value: string }> {

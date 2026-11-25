@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { isMacPlatform } from "@/annotations/shortcut";
 
 const SHORTCUTS = [
   ["previous", "Alt + ←"],
@@ -16,6 +17,8 @@ const SHORTCUTS = [
   ["copy", "Ctrl/Cmd + C"],
   ["readerPrevious", "←"],
   ["readerNext", "→"],
+  // Not Cmd+Option+M on a Mac, where it minimizes every window (src/annotations/shortcut.ts).
+  ["annotate", { mac: "⌥ + ⌘ + A", other: "Ctrl + Alt + M" }],
 ] as const;
 
 export function KeyboardShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -29,7 +32,7 @@ export function KeyboardShortcutsDialog({ open, onOpenChange }: { open: boolean;
           {SHORTCUTS.map(([id, keys]) => (
             <div key={id} className="flex items-center justify-between gap-4 px-3 py-2.5 text-sm">
               <span>{t(`shortcuts.items.${id}`)}</span>
-              <kbd className="shrink-0 rounded border bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">{keys}</kbd>
+              <kbd className="shrink-0 rounded border bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">{typeof keys === "string" ? keys : isMacPlatform() ? keys.mac : keys.other}</kbd>
             </div>
           ))}
         </div>

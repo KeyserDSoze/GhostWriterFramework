@@ -3,6 +3,11 @@
  * many wait for the author), bundled with the app shell (see `@/i18n/shell`): the public pages do not download them.
  */
 const shellEn = {
+  shortcuts: {
+    items: {
+      annotate: "Annotate the passage selected in the reader",
+    },
+  },
   shell: {
     navMenu: "Navigation menu",
   },

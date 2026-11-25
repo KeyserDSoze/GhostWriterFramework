@@ -21,6 +21,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { CustomActionRunner, type CustomActionInvocation } from "@/components/custom-actions/CustomActionRunner";
 import { compatibleCustomActions, customActionRecordIdentity, customActionTargetIdentity, resolveCustomActionTarget } from "@/custom-actions/customActions";
 import type { CustomAction } from "@/types/settings";
+import { useSelectionMenuStore, type SelectionMenuExtension } from "@/components/editor/selectionMenuStore";
 
 type Editable = HTMLTextAreaElement | HTMLInputElement;
 
@@ -41,9 +42,18 @@ interface MenuState {
   editable: Editable | null;
   prose?: ProseEditorActions;
   selection: string;
+  /** What the pages' extensions captured when the menu opened (selectionMenuStore). */
+  extensions?: Array<{ extension: SelectionMenuExtension; context: unknown }>;
 }
 
 const CLOSED: MenuState = { open: false, x: 0, y: 0, editable: null, selection: "" };
+
+function capturedExtensions(target: EventTarget | null): Array<{ extension: SelectionMenuExtension; context: unknown }> {
+  const selection = typeof window !== "undefined" ? window.getSelection() : null;
+  return useSelectionMenuStore.getState().extensions
+    .map((extension) => ({ extension, context: extension.capture(target, selection) }))
+    .filter((entry) => entry.context !== null && entry.context !== undefined);
+}
 
 function isTouchDevice(): boolean {
   return typeof window !== "undefined" && (window.matchMedia("(pointer: coarse)").matches || "ontouchstart" in window);
@@ -141,20 +151,27 @@ export function GlobalContextMenu() {
       selection: sel,
       canReplace: Boolean(editable),
     });
+    const extensions = editable ? [] : capturedExtensions(target);
     // Open when there is something actionable: an editable, a selection, or contextual actions.
     // (hasContextActions is read fresh here because openAtRef always points at the latest closure.)
-    if (!editable && !sel.trim() && !hasBaseContextActions && customForOpen.length === 0) return false;
+    if (!editable && !sel.trim() && !hasBaseContextActions && customForOpen.length === 0 && extensions.length === 0) return false;
     const pad = 8;
     const width = 234;
     const left = Math.min(x, window.innerWidth - width - pad);
     const top = Math.min(y, window.innerHeight - 320 - pad);
-    setMenu({ open: true, x: Math.max(pad, left), y: Math.max(pad, top), editable, prose: editable ? forElement(editable) : undefined, selection: sel });
+    setMenu({ open: true, x: Math.max(pad, left), y: Math.max(pad, top), editable, prose: editable ? forElement(editable) : undefined, selection: sel, extensions });
     setShowHistory(false);
     setCustomSubmenuOpen(false);
     setFab(null);
     return true;
   };
   openAtRef.current = openAt;
+
+  // Pages open the menu from a button of their own (the toolbar of a selection on a touch screen).
+  useEffect(() => {
+    useSelectionMenuStore.getState().setOpenMenu((x, y, target) => openAtRef.current(x, y, target));
+    return () => useSelectionMenuStore.getState().setOpenMenu(null);
+  }, []);
 
   // ── Desktop: right-click ───────────────────────────────────────────────────
   useEffect(() => {
@@ -187,6 +204,8 @@ export function GlobalContextMenu() {
 
       // Non-editable selected text
       const sel = window.getSelection();
+      // A page that shows its own toolbar for this selection (the reader) gets no second floating button.
+      if (useSelectionMenuStore.getState().extensions.some((extension) => extension.ownsTouchSelection?.(sel))) { setFab(null); return; }
       if (sel && !sel.isCollapsed && sel.toString().trim().length > 0 && sel.rangeCount > 0) {
         const r = sel.getRangeAt(0).getBoundingClientRect();
         if (r.width || r.height) {
@@ -354,7 +373,8 @@ export function GlobalContextMenu() {
         <div
           ref={menuRef}
           data-no-context-menu
-          className="fixed z-[70] w-[234px] overflow-hidden rounded-xl border border-layer bg-popover p-1 text-popover-foreground shadow-2xl"
+          // Not overflow-hidden: the submenus (custom actions, Annotate) open beside the menu and would be cut off.
+          className="fixed z-[70] w-[234px] rounded-xl border border-layer bg-popover p-1 text-popover-foreground shadow-2xl"
           style={{ left: menu.x, top: menu.y }}
           onContextMenu={(e) => e.preventDefault()}
         >
@@ -377,6 +397,12 @@ export function GlobalContextMenu() {
             </div>
           ) : (
             <div className="flex flex-col">
+              {menu.extensions?.map(({ extension, context }) => (
+                <div key={extension.id}>
+                  {extension.render({ context, close, touch: isTouchDevice(), menuX: menu.x })}
+                  <div className="my-1 h-px bg-border" />
+                </div>
+              ))}
               {showContextActions && (
                 <>
                   {showBaseContextActions && (

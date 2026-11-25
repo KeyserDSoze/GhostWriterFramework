@@ -191,6 +191,32 @@ test("floating layers keep a visible edge in the dark theme: --layer reaches 3:1
   c.done();
 });
 
+test("the marks of the annotations: every colour of the palette is a token of both themes, its underline and icon reach 3:1 and the text stays AA on its tint", async () => {
+  const model = await readFile(new URL("../src/annotations/model.ts", import.meta.url), "utf8");
+  const colours = [...(/MARK_COLORS = \[([^\]]+)\]/.exec(model)?.[1] ?? "").matchAll(/"([a-z]+)"/g)].map((match) => match[1]);
+  assert.ok(colours.length >= 8, `the palette of the marks (saw ${colours.length} colours)`);
+  for (const colour of colours) assert.match(css, new RegExp(`\\[data-mark-color="${colour}"\\]\\s*\\{\\s*--annotation-hsl:\\s*var\\(--mark-${colour}\\)`), `${colour}: the attribute of the mark sets its colour`);
+  const c = checker();
+  for (const theme of THEMES) {
+    for (const colour of colours) {
+      const mark = c.colour(theme, `mark-${colour}`);
+      for (const surface of ["background", "card", "popover", "muted"]) {
+        const under = c.colour(theme, surface);
+        if (!mark || !under) continue;
+        // The underline and the icon of a tag (non-text: WCAG 1.4.11), on the page and on the mark's own tint (14 %, 24 % where two overlap).
+        c.expectRatio(theme, `--mark-${colour} on --${surface} (underline, icon)`, mark, under, 3);
+        for (const alpha of [0.14, 0.24]) {
+          const tint = over(mark, alpha, under);
+          c.expectRatio(theme, `--mark-${colour} on its ${Math.round(alpha * 100)} % tint over --${surface} (icon of the mark)`, mark, tint, 3);
+          // The words of the passage keep the colour of the text and stay readable on the tint.
+          c.expectRatio(theme, `--foreground on the ${Math.round(alpha * 100)} % tint of --mark-${colour} over --${surface} (marked text)`, c.colour(theme, "foreground"), tint, 4.5);
+        }
+      }
+    }
+  }
+  c.done();
+});
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Tailwind wiring: what the utilities of the components really compile to.
 // ---------------------------------------------------------------------------------------------------------------------

@@ -13,6 +13,7 @@ import { refreshAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { mergeLocalDeviceSettings } from "@/account/dataProjection";
 import { mergeBranchMemories } from "@/branches/memory";
+import { mergeAccountAnnotations } from "@/annotations/accountTags";
 import { acquireMicrosoftConnectionToken } from "@/account/microsoftConnectionToken";
 import { acquireGoogleConnectionToken } from "@/account/googleConnectionToken";
 import { acquireGitHubConnectionToken } from "@/account/githubConnectionToken";
@@ -330,7 +331,9 @@ export function reconciledAccountData(request: Pick<AccountReconciliationRequest
   if (!selected) throw new Error("The selected account replica is unavailable.");
   const settings = authoritative === "local" ? selected.data.settings : mergeLocalDeviceSettings(request.local.data.settings, selected.data.settings);
   const branchMemory = mergeBranchMemories(selected.data.settings.branchMemory, request.local.data.settings.branchMemory, ...request.remotes.map((remote) => remote.data.settings.branchMemory));
-  return { ...selected.data, settings: branchMemory ? { ...settings, branchMemory } : settings };
+  // The tags of the annotations are not lost either: every tag of every copy, of one tag its newest version.
+  const annotations = mergeAccountAnnotations(selected.data.settings.annotations, request.local.data.settings.annotations, ...request.remotes.map((remote) => remote.data.settings.annotations));
+  return { ...selected.data, settings: { ...settings, ...(branchMemory ? { branchMemory } : {}), ...(annotations ? { annotations } : {}) } };
 }
 
 export async function resolveAccountReconciliation(authoritative: "local" | AccountSyncBackendKind): Promise<void> {

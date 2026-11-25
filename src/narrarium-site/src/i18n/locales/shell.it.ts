@@ -3,6 +3,11 @@
  * sono in esecuzione e quanti aspettano l'autore), caricati con il guscio dell'app (vedi `@/i18n/shell`).
  */
 const shellIt = {
+  shortcuts: {
+    items: {
+      annotate: "Annota il passaggio selezionato nel reader",
+    },
+  },
   shell: {
     navMenu: "Menu di navigazione",
   },

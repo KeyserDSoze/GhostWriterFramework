@@ -32,11 +32,14 @@ describe("non-Copilot page safety contracts", () => {
 
   it("gates Reader resources, EPUB Markdown, and CSP at their shared boundaries", () => {
     const reader = source("src/pages/ReaderPreviewPage.tsx");
+    // The images of a scene are taken out of its Markdown by the text helpers of the reader, which the annotations share.
+    const readerText = source("src/narrarium/readerText.ts");
     const epub = source("src/export/bookExport.ts");
     // The policy is written once, in csp.ts, and index.html takes it from there.
     const html = source("csp.ts");
     expect(source("index.html")).toContain('content="%NARRARIUM_CSP%"');
-    expect(reader).toContain("isApprovedRepositoryAssetPath(src)");
+    expect(readerText).toContain("isApprovedRepositoryAssetPath(src)");
+    expect(reader).toContain('from "@/narrarium/readerText"');
     expect(reader).toContain("if (!isApprovedRepositoryAssetPath(path)) return undefined");
     expect(epub).toContain("renderEpubMarkdownHtml");
     expect(epub).not.toContain("marked.parse(");

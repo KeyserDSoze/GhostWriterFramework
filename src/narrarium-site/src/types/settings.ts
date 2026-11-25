@@ -1,5 +1,6 @@
 import { resolveGitHubCredentialValue, type ResolvedGitHubCredential } from "@/github/githubCredentialRuntime";
 import type { AiApiProtocol, AutopilotPresetId } from "narrarium-engine";
+import type { AnnotationAccountSettings } from "@/annotations/accountTags";
 
 // ─── Azure OpenAI ────────────────────────────────────────────────────────────
 
@@ -636,6 +637,8 @@ export interface ReaderSettings {
   /** Show a persistent exit-fullscreen button overlay while in full-screen mode. Off by default. */
   showExitFullscreenButton: boolean;
   bookmarks: ReaderBookmark[];
+  /** Whether the reader draws the marks of the annotations. Absent: it does. */
+  showAnnotations?: boolean;
 }
 
 export type CustomActionActivation = "selection" | "element";
@@ -705,6 +708,12 @@ export interface AppSettings {
    * opens the same branch and syncs the same ones. In the account data that already syncs; an older client keeps the field as it is.
    */
   branchMemory?: Record<string, BookBranchMemory>;
+  /**
+   * The annotations of the reader that belong to the account: the tags for every book (name, mark, the instruction of the AI), in the order of Settings,
+   * and the GitHub books whose notice about a public repository was shown. The annotations themselves are in each book. In the account data that already
+   * syncs; an older client keeps the field as it is.
+   */
+  annotations?: AnnotationAccountSettings;
   azureOpenAI: AzureOpenAIConfig;
   aiIntegrations: AIIntegration[];
   defaultWritingIntegrationId?: string;
