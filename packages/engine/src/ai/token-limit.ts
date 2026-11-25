@@ -2,7 +2,7 @@ import { DEFAULT_AZURE_API_VERSION } from "./config.js";
 import type { AiCandidate } from "./router.js";
 import type { AiRequest } from "./types.js";
 
-const MODERN_REASONING_MODEL = /(?:^|[/_.-])(?:o[134](?:[-_.]|$)|gpt-5(?:[-_.]|$)|codex-mini(?:[-_.]|$))/i;
+const MODERN_REASONING_MODEL = /(?:^|[/_.-])(?:o[134](?:[-_.]|$)|gpt-[5-9](?:[-_.]|$)|codex-mini(?:[-_.]|$))/i;
 
 /** Reasoning models spend output tokens before replying: small structured tasks get at least this limit. */
 export const STRUCTURED_OUTPUT_FLOOR = 4096;
@@ -28,7 +28,8 @@ function acceptsCompletionLimit(apiVersion: string | undefined): boolean {
 }
 
 /**
- * The output-limit parameter each model family expects (same rule as the web app). An Azure deployment whose model is
+ * The output-limit parameter each model family expects (same rule as the web app). A model that the name rules do not know yet is not left to guess: the client
+ * sends the classic parameter, and when the provider refuses it, asks again with the other and remembers it (see `refusedLimitParameter` in the fetch client). An Azure deployment whose model is
  * not declared is recognized by its name; one that stays unknown gets `max_completion_tokens` (every model accepts it
  * from API version 2024-09-01) or, on an older API, `max_tokens`.
  */

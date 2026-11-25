@@ -36,6 +36,7 @@ case "$*" in
   *"ad app show"*web.redirectUris*) cat "$FAKE_AZ_DIR/web" ;;
   *"ad app show"*spa.redirectUris*) cat "$FAKE_AZ_DIR/spa" ;;
   *"ad app show"*publicClient.redirectUris*) cat "$FAKE_AZ_DIR/public" ;;
+  *"ad app show"*isFallbackPublicClient*) cat "$FAKE_AZ_DIR/fallback" ;;
   *"ad app show"*requiredResourceAccess*) cat "$FAKE_AZ_DIR/declared" ;;
   *"ad sp show"*) cat "$FAKE_AZ_DIR/scopes" ;;
   *"ad app credential list"*) cat "$FAKE_AZ_DIR/credentials" ;;
@@ -54,6 +55,7 @@ function setup(overrides = {}) {
     web: `${MICROSOFT_CALLBACKS.join("\t")}\n`,
     spa: `${MSAL_POPUP}\n`,
     public: "\n",
+    fallback: "False\n",
     declared: `${["User.Read", "Files.ReadWrite", "offline_access", "openid", "profile"].map(idOf).join("\t")}\n`,
     scopes: `${SCOPES.map((pair) => pair.join("\t")).join("\n")}\n`,
     credentials: "narrarium-worker\t2099-01-01T00:00:00Z\n",
@@ -122,6 +124,28 @@ describe("check-microsoft-app.sh", () => {
       assert.equal(result.status, 3);
       assert.ok(result.stdout.includes(`SBAGLIATA ${MICROSOFT_CALLBACKS[0]}`));
       assert.match(result.stdout, /24 ore/);
+    }),
+  );
+
+  bashTest(
+    "flags «Allow public client flows»: with it Microsoft answers AADSTS90023 to every request that carries the client secret",
+    withSandbox({ fallback: "True\n" }, (sandbox) => {
+      const result = run(sandbox);
+      assert.equal(result.status, 3);
+      assert.match(result.stdout, /DA CORREGGERE: e' attivo/);
+      assert.match(result.stdout, /AADSTS90023/);
+      assert.match(result.stdout, /az ad app update --id a80b2024-b9e3-4cb1-8480-aac7f164a6eb --is-fallback-public-client false/);
+      assert.doesNotMatch(sandbox.calls(), /ad app update/, "it only prints the command");
+    }),
+  );
+
+  bashTest(
+    "flags a callback registered under Mobile and desktop applications",
+    withSandbox({ web: `${MICROSOFT_CALLBACKS.slice(1).join("\t")}\n`, public: `${MICROSOFT_CALLBACKS[0]}\n` }, (sandbox) => {
+      const result = run(sandbox);
+      assert.equal(result.status, 3);
+      assert.ok(result.stdout.includes(`SBAGLIATA ${MICROSOFT_CALLBACKS[0]}`));
+      assert.match(result.stdout, /AADSTS90023/);
     }),
   );
 

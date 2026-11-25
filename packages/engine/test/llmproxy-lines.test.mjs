@@ -131,3 +131,86 @@ test("a refusal that comes again for the request without the option is the provi
   assert.equal(error.status, 400);
   assert.match(error.message, /set "Streaming" of the integration "LlmProxy" to "off"/);
 });
+
+// ─── The output-limit parameter a model refuses ──────────────────────────────
+
+const LIMIT_ASK = { ...ASK, maxOutputTokens: 900, onText: () => undefined };
+
+/** A model that takes only `accepted` as its output limit, and refuses the other with `message`. */
+function limitServer(accepted, message, status = 400) {
+  const bodies = [];
+  const fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    const refused = accepted === "max_completion_tokens" ? "max_tokens" : "max_completion_tokens";
+    return refused in body
+      ? new Response(JSON.stringify({ error: { message, type: "invalid_request_error", param: refused, code: "unsupported_parameter" } }), { status, headers: { "content-type": "application/json" } })
+      : chunks(`data: ${JSON.stringify(delta("Hi"))}\n\n`, `data: ${JSON.stringify(finish)}\n\n`, "data: [DONE]\n\n");
+  };
+  return { bodies, fetch };
+}
+
+test("a model that refuses max_tokens is asked again with max_completion_tokens, and the limit is kept", async () => {
+  const { bodies, fetch } = limitServer("max_completion_tokens", "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.");
+  const response = await createFetchAi(config(), { minimumTimeoutMs: 1, fetch }).complete(LIMIT_ASK);
+  assert.equal(response.text, "Hi");
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[0].max_tokens, 900);
+  assert.equal(bodies[1].max_tokens, undefined);
+  assert.equal(bodies[1].max_completion_tokens, 900);
+});
+
+test("a model that refuses max_completion_tokens is asked again with max_tokens", async () => {
+  // The name rules send max_completion_tokens to gpt-5: an older API that does not know it is the reverse case.
+  const { bodies, fetch } = limitServer("max_tokens", "Unrecognized request argument supplied: max_completion_tokens");
+  const gpt5 = config({ chatModels: [{ id: "m", name: "gpt-5", capabilities: ["default"] }] });
+  const response = await createFetchAi(gpt5, { minimumTimeoutMs: 1, fetch }).complete(LIMIT_ASK);
+  assert.equal(response.text, "Hi");
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[0].max_completion_tokens > 900, true, "the reasoning margin is on top of the limit");
+  assert.equal(bodies[1].max_completion_tokens, undefined);
+  assert.equal(bodies[1].max_tokens, bodies[0].max_completion_tokens);
+});
+
+test("what a model refused is remembered by the set the client shares, so the next call sends the right parameter at once", async () => {
+  const { bodies, fetch } = limitServer("max_completion_tokens", "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.");
+  const usageOptionRefusals = new Set();
+  const ai = createFetchAi(config(), { minimumTimeoutMs: 1, fetch, usageOptionRefusals });
+  await ai.complete(LIMIT_ASK);
+  await ai.complete(LIMIT_ASK);
+  assert.equal(bodies.length, 3, "two requests for the first call, one for the second");
+  assert.equal(bodies[2].max_completion_tokens, 900);
+  assert.equal(bodies[2].max_tokens, undefined);
+});
+
+test("gpt-6 and later are sent max_completion_tokens from the start", async () => {
+  for (const name of ["gpt-6", "gpt-6-luna", "gpt-7-mini"]) {
+    const bodies = [];
+    const fetch = async (_url, init) => {
+      bodies.push(JSON.parse(init.body));
+      return chunks(`data: ${JSON.stringify(delta("Hi"))}\n\n`, `data: ${JSON.stringify(finish)}\n\n`, "data: [DONE]\n\n");
+    };
+    await createFetchAi(config({ chatModels: [{ id: "m", name, capabilities: ["default"] }] }), { minimumTimeoutMs: 1, fetch }).complete(LIMIT_ASK);
+    assert.equal("max_tokens" in bodies[0], false, name);
+    assert.equal("max_completion_tokens" in bodies[0], true, name);
+  }
+});
+
+test("a refusal of the output limit that the provider repeats is not a loop, and another 400 is not taken for one", async () => {
+  let calls = 0;
+  const always = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ error: { message: "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead." } }), { status: 400, headers: { "content-type": "application/json" } });
+  };
+  const error = await createFetchAi(config(), { minimumTimeoutMs: 1, fetch: always }).complete(LIMIT_ASK).then(() => null, (failure) => failure);
+  assert.equal(calls, 2, "asked again once");
+  assert.equal(error.status, 400);
+
+  for (const [status, message] of [[400, "max_tokens is too large"], [401, "Unsupported parameter: 'max_tokens'"], [500, "Unsupported parameter: 'max_tokens'"]]) {
+    let asked = 0;
+    const refuse = async () => { asked += 1; return new Response(JSON.stringify({ error: { message } }), { status, headers: { "content-type": "application/json" } }); };
+    const failure = await createFetchAi(config(), { minimumTimeoutMs: 1, fetch: refuse }).complete(LIMIT_ASK).then(() => null, (cause) => cause);
+    assert.ok(failure, `${status} ${message}`);
+    assert.equal(asked, 1, `${status} ${message}: asked once`);
+  }
+});

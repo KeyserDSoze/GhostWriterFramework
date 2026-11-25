@@ -237,6 +237,13 @@ Gli URI «Single-page application» (`…/msal-popup.html`) stanno in un'altra p
 
 **Verifica:** rilancia `check-microsoft-app.sh`: i quattro URI sono `OK` e quelli MSAL ci sono ancora.
 
+**Se il collegamento dà `AADSTS90023` («Public clients can't send a client secret»):** Microsoft tratta l'app come client pubblico, e un client pubblico non può presentare il segreto del Worker. Succede per una di queste due cause, che lo script segnala:
+
+1. **«Allow public client flows»** è attivo (portale: *Authentication* → *Settings* → *Allow public client flows*). Si spegne con `az ad app update --id a80b2024-b9e3-4cb1-8480-aac7f164a6eb --is-fallback-public-client false` (non tocca i URI «Single-page application» di MSAL).
+2. Uno dei quattro URI `…/auth/microsoft-callback.html` è sotto **«Mobile and desktop applications»**. Toglilo da lì (portale) e lascialo solo sotto «Web».
+
+**Verifica:** `check-microsoft-app.sh` dice «OK: disattivo» per il client pubblico e nessun URI è `SBAGLIATA`; poi un nuovo «Connetti» di OneDrive riesce.
+
 ### 3.4 Permessi delegati (senza consenso amministratore)
 
 Si dichiarano `User.Read`, `Files.ReadWrite`, `offline_access`, `openid`, `profile` di Microsoft Graph. Gli ID dei permessi **non si copiano a mano**: si ricavano.

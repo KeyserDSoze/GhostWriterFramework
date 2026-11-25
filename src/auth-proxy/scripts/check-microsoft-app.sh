@@ -123,6 +123,7 @@ echo
 web_uris=$(az_read ad app show --id "$app_id" --query "web.redirectUris")
 spa_uris=$(az_read ad app show --id "$app_id" --query "spa.redirectUris")
 public_uris=$(az_read ad app show --id "$app_id" --query "publicClient.redirectUris")
+fallback_public=$(az_read ad app show --id "$app_id" --query "isFallbackPublicClient" | tr '[:upper:]' '[:lower:]')
 
 has_line() {
   printf '%s\n' "$2" | tr '\t' '\n' | grep -Fxq -- "$1"
@@ -135,6 +136,10 @@ for uri in "${expected_callbacks[@]}"; do
     echo "  OK        $uri"
   elif has_line "$uri" "$spa_uris"; then
     echo "  SBAGLIATA $uri (e' sotto 'Single-page application': il refresh token durerebbe 24 ore; serve la piattaforma Web)"
+    missing_uris+=("$uri")
+    note_missing
+  elif has_line "$uri" "$public_uris"; then
+    echo "  SBAGLIATA $uri (e' sotto 'Mobile and desktop applications': Microsoft la tratta come client pubblico e rifiuta il client secret, AADSTS90023; toglila da li e mettila sotto Web)"
     missing_uris+=("$uri")
     note_missing
   else
@@ -156,6 +161,16 @@ echo "URI 'Single-page application' (non vengono toccati: servono al collegament
 if [ -n "$spa_uris" ]; then printf '%s\n' "$spa_uris" | tr '\t' '\n' | sed 's/^/    /'; else echo "    (nessuno)"; fi
 echo "URI 'Mobile and desktop' (public client):"
 if [ -n "$public_uris" ]; then printf '%s\n' "$public_uris" | tr '\t' '\n' | sed 's/^/    /'; else echo "    (nessuno)"; fi
+
+echo
+echo "Client pubblico (Authentication > 'Allow public client flows'):"
+if [ "$fallback_public" = "true" ]; then
+  echo "  DA CORREGGERE: e' attivo, quindi Microsoft rifiuta ogni richiesta con il client secret del Worker (AADSTS90023: Public clients can't send a client secret). Comando (lo lanci tu):"
+  echo "    az ad app update --id $app_id --is-fallback-public-client false"
+  note_missing
+else
+  echo "  OK: disattivo (il Worker usa il client secret, un client riservato)."
+fi
 
 if [ "${#missing_uris[@]}" -gt 0 ]; then
   # --web-redirect-uris REPLACES the whole list: the command printed here merges what is there with what is missing.

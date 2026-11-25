@@ -205,7 +205,8 @@ export interface FetchAiOptions {
    * request. The option is asked of every provider (it is how a stream reports its tokens), and a provider that answers 400 or 422 naming it is asked again, at once, without it and not again after
    * (its replies then carry no token count, and say so: their usage is an estimate). The default is one set for each client, so a call asks every address once, whatever came before it: the
    * app's hosts leave it at that, so that the same configuration builds the same requests in every host, at the price of one refusal (which costs nothing: it is answered before any work) per call
-   * to a provider that refuses. An embedder that wants to ask once for all its calls shares one set between its clients.
+   * to a provider that refuses. An embedder that wants to ask once for all its calls shares one set between its clients. The same set remembers which output-limit parameter
+   * (`max_tokens` or `max_completion_tokens`) a model refused, by address and model.
    */
   usageOptionRefusals?: Set<string>;
 }
@@ -881,6 +882,30 @@ function withoutUsageOption(body: Record<string, unknown>): Record<string, unkno
   return rest;
 }
 
+type LimitParameter = "max_tokens" | "max_completion_tokens";
+
+/**
+ * The output-limit parameter that a 400 or a 422 says it refuses, when it does: «Unsupported parameter: 'max_tokens' is not supported with this model. Use
+ * 'max_completion_tokens' instead.» (a reasoning model, or one that the name rules do not know yet) or the reverse («Unrecognized request argument: max_completion_tokens»,
+ * an older API). `max_tokens` is looked for first: its refusal names the other parameter as the remedy.
+ */
+function refusedLimitParameter(failure: AiProviderError, label: string): LimitParameter | undefined {
+  if (failure.status !== 400 && failure.status !== 422) return undefined;
+  const said = failure.message.replace(label, "");
+  if (!/unsupported|not supported|unrecognized|unknown|not permitted|extra inputs/i.test(said)) return undefined;
+  if (/(?<![a-z_])max_tokens/i.test(said)) return "max_tokens";
+  return /max_completion_tokens/i.test(said) ? "max_completion_tokens" : undefined;
+}
+
+function withLimitParameter(body: Record<string, unknown>, refused: LimitParameter): Record<string, unknown> {
+  const used: LimitParameter = refused === "max_tokens" ? "max_completion_tokens" : "max_tokens";
+  const { [refused]: limit, ...rest } = body;
+  return typeof limit === "number" ? { ...rest, [used]: limit } : body;
+}
+
+/** What is remembered about a model that refused an output-limit parameter: the address and the model, since a gateway serves many models at one address. */
+const limitRefusalKey = (refused: LimitParameter, url: string, model: string): string => `limit:${refused}:${url}#${model}`;
+
 async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, built: ChatRequest, request: AiRequest, options: FetchAiOptions, deadlines: ResolvedDeadlines, secrets: readonly string[], trace: AttemptTrace, refusals: Set<string>): Promise<AiResponse> {
   const { candidate } = attempt;
   const { integration, model } = candidate;
@@ -1094,6 +1119,11 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
     body = withoutUsageOption(body);
     usageRequested = false;
   }
+  // A model that refused an output-limit parameter before is sent the other one at once.
+  for (const refused of ["max_tokens", "max_completion_tokens"] as const) {
+    if (refusals.has(limitRefusalKey(refused, built.url, model))) body = withLimitParameter(body, refused);
+  }
+  const limitSwaps = new Set<LimitParameter>();
   const send = (): Promise<Response> => {
     const sent = Promise.resolve(fetchImpl(built.url, {
       method: "POST",
@@ -1125,6 +1155,15 @@ async function callCandidate(config: AiRuntimeConfig, attempt: PlannedAttempt, b
         refusals.add(built.url);
         usageRequested = false;
         body = withoutUsageOption(body);
+        continue;
+      }
+      // A model that refuses the output-limit parameter it was sent is asked again, at once, with the other one, and is not asked the refused one again.
+      const refusedLimit = refusedLimitParameter(failure, label);
+      if (refusedLimit && !limitSwaps.has(refusedLimit) && refusedLimit in body) {
+        limitSwaps.add(refusedLimit);
+        if (refusals.size >= MAX_REMEMBERED_REFUSALS) refusals.delete(refusals.values().next().value as string);
+        refusals.add(limitRefusalKey(refusedLimit, built.url, model));
+        body = withLimitParameter(body, refusedLimit);
         continue;
       }
       // A provider that cannot stream says so with a 400: tell where to switch streaming off.

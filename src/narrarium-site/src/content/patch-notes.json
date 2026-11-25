@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.108.2",
+    "date": "2026-11-25",
+    "en": {
+      "title": "Azure OpenAI and newer models: the right output-limit parameter, found by itself",
+      "summary": "A model such as gpt-6-luna on Azure OpenAI answered «Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.» because the app did not know that this model wants the newer parameter. The app now sends it to gpt-6 and later from the start, and for any other model it learns from the refusal: it asks again at once with the other parameter, so the call goes through.",
+      "changes": [
+        "When a model refuses max_tokens (or, on an older API, max_completion_tokens), the same call is repeated at once with the other parameter and the same limit. You see no error: the first refusal costs nothing, because the provider answers it before doing any work.",
+        "gpt-6 to gpt-9 models (by name, or by the model declared for an Azure deployment) are treated like gpt-5: they get max_completion_tokens and room for their reasoning.",
+        "Models that already worked (LlmProxy, gpt-4o and similar) are sent exactly what they were sent before."
+      ]
+    },
+    "it": {
+      "title": "Azure OpenAI e modelli nuovi: il parametro giusto per il limite di output, trovato da solo",
+      "summary": "Un modello come gpt-6-luna su Azure OpenAI rispondeva «Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.» perché l'app non sapeva che questo modello vuole il parametro più recente. Ora l'app lo manda a gpt-6 e successivi fin dall'inizio e, per qualsiasi altro modello, impara dal rifiuto: chiede di nuovo subito con l'altro parametro e la chiamata va a buon fine.",
+      "changes": [
+        "Quando un modello rifiuta max_tokens (o, su un'API più vecchia, max_completion_tokens), la stessa chiamata viene ripetuta subito con l'altro parametro e lo stesso limite. Non vedi alcun errore: il primo rifiuto non costa nulla, perché il provider risponde prima di fare qualsiasi lavoro.",
+        "I modelli da gpt-6 a gpt-9 (per nome, o per il modello dichiarato di una distribuzione Azure) sono trattati come gpt-5: ricevono max_completion_tokens e lo spazio per il ragionamento.",
+        "I modelli che già funzionavano (LlmProxy, gpt-4o e simili) ricevono esattamente ciò che ricevevano prima."
+      ]
+    }
+  },
+  {
     "version": "0.108.1",
     "date": "2026-11-25",
     "en": {
