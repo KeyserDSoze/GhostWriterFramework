@@ -1,4 +1,4 @@
-import { effectiveApiVersion, effectiveResponsesApiVersion, isAzureV1Endpoint, normalizeApiProtocol, normalizeEndpointUrl, normalizeThinking, type AiApiProtocol, type AiIntegrationConfig, type AiNoThinkingWithTools, type AiReasoningParameter, type AiThinking } from "./config.js";
+import { addressPath, effectiveApiVersion, effectiveResponsesApiVersion, isAzureV1Endpoint, normalizeApiProtocol, normalizeEndpointUrl, normalizeThinking, type AiApiProtocol, type AiIntegrationConfig, type AiNoThinkingWithTools, type AiReasoningParameter, type AiThinking } from "./config.js";
 import type { AiCandidate } from "./router.js";
 import { forcedToolChoice } from "./structured.js";
 import { completionTokenLimit, isReasoningModel, requestOutputLimit } from "./token-limit.js";
@@ -36,6 +36,27 @@ export function endpointOrigin(value: unknown): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * What a trail says of where a candidate's requests go, as far as it may be shown and saved: the origin of the address (the model's own address when it has one, else the base of its integration), the path of
+ * the model's own address (never its query: it may hold a key), and `responses` when the model is asked through the Responses API (Chat Completions is what no word means).
+ */
+export function candidateDestination(
+  candidate: { integration: Pick<AiIntegrationConfig, "provider" | "endpoint"> } & { endpointUrl?: unknown; apiProtocol?: unknown },
+  githubModelsBaseUrl?: string,
+): { endpoint?: string; path?: string; protocol?: "responses" } {
+  const own = normalizeEndpointUrl(candidate.endpointUrl);
+  const endpoint = endpointOrigin(own ?? effectiveAiBase(candidate.integration, githubModelsBaseUrl));
+  const path = own ? addressPath(own) : undefined;
+  return { ...(endpoint ? { endpoint } : {}), ...(path ? { path } : {}), ...(normalizeApiProtocol(candidate.apiProtocol) ? { protocol: "responses" as const } : {}) };
+}
+
+/** The address a candidate's requests go to, as an attempt reports it: the base of its integration, or the model's own address without its query (and never a key). */
+export function candidateEndpoint(candidate: { integration: Pick<AiIntegrationConfig, "provider" | "endpoint"> } & { endpointUrl?: unknown }, githubModelsBaseUrl?: string): string | null {
+  const own = normalizeEndpointUrl(candidate.endpointUrl);
+  if (!own) return effectiveAiBase(candidate.integration, githubModelsBaseUrl);
+  return `${endpointOrigin(own) ?? ""}${addressPath(own) ?? ""}` || null;
 }
 
 interface RequestTarget {

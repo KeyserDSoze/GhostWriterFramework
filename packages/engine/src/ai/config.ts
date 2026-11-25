@@ -129,6 +129,16 @@ export function describeUrl(value: unknown): string | undefined {
   }
 }
 
+/** The path of an address, and nothing else (`/openai/responses`): never its query, its fragment or the credentials in it. `undefined` for anything that is not an http or https address, and for an address that has no path. */
+export function addressPath(value: unknown): string | undefined {
+  if (typeof value !== "string" || endpointUrlProblem(value) || !value.trim()) return undefined;
+  try {
+    return new URL(value.trim()).pathname.replace(/\/+$/, "") || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Whether the path of an address ends with `/responses`: the address of the Responses API, which a model whose address is that is likely to be asked through. */
 export function looksLikeResponsesUrl(value: unknown): boolean {
   if (typeof value !== "string" || endpointUrlProblem(value) || !value.trim()) return false;

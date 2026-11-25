@@ -422,6 +422,7 @@ export class CallRecorder {
       integrationId: this.short(attempt.integrationId),
       endpoint: endpointOrigin(attempt.endpoint),
       ...(typeof attempt.apiVersion === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(attempt.apiVersion) ? { apiVersion: attempt.apiVersion } : {}),
+      ...(attempt.protocol === "responses" ? { protocol: "responses" as const } : {}),
       stream: attempt.stream === true,
       tools: attempt.tools === true,
       firstByteMs: number(attempt.firstByteMs),

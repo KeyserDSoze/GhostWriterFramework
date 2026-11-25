@@ -243,7 +243,7 @@ test("gpt-6.2-sol, which takes function tools on the Responses API only: asked t
   assert.ok(failure);
   assert.equal(failure.status, 400);
   assert.equal(failure.body.message, "Unsupported value: 'reasoning_effort' does not support 'none' with this model.", "the provider's last words");
-  assert.match(failure.message, /HTTP 400 — Unsupported value: 'reasoning_effort' does not support 'none' with this model\. \[type: invalid_request_error, param: reasoning_effort, code: unsupported_value\]\. Narrarium asked again without a thinking level and with "none", and the model still refuses function tools on this endpoint: the provider says to use \/v1\/responses for them\.$/);
+  assert.match(failure.message, /HTTP 400 — Unsupported value: 'reasoning_effort' does not support 'none' with this model\. \[type: invalid_request_error, param: reasoning_effort, code: unsupported_value\]\. Narrarium asked again without a thinking level and with "none", and the model still refuses function tools on this endpoint: the provider says to use \/v1\/responses for them\. Set the "API protocol" of the model to "Responses API" in AI Integrations to use them\.$/);
   assert.ok(!/Nothing was applied/.test(failure.message), "the remedy of a level that the author chose is not for a level that the engine did");
   assert.deepEqual(failure.route.map((step) => [step.outcome, step.status, step.body?.param]), [["failed", 400, "reasoning_effort"], ["failed", 400, "reasoning_effort"], ["failed", 400, "reasoning_effort"]], "every request is in the trail");
   assert.deepEqual(learned, [], "no way answered: nothing is learned");

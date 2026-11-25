@@ -189,6 +189,19 @@ function versionOf(value: unknown): string | undefined {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(text) ? text : undefined;
 }
 
+/** The protocol a detail keeps: `responses` exactly (Chat Completions is what no word says). */
+function protocolOf(value: unknown): "responses" | undefined {
+  return value === "responses" ? "responses" : undefined;
+}
+
+/** The path of a model's own address as a detail keeps it: a path of the characters that an address allows, cleaned of credentials, and nothing else (never a query). */
+function pathOf(value: unknown): string | undefined {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{0,199}$/.test(text)) return undefined;
+  const clean = redactSecrets(text);
+  return /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$/.test(clean) ? clean : undefined;
+}
+
 /** One step of a route, from what an error of the engine's client carries or from a detail read from a file: only the known fields that are valid, no credential in any of them. */
 function routeStepOf(value: unknown): AutopilotRouteStep | undefined {
   const source = record(value);
@@ -199,6 +212,8 @@ function routeStepOf(value: unknown): AutopilotRouteStep | undefined {
   const integrationId = shortText(source.integrationId) ?? "";
   const endpoint = endpointOrigin(source.endpoint);
   const apiVersion = versionOf(source.apiVersion);
+  const protocol = protocolOf(source.protocol);
+  const path = pathOf(source.path);
   const body = normalizeErrorBody(source.body, redactSecrets);
   const status = httpStatus(source.status);
   const durationMs = wholeNumber(source.durationMs, MAX_TIMEOUT_MS);
@@ -217,7 +232,9 @@ function routeStepOf(value: unknown): AutopilotRouteStep | undefined {
     model,
     outcome,
     ...(endpoint ? { endpoint } : {}),
+    ...(path ? { path } : {}),
     ...(apiVersion ? { apiVersion } : {}),
+    ...(protocol ? { protocol } : {}),
     ...(status !== undefined ? { status } : {}),
     ...(body ? { body } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
@@ -245,6 +262,8 @@ function detailOf(error: unknown): AutopilotErrorDetail {
   const status = httpStatus(source.status);
   const endpoint = endpointOrigin(target.endpoint ?? source.endpoint);
   const apiVersion = versionOf(target.apiVersion ?? source.apiVersion);
+  const protocol = protocolOf(target.protocol ?? source.protocol);
+  const path = pathOf(target.path ?? source.path);
   const body = normalizeErrorBody(source.body, redactSecrets);
   const model = shortText(source.model) ?? shortText(target.model);
   const provider = shortText(source.provider) ?? shortText(target.provider);
@@ -265,7 +284,9 @@ function detailOf(error: unknown): AutopilotErrorDetail {
   return {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
+    ...(path ? { path } : {}),
     ...(apiVersion ? { apiVersion } : {}),
+    ...(protocol ? { protocol } : {}),
     ...(body ? { body } : {}),
     ...(model ? { model } : {}),
     ...(provider ? { provider } : {}),
@@ -334,6 +355,8 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
   const status = httpStatus(source.status);
   const endpoint = endpointOrigin(source.endpoint);
   const apiVersion = versionOf(source.apiVersion);
+  const protocol = protocolOf(source.protocol);
+  const path = pathOf(source.path);
   const body = normalizeErrorBody(source.body, redactSecrets);
   const model = shortText(source.model);
   const provider = shortText(source.provider);
@@ -349,7 +372,9 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
   const detail: AutopilotErrorDetail = {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
+    ...(path ? { path } : {}),
     ...(apiVersion ? { apiVersion } : {}),
+    ...(protocol ? { protocol } : {}),
     ...(body ? { body } : {}),
     ...(model ? { model } : {}),
     ...(provider ? { provider } : {}),

@@ -8,7 +8,7 @@ import { redactSecrets } from "./redact.js";
 import type { AiModelLearning, AiModelMemory } from "./memory.js";
 import { describeErrorBody, errorBodyOfObject, parseErrorBody, refusesThinkingWithTools, suggestsResponsesApi, type AiErrorBody } from "./provider-error.js";
 import { ResponsesStreamReader, responseAsChat } from "./responses.js";
-import { attemptThinking, buildChatRequest, canSendNone, effectiveAiBase, endpointOrigin, type AiAttemptThinking, type AiReasoningEffort, type AiThinkingWhy, type ChatRequest } from "./request.js";
+import { attemptThinking, buildChatRequest, candidateDestination, candidateEndpoint, canSendNone, effectiveAiBase, endpointOrigin, type AiAttemptThinking, type AiReasoningEffort, type AiThinkingWhy, type ChatRequest } from "./request.js";
 import type { AiCandidate } from "./router.js";
 import { candidateBoundary, leftOutStep, planAttempts, sortedRoute, type PlannedAttempt } from "./routing.js";
 import { isEmptyToolArguments, splitReasoningBlock, structuredFromReply } from "./structured.js";
@@ -85,10 +85,12 @@ export interface FetchAiAttempt {
   maxOutputTokens?: number;
   /** The API version this request carries, for a provider that has one (Azure OpenAI's `api-version`, or `v1`): the model's own, else its integration's (`effectiveApiVersion`). */
   apiVersion?: string;
+  /** The request is made through the Responses API (absent: Chat Completions). */
+  protocol?: "responses";
   stream: boolean;
   /** The structured reply is requested as a forced function call. */
   tools: boolean;
-  /** The origin and path every request of this integration starts with (never a key). */
+  /** The origin and path every request of this integration starts with, or, for a model with an address of its own, that address without its query (never a key). */
   endpoint: string | null;
   /** How long the provider has to begin answering (`timeouts.startMs`). */
   timeoutMs: number;
@@ -320,6 +322,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
         for (;;) {
           const { candidate } = attempt;
           const deadlines = resolveDeadlines(integration, options, routingLeft?.());
+          const destination = candidateDestination(candidate, options.githubModelsBaseUrl);
 
           const identity = { attemptId: randomId("attempt"), label: request.label, capability: request.capability, provider: integration.provider, model: candidate.model, integrationId: integration.id, index: attempt.index };
           const attemptReport: FetchAiAttempt = {
@@ -332,9 +335,10 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
             messages: reportedMessages(attempt.built, request),
             ...(attempt.built?.outputLimit ? { maxOutputTokens: attempt.built.outputLimit } : {}),
             ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}),
+            ...(destination.protocol ? { protocol: destination.protocol } : {}),
             stream: attempt.built?.stream ?? false,
             tools: attempt.built?.useTools ?? false,
-            endpoint: effectiveAiBase(integration, options.githubModelsBaseUrl),
+            endpoint: candidateEndpoint(candidate, options.githubModelsBaseUrl),
             timeoutMs: deadlines.startMs,
             timeouts: { startMs: deadlines.startMs, idleMs: deadlines.idleMs, capMs: deadlines.capMs, ...(deadlines.raisedFrom !== undefined ? { raised: { from: deadlines.raisedFrom } } : {}) },
             streamMode: integration.streamMode === "off" ? "off" : "auto",
@@ -393,11 +397,10 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
             notify(options.onAttemptEnd, failedReport);
             notify(request.onAttemptEnd, failedReport);
             if (cancelled) throw error;
-            const origin = endpointOrigin(effectiveAiBase(integration, options.githubModelsBaseUrl));
             if (error instanceof AiProviderError && !error.target) {
-              error.target = { provider: integration.provider, model: candidate.model, integrationId: integration.id, ...(origin ? { endpoint: origin } : {}), ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}) };
+              error.target = { provider: integration.provider, model: candidate.model, integrationId: integration.id, ...(destination.endpoint ? { endpoint: destination.endpoint } : {}), ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}), ...(destination.protocol ? { protocol: destination.protocol } : {}), ...(destination.path ? { path: redactSecrets(destination.path, secrets) } : {}) };
             }
-            steps.push(triedStep(attempt, failedReport, error, origin, secrets));
+            steps.push(triedStep(attempt, failedReport, error, destination, secrets));
             addSpent(spent, error);
             lastError = error;
             notify(request.onText, "");
@@ -418,7 +421,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
               continue;
             }
             // Asked every way, and refused every time: the provider's last words are the error, with what was tried, and where the provider says function tools are taken.
-            if (withoutThinking.length && error instanceof AiProviderError) error.message = redactSecrets(`${error.message}${/[.!?]$/.test(error.message) ? "" : "."} ${refusedEveryWay(withoutThinking, refusedWith)}`, secrets);
+            if (withoutThinking.length && error instanceof AiProviderError) error.message = redactSecrets(`${error.message}${/[.!?]$/.test(error.message) ? "" : "."} ${refusedEveryWay(withoutThinking, refusedWith, integration.provider)}`, secrets);
             break;
           }
         }
@@ -482,13 +485,17 @@ function nextWithoutThinking(candidate: AiCandidate, built: ChatRequest | null, 
   return (["omit", "none"] as const).find((way) => !sent.has(way) && (way !== "none" || canSendNone(candidate)));
 }
 
-/** What an error says after a model was asked every way without thinking and refused function tools each time: what was tried, and, when the provider says it, where the tools are taken. */
-function refusedEveryWay(tried: readonly ("omit" | "none")[], first: AiErrorBody | undefined): string {
+/**
+ * What an error says after a model was asked every way without thinking and refused function tools each time: what was tried, and, when the provider says it, where the tools are taken, and what to set so that
+ * they are (the model's API protocol, for a provider that has the Responses API).
+ */
+function refusedEveryWay(tried: readonly ("omit" | "none")[], first: AiErrorBody | undefined, provider: string): string {
   const how = tried.includes("none") ? "without a thinking level and with \"none\"" : "without a thinking level";
-  return `Narrarium asked again ${how}, and the model still refuses function tools on this endpoint${suggestsResponsesApi(first) ? ": the provider says to use /v1/responses for them" : ""}.`;
+  const responses = suggestsResponsesApi(first);
+  return `Narrarium asked again ${how}, and the model still refuses function tools on this endpoint${responses ? ": the provider says to use /v1/responses for them" : ""}.${responses && provider !== "github_models" ? ' Set the "API protocol" of the model to "Responses API" in AI Integrations to use them.' : ""}`;
 }
 
-function triedStep(attempt: PlannedAttempt, end: FetchAiAttemptEnd, error: unknown, endpoint: string | undefined, secrets: readonly string[]): AiRouteStep {
+function triedStep(attempt: PlannedAttempt, end: FetchAiAttemptEnd, error: unknown, destination: ReturnType<typeof candidateDestination>, secrets: readonly string[]): AiRouteStep {
   const integration = attempt.candidate.integration;
   const timeout = error instanceof AiProviderError ? error.timeout : undefined;
   const message = (end.error ?? "").replace(/\s+/g, " ").trim();
@@ -499,8 +506,10 @@ function triedStep(attempt: PlannedAttempt, end: FetchAiAttemptEnd, error: unkno
     provider: integration.provider,
     model: redactSecrets(attempt.candidate.model, secrets),
     outcome: end.outcome === "cancelled" ? "cancelled" : end.failureKind === "timeout" ? "timeout" : "failed",
-    ...(endpoint ? { endpoint } : {}),
+    ...(destination.endpoint ? { endpoint: destination.endpoint } : {}),
+    ...(destination.path ? { path: redactSecrets(destination.path, secrets) } : {}),
     ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}),
+    ...(destination.protocol ? { protocol: destination.protocol } : {}),
     ...(end.status !== undefined ? { status: end.status } : {}),
     ...(end.errorBody ? { body: end.errorBody } : {}),
     durationMs: end.durationMs,

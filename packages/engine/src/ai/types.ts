@@ -128,10 +128,14 @@ export interface AiErrorTarget {
   provider: string;
   model: string;
   integrationId: string;
-  /** The origin (`https://api.openai.com`) of the integration's address: never its path or its query. */
+  /** The origin (`https://api.openai.com`) of the integration's address, or of the model's own address: never its path or its query (`path` is the path of an address of the model's own). */
   endpoint?: string;
   /** The API version the request carried (Azure OpenAI's `api-version`, or `v1`), as `effectiveApiVersion` says it for the model that was asked. Absent for a provider that has none. */
   apiVersion?: string;
+  /** The model was asked through the Responses API (absent: Chat Completions). */
+  protocol?: "responses";
+  /** The path of the model's own address (`endpointUrl`), when it has one: with `endpoint`, where the request went. Never its query. */
+  path?: string;
 }
 
 /** Which deadline of a call ran out: the provider did not start answering (`start`), went silent while it answered (`idle`), or the call took longer than any call may (`total`). */
@@ -173,10 +177,14 @@ export interface AiRouteStep {
   provider: string;
   model: string;
   outcome: "ok" | "failed" | "timeout" | "cancelled" | "left-out";
-  /** The origin of the integration's address (never a path or a query). */
+  /** The origin of the integration's address, or of the model's own address (never a path or a query). */
   endpoint?: string;
   /** The API version the attempt carried (Azure OpenAI's `api-version`, or `v1`), when the provider has one: the model's own, else its integration's. */
   apiVersion?: string;
+  /** The model was asked through the Responses API (absent: Chat Completions). */
+  protocol?: "responses";
+  /** The path of the model's own address (`endpointUrl`), when it has one: with `endpoint`, where the request went. Never its query. */
+  path?: string;
   /** The HTTP status the provider answered, when it did. */
   status?: number;
   /** How long the attempt took, in milliseconds. Absent for a candidate that was left out. */

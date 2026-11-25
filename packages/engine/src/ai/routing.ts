@@ -1,7 +1,7 @@
 import { likelyMessageTokens, likelyTextTokens, resolveModelTokenBudgets } from "./budget.js";
 import type { AiNoThinkingWithTools, AiRuntimeConfig } from "./config.js";
 import { redactSecrets } from "./redact.js";
-import { buildChatRequest, effectiveAiBase, endpointOrigin, type ChatRequest } from "./request.js";
+import { buildChatRequest, candidateDestination, effectiveAiBase, endpointOrigin, type ChatRequest } from "./request.js";
 import { describeAiRoute, type AiCandidate, type AiRouteEntry } from "./router.js";
 import { AiPromptTooLargeError, AiProviderError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, type AiLeftOutReason, type AiRequest, type AiRouteStep } from "./types.js";
 
@@ -68,7 +68,7 @@ export interface AttemptPlan {
 
 /** The step that says a candidate was left out: who it is, and why (`extra` has the numbers). Names are cleaned of the credentials of the configuration. */
 export function leftOutStep(candidate: AiCandidate, position: number, reason: AiLeftOutReason, secrets: readonly string[], githubModelsBaseUrl?: string, extra: Partial<AiRouteStep> = {}): AiRouteStep {
-  const endpoint = endpointOrigin(effectiveAiBase(candidate.integration, githubModelsBaseUrl));
+  const { endpoint, path, protocol } = candidateDestination(candidate, githubModelsBaseUrl);
   return {
     position,
     integrationId: redactSecrets(candidate.integration.id, secrets),
@@ -77,6 +77,8 @@ export function leftOutStep(candidate: AiCandidate, position: number, reason: Ai
     model: redactSecrets(candidate.model, secrets),
     outcome: "left-out",
     ...(endpoint ? { endpoint } : {}),
+    ...(path ? { path: redactSecrets(path, secrets) } : {}),
+    ...(protocol ? { protocol } : {}),
     leftOut: reason,
     ...extra,
   };

@@ -567,12 +567,16 @@ export type AutopilotRouteStep = AiRouteStep;
 /** The most steps of a route that the detail of an error keeps: far above what a route has (`maxCandidates` is at most 8), so that a detail read from a file is never bigger. */
 export const MAX_ROUTE_STEPS = 12;
 
-/** Where an error happened. Short, and never a secret: `endpoint` is the origin of the provider's address, never a path or a query. */
+/** Where an error happened. Short, and never a secret: `endpoint` is the origin of the provider's address, never a path or a query (`path` is the path of an address that a model has of its own, and nothing of its query). */
 export interface AutopilotErrorDetail {
   /** The HTTP status the provider answered, when it answered. */
   status?: number;
-  /** The origin (`https://api.openai.com`) of the integration that was called. */
+  /** The origin (`https://api.openai.com`) of the integration that was called, or of the model's own address. */
   endpoint?: string;
+  /** The path of the model's own address (`/openai/responses`), when it has one: with `endpoint`, where the request went. Never its query. */
+  path?: string;
+  /** The request was made through the Responses API (absent: Chat Completions, and a detail from an engine that did not say). */
+  protocol?: "responses";
   /**
    * What the provider answered when it refused the request, in its own words (see `AiErrorBody`): the status, the message, the type, the parameter and the code of its error, or its text when it was no known shape.
    * That of the last candidate that was asked; `route[].body` has each one's. Absent when no provider answered, and from an engine that did not say.
