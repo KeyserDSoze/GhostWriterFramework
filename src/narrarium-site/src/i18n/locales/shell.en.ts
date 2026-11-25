@@ -8,6 +8,9 @@ const shellEn = {
       annotate: "Annotate the passage selected in the reader",
     },
   },
+  nav: {
+    annotations: "Annotations",
+  },
   shell: {
     navMenu: "Navigation menu",
   },

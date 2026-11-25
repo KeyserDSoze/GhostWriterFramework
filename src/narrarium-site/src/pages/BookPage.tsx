@@ -48,6 +48,7 @@ import {
 import { CreateChapterDialog } from "@/components/canon/CreateChapterDialog";
 import { CreateEntityDialog } from "@/components/canon/CreateEntityDialog";
 import { ChapterReorderList } from "@/components/book/ChapterReorderList";
+import { useAnnotationCounts } from "@/components/annotations/AnnotationCountBadge";
 
 function fileSlug(path: string): string {
   return (path.split("/").pop() ?? "").replace(/\.md$/i, "");
@@ -117,6 +118,7 @@ export function BookPage() {
   const { t } = useTranslation();
   const { bookId } = useParams<{ bookId: string }>();
   const location = useLocation();
+  const annotationCounts = useAnnotationCounts(bookId);
   const SECTIONS = ["chapters", "characters", "locations", "factions", "items", "timelines", "secrets", "metadata"];
   const [section, setSection] = useState("chapters");
   useEffect(() => {
@@ -404,6 +406,7 @@ export function BookPage() {
                             {ch.draftPath && ` · ${t("bookPage.draft")}`}
                             {ch.hasResume && ` · ${t("bookPage.resume")}`}
                             {ch.hasEvaluation && ` · ${t("bookPage.eval")}`}
+                            {annotationCounts(ch.slug).total > 0 && ` · ${t("annotations.badge.label", { count: annotationCounts(ch.slug).total })}`}
                           </p>
                         </div>
                       </div>

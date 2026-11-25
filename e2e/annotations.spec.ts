@@ -216,6 +216,14 @@ test("annotating in the reader: a built-in tag from the menu, a new tag with the
   await expect.poll(() => marked(page, "the color of")).toBeNull();
   expect(await fileText(page, repoId, `annotations/chapters/${CHAPTER}.yml`)).toContain("deletedAt:");
 
+  // 6. The list of the chapter and the badge of the book.
+  await page.goto(`app/books/${bookId}/chapters/${CHAPTER}/annotations`);
+  await expect(page.locator('[data-route-ready="ChapterAnnotationsPage"]')).toBeAttached({ timeout: 15_000 });
+  await expect(page.getByText("Shorter.")).toBeVisible();
+  await expect(page.getByText("1 annotation", { exact: true })).toBeVisible();
+  await page.goto(`app/books/${bookId}`);
+  await expect(page.getByRole("link", { name: "1 annotation to review in The Gate" })).toBeVisible({ timeout: 15_000 });
+
   expect(github).toEqual([]);
   expect(pageErrors).toEqual([]);
 });

@@ -14,6 +14,7 @@ import {
   ChevronUp,
   ChevronDown,
   Clapperboard,
+  Highlighter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -56,6 +57,8 @@ import {
 import { GhostwriterField } from "@/components/book/GhostwriterField";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { countChapterReaderEvaluations, countParagraphReaderEvaluations } from "@/narrarium/readerEvaluationCounts";
+import { AnnotationCountBadge, chapterAnnotationsHref, useAnnotationCounts } from "@/components/annotations/AnnotationCountBadge";
+import { sceneSlugOfPath } from "@/components/annotations/reader/useLocatedAnnotations";
 import { parseDocument, stringify } from "yaml";
 import { openAskDirector } from "@/store/askDirectorStore";
 import { FrozenChangeNotice, FrozenChapterBar } from "@/components/frozen/FrozenChapter";
@@ -89,6 +92,7 @@ export function ChapterPage() {
   const chapter = structure?.chapters.find((c) => c.slug === chapterId);
 
   const chapterReaderEvaluationCount = countChapterReaderEvaluations(structure, chapterId ?? "");
+  const annotationCounts = useAnnotationCounts(bookId)(chapterId ?? "");
 
   const token = book ? resolveWorkingCopyToken(book, settings) : "";
 
@@ -507,6 +511,13 @@ export function ChapterPage() {
           count={chapterReaderEvaluationCount}
           active={chapterReaderEvaluationCount > 0}
         />
+        <ChapterActionChip
+          to={chapterAnnotationsHref(bookId ?? "", chapterId ?? "")}
+          icon={<Highlighter className="h-3.5 w-3.5" />}
+          label={t("annotations.badge.chip")}
+          count={annotationCounts.total}
+          active={annotationCounts.total > 0}
+        />
         {bookId && (
           <button
             type="button"
@@ -585,6 +596,7 @@ export function ChapterPage() {
                 count={countParagraphReaderEvaluations(structure, chapterId ?? "", p.path)}
                 active={countParagraphReaderEvaluations(structure, chapterId ?? "", p.path) > 0}
               />
+              <AnnotationCountBadge to={chapterAnnotationsHref(bookId ?? "", chapterId ?? "", sceneSlugOfPath(p.path))} count={annotationCounts.byParagraph[sceneSlugOfPath(p.path)] ?? 0} title={p.title} />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="h-7 w-7 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9" aria-label={t("assistant.quickActions")}>

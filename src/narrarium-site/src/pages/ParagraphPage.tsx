@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Badge } from "@/components/ui/badge";
+import { AnnotationCountBadge, chapterAnnotationsHref, useAnnotationCounts } from "@/components/annotations/AnnotationCountBadge";
+import { sceneSlugOfPath } from "@/components/annotations/reader/useLocatedAnnotations";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -154,6 +156,7 @@ export function ParagraphPage() {
   const { updateChapterParagraphs } = useBooksStore();
   const { book, structure, loading: structureLoading, error: structureError, reload } = useBookStructure(bookId);
   const { branch } = useWorkingBranch(bookId);
+  const annotationCounts = useAnnotationCounts(bookId);
 
   const chapter = structure?.chapters.find((c) => c.slug === chapterId);
   const paragraph = chapter?.paragraphs.find((p) => p.number === paragraphNum);
@@ -647,6 +650,7 @@ export function ParagraphPage() {
           <Badge variant="outline" className="max-w-[42vw] truncate font-mono text-xs sm:max-w-none">
             {branch}
           </Badge>
+          <AnnotationCountBadge variant="chip" to={chapterAnnotationsHref(bookId ?? "", chapterId ?? "", sceneSlugOfPath(paragraph.path))} count={annotationCounts(chapterId ?? "").byParagraph[sceneSlugOfPath(paragraph.path)] ?? 0} title={paragraph.title} />
           {isDirty && !saving && (
             <span className="hidden text-xs text-muted-foreground sm:inline">{t("common.unsaved")}</span>
           )}

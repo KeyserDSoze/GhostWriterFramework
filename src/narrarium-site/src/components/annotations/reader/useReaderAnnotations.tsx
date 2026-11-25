@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Highlighter, ListChecks, MessageSquareOff, MessageSquareText, MoreHorizontal } from "lucide-react";
 import "@/i18n/annotations";
@@ -432,6 +433,11 @@ export function useReaderAnnotations(input: ReaderAnnotationsInput) {
                 </li>
               ))}
             </ul>
+          )}
+          {panel && (
+            <Button asChild variant="link" className="justify-start px-0">
+              <Link to={`/app/books/${bookId}/chapters/${panel.chapter}/annotations${panel.paragraph ? `?scene=${encodeURIComponent(panel.paragraph)}` : ""}`}>{t("annotations.reader.openList")}</Link>
+            </Button>
           )}
         </DialogContent>
       </Dialog>

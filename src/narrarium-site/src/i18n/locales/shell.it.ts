@@ -8,6 +8,9 @@ const shellIt = {
       annotate: "Annota il passaggio selezionato nel reader",
     },
   },
+  nav: {
+    annotations: "Annotazioni",
+  },
   shell: {
     navMenu: "Menu di navigazione",
   },

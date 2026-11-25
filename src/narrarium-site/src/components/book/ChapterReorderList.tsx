@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { useToast } from "@/components/ui/use-toast";
 import { reorderChaptersInBook } from "@/github/githubClient";
 import { countChapterReaderEvaluations } from "@/narrarium/readerEvaluationCounts";
+import { AnnotationCountBadge, chapterAnnotationsHref, useAnnotationCounts } from "@/components/annotations/AnnotationCountBadge";
 import type { BookEntry } from "@/types/settings";
 import type { BookStructure, Chapter } from "@/types/book";
 
@@ -30,6 +31,7 @@ export function ChapterReorderList({
 }) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const annotationCounts = useAnnotationCounts(bookId);
 
   const [localChapters, setLocalChapters] = useState<Chapter[]>(chapters);
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
@@ -139,6 +141,7 @@ export function ChapterReorderList({
               </p>
             </Link>
             <div className="ml-auto flex shrink-0 items-center gap-1">
+              <AnnotationCountBadge to={chapterAnnotationsHref(bookId, ch.slug)} count={annotationCounts(ch.slug).total} title={ch.title} />
               <ChapterRowAction
                 to={`/app/books/${bookId}/chapters/${ch.slug}/workspace/resume`}
                 label={t("bookPage.resume")}

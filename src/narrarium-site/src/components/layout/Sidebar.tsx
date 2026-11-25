@@ -1,3 +1,4 @@
+import "@/i18n/shell";
 import { createContext, useContext, useId, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -13,6 +14,7 @@ import {
   EyeOff,
   FileEdit,
   FileText,
+  Highlighter,
   Library,
   MapPin,
   Network,
@@ -157,6 +159,7 @@ function SidebarContent({ onNavigate, headerAction }: { onNavigate?: () => void;
         { label: t("chapter.resume"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/resume`, icon: <NotebookText className="h-4 w-4" /> },
         { label: t("chapter.evaluation"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/evaluation`, icon: <ClipboardCheck className="h-4 w-4" /> },
         { label: t("readerEvaluations.title"), href: `/app/books/${bookId}/chapters/${chapterId}/reader-evaluations`, icon: <Users className="h-4 w-4" /> },
+        { label: t("nav.annotations"), href: `/app/books/${bookId}/chapters/${chapterId}/annotations`, icon: <Highlighter className="h-4 w-4" /> },
       ]
     : [];
 
