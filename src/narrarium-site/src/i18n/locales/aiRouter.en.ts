@@ -196,6 +196,12 @@ const aiRouterEn = {
     thinkingParameterSuggestion: "Suggested: {{value}}. The documentation of a model with this name says it takes its level of thinking that way; until you set it, the level goes as reasoning_effort, which may be ignored.",
     thinkingParameterUse: "Use it",
     thinkingParameterUseFor: "Use it for {{name}}",
+    modelApiVersion: "API version",
+    modelApiVersionInherit: "Inherits from the integration: {{value}}",
+    modelApiVersionOwn: "Own version",
+    modelApiVersionHint: "Azure OpenAI only: each deployment may need its own api-version. Leave it empty to use the integration's API version, which is the default of the models that do not have their own.",
+    modelApiVersionInvalid: "An API version is a word without spaces, like 2025-01-01-preview.",
+    integrationApiVersionHint: "The default API version of this integration: its models use it unless they have their own, which you set in the card of the model.",
     forcedToolCallsHint: "On: the model is asked to answer by calling a function. Off: it cannot, so “Tools only” skips it (with “Tools only” off the autopilot asks it for JSON in the message instead).",
   },
 };

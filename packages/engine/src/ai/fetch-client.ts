@@ -86,6 +86,8 @@ export interface FetchAiAttempt {
   messages: FetchAiMessage[];
   /** The output token limit sent, when there is one. */
   maxOutputTokens?: number;
+  /** The API version this request carries, for a provider that has one (Azure OpenAI's `api-version`, or `v1`): the model's own, else its integration's (`effectiveApiVersion`). */
+  apiVersion?: string;
   stream: boolean;
   /** The structured reply is requested as a forced function call. */
   tools: boolean;
@@ -311,6 +313,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           // Copies: a listener can never change what is sent.
           messages: reportedMessages(attempt.built, request),
           ...(attempt.built?.outputLimit ? { maxOutputTokens: attempt.built.outputLimit } : {}),
+          ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}),
           stream: attempt.built?.stream ?? false,
           tools: attempt.built?.useTools ?? false,
           endpoint: effectiveAiBase(integration, options.githubModelsBaseUrl),
@@ -360,7 +363,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
           if (cancelled) throw error;
           const origin = endpointOrigin(effectiveAiBase(integration, options.githubModelsBaseUrl));
           if (error instanceof AiProviderError && !error.target) {
-            error.target = { provider: integration.provider, model: candidate.model, integrationId: integration.id, ...(origin ? { endpoint: origin } : {}) };
+            error.target = { provider: integration.provider, model: candidate.model, integrationId: integration.id, ...(origin ? { endpoint: origin } : {}), ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}) };
           }
           steps.push(triedStep(attempt, failedReport, error, origin, secrets));
           addSpent(spent, error);
@@ -428,6 +431,7 @@ function triedStep(attempt: PlannedAttempt, end: FetchAiAttemptEnd, error: unkno
     model: redactSecrets(attempt.candidate.model, secrets),
     outcome: end.outcome === "cancelled" ? "cancelled" : end.failureKind === "timeout" ? "timeout" : "failed",
     ...(endpoint ? { endpoint } : {}),
+    ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}),
     ...(end.status !== undefined ? { status: end.status } : {}),
     durationMs: end.durationMs,
     ...(message ? { message: message.length > MAX_STEP_MESSAGE_CHARACTERS ? `${message.slice(0, MAX_STEP_MESSAGE_CHARACTERS - 1)}…` : message } : {}),

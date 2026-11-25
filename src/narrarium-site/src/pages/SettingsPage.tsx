@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { SecretInput } from "@/components/ui/secret-input";
 import { PersonalServerSettingsBody } from "@/components/settings/PersonalServerSettingsBody";
 import { IntegrationRequestFields } from "@/components/settings/IntegrationRequestFields";
+import { ModelApiVersionField, apiVersionLooksValid, inheritedApiVersion } from "@/components/settings/ModelApiVersionField";
 import { ReasoningParameterField } from "@/components/settings/ReasoningParameterField";
 import { EndpointTools } from "@/components/settings/endpoint/EndpointTools";
 import { integrationAnchor } from "@/components/settings/endpoint/anchor";
@@ -632,7 +633,16 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
         {integration.provider === "azure_openai" && (
           <div className="grid gap-2">
             <Label htmlFor={`${id}-version`}>{t("settings.apiVersion")}</Label>
-            <Input id={`${id}-version`} value={integration.apiVersion ?? ""} onChange={(e) => onChange({ apiVersion: e.target.value })} placeholder="2024-10-21" />
+            <Input
+              id={`${id}-version`}
+              value={integration.apiVersion ?? ""}
+              onChange={(e) => onChange({ apiVersion: e.target.value })}
+              placeholder="2024-10-21"
+              aria-describedby={`${id}-version-hint${apiVersionLooksValid(integration.apiVersion) ? "" : ` ${id}-version-invalid`}`}
+              aria-invalid={!apiVersionLooksValid(integration.apiVersion) || undefined}
+            />
+            <p id={`${id}-version-hint`} className="text-xs text-muted-foreground">{t("settings.integrationApiVersionHint")}</p>
+            {!apiVersionLooksValid(integration.apiVersion) && <p id={`${id}-version-invalid`} role="alert" className="text-xs text-destructive">{t("settings.modelApiVersionInvalid")}</p>}
           </div>
         )}
       </div>
@@ -640,6 +650,7 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
       {integration.provider !== "m365_copilot" && (
         <ChatModelsEditor
           provider={integration.provider}
+          apiVersion={integration.apiVersion}
           endpoint={integration.endpoint ?? ""}
           apiKey={integration.apiKey}
           models={integration.chatModels ?? []}
@@ -671,7 +682,7 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
   );
 }
 
-function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networkDisabled = false }: { provider: AIProviderType; endpoint: string; apiKey: string; models: ChatModel[]; onChange: (models: ChatModel[]) => void; networkDisabled?: boolean }) {
+function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onChange, networkDisabled = false }: { provider: AIProviderType; apiVersion?: string; endpoint: string; apiKey: string; models: ChatModel[]; onChange: (models: ChatModel[]) => void; networkDisabled?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const id = useId();
@@ -768,6 +779,7 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networ
           <p className="text-xs text-muted-foreground">{t("settings.chatModelsHint")}</p>
           <p id={`${id}-tools-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.forcedToolCallsHint")}</p>
           <p id={`${id}-thinking-parameter-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.thinkingParameterHint")}</p>
+          {provider === "azure_openai" && <p id={`${id}-api-version-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.modelApiVersionHint")}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {provider === "github_models" && (
@@ -828,6 +840,9 @@ function ChatModelsEditor({ provider, endpoint, apiKey, models, onChange, networ
                   <Label htmlFor={`${id}-${model.id}-tier`} className="text-xs">{t("settings.modelTier")}</Label>
                   <Input id={`${id}-${model.id}-tier`} value={model.tier ?? ""} onChange={(e) => patchModel(model.id, { tier: e.target.value.trim() || undefined })} placeholder="low / standard / high" className="h-8 text-sm" />
                 </div>
+              )}
+              {provider === "azure_openai" && (
+                <ModelApiVersionField model={model} inherited={inheritedApiVersion({ apiVersion })} hintId={`${id}-api-version-hint`} onChange={(next) => patchModel(model.id, { apiVersion: next })} />
               )}
               <TokenLimitField label={t("settings.maxInputTokens")} value={model.maxInputTokens} onChange={(v) => patchModel(model.id, { maxInputTokens: v })} />
               <TokenLimitField label={t("settings.maxOutputTokens")} value={model.maxOutputTokens} onChange={(v) => patchModel(model.id, { maxOutputTokens: v })} />

@@ -3,6 +3,24 @@ export type AiProviderKind = "azure_openai" | "openai" | "github_models" | "m365
 /** The Azure OpenAI API version used when an integration does not name one. */
 export const DEFAULT_AZURE_API_VERSION = "2024-10-21";
 
+/** Whether an endpoint is the v1 API of Azure OpenAI (`https://<resource>.openai.azure.com/openai/v1`), which takes no `api-version` in its address. */
+export function isAzureV1Endpoint(endpoint: string | undefined): boolean {
+  return /\/openai\/v1$/i.test((endpoint ?? "").trim().replace(/\/+$/, ""));
+}
+
+/**
+ * The API version a request to a model is sent with, and the one place that says it (the client, the diagnostics, the editor and the configuration of a personal server all ask here): the
+ * model's own (`AiChatModelConfig.apiVersion`), else its integration's, else `DEFAULT_AZURE_API_VERSION`. `v1` for the v1 API of Azure OpenAI, which has none in its address, and
+ * `undefined` for a provider that has no API version. Whitespace is no version: an empty field inherits. `model` is the model's entry, or a candidate that carries its `apiVersion`.
+ */
+export function effectiveApiVersion(integration: Pick<AiIntegrationConfig, "provider" | "endpoint" | "apiVersion">, model?: { apiVersion?: string } | null): string | undefined {
+  if (integration.provider !== "azure_openai") return undefined;
+  if (isAzureV1Endpoint(integration.endpoint)) return "v1";
+  const own = typeof model?.apiVersion === "string" ? model.apiVersion.trim() : "";
+  const inherited = typeof integration.apiVersion === "string" ? integration.apiVersion.trim() : "";
+  return own || inherited || DEFAULT_AZURE_API_VERSION;
+}
+
 export interface AiPricingConfig {
   inputPerMTok?: number;
   cachedPerMTok?: number;
@@ -33,6 +51,11 @@ export interface AiChatModelConfig {
    * `suggestedReasoningParameter` says what the documented sources know of a model name; the engine never applies it by itself.
    */
   reasoningParameter?: AiReasoningParameter;
+  /**
+   * The API version this model's requests carry (Azure OpenAI's `api-version`): each deployment may need its own. Absent or empty: the integration's `apiVersion`, else
+   * `DEFAULT_AZURE_API_VERSION`. `effectiveApiVersion` is the one place that says which is used; it only has an effect for an Azure OpenAI integration.
+   */
+  apiVersion?: string;
   /** The context window of the model: what a prompt and its answer may be together. The engine subtracts the answer and a margin itself. */
   maxInputTokens?: number;
   /** The largest answer that can be asked of the model. */
@@ -85,6 +108,7 @@ export interface AiIntegrationConfig {
   provider: AiProviderKind;
   endpoint?: string;
   apiKey: string;
+  /** The API version of the integration's models that do not name their own (`AiChatModelConfig.apiVersion`): Azure OpenAI's `api-version`. Absent: `DEFAULT_AZURE_API_VERSION`. */
   apiVersion?: string;
   /**
    * How long the provider has to begin answering (the connection and the headers), as the author wrote it. A call raises a value
@@ -247,6 +271,7 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
         ...(typeof model.supportsReasoning === "boolean" ? { supportsReasoning: model.supportsReasoning } : {}),
         ...(typeof model.supportsVision === "boolean" ? { supportsVision: model.supportsVision } : {}),
         ...reasoningParameterOf(model.reasoningParameter),
+        ...(text(model.apiVersion) ? { apiVersion: text(model.apiVersion) } : {}),
         maxInputTokens: positive(model.maxInputTokens),
         maxOutputTokens: positive(model.maxOutputTokens),
         pricing: pricing(model.pricing),
@@ -308,6 +333,8 @@ export interface RedactedAiIntegration {
   streamMode?: AiStreamMode;
   /** The thinking level of the integration, when it sets one. */
   thinking?: AiThinking;
+  /** The API version of the integration (Azure OpenAI), when it names one: the default of its models that do not name their own. */
+  apiVersion?: string;
   models: RedactedAiModel[];
 }
 
@@ -321,6 +348,8 @@ export interface RedactedAiModel {
   supportsVision?: boolean;
   /** How the thinking level reaches the model, when the model says (absent: `reasoning_effort`). */
   reasoningParameter?: AiReasoningParameter;
+  /** The API version of the model, when it names its own (Azure OpenAI): absent, it takes the integration's. */
+  apiVersion?: string;
   maxInputTokens?: number;
   maxOutputTokens?: number;
 }
@@ -371,6 +400,7 @@ function redactedModel(model: AiChatModelConfig): RedactedAiModel {
     ...(supportsReasoning !== undefined ? { supportsReasoning } : {}),
     ...(supportsVision !== undefined ? { supportsVision } : {}),
     ...reasoningParameterOf(model.reasoningParameter),
+    ...(text(model.apiVersion) ? { apiVersion: text(model.apiVersion) } : {}),
     ...(maxInputTokens !== undefined ? { maxInputTokens } : {}),
     ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
   };
@@ -400,6 +430,7 @@ export function redactAiRuntimeConfig(config: AiRuntimeConfig): RedactedAiRuntim
         ...(integration.idleTimeoutMs !== undefined ? { idleTimeoutMs: integration.idleTimeoutMs } : {}),
         ...(integration.streamMode ? { streamMode: integration.streamMode } : {}),
         ...(thinking ? { thinking } : {}),
+        ...(text(integration.apiVersion) ? { apiVersion: text(integration.apiVersion) } : {}),
         models: (integration.chatModels ?? []).map(redactedModel),
       };
     }),

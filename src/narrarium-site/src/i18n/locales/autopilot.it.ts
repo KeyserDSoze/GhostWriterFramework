@@ -378,6 +378,7 @@ const autopilotIt = {
     route: {
       title: "Cosa è stato provato, nell'ordine del router",
       target: "{{integration}} · {{model}}",
+      apiVersion: "Versione API {{version}}",
       outcome: {
         ok: "ha risposto",
         failed: "non è riuscito",
@@ -512,6 +513,7 @@ const autopilotIt = {
       facts: {
         step: "Passo",
         endpoint: "Indirizzo",
+        apiVersion: "Versione API",
         model: "Modello",
         provider: "Provider",
         integration: "Integrazione",

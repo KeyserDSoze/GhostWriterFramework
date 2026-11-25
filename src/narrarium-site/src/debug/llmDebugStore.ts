@@ -57,6 +57,8 @@ export interface LlmDebugEntry {
   stream?: boolean;
   /** What the integration says about streaming. */
   streamMode?: "auto" | "off";
+  /** The API version the request carried (Azure OpenAI's `api-version`, or `v1`): a short word, nothing else. */
+  apiVersion?: string;
   /** The level that was sent; absent when none was. */
   thinking?: "low" | "medium" | "high" | "xhigh";
   /** Where the level went, only when it went as the argument of the chat template (the model's "Thinking parameter"); absent: it went as `reasoning_effort`, or no level was sent. */
@@ -216,6 +218,7 @@ function attemptFields(entry: LlmDebugEntry): Partial<LlmDebugEntry> {
     tools: flag(entry.tools),
     stream: flag(entry.stream),
     streamMode: word(entry.streamMode, STREAM_MODES),
+    apiVersion: typeof entry.apiVersion === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(entry.apiVersion) ? entry.apiVersion : undefined,
     thinking: word(entry.thinking, THINKING),
     reasoningParameter: word(entry.reasoningParameter, REASONING_PARAMETERS),
     toolsOnly: flag(entry.toolsOnly),
@@ -236,7 +239,7 @@ function storageErrorMessage(error: unknown, fallback: string): string {
 }
 
 export function redactLlmDebugEntry(entry: LlmDebugEntry): LlmDebugEntry {
-  const { structured: _s, tools: _t, stream: _st, streamMode: _sm, thinking: _th, reasoningParameter: _rp, toolsOnly: _to, skipped: _sk, timeouts: _ti, streamed: _sd, firstByteMs: _fb, toolCalled: _tc, timeoutPhase: _tp, transport: _tr, ...rest } = entry;
+  const { structured: _s, tools: _t, stream: _st, streamMode: _sm, apiVersion: _av, thinking: _th, reasoningParameter: _rp, toolsOnly: _to, skipped: _sk, timeouts: _ti, streamed: _sd, firstByteMs: _fb, toolCalled: _tc, timeoutPhase: _tp, transport: _tr, ...rest } = entry;
   return {
     ...rest,
     ...attemptFields(entry),

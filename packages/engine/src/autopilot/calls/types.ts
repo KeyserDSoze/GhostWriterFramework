@@ -138,6 +138,8 @@ export interface AiCallAttempt {
   model: string | null;
   integrationId: string | null;
   endpoint: string | null;
+  /** The API version the request carried (Azure OpenAI's `api-version`, or `v1`). Absent for a provider that has none, and from the records of an engine that did not say. */
+  apiVersion?: string;
   stream: boolean;
   tools: boolean;
   firstByteMs: number | null;

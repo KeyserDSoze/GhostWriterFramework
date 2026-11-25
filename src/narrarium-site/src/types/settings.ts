@@ -98,6 +98,11 @@ export interface ChatModel {
    * the card of the integration only suggests it for the names the engine's `suggestedReasoningParameter` knows. A value this version does not know is kept as it is, and not used.
    */
   reasoningParameter?: ReasoningParameter;
+  /**
+   * The API version this model's requests carry (Azure OpenAI's `api-version`): each deployment may need its own. Absent or empty: the integration's `apiVersion` (the default of
+   * its models that do not name one), else the engine's default. `effectiveApiVersion` of the engine says which is used.
+   */
+  apiVersion?: string;
   /** Provider-specific tier label. Currently populated from GitHub Models rate_limit_tier. */
   tier?: string;
   /** Total model context window; prompt budgeting reserves output and a safety margin within it. */

@@ -1,4 +1,4 @@
-import { DEFAULT_AZURE_API_VERSION, normalizeThinking, type AiIntegrationConfig, type AiReasoningParameter, type AiThinking } from "./config.js";
+import { effectiveApiVersion, isAzureV1Endpoint, normalizeThinking, type AiIntegrationConfig, type AiReasoningParameter, type AiThinking } from "./config.js";
 import type { AiCandidate } from "./router.js";
 import { forcedToolChoice } from "./structured.js";
 import { completionTokenLimit, isReasoningModel, requestOutputLimit } from "./token-limit.js";
@@ -44,7 +44,7 @@ interface RequestTarget {
 }
 
 function azureV1(integration: Pick<AiIntegrationConfig, "provider" | "endpoint">): boolean {
-  return integration.provider === "azure_openai" && /\/openai\/v1$/i.test(trimBase(integration.endpoint));
+  return integration.provider === "azure_openai" && isAzureV1Endpoint(integration.endpoint);
 }
 
 /** How an integration authenticates: its key, in the header its provider expects (none for an endpoint that needs no key). */
@@ -54,13 +54,14 @@ function authHeaders(integration: Pick<AiIntegrationConfig, "provider" | "apiKey
   return integration.provider === "azure_openai" ? { "api-key": key } : { authorization: `Bearer ${key}` };
 }
 
-function requestTarget(integration: AiIntegrationConfig, model: string, githubModelsBaseUrl: string): RequestTarget {
+/** `apiVersion` is `effectiveApiVersion(integration, model)`: what an Azure OpenAI address carries as its `api-version`. */
+function requestTarget(integration: AiIntegrationConfig, model: string, githubModelsBaseUrl: string, apiVersion: string | undefined): RequestTarget {
   const base = effectiveAiBase(integration, githubModelsBaseUrl);
   if (integration.provider === "azure_openai") {
     if (!base) throw new AiProviderError(`Azure OpenAI integration "${integration.name}" has no endpoint.`);
     const url = azureV1(integration)
       ? `${base}/chat/completions`
-      : `${base}/openai/deployments/${encodeURIComponent(model)}/chat/completions?api-version=${encodeURIComponent(integration.apiVersion || DEFAULT_AZURE_API_VERSION)}`;
+      : `${base}/openai/deployments/${encodeURIComponent(model)}/chat/completions?api-version=${encodeURIComponent(apiVersion ?? "")}`;
     return { url, headers: authHeaders(integration) };
   }
   if (base && (integration.provider === "github_models" || integration.provider === "openai")) {
@@ -198,6 +199,8 @@ export interface ChatRequest {
   useTools: boolean;
   /** The output token limit the body asks for (`undefined`: none). */
   outputLimit?: number;
+  /** The API version the request carries (Azure OpenAI: the `api-version` of its address, or `v1`); absent for a provider that has none. */
+  apiVersion?: string;
   /** The thinking level the body carries, as `reasoning_effort` or, when `reasoningParameter` says so, as the chat-template argument; absent when none is sent. */
   thinking?: AiReasoningEffort;
   /** Where the level went, when it went in the chat-template argument (`chat_template_kwargs.reasoning_strength`). Absent: it went as `reasoning_effort`, or no level was sent. */
@@ -223,12 +226,14 @@ export interface ChatRequestOptions {
  * Pure: it calls nothing and changes nothing. Throws only when the integration cannot be called at all.
  */
 export function buildChatRequest(
-  candidate: Pick<AiCandidate, "integration" | "model"> & Partial<Pick<AiCandidate, "underlyingModel" | "supportsToolCalls" | "supportsStreaming" | "supportsReasoning" | "reasoningParameter" | "maxOutputTokens" | "thinking">>,
+  candidate: Pick<AiCandidate, "integration" | "model"> & Partial<Pick<AiCandidate, "underlyingModel" | "supportsToolCalls" | "supportsStreaming" | "supportsReasoning" | "reasoningParameter" | "apiVersion" | "maxOutputTokens" | "thinking">>,
   request: Pick<AiRequest, "system" | "user" | "messages" | "json" | "maxOutputTokens" | "outputBoost" | "temperature" | "onText">,
   options: ChatRequestOptions = {},
 ): ChatRequest {
   const { integration, model } = candidate;
-  const target = requestTarget(integration, model, options.githubModelsBaseUrl ?? GITHUB_MODELS_BASE_URL);
+  // The API version of the model that is asked: its own, else its integration's. A fallback in another integration, or another model, is asked with its own.
+  const apiVersion = effectiveApiVersion(integration, candidate);
+  const target = requestTarget(integration, model, options.githubModelsBaseUrl ?? GITHUB_MODELS_BASE_URL, apiVersion);
   const useTools = Boolean(request.json) && candidate.supportsToolCalls !== false;
   // What the integration turns off a model does not turn on; what a model declares it cannot do is not asked of it.
   const stream = integration.streamMode !== "off" && candidate.supportsStreaming !== false;
@@ -239,7 +244,7 @@ export function buildChatRequest(
   const body: Record<string, unknown> = {
     model,
     messages: messages.map((message) => ({ role: message.role, content: wireContent(message.content) })),
-    ...completionTokenLimit(integration.provider, model, outputLimit, candidate.underlyingModel, azureV1(integration) ? "v1" : integration.apiVersion),
+    ...completionTokenLimit(integration.provider, model, outputLimit, candidate.underlyingModel, apiVersion),
   };
   if (request.temperature !== undefined && !isReasoningModel(integration.provider, model, candidate.underlyingModel)) body.temperature = request.temperature;
   const thinking = reasoningEffortOf(candidate);
@@ -252,7 +257,7 @@ export function buildChatRequest(
   }
   if (useTools && request.json) {
     body.tools = [{ type: "function", function: request.json }];
-    body.tool_choice = forcedToolChoice(integration.provider, integration.apiVersion, request.json.name);
+    body.tool_choice = forcedToolChoice(integration.provider, apiVersion, request.json.name);
   }
   if (stream) {
     body.stream = true;
@@ -264,6 +269,7 @@ export function buildChatRequest(
     body,
     stream,
     useTools,
+    ...(apiVersion ? { apiVersion } : {}),
     ...(outputLimit ? { outputLimit } : {}),
     ...(thinking ? { thinking } : {}),
     ...(thinking && candidate.reasoningParameter === CHAT_TEMPLATE_PARAMETER ? { reasoningParameter: CHAT_TEMPLATE_PARAMETER } : {}),

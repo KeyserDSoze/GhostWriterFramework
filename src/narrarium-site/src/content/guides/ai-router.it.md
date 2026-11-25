@@ -1,6 +1,6 @@
 # Integrazioni AI e Router
 
-Narrarium usa le tue integrazioni AI. Aggiungi Azure OpenAI, endpoint compatibili OpenAI o GitHub Models in **Impostazioni → Integrazioni AI**, dove trovi anche chiavi, modelli, prezzi e modelli predefiniti. Poi scegli in **Impostazioni → AI Router** quale modello gestisce ogni task.
+Narrarium usa le tue integrazioni AI. Aggiungi Azure OpenAI, endpoint compatibili OpenAI o GitHub Models in **Impostazioni → Integrazioni AI**, dove trovi anche chiavi, modelli, prezzi e modelli predefiniti. Per Azure OpenAI la **Versione API** dell'integrazione è il valore predefinito dei suoi modelli, e la scheda di ogni modello ha un campo **Versione API** per un deployment che ne richiede un'altra (vuoto: eredita quella dell'integrazione, e il campo dice quale). Poi scegli in **Impostazioni → AI Router** quale modello gestisce ogni task.
 
 ## Avvio rapido GitHub Models
 

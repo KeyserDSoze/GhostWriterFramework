@@ -83,11 +83,16 @@ test("a candidate carries the thinking parameter of its model, with or without a
 test("a candidate with no thinking parameter, or with reasoning_effort, builds byte for byte the 72 requests that the engine built before the parameter existed", () => {
   assert.ok(golden.requests.length >= 60);
   assert.ok(golden.requests.filter((entry) => entry.expected.includes("\"reasoning_effort\"")).length >= 30, "the golden has the levels in it, sent");
+  // What goes on the wire and how it is asked: `apiVersion` is what the request says of itself (the version an Azure address carries, which is in the address), not a byte of it.
+  const built = (candidate, request) => {
+    const { apiVersion: _said, ...wire } = buildChatRequest(candidate, request);
+    return JSON.stringify(wire);
+  };
   for (const entry of golden.requests) {
-    assert.equal(JSON.stringify(buildChatRequest(entry.candidate, entry.request)), entry.expected, entry.name);
-    assert.equal(JSON.stringify(buildChatRequest({ ...entry.candidate, reasoningParameter: undefined }, entry.request)), entry.expected, `${entry.name}: undefined`);
-    assert.equal(JSON.stringify(buildChatRequest({ ...entry.candidate, reasoningParameter: "reasoning_effort" }, entry.request)), entry.expected, `${entry.name}: reasoning_effort, said`);
-    assert.equal(JSON.stringify(buildChatRequest({ ...entry.candidate, reasoningParameter: "bogus" }, entry.request)), entry.expected, `${entry.name}: a word the engine does not know is no word`);
+    assert.equal(built(entry.candidate, entry.request), entry.expected, entry.name);
+    assert.equal(built({ ...entry.candidate, reasoningParameter: undefined }, entry.request), entry.expected, `${entry.name}: undefined`);
+    assert.equal(built({ ...entry.candidate, reasoningParameter: "reasoning_effort" }, entry.request), entry.expected, `${entry.name}: reasoning_effort, said`);
+    assert.equal(built({ ...entry.candidate, reasoningParameter: "bogus" }, entry.request), entry.expected, `${entry.name}: a word the engine does not know is no word`);
   }
 });
 

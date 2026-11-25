@@ -39,6 +39,7 @@ const RETRY_LATER_HASH = "autopilot-retry";
 
 const FACT_LABEL: Record<ErrorFact["key"], string> = {
   endpoint: "autopilot.failure.facts.endpoint",
+  apiVersion: "autopilot.failure.facts.apiVersion",
   model: "autopilot.failure.facts.model",
   provider: "autopilot.failure.facts.provider",
   integration: "autopilot.failure.facts.integration",

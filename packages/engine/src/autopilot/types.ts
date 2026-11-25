@@ -571,6 +571,8 @@ export interface AutopilotErrorDetail {
   status?: number;
   /** The origin (`https://api.openai.com`) of the integration that was called. */
   endpoint?: string;
+  /** The API version the request carried (Azure OpenAI's `api-version`, or `v1`): the model's own, else its integration's. Absent for a provider that has none, and from an engine that did not say. */
+  apiVersion?: string;
   model?: string;
   provider?: string;
   /** The id of the integration. */

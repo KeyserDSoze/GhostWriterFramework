@@ -15,6 +15,8 @@ export interface AiCandidate {
   supportsVision?: boolean;
   /** How the model's thinking level is sent (see `AiChatModelConfig.reasoningParameter`); absent when the model does not say: `reasoning_effort`. */
   reasoningParameter?: AiReasoningParameter;
+  /** The model's own API version (see `AiChatModelConfig.apiVersion`); absent: its integration's. `effectiveApiVersion(candidate.integration, candidate)` says which is used. */
+  apiVersion?: string;
   /**
    * The thinking level for this candidate: its route target's, else its integration's (`automatic` is a choice that sends nothing). Absent when
    * neither says: the request carries no level.
@@ -38,6 +40,7 @@ function supports(model: AiChatModelConfig, capability: string): boolean {
 function candidate(integration: AiIntegrationConfig, model: AiChatModelConfig, target?: AiRouteTarget): AiCandidate {
   const thinking = normalizeThinking(target?.thinking) ?? normalizeThinking(integration.thinking);
   const reasoningParameter = normalizeReasoningParameter(model.reasoningParameter);
+  const apiVersion = typeof model.apiVersion === "string" ? model.apiVersion.trim() : "";
   return {
     integration,
     model: model.name,
@@ -50,6 +53,7 @@ function candidate(integration: AiIntegrationConfig, model: AiChatModelConfig, t
     ...(typeof model.supportsReasoning === "boolean" ? { supportsReasoning: model.supportsReasoning } : {}),
     ...(typeof model.supportsVision === "boolean" ? { supportsVision: model.supportsVision } : {}),
     ...(reasoningParameter ? { reasoningParameter } : {}),
+    ...(apiVersion ? { apiVersion } : {}),
     ...(thinking ? { thinking } : {}),
   };
 }

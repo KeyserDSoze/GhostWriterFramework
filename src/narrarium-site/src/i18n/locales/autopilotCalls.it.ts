@@ -84,6 +84,7 @@ const autopilotCallsIt = {
         },
       },
       attemptFacts: {
+        apiVersion: "Versione API {{version}}",
         title: "Tentativo {{number}}",
         outcome: {
           ok: "fatto",

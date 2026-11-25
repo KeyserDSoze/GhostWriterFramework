@@ -7,6 +7,7 @@ const debugAttemptIt = {
       json: "JSON nel messaggio",
       streaming: "In streaming",
       notStreaming: "Non in streaming",
+      apiVersion: "Versione API: {{version}}",
       thinking: "Thinking: {{level}}",
       reasoningParameter: "Livello inviato come {{parameter}}",
       calledYes: "Funzione chiamata: sì",

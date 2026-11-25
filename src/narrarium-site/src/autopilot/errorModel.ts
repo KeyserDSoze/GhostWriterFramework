@@ -189,7 +189,7 @@ export function retryAfterSeconds(detail: AutopilotErrorDetail): number | null {
 }
 
 export type ErrorFact =
-  | { key: "endpoint" | "model" | "provider" | "integration" | "status"; value: string }
+  | { key: "endpoint" | "apiVersion" | "model" | "provider" | "integration" | "status"; value: string }
   | { key: "attempt"; attempt: number; retries: number };
 
 const clean = (value: unknown): string | undefined => (typeof value === "string" && value.trim() ? value.trim() : undefined);
@@ -202,6 +202,8 @@ export function errorFacts(detail: AutopilotErrorDetail, integrationName?: (id: 
   const facts: ErrorFact[] = [];
   const endpoint = clean(detail.endpoint);
   if (endpoint && !withRoute) facts.push({ key: "endpoint", value: endpoint });
+  const apiVersion = clean(detail.apiVersion);
+  if (apiVersion && !withRoute) facts.push({ key: "apiVersion", value: apiVersion });
   const model = clean(detail.model);
   if (model && !withRoute) facts.push({ key: "model", value: model });
   const provider = clean(detail.provider);
@@ -225,7 +227,7 @@ export interface DiagnosticsInput {
 
 /** One step of the route, as a line of the text that is copied: who it is, and how it ended or why it was left out. English, closed words and figures, and what the provider said cleaned of credentials. */
 function routeLine(step: AutopilotRouteStep): string {
-  const who = `${step.integrationName || step.integrationId || "?"}${step.integrationId && step.integrationId !== step.integrationName ? ` (${step.integrationId})` : ""} ${step.model}`;
+  const who = `${step.integrationName || step.integrationId || "?"}${step.integrationId && step.integrationId !== step.integrationName ? ` (${step.integrationId})` : ""} ${step.model}${step.apiVersion ? ` [api-version ${step.apiVersion}]` : ""}`;
   if (step.outcome === "left-out") {
     const numbers = step.leftOut === "context-window" ? ` (the prompt is about ${step.promptTokens ?? "?"} tokens, the window leaves about ${step.windowTokens ?? "?"})` : step.why ? ` (${step.why})` : "";
     return `${step.position + 1}. ${who}: left out, ${step.leftOut ?? "unknown reason"}${numbers}`;
@@ -281,6 +283,7 @@ export function diagnosticsText({ source, appVersion, engineVersion, host, at, i
   if (source.repeats > 1) lines.push(`Failed in a row: ${source.repeats}`);
   if (typeof detail.status === "number") lines.push(`HTTP status: ${detail.status}`);
   if (clean(detail.endpoint)) lines.push(`Endpoint: ${clean(detail.endpoint)}`);
+  if (clean(detail.apiVersion)) lines.push(`API version: ${clean(detail.apiVersion)}`);
   if (clean(detail.model)) lines.push(`Model: ${clean(detail.model)}`);
   if (clean(detail.provider)) lines.push(`Provider: ${clean(detail.provider)}`);
   const integration = clean(detail.integration);

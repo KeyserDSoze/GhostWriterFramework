@@ -4,7 +4,7 @@ import { formatLimit } from "@/lib/formatLimit";
 
 /** One fact about how an attempt was asked, or what came back: a text of the app with its figures, which the panel says in words. */
 export interface AttemptBadge {
-  id: "request" | "stream" | "thinking" | "reasoningParameter" | "called" | "skipped" | "firstByte" | "toolsOnly" | "limits" | "received" | "lastChunk" | "streamEnd" | "finishReason" | "usage" | "requestId";
+  id: "request" | "stream" | "apiVersion" | "thinking" | "reasoningParameter" | "called" | "skipped" | "firstByte" | "toolsOnly" | "limits" | "received" | "lastChunk" | "streamEnd" | "finishReason" | "usage" | "requestId";
   key: string;
   params?: Record<string, string>;
 }
@@ -24,6 +24,7 @@ export function attemptBadges(entry: LlmDebugEntry, language?: string): AttemptB
   // What was read once the reply is in; what was asked until then.
   const streaming = entry.streamed ?? entry.stream;
   if (streaming !== undefined) badges.push({ id: "stream", key: streaming ? "debug.attempt.streaming" : "debug.attempt.notStreaming" });
+  if (entry.apiVersion) badges.push({ id: "apiVersion", key: "debug.attempt.apiVersion", params: { version: entry.apiVersion } });
   if (entry.thinking) badges.push({ id: "thinking", key: "debug.attempt.thinking", params: { level: entry.thinking } });
   // Next to the level: where it went, when it went as the argument of the chat template.
   if (entry.reasoningParameter) badges.push({ id: "reasoningParameter", key: "debug.attempt.reasoningParameter", params: { parameter: entry.reasoningParameter } });

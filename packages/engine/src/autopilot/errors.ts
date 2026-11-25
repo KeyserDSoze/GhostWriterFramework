@@ -182,6 +182,12 @@ function stepMessage(value: unknown): string | undefined {
   return text || undefined;
 }
 
+/** An API version as a detail keeps it: a short word of letters, digits and `-._` (`2025-01-01-preview`, `v1`), nothing else. */
+function versionOf(value: unknown): string | undefined {
+  const text = typeof value === "string" ? value.trim() : "";
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(text) ? text : undefined;
+}
+
 /** One step of a route, from what an error of the engine's client carries or from a detail read from a file: only the known fields that are valid, no credential in any of them. */
 function routeStepOf(value: unknown): AutopilotRouteStep | undefined {
   const source = record(value);
@@ -191,6 +197,7 @@ function routeStepOf(value: unknown): AutopilotRouteStep | undefined {
   if (position === undefined || !model || !outcome) return undefined;
   const integrationId = shortText(source.integrationId) ?? "";
   const endpoint = endpointOrigin(source.endpoint);
+  const apiVersion = versionOf(source.apiVersion);
   const status = httpStatus(source.status);
   const durationMs = wholeNumber(source.durationMs, MAX_TIMEOUT_MS);
   const message = stepMessage(source.message);
@@ -208,6 +215,7 @@ function routeStepOf(value: unknown): AutopilotRouteStep | undefined {
     model,
     outcome,
     ...(endpoint ? { endpoint } : {}),
+    ...(apiVersion ? { apiVersion } : {}),
     ...(status !== undefined ? { status } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
     ...(message ? { message } : {}),
@@ -233,6 +241,7 @@ function detailOf(error: unknown): AutopilotErrorDetail {
   const target = record(source.target);
   const status = httpStatus(source.status);
   const endpoint = endpointOrigin(target.endpoint ?? source.endpoint);
+  const apiVersion = versionOf(target.apiVersion ?? source.apiVersion);
   const model = shortText(source.model) ?? shortText(target.model);
   const provider = shortText(source.provider) ?? shortText(target.provider);
   const integration = shortText(source.integrationId) ?? shortText(target.integrationId);
@@ -252,6 +261,7 @@ function detailOf(error: unknown): AutopilotErrorDetail {
   return {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
+    ...(apiVersion ? { apiVersion } : {}),
     ...(model ? { model } : {}),
     ...(provider ? { provider } : {}),
     ...(integration ? { integration } : {}),
@@ -318,6 +328,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
   const source = record(value);
   const status = httpStatus(source.status);
   const endpoint = endpointOrigin(source.endpoint);
+  const apiVersion = versionOf(source.apiVersion);
   const model = shortText(source.model);
   const provider = shortText(source.provider);
   const integration = shortText(source.integration);
@@ -332,6 +343,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
   const detail: AutopilotErrorDetail = {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
+    ...(apiVersion ? { apiVersion } : {}),
     ...(model ? { model } : {}),
     ...(provider ? { provider } : {}),
     ...(integration ? { integration } : {}),

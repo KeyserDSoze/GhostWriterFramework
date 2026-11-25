@@ -196,6 +196,12 @@ const aiRouterIt = {
     thinkingParameterSuggestion: "Suggerito: {{value}}. La documentazione di un modello con questo nome dice che prende così il livello di thinking; finché non lo imposti, il livello va come reasoning_effort, che può essere ignorato.",
     thinkingParameterUse: "Usalo",
     thinkingParameterUseFor: "Usalo per {{name}}",
+    modelApiVersion: "Versione API",
+    modelApiVersionInherit: "Eredità dall'integrazione: {{value}}",
+    modelApiVersionOwn: "Versione propria",
+    modelApiVersionHint: "Solo Azure OpenAI: ogni deployment può richiedere la sua api-version. Lascia vuoto per usare la versione API dell'integrazione, che è il valore predefinito dei modelli senza una propria.",
+    modelApiVersionInvalid: "Una versione API è una parola senza spazi, come 2025-01-01-preview.",
+    integrationApiVersionHint: "La versione API predefinita di questa integrazione: i suoi modelli la usano a meno che non ne abbiano una propria, che imposti nella scheda del modello.",
     forcedToolCallsHint: "Acceso: al modello si chiede di rispondere chiamando una funzione. Spento: non ne è capace, quindi «Solo tool» lo salta (con «Solo tool» spento l'autopilot gli chiede invece un JSON nel messaggio).",
   },
 };

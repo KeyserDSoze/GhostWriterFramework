@@ -35,7 +35,8 @@ export function RouteTrail({ route, integrationName }: { route: readonly Autopil
                 {left ? t("autopilot.route.leftOut", { reason: leftOutReason(t, { reason: step.leftOut, why: step.why, promptTokens: step.promptTokens, windowTokens: step.windowTokens }) }) : outcomeWords(t, step, language)}
                 {showDuration && <span className="text-muted-foreground"> · {t("autopilot.route.took", { time: formatLimit(step.durationMs as number, language) })}</span>}
               </p>
-              {!left && step.endpoint && <p className="break-all text-muted-foreground">{step.endpoint}</p>}
+              {!left && step.endpoint && <p className="break-all text-muted-foreground">{step.endpoint}{step.apiVersion && <span data-route-api-version> · {t("autopilot.route.apiVersion", { version: step.apiVersion })}</span>}</p>}
+              {!left && !step.endpoint && step.apiVersion && <p data-route-api-version className="text-muted-foreground">{t("autopilot.route.apiVersion", { version: step.apiVersion })}</p>}
               {!left && step.message && <p className="whitespace-pre-wrap break-words text-muted-foreground [overflow-wrap:anywhere]">{step.message}</p>}
             </li>
           );
