@@ -11,6 +11,12 @@ describe("where a call came from: one rule", () => {
     for (const capability of [...AUTOPILOT_TASKS, ...CHAT_CAPABILITIES]) expect(usageSource({ origin: "autopilot", capability, label: "copilot:review" }), capability).toBe("autopilot");
   });
 
+  it("gives every call of a turn of the Copilot to the Copilot, the tools it runs included", () => {
+    for (const [capability, label] of [["copilot", "copilot"], ["default", "pipeline:refine-prose"], ["deep-research", "deep-research"], ["image", "image"], ["review", "audit:chapter"]] as const) {
+      expect(usageSource({ origin: "copilot", capability, label }), `${capability} ${label}`).toBe("copilot");
+    }
+  });
+
   it("knows the feature of a capability that only one feature uses", () => {
     expect(usageSource({ capability: "autopilot" })).toBe("autopilot");
     expect(usageSource({ capability: "director" })).toBe("autopilot");
@@ -78,6 +84,7 @@ describe("a capability of the Copilot that a later version adds, and one nobody 
       expect(usageSource({ capability: "a-capability-of-tomorrow", label }), String(label)).toBe("other");
     }
     expect(usageSource({ capability: "a-capability-of-tomorrow", origin: "autopilot" }), "a run's call is the run's").toBe("autopilot");
+    expect(usageSource({ capability: "a-capability-of-tomorrow", origin: "copilot" }), "a turn's call is the turn's").toBe("copilot");
     expect(() => usageSource({ capability: "" })).not.toThrow();
     expect(usageSource({ capability: "" })).toBe("other");
     expect(usageSource({ capability: undefined as unknown as string, label: 42 as unknown as string })).toBe("other");

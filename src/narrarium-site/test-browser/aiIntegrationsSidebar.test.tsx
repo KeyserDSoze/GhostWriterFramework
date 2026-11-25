@@ -21,6 +21,7 @@ const SETTINGS_ENTRIES = [
   "/app/settings/speech",
   "/app/settings/repository",
   "/app/settings/server",
+  "/app/settings/costs",
 ];
 
 async function open(menu: "desktop" | "mobile", path: string, language: Language = "en") {

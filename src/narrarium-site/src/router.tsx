@@ -108,6 +108,7 @@ export const router = createBrowserRouter([
       { path: "settings/speech", lazy: appPage("SettingsPage") },
       { path: "settings/repository", lazy: appPage("SettingsPage") },
       { path: "settings/server", lazy: appPage("SettingsPageWithAutopilotTexts", "SettingsPage") },
+      { path: "settings/costs", lazy: appPage("SettingsPage") },
       { path: "account-sync", lazy: appPage("AccountSyncPage") },
       { path: "reader-settings", lazy: appPage("ReaderSettingsPage") },
       { path: "custom-actions", lazy: appPage("CustomActionsPage") },

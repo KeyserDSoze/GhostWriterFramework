@@ -1,11 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Send, Server } from "lucide-react";
-import { pickAiRuntimeConfig, redactAiRuntimeConfig, type ServerAiStatus } from "narrarium-engine";
+import { pickAiRuntimeConfig, redactAiRuntimeConfig } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { formatDateTime } from "@/autopilot/format";
-import { useServerConnection } from "@/autopilot/serverConnection";
-import { verifiedServer } from "@/autopilot/serverIdentity";
+import { useSendAiConfiguration } from "@/autopilot/sendAiConfiguration";
 import { useServerAiStatus } from "@/autopilot/useRunEstimate";
 import { useSettingsStore } from "@/store/settingsStore";
 
@@ -24,29 +23,12 @@ function canonical(value: unknown): string {
 export function ServerAiNote() {
   const { t } = useTranslation();
   const read = useServerAiStatus(true);
-  const server = useServerConnection();
   const settings = useSettingsStore((state) => state.settings);
-  const [sent, setSent] = useState<ServerAiStatus | null>(null);
-  const [state, setState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
-  const [reason, setReason] = useState("");
+  const { send, sent, state, reason, online } = useSendAiConfiguration();
   const status = sent ?? (read.status === "ready" ? read.value : null);
   const here = useMemo(() => canonical(redactAiRuntimeConfig(pickAiRuntimeConfig(settings)).taskRouting), [settings]);
   const comparable = Boolean(status?.configured && status.taskRouting);
   const same = comparable && canonical(status?.taskRouting) === here;
-
-  async function send() {
-    setState("sending");
-    try {
-      const connection = server.status === "online" ? server.connection : null;
-      if (!connection) throw new Error(t("autopilot.serverAi.unavailable"));
-      const { client } = await verifiedServer({ connection });
-      setSent(await client.putAiConfig(pickAiRuntimeConfig(useSettingsStore.getState().settings)));
-      setState("sent");
-    } catch (error) {
-      setReason(error instanceof Error ? error.message : String(error));
-      setState("failed");
-    }
-  }
 
   return (
     <div data-server-ai-note role="note" className="space-y-2 rounded-md border border-dashed p-3 text-sm">
@@ -57,7 +39,7 @@ export function ServerAiNote() {
         {comparable ? ` ${t(same ? "autopilot.serverAi.same" : "autopilot.serverAi.differs")}` : ""}
       </p>
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant={comparable && !same ? "default" : "outline"} disabled={state === "sending" || server.status !== "online"} onClick={() => void send()}>
+        <Button size="sm" variant={comparable && !same ? "default" : "outline"} disabled={state === "sending" || !online} onClick={() => void send()}>
           {state === "sending" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
           {state === "sending" ? t("autopilot.serverAi.sending") : t("autopilot.serverAi.send")}
         </Button>

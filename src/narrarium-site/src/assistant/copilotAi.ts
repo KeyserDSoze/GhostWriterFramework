@@ -16,6 +16,7 @@ import { pause, QUIET_RETRY_ATTEMPTS, quietRetryWait } from "@/assistant/quietRe
 import type { RetryNotice } from "@/assistant/retryNotice";
 import type { TaskCandidate } from "@/assistant/router";
 import { DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability } from "@/types/settings";
+import type { UsageTask } from "@/costs/usageTasks";
 
 /**
  * The Copilot's way to the language models: the engine's client (`createFetchAi`, through `createBrowserAi`), the same that the autopilot and the personal server use, so a model
@@ -191,6 +192,8 @@ export interface CopilotAttempt {
   onRestart?: () => void;
   /** A wait begins before the next attempt of the same candidate: what the chat says about it. */
   onRetry?: (notice: RetryNotice) => void;
+  /** The task the call is part of for the costs: the turn of the Copilot that made it (`usageTaskOf` of the caller's signal); absent, the call is a task of its own. */
+  usageTask?: UsageTask;
 }
 
 type BrowserAiFactory = typeof import("@/autopilot/browserAi").createBrowserAi;
@@ -206,6 +209,7 @@ async function once(createBrowserAi: BrowserAiFactory, attempt: CopilotAttempt):
       configure: (config) => singleCandidateConfig(config, candidate, capability),
       route: attempt.route,
       ...(attempt.onEnd ? { onEnd: attempt.onEnd } : {}),
+      ...(attempt.usageTask ? { usage: () => attempt.usageTask } : {}),
     }).complete({
       capability,
       label: attempt.label,

@@ -1,9 +1,11 @@
 import { emptyCounters, type UsageCounters, type UsageRow } from "@/costs/ledger";
-import { addMoney, type MoneyTotals } from "@/costs/money";
+import { addRecordedMoney, type MoneyTotals } from "@/costs/money";
+import type { CostRelabel } from "@/types/settings";
 
 /**
  * Sums of rows of the ledger, for what the person reads: money by currency (measured and estimated apart: never added to each other), and the counts.
- * Rows of different currencies are never added into one amount here: `money` keeps one total per currency (see `money.ts` for how they are shown).
+ * Rows of different currencies are never added into one amount here: `money` keeps one total per currency (see `money.ts` for how they are shown), and
+ * the amounts a relabel of the settings names under its own key (`USD>EUR`), by the day of their row.
  */
 export interface UsageSummary extends Omit<UsageCounters, "cost" | "estimatedCost"> {
   /** Measured money, by currency. */
@@ -20,28 +22,28 @@ export function emptySummary(): UsageSummary {
 
 const COUNT_FIELDS = ["calls", "tasks", "inputTokens", "cachedTokens", "outputTokens", "unpricedCalls", "unknownUsageCalls", "estimatedInputTokens", "estimatedOutputTokens"] as const;
 
-export function addRow(summary: UsageSummary, row: UsageRow): UsageSummary {
+export function addRow(summary: UsageSummary, row: UsageRow, relabels?: readonly CostRelabel[]): UsageSummary {
   const next: UsageSummary = { ...summary, rows: summary.rows + 1 };
   for (const field of COUNT_FIELDS) next[field] = summary[field] + (Number.isFinite(row[field]) ? row[field] : 0);
-  if (row.cost) next.money = addMoney(summary.money, row.currency, row.cost);
-  if (row.estimatedCost) next.estimated = addMoney(summary.estimated, row.currency, row.estimatedCost);
+  if (row.cost) next.money = addRecordedMoney(summary.money, row.currency, row.cost, row.period, relabels);
+  if (row.estimatedCost) next.estimated = addRecordedMoney(summary.estimated, row.currency, row.estimatedCost, row.period, relabels);
   return next;
 }
 
-export function summarize(rows: Iterable<UsageRow>, keep: (row: UsageRow) => boolean = () => true): UsageSummary {
+export function summarize(rows: Iterable<UsageRow>, keep: (row: UsageRow) => boolean = () => true, relabels?: readonly CostRelabel[]): UsageSummary {
   let summary = emptySummary();
-  for (const row of rows) if (keep(row)) summary = addRow(summary, row);
+  for (const row of rows) if (keep(row)) summary = addRow(summary, row, relabels);
   return summary;
 }
 
 /** Rows grouped by a key (a book, a source, a month…), each group summed. */
-export function summarizeBy(rows: Iterable<UsageRow>, keyOf: (row: UsageRow) => string | null, keep: (row: UsageRow) => boolean = () => true): Map<string, UsageSummary> {
+export function summarizeBy(rows: Iterable<UsageRow>, keyOf: (row: UsageRow) => string | null, keep: (row: UsageRow) => boolean = () => true, relabels?: readonly CostRelabel[]): Map<string, UsageSummary> {
   const groups = new Map<string, UsageSummary>();
   for (const row of rows) {
     if (!keep(row)) continue;
     const key = keyOf(row);
     if (key === null) continue;
-    groups.set(key, addRow(groups.get(key) ?? emptySummary(), row));
+    groups.set(key, addRow(groups.get(key) ?? emptySummary(), row, relabels));
   }
   return groups;
 }

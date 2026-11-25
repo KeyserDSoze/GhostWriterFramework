@@ -1,11 +1,11 @@
 import { memo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, Check, ChevronRight, CheckCircle2, Circle, CircleDot, CircleHelp, Laptop, Loader2, Lock, Pause, Server, XCircle } from "lucide-react";
-import type { AutopilotActivity, AutopilotOptions, AutopilotStateSummary, AutopilotStatus } from "narrarium-engine";
+import { Check, ChevronRight, CheckCircle2, Circle, CircleDot, CircleHelp, Laptop, Loader2, Lock, Pause, Server, XCircle } from "lucide-react";
+import type { AutopilotActivity, AutopilotStateSummary, AutopilotStatus } from "narrarium-engine";
 import { useElapsed, useNow } from "@/autopilot/hooks";
-import { CYCLE_STAGES, bandPhases, budgetUse, cycleItems, type ChapterCycle } from "@/autopilot/bandModel";
+import { CYCLE_STAGES, bandPhases, cycleItems, type ChapterCycle } from "@/autopilot/bandModel";
 import { formatCountdown, secondsLeft } from "@/autopilot/errorModel";
-import { STATUS_BADGE, activityTitle, formatAgo, formatBytes, formatCost, formatCount, formatDuration } from "@/autopilot/format";
+import { STATUS_BADGE, activityTitle, formatAgo, formatBytes, formatDuration } from "@/autopilot/format";
 import { waitLineText, type RetryWait } from "@/autopilot/retry";
 import { lastSignalAt, useAutopilotStore } from "@/autopilot/store";
 import { useTextDetail } from "@/autopilot/useLiveText";
@@ -283,51 +283,6 @@ export const CycleList = memo(function CycleList({ cycle }: { cycle: ChapterCycl
         ))}
       </ol>
       {cycle.round !== null && cycle.round > 1 && <span className="text-xs font-medium text-muted-foreground">{t("autopilot.band.cycle.round", { round: cycle.round })}</span>}
-    </div>
-  );
-});
-
-/**
- * What it costs and how much it uses, in one line: the cost against the budget (a bar when there is one), the tokens, the calls, and the notices of the
- * calls the totals cannot be sure of. The reasons for those notices are one click away, so that the line stays a line. While a step runs, `step` is what it has spent so
- * far beside the total, when the activity says it (`stepSpendOf`: the engine says it once the step ends, so today there is none to show).
- */
-export const UsageLine = memo(function UsageLine({ summary, options, currency, className, step = null }: { summary: AutopilotStateSummary; options: AutopilotOptions | null; currency: string | undefined; className?: string; step?: { cost: number } | null }) {
-  const { t } = useTranslation();
-  const { stats } = summary;
-  const use = budgetUse(stats, options);
-  const usageUnknown = stats.usageUnknownCalls ?? 0;
-  const costUnknown = stats.costUnknownCalls ?? 0;
-  return (
-    <div data-band-usage className={cn("flex flex-wrap items-center gap-x-4 gap-y-1 text-xs", className)}>
-      <span className="inline-flex items-center gap-2">
-        <span className="text-muted-foreground">{t("autopilot.band.usage.cost")}</span>
-        <span className="font-semibold tabular-nums">
-          {use.cost.limit !== null ? t("autopilot.band.usage.costOf", { value: formatCost(use.cost.value, currency), budget: formatCost(use.cost.limit, currency) }) : formatCost(use.cost.value, currency)}
-        </span>
-        {step && <span data-band-step-cost className="tabular-nums text-muted-foreground">({t("autopilot.band.usage.step", { value: formatCost(step.cost, currency) })})</span>}
-        {use.cost.limit !== null && use.cost.ratio !== null && <ProgressBar label={t("autopilot.band.usage.costBar")} now={use.cost.value} max={use.cost.limit} valueText={t("autopilot.band.usage.costOf", { value: formatCost(use.cost.value, currency), budget: formatCost(use.cost.limit, currency) })} className="w-16" thin />}
-      </span>
-      <span className="inline-flex items-center gap-2">
-        <span className="tabular-nums">
-          {use.tokens.limit !== null
-            ? t("autopilot.band.usage.tokensOf", { value: formatCount(use.tokens.value), budget: formatCount(use.tokens.limit) })
-            : t("autopilot.band.usage.tokens", { value: formatCount(use.tokens.value) })}
-        </span>
-        {use.tokens.limit !== null && <ProgressBar label={t("autopilot.band.usage.tokensBar")} now={use.tokens.value} max={use.tokens.limit} valueText={t("autopilot.band.usage.tokensOf", { value: formatCount(use.tokens.value), budget: formatCount(use.tokens.limit) })} className="w-16" thin />}
-      </span>
-      <span className="tabular-nums">{t("autopilot.band.usage.calls", { count: stats.aiCalls })}</span>
-      {usageUnknown > 0 && <span className="inline-flex items-center gap-1 font-medium text-amber-800 dark:text-amber-300"><AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{t("autopilot.progress.usageUnknown", { count: usageUnknown })}</span>}
-      {costUnknown > 0 && <span className="inline-flex items-center gap-1 font-medium text-amber-800 dark:text-amber-300"><AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{t("autopilot.progress.costUnknown", { count: costUnknown })}</span>}
-      {(usageUnknown > 0 || costUnknown > 0) && (
-        <details className="basis-full text-muted-foreground">
-          <summary className="inline-flex cursor-pointer items-center rounded-sm underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{t("autopilot.band.usage.why")}</summary>
-          <div className="mt-1 space-y-1">
-            {usageUnknown > 0 && <p>{t("autopilot.progress.usageUnknownHint")}</p>}
-            {costUnknown > 0 && <p>{t("autopilot.progress.costUnknownHint")}</p>}
-          </div>
-        </details>
-      )}
     </div>
   );
 });

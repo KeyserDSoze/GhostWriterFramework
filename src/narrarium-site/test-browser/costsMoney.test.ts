@@ -79,8 +79,9 @@ describe("the exchange rates of the settings", () => {
     expect(normalizeRates(undefined)).toEqual([]);
   });
 
-  it("make the money context of the settings: their currency, «USD» when they have none", () => {
-    expect(moneyContextOf({ costCurrency: "eur", costRates: [{ from: "USD", to: "EUR", rate: 0.9 }] })).toEqual({ display: "EUR", rates: [{ from: "USD", to: "EUR", rate: 0.9 }] });
+  it("make the money context of the settings: their currency, «USD» when they have none, their rates and their relabels", () => {
+    expect(moneyContextOf({ costCurrency: "eur", costRates: [{ from: "USD", to: "EUR", rate: 0.9 }] })).toEqual({ display: "EUR", rates: [{ from: "USD", to: "EUR", rate: 0.9 }], relabels: [] });
+    expect(moneyContextOf({ costCurrency: "EUR", costRelabels: [{ from: "USD", to: "EUR", until: "2026-05-01T00:00:00.000Z" }, { from: "GBP", to: "GBP", until: "2026-05-01T00:00:00.000Z" }] }).relabels).toEqual([{ from: "USD", to: "EUR", until: "2026-05-01T00:00:00.000Z" }]);
     expect(moneyContextOf({ costCurrency: "" }).display).toBe("USD");
   });
 });

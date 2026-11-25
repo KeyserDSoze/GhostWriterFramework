@@ -388,6 +388,7 @@ const it = {
     nextRouteTasks: "Passo successivo: instrada i task nell'AI Router",
     costCurrency: "Valuta di prezzi e costi",
     costCurrencyHint: "Inserisci i prezzi dei tuoi modelli in questa valuta: ogni costo è mostrato in questa valuta. Un cambio vale subito per le chiamate che seguono e per ogni schermata; i costi già registrati tengono la loro valuta.",
+    costSettings: { title: "Costi" },
     providers: {
       azure_openai: "Azure OpenAI",
       openai: "OpenAI / compatibili",
@@ -1646,6 +1647,11 @@ const it = {
   },
   costs: {
     title: "Costi",
+    money: {
+      convertedAt: "convertito a {{rates}}",
+      relabelledMark: "(rietichettato)",
+      relabelledAs: "registrato come {{from}}, mostrato come {{to}}",
+    },
   },
   merge: {
     button: "Unisci bozza + definitivo",

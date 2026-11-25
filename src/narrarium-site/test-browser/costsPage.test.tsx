@@ -10,6 +10,9 @@ vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast: () => un
 import i18n from "@/i18n";
 import "@/i18n/costs";
 import { CostRatesEditor } from "@/components/settings/CostRatesEditor";
+import { EstimatedMoney, estimatePhrase } from "@/components/costs/MoneyText";
+import { moneyContextOf } from "@/costs/useMoney";
+import { formatAmount, formatTotals } from "@/costs/money";
 import { chooseOption, polyfillRadix } from "./helpers/radix";
 import { useCostsStore } from "@/costs/costsStore";
 import { addToLedger, ledgerWriterId, localDay, type UsageDelta } from "@/costs/ledger";
@@ -152,4 +155,36 @@ describe("the prices in Settings are in the currency of the settings", () => {
     expect(notice()?.textContent).toContain("prices are read in EUR");
     // The whole page of the settings, read by its labels: as long as the other tests of that page are given (`aiIntegrationsSettings`).
   }, 30_000);
+});
+
+describe("an estimate, in one phrase", () => {
+  const moneyOf = (currency: string, rates: CostExchangeRate[] = []) => {
+    const context = moneyContextOf({ costCurrency: currency, costRates: rates }, "en");
+    return { ...context, amount: (value: number | undefined, recorded?: string) => formatAmount(value ?? 0, recorded, context), totals: (totals: Record<string, number>) => formatTotals(totals, context) };
+  };
+  const t = i18n.t.bind(i18n);
+
+  it("says the tokens and the money of the calls without a token count together, the tokens alone, the money alone, or nothing", () => {
+    const money = moneyOf("USD");
+    expect(estimatePhrase(t, money, "1,320", { USD: 0.0041 })).toBe("≈ 1,320 tokens and ≈ $0.0041, estimated");
+    expect(estimatePhrase(t, money, "800", {})).toBe("≈ 800 tokens, estimated");
+    expect(estimatePhrase(t, money, null, { USD: 0.002 })).toBe("≈ $0.002 estimated");
+    expect(estimatePhrase(t, money, null, {})).toBe("");
+  });
+
+  it("never says «≈» twice for an estimate converted at a rate, in the phrase or on its own", () => {
+    setSettings("EUR", [{ from: "USD", to: "EUR", rate: 0.9 }]);
+    expect(estimatePhrase(t, moneyOf("EUR", [{ from: "USD", to: "EUR", rate: 0.9 }]), "500", { USD: 0.002 })).toBe("≈ 500 tokens and ≈ €0.0018, estimated");
+    render(<EstimatedMoney totals={{ USD: 0.002 }} />);
+    expect(screen.getByText("≈ €0.0018 estimated")).toBeInTheDocument();
+  });
+
+  it("is said where the Costs page counts the calls without a token count", () => {
+    const file = costs();
+    const delta: UsageDelta = { key: { period: today, bookId: "book-1", source: "autopilot", capability: "autopilot", integrationId: "int-1", model: "gpt-5", currency: "EUR" }, counters: { calls: 1, unknownUsageCalls: 1, estimatedInputTokens: 1000, estimatedOutputTokens: 320, estimatedCost: 0.0041 } };
+    const next = { ...file, ledger: addToLedger(file.ledger, WRITER, [delta], new Date(), "EUR") };
+    useCostsStore.setState({ file: next, persisted: next });
+    renderCosts();
+    expect(within(bookCard("The Glass Harbor")).getAllByText("1 call without a token count (≈ 1,320 tokens and ≈ €0.0041, estimated)").length).toBeGreaterThan(0);
+  });
 });

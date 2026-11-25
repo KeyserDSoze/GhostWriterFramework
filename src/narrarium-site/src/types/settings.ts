@@ -153,6 +153,16 @@ export interface CostExchangeRate {
   rate: number;
 }
 
+/**
+ * «The amounts recorded as `from` up to `until` were really `to`»: a display alias for costs priced in a currency the setting named by mistake (`AppSettings.costRelabels`). It
+ * changes how they are shown, marked «relabelled», never what is recorded; removing it shows them as recorded again. `until` is the moment it was set (ISO 8601).
+ */
+export interface CostRelabel {
+  from: string;
+  to: string;
+  until: string;
+}
+
 /** Optional unit prices used to track spend, in the currency of the settings (`AppSettings.costCurrency`). Token prices are per 1,000,000 tokens. */
 export interface AIPricing {
   /** Per 1M input tokens (chat) */
@@ -718,6 +728,8 @@ export interface AppSettings {
    * Absent: costs in other currencies are shown in their own, as subtotals. An older client keeps the field as it is.
    */
   costRates?: CostExchangeRate[];
+  /** Amounts recorded in a currency that was not the one of the prices, shown in the right one (see `CostRelabel`). Absent: none. An older client keeps the field as it is. */
+  costRelabels?: CostRelabel[];
   ui: {
     language: "en" | "it";
     theme: "light" | "dark" | "system";

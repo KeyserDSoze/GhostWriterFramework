@@ -17,6 +17,8 @@ const FIRST = mine("first", "First");
 const ODD = mine("team/ai:1", "Odd id");
 const scrollIntoView = vi.fn();
 
+// The whole page of the settings is drawn for each test: as long as the other tests of that page are given (`aiIntegrationsSettings`).
+vi.setConfig({ testTimeout: 30_000 });
 beforeAll(async () => {
   polyfillRadix();
   await i18n.changeLanguage("en");
@@ -67,6 +69,36 @@ describe("the link to one integration", () => {
       }
       cleanup();
     }
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+});
+
+describe("the link to the prices of a model", () => {
+  const priceOf = (anchor: string) => document.getElementById(anchor) as HTMLDetailsElement;
+
+  it("opens the card of its integration and the prices of the model, and gives the focus to the first price: the fix of «calls without a price»", async () => {
+    await showIntegrations([FIRST, AZURE], "en", "/app/settings/ai-integrations#model-price-first--m-first");
+    const prices = priceOf("model-price-first--m-first");
+    await waitFor(() => expect(prices.querySelector("input")).toHaveFocus());
+    expect(prices).toHaveAttribute("open");
+    expect(cardOf("First")).toHaveAttribute("open");
+    expect(cardOf("Studio Azure")).not.toHaveAttribute("open");
+    expect(priceOf("model-price-az--m1")).not.toHaveAttribute("open");
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("opens the prices of the voice and the images of an integration, and takes an id written the way an address carries it", async () => {
+    await showIntegrations([FIRST, ODD], "en", `/app/settings/ai-integrations#${encodeURIComponent("media-price-team/ai:1")}`);
+    const prices = priceOf("media-price-team/ai:1");
+    await waitFor(() => expect(prices.querySelector("input")).toHaveFocus());
+    expect(cardOf("Odd id")).toHaveAttribute("open");
+    expect(cardOf("First")).not.toHaveAttribute("open");
+  });
+
+  it("opens nothing for the prices of a model that is not there", async () => {
+    await showIntegrations([FIRST], "en", "/app/settings/ai-integrations#model-price-first--ghost");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(cardOf("First")).not.toHaveAttribute("open");
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 });

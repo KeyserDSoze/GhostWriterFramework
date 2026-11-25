@@ -1,6 +1,6 @@
-import type { CostExchangeRate } from "@/types/settings";
+import type { CostExchangeRate, CostRelabel } from "@/types/settings";
 
-/** The exchange rates of the settings (`costRates`), on their own: the settings read them without the rest of `money.ts`. */
+/** The exchange rates and the relabels of the settings (`costRates`, `costRelabels`), on their own: the settings read them without the rest of `money.ts`. */
 
 export const CURRENCY_CODE = /^[A-Z]{3}$/;
 
@@ -31,3 +31,16 @@ export function rateBetween(from: string, to: string, rates: readonly CostExchan
   return inverse ? { factor: 1 / inverse.rate, rate: inverse } : null;
 }
 
+/** The settings' relabels that can be used: two different three-letter codes and a moment; one for each currency recorded (the last given wins). */
+export function normalizeRelabels(value: unknown): CostRelabel[] {
+  if (!Array.isArray(value)) return [];
+  const byFrom = new Map<string, CostRelabel>();
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const { from, to, until } = entry as Partial<CostRelabel>;
+    if (typeof from !== "string" || typeof to !== "string" || !CURRENCY_CODE.test(from) || !CURRENCY_CODE.test(to) || from === to) continue;
+    if (typeof until !== "string" || !Number.isFinite(Date.parse(until))) continue;
+    byFrom.set(from, { from, to, until });
+  }
+  return [...byFrom.values()];
+}

@@ -388,6 +388,7 @@ const en = {
     nextRouteTasks: "Next: route your tasks in AI Router",
     costCurrency: "Currency of prices and costs",
     costCurrencyHint: "Enter the prices of your models in this currency: every cost is shown in it. A change applies at once to the calls that follow and to every display; costs already recorded keep their currency.",
+    costSettings: { title: "Costs" },
     providers: {
       azure_openai: "Azure OpenAI",
       openai: "OpenAI / compatible",
@@ -1646,6 +1647,11 @@ const en = {
   },
   costs: {
     title: "Costs",
+    money: {
+      convertedAt: "converted at {{rates}}",
+      relabelledMark: "(relabelled)",
+      relabelledAs: "recorded as {{from}}, shown as {{to}}",
+    },
   },
   merge: {
     button: "Merge draft + final",

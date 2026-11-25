@@ -6,7 +6,7 @@ import { ensureGoogleAppFolder, listVerifiedGoogleAppFolders, selectCanonicalGoo
 import { assertCloudReadAllowed, beginCloudWrite, fencedCloudMutation } from "@/drive/cloudWriteBarrier";
 import { ensureMicrosoftAppMarker, graphPath, ONE_DRIVE_APP_FOLDER, verifyMicrosoftAppFolder } from "@/drive/microsoftAppFolder";
 import { fetchMicrosoftGraph } from "@/drive/microsoftGraph";
-import { normalizeRates } from "@/costs/rates";
+import { normalizeRates, normalizeRelabels } from "@/costs/rates";
 
 export class TokenExpiredError extends Error {
   constructor() {
@@ -416,6 +416,9 @@ export function migrateSettingsWithDiagnostics(raw: unknown): { settings: AppSet
   const costRates = normalizeRates(source.costRates);
   if (costRates.length) settings.costRates = costRates;
   else delete settings.costRates;
+  const costRelabels = normalizeRelabels(source.costRelabels);
+  if (costRelabels.length) settings.costRelabels = costRelabels;
+  else delete settings.costRelabels;
   return { settings, diagnostics };
 }
 

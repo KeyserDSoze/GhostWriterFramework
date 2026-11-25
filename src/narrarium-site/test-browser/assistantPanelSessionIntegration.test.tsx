@@ -8,6 +8,7 @@ import { createEmptyAssistantSession, useAssistantStore } from "@/assistant/stor
 import { useAuthStore } from "@/store/authStore";
 import { resetAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
+import { usageTaskOf, type UsageTask } from "@/costs/usageTasks";
 
 const service = vi.hoisted(() => ({ run: vi.fn() }));
 const context = vi.hoisted(() => ({ load: vi.fn() }));
@@ -332,5 +333,33 @@ describe("AssistantPanel while the Copilot waits to ask a model again", () => {
     expect(useAssistantStore.getState().busy).toBe(false);
     const texts = (useAssistantStore.getState().currentSession?.messages ?? []).map((message) => message.text);
     expect(texts.some((text) => /Stopped by the author/.test(text)), "a stop is not an error of the chat").toBe(false);
+  });
+});
+
+describe("AssistantPanel and the costs of a turn", () => {
+  const send = async (prompt: string) => {
+    service.run.mockClear();
+    render(<MemoryRouter initialEntries={["/app/settings"]}><AssistantPanel /></MemoryRouter>);
+    fireEvent.change(await screen.findByRole("textbox"), { target: { value: prompt } });
+    fireEvent.submit(screen.getByRole("textbox").closest("form")!);
+    await waitFor(() => expect(service.run).toHaveBeenCalledOnce());
+  };
+
+  it("makes the whole turn one task of the Copilot: every call it makes carries the signal that names it, and the task ends with the turn", async () => {
+    const seen: Array<{ signal: AbortSignal; task: UsageTask | undefined }> = [];
+    service.run.mockImplementation(async (input) => {
+      // A turn calls the models many times (its tools, its confirmations): each with the signal of the turn.
+      seen.push({ signal: input.signal, task: usageTaskOf(input.signal) });
+      return { id: `reply-${seen.length}`, role: "assistant", text: "A line." };
+    });
+    await send("Write a line");
+    await waitFor(() => expect(useAssistantStore.getState().currentSession?.messages.map((message) => message.text)).toEqual(["Write a line", "A line."]));
+    expect(seen[0].task).toEqual({ task: expect.stringMatching(/^copilot-/), origin: "copilot" });
+    await waitFor(() => expect(usageTaskOf(seen[0].signal), "the turn ended").toBeUndefined());
+
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "And another" } });
+    fireEvent.submit(screen.getByRole("textbox").closest("form")!);
+    await waitFor(() => expect(seen).toHaveLength(2));
+    expect(seen[1].task?.task, "another turn is another task").not.toBe(seen[0].task?.task);
   });
 });

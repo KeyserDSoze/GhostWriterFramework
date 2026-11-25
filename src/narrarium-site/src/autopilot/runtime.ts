@@ -34,6 +34,8 @@ import {
 import i18n from "@/i18n";
 import { localDeviceId } from "@/account/deviceIdentity";
 import { createBrowserAi } from "@/autopilot/browserAi";
+// What each step of a run of this browser costs is kept with its step as its calls end, whether or not a band shows it.
+import "@/autopilot/taskCosts";
 import { LocalWorkingCopyMissingError, createBrowserBookStore } from "@/autopilot/browserStore";
 import { selectAutopilotControl } from "@/autopilot/control";
 import { HandoverCoordinator, HandoverConsentError, type HandoverOptions, type HandoverPorts, type HandoverRequest, type HandoverSide, type RunInspection, type RunOutcome } from "@/autopilot/handover";

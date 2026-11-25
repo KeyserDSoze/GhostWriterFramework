@@ -1,12 +1,13 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Ban, CheckCircle2, Loader2, RotateCw, XCircle } from "lucide-react";
 import type { ActivityStatus, AutopilotActivity } from "narrarium-engine";
 import { EventIcon } from "@/components/autopilot/AutopilotFeed";
 import { KindIcon } from "@/components/autopilot/KindIcon";
 import { isErrorKind } from "@/autopilot/errorModel";
-import { TONE_BORDER, TONE_TEXT, activityTitle, formatClock, formatCount, formatDateTime, formatDuration, presentFeedEvent } from "@/autopilot/format";
+import { TONE_BORDER, TONE_TEXT, activityTitle, formatClock, formatDateTime, formatDuration, presentFeedEvent } from "@/autopilot/format";
 import { useMoney } from "@/costs/useMoney";
+import { StepCostBadge, StepCostFacts, useStepCost } from "@/components/autopilot/costs/StepCost";
 import type { TimelineMarker, TimelineNote, TimelineRow, TimelineStep } from "@/autopilot/timelineModel";
 import { taskElementId } from "@/autopilot/liveText";
 import { TaskCallsEntry } from "@/components/autopilot/calls/TaskCallsEntry";
@@ -45,9 +46,8 @@ function NoteLine({ note, currency, covered }: { note: TimelineNote; currency?: 
 }
 
 /** What a step holds, drawn only once it is opened. */
-function StepBody({ step, currency }: { step: TimelineStep; currency?: string }) {
+function StepBody({ step, currency, cost }: { step: TimelineStep; currency?: string; cost: ReturnType<typeof useStepCost> }) {
   const { t } = useTranslation();
-  const money = useMoney();
   const { last } = step;
   const many = step.attempts.length > 1;
   const latest = (pick: (activity: AutopilotActivity) => string | undefined) => [...step.attempts].reverse().map((attempt) => pick(attempt.activity)).find(Boolean);
@@ -59,8 +59,6 @@ function StepBody({ step, currency }: { step: TimelineStep; currency?: string })
     model,
     provider,
     endpoint,
-    step.tokens ? t("autopilot.timeline.row.tokens", { input: formatCount(step.tokens.input), output: formatCount(step.tokens.output), cached: formatCount(step.tokens.cached) }) : "",
-    step.cost > 0 ? money.amount(step.cost, currency) : "",
     last.host ? t(`autopilot.host.${last.host}`) : "",
   ].filter(Boolean);
   const attemptsId = `${step.key}-attempts`;
@@ -111,6 +109,7 @@ function StepBody({ step, currency }: { step: TimelineStep; currency?: string })
         </div>
       )}
       <p className="text-muted-foreground">{facts.join(" · ")}</p>
+      <StepCostFacts view={cost} server={last.host === "server"} />
       {last.changedPaths && last.changedPaths.length > 0 && (
         <div>
           <p className="font-medium">{t("autopilot.activity.changed")}</p>
@@ -129,7 +128,8 @@ function StepBody({ step, currency }: { step: TimelineStep; currency?: string })
  */
 function StepRow({ step, currency, revealed = false }: { step: TimelineStep; currency?: string; revealed?: boolean }) {
   const { t } = useTranslation();
-  const money = useMoney();
+  const attempts = useMemo(() => step.attempts.map((attempt) => attempt.activity), [step.attempts]);
+  const cost = useStepCost(attempts, currency);
   const [open, setOpen] = useState(revealed);
   useEffect(() => {
     if (revealed) setOpen(true);
@@ -155,9 +155,9 @@ function StepRow({ step, currency, revealed = false }: { step: TimelineStep; cur
             <span className={step.status === "succeeded" ? "sr-only" : cn(badge, failed ? "bg-red-500/15 text-red-800 dark:text-red-300" : "bg-amber-500/15 text-amber-800 dark:text-amber-300")}>{t(`autopilot.activity.status.${step.status}`)}</span>
           )}
           <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatDuration(step.durationMs)}</span>
-          {step.cost > 0 && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{money.amount(step.cost, currency)}</span>}
+          <StepCostBadge view={cost} />
         </summary>
-        {open && <StepBody step={step} currency={currency} />}
+        {open && <StepBody step={step} currency={currency} cost={cost} />}
       </details>
     </li>
   );

@@ -18,6 +18,7 @@ import { acknowledgeCrossBoundaryFallback, type BoundaryCandidate } from "@/assi
 import { pageEnding } from "@/autopilot/localRuns";
 import { GITHUB_MODELS_BASE } from "@/config/githubModels";
 import { recordUsage } from "@/costs/recordUsage";
+import { ownCallTask } from "@/costs/usageTasks";
 import { inputOfLearning, rememberLearnedModel } from "@/autopilot/learnedModels";
 import { flattenLlmContent, useLlmDebugStore } from "@/debug/llmDebugStore";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -110,7 +111,7 @@ function closeAttempt(config: AiRuntimeConfig, debugId: string | undefined, end:
  * Whose calls these are, for the costs: the book, that the autopilot made them (`origin`), and the task they belong to (the step that runs). Asked at the
  * end of each attempt, so that the step of the moment is the one that counts. Absent: the book open in the app, and each call a task of its own.
  */
-export type BrowserAiUsage = () => { bookId?: string; bookName?: string; origin?: "autopilot"; task?: string } | undefined;
+export type BrowserAiUsage = () => { bookId?: string; bookName?: string; origin?: "autopilot" | "copilot"; task?: string } | undefined;
 
 /** Where an attempt stands in a route that the caller resolved itself, and what it left out of that route: what the debug panel says of it. */
 export interface BrowserAiRoute {
@@ -167,7 +168,7 @@ export function createBrowserAi(options: BrowserAiOptions = {}): AiPort {
       const config = options.configure ? options.configure(picked, request) : picked;
       const debugEntries = new Map<string, string>();
       // A call is a task of its own (its attempts, fallbacks included, count it once) unless the caller says which task it belongs to.
-      const callTask = `call-${crypto.randomUUID()}`;
+      const callTask = ownCallTask();
       const usage: BrowserAiUsage = () => {
         const scope = options.usage?.();
         return { ...scope, task: scope?.task ?? callTask };

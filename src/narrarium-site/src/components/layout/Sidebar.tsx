@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Clock,
   Cloud,
+  Coins,
   Columns2,
   EyeOff,
   FileEdit,
@@ -184,6 +185,7 @@ function SidebarContent({ onNavigate, headerAction }: { onNavigate?: () => void;
     { label: t("speech.title"), href: "/app/settings/speech", icon: <BookOpen className="h-4 w-4" /> },
     { label: t("repoSettings.title"), href: "/app/settings/repository", icon: <Network className="h-4 w-4" /> },
     { label: t("personalServer.title"), href: "/app/settings/server", icon: <Server className="h-4 w-4" /> },
+    { label: t("settings.costSettings.title"), href: "/app/settings/costs", icon: <Coins className="h-4 w-4" /> },
   ];
 
   return (

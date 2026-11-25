@@ -396,7 +396,7 @@ describe("what it costs and how much it uses", () => {
     render(<Page />);
     const usage = bandOf().querySelector("[data-band-usage]") as HTMLElement;
     expect(within(usage).getByText("3 calls without a token count")).toBeInTheDocument();
-    expect(within(usage).getByText("1 call without a price")).toBeInTheDocument();
+    expect(within(usage).getByText("1 call without a measured cost")).toBeInTheDocument();
     expect(within(usage).getByText(t("autopilot.progress.usageUnknownHint"))).toBeInTheDocument();
     expect(within(usage).getByText(t("autopilot.progress.costUnknownHint"))).toBeInTheDocument();
     // The reasons are in a disclosure: the line stays one line.

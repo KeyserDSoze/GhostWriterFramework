@@ -218,7 +218,6 @@ const autopilotIt = {
         calls_other: "{{count, number}} chiamate",
         costBar: "Costo rispetto al budget",
         tokensBar: "Token rispetto al budget",
-        why: "Che cosa significa?",
         step: "questo passo {{value}}",
       },
     },
@@ -315,7 +314,6 @@ const autopilotIt = {
         attempt: "Tentativo {{number}}",
         retryOf: "Nuovo tentativo {{attempt}} di {{retries}}",
         notes: "Note",
-        tokens: "{{input}} in ingresso · {{output}} in uscita · {{cached}} in cache",
       },
     },
     result: {
@@ -923,9 +921,9 @@ const autopilotIt = {
       usageUnknown_one: "{{count, number}} chiamata senza conteggio dei token",
       usageUnknown_other: "{{count, number}} chiamate senza conteggio dei token",
       usageUnknownHint: "Il provider non ha comunicato i token di queste chiamate: nei totali qui sopra sono una stima.",
-      costUnknown_one: "{{count, number}} chiamata senza prezzo",
-      costUnknown_other: "{{count, number}} chiamate senza prezzo",
-      costUnknownHint: "Il modello non ha un prezzo in Integrazioni AI, quindi queste chiamate non rientrano nel costo stimato. Il budget in token vale comunque.",
+      costUnknown_one: "{{count, number}} chiamata senza costo misurato",
+      costUnknown_other: "{{count, number}} chiamate senza costo misurato",
+      costUnknownHint: "Nessun costo misurato per queste chiamate: il modello non ha un prezzo in Integrazioni AI, o il provider non ne ha comunicato i token. Il budget in token vale comunque.",
     },
     current: { loading: "Caricamento dell'autopilot di questo libro…", working: "Sta lavorando su", preparing: "Prepara il prossimo passo…" },
     frozen: {

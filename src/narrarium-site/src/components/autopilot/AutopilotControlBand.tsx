@@ -10,7 +10,8 @@ import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useAutopilotControl, type AutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useTextDetail } from "@/autopilot/useLiveText";
 import { AttemptNow } from "@/components/autopilot/band/Attempt";
-import { CycleList, FrozenChangesChip, HostChip, PhaseList, PreviewLine, ProgressBars, SignalAge, StatusMessage, StatusPill, StepElapsed, StepNow, UsageLine } from "@/components/autopilot/band/parts";
+import { CycleList, FrozenChangesChip, HostChip, PhaseList, PreviewLine, ProgressBars, SignalAge, StatusMessage, StatusPill, StepElapsed, StepNow } from "@/components/autopilot/band/parts";
+import { CostLine } from "@/components/autopilot/costs/CostLine";
 import { LastDone } from "@/components/autopilot/live/LastDone";
 import { LiveAnnouncer, TextDetailToggle } from "@/components/autopilot/live/LiveControls";
 import { StreamLines } from "@/components/autopilot/live/StreamLines";
@@ -163,7 +164,7 @@ export function AutopilotControlBand({ bookId, variant = "full", commands }: Aut
               {full && model.cycle && <CycleList cycle={model.cycle} />}
               {/* Which model the step asks now, beside what it costs: the two lines that say where the money goes. */}
               {full && running && !model.wait && <AttemptNow bookId={bookId} className="-mb-1.5" />}
-              {full && !completed && <UsageLine summary={summary} options={model.state?.options ?? null} currency={model.currency} step={model.stepSpend} />}
+              {full && !completed && <CostLine model={model} />}
               {!commands && lastDone}
             </div>
             {commands && <div className={cn("min-w-0", full ? "max-w-[22rem] space-y-3" : "border-t pt-3")}>{commands}{lastDone}</div>}
@@ -197,7 +198,7 @@ export function AutopilotBandDetails({ bookId, variant }: { bookId: string; vari
       {compact && <ProgressBars summary={summary} chapters={false} />}
       {summary.progress.chapters > 0 && <PhaseList summary={summary} />}
       {model.cycle && <CycleList cycle={model.cycle} />}
-      {!completed && <UsageLine summary={summary} options={model.state?.options ?? null} currency={model.currency} step={model.stepSpend} />}
+      {!completed && <CostLine model={model} />}
     </div>
   );
 }

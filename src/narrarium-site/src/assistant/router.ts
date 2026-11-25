@@ -5,6 +5,7 @@ import { followOrder, integrationChatModels, modelSupportsCapability, pickModelF
 import { executeCompletionFallback } from "@/assistant/completionFallback";
 import { budgetLlmMessages, likelyMessageTokens, resolveModelTokenBudgets } from "@/assistant/promptBudget";
 import { announceRetry } from "@/assistant/retryNotice";
+import { usageTaskOf } from "@/costs/usageTasks";
 import { engineOutputLimit, jsonInstructionTokens, requestedOutput, runCopilotAttempt, runMetadata, startRoutingClock, toolsOnly, toolsRequiredError, toolTokens, usageReport, type ChatCandidate, type SkippedModels } from "@/assistant/copilotAi";
 import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
 import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
@@ -461,6 +462,7 @@ export async function completeTextRouted(
             partial = "";
           },
           onRetry: (notice) => announceRetry(options?.signal, notice),
+          usageTask: usageTaskOf(options?.signal),
         });
         text = response.text;
       } catch (error) {
@@ -553,6 +555,7 @@ export async function completeToolRouted<T>(
         },
         clock,
         onRetry: (notice) => announceRetry(options?.signal, notice),
+        usageTask: usageTaskOf(options?.signal),
       });
       const output = options.validate ? options.validate(response.json) : response.json as T;
       return {
@@ -636,6 +639,7 @@ export async function classifyConfirmationRouted(settings: AppSettings, utteranc
         maxOutputTokens: requested,
         clock,
         onRetry: (notice) => announceRetry(operationSignal, notice),
+        usageTask: usageTaskOf(operationSignal),
       });
       const decision = (response.json as { decision?: unknown } | undefined)?.decision;
       return decision === "yes" || decision === "no" ? decision : "unclear";

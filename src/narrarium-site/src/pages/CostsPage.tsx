@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { AlertTriangle, Coins } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { EstimatedMoney, MoneyText } from "@/components/costs/MoneyText";
+import { EstimatedMoney, MoneyText, estimatePhrase } from "@/components/costs/MoneyText";
 import { useCostsStore } from "@/costs/costsStore";
 import { localMonth, USAGE_SOURCES, type UsageRow } from "@/costs/ledger";
 import { EARLIER, usageRows } from "@/costs/legacyCosts";
@@ -34,7 +34,9 @@ function orderValue(totals: MoneyTotals, money: ReturnType<typeof useMoney>): nu
 function Figures({ summary }: { summary: UsageSummary }) {
   const { t } = useTranslation();
   const number = useNumber();
+  const money = useMoney();
   const estimatedTokens = summary.estimatedInputTokens + summary.estimatedOutputTokens;
+  const estimate = estimatePhrase(t, money, estimatedTokens > 0 ? number.whole(estimatedTokens) : null, summary.estimated);
   return (
     <div className="space-y-1 text-xs text-muted-foreground">
       <p className="tabular-nums">
@@ -48,8 +50,8 @@ function Figures({ summary }: { summary: UsageSummary }) {
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 font-medium text-amber-800 dark:text-amber-300">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           {summary.unpricedCalls > 0 && <span>{t("costs.figures.unpriced", { count: summary.unpricedCalls })}</span>}
-          {summary.unknownUsageCalls > 0 && <span>{t("costs.figures.unknownUsage", { count: summary.unknownUsageCalls })}{estimatedTokens > 0 ? ` (${t("costs.figures.estimatedTokens", { value: number.whole(estimatedTokens) })})` : ""}</span>}
-          <EstimatedMoney totals={summary.estimated} />
+          {summary.unknownUsageCalls > 0 && <span>{t("costs.figures.unknownUsage", { count: summary.unknownUsageCalls })}{estimate ? ` (${estimate})` : ""}</span>}
+          {summary.unknownUsageCalls <= 0 && <EstimatedMoney totals={summary.estimated} />}
         </p>
       )}
     </div>
@@ -72,11 +74,12 @@ function SummaryRow({ name, summary }: { name: string; summary: UsageSummary }) 
 function BookCard({ bookId, name, rows, legacy, month }: { bookId: string; name: string; rows: UsageRow[]; legacy: BookUsage | undefined; month: string }) {
   const { t } = useTranslation();
   const number = useNumber();
-  const total = useMemo(() => summarize(rows), [rows]);
-  const thisMonth = useMemo(() => summarize(rows, (row) => inMonth(row, month)), [rows, month]);
-  const bySource = useMemo(() => summarizeBy(rows, (row) => (row.writer === EARLIER ? null : row.source)), [rows]);
-  const earlier = useMemo(() => summarize(rows, (row) => row.writer === EARLIER), [rows]);
-  const byModel = useMemo(() => summarizeBy(rows, (row) => (row.writer === EARLIER ? null : row.model || null)), [rows]);
+  const { relabels } = useMoney();
+  const total = useMemo(() => summarize(rows, undefined, relabels), [rows, relabels]);
+  const thisMonth = useMemo(() => summarize(rows, (row) => inMonth(row, month), relabels), [rows, month, relabels]);
+  const bySource = useMemo(() => summarizeBy(rows, (row) => (row.writer === EARLIER ? null : row.source), undefined, relabels), [rows, relabels]);
+  const earlier = useMemo(() => summarize(rows, (row) => row.writer === EARLIER, relabels), [rows, relabels]);
+  const byModel = useMemo(() => summarizeBy(rows, (row) => (row.writer === EARLIER ? null : row.model || null), undefined, relabels), [rows, relabels]);
   const media = { ...emptyBucket(), ...legacy };
   const titleId = `costs-book-${bookId || "none"}`;
   return (
@@ -133,14 +136,14 @@ export function CostsPage() {
   const books = useSettingsStore((s) => s.settings.books);
   const rows = useMemo(() => usageRows(file, money.display), [file, money.display]);
   const month = localMonth(new Date());
-  const total = useMemo(() => summarize(rows), [rows]);
-  const thisMonth = useMemo(() => summarize(rows, (row) => inMonth(row, month)), [rows, month]);
-  const bySource = useMemo(() => summarizeBy(rows, (row) => (row.writer === EARLIER ? null : row.source)), [rows]);
+  const total = useMemo(() => summarize(rows, undefined, money.relabels), [rows, money.relabels]);
+  const thisMonth = useMemo(() => summarize(rows, (row) => inMonth(row, month), money.relabels), [rows, month, money.relabels]);
+  const bySource = useMemo(() => summarizeBy(rows, (row) => (row.writer === EARLIER ? null : row.source), undefined, money.relabels), [rows, money.relabels]);
   const byBook = useMemo(() => {
     const groups = new Map<string, UsageRow[]>();
     for (const row of rows) groups.set(row.bookId, [...(groups.get(row.bookId) ?? []), row]);
     return [...groups.entries()]
-      .map(([bookId, bookRows]) => ({ bookId, rows: bookRows, money: summarize(bookRows).money }))
+      .map(([bookId, bookRows]) => ({ bookId, rows: bookRows, money: summarize(bookRows, undefined, money.relabels).money }))
       .sort((left, right) => orderValue(right.money, money) - orderValue(left.money, money) || left.bookId.localeCompare(right.bookId));
   }, [rows, money]);
   const nameOf = (bookId: string) => (bookId ? books.find((book) => book.id === bookId)?.name ?? file.books[bookId]?.bookName ?? bookId : t("costs.noBook"));
@@ -152,7 +155,7 @@ export function CostsPage() {
         <p className="text-sm text-muted-foreground">{t("costs.intro")}</p>
         <p className="text-sm text-muted-foreground">
           {t("costs.shownIn", { currency: money.display })}{" "}
-          <Link to="/app/settings/ai-integrations" className="font-medium text-primary underline underline-offset-2">{t("costs.changeCurrency")}</Link>
+          <Link to="/app/settings/costs" className="font-medium text-primary underline underline-offset-2">{t("costs.changeCurrency")}</Link>
         </p>
       </div>
 

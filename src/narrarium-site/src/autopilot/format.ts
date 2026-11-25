@@ -104,8 +104,8 @@ export function formatCount(value: number): string {
  * with the settings as they are now: in the currency of the setting when it is that one or has an exchange rate to it, else in its own. Nothing is «—».
  * A component that shows it follows the settings with `useMoney`, so that a change of the currency or of a rate shows at once.
  */
-export function formatCost(value: number | undefined, currency: string | undefined): string {
-  return formatAmount(value ?? 0, currency, { ...moneyContextNow(), locale: locale() }, { zero: "dash" });
+export function formatCost(value: number | undefined, currency: string | undefined, at?: string): string {
+  return formatAmount(value ?? 0, currency, { ...moneyContextNow(), locale: locale() }, { zero: "dash", ...(at ? { at } : {}) });
 }
 
 /** "Writing · Chapters approved: 1/3 · Words: 4,200"; once completed the status badge already says so. */

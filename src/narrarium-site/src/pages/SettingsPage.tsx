@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, Bot, ChevronRight, Cloud, CloudOff, Download, Github, Loader2, Mic, Plug, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
+import { ArrowRight, Bot, ChevronRight, Cloud, CloudOff, Coins, Download, Github, Loader2, Mic, Plug, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import { ModelRequestFields, protocolOf, type ModelRequestPatch } from "@/compon
 import { NoThinkingWithToolsField } from "@/components/settings/NoThinkingWithToolsField";
 import { ReasoningParameterField } from "@/components/settings/ReasoningParameterField";
 import { EndpointTools } from "@/components/settings/endpoint/EndpointTools";
-import { integrationAnchor } from "@/components/settings/endpoint/anchor";
+import { integrationAnchor, mediaPriceAnchor, modelPriceAnchor } from "@/components/settings/endpoint/anchor";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
@@ -37,7 +37,8 @@ import { RouterRunNote } from "@/components/settings/router/RouterRunNote";
 import { RouterSections } from "@/components/settings/router/RouterSections";
 import { ToolsOnlyField } from "@/components/settings/router/ToolsOnlyField";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar";
-import { CostRatesEditor } from "@/components/settings/CostRatesEditor";
+import { CostCurrencyField } from "@/components/settings/CostCurrencyField";
+import { CostSettingsBody } from "@/components/settings/CostSettingsBody";
 import "@/i18n/costs";
 
 /** How long the bar of the settings says that a save is done before it goes away. */
@@ -49,16 +50,6 @@ const PROVIDERS: Array<{ value: AIProviderType; labelKey: string; fallback: stri
   { value: "github_models", labelKey: "settings.providers.github_models", fallback: "GitHub Models" },
   { value: "m365_copilot", labelKey: "settings.providers.m365_copilot", fallback: "Microsoft 365 Copilot" },
 ];
-
-const COST_CURRENCIES = [
-  { value: "USD", labelKey: "settings.currencies.USD", fallback: "USD — US Dollar" },
-  { value: "EUR", labelKey: "settings.currencies.EUR", fallback: "EUR — Euro" },
-  { value: "GBP", labelKey: "settings.currencies.GBP", fallback: "GBP — British Pound" },
-  { value: "JPY", labelKey: "settings.currencies.JPY", fallback: "JPY — Japanese Yen" },
-  { value: "CHF", labelKey: "settings.currencies.CHF", fallback: "CHF — Swiss Franc" },
-  { value: "CAD", labelKey: "settings.currencies.CAD", fallback: "CAD — Canadian Dollar" },
-  { value: "AUD", labelKey: "settings.currencies.AUD", fallback: "AUD — Australian Dollar" },
-] as const;
 
 function providerLabel(t: ReturnType<typeof useTranslation>["t"], value: AIProviderType): string {
   const provider = PROVIDERS.find((entry) => entry.value === value);
@@ -137,9 +128,6 @@ export function SettingsPage() {
   const [newTokenLabel, setNewTokenLabel] = useState("");
   const [newToken, setNewToken] = useState("");
   const [newIntegration, setNewIntegration] = useState<AIIntegration>(() => createBlankIntegration());
-  const currencyId = useId();
-  // The currency the person chose here: the change says at once what it changes (the unit of the prices from now on, never what was recorded).
-  const [currencyChosen, setCurrencyChosen] = useState<string | null>(null);
 
   useEffect(() => {
     setDefaultToken(settings.defaultGitHubToken);
@@ -268,6 +256,7 @@ export function SettingsPage() {
           <SettingsCard href="/app/settings/speech" title={t("speech.title")} description={t("speech.browserOnlyDescription")} icon={<Volume2 className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/repository" title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-5 w-5" />} />
           <SettingsCard href="/app/settings/server" title={t("personalServer.title")} description={t("personalServer.description")} icon={<Server className="h-5 w-5" />} />
+          <SettingsCard href="/app/settings/costs" title={t("settings.costSettings.title")} description={t("settings.costSettings.description")} icon={<Coins className="h-5 w-5" />} />
         </div>
       ) : section === "ai-integrations" ? (
         // The two AI pages share one mounted SettingsPage (router.tsx): keyed, so nothing of one carries over to the other.
@@ -275,22 +264,8 @@ export function SettingsPage() {
           <Section title={t("settings.aiIntegrations")} description={t("settings.aiDescription")} icon={<Plug className="h-4 w-4 shrink-0" />} defaultOpen>
             <div className="space-y-5">
               <DefaultIntegrationSelectors integrations={aiIntegrations} defaultWriting={defaultWriting} defaultReview={defaultReview} onWritingChange={(id) => patchAi({ defaultWritingIntegrationId: id })} onReviewChange={(id) => patchAi({ defaultReviewIntegrationId: id })} />
-              <div className="grid gap-2 sm:max-w-xs">
-                <Label htmlFor={currencyId}>{t("settings.costCurrency")}</Label>
-                <Select value={settings.costCurrency || "USD"} onValueChange={(value) => { setCurrencyChosen(value); patchSettings({ costCurrency: value }); }}>
-                  <SelectTrigger id={currencyId} aria-describedby={`${currencyId}-hint`}><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {COST_CURRENCIES.map((currency) => (
-                      <SelectItem key={currency.value} value={currency.value}>
-                        {t(currency.labelKey, { defaultValue: currency.fallback })}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p id={`${currencyId}-hint`} className="text-xs text-muted-foreground">{t("settings.costCurrencyHint")}</p>
-                {currencyChosen !== null && currencyChosen === settings.costCurrency && <p role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">{t("settings.costCurrencyChanged", { currency: settings.costCurrency || "USD" })}</p>}
-              </div>
-              <CostRatesEditor currency={settings.costCurrency || "USD"} rates={settings.costRates} onChange={(costRates) => patchSettings({ costRates })} />
+              <CostCurrencyField className="grid gap-2 sm:max-w-xs" />
+              <p className="text-xs text-muted-foreground">{t("settings.costSettings.ratesElsewhere")} <Link to="/app/settings/costs" className="font-medium text-primary underline underline-offset-2">{t("settings.costSettings.title")}</Link></p>
               {aiIntegrations.length === 0 && <p className="text-sm text-muted-foreground">{t("settings.noIntegrations")}</p>}
               <div className="grid gap-3">{aiIntegrations.map((integration) => <IntegrationAccordion key={integration.id} integration={integration}><IntegrationEditor integration={integration} onChange={(patch) => updateIntegration(integration.id, patch)} onRemove={() => removeIntegration(integration.id)} credentialsDisabled={false} /></IntegrationAccordion>)}</div>
               <Separator />
@@ -346,6 +321,10 @@ export function SettingsPage() {
         <Section title={t("speech.title")} description={t("speech.browserOnlyDescription")} icon={<Volume2 className="h-4 w-4 shrink-0" />} defaultOpen><SpeechCardBody settings={settings} patchSettings={patchSettings} /></Section>
       ) : section === "server" ? (
         <Section title={t("personalServer.title")} description={t("personalServer.description")} icon={<Server className="h-4 w-4 shrink-0" />} defaultOpen><PersonalServerSettingsBody settings={settings} patchSettings={patchSettings} onSave={handleSave} /></Section>
+      ) : section === "costs" ? (
+        <fieldset className="min-w-0 space-y-3" aria-describedby={offline ? "offline-settings-explanation" : undefined} key="costs">
+          <Section title={t("settings.costSettings.title")} description={t("settings.costSettings.description")} icon={<Coins className="h-4 w-4 shrink-0" />} defaultOpen><CostSettingsBody /></Section>
+        </fieldset>
       ) : (
         <Section title={t("repoSettings.title")} description={t("repoSettings.description")} icon={<Route className="h-4 w-4 shrink-0" />} defaultOpen><RepositorySettingsBody settings={settings} patchSettings={patchSettings} /></Section>
       )}
@@ -362,7 +341,7 @@ export function SettingsPage() {
   );
 }
 
-function currentSettingsSection(pathname: string): "home" | "ai-integrations" | "ai-router" | "deep-search" | "tools" | "github" | "speech" | "repository" | "server" {
+function currentSettingsSection(pathname: string): "home" | "ai-integrations" | "ai-router" | "deep-search" | "tools" | "github" | "speech" | "repository" | "server" | "costs" {
   if (/\/app\/settings\/ai-integrations$/.test(pathname)) return "ai-integrations";
   if (/\/app\/settings\/ai-router$/.test(pathname)) return "ai-router";
   if (/\/app\/settings\/deep-search$/.test(pathname)) return "deep-search";
@@ -371,6 +350,7 @@ function currentSettingsSection(pathname: string): "home" | "ai-integrations" | 
   if (/\/app\/settings\/speech$/.test(pathname)) return "speech";
   if (/\/app\/settings\/repository$/.test(pathname)) return "repository";
   if (/\/app\/settings\/server$/.test(pathname)) return "server";
+  if (/\/app\/settings\/costs$/.test(pathname)) return "costs";
   return "home";
 }
 
@@ -383,6 +363,7 @@ function settingsSectionMeta(t: ReturnType<typeof useTranslation>["t"], section:
   if (section === "speech") return { title: t("speech.title"), description: t("speech.browserOnlyDescription") };
   if (section === "repository") return { title: t("repoSettings.title"), description: t("repoSettings.description") };
   if (section === "server") return { title: t("personalServer.title"), description: t("personalServer.description") };
+  if (section === "costs") return { title: t("settings.costSettings.title"), description: t("settings.costSettings.description") };
   return { title: t("settings.title"), description: t("settings.description") };
 }
 
@@ -565,6 +546,27 @@ function IntegrationAccordion({ integration, children }: { integration: AIIntegr
   );
 }
 
+/**
+ * Prices behind a disclosure that a link can open (`#model-price-…`, `#media-price-…`: the fix of «calls without a price» in the autopilot): the card of the
+ * integration and the prices open, come into view and their first field takes the focus, so the price can be typed at once. Followed once per entry of the
+ * history. The prices open the disclosures around them themselves: a field of a closed card cannot take the focus.
+ */
+function PriceDetails({ anchor, className, children }: { anchor: string; className?: string; children: ReactNode }) {
+  const location = useLocation();
+  const box = useRef<HTMLDetailsElement>(null);
+  const followed = useRef("");
+  useEffect(() => {
+    const element = box.current;
+    if (!element || hashName(location.hash) !== anchor || followed.current === location.key) return;
+    followed.current = location.key;
+    for (let around = element.parentElement?.closest("details"); around; around = around.parentElement?.closest("details")) around.open = true;
+    element.open = true;
+    element.scrollIntoView?.({ block: "center" });
+    element.querySelector<HTMLElement>("input")?.focus({ preventScroll: true });
+  }, [location.hash, location.key, anchor]);
+  return <details ref={box} id={anchor} className={className}>{children}</details>;
+}
+
 function IntegrationEditor({ integration, onChange, onRemove, credentialsDisabled = false }: { integration: AIIntegration; onChange: (patch: Partial<AIIntegration>) => void; onRemove?: () => void; credentialsDisabled?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -659,6 +661,7 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
 
       {integration.provider !== "m365_copilot" && (
         <ChatModelsEditor
+          integrationId={integration.id}
           provider={integration.provider}
           apiVersion={integration.apiVersion}
           endpoint={integration.endpoint ?? ""}
@@ -670,7 +673,7 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
       )}
 
       {usesMedia && (
-        <details className="mt-3 rounded-lg border bg-muted/20 p-3">
+        <PriceDetails anchor={mediaPriceAnchor(integration.id)} className="mt-3 rounded-lg border bg-muted/20 p-3">
           <summary className="cursor-pointer py-1 text-sm font-medium [@media(pointer:coarse)]:py-3">{t("costs.mediaPricingTitle")}</summary>
           <p className="mt-1 text-xs text-muted-foreground">{t("costs.mediaPricingHint", { currency: unit })}</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -685,14 +688,14 @@ function IntegrationEditor({ integration, onChange, onRemove, credentialsDisable
             <PriceField label={t("costs.priceImgCachedImage", { unit })} value={integration.pricing?.imageCachedInputImagePerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageCachedInputImagePerMTok: v } })} />
             <PriceField label={t("costs.priceImgOutput", { unit })} value={integration.pricing?.imageOutputPerMTok} onChange={(v) => onChange({ pricing: { ...integration.pricing, imageOutputPerMTok: v } })} />
           </div>
-        </details>
+        </PriceDetails>
       )}
       <Badge variant="secondary" className="mt-3 text-xs">{providerLabel(t, integration.provider)}</Badge>
     </div>
   );
 }
 
-function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onChange, networkDisabled = false }: { provider: AIProviderType; apiVersion?: string; endpoint: string; apiKey: string; models: ChatModel[]; onChange: (models: ChatModel[]) => void; networkDisabled?: boolean }) {
+function ChatModelsEditor({ integrationId, provider, apiVersion, endpoint, apiKey, models, onChange, networkDisabled = false }: { integrationId: string; provider: AIProviderType; apiVersion?: string; endpoint: string; apiKey: string; models: ChatModel[]; onChange: (models: ChatModel[]) => void; networkDisabled?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const id = useId();
@@ -893,7 +896,7 @@ function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onCh
                 );
               })}
             </div>
-            <details className="mt-2 rounded-md border bg-muted/20 p-2">
+            <PriceDetails anchor={modelPriceAnchor(integrationId, model.id)} className="mt-2 rounded-md border bg-muted/20 p-2">
               <summary className="cursor-pointer py-1 text-xs font-medium [@media(pointer:coarse)]:py-3">{t("costs.chatPricingTitle")}</summary>
               <p className="mt-1 text-xs text-muted-foreground">{t("costs.chatPricingHint", { currency: unit })}</p>
               <div className="mt-2 grid gap-2 sm:grid-cols-3">
@@ -901,7 +904,7 @@ function ChatModelsEditor({ provider, apiVersion, endpoint, apiKey, models, onCh
                 <PriceField label={t("costs.priceCached", { unit })} value={model.pricing?.cachedPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, cachedPerMTok: v } })} />
                 <PriceField label={t("costs.priceOutput", { unit })} value={model.pricing?.outputPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, outputPerMTok: v } })} />
               </div>
-            </details>
+            </PriceDetails>
           </div>
         ))}
       </div>

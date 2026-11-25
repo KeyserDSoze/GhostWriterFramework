@@ -1,3 +1,6 @@
+// What turns records into costs is loaded with the first record (`recordUsage`); a test that moves a virtual clock, or reads the costs right after a call,
+// must not wait for a module to be read, so it is already there.
+import "@/costs/applyUsage";
 import { useCostsStore } from "@/costs/costsStore";
 import { emptyCostsFile } from "@/costs/model";
 import { resetUsageRecorder } from "@/costs/recordUsage";

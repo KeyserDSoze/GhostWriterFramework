@@ -158,6 +158,9 @@ test("a model that took function tools only with none is told with the Responses
     thinkingA: "high",
     modelA: { supportsStreaming: false },
   });
+  // The stub answers at once: the run could reach its end before the button is pressed, and no request would be left to go to the Responses API. Each
+  // answer takes a moment, so the run is still at work when the author decides.
+  run.a.delayMs = 400;
   const notice = page.locator("[data-learned-model]");
   await expect(notice).toBeVisible({ timeout: 40_000 });
   const ways = notice.locator("[data-learned-way]");

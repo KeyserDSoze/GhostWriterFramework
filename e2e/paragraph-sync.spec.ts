@@ -565,6 +565,7 @@ test("authenticated route families survive direct navigation and refresh", async
     ["app/settings/speech", "SettingsPage"],
     ["app/settings/repository", "SettingsPage"],
     ["app/settings/server", "SettingsPage"],
+    ["app/settings/costs", "SettingsPage"],
     ["app/reader-settings", "ReaderSettingsPage"],
     ["app/custom-actions", "CustomActionsPage"],
     ["app/migrate", "MigratePage"],

@@ -218,7 +218,6 @@ const autopilotEn = {
         calls_other: "{{count, number}} calls",
         costBar: "Cost against the budget",
         tokensBar: "Tokens against the budget",
-        why: "What does this mean?",
         step: "this step {{value}}",
       },
     },
@@ -315,7 +314,6 @@ const autopilotEn = {
         attempt: "Attempt {{number}}",
         retryOf: "Retry {{attempt}} of {{retries}}",
         notes: "Notes",
-        tokens: "{{input}} in · {{output}} out · {{cached}} cached",
       },
     },
     result: {
@@ -923,9 +921,9 @@ const autopilotEn = {
       usageUnknown_one: "{{count, number}} call without a token count",
       usageUnknown_other: "{{count, number}} calls without a token count",
       usageUnknownHint: "The provider did not report the tokens of these calls: the totals above use an estimate for them.",
-      costUnknown_one: "{{count, number}} call without a price",
-      costUnknown_other: "{{count, number}} calls without a price",
-      costUnknownHint: "The model has no price in AI Integrations, so these calls are not in the estimated cost. A token budget still applies.",
+      costUnknown_one: "{{count, number}} call without a measured cost",
+      costUnknown_other: "{{count, number}} calls without a measured cost",
+      costUnknownHint: "No measured cost for these calls: the model has no price in AI Integrations, or the provider did not report their tokens. A token budget still applies.",
     },
     current: { loading: "Loading the autopilot of this book…", working: "Working on", preparing: "Preparing the next step…" },
     frozen: {

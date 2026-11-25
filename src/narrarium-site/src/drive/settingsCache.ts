@@ -8,11 +8,11 @@ const LEGACY_UNSAFE_CACHE_PREFIX = "narrarium-settings-cache-v1:";
 
 export const SAFE_SETTINGS_KEYS = [
   "azureOpenAI", "aiIntegrations", "defaultWritingIntegrationId", "defaultReviewIntegrationId", "taskRouting", "fallbackDisclosure",
-  "routingExecution", "aiToolsOnly", "costCurrency", "costRates", "ui", "speech", "repository", "deepSearch", "copilotTools", "reader", "customActionsSchemaVersion",
+  "routingExecution", "aiToolsOnly", "costCurrency", "costRates", "costRelabels", "ui", "speech", "repository", "deepSearch", "copilotTools", "reader", "customActionsSchemaVersion",
   "customActions", "books", "branchMemory",
 ] as const;
 
-export const OFFLINE_EDITABLE_SETTINGS_KEYS = ["costCurrency", "costRates", "ui", "repository", "reader", "customActions", "copilotTools", "speech", "books", "branchMemory"] as const;
+export const OFFLINE_EDITABLE_SETTINGS_KEYS = ["costCurrency", "costRates", "costRelabels", "ui", "repository", "reader", "customActions", "copilotTools", "speech", "books", "branchMemory"] as const;
 export type OfflineEditableSettingsKey = typeof OFFLINE_EDITABLE_SETTINGS_KEYS[number];
 
 export type SafeSettingsKey = typeof SAFE_SETTINGS_KEYS[number];
@@ -121,7 +121,7 @@ function assertOfflineBooksAllowed(current: AppSettings["books"], next: AppSetti
 
 export function assertOfflineSettingsReplacementAllowed(current: AppSettings, next: AppSettings): void {
   // Which branch a book is on is chosen offline too: the branches live on this device, and the memory of them (names and dates) is no credential.
-  const fullyEditable = new Set<keyof AppSettings>(["costCurrency", "costRates", "ui", "repository", "reader", "customActions", "copilotTools", "branchMemory"]);
+  const fullyEditable = new Set<keyof AppSettings>(["costCurrency", "costRates", "costRelabels", "ui", "repository", "reader", "customActions", "copilotTools", "branchMemory"]);
   const keys = [...new Set([...Object.keys(current), ...Object.keys(next)])] as Array<keyof AppSettings>;
   for (const key of keys) {
     if (same(current[key], next[key])) continue;
@@ -157,6 +157,7 @@ export function projectSafeSettings(settings: AppSettings): SafeSettingsProjecti
     ...(settings.aiToolsOnly !== undefined ? { aiToolsOnly: settings.aiToolsOnly } : {}),
     costCurrency: settings.costCurrency,
     ...(settings.costRates ? { costRates: settings.costRates } : {}),
+    ...(settings.costRelabels ? { costRelabels: settings.costRelabels } : {}),
     ui: settings.ui,
     speech: settings.speech,
     repository: settings.repository,

@@ -126,6 +126,7 @@ import { directSecretPath } from "@/assistant/secretPolicy";
 import { deleteLocalChatSession, loadLocalChatSession, saveLocalChatSession } from "@/assistant/chatLocal";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { scrollBehavior } from "@/lib/motion";
+import { beginUsageTask } from "@/costs/usageTasks";
 
 ensureBuiltinCopilotToolsRegistered();
 
@@ -1442,6 +1443,8 @@ export function AssistantPanel() {
     else options?.signal?.addEventListener("abort", abortFromCaller, { once: true });
     if (controller.signal.aborted) return null;
     activePromptRef.current = { ...requestOwner, controller };
+    // The whole turn, its tools included, is one task of the Copilot in the costs: every call it makes carries this signal.
+    const endUsageTask = beginUsageTask(controller.signal, { task: `copilot-${requestId}`, origin: "copilot" });
     const ownsRequest = () => isAssistantRequestOwned(
       activePromptRef.current,
       requestOwner,
@@ -1562,6 +1565,7 @@ export function AssistantPanel() {
     } finally {
       options?.signal?.removeEventListener("abort", abortFromCaller);
       stopListeningToRetries();
+      endUsageTask();
       setRetryNotice(null);
       if (controller.signal.aborted) setRequestStatus("");
       if (activePromptRef.current?.requestId === requestId) {

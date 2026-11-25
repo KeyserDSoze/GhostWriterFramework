@@ -8,6 +8,10 @@ import { AutopilotTimeline } from "@/components/autopilot/AutopilotTimeline";
 import { useAutopilotStore } from "@/autopilot/store";
 import { formatClock } from "@/autopilot/format";
 import { GROUP_ROWS } from "@/autopilot/timelineModel";
+import { resetTaskCosts, useTaskCosts, type TaskCost } from "@/autopilot/taskCosts";
+import { useSettingsStore } from "@/store/settingsStore";
+import { DEFAULT_SETTINGS, type AIIntegration } from "@/types/settings";
+import "@/i18n/costs";
 import { chapterFlow, countActivityReads, eventAt, finishedEvent, insightFor, resetIds, resetSeq, retryNotice, runEnded, runStarted, sec, stepOf } from "./helpers/autopilotTimeline";
 
 const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options) as string;
@@ -642,5 +646,75 @@ describe("the rounds the plan records, and the verdict on the book, in the heade
     const review = { verdict: "revise" as const, score: 7, text: "Good, but the middle drags.", at: sec(40) };
     show({ activities: [final], finalReview: review });
     expect(groupHeader(new RegExp(t("autopilot.timeline.group.final")))).toHaveTextContent(`${t("autopilot.timeline.group.final")} · ${t("director.opinion.verdict.revise")} 7/10`);
+  });
+});
+
+describe("what a step cost, in its row", () => {
+  const PROXY = { id: "int-1", name: "LlmProxy", provider: "openai", endpoint: "https://proxy.example.test/v1", apiKey: "k", chatModels: [{ id: "m-free", name: "free-model" }] } as unknown as AIIntegration;
+  const recordOf = (activity: AutopilotActivity, patch: Partial<TaskCost> = {}): TaskCost => ({ bookId: BOOK, task: activity.id, calls: 1, money: { USD: 0.01 }, estimated: {}, inputTokens: 1000, cachedTokens: 0, outputTokens: 300, estimatedTokens: 0, unpricedCalls: 0, unknownUsageCalls: 0, models: ["gpt-5"], unpriced: [], at: sec(30), ...patch });
+  const keep = (...records: TaskCost[]) => act(() => { useTaskCosts.setState({ tasks: Object.fromEntries(records.map((entry) => [`${entry.bookId}\u0000${entry.task}`, entry])) }); });
+  // The text as it reads: the elements of a line apart, as the gaps of the layout set them.
+  const spaced = (node: Node): string => (node.nodeType === Node.TEXT_NODE ? node.textContent ?? "" : [...node.childNodes].map((child) => (child.nodeType === Node.ELEMENT_NODE ? ` ${spaced(child)} ` : spaced(child))).join(""));
+  const words = (element: Element) => spaced(element).replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+
+  beforeEach(() => {
+    resetTaskCosts();
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, aiIntegrations: [PROXY] } });
+  });
+
+  afterEach(() => {
+    resetTaskCosts();
+    useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+  });
+
+  it("says, closed, what a step this browser ran cost and how many calls it made, its retries and the fallbacks that were billed included", () => {
+    const failed = stepOf("write", { from: 0, length: 10, chapterNumber: 1, sceneNumber: 1, title: "Writing scene 1", status: "failed", error: "429 once", cost: 0.5 });
+    const worked = stepOf("write", { from: 40, length: 30, chapterNumber: 1, sceneNumber: 1, title: "Writing scene 1", summary: "640 words — done", cost: 0.5 });
+    keep(recordOf(failed, { calls: 2, money: { USD: 0.001 } }), recordOf(worked, { calls: 1, money: { USD: 0.03 } }));
+    show({ activities: [failed, worked] });
+    const badge = summaryOf("Writing scene 1").querySelector("[data-step-cost]") as HTMLElement;
+    expect(words(badge), "this browser's record, not the engine's").toBe("$0.031 · 3 calls");
+  });
+
+  it("tells, once it is opened, its money, its calls, its tokens and that this browser recorded them", async () => {
+    const worked = stepOf("write", { from: 0, length: 30, chapterNumber: 1, sceneNumber: 1, title: "Writing scene 1", summary: "640 words — done" });
+    keep(recordOf(worked, { calls: 2, inputTokens: 2000, cachedTokens: 500, outputTokens: 600, money: { USD: 0.02, EUR: 0.01 } }));
+    show({ activities: [worked] });
+    fireEvent.click(summaryOf("Writing scene 1"));
+    const facts = (await screen.findByText(t("costs.step.cost"))).closest("[data-step-cost-facts]") as HTMLElement;
+    expect(words(facts)).toContain("$0.02 + €0.01");
+    expect(facts).toHaveTextContent(t("costs.figures.calls", { count: 2, value: "2" }));
+    expect(facts).toHaveTextContent(t("costs.step.tokens", { input: "2,000", cached: "500", output: "600" }));
+    expect(facts).toHaveTextContent(t("costs.step.fromDevice"));
+  });
+
+  it("names the models it asked without a price, with the way to their price, and keeps the estimate of the calls without a token count apart", async () => {
+    const worked = stepOf("write", { from: 0, length: 30, chapterNumber: 1, sceneNumber: 1, title: "Writing scene 1", summary: "640 words — done" });
+    keep(recordOf(worked, { calls: 3, unpricedCalls: 1, unpriced: [{ integrationId: "int-1", model: "free-model" }], unknownUsageCalls: 1, estimated: { USD: 0.002 }, estimatedTokens: 800 }));
+    show({ activities: [worked] });
+    const summary = summaryOf("Writing scene 1");
+    expect(within(summary).getByText(t("costs.step.notKnown"))).toBeInTheDocument();
+    fireEvent.click(summary);
+    const facts = (await screen.findByText(t("costs.step.cost"))).closest("[data-step-cost-facts]") as HTMLElement;
+    expect(words(facts)).toContain(`${t("costs.figures.unknownUsage", { count: 1 })} · ${t("costs.estimate.withCost", { tokens: "800", amount: "$0.002" })}`);
+    expect(words(facts)).toContain("$0.01");
+    expect(facts).toHaveTextContent(t("costs.figures.unpriced", { count: 1 }));
+    expect(within(facts).getByRole("link", { name: `${t("costs.fix.openPrices")} — free-model · LlmProxy` })).toHaveAttribute("href", "/app/settings/ai-integrations#model-price-int-1--m-free");
+  });
+
+  it("says the engine's record of a step this browser did not run: its cost and tokens, no calls, and that it is the server's summary for a run on the server", async () => {
+    const elsewhere = stepOf("write", { from: 0, length: 30, chapterNumber: 1, sceneNumber: 1, title: "Writing scene 1", summary: "640 words — done", cost: 0.0312, usage: { inputTokens: 4001, outputTokens: 900, cachedInputTokens: 100 }, host: "server" });
+    show({ activities: [elsewhere] });
+    const summary = summaryOf("Writing scene 1");
+    expect(words(summary.querySelector("[data-step-cost]") as HTMLElement)).toBe("$0.0312");
+    fireEvent.click(summary);
+    const facts = (await screen.findByText(t("costs.step.cost"))).closest("[data-step-cost-facts]") as HTMLElement;
+    expect(facts).toHaveTextContent(t("costs.step.fromServer"));
+    expect(facts).not.toHaveTextContent(t("costs.figures.calls", { count: 1, value: "1" }));
+  });
+
+  it("says nothing of a step that spent nothing", () => {
+    show({ activities: [stepOf("consolidate", { from: 0, chapterNumber: 1, title: "Closing chapter 1", summary: "Chapter closed." })] });
+    expect(summaryOf("Closing chapter 1").querySelector("[data-step-cost]")).toBeNull();
   });
 });

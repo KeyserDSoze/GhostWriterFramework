@@ -49,7 +49,7 @@ afterEach(async () => {
 });
 
 describe("Settings home", () => {
-  it("lists AI Integrations first and AI Router right after it, then the other sections as before", async () => {
+  it("lists AI Integrations first and AI Router right after it, then the other sections as before, Costs last", async () => {
     await show("/app/settings");
     expect(settingsHrefs()).toEqual([
       "/app/settings/ai-integrations",
@@ -60,6 +60,7 @@ describe("Settings home", () => {
       "/app/settings/speech",
       "/app/settings/repository",
       "/app/settings/server",
+      "/app/settings/costs",
     ]);
   });
 

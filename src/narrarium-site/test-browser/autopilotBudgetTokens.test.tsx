@@ -249,11 +249,11 @@ describe("the line of the cost and the use, when some calls cannot be counted", 
     useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
   });
 
-  it("says how many calls have no token count and how many have no price, with a short reason for each", () => {
+  it("says how many calls have no token count and how many have no measured cost (no price, or tokens estimated), with a short reason for each", () => {
     seed({ usageUnknownCalls: 3, costUnknownCalls: 2 });
     render(<Page />);
     expect(screen.getByText("3 calls without a token count")).toBeInTheDocument();
-    expect(screen.getByText("2 calls without a price")).toBeInTheDocument();
+    expect(screen.getByText("2 calls without a measured cost")).toBeInTheDocument();
     expect(screen.getByText(t("autopilot.progress.usageUnknownHint"))).toBeInTheDocument();
     expect(screen.getByText(t("autopilot.progress.costUnknownHint"))).toBeInTheDocument();
   });
@@ -262,7 +262,7 @@ describe("the line of the cost and the use, when some calls cannot be counted", 
     seed({ usageUnknownCalls: 1, costUnknownCalls: 1 });
     render(<Page />);
     expect(screen.getByText("1 call without a token count")).toBeInTheDocument();
-    expect(screen.getByText("1 call without a price")).toBeInTheDocument();
+    expect(screen.getByText("1 call without a measured cost")).toBeInTheDocument();
   });
 
   it("says it in Italian, one or many", async () => {
@@ -270,7 +270,7 @@ describe("the line of the cost and the use, when some calls cannot be counted", 
     seed({ usageUnknownCalls: 1, costUnknownCalls: 5 });
     render(<Page />);
     expect(screen.getByText("1 chiamata senza conteggio dei token")).toBeInTheDocument();
-    expect(screen.getByText("5 chiamate senza prezzo")).toBeInTheDocument();
+    expect(screen.getByText("5 chiamate senza costo misurato")).toBeInTheDocument();
   });
 
   it("writes a large number with the separators of the language", async () => {
@@ -287,26 +287,26 @@ describe("the line of the cost and the use, when some calls cannot be counted", 
     seed({ usageUnknownCalls: 0, costUnknownCalls: 4 });
     render(<Page />);
     expect(screen.queryByText(/without a token count/)).not.toBeInTheDocument();
-    expect(screen.getByText("4 calls without a price")).toBeInTheDocument();
+    expect(screen.getByText("4 calls without a measured cost")).toBeInTheDocument();
   });
 
   it("shows nothing when every call is counted, or when the state does not say", () => {
     seed({ usageUnknownCalls: 0, costUnknownCalls: 0 });
     const view = render(<Page />);
-    expect(screen.queryByText(/without a token count|without a price/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/without a token count|without a measured cost/)).not.toBeInTheDocument();
     view.unmount();
     seed({});
     render(<Page />);
-    expect(screen.queryByText(/without a token count|without a price/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/without a token count|without a measured cost/)).not.toBeInTheDocument();
   });
 
   it("follows the live summaries of the run", async () => {
     seed({});
     render(<Page />);
-    expect(screen.queryByText(/without a price/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/without a measured cost/)).not.toBeInTheDocument();
     const live = { ...summaryOf({ costUnknownCalls: 2 }), updatedAt: "2026-11-21T10:05:00.000Z" };
     await act(async () => { useAutopilotStore.getState().ingest({ bookId: BOOK.id, at: live.updatedAt, seq: 1, type: "state", state: live } as AutopilotEvent, BOOK.name); });
     const band = document.querySelector("[data-autopilot-band]") as HTMLElement;
-    expect(within(band).getByText("2 calls without a price")).toBeInTheDocument();
+    expect(within(band).getByText("2 calls without a measured cost")).toBeInTheDocument();
   });
 });
