@@ -98,6 +98,39 @@ test("C16: every integration has a base, the providers' defaults included; what 
   assert.deepEqual(unapprovedAiBases({ aiIntegrations: [] }, []), []);
 });
 
+test("a model with an address of its own is a destination of its own: the key goes there, so its origin and path (never its query) wait for approval, and a call for it is refused until they are approved", () => {
+  const { aiDestinations, unapprovedAiBases, assertAiApproved, AiNotApprovedError } = testing;
+  const secret = "SECRET-QUERY-VALUE-123456";
+  const config = {
+    aiIntegrations: [{
+      id: "z", name: "Azure", provider: "azure_openai", endpoint: "https://res.openai.azure.com", apiKey: "k",
+      chatModels: [
+        { id: "a", name: "gpt-5.2", capabilities: ["default"], apiProtocol: "responses", endpointUrl: `https://Gateway.Example.com/openai/responses?api-version=2025-04-01-preview&key=${secret}` },
+        { id: "b", name: "plain", capabilities: ["default"] },
+        { id: "c", name: "unsafe", capabilities: ["default"], endpointUrl: "https://user:pass@gateway.example.com/x" },
+      ],
+    }],
+    taskRouting: { autopilot: { primary: { integrationId: "z", model: "gpt-5.2" }, fallbacks: [] } },
+  };
+  assert.deepEqual(aiDestinations(config).map((entry) => [entry.integrationId, entry.model, entry.base]), [
+    ["z", undefined, "https://res.openai.azure.com"],
+    ["z", "gpt-5.2", "https://gateway.example.com/openai/responses"],
+  ], "the base of the integration, and the address of the model without its query; an address with credentials is nothing to approve");
+  assert.deepEqual(unapprovedAiBases(config, []), ["https://res.openai.azure.com", "https://gateway.example.com/openai/responses"]);
+  assert.deepEqual(unapprovedAiBases(config, ["https://res.openai.azure.com"]), ["https://gateway.example.com/openai/responses"], "the approval of the integration's origin does not cover another origin");
+  assert.deepEqual(unapprovedAiBases(config, ["https://res.openai.azure.com", "https://gateway.example.com"]), [], "the origin of the address covers it");
+  assert.deepEqual(unapprovedAiBases(config, ["https://res.openai.azure.com", "https://gateway.example.com/openai"]), [], "so does a path above it");
+  assert.equal(JSON.stringify(unapprovedAiBases(config, [])).includes(secret), false, "the query never reaches the list the owner reads");
+
+  // The model's own address is where its call goes: it is what must be approved for it, not the integration's base.
+  const own = (error) => error instanceof AiNotApprovedError && error.bases.length === 1 && error.bases[0] === "https://gateway.example.com/openai/responses" && !error.message.includes(secret) && /\(gpt-5\.2\)/.test(error.message);
+  assert.throws(() => assertAiApproved(config, "autopilot", ["https://res.openai.azure.com"]), own);
+  assert.doesNotThrow(() => assertAiApproved(config, "autopilot", ["https://gateway.example.com"]), "the integration's own base is not asked for a model that does not use it");
+  const plain = { ...config, taskRouting: { autopilot: { primary: { integrationId: "z", model: "plain" }, fallbacks: [] } } };
+  assert.throws(() => assertAiApproved(plain, "autopilot", ["https://gateway.example.com"]), (error) => error instanceof AiNotApprovedError && error.bases[0] === "https://res.openai.azure.com", "a model without one still needs its integration's base");
+  assert.doesNotThrow(() => assertAiApproved(plain, "autopilot", ["https://res.openai.azure.com"]));
+});
+
 // ---------------------------------------------------------------------------------------------
 // Waiting for approval, and a run that stops instead of calling
 // ---------------------------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { effectiveApiVersion, isAzureV1Endpoint, normalizeThinking, type AiIntegrationConfig, type AiReasoningParameter, type AiThinking } from "./config.js";
+import { effectiveApiVersion, effectiveResponsesApiVersion, isAzureV1Endpoint, normalizeApiProtocol, normalizeEndpointUrl, normalizeThinking, type AiApiProtocol, type AiIntegrationConfig, type AiReasoningParameter, type AiThinking } from "./config.js";
 import type { AiCandidate } from "./router.js";
 import { forcedToolChoice } from "./structured.js";
 import { completionTokenLimit, isReasoningModel, requestOutputLimit } from "./token-limit.js";
@@ -54,20 +54,69 @@ function authHeaders(integration: Pick<AiIntegrationConfig, "provider" | "apiKey
   return integration.provider === "azure_openai" ? { "api-key": key } : { authorization: `Bearer ${key}` };
 }
 
-/** `apiVersion` is `effectiveApiVersion(integration, model)`: what an Azure OpenAI address carries as its `api-version`. */
-function requestTarget(integration: AiIntegrationConfig, model: string, githubModelsBaseUrl: string, apiVersion: string | undefined): RequestTarget {
+/**
+ * The address of a request of a protocol, built from the integration, and what authenticates it. `apiVersion` is what an Azure OpenAI address carries as its `api-version`: `effectiveApiVersion(integration, model)`
+ * for Chat Completions, `effectiveResponsesApiVersion` for the Responses API. A model with an address of its own (`endpointUrl`) is sent exactly there, as it was written, with the key of its integration.
+ */
+function requestTarget(integration: AiIntegrationConfig, model: string, githubModelsBaseUrl: string, apiVersion: string | undefined, protocol: AiApiProtocol = "chat-completions", endpointUrl?: string): RequestTarget {
+  if (endpointUrl) return { url: endpointUrl, headers: authHeaders(integration) };
   const base = effectiveAiBase(integration, githubModelsBaseUrl);
+  const responses = protocol === "responses";
   if (integration.provider === "azure_openai") {
     if (!base) throw new AiProviderError(`Azure OpenAI integration "${integration.name}" has no endpoint.`);
+    // The v1 API has one address for every model and no version; the older API has the deployment in the address of Chat Completions, and `/openai/responses` for the Responses API (the model is in the body).
     const url = azureV1(integration)
-      ? `${base}/chat/completions`
-      : `${base}/openai/deployments/${encodeURIComponent(model)}/chat/completions?api-version=${encodeURIComponent(apiVersion ?? "")}`;
+      ? `${base}/${responses ? "responses" : "chat/completions"}`
+      : responses
+        ? `${base}/openai/responses?api-version=${encodeURIComponent(apiVersion ?? "")}`
+        : `${base}/openai/deployments/${encodeURIComponent(model)}/chat/completions?api-version=${encodeURIComponent(apiVersion ?? "")}`;
     return { url, headers: authHeaders(integration) };
   }
+  if (integration.provider === "github_models" && responses) {
+    throw new AiProviderError(`GitHub Models integration "${integration.name}" has no Responses API: its models are asked through Chat Completions. Set the model to Chat Completions, or give it an address of its own.`);
+  }
   if (base && (integration.provider === "github_models" || integration.provider === "openai")) {
-    return { url: `${base}/chat/completions`, headers: authHeaders(integration) };
+    return { url: `${base}/${responses ? "responses" : "chat/completions"}`, headers: authHeaders(integration) };
   }
   throw new AiProviderError(`Provider ${integration.provider} cannot run chat tasks outside Microsoft 365.`);
+}
+
+/** The protocol a model is asked through: `responses` when it says so, else Chat Completions. */
+export function effectiveApiProtocol(model?: { apiProtocol?: unknown } | null): AiApiProtocol {
+  return normalizeApiProtocol(model?.apiProtocol) ?? "chat-completions";
+}
+
+/** Where the requests of a model go, as the client builds the address: `url`, the protocol, the API version it carries (none for an address of the model's own, and for a provider that has none) and whether the address is the model's own. */
+export interface ModelRequestTarget {
+  protocol: AiApiProtocol;
+  url: string;
+  apiVersion?: string;
+  own: boolean;
+}
+
+/** Why an address cannot be built: the integration has no endpoint, its provider has no Responses API (GitHub Models), or it cannot run chat tasks here at all. */
+export type ModelRequestTargetProblem = "no-endpoint" | "no-responses-api" | "provider-unsupported";
+
+/**
+ * Where the requests of a model go and how they are asked, as the client builds them: the protocol, the address (the model's own, exactly as written, or the one built from its integration), and the API version
+ * the address carries. It is what an editor shows of a model, and the one rule the client follows. `model` is the model's entry or a candidate. When no address can be built (the integration has no endpoint, or
+ * its provider has no Responses API), it says why instead.
+ */
+export function modelRequestTarget(
+  integration: AiIntegrationConfig,
+  model: { name: string; apiVersion?: string; apiProtocol?: unknown; endpointUrl?: unknown },
+  options: { githubModelsBaseUrl?: string } = {},
+): ModelRequestTarget | { problem: ModelRequestTargetProblem } {
+  const protocol = effectiveApiProtocol(model);
+  const own = normalizeEndpointUrl(model.endpointUrl);
+  const versionOf = protocol === "responses" ? effectiveResponsesApiVersion : effectiveApiVersion;
+  const apiVersion = versionOf(integration, { apiVersion: model.apiVersion, ...(own ? { endpointUrl: own } : {}) });
+  try {
+    return { protocol, url: requestTarget(integration, model.name, options.githubModelsBaseUrl ?? GITHUB_MODELS_BASE_URL, apiVersion, protocol, own).url, ...(apiVersion ? { apiVersion } : {}), own: Boolean(own) };
+  } catch {
+    if (integration.provider === "github_models" && protocol === "responses") return { problem: "no-responses-api" };
+    return { problem: integration.provider === "azure_openai" ? "no-endpoint" : "provider-unsupported" };
+  }
 }
 
 /**
@@ -241,14 +290,14 @@ export interface ChatRequestOptions {
  * Pure: it calls nothing and changes nothing. Throws only when the integration cannot be called at all.
  */
 export function buildChatRequest(
-  candidate: Pick<AiCandidate, "integration" | "model"> & Partial<Pick<AiCandidate, "underlyingModel" | "supportsToolCalls" | "supportsStreaming" | "supportsReasoning" | "reasoningParameter" | "noThinkingWithTools" | "apiVersion" | "maxOutputTokens" | "thinking">>,
+  candidate: Pick<AiCandidate, "integration" | "model"> & Partial<Pick<AiCandidate, "underlyingModel" | "supportsToolCalls" | "supportsStreaming" | "supportsReasoning" | "reasoningParameter" | "noThinkingWithTools" | "apiVersion" | "endpointUrl" | "maxOutputTokens" | "thinking">>,
   request: Pick<AiRequest, "system" | "user" | "messages" | "json" | "maxOutputTokens" | "outputBoost" | "temperature" | "onText">,
   options: ChatRequestOptions = {},
 ): ChatRequest {
   const { integration, model } = candidate;
   // The API version of the model that is asked: its own, else its integration's. A fallback in another integration, or another model, is asked with its own.
   const apiVersion = effectiveApiVersion(integration, candidate);
-  const target = requestTarget(integration, model, options.githubModelsBaseUrl ?? GITHUB_MODELS_BASE_URL, apiVersion);
+  const target = requestTarget(integration, model, options.githubModelsBaseUrl ?? GITHUB_MODELS_BASE_URL, apiVersion, "chat-completions", normalizeEndpointUrl(candidate.endpointUrl));
   const useTools = Boolean(request.json) && candidate.supportsToolCalls !== false;
   // What the integration turns off a model does not turn on; what a model declares it cannot do is not asked of it.
   const stream = integration.streamMode !== "off" && candidate.supportsStreaming !== false;

@@ -1,4 +1,4 @@
-import { normalizeReasoningParameter, normalizeThinking, type AiChatModelConfig, type AiNoThinkingWithTools, type AiIntegrationConfig, type AiPricingConfig, type AiReasoningParameter, type AiRouteTarget, type AiRuntimeConfig, type AiThinking } from "./config.js";
+import { normalizeApiProtocol, normalizeEndpointUrl, normalizeReasoningParameter, normalizeThinking, type AiChatModelConfig, type AiNoThinkingWithTools, type AiIntegrationConfig, type AiPricingConfig, type AiReasoningParameter, type AiRouteTarget, type AiRuntimeConfig, type AiThinking } from "./config.js";
 import type { AiUnusableWhy } from "./types.js";
 
 export interface AiCandidate {
@@ -19,6 +19,10 @@ export interface AiCandidate {
   noThinkingWithTools?: AiNoThinkingWithTools;
   /** The model's own API version (see `AiChatModelConfig.apiVersion`); absent: its integration's. `effectiveApiVersion(candidate.integration, candidate)` says which is used. */
   apiVersion?: string;
+  /** The model is asked through the Responses API (see `AiChatModelConfig.apiProtocol`); absent: Chat Completions. */
+  apiProtocol?: "responses";
+  /** The address the model's requests go to, as it was written (see `AiChatModelConfig.endpointUrl`); absent: the one the engine builds from the integration. */
+  endpointUrl?: string;
   /**
    * The thinking level for this candidate: its route target's, else its integration's (`automatic` is a choice that sends nothing). Absent when
    * neither says: the request carries no level.
@@ -57,6 +61,8 @@ function candidate(integration: AiIntegrationConfig, model: AiChatModelConfig, t
     ...(reasoningParameter ? { reasoningParameter } : {}),
     ...(model.noThinkingWithTools === true || model.noThinkingWithTools === "none" ? { noThinkingWithTools: model.noThinkingWithTools } : {}),
     ...(apiVersion ? { apiVersion } : {}),
+    ...(normalizeApiProtocol(model.apiProtocol) ? { apiProtocol: "responses" as const } : {}),
+    ...(normalizeEndpointUrl(model.endpointUrl) ? { endpointUrl: normalizeEndpointUrl(model.endpointUrl) } : {}),
     ...(thinking ? { thinking } : {}),
   };
 }

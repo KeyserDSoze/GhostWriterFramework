@@ -44,18 +44,25 @@ export interface AiDestination {
   integrationId: string;
   integrationName: string;
   base: string;
+  /** The model whose address of its own this is (`endpointUrl`); absent for the base of the integration itself. */
+  model?: string;
 }
 
 /**
  * The base of every integration of a configuration, the providers' defaults included (`https://api.openai.com/v1`,
  * `https://models.github.ai/inference`): the engine says what every request starts with (`effectiveAiBase`). An integration that cannot be
- * called (no address, no chat) has none.
+ * called (no address, no chat) has none. A model with an address of its own sends the key of its integration there, so that address (its origin and
+ * its path, never its query) is a destination too.
  */
 export function aiDestinations(config: Pick<AiRuntimeConfig, "aiIntegrations">): AiDestination[] {
   const destinations: AiDestination[] = [];
   for (const integration of config.aiIntegrations) {
     const base = canonicalAiBase(effectiveAiBase(integration));
     if (base) destinations.push({ integrationId: integration.id, integrationName: integration.name, base });
+    for (const model of integration.chatModels ?? []) {
+      const own = canonicalAiBase(model.endpointUrl);
+      if (own) destinations.push({ integrationId: integration.id, integrationName: integration.name, base: own, model: model.name });
+    }
   }
   return destinations;
 }
@@ -93,10 +100,12 @@ export class AiNotApprovedError extends Error {
 export function assertAiApproved(config: AiRuntimeConfig, capability: string, approvals: readonly string[]): void {
   const missing = new Map<string, Set<string>>();
   for (const candidate of callableCandidates(config, capability)) {
-    const base = canonicalAiBase(effectiveAiBase(candidate.integration));
+    // A model with an address of its own sends its requests (and the key) there, not to the base of its integration.
+    const own = canonicalAiBase(candidate.endpointUrl);
+    const base = own ?? canonicalAiBase(effectiveAiBase(candidate.integration));
     if (!base || baseIsApproved(base, approvals)) continue;
     const names = missing.get(base) ?? new Set<string>();
-    names.add(`"${candidate.integration.name.slice(0, 60)}"`);
+    names.add(own ? `"${candidate.integration.name.slice(0, 60)}" (${candidate.model.slice(0, 60)})` : `"${candidate.integration.name.slice(0, 60)}"`);
     missing.set(base, names);
   }
   if (!missing.size) return;

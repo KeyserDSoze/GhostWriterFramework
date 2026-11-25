@@ -19,12 +19,124 @@ export function isAzureV1Endpoint(endpoint: string | undefined): boolean {
  * model's own (`AiChatModelConfig.apiVersion`), else its integration's, else `DEFAULT_AZURE_API_VERSION`. `v1` for the v1 API of Azure OpenAI, which has none in its address, and
  * `undefined` for a provider that has no API version. Whitespace is no version: an empty field inherits. `model` is the model's entry, or a candidate that carries its `apiVersion`.
  */
-export function effectiveApiVersion(integration: Pick<AiIntegrationConfig, "provider" | "endpoint" | "apiVersion">, model?: { apiVersion?: string } | null): string | undefined {
+export function effectiveApiVersion(integration: Pick<AiIntegrationConfig, "provider" | "endpoint" | "apiVersion">, model?: { apiVersion?: string; endpointUrl?: unknown } | null): string | undefined {
   if (integration.provider !== "azure_openai") return undefined;
+  // A model with an address of its own is sent where the address says, with no version of ours.
+  if (normalizeEndpointUrl(model?.endpointUrl)) return undefined;
   if (isAzureV1Endpoint(integration.endpoint)) return "v1";
   const own = typeof model?.apiVersion === "string" ? model.apiVersion.trim() : "";
   const inherited = typeof integration.apiVersion === "string" ? integration.apiVersion.trim() : "";
   return own || inherited || DEFAULT_AZURE_API_VERSION;
+}
+
+/** The API version of Azure OpenAI that a request to the Responses API carries when neither the model nor its integration names one that the Responses API takes: the one the Azure portal's playground sends. */
+export const DEFAULT_AZURE_RESPONSES_API_VERSION = "2025-04-01-preview";
+
+/** The first dated API version of Azure OpenAI that has the Responses API: an older one cannot take a request to it. */
+const FIRST_RESPONSES_API_VERSION = "2025-03-01";
+
+/** Whether an Azure OpenAI API version can take a request to the Responses API: `v1`, `preview`, or a dated version from 2025-03-01 on. */
+export function azureVersionHasResponses(version: string | undefined): boolean {
+  const value = (version ?? "").trim();
+  if (!value) return false;
+  if (/^(?:v1|preview)$/i.test(value)) return true;
+  return /^\d{4}-\d{2}-\d{2}/.test(value) && value.slice(0, 10) >= FIRST_RESPONSES_API_VERSION;
+}
+
+/**
+ * The API version a request to the Responses API of a model is sent with (`effectiveApiVersion` is the one of Chat Completions): `v1` for the v1 API of Azure OpenAI; else the model's own version, which
+ * is the author's word for it whatever it is; else its integration's when the Responses API has it (an integration that keeps `2024-10-21` for its Chat Completions models is not made to ask the Responses API
+ * with a version that predates it); else `DEFAULT_AZURE_RESPONSES_API_VERSION`. `undefined` for a provider that has no API version. A model with an address of its own (`endpointUrl`) has none: the
+ * address says everything.
+ */
+export function effectiveResponsesApiVersion(integration: Pick<AiIntegrationConfig, "provider" | "endpoint" | "apiVersion">, model?: { apiVersion?: string; endpointUrl?: unknown } | null): string | undefined {
+  if (integration.provider !== "azure_openai") return undefined;
+  if (normalizeEndpointUrl(model?.endpointUrl)) return undefined;
+  if (isAzureV1Endpoint(integration.endpoint)) return "v1";
+  const own = typeof model?.apiVersion === "string" ? model.apiVersion.trim() : "";
+  const inherited = typeof integration.apiVersion === "string" ? integration.apiVersion.trim() : "";
+  return own || (azureVersionHasResponses(inherited) ? inherited : DEFAULT_AZURE_RESPONSES_API_VERSION);
+}
+
+/**
+ * How the requests of a model are made: `chat-completions` (the default, and what a model that says nothing gets) or `responses`, the Responses API (`/responses`, `input` and `output` items, function tools that work
+ * together with reasoning). It is the author's word for the model and is never changed by itself.
+ */
+export const AI_API_PROTOCOLS = ["chat-completions", "responses"] as const;
+export type AiApiProtocol = (typeof AI_API_PROTOCOLS)[number];
+
+/** The protocol a configuration says: `responses` exactly, and nothing for anything else (Chat Completions is what no value means, so the settings of before are the settings they were). */
+export function normalizeApiProtocol(value: unknown): "responses" | undefined {
+  return value === "responses" ? "responses" : undefined;
+}
+
+/** What is wrong with an address typed for a model, or `undefined` when it is fine or empty (no address of its own): it is not an address, it is not http or https, or it carries a user name or a password. */
+export type EndpointUrlProblem = "invalid" | "scheme" | "credentials";
+
+export function endpointUrlProblem(value: unknown): EndpointUrlProblem | undefined {
+  const written = typeof value === "string" ? value.trim() : "";
+  if (!written) return undefined;
+  let url: URL;
+  try {
+    url = new URL(written);
+  } catch {
+    return "invalid";
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return "scheme";
+  if (url.username || url.password) return "credentials";
+  return undefined;
+}
+
+/** The address of a model as the engine keeps it: exactly what was written, without the spaces around it, when it is an http or https address with no credentials; nothing for anything else. */
+export function normalizeEndpointUrl(value: unknown): string | undefined {
+  const written = typeof value === "string" ? value.trim() : "";
+  return written && !endpointUrlProblem(written) ? written : undefined;
+}
+
+/** The query keys that carry a secret in the addresses of some gateways (`?key=`, `?api-key=`, `?sig=`, `?code=`, `?token=`). */
+const SECRET_QUERY_KEY = /^(?:key|api[-_]?key|apikey|token|access[-_]?token|auth|authorization|sig|signature|sas|secret|password|pwd|code)$/i;
+
+/** The names of the parameters of the query of an address that look like a key, in the order they are written, each once: the editor warns of them, since the address is saved with the settings and travels to a personal server. */
+export function endpointUrlSecretKeys(value: unknown): string[] {
+  if (typeof value !== "string" || endpointUrlProblem(value)) return [];
+  const names: string[] = [];
+  try {
+    new URL(value.trim()).searchParams.forEach((_value, name) => {
+      if (SECRET_QUERY_KEY.test(name) && !names.includes(name)) names.push(name);
+    });
+  } catch {
+    return [];
+  }
+  return names;
+}
+
+/** Whether the query of an address carries what looks like a key (see `endpointUrlSecretKeys`). */
+export function endpointUrlHasSecret(value: unknown): boolean {
+  return endpointUrlSecretKeys(value).length > 0;
+}
+
+/**
+ * Where an address goes, and nothing else: its host and its path (`oai-gw.openai.azure.com/openai/responses`), never its query, its fragment or the credentials in it, which is what may be shown and saved about it.
+ * `undefined` for anything that is not an http or https address.
+ */
+export function describeUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || endpointUrlProblem(value) || !value.trim()) return undefined;
+  try {
+    const url = new URL(value.trim());
+    return `${url.host}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether the path of an address ends with `/responses`: the address of the Responses API, which a model whose address is that is likely to be asked through. */
+export function looksLikeResponsesUrl(value: unknown): boolean {
+  if (typeof value !== "string" || endpointUrlProblem(value) || !value.trim()) return false;
+  try {
+    return /\/responses$/i.test(new URL(value.trim()).pathname.replace(/\/+$/, ""));
+  } catch {
+    return false;
+  }
 }
 
 export interface AiPricingConfig {
@@ -68,6 +180,17 @@ export interface AiChatModelConfig {
    * `DEFAULT_AZURE_API_VERSION`. `effectiveApiVersion` is the one place that says which is used; it only has an effect for an Azure OpenAI integration.
    */
   apiVersion?: string;
+  /**
+   * How this model's requests are made (`AI_API_PROTOCOLS`): absent or `chat-completions`, Chat Completions, as always; `responses`, the Responses API. The key of the integration is sent the way its provider
+   * takes it (the `api-key` header of Azure OpenAI, a bearer token for the others), whichever protocol it is. With the Responses API a thinking level and function tools work together, so `noThinkingWithTools` is not used.
+   */
+  apiProtocol?: AiApiProtocol;
+  /**
+   * The address this model's requests go to, used exactly as it was written (its query included): for a gateway whose address is not the one the engine would build from the integration. It has to be an http or
+   * https address with no user name or password in it; anything else is no value. It is the address of the request, not a base: `…/openai/responses?api-version=2025-04-01-preview`. The API version of the
+   * model and of its integration are not used for it. The key of the integration is sent as ever. Do not put a key in it: it is saved with the settings, and travels to a personal server.
+   */
+  endpointUrl?: string;
   /** The context window of the model: what a prompt and its answer may be together. The engine subtracts the answer and a margin itself. */
   maxInputTokens?: number;
   /** The largest answer that can be asked of the model. */
@@ -285,6 +408,8 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
         ...reasoningParameterOf(model.reasoningParameter),
         ...(model.noThinkingWithTools === true || model.noThinkingWithTools === "none" ? { noThinkingWithTools: model.noThinkingWithTools } : {}),
         ...(text(model.apiVersion) ? { apiVersion: text(model.apiVersion) } : {}),
+        ...(normalizeApiProtocol(model.apiProtocol) ? { apiProtocol: normalizeApiProtocol(model.apiProtocol) } : {}),
+        ...(normalizeEndpointUrl(model.endpointUrl) ? { endpointUrl: normalizeEndpointUrl(model.endpointUrl) } : {}),
         maxInputTokens: positive(model.maxInputTokens),
         maxOutputTokens: positive(model.maxOutputTokens),
         pricing: pricing(model.pricing),
@@ -365,6 +490,10 @@ export interface RedactedAiModel {
   noThinkingWithTools?: AiNoThinkingWithTools;
   /** The API version of the model, when it names its own (Azure OpenAI): absent, it takes the integration's. */
   apiVersion?: string;
+  /** The Responses API, when the model is asked through it (absent: Chat Completions). */
+  apiProtocol?: "responses";
+  /** Where the model's requests go, when it has an address of its own: its host and its path, never its query (which may hold a key) or credentials. */
+  endpointUrl?: string;
   maxInputTokens?: number;
   maxOutputTokens?: number;
 }
@@ -417,6 +546,8 @@ function redactedModel(model: AiChatModelConfig): RedactedAiModel {
     ...reasoningParameterOf(model.reasoningParameter),
     ...(model.noThinkingWithTools === true || model.noThinkingWithTools === "none" ? { noThinkingWithTools: model.noThinkingWithTools } : {}),
     ...(text(model.apiVersion) ? { apiVersion: text(model.apiVersion) } : {}),
+    ...(normalizeApiProtocol(model.apiProtocol) ? { apiProtocol: "responses" as const } : {}),
+    ...(describeUrl(model.endpointUrl) ? { endpointUrl: describeUrl(model.endpointUrl) } : {}),
     ...(maxInputTokens !== undefined ? { maxInputTokens } : {}),
     ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
   };
