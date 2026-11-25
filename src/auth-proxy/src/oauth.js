@@ -98,11 +98,12 @@ const rateLimiter = createRateLimiter({
 });
 
 class HttpError extends Error {
-  constructor(status, code, message, headers = {}) {
+  constructor(status, code, message, headers = {}, details = {}) {
     super(message);
     this.status = status;
     this.code = code;
     this.headers = headers;
+    this.details = details;
   }
 }
 
@@ -130,7 +131,7 @@ function jsonResponse(status, payload, allowedOrigin, extraHeaders) {
 }
 
 function errorResponse(error, allowedOrigin) {
-  return jsonResponse(error.status, { error: error.code, message: error.message }, allowedOrigin, error.headers);
+  return jsonResponse(error.status, { error: error.code, message: error.message, ...error.details }, allowedOrigin, error.headers);
 }
 
 // Only the Content-Type request header is ever granted, echoed as the browser spelled it.
@@ -323,6 +324,13 @@ function parseJson(text) {
   }
 }
 
+const MAX_PROVIDER_CODES = 3;
+
+function readProviderCodes(data) {
+  if (data === null || typeof data !== "object" || !Array.isArray(data.error_codes)) return [];
+  return data.error_codes.filter((number) => Number.isSafeInteger(number) && number > 0 && number < 100_000_000).slice(0, MAX_PROVIDER_CODES);
+}
+
 // The provider's error code is quoted only if it is a known one; its description never is.
 function describeFailure(provider, status, data, { reauthenticate }) {
   const code = data !== null && typeof data === "object" && typeof data.error === "string" ? data.error : "";
@@ -330,7 +338,14 @@ function describeFailure(provider, status, data, { reauthenticate }) {
     return new HttpError(400, "invalid_grant", `${provider.name} rejected the authorization code or refresh token. Connect again.`);
   }
   if (KNOWN_PROVIDER_ERRORS.has(code)) {
-    return new HttpError(502, "upstream_error", `${provider.name} rejected the request (${code}).`);
+    // Microsoft adds the numeric AADSTS codes: they name the exact reason (for example 9002327, a redirect URI registered as a single-page
+    // application) and are what the owner needs. They are plain integers, never text of the provider's, so they are safe to quote.
+    const providerCodes = readProviderCodes(data);
+    const reason = providerCodes.length > 0 ? `${code}, ${providerCodes.map((number) => `AADSTS${number}`).join(", ")}` : code;
+    return new HttpError(502, "upstream_error", `${provider.name} rejected the request (${reason}).`, {}, {
+      providerError: code,
+      ...(providerCodes.length > 0 ? { providerCodes } : {}),
+    });
   }
   return new HttpError(502, "upstream_error", `${provider.name} answered with an unexpected error (HTTP ${status}).`);
 }
@@ -400,7 +415,7 @@ async function googleToken(body, { provider, credentials, origin }) {
     // Google's guide to the popup flow says the exchange uses the origin of the page that asked for the code as redirect_uri, while the way
     // that has always worked with it is «postmessage». «postmessage» goes first; only when Google says the redirect URI does not match is the
     // origin tried, and only one that this Worker already allows (the request's own, checked by the caller) is ever sent.
-    const mismatch = error instanceof HttpError && error.status === 502 && error.message.includes("(redirect_uri_mismatch)");
+    const mismatch = error instanceof HttpError && error.status === 502 && error.details.providerError === "redirect_uri_mismatch";
     if (!mismatch || !origin) throw error;
     tokens = await exchange(origin);
   }

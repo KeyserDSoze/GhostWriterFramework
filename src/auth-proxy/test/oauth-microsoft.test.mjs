@@ -113,6 +113,33 @@ describe("POST /oauth/microsoft/token", () => {
   });
 });
 
+describe("POST /oauth/microsoft/token: the reason behind a rejection", () => {
+  it("quotes Microsoft's numeric AADSTS codes, never its description", async () => {
+    provider.reply(() =>
+      jsonResponse(400, {
+        error: "invalid_request",
+        error_description: "AADSTS9002327: Tokens issued for the 'Single-Page Application' client-type may only be redeemed via cross-origin requests. Trace ID: 0000",
+        error_codes: [9002327],
+        trace_id: "00000000-0000-0000-0000-000000000000",
+      }),
+    );
+    const response = await oauthCall("/oauth/microsoft/token", { json: TOKEN_REQUEST });
+    const body = await assertError(response, 502, "upstream_error");
+    assert.equal(body.message, "Microsoft rejected the request (invalid_request, AADSTS9002327).");
+    assert.equal(body.providerError, "invalid_request");
+    assert.deepEqual(body.providerCodes, [9002327]);
+    assert.ok(!JSON.stringify(body).includes("Trace ID"));
+    assert.ok(!JSON.stringify(body).includes("cross-origin"));
+  });
+
+  it("ignores error codes that are not plain positive integers, and keeps at most three", async () => {
+    provider.reply(() => jsonResponse(400, { error: "invalid_request", error_codes: ["70000", -1, 1.5, 9002327, 1, 2, 3] }));
+    const response = await oauthCall("/oauth/microsoft/token", { json: TOKEN_REQUEST });
+    const body = await assertError(response, 502, "upstream_error");
+    assert.deepEqual(body.providerCodes, [9002327, 1, 2]);
+  });
+});
+
 describe("POST /oauth/microsoft/token: redirect URI allow-list", () => {
   it("accepts the four built-in redirect URIs", async () => {
     for (const redirectUri of [

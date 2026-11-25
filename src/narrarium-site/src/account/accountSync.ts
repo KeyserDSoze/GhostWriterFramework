@@ -155,6 +155,15 @@ function renewalCodeOf(error: unknown): string | undefined {
   return error instanceof AccountCredentialError ? error.code : signInRenewalCode(error);
 }
 
+const REMOTE_CHANGED_CODE = "GITHUB_ACCOUNT_REPOSITORY_CHANGED";
+/** A write that lost the race against another one is repeated from what the service holds now; this many times in a row before it is reported. */
+const MAX_LOST_RACES = 3;
+const lostRaces = new Map<AccountSyncBackendKind, number>();
+
+function lostRace(error: unknown): boolean {
+  return Boolean(error) && typeof error === "object" && (error as { code?: unknown }).code === REMOTE_CHANGED_CODE;
+}
+
 export function classifyAccountSyncError(error: unknown) {
   if (error instanceof AccountCredentialError) return error.reason === "expired" ? "credential-expired" as const : "credential-missing" as const;
   // The broker says what it means: only a refused refresh token (or a broker that no longer serves) needs the owner.
@@ -168,6 +177,7 @@ export function classifyAccountSyncError(error: unknown) {
   const status = typeof value.status === "number" ? value.status : statusMatch ? Number(statusMatch[1]) : undefined;
   if (value.code === "GITHUB_ACCOUNT_REPOSITORY_PUBLIC") return "remote-public" as const;
   if (value.code === "GITHUB_ACCOUNT_REPOSITORY_UNREACHABLE") return "repository-unreachable" as const;
+  if (value.code === REMOTE_CHANGED_CODE) return "remote-changed" as const;
   if (status === 401 || /expired/.test(message)) return "credential-expired" as const;
   if (status === 403 || /permission|forbidden/.test(message)) return "permission-denied" as const;
   if (status === 404) return "remote-not-found" as const;
@@ -259,11 +269,19 @@ async function syncAccountReplicas(activeKinds: AccountSyncBackendKind[]): Promi
           errorKind: undefined,
           lastErrorMessage: undefined,
         });
+        lostRaces.delete(kind);
         await markLocalAccountReplicaConfirmed(local.manifest.snapshotId);
         useCostsStore.getState().markSynced(useCostsStore.getState().revision);
         useClipboardStore.getState().markSynced(useClipboardStore.getState().revision);
         synced.push(kind);
       } catch (error) {
+        if (lostRace(error) && (lostRaces.get(kind) ?? 0) < MAX_LOST_RACES) {
+          // Nothing is wrong: someone else wrote first. The next round reads what is there now and decides again (pull, reconcile or push).
+          lostRaces.set(kind, (lostRaces.get(kind) ?? 0) + 1);
+          syncRequestedWhileBusy = true;
+          await useConnectionStore.getState().updateReplica(kind, { status: "dirty", errorKind: undefined, lastErrorMessage: undefined });
+          continue;
+        }
         failures.set(kind, error);
         await setReplicaFailure(kind, error);
       }

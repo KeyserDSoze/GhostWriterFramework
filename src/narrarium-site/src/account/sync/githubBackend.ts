@@ -29,12 +29,31 @@ export class GitHubAccountRepositoryUnreachableError extends Error {
   }
 }
 
+/**
+ * Another write reached narrarium.settings between this device reading it and writing it (another device, or a read that was out of date). Nothing
+ * was lost: the sync starts again from what is on GitHub now, instead of reporting a failure.
+ */
+export class GitHubAccountRepositoryChangedError extends Error {
+  readonly code = "GITHUB_ACCOUNT_REPOSITORY_CHANGED";
+  constructor() {
+    super("GitHub account repository changed before it could be updated.");
+    this.name = "GitHubAccountRepositoryChangedError";
+  }
+}
+
+/**
+ * GitHub answers its API with `Cache-Control: private, max-age=60`, so the browser may hand back a branch that is a minute old without asking. A sync that
+ * builds its commit on that stale head is refused by GitHub («Update is not a fast forward»), over and over. Every call of the account repository
+ * therefore bypasses the HTTP cache.
+ */
+const uncachedFetch: typeof fetch = (input, init) => fetch(input, { ...init, cache: "no-store" });
+
 export class GitHubAccountSyncBackend implements AccountSyncBackend {
   readonly kind = "github" as const;
   private readonly octokit: Octokit;
 
   constructor(token: string, private readonly owner: string, private readonly credentialKind: GitHubCredentialKind = "pat") {
-    this.octokit = new Octokit({ auth: token });
+    this.octokit = new Octokit({ auth: token, request: { fetch: uncachedFetch } });
   }
 
   async pull(): Promise<AccountRemoteSnapshot | null> {
@@ -84,9 +103,9 @@ export class GitHubAccountSyncBackend implements AccountSyncBackend {
     if (ref) {
       headSha = ref.data.object.sha;
       if (expected.absent) {
-        if (!await this.isBootstrapCommit(headSha)) throw new Error("GitHub account repository changed before it could be updated.");
+        if (!await this.isBootstrapCommit(headSha)) throw new GitHubAccountRepositoryChangedError();
       } else {
-        if (!expected.revision || expected.revision !== headSha) throw new Error("GitHub account repository changed before it could be updated.");
+        if (!expected.revision || expected.revision !== headSha) throw new GitHubAccountRepositoryChangedError();
         try {
           const commit = await this.octokit.rest.git.getCommit({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, commit_sha: headSha });
           baseTree = commit.data.tree.sha;
@@ -117,8 +136,13 @@ export class GitHubAccountSyncBackend implements AccountSyncBackend {
       tree: tree.data.sha,
       parents: headSha ? [headSha] : [],
     });
-    if (headSha) await this.octokit.rest.git.updateRef({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, ref: `heads/${branch}`, sha: commit.data.sha, force: false });
-    else await this.octokit.rest.git.createRef({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, ref: `refs/heads/${branch}`, sha: commit.data.sha });
+    try {
+      if (headSha) await this.octokit.rest.git.updateRef({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, ref: `heads/${branch}`, sha: commit.data.sha, force: false });
+      else await this.octokit.rest.git.createRef({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, ref: `refs/heads/${branch}`, sha: commit.data.sha });
+    } catch (error) {
+      if (isLostRace(error)) throw new GitHubAccountRepositoryChangedError();
+      throw error;
+    }
     return { revision: commit.data.sha };
   }
 
@@ -173,13 +197,13 @@ export class GitHubAccountSyncBackend implements AccountSyncBackend {
       if (this.refusedToTheApp(error) || (this.credentialKind === "app" && statusOf(error) === 404)) throw new GitHubAccountRepositoryUnreachableError("no-access");
       if (statusOf(error) !== 409 && statusOf(error) !== 422) throw error;
       const ref = await this.octokit.rest.git.getRef({ owner: this.owner, repo: GITHUB_ACCOUNT_REPOSITORY, ref: `heads/${branch}` });
-      if (!await this.isBootstrapCommit(ref.data.object.sha)) throw new Error("GitHub account repository changed before it could be updated.");
+      if (!await this.isBootstrapCommit(ref.data.object.sha)) throw new GitHubAccountRepositoryChangedError();
       return ref.data.object.sha;
     }
     if (!response.data.commit.sha) throw new Error("GitHub did not return the initial account repository commit.");
     if (!await this.isBootstrapCommit(response.data.commit.sha)) {
       await this.removeBootstrapMarker(response.data.content?.sha, branch);
-      throw new Error("GitHub account repository changed before it could be updated.");
+      throw new GitHubAccountRepositoryChangedError();
     }
     return response.data.commit.sha;
   }
@@ -205,6 +229,13 @@ export class GitHubAccountSyncBackend implements AccountSyncBackend {
 
 function statusOf(error: unknown): number | undefined {
   return error && typeof error === "object" && "status" in error && typeof error.status === "number" ? error.status : undefined;
+}
+
+/** The branch moved while the commit was being made: «Update is not a fast forward» (422) when updating, «Reference already exists» (422) when creating. */
+function isLostRace(error: unknown): boolean {
+  if (statusOf(error) !== 422) return false;
+  const message = error && typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : "";
+  return /fast.?forward|already exists/i.test(message);
 }
 
 function isRateLimit(error: unknown): boolean {

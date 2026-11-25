@@ -39,6 +39,11 @@ describe("what the page says when a sign-in does not work", () => {
     expect(describeConnectError(new BrokerError(code, `HTTP failure mentioning ${SECRETS.refresh}`), t)).toBe(key);
   });
 
+  it("quotes why the provider refused, when the broker says", () => {
+    const refused = new BrokerError("upstream", "failed", { status: 502, providerDetail: "invalid_request AADSTS9002327" });
+    expect(describeConnectError(refused, t)).toBe('accountSync.connectError.providerRefused {"detail":"invalid_request AADSTS9002327"}');
+  });
+
   it("leaves other errors to the caller", () => {
     expect(describeConnectError(new Error("Google profile failed (401)."), t)).toBeNull();
     expect(describeConnectError("boom", t)).toBeNull();

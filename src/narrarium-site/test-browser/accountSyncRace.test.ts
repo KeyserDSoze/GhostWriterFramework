@@ -3,7 +3,7 @@ import "fake-indexeddb/auto";
 import { closeAccountLocalStoreForTests, initializeAccountLocalStore, loadLocalAccountSnapshot, saveLocalAccountClipboard } from "@/account/accountLocalStore";
 import { useConnectionStore } from "@/account/connectionStore";
 import { classifyAccountSyncError, scheduleAccountSync, syncAllAccountReplicas, syncOneAccountReplica, useAccountSyncStore } from "@/account/accountSync";
-import { GitHubAccountRepositoryUnreachableError } from "@/account/sync/githubBackend";
+import { GitHubAccountRepositoryChangedError, GitHubAccountRepositoryUnreachableError } from "@/account/sync/githubBackend";
 import { ACCOUNT_SYNC_SCHEMA_VERSION, type AccountRemoteSnapshot, type AccountSyncBackendKind } from "@/account/types";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { emptyCostsFile } from "@/costs/model";
@@ -17,6 +17,9 @@ const drives = vi.hoisted(() => ({
 vi.mock("@/account/sync/githubBackend", () => ({
   GitHubAccountRepositoryUnreachableError: class extends Error {
     readonly code = "GITHUB_ACCOUNT_REPOSITORY_UNREACHABLE";
+  },
+  GitHubAccountRepositoryChangedError: class extends Error {
+    readonly code = "GITHUB_ACCOUNT_REPOSITORY_CHANGED";
   },
   GitHubAccountSyncBackend: class {
     kind = "github" as const;
@@ -231,6 +234,42 @@ describe("account synchronization races", () => {
       expect(result.synced.sort()).toEqual(["google-drive", "onedrive"]);
       expect(github.push).not.toHaveBeenCalled();
       expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ status: "error", errorKind: "network" });
+    });
+
+    describe("when another write reaches narrarium.settings first", () => {
+      it("is not a failure: the replica stays pending and the sync starts again from what GitHub holds now", async () => {
+        expect(classifyAccountSyncError(new GitHubAccountRepositoryChangedError())).toBe("remote-changed");
+        github.pull.mockResolvedValue(null);
+        drives.google.pull.mockResolvedValue(null);
+        drives.microsoft.pull.mockResolvedValue(null);
+        github.push.mockRejectedValueOnce(new GitHubAccountRepositoryChangedError()).mockResolvedValue({ revision: "github-1" });
+        drives.google.push.mockResolvedValue({ revision: "drive-1" });
+        drives.microsoft.push.mockResolvedValue({ revision: "onedrive-1" });
+
+        const first = await syncAllAccountReplicas();
+        expect(first.synced).not.toContain("github");
+        expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ status: "dirty" });
+        expect(useConnectionStore.getState().configuration.github?.replica.errorKind).toBeUndefined();
+
+        const second = await syncAllAccountReplicas();
+        expect(second.synced).toContain("github");
+        expect(github.pull).toHaveBeenCalledTimes(2);
+      });
+
+      it("is reported after three lost races in a row, so a service that never settles does not loop silently", async () => {
+        github.pull.mockResolvedValue(null);
+        drives.google.pull.mockResolvedValue(null);
+        drives.microsoft.pull.mockResolvedValue(null);
+        github.push.mockRejectedValue(new GitHubAccountRepositoryChangedError());
+        drives.google.push.mockResolvedValue({ revision: "drive-1" });
+        drives.microsoft.push.mockResolvedValue({ revision: "onedrive-1" });
+
+        // A sync that a lost race asks for runs by itself a moment later and may take a round: the count is what matters, not the round.
+        for (let round = 0; round < 8 && useConnectionStore.getState().configuration.github?.replica.status !== "error"; round += 1) await syncAllAccountReplicas();
+
+        expect(github.push.mock.calls.length).toBeGreaterThanOrEqual(4);
+        expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ status: "error", errorKind: "remote-changed" });
+      });
     });
 
     describe("when the GitHub app cannot create or reach narrarium.settings", () => {

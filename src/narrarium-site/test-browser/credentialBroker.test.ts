@@ -205,6 +205,18 @@ describe("what the broker's errors become", () => {
     expect(failure.retryAfterMs).toBe(12_000);
   });
 
+  it("keeps the provider's plain error code and numeric codes, and nothing else the Worker adds", async () => {
+    net.reply("POST", url("/oauth/microsoft/token"), { error: "upstream_error", message: "Microsoft rejected the request (invalid_request, AADSTS9002327).", providerError: "invalid_request", providerCodes: [9002327, "x", -4], other: "ignored" }, 502);
+    const failure = await caught(exchangeCode({ provider: "microsoft", code: SECRETS.code, codeVerifier: "v".repeat(50), redirectUri: "https://narrarium.net/auth/microsoft-callback.html" }));
+    expect(failure.code).toBe("upstream");
+    expect(failure.providerDetail).toBe("invalid_request AADSTS9002327");
+  });
+
+  it("ignores a provider error that is not a plain code", async () => {
+    net.reply("POST", url("/oauth/google/refresh"), { error: "upstream_error", message: "x", providerError: "Bad <b>" }, 502);
+    expect((await caught(refresh("google", SECRETS.refresh))).providerDetail).toBeUndefined();
+  });
+
   it("treats a page that is not JSON as an upstream failure", async () => {
     net.on("POST", url("/oauth/google/refresh"), () => new Response("<html>Error 520</html>", { status: 520 }));
     expect((await caught(refresh("google", SECRETS.refresh))).code).toBe("upstream");

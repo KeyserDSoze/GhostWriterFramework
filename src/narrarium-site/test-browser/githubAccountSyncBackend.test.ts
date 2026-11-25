@@ -5,8 +5,11 @@ const api = vi.hoisted(() => ({
   getRef: vi.fn(), getCommit: vi.fn(), getTree: vi.fn(), getBlob: vi.fn(), createBlob: vi.fn(), createTree: vi.fn(), createCommit: vi.fn(), createRef: vi.fn(), updateRef: vi.fn(),
 }));
 
+const constructed = vi.hoisted(() => ({ options: [] as Array<{ request?: { fetch?: typeof fetch } }> }));
+
 vi.mock("@octokit/rest", () => ({
   Octokit: class {
+    constructor(options: { request?: { fetch?: typeof fetch } }) { constructed.options.push(options); }
     rest = {
       repos: { get: api.getRepository, createForAuthenticatedUser: api.createRepository, createOrUpdateFileContents: api.createFile, deleteFile: api.deleteFile, delete: api.deleteRepository },
       users: { getAuthenticated: api.getAuthenticated },
@@ -15,7 +18,7 @@ vi.mock("@octokit/rest", () => ({
   },
 }));
 
-import { GitHubAccountRepositoryPublicError, GitHubAccountRepositoryUnreachableError, GitHubAccountSyncBackend } from "@/account/sync/githubBackend";
+import { GitHubAccountRepositoryChangedError, GitHubAccountRepositoryPublicError, GitHubAccountRepositoryUnreachableError, GitHubAccountSyncBackend } from "@/account/sync/githubBackend";
 import { ACCOUNT_SYNC_SCHEMA_VERSION, type LocalAccountSnapshot } from "@/account/types";
 import { initialAccountManifest } from "@/account/vectorClock";
 import { DEFAULT_SETTINGS } from "@/types/settings";
@@ -158,6 +161,44 @@ describe("GitHub account sync backend", () => {
     expect(api.createFile).not.toHaveBeenCalled();
     expect(api.createTree).toHaveBeenCalledWith(expect.objectContaining({ base_tree: "previous-tree" }));
     expect(api.updateRef).toHaveBeenCalledWith(expect.objectContaining({ ref: "heads/main", sha: "commit", force: false }));
+  });
+
+  it("reads and writes without the browser's HTTP cache, so a branch that moved is never read as it was a minute ago", async () => {
+    constructed.options.length = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{}"));
+    try {
+      new GitHubAccountSyncBackend("token", "writer");
+      await constructed.options[0].request!.fetch!("https://api.github.com/repos/writer/narrarium.settings/git/ref/heads/main", { headers: { a: "b" } });
+      expect(fetchSpy).toHaveBeenCalledWith("https://api.github.com/repos/writer/narrarium.settings/git/ref/heads/main", expect.objectContaining({ cache: "no-store", headers: { a: "b" } }));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("reports «Update is not a fast forward» as a lost race, not as a failure", async () => {
+    api.getRepository.mockResolvedValue({ data: { private: true, default_branch: "main" } });
+    api.getRef.mockResolvedValue({ data: { object: { sha: "previous" } } });
+    api.getCommit.mockResolvedValue({ data: { tree: { sha: "previous-tree" } } });
+    api.getTree.mockResolvedValue({ data: { truncated: false, tree: [{ type: "blob", path: "manifest.json", sha: "manifest" }] } });
+    api.createBlob.mockImplementation(async () => ({ data: { sha: crypto.randomUUID() } }));
+    api.createTree.mockResolvedValue({ data: { sha: "tree" } });
+    api.createCommit.mockResolvedValue({ data: { sha: "commit" } });
+    api.updateRef.mockRejectedValue({ status: 422, message: "Update is not a fast forward - https://docs.github.com/rest/git/refs#update-a-reference" });
+
+    await expect(new GitHubAccountSyncBackend("token", "writer").push(snapshot, { absent: false, revision: "previous" })).rejects.toBeInstanceOf(GitHubAccountRepositoryChangedError);
+  });
+
+  it("does not take another 422 for a lost race", async () => {
+    api.getRepository.mockResolvedValue({ data: { private: true, default_branch: "main" } });
+    api.getRef.mockResolvedValue({ data: { object: { sha: "previous" } } });
+    api.getCommit.mockResolvedValue({ data: { tree: { sha: "previous-tree" } } });
+    api.getTree.mockResolvedValue({ data: { truncated: false, tree: [{ type: "blob", path: "manifest.json", sha: "manifest" }] } });
+    api.createBlob.mockImplementation(async () => ({ data: { sha: crypto.randomUUID() } }));
+    api.createTree.mockResolvedValue({ data: { sha: "tree" } });
+    api.createCommit.mockResolvedValue({ data: { sha: "commit" } });
+    api.updateRef.mockRejectedValue({ status: 422, message: "Object does not exist" });
+
+    await expect(new GitHubAccountSyncBackend("token", "writer").push(snapshot, { absent: false, revision: "previous" })).rejects.not.toBeInstanceOf(GitHubAccountRepositoryChangedError);
   });
 
   it("does not adopt a non-empty repository when the remote snapshot was expected to be absent", async () => {

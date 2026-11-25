@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.108.1",
+    "date": "2026-11-25",
+    "en": {
+      "title": "GitHub sync no longer fails with «not a fast forward», and sign-in failures say why",
+      "summary": "Syncing your account settings to GitHub used to fail over and over with «Update is not a fast forward», because the browser answered with a minute-old copy of the repository. It now always reads the current one, and a write that really loses a race is repeated on its own. When Google Drive or OneDrive refuses a sign-in, the page now says the reason instead of «The sign-in service did not answer».",
+      "changes": [
+        "GitHub account sync reads and writes narrarium.settings without the browser's HTTP cache, so it never builds its commit on an outdated branch.",
+        "If another device (or another tab) writes at the same moment, the sync is not reported as an error: it starts again from what GitHub holds now, up to three times in a row, then it says «The data on the service changed while this device was saving».",
+        "When the provider refuses to complete a sign-in (for example a Microsoft app setting), the Account and sync page shows the provider's error code, such as invalid_request AADSTS9002327, instead of a generic «did not answer» message.",
+        "Google Drive showing «Reconnect Google Drive» after a device restart is expected for a connection without long-lived credentials: press Reconnect once and the connection renews itself from then on."
+      ]
+    },
+    "it": {
+      "title": "La sincronizzazione con GitHub non fallisce più con «not a fast forward» e gli accessi rifiutati dicono perché",
+      "summary": "La sincronizzazione delle impostazioni dell'account su GitHub falliva di continuo con «Update is not a fast forward», perché il browser rispondeva con una copia del repository vecchia di un minuto. Ora legge sempre quella attuale, e una scrittura che perde davvero una gara viene ripetuta da sola. Quando Google Drive o OneDrive rifiutano un accesso, la pagina dice il motivo invece di «Il servizio di accesso non ha risposto».",
+      "changes": [
+        "La sincronizzazione dell'account con GitHub legge e scrive narrarium.settings senza la cache HTTP del browser, quindi non costruisce più il suo commit su un ramo non aggiornato.",
+        "Se un altro dispositivo (o un'altra scheda) scrive nello stesso momento, non è più segnalato come errore: la sincronizzazione riparte da ciò che GitHub ha adesso, fino a tre volte di fila, poi dice «I dati sul servizio sono cambiati mentre questo dispositivo salvava».",
+        "Quando il provider rifiuta di completare un accesso (per esempio per un'impostazione dell'app Microsoft), la pagina Account e sincronizzazione mostra il suo codice di errore, come invalid_request AADSTS9002327, invece di un generico «non ha risposto».",
+        "Google Drive che mostra «Riconnetti Google Drive» dopo il riavvio del dispositivo è normale per una connessione senza credenziali durature: premi Riconnetti una volta e da lì in poi la connessione si rinnova da sola."
+      ]
+    }
+  },
+  {
     "version": "0.108.0",
     "date": "2026-11-24",
     "en": {

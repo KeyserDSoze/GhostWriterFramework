@@ -333,7 +333,8 @@ export async function readJson(response, status) {
 
 export async function assertError(response, status, code) {
   const body = await readJson(response, status);
-  assert.deepEqual(Object.keys(body).sort(), ["error", "message"]);
+  const optional = new Set(["providerError", "providerCodes"]);
+  assert.deepEqual(Object.keys(body).filter((key) => !optional.has(key)).sort(), ["error", "message"]);
   assert.equal(body.error, code);
   assert.equal(typeof body.message, "string");
   assert.ok(body.message.length > 0 && body.message.length <= 300, "the message is a short human text");

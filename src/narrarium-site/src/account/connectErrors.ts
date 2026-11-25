@@ -63,6 +63,7 @@ export function describeConnectError(error: unknown, t: TFunction): string | nul
   if (error instanceof BrokerError) {
     if (error.code === "invalid_grant") return t("accountSync.connectError.codeRejected");
     if (error.code === "rate_limited") return t("accountSync.connectError.rateLimited");
+    if (error.code === "upstream" && error.providerDetail) return t("accountSync.connectError.providerRefused", { detail: error.providerDetail });
     return t("accountSync.connectError.brokerUnavailable");
   }
   return null;

@@ -68,6 +68,7 @@ export type AccountSyncErrorKind =
   | "repository-unreachable"
   | "rate-limited"
   | "cache-revalidation"
+  | "remote-changed"
   | "network"
   | "schema-incompatible"
   | "remote-corrupt"
