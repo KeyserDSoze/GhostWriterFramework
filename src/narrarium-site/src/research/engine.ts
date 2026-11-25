@@ -10,7 +10,7 @@ import type { ChatCapability, ResearchIntent } from "@/types/settings";
 import type { LlmMessage } from "@/assistant/llm";
 import type { ResearchFrontmatter, ResearchResult, ResearchDepth, ResearchSourceMode } from "./types";
 import { DEPTH_CONFIG } from "./types";
-import { useCostsStore, bucketTotal, aggregateAll } from "@/costs/costsStore";
+import { onUsageRecorded } from "@/costs/recordUsage";
 import { runResearchRouter } from "./ResearchRouter";
 import { captureImmediateMutation, commitImmediateMutation, mergeManagedFrontmatter } from "@/assistant/immediateMutation";
 import { resolveRepositoryHeadForMutation } from "@/repository/safeRepositoryMutation";
@@ -165,9 +165,15 @@ export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunD
   const operation = beginAccountScopedAiOperation(input.signal, input.accountScope);
   operation.signal.throwIfAborted();
   input = { ...input, signal: operation.signal, accountScope: operation.accountScope };
+  // What this research cost: the money of its own calls, as the recorder hears them, in the currency of the settings (a call of anything else that runs
+  // meanwhile, an autopilot for one, is not this research's; an amount in another currency is never added to it).
+  const currency = input.settings.costCurrency || "USD";
+  let costDelta = 0;
+  const stopCounting = onUsageRecorded(({ source, delta }) => {
+    if (source === "research" && delta.key.currency === currency) costDelta += delta.counters.cost ?? 0;
+  });
   try {
   const expectedRemoteHeadSha = input.expectedRemoteHeadSha ?? await resolveRepositoryHeadForMutation(input);
-  const costBefore = bucketTotal(aggregateAll(useCostsStore.getState().file));
 
   reportProgress(input, "Generating search queries…");
   const queries = await generateQueries(input);
@@ -202,8 +208,7 @@ export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunD
   reportProgress(input, `Synthesizing ${deduped.length} results…`);
   const { title, markdown: body } = await synthesize(input, deduped, providerSummary);
 
-  const costAfter = bucketTotal(aggregateAll(useCostsStore.getState().file));
-  const costDelta = Math.max(0, costAfter - costBefore);
+  stopCounting();
 
   const now = new Date().toISOString();
   const datePrefix = now.slice(0, 10);
@@ -238,6 +243,7 @@ export async function runDeepResearch(input: RunDeepResearchInput): Promise<RunD
 
   return { path, slug, title, markdown: fullMarkdown, cost: costDelta, providers: frontmatter.providers, providerUsage, intentsResolved, unavailableSummary: [...unavailableSummary] };
   } finally {
+    stopCounting();
     operation.dispose();
   }
 }

@@ -4,12 +4,12 @@ import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { clearFallbackAcknowledgements, CrossBoundaryFallbackCancelledError, setFallbackAcknowledgementAccountScope } from "@/assistant/fallbackDisclosure";
 import { createBrowserAi } from "@/autopilot/browserAi";
 import { chatDelta, useCostsStore } from "@/costs/costsStore";
-import { emptyCostsFile } from "@/costs/model";
 import { LLM_DEBUG_ERROR_REDACTED, LLM_DEBUG_REDACTED, useLlmDebugStore } from "@/debug/llmDebugStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type AppSettings } from "@/types/settings";
 import { assertProvidersClean, createFakeProvider, failReply, hang, streamedReply, textReply, toolReply, USAGE, type ProviderReply } from "./helpers/fakeProvider";
 import { chatModel, compatible, endpointsOf, GITHUB_TOKEN, PRICE, routed, SCHEMA, settingsOf, type Fixture } from "./helpers/aiFixtures";
+import { resetCosts } from "./helpers/costs";
 
 const ASK: AiRequest = { capability: "autopilot", label: "autopilot:scene", system: "The system prompt", user: "The user prompt" };
 
@@ -29,7 +29,7 @@ const failure = (promise: Promise<unknown>) => promise.then(() => undefined, (er
 beforeEach(() => {
   localStorage.clear();
   useLlmDebugStore.setState({ entries: [], pending: 0, storageError: null, accountIdentity: null });
-  useCostsStore.setState({ file: emptyCostsFile(), currentBookId: "book-1", currentBookName: "The Glass Harbor", dirty: false, revision: 0 });
+  resetCosts({ bookId: "book-1", bookName: "The Glass Harbor" });
   setFallbackAcknowledgementAccountScope(localWorkspaceScope());
 });
 

@@ -6,7 +6,6 @@ import { setFallbackAcknowledgementAccountScope } from "@/assistant/fallbackDisc
 import { createBrowserAi } from "@/autopilot/browserAi";
 import { presentFeedEvent } from "@/autopilot/format";
 import { useCostsStore } from "@/costs/costsStore";
-import { emptyCostsFile } from "@/costs/model";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
@@ -14,6 +13,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import type { AppSettings } from "@/types/settings";
 import { assertProvidersClean, createFakeProvider, failReply, streamedReply, textReply, toolReply, type ProviderCall, type ProviderReply } from "./helpers/fakeProvider";
 import { chatModel, compatible, endpointsOf, GITHUB_TOKEN, settingsOf, type Fixture } from "./helpers/aiFixtures";
+import { resetCosts } from "./helpers/costs";
 
 const USAGE = { prompt_tokens: 100, completion_tokens: 50 };
 const fixture = compatible("a", [chatModel("gpt-4o", { maxInputTokens: 128_000, maxOutputTokens: 16_384 })]);
@@ -75,7 +75,7 @@ async function runBook(host: "browser" | "server", retryAfter: string, setup: Se
 beforeEach(() => {
   localStorage.clear();
   useLlmDebugStore.setState({ entries: [], pending: 0, storageError: null, accountIdentity: null });
-  useCostsStore.setState({ file: emptyCostsFile(), currentBookId: "book-1", currentBookName: "The Glass Harbor", dirty: false, revision: 0 });
+  resetCosts({ bookId: "book-1", bookName: "The Glass Harbor" });
   setFallbackAcknowledgementAccountScope(localWorkspaceScope());
 });
 

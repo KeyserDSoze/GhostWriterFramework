@@ -13,7 +13,7 @@ import type { AssistantSession } from "@/assistant/store";
 async function ensureLocalAccount(): Promise<void> {
   await initializeAccountLocalStore({
     settings: useSettingsStore.getState().settings,
-    costs: useCostsStore.getState().file,
+    costs: useCostsStore.getState().persisted,
     clipboard: useClipboardStore.getState().items,
     chats: [],
   });

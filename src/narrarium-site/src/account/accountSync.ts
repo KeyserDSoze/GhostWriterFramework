@@ -4,6 +4,7 @@ import { AccountCredentialError, useConnectionStore } from "@/account/connection
 import { compareAccountManifests } from "@/account/vectorClock";
 import { accountSyncEnvelope } from "@/account/serialization";
 import type { AccountRemoteSnapshot, AccountSyncBackend, AccountSyncBackendKind, LocalAccountSnapshot, ReplicaComparison } from "@/account/types";
+import type { CostsFile } from "@/costs/model";
 import { DriveAccountSyncBackend } from "@/account/sync/driveBackend";
 import { useSettingsStore, LOCAL_SETTINGS_SOURCE_SCHEMA_VERSION } from "@/store/settingsStore";
 import { useCostsStore } from "@/costs/costsStore";
@@ -131,6 +132,17 @@ async function applyLocalSnapshot(snapshot: LocalAccountSnapshot): Promise<void>
   await refreshAssistantSessionIndex();
 }
 
+/**
+ * The costs to keep when copies meet: whichever copy is kept, the usage ledger is the merge of all of them (by writer: never twice, never lost; see
+ * `costs/ledger.ts`), and the legacy totals are made whole again on it. `selected` itself when there is nothing to merge. The merge loads with the
+ * first copy that has a ledger.
+ */
+async function mergedCosts(selected: CostsFile, others: readonly CostsFile[]): Promise<CostsFile> {
+  if (!selected.ledger && others.every((other) => !other.ledger)) return selected;
+  const { mergeCostsFiles } = await import("@/costs/legacyCosts");
+  return mergeCostsFiles(selected, others);
+}
+
 const MAX_ERROR_MESSAGE_LENGTH = 300;
 
 function describeAccountSyncError(error: unknown): string | undefined {
@@ -244,8 +256,13 @@ async function syncAccountReplicas(activeKinds: AccountSyncBackendKind[]): Promi
 
     const newer = plan.action === "pull-remote" ? remotes.find((remote) => remote.backend === plan.authoritativeRemote) : undefined;
     if (newer) {
-      const data = { ...newer.data, settings: mergeLocalDeviceSettings(local.data.settings, newer.data.settings) };
-      local = await adoptRemoteAccountSnapshot(data, newer.manifest, `Pulled account data from ${backendLabel(newer.backend)}`, local.manifest.snapshotId);
+      // The newer copy is taken; the usage this device recorded is merged into it, and when that adds something the result is a new version of this
+      // device (pushed below), so a copy that lost a device's usage (an older client chose another copy whole) gets it back.
+      const costs = await mergedCosts(newer.data.costs, [local.data.costs]);
+      const data = { ...newer.data, costs, settings: mergeLocalDeviceSettings(local.data.settings, newer.data.settings) };
+      local = costs === newer.data.costs
+        ? await adoptRemoteAccountSnapshot(data, newer.manifest, `Pulled account data from ${backendLabel(newer.backend)}`, local.manifest.snapshotId)
+        : await replaceLocalAccountSnapshot(data, [local.manifest, newer.manifest], `Pulled account data from ${backendLabel(newer.backend)} and kept the usage of this device`, local.manifest.snapshotId);
       await applyLocalSnapshot(local);
     }
 
@@ -320,7 +337,11 @@ export async function resolveAccountReconciliation(authoritative: "local" | Acco
   const request = useAccountSyncStore.getState().reconciliation;
   if (!request) return;
   const allManifests = [request.local.manifest, ...request.remotes.map((remote) => remote.manifest)];
-  const data = reconciledAccountData(request, authoritative);
+  const chosen = reconciledAccountData(request, authoritative);
+  // The person chooses which copy to keep; what every copy recorded of the usage is kept whatever the choice.
+  const selected = authoritative === "local" ? request.local : request.remotes.find((remote) => remote.backend === authoritative);
+  const copies = [request.local, ...request.remotes].filter((copy) => copy !== selected).map((copy) => copy.data.costs);
+  const data = { ...chosen, costs: await mergedCosts(chosen.costs, copies) };
   const reconciled = await replaceLocalAccountSnapshot(data, allManifests, `Resolved account divergence using ${authoritative}`, request.local.manifest.snapshotId);
   await applyLocalSnapshot(reconciled);
   useAccountSyncStore.getState().setReconciliation(null);

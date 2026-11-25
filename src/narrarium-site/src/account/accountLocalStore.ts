@@ -10,6 +10,7 @@ import { initialAccountManifest, nextAccountManifest, reconciledAccountManifest 
 import type { AssistantLosslessSegment, AssistantSession } from "@/assistant/store";
 import type { ClipboardEntry } from "@/clipboard/clipboardStore";
 import type { CostsFile } from "@/costs/model";
+import { ledgerWriterId } from "@/costs/ledgerWriter";
 import type { AppSettings } from "@/types/settings";
 import { projectSyncableSettings } from "@/account/dataProjection";
 
@@ -210,12 +211,52 @@ export async function saveLocalAccountSettings(settings: AppSettings): Promise<A
   return updateCore({ settings });
 }
 
-export function saveLocalAccountCosts(costs: CostsFile): Promise<AccountSyncManifest> {
-  return updateCore({ costs });
-}
-
 export function saveLocalAccountClipboard(clipboard: ClipboardEntry[]): Promise<AccountSyncManifest> {
   return updateCore({ clipboard });
+}
+
+/** The writer of the usage ledger in this store: this device and the moment the store was made (see `ledgerWriterId`). */
+function ledgerWriterOf(meta: StoredMeta): string {
+  return ledgerWriterId(localDeviceId(), meta.initializedAtUtc);
+}
+
+/**
+ * Changes the costs in one transaction with what they are now: `change` receives the costs as stored and the ledger writer of this store, and returns the
+ * new costs. Every tab of this browser writes through it, so the records of two tabs are both kept (a whole file written from memory would lose the other
+ * tab's). Returns the costs as stored after the change.
+ */
+export async function updateLocalAccountCosts(change: (costs: CostsFile, writerId: string) => CostsFile): Promise<CostsFile> {
+  const db = await openDb();
+  const tx = db.transaction(["meta", "core"], "readwrite");
+  const metaStore = tx.objectStore("meta");
+  const coreStore = tx.objectStore("core");
+  const [meta, core] = await Promise.all([
+    requestValue(metaStore.get(CURRENT_KEY)) as Promise<StoredMeta | undefined>,
+    requestValue(coreStore.get(CURRENT_KEY)) as Promise<StoredCore | undefined>,
+  ]);
+  if (!meta || !core) { tx.abort(); throw new LocalAccountStoreMissingError(); }
+  const costs = change(core.costs, ledgerWriterOf(meta));
+  if (costs === core.costs) { tx.abort(); return core.costs; }
+  const manifest = nextAccountManifest(meta.manifest, localDeviceId());
+  coreStore.put({ ...core, costs });
+  metaStore.put({ ...meta, manifest, dirty: true });
+  await transactionDone(tx);
+  emitChanged(manifest);
+  return costs;
+}
+
+/** The costs as this browser keeps them, read on their own (not the chats); `null` before the store is made. */
+export async function loadLocalAccountCosts(): Promise<CostsFile | null> {
+  const db = await openDb();
+  const tx = db.transaction("core", "readonly");
+  const core = await requestValue(tx.objectStore("core").get(CURRENT_KEY)) as StoredCore | undefined;
+  await transactionDone(tx);
+  return core?.costs ?? null;
+}
+
+export class LocalAccountStoreMissingError extends Error {
+  readonly code = "LOCAL_ACCOUNT_STORE_MISSING";
+  constructor() { super("Local account store has not been initialized."); this.name = "LocalAccountStoreMissingError"; }
 }
 
 export async function saveLocalAssistantSession(session: AssistantSession): Promise<AccountSyncManifest> {

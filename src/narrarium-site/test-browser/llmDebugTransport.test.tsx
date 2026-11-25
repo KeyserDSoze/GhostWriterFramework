@@ -8,8 +8,6 @@ import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { setFallbackAcknowledgementAccountScope } from "@/assistant/fallbackDisclosure";
 import { createBrowserAi } from "@/autopilot/browserAi";
 import { LlmDebugPanel } from "@/components/debug/LlmDebugPanel";
-import { emptyCostsFile } from "@/costs/model";
-import { useCostsStore } from "@/costs/costsStore";
 import { attemptBadges } from "@/debug/attemptBadges";
 import { redactLlmDebugEntry, useLlmDebugStore, type LlmDebugEntry } from "@/debug/llmDebugStore";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -17,6 +15,7 @@ import { useUiStore } from "@/store/uiStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { assertProvidersClean, createFakeProvider, data, DONE, eventStream, USAGE, type ProviderReply } from "./helpers/fakeProvider";
 import { compatible, endpointsOf, GITHUB_TOKEN, settingsOf } from "./helpers/aiFixtures";
+import { resetCosts } from "./helpers/costs";
 
 // What the debug history keeps of the transport of a call, and what the panel says of it. The history is saved in the browser and keeps metadata only: it has the figures of
 // the response, how the stream ended and the id of the request, and never the end of the stream or the reply that had arrived, which are words of the model.
@@ -59,7 +58,7 @@ beforeAll(async () => {
 beforeEach(() => {
   localStorage.clear();
   useLlmDebugStore.setState({ entries: [], pending: 0, storageError: null, accountIdentity: null });
-  useCostsStore.setState({ file: emptyCostsFile(), currentBookId: "book-1", currentBookName: "The Glass Harbor", dirty: false, revision: 0 });
+  resetCosts({ bookId: "book-1", bookName: "The Glass Harbor" });
   setFallbackAcknowledgementAccountScope(localWorkspaceScope());
 });
 

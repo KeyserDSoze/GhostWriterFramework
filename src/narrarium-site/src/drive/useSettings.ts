@@ -46,7 +46,7 @@ export async function saveSettingsNow(): Promise<boolean> {
     if (!await loadLocalAccountSnapshot()) {
       await initializeAccountLocalStore({
         settings: store.settings,
-        costs: useCostsStore.getState().file,
+        costs: useCostsStore.getState().persisted,
         clipboard: useClipboardStore.getState().items,
         chats: [],
       });
@@ -103,7 +103,7 @@ export function useSettings() {
       try {
         const snapshot = await initializeAccountLocalStore({
           settings: legacySeedSettings(),
-          costs: useCostsStore.getState().file,
+          costs: useCostsStore.getState().persisted,
           clipboard: useClipboardStore.getState().items,
           chats: [],
         });

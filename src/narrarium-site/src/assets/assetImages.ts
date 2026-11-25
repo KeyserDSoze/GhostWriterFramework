@@ -5,7 +5,8 @@ import { createOrUpdateTextAndBinaryFilesAtomically, createOrUpdateTextFile, loa
 import { completeTextRouted, resolveTaskCandidates } from "@/assistant/router";
 import { CandidateTimeoutError } from "@/assistant/executionLimits";
 import { executeMediaFallback } from "@/assistant/mediaFallback";
-import { imageTokenDelta, useCostsStore } from "@/costs/costsStore";
+import { imageTokenDelta } from "@/costs/costsStore";
+import { recordUsage } from "@/costs/recordUsage";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { providerErrorOf } from "@/debug/providerError";
 import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
@@ -213,7 +214,7 @@ export async function generateAssetImage(input: {
       if (isGptImageModel(model)) request.output_format = "png";
       else request.response_format = "b64_json";
       const response = await client.images.generate(request as never, { signal: attemptSignal });
-      const cost = recordImageUsage(integration, response);
+      const cost = recordImageUsage(integration, model, response, input.settings.costCurrency);
       const image = response.data?.[0];
       if (image?.b64_json) {
         const result = { bytes: base64ToBytes(image.b64_json), provider: integration.provider, model, cost };
@@ -252,27 +253,47 @@ function createImageClient(integration: AIIntegration): AzureOpenAI | OpenAI {
     : new OpenAI({ apiKey: integration.apiKey, baseURL: integration.endpoint || "https://api.openai.com/v1", dangerouslyAllowBrowser: true });
 }
 
-function recordImageUsage(integration: AIIntegration, response: unknown): number | undefined {
+const IMAGE_PRICES = ["imageInputTextPerMTok", "imageCachedInputTextPerMTok", "imageInputImagePerMTok", "imageCachedInputImagePerMTok", "imageOutputPerMTok"] as const;
+
+/**
+ * Records a generated image (`recordUsage`): its tokens when the provider reported them, its cost when the integration prices images, and that it was
+ * made even when nothing says how much it used. The legacy totals get what they always got. Returns the cost, when it is known.
+ */
+function recordImageUsage(integration: AIIntegration, model: string, response: unknown, currency: string): number | undefined {
   const pricing = integration.pricing;
-  if (!pricing) return undefined;
+  const priced = Boolean(pricing && IMAGE_PRICES.some((field) => typeof pricing[field] === "number"));
   const usage = (response as { usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { text_tokens?: number; image_tokens?: number; cached_text_tokens?: number; cached_image_tokens?: number; cached_tokens?: number } } }).usage;
   const details = usage?.input_tokens_details;
-  if (usage && (usage.output_tokens || usage.input_tokens)) {
-    const inputText = details?.text_tokens ?? usage.input_tokens ?? 0;
-    const inputImage = details?.image_tokens ?? 0;
-    const delta = imageTokenDelta({
-      inputTextTokens: inputText,
-      cachedInputTextTokens: details?.cached_text_tokens ?? 0,
-      inputImageTokens: inputImage,
-      cachedInputImageTokens: details?.cached_image_tokens ?? 0,
-      outputTokens: usage.output_tokens ?? 0,
-    }, pricing);
-    useCostsStore.getState().recordCurrent(delta);
-    return delta.imageCost;
-  }
-  // No token usage returned: count the image without a cost.
-  useCostsStore.getState().recordCurrent({ imageCount: 1 });
-  return undefined;
+  const reported = Boolean(usage && (usage.output_tokens || usage.input_tokens));
+  const delta = reported ? imageTokenDelta({
+    inputTextTokens: details?.text_tokens ?? usage?.input_tokens ?? 0,
+    cachedInputTextTokens: details?.cached_text_tokens ?? 0,
+    inputImageTokens: details?.image_tokens ?? 0,
+    cachedInputImageTokens: details?.cached_image_tokens ?? 0,
+    outputTokens: usage?.output_tokens ?? 0,
+  }, pricing) : undefined;
+  const cost = priced && delta ? delta.imageCost : undefined;
+  // The legacy totals counted an image only for an integration with prices: its tokens when reported, else the image alone; its cost comes with the record.
+  const { imageCost: _cost, ...counts } = delta ?? { imageCount: 1 };
+  recordUsage({
+    capability: "image",
+    label: "image",
+    integrationId: integration.id,
+    model,
+    usage: delta ? {
+      inputTokens: (delta.imageInputTextTokens ?? 0) + (delta.imageInputImageTokens ?? 0),
+      cachedTokens: (delta.imageCachedInputTextTokens ?? 0) + (delta.imageCachedInputImageTokens ?? 0),
+      outputTokens: delta.imageOutputTokens ?? 0,
+    } : null,
+    usageKnown: reported,
+    ...(cost !== undefined ? { cost } : {}),
+    costKnown: cost !== undefined,
+    priced,
+    currency,
+    billed: true,
+    ...(pricing ? { legacy: counts } : {}),
+  });
+  return cost;
 }
 
 function parseAssetMarkdown(raw: string): {

@@ -17,7 +17,7 @@ import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperatio
 import { acknowledgeCrossBoundaryFallback, type BoundaryCandidate } from "@/assistant/fallbackDisclosure";
 import { pageEnding } from "@/autopilot/localRuns";
 import { GITHUB_MODELS_BASE } from "@/config/githubModels";
-import { chatDelta, useCostsStore } from "@/costs/costsStore";
+import { recordUsage } from "@/costs/recordUsage";
 import { inputOfLearning, rememberLearnedModel } from "@/autopilot/learnedModels";
 import { flattenLlmContent, useLlmDebugStore } from "@/debug/llmDebugStore";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -70,16 +70,16 @@ function openDebugEntry(attempt: FetchAiAttempt, structured: boolean, route?: Br
 }
 
 /**
- * Closes the panel entry of an attempt and records what the provider billed for it, failed attempts included. Only
- * tokens the provider reported are recorded: an estimate is not a measurement, and a model with no price has no cost.
+ * Closes the panel entry of an attempt and records what it used, failed attempts included, with the one recorder of the app (`recordUsage`): the
+ * tokens the provider reported, and apart from them the engine's estimate when it reported none (an estimate is never a measurement); the money at
+ * the price of the model, in the currency of the settings the call was made with; and, for a model with no price, that it has none.
  */
-function closeAttempt(config: AiRuntimeConfig, debugId: string | undefined, end: FetchAiAttemptEnd): void {
+function closeAttempt(config: AiRuntimeConfig, debugId: string | undefined, end: FetchAiAttemptEnd, usageOf: BrowserAiUsage | undefined): void {
   const pricing = pricingOf(config, end.integrationId, end.model);
   const usage = end.usageKnown && end.usage
     ? { inputTokens: end.usage.inputTokens, cachedTokens: end.usage.cachedInputTokens, outputTokens: end.usage.outputTokens }
     : undefined;
-  const delta = usage ? chatDelta(usage, pricing) : undefined;
-  const cost = pricing ? delta?.chatCost : undefined;
+  const cost = pricing && usage ? end.cost : undefined;
   if (debugId) {
     // What came back, whether it worked or not: read as a stream, how long the first byte took, whether the model called the function, which deadline ran out, what the transport saw
     // (the store keeps its figures and never the end of the stream, which is words of the model: this history keeps metadata only).
@@ -88,8 +88,29 @@ function closeAttempt(config: AiRuntimeConfig, debugId: string | undefined, end:
       ? { status: "done", response: end.text, ...came, ...usage, cost }
       : { status: "error", error: end.error, failureKind: end.failureKind, timeoutMs: end.timeoutMs, timeoutPhase: end.timeoutPhase, ...(end.errorBody ? { providerError: { status: end.errorBody.status, type: end.errorBody.type, param: end.errorBody.param, code: end.errorBody.code } } : {}), ...came, ...usage, cost });
   }
-  if (usage && delta && pricing && (usage.inputTokens || usage.outputTokens)) useCostsStore.getState().recordCurrent(delta, end.model);
+  const scope = usageOf?.();
+  recordUsage({
+    ...(scope?.bookId !== undefined ? { bookId: scope.bookId, bookName: scope.bookName } : {}),
+    ...(scope?.origin ? { origin: scope.origin } : {}),
+    ...(scope?.task ? { task: scope.task } : {}),
+    capability: end.capability,
+    label: end.label,
+    integrationId: end.integrationId,
+    model: end.model,
+    usage: end.usage ? { inputTokens: end.usage.inputTokens, cachedTokens: end.usage.cachedInputTokens, outputTokens: end.usage.outputTokens } : null,
+    usageKnown: end.usageKnown && Boolean(end.usage),
+    ...(pricing && end.cost !== undefined ? { cost: end.cost } : {}),
+    costKnown: end.costKnown,
+    priced: Boolean(pricing),
+    currency: end.currency || config.costCurrency || "",
+  });
 }
+
+/**
+ * Whose calls these are, for the costs: the book, that the autopilot made them (`origin`), and the task they belong to (the step that runs). Asked at the
+ * end of each attempt, so that the step of the moment is the one that counts. Absent: the book open in the app, and each call a task of its own.
+ */
+export type BrowserAiUsage = () => { bookId?: string; bookName?: string; origin?: "autopilot"; task?: string } | undefined;
 
 /** Where an attempt stands in a route that the caller resolved itself, and what it left out of that route: what the debug panel says of it. */
 export interface BrowserAiRoute {
@@ -113,6 +134,8 @@ export interface BrowserAiOptions {
   route?: BrowserAiRoute;
   /** An attempt ended and its panel entry is closed: how it ended, and which entry it is. A listener that throws never breaks the call. */
   onEnd?: (end: FetchAiAttemptEnd, debugId: string | undefined) => void;
+  /** Whose calls these are, for the costs (see `BrowserAiUsage`). Absent: the book open in the app. */
+  usage?: BrowserAiUsage;
 }
 
 /**
@@ -143,6 +166,12 @@ export function createBrowserAi(options: BrowserAiOptions = {}): AiPort {
       const picked = pickAiRuntimeConfig(settings);
       const config = options.configure ? options.configure(picked, request) : picked;
       const debugEntries = new Map<string, string>();
+      // A call is a task of its own (its attempts, fallbacks included, count it once) unless the caller says which task it belongs to.
+      const callTask = `call-${crypto.randomUUID()}`;
+      const usage: BrowserAiUsage = () => {
+        const scope = options.usage?.();
+        return { ...scope, task: scope?.task ?? callTask };
+      };
       const operation = beginAccountScopedAiOperation(request.signal, "accountScope" in options ? options.accountScope : localWorkspaceScope());
       try {
         const ai = createFetchAi(config, {
@@ -156,7 +185,7 @@ export function createBrowserAi(options: BrowserAiOptions = {}): AiPort {
           onAttemptEnd: (end) => {
             const debugId = debugEntries.get(end.attemptId);
             debugEntries.delete(end.attemptId);
-            closeAttempt(config, debugId, end);
+            closeAttempt(config, debugId, end, usage);
             try {
               options.onEnd?.(end, debugId);
             } catch {

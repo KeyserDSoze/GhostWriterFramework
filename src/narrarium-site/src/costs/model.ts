@@ -1,3 +1,5 @@
+import type { UsageLedger } from "@/costs/ledger";
+
 export interface UsageBucket {
   inputTokens: number;
   cachedTokens: number;
@@ -28,6 +30,11 @@ export interface CostsFile {
   currency: "EUR";
   updatedAt: string;
   books: Record<string, BookUsage>;
+  /**
+   * The usage ledger (see `costs/ledger.ts`): by day, book, source, model and currency, merged by writer. Absent until this version records a call;
+   * older clients keep it as it is, since they keep every key of this file they do not know.
+   */
+  ledger?: UsageLedger;
 }
 
 export function emptyBucket(): UsageBucket {

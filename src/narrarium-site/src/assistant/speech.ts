@@ -2,7 +2,8 @@ import OpenAI, { AzureOpenAI } from "openai";
 import type { AIIntegration, AppSettings } from "@/types/settings";
 import { resolveWritingIntegration } from "@/assistant/llm";
 import { resolveTaskCandidates, type TaskCandidate } from "@/assistant/router";
-import { sttDelta, ttsDelta, useCostsStore } from "@/costs/costsStore";
+import { sttDelta, ttsDelta } from "@/costs/costsStore";
+import { recordUsage } from "@/costs/recordUsage";
 import { useLlmDebugStore, type LlmDebugProviderError } from "@/debug/llmDebugStore";
 import { providerErrorOf } from "@/debug/providerError";
 import { BrowserSpeechFallbackRequired, executeMediaFallback } from "@/assistant/mediaFallback";
@@ -151,7 +152,10 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings, signal:
       attemptSignal?.throwIfAborted();
       const estimatedHours = blob.size > 0 ? blob.size / (16000 * 3600) : 0;
       const cost = pricing ? sttDelta(estimatedHours, pricing).sttCost : undefined;
-      if (estimatedHours > 0 && pricing) useCostsStore.getState().recordCurrent(sttDelta(estimatedHours, pricing));
+      // The hours are worked out from the size of the recording, as they always were; the cost is counted as measured with them.
+      const priced = typeof pricing?.sttPerHour === "number";
+      const { sttCost: _sttCost, ...heard } = sttDelta(estimatedHours, pricing);
+      recordUsage({ capability: "stt", label: "stt", integrationId: integration.id, model, usage: null, usageKnown: true, ...(priced ? { cost: cost ?? 0 } : {}), costKnown: priced, priced, currency: settings.costCurrency, billed: estimatedHours > 0, ...(estimatedHours > 0 && pricing ? { legacy: heard } : {}) });
       const text = response.text ?? "";
       useLlmDebugStore.getState().finish(debugId, { status: "done", response: text, cost });
       return text;
@@ -364,7 +368,9 @@ async function speakWithOpenAICompatible(text: string, settings: AppSettings, ca
         throw error;
       }
       const cost = pricing ? ttsDelta(segment.length, pricing).ttsCost : undefined;
-      if (pricing) useCostsStore.getState().recordCurrent(ttsDelta(segment.length, pricing));
+      const priced = typeof pricing?.ttsPerMChar === "number";
+      const { ttsCost: _ttsCost, ...spoken } = ttsDelta(segment.length, pricing);
+      recordUsage({ capability: "tts", label: "tts", integrationId: integration.id, model, usage: null, usageKnown: true, ...(priced ? { cost: cost ?? 0 } : {}), costKnown: priced, priced, currency: settings.costCurrency, billed: segment.length > 0, ...(pricing ? { legacy: spoken } : {}) });
       if (stopped || synthesisController.signal.aborted) {
         URL.revokeObjectURL(url);
         useLlmDebugStore.getState().finish(debugId, { status: "done", response: `${segment.length} generated chars, 0 played chars`, cost });

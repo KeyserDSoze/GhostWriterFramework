@@ -19,7 +19,6 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
 import { useGlobalShortcuts } from "@/hooks/useGlobalShortcuts";
-import { useCostsSync } from "@/costs/useCostsSync";
 import { useCostsStore } from "@/costs/costsStore";
 import { useClipboardSync } from "@/clipboard/useClipboardSync";
 import { parseAppRoute } from "@/assistant/context";
@@ -82,7 +81,6 @@ export function Shell() {
   const accessToken = useAuthStore((s) => s.accessToken);
   const hydrateConnections = useConnectionStore((state) => state.hydrate);
 
-  useCostsSync();
   useClipboardSync();
   useGlobalShortcuts();
   useDirtyNavigationGuard(t("common.unsavedNavigationConfirm"));

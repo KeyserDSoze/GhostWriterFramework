@@ -7,8 +7,6 @@ import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { setFallbackAcknowledgementAccountScope } from "@/assistant/fallbackDisclosure";
 import { createBrowserAi } from "@/autopilot/browserAi";
 import { LlmDebugPanel } from "@/components/debug/LlmDebugPanel";
-import { emptyCostsFile } from "@/costs/model";
-import { useCostsStore } from "@/costs/costsStore";
 import { attemptBadges } from "@/debug/attemptBadges";
 import { LLM_DEBUG_MAX_BYTES, pruneLlmDebugEntries, redactLlmDebugEntry, useLlmDebugStore, type LlmDebugEntry } from "@/debug/llmDebugStore";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -16,6 +14,7 @@ import { useUiStore } from "@/store/uiStore";
 import { DEFAULT_SETTINGS, type ReasoningParameter } from "@/types/settings";
 import { assertProvidersClean, createFakeProvider, data, DONE, eventStream, hang, textReply, toolReply, USAGE, type ProviderReply } from "./helpers/fakeProvider";
 import { chatModel, compatible, endpointsOf, GITHUB_TOKEN, routed, SCHEMA, settingsOf, type Fixture } from "./helpers/aiFixtures";
+import { resetCosts } from "./helpers/costs";
 
 const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options) as string;
 const ASK: AiRequest = { capability: "autopilot", label: "autopilot:scene", system: "The system prompt", user: "The user prompt" };
@@ -49,7 +48,7 @@ beforeAll(async () => {
 beforeEach(() => {
   localStorage.clear();
   useLlmDebugStore.setState({ entries: [], pending: 0, storageError: null, accountIdentity: null });
-  useCostsStore.setState({ file: emptyCostsFile(), currentBookId: "book-1", currentBookName: "The Glass Harbor", dirty: false, revision: 0 });
+  resetCosts({ bookId: "book-1", bookName: "The Glass Harbor" });
   setFallbackAcknowledgementAccountScope(localWorkspaceScope());
 });
 

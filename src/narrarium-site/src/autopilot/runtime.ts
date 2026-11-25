@@ -460,10 +460,12 @@ export class BrowserAutopilotRuntime {
     const existing = this.sessions.get(book.id);
     if (existing && (existing.key === key || existing.session.running)) return existing.session;
     existing?.unsubscribe();
+    // The step that runs: what its calls cost is counted as one task of the book's autopilot (`usage` of the AI port), whichever tab or page shows it.
+    const running: { activity?: string } = {};
     const session = new AutopilotSession({
       bookId: book.id,
       store: createBrowserBookStore(book, branch),
-      ai: this.aiOfPage(createBrowserAi()),
+      ai: this.aiOfPage(createBrowserAi({ usage: () => ({ bookId: book.id, bookName: bookTitle(book.id), origin: "autopilot", ...(running.activity ? { task: running.activity } : {}) }) })),
       host: "browser",
       hostLabel: browserLabel(),
       hostId: localDeviceId(),
@@ -482,6 +484,8 @@ export class BrowserAutopilotRuntime {
     void ensureCallsHost();
     const scope = currentRepositoryScopeIdentity();
     const unsubscribe = session.subscribe((event) => {
+      if (event.type === "task-started") running.activity = event.activity.id;
+      else if (event.type === "task-finished" || event.type === "run-ended") running.activity = undefined;
       // What a run says while its page ends is not shown here or in the other tabs, and changes nothing of what resumes it.
       if (pageEnding()) return;
       const title = bookTitle(book.id);

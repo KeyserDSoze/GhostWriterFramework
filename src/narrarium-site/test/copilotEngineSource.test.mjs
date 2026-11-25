@@ -54,8 +54,14 @@ test("executionLimits stays for the media, which have deadlines of their own, an
 
 test("a call of the Copilot is recorded once, by the browser's AI port: no second debug entry and no second cost record of its own", () => {
   for (const path of COPILOT_PATH) {
-    assert.doesNotMatch(read(path), /useLlmDebugStore|useCostsStore|recordChatUsage|recordCurrent/, path);
+    assert.doesNotMatch(read(path), /useLlmDebugStore|useCostsStore|recordUsage|recordChatUsage|recordCurrent/, path);
   }
   assert.match(read("src/autopilot/browserAi.ts"), /useLlmDebugStore\.getState\(\)\.begin/);
-  assert.match(read("src/autopilot/browserAi.ts"), /useCostsStore\.getState\(\)\.recordCurrent/);
+  assert.match(read("src/autopilot/browserAi.ts"), /recordUsage\(\{/);
+});
+
+test("every call that may cost is recorded through the one recorder, and only the recorder writes the costs of the account", () => {
+  assert.deepEqual(importing(/\brecordUsage\(\{/), ["src/assets/assetImages.ts", "src/assistant/speech.ts", "src/autopilot/browserAi.ts"]);
+  assert.deepEqual(importing(/updateLocalAccountCosts\(/).filter((path) => !path.startsWith("src/account/")), ["src/costs/recordUsage.ts"]);
+  assert.deepEqual(importing(/\.recordCurrent\(|saveLocalAccountCosts/), []);
 });

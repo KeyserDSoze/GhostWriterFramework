@@ -4,12 +4,12 @@ import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { setFallbackAcknowledgementAccountScope } from "@/assistant/fallbackDisclosure";
 import { createBrowserAi } from "@/autopilot/browserAi";
 import { useCostsStore } from "@/costs/costsStore";
-import { emptyCostsFile } from "@/costs/model";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import type { AppSettings } from "@/types/settings";
 import { assertProvidersClean, createFakeProvider, data, eventStream, failReply, holdsSecret, textReply, type ProviderEndpoint, type ProviderReply } from "./helpers/fakeProvider";
 import { chatModel, compatible, endpointsOf, GITHUB_TOKEN, routed, settingsOf, type Fixture } from "./helpers/aiFixtures";
+import { resetCosts } from "./helpers/costs";
 
 // The browser reaches GitHub Models through the site's proxy.
 vi.mock("@/config/githubModels", () => ({
@@ -24,7 +24,7 @@ const failure = (promise: Promise<unknown>) => promise.then(() => undefined, (er
 beforeEach(() => {
   localStorage.clear();
   useLlmDebugStore.setState({ entries: [], pending: 0, storageError: null, accountIdentity: null });
-  useCostsStore.setState({ file: emptyCostsFile(), currentBookId: "book-1", currentBookName: "The Glass Harbor", dirty: false, revision: 0 });
+  resetCosts({ bookId: "book-1", bookName: "The Glass Harbor" });
   setFallbackAcknowledgementAccountScope(localWorkspaceScope());
 });
 

@@ -11,7 +11,7 @@ import {
   markLocalAccountReplicaConfirmed,
   replaceLocalAccountSnapshot,
   saveLocalAccountClipboard,
-  saveLocalAccountCosts,
+  updateLocalAccountCosts,
   saveLocalAccountSettings,
   saveLocalAssistantSession,
   LocalAccountSnapshotChangedError,
@@ -105,7 +105,7 @@ describe("local account store", () => {
     await initializeAccountLocalStore({ settings: DEFAULT_SETTINGS, costs: emptyCostsFile(), clipboard: [], chats: [] });
     await saveLocalAccountClipboard([{ id: "new", text: "new clipboard", at: "2026-08-31T12:00:00.000Z" }]);
     const costs = { ...emptyCostsFile(), updatedAt: "2026-08-31T12:00:00.000Z", books: {} };
-    await saveLocalAccountCosts(costs);
+    await updateLocalAccountCosts(() => costs);
     await saveLocalAccountSettings({ ...DEFAULT_SETTINGS, books: [{ id: "local", storageMode: "local-only", localRepositoryId: "device-only", owner: "", repo: "", name: "Local", tokenIndex: null, activeBranch: "local:device-only", addedAt: "2026-08-31T12:00:00.000Z" }] });
     const current = await loadLocalAccountSnapshot();
     expect(current?.data.clipboard[0]?.text).toBe("new clipboard");

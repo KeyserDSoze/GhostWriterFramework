@@ -4,11 +4,11 @@ import "@/autopilot/browserAi";
 import { setFallbackAcknowledgementAccountScope } from "@/assistant/fallbackDisclosure";
 import type { LlmMessage } from "@/assistant/llm";
 import { useCostsStore } from "@/costs/costsStore";
-import { emptyCostsFile } from "@/costs/model";
 import { useLlmDebugStore } from "@/debug/llmDebugStore";
 import { DEFAULT_SETTINGS, type AppSettings, type ChatCapability, type RoutingTarget } from "@/types/settings";
 import { endpointsOf, GITHUB_TOKEN, settingsOf, type Fixture } from "./aiFixtures";
 import { createFakeProvider, data, DONE, streamedReply, textReply, toolReply, USAGE, type FakeProvider, type ProviderCall, type ProviderReply } from "./fakeProvider";
+import { resetCosts } from "./costs";
 
 /** What the Copilot sends: its system prompt, and the message of the author, which is always parts (text, and the images that were attached). */
 export const MESSAGES: LlmMessage[] = [
@@ -66,7 +66,7 @@ export const hostsOf = (fake: FakeProvider) => fake.calls.map((call) => hostOf(c
 export function resetStores(): void {
   localStorage.clear();
   useLlmDebugStore.setState({ entries: [], pending: 0, storageError: null, accountIdentity: null });
-  useCostsStore.setState({ file: emptyCostsFile(), currentBookId: "book-1", currentBookName: "The Glass Harbor", dirty: false, revision: 0 });
+  resetCosts({ bookId: "book-1", bookName: "The Glass Harbor" });
   setFallbackAcknowledgementAccountScope(null);
 }
 
