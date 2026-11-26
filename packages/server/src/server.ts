@@ -83,6 +83,7 @@ import { OutlineTextLimitError } from "narrarium-engine";
 import { FROZEN_ACTIONS, FROZEN_EDITS_MODES, FrozenChapterError, SERVER_FEATURE_AUTOPILOT_FROZEN, type FrozenAction, type FrozenChangeKind, type FrozenEditsMode } from "narrarium-engine";
 import { REVISION_CHAPTER_MODES, REVISION_REASONS, RevisionCampaignError, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, type ReviseChaptersInput } from "narrarium-engine";
 import { REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, type ReviewBookInput } from "narrarium-engine";
+import { AutopilotDesignError, SERVER_FEATURE_AUTOPILOT_DESIGN, normalizeDesignStart } from "narrarium-engine";
 
 /** Tuning of the server's own limits (the defaults are the ones to run with; tests shorten them). */
 export interface ServerLimits {
@@ -303,6 +304,9 @@ const FROZEN_ERROR_STATUS: Record<string, number> = { chapter_not_found: 404, no
  */
 const CAMPAIGN_ERROR_STATUS: Record<string, number> = { invalid_request: 400, campaign_active: 409, not_changed: 409, stale: 409, not_finished: 409, nothing_to_review: 409 };
 
+/** A design that cannot begin: what was asked is not one (400), the autopilot has written chapters of the book, or the book has no description to design it from (409). */
+const DESIGN_ERROR_STATUS: Record<string, number> = { invalid_request: 400, design_written: 409, design_no_description: 409 };
+
 /**
  * What a failure is answered with. Only errors this server knows keep their meaning: its own HttpError, the engine's
  * errors and a few explicit cases. A `status` or `code` that some other library put on its error says nothing about this
@@ -318,6 +322,7 @@ export function errorStatus(error: unknown): MappedError {
   if (error instanceof AutopilotRuleError) return { status: RULE_ERROR_STATUS[error.code] ?? 400, code: error.code, message: error.message };
   if (error instanceof FrozenChapterError) return { status: FROZEN_ERROR_STATUS[error.code] ?? 400, code: error.code, message: error.message };
   if (error instanceof RevisionCampaignError) return { status: CAMPAIGN_ERROR_STATUS[error.code] ?? 400, code: error.code, message: error.message };
+  if (error instanceof AutopilotDesignError) return { status: DESIGN_ERROR_STATUS[error.code] ?? 400, code: error.code, message: error.message };
   if (error instanceof FrontmatterError) return { status: 422, code: "frontmatter_invalid", message: error.message };
   // A text longer than the outline takes is refused whole, with nothing written: the idea of the book is never cut.
   if (error instanceof OutlineTextLimitError) return { status: 413, code: "text_too_long", message: error.message };
@@ -884,7 +889,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -1248,9 +1253,10 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/start$/, scope: "run", handler: async ({ request, params }) => {
           const runtime = books.get(params[0]);
           const body = asObject(await readBody(request, SMALL_BODY));
-          // A request that is wrong in itself is refused before anything else is asked of the server, and starts nothing.
+          // A request that is wrong in itself is refused before anything else is asked of the server, and starts nothing: a design that is not one too (the engine's words).
           const limits = asLimits(body.limits);
-          await books.startRun(runtime, { brief: body.brief as never, options: body.options as never, limits, force: body.force === true });
+          const design = normalizeDesignStart(body.design);
+          await books.startRun(runtime, { brief: body.brief as never, options: body.options as never, limits, force: body.force === true, ...(design !== undefined ? { design } : {}) });
           return runtime.session.snapshot();
         },
       },

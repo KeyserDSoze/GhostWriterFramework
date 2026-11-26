@@ -47,6 +47,7 @@ export {
   AiProviderError,
   AiReplyRejectedError,
   AiRoutingBudgetError,
+  AutopilotDesignError,
   AutopilotRuleError,
   AutopilotStateCorruptError,
   FrontmatterError,
