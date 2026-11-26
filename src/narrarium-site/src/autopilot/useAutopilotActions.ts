@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { createElement, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AutopilotLiveOptions, AutopilotPublishMode } from "narrarium-engine";
+import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/components/ui/use-toast";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
 import type { HandoverRequest } from "@/autopilot/handover";
@@ -103,10 +104,14 @@ export function useAutopilotActions(bookId: string | undefined, reach: { unreach
       // The caller may handle a failure better than a toast (a consent that is missing opens the flow that asks for it).
       if (onError?.(error)) return false;
       const runtime = await loadAutopilotRuntime().catch(() => null);
+      // A start refused for a budget that is used up (the book has spent nothing yet, so the engine's cap cannot stop it before its first step) is the person's to overrule, once.
+      const budget = name === "start" && (error as { code?: unknown } | null)?.code === "budget-used-up";
+      const label = t("autopilot.errors.startAnyway");
       toast({
         title: t(name === "start" ? "autopilot.errors.start" : "autopilot.errors.action"),
         description: runtime ? runtime.describeError(error) : error instanceof Error ? error.message : String(error),
         variant: "destructive",
+        ...(budget ? { action: createElement(ToastAction, { altText: label, onClick: () => { void run(name, async (next, id) => { next.allowBudgetOverrun(id); await action(next, id); }); } }, label) } : {}),
       });
       return false;
     } finally {

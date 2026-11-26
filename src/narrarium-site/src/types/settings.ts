@@ -164,6 +164,25 @@ export interface CostRelabel {
   until: string;
 }
 
+/** What a budget allows in one currency: per calendar month and/or in all. Absent: no limit of that kind. */
+export interface CostBudgetLimit {
+  month?: number;
+  total?: number;
+}
+
+/**
+ * The budgets of the costs (`AppSettings.costBudgets`, spec point 5): limits per currency, for all the books together (`global`) and for each book (`books`), per month
+ * and in total. They count what the ledger recorded; the autopilot of a book is stopped at what is left of them by the engine's own cap (`costs/budgets.ts`).
+ */
+export interface CostBudgets {
+  /** The share of a budget (percent) at which it is warned about. Default 80. */
+  warnAt?: number;
+  /** What counts: every use that was recorded (default), or what the autopilot spent only. */
+  counts?: "all" | "autopilot";
+  global?: Record<string, CostBudgetLimit>;
+  books?: Record<string, Record<string, CostBudgetLimit>>;
+}
+
 /** Optional unit prices used to track spend, in the currency of the settings (`AppSettings.costCurrency`). Token prices are per 1,000,000 tokens. */
 export interface AIPricing {
   /** Per 1M input tokens (chat) */
@@ -739,6 +758,8 @@ export interface AppSettings {
   costRates?: CostExchangeRate[];
   /** Amounts recorded in a currency that was not the one of the prices, shown in the right one (see `CostRelabel`). Absent: none. An older client keeps the field as it is. */
   costRelabels?: CostRelabel[];
+  /** The budgets of the costs (see `CostBudgets`). Absent: none. An older client keeps the field as it is. */
+  costBudgets?: CostBudgets;
   ui: {
     language: "en" | "it";
     theme: "light" | "dark" | "system";

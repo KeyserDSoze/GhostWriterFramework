@@ -1461,6 +1461,7 @@ const autopilotEn = {
     },
     errors: {
       start: "Could not start the autopilot",
+      startAnyway: "Start anyway",
       action: "Autopilot action failed",
       aiMissing: "Configure an AI model for the Autopilot and Director tasks in AI Integrations or the AI Router.",
       workingCopy: "Open the book once so Narrarium can prepare its local working copy, then retry.",

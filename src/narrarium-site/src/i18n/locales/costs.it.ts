@@ -187,6 +187,11 @@ export default {
         open: "Apri l'autopilota",
       },
     },
+    budget: {
+      usedUpError: "Il budget {{scope}} ({{period}}) è esaurito, e questo libro non ha ancora speso nulla, quindi l'autopilot non parte. Alza il budget in Costi, o avvialo comunque.",
+      scope: { global: "Tutti i libri", book: "Questo libro" },
+      period: { month: "Al mese", total: "In totale" },
+    },
     indicator: {
       today: "Spesa di oggi",
       month: "questo mese",

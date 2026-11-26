@@ -187,6 +187,11 @@ export default {
         open: "Open the autopilot",
       },
     },
+    budget: {
+      usedUpError: "The {{scope}} budget ({{period}}) is used up, and this book has not spent anything yet, so the autopilot does not start. Raise the budget in Costs, or start it anyway.",
+      scope: { global: "All books", book: "This book" },
+      period: { month: "Per month", total: "In total" },
+    },
     indicator: {
       today: "Spend today",
       month: "this month",

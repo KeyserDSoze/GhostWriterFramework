@@ -78,6 +78,7 @@ import {
 } from "@/autopilot/store";
 import { rememberLearnedModel } from "@/autopilot/learnedModels";
 import { StreamWatchdog } from "@/autopilot/streamWatchdog";
+import { budgetsApply, startWithBudgets } from "@/autopilot/startBudgets";
 import { latestSummary } from "@/autopilot/summary";
 import { describeConflicts, recordedManifest } from "@/autopilot/syncConflicts";
 import { SyncBaseError, readSyncBase, writeSyncBase } from "@/autopilot/syncBase";
@@ -362,6 +363,8 @@ export class BrowserAutopilotRuntime {
   private readonly handovers: HandoverCoordinator;
   /** How each plan keeps the author's settings (the host of the book is one of them): the component that made the plan gives it. */
   private readonly handoverSavers = new Map<string, () => Promise<unknown>>();
+  /** The books whose next start goes on past the budgets (`allowBudgetOverrun`). */
+  private readonly budgetOverrun = new Set<string>();
 
   constructor(private readonly env: RuntimeEnvironment = {}) {
     this.channel()?.addEventListener("message", (message: MessageEvent<AutopilotChannelMessage>) => this.onChannelMessage(message.data));
@@ -678,8 +681,20 @@ export class BrowserAutopilotRuntime {
     return this.start(bookId, { limits: kind === "step" ? { steps: 1 } : { chapters: 1 } });
   }
 
-  private async startNow(bookId: string, startOptions: StartOptions & { force?: boolean; afterRestart?: boolean }): Promise<void> {
+  /**
+   * The person chose to go on past the budgets: the next start of the book ignores them, that one only (`startWithBudgets`). It is for the start that was refused for them, or the
+   * one that goes on after the engine stopped at the cap they gave.
+   */
+  allowBudgetOverrun(bookId: string): void {
+    this.budgetOverrun.add(bookId);
+  }
+
+  private async startNow(bookId: string, requested: StartOptions & { force?: boolean; afterRestart?: boolean }): Promise<void> {
     const book = findBook(bookId);
+    // The money cap the budgets leave (the engine's own cap, see `startWithBudgets`), from what the book holds now: a book without budgets is not read.
+    const overrun = this.budgetOverrun.delete(bookId);
+    if (budgetsApply(bookId)) await this.refresh(bookId, { join: true }).catch(() => null);
+    const startOptions = startWithBudgets(book, requested, overrun);
     if (autopilotHostOf(book) === "server") {
       // Check the server before the book's changes are handed to it, and before a limit is asked of one that would not stop at it.
       const { info } = await this.requireServer();
