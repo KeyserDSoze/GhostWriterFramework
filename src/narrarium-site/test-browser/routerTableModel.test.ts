@@ -71,8 +71,8 @@ describe("the four sections and the groups of the text table", () => {
     expect([...all].sort()).toEqual([...ROUTING_TASKS].sort());
   });
 
-  it("lists the 14 chat tasks in the text section, the default route first, with no media task among them", () => {
-    expect(TEXT).toHaveLength(14);
+  it("lists the 15 chat tasks in the text section, the default route first, with no media task among them", () => {
+    expect(TEXT).toHaveLength(15);
     expect(TEXT[0]).toBe("default");
     expect([...TEXT].sort()).toEqual([...CHAT_CAPABILITIES].sort());
     expect(TEXT).toEqual(TEXT_TASK_ORDER);
@@ -84,8 +84,8 @@ describe("the four sections and the groups of the text table", () => {
     expect(TEXT_GROUPS).toEqual({
       // What the autopilot asks the router for: the writer, the director, the simulated readers and their summary, the specialists (review) and the summaries (simple-tasks).
       autopilot: ["autopilot", "director", "reader-evaluation", "reader-evaluation-summary", "review", "simple-tasks"],
-      // The interactive side: the Copilot and what it writes with the default model, the editor actions, quick decisions and the resume of chats.
-      copilot: ["default", "copilot", "editor-actions", "simple-tasks", "chat-resume"],
+      // The interactive side: the Copilot, Brainstorming (its mode on the Synopsis page), what it writes with the default model, the editor actions, quick decisions and the resume of chats.
+      copilot: ["default", "copilot", "brainstorming", "editor-actions", "simple-tasks", "chat-resume"],
       // The judging side: chapter and paragraph evaluations, the readers, the audit and the rewrite from the readers' feedback.
       review: ["review", "reader-evaluation", "reader-evaluation-summary", "audit", "rewrite-from-reader-feedback"],
       research: ["deep-research", "create-from-research"],
@@ -106,7 +106,7 @@ describe("the four sections and the groups of the text table", () => {
   it("shows every task for \"all\", in the order of the table, and a group in its own order", () => {
     expect(tasksInGroup("all")).toEqual(TEXT_TASK_ORDER);
     expect(tasksInGroup("research")).toEqual(["deep-research", "create-from-research"]);
-    expect(tasksInGroup("copilot")).toEqual(["default", "copilot", "editor-actions", "simple-tasks", "chat-resume"]);
+    expect(tasksInGroup("copilot")).toEqual(["default", "copilot", "brainstorming", "editor-actions", "simple-tasks", "chat-resume"]);
   });
 });
 
@@ -433,7 +433,7 @@ describe("changing the target of rows, all together", () => {
     // every row changed: even the one that already pointed at gh/mini gains the thinking
     expect(outcome.changed).toEqual([...TEXT]);
     expect(outcome.created).toEqual(TEXT.filter((task) => !rows[task]));
-    expect(outcome.created).toHaveLength(10);
+    expect(outcome.created).toHaveLength(11);
     expect(outcome.skipped).toEqual([]);
   });
 
@@ -665,5 +665,61 @@ describe("deleting a tab", () => {
     const outcome = removeLevel(routing, TEXT, 3);
     expect(outcome.lost).toEqual([]);
     expect(outcome.routing).toBe(routing);
+  });
+});
+
+describe("the row of Brainstorming, which follows the Copilot while it has no route of its own", () => {
+  const copilot = route(to("az", "gpt-4o", "low"), to("gh", "mini"));
+
+  it("sits in the Copilot's group right after the Copilot, and in no other", () => {
+    expect(TEXT_GROUP_IDS.filter((group) => TEXT_GROUPS[group].includes("brainstorming"))).toEqual(["copilot"]);
+    expect(TEXT_GROUPS.copilot.indexOf("brainstorming")).toBe(TEXT_GROUPS.copilot.indexOf("copilot") + 1);
+    expect(TEXT_TASK_ORDER.indexOf("brainstorming")).toBe(TEXT_TASK_ORDER.indexOf("copilot") + 1);
+    expect(takesThinking("brainstorming")).toBe(true);
+  });
+
+  it("shows on every tab what the Copilot's route has there, its thinking included, and says whose route it is; it is not customized", () => {
+    const settings = settingsOf({ copilot });
+    const primary = buildRow(settings, "brainstorming", 0);
+    expect(primary).toMatchObject({ custom: false, routed: false, follows: "copilot", effective: { integrationId: "az", model: "gpt-4o", thinking: "low" } });
+    const fallback = buildRow(settings, "brainstorming", 1);
+    expect(fallback).toMatchObject({ custom: false, follows: "copilot", effective: { integrationId: "gh", model: "mini" } });
+    expect(fallback.effective).not.toHaveProperty("thinking");
+    expect(buildRow(settings, "brainstorming", 2).effective).toBeUndefined();
+    // A row that follows no other says nothing of the kind.
+    expect(buildRow(settings, "audit", 0)).not.toHaveProperty("follows");
+    expect(buildRow(settings, "audit", 0).effective).not.toHaveProperty("thinking");
+  });
+
+  it("without the Copilot's route either shows where the Copilot goes, and follows nobody's route", () => {
+    const row = buildRow(settingsOf({}), "brainstorming", 0);
+    expect(row).not.toHaveProperty("follows");
+    expect(row.effective).toMatchObject({ integrationId: "llm", model: "muse-big" });
+    expect(row.effective).toEqual(buildRow(settingsOf({}), "copilot", 0).effective);
+  });
+
+  it("with a route of its own is a row like any other: customized, its own target, and edited, swapped and cleared on its own", () => {
+    const own = route(to("llm", "muse-big", "high"), to("az", "gpt-4.1"));
+    const settings = settingsOf({ copilot, brainstorming: own });
+    const row = buildRow(settings, "brainstorming", 0);
+    expect(row).toMatchObject({ custom: true, routed: true, target: to("llm", "muse-big", "high") });
+    expect(row).not.toHaveProperty("follows");
+    const swapped = swapLevels(settings.taskRouting, ["brainstorming"], 0, 1);
+    expect(swapped.routing.brainstorming).toEqual(route(to("az", "gpt-4.1"), to("llm", "muse-big", "high")));
+    expect(swapped.routing.copilot).toEqual(copilot);
+    const cleared = clearTargetAt(settings.taskRouting, ["brainstorming"], 0);
+    expect(cleared.routing.brainstorming).toEqual(route(to("az", "gpt-4.1")));
+    const bulk = applyBulkChange({ routing: settings.taskRouting, integrations: INTEGRATIONS, tasks: ["copilot", "brainstorming"], level: 0, change: { endpointId: "gh", model: "llama" }, maxCandidates: 4 });
+    expect(bulk.changed).toEqual(["copilot", "brainstorming"]);
+    expect(bulk.routing.brainstorming?.primary).toEqual(to("gh", "llama", "high"));
+  });
+
+  it("offers it the models allowed the Copilot, and to the Copilot not the models allowed only Brainstorming", () => {
+    const muse: AIIntegration = { id: "muse", name: "Muse", provider: "openai", apiKey: "k", chatModels: [model("deep", ["brainstorming"]), model("chatty", ["copilot"]), model("small", ["simple-tasks"])] };
+    expect(modelChoicesFor([muse], "muse", "brainstorming")).toEqual(["deep", "chatty"]);
+    expect(modelChoicesFor([muse], "muse", "copilot")).toEqual(["chatty"]);
+    expect(commonModelChoices([muse], "muse", ["copilot", "brainstorming"])).toEqual(["chatty"]);
+    const kept = buildRow({ ...settingsOf({ brainstorming: route(to("muse", "chatty")) }), aiIntegrations: [muse] }, "brainstorming", 0);
+    expect(kept.missing).toEqual({ integration: false, model: false });
   });
 });

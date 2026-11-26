@@ -18,7 +18,7 @@ import { MAX_BRAINSTORM_ROUNDS, parseBrainstormTurn, runBrainstormPrompt } from 
 import { copilotToolRegistry } from "@/assistant/tools/registry";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import type { BookStructure } from "@/types/book";
-import { DEFAULT_SETTINGS, type AppSettings, type BookEntry } from "@/types/settings";
+import { BRAINSTORMING_CAPABILITY, DEFAULT_SETTINGS, type AppSettings, type BookEntry } from "@/types/settings";
 
 const D = "0123456789abcdef";
 const BOOK: BookEntry = { id: "book", owner: "", repo: "", name: "The Glass Harbor", tokenIndex: null, storageMode: "local-only", localRepositoryId: "repo", activeBranch: "local:repo", addedAt: "2026-11-21T00:00:00.000Z" };
@@ -204,8 +204,9 @@ describe("Brainstorming's turn", () => {
     const message = await ask("Move the vault earlier");
     expect(mocks.complete).toHaveBeenCalledTimes(2);
     for (const call of mocks.complete.mock.calls) {
-      expect(call[2], "the Copilot's task of the AI router").toBe("copilot");
-      expect(call[3]).toMatchObject({ label: "copilot:brainstorming", accountScope: "workspace:test" });
+      expect(call[2], "Brainstorming's own task of the AI router").toBe("brainstorming");
+      expect(call[2]).toBe(BRAINSTORMING_CAPABILITY);
+      expect(call[3]).toMatchObject({ label: "brainstorming", accountScope: "workspace:test" });
     }
     const second = mocks.complete.mock.calls[1][1].map((entry: { content: string }) => entry.content).join("\n");
     expect(second).toContain("TOOL RESULTS");

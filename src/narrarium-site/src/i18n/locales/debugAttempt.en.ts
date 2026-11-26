@@ -1,6 +1,7 @@
 /** Texts of the attempt details of the debug panel, bundled with the panel that shows them (see `@/i18n/debugAttempt`). */
 const debugAttemptEn = {
   debug: {
+    task: "Task",
     attempt: {
       title: "How it was asked",
       tools: "Asked as a function call",

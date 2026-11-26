@@ -72,7 +72,7 @@ describe("what the debug history keeps of how an attempt was asked", () => {
     await done;
     const [entry] = entries();
     expect(entry).toMatchObject({
-      model: "fine", routeCandidateIndex: 1, usedFallback: true,
+      model: "fine", routeCandidateIndex: 1, usedFallback: true, task: "autopilot", label: "autopilot:scene",
       structured: true, tools: true, stream: true, streamMode: "auto", toolsOnly: true, thinking: "high",
       skipped: [{ model: "lame", reason: "no-tool-calls" }],
     });
@@ -167,7 +167,7 @@ describe("the fields are facultative, and nothing but metadata gets in", () => {
 
   it("keeps an entry that an earlier version saved, as it was: it has none of them", () => {
     const old = kept({});
-    for (const field of ["structured", "tools", "stream", "streamMode", "thinking", "reasoningParameter", "toolsOnly", "skipped", "timeouts", "streamed", "firstByteMs", "toolCalled", "timeoutPhase"]) expect(old, field).not.toHaveProperty(field);
+    for (const field of ["task", "structured", "tools", "stream", "streamMode", "thinking", "reasoningParameter", "toolsOnly", "skipped", "timeouts", "streamed", "firstByteMs", "toolCalled", "timeoutPhase"]) expect(old, field).not.toHaveProperty(field);
     expect(old).toMatchObject({ model: "gpt-4o", status: "done" });
   });
 
@@ -194,6 +194,8 @@ describe("the fields are facultative, and nothing but metadata gets in", () => {
     ["none, which sends no level and so has nothing to say", { reasoningParameter: "none" }],
     ["a way of sending the level that this version does not know", { reasoningParameter: "chat_template_kwargs.enable_thinking" }],
     ["a way of sending the level that is not a word", { reasoningParameter: 3 }],
+    ["a task that is no task of the router", { task: "copilot:brainstorming" }],
+    ["a task that is not a word", { task: { name: "brainstorming" } }],
   ])("drops %s", (_name, extra) => {
     const entry = kept(extra);
     for (const field of Object.keys(extra)) expect(entry, field).not.toHaveProperty(field);
@@ -202,6 +204,10 @@ describe("the fields are facultative, and nothing but metadata gets in", () => {
   it("keeps the flags, the level, the mode, the phase and the times that are what the engine says", () => {
     const entry = kept({ structured: true, tools: false, stream: true, streamMode: "off", thinking: "xhigh", reasoningParameter: "chat_template_kwargs.reasoning_strength", toolsOnly: false, streamed: false, toolCalled: false, firstByteMs: 0, timeoutPhase: "idle", timeouts: { startMs: 30_000, idleMs: 45_000, capMs: 14_400_000, raisedFrom: 6_000 } });
     expect(entry).toMatchObject({ structured: true, tools: false, stream: true, streamMode: "off", thinking: "xhigh", reasoningParameter: "chat_template_kwargs.reasoning_strength", toolsOnly: false, streamed: false, toolCalled: false, firstByteMs: 0, timeoutPhase: "idle", timeouts: { startMs: 30_000, idleMs: 45_000, capMs: 14_400_000, raisedFrom: 6_000 } });
+  });
+
+  it("keeps the task of the router the request was made for, Brainstorming's among them", () => {
+    for (const task of ["brainstorming", "copilot", "autopilot", "default"]) expect(kept({ task }).task).toBe(task);
   });
 
   it("keeps only the numbers of the deadlines, and drops a deadline that is not one", () => {
@@ -311,6 +317,21 @@ describe("the panel", () => {
     open(rich);
     const list = within(details());
     for (const text of words) expect(list.getByText(text)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["en", "Task", { brainstorming: "Brainstorming", copilot: "Copilot", autopilot: "Autopilot" }],
+    ["it", "Attività", { brainstorming: "Brainstorming", copilot: "Copilot", autopilot: "Autopilot" }],
+  ] as const)("says in words which task of the router the request was for, Brainstorming's included (%s)", async (language, title, names) => {
+    await i18n.changeLanguage(language);
+    expect(t("debug.task")).toBe(title);
+    for (const [task, name] of Object.entries(names)) {
+      const view = open({ ...rich, label: task, task: task as LlmDebugEntry["task"] });
+      expect(screen.getByText(title).parentElement).toHaveTextContent(`${title}${name}`);
+      view.unmount();
+    }
+    open({ ...rich, task: undefined });
+    expect(screen.getByText(title).parentElement).toHaveTextContent(`${title}—`);
   });
 
   it("says JSON in the message and that the function was not called, for a model that cannot", async () => {

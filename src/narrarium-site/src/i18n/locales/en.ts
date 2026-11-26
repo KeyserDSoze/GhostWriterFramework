@@ -366,6 +366,7 @@ const en = {
     capability: {
       default: "Default",
       copilot: "Copilot",
+      brainstorming: "Brainstorming",
       "simple-tasks": "Simple tasks",
       review: "Review",
       audit: "Audit",
@@ -464,6 +465,7 @@ const en = {
       default: "Chat (default)",
       "editor-actions": "Editor actions",
       copilot: "Copilot",
+      brainstorming: "Brainstorming",
       "simple-tasks": "Simple tasks",
       review: "Review",
       "chat-resume": "Chat resume",

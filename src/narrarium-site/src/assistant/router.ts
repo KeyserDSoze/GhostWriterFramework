@@ -1,7 +1,7 @@
-import type { AIIntegration, AIPricing, AppSettings, ChatCapability, ReasoningParameter, RoutingTarget, RoutingTaskKind, TaskRoute, ThinkingLevel } from "@/types/settings";
+import { CHAT_CAPABILITIES, type AIIntegration, type AIPricing, type AppSettings, type ChatCapability, type ReasoningParameter, type RoutingTarget, type RoutingTaskKind, type TaskRoute, type ThinkingLevel } from "@/types/settings";
 import { AiProviderError, splitReasoningBlock, type FetchAiAttemptEnd } from "narrarium-engine";
 import { effectiveThinking } from "@/router/thinking";
-import { integrationChatModels, modelSupportsCapability, resolveReviewIntegration, resolveWritingIntegration, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmFinishReport, type LlmMessage, type LlmResult, type LlmUsageReport } from "@/assistant/llm";
+import { followOrder, integrationChatModels, modelSupportsCapability, pickModelFor, resolveReviewIntegration, resolveWritingIntegration, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmFinishReport, type LlmMessage, type LlmResult, type LlmUsageReport } from "@/assistant/llm";
 import { executeCompletionFallback } from "@/assistant/completionFallback";
 import { budgetLlmMessages, likelyMessageTokens, resolveModelTokenBudgets } from "@/assistant/promptBudget";
 import { announceRetry } from "@/assistant/retryNotice";
@@ -87,7 +87,7 @@ function budgetForcedToolMessages(messages: LlmMessage[], candidate: TaskCandida
   return budgeted;
 }
 
-const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(["default", "editor-actions", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director"]);
+const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(CHAT_CAPABILITIES);
 
 function isChatTask(task: RoutingTaskKind): task is ChatCapability {
   return CHAT_CAPABILITIES_SET.has(task);
@@ -215,10 +215,23 @@ function dedupe(candidates: TaskCandidate[]): TaskCandidate[] {
   return out;
 }
 
+const writtenRoute = (route: TaskRoute | undefined): boolean => Boolean(route?.primary || route?.fallbacks?.length);
+
+/**
+ * The task whose route a task goes by now when it is not its own: the task it follows (`CAPABILITY_FOLLOWS`: Brainstorming the Copilot), while it has no route of its own
+ * and that one has. Without either route it goes by none: it is resolved from the models tagged for it, then for the task it follows, then the Default route's endpoint.
+ */
+export function followedRoute(settings: AppSettings, task: RoutingTaskKind): ChatCapability | undefined {
+  if (!isChatTask(task) || writtenRoute(settings.taskRouting?.[task])) return undefined;
+  return followOrder(task).slice(1).find((other) => writtenRoute(settings.taskRouting?.[other]));
+}
+
+const routedTask = (settings: AppSettings, task: RoutingTaskKind): RoutingTaskKind => followedRoute(settings, task) ?? task;
+
 /** Router-configured targets (primary then fallbacks) for a task, mapped to candidates. */
 function routerCandidates(settings: AppSettings, task: RoutingTaskKind): TaskCandidate[] {
   const inheritedDefault = task === "editor-actions" && !settings.taskRouting?.[task];
-  const route = settings.taskRouting?.[task] ?? (inheritedDefault ? settings.taskRouting?.default : undefined);
+  const route = settings.taskRouting?.[routedTask(settings, task)] ?? (inheritedDefault ? settings.taskRouting?.default : undefined);
   if (!route) return [];
   const targets: RoutingTarget[] = [...(route.primary ? [route.primary] : []), ...(route.fallbacks ?? [])];
   // The Default route only chooses where the tasks without a route go, whether they inherit it or it is asked for itself: its level of thinking is not used, the integration's is.
@@ -230,8 +243,8 @@ function routerCandidates(settings: AppSettings, task: RoutingTaskKind): TaskCan
 }
 
 function hasConfiguredRoute(settings: AppSettings, task: RoutingTaskKind): boolean {
-  const route = settings.taskRouting?.[task] ?? (task === "editor-actions" ? settings.taskRouting?.default : undefined);
-  return Boolean(route?.primary || route?.fallbacks?.length);
+  const route = settings.taskRouting?.[routedTask(settings, task)] ?? (task === "editor-actions" ? settings.taskRouting?.default : undefined);
+  return writtenRoute(route);
 }
 
 /** Legacy chat resolution tiers. Review honors its configured default before capability tags. */
@@ -253,22 +266,22 @@ function legacyChatCandidates(settings: AppSettings, capability: ChatCapability)
       if (picked) push(review, picked.name, picked.pricing ?? review.pricing);
     }
   }
-  // Exact capability match anywhere.
-  for (const integration of integrations) {
-    const exact = integrationChatModels(integration).find((m) => m.capabilities?.includes(capability));
-    if (exact) push(integration, exact.name, exact.pricing ?? integration.pricing);
+  // Exact capability match anywhere: the models tagged for the task, then those tagged for the task it follows.
+  for (const tag of followOrder(capability)) {
+    for (const integration of integrations) {
+      const exact = integrationChatModels(integration).find((m) => m.capabilities?.includes(tag));
+      if (exact) push(integration, exact.name, exact.pricing ?? integration.pricing);
+    }
   }
   // 2) default-writing integration's fallback model for this capability
   const preferred = resolveWritingIntegration(settings);
   if (preferred) {
-    const models = integrationChatModels(preferred);
-    const picked = models.find((m) => m.capabilities?.includes(capability)) ?? models.find((m) => m.capabilities?.includes("default"));
+    const picked = pickModelFor(integrationChatModels(preferred), capability);
     if (picked) push(preferred, picked.name, picked.pricing ?? preferred.pricing);
   }
   // 3) any default model anywhere
   for (const integration of integrations) {
-    const models = integrationChatModels(integration);
-    const picked = models.find((m) => m.capabilities?.includes(capability)) ?? models.find((m) => m.capabilities?.includes("default"));
+    const picked = pickModelFor(integrationChatModels(integration), capability);
     if (picked) push(integration, picked.name, picked.pricing ?? integration.pricing);
   }
   return out;
@@ -381,7 +394,7 @@ export async function completeTextRouted(
   const preferred = options?.preferred ? chatCandidateFromTarget(settings, options.preferred, capability) : null;
   const candidates = boundedCandidates(settings, applySameBoundaryPolicy(settings, dedupe([...(preferred ? [preferred] : []), ...resolveTaskCandidates(settings, capability)])));
   if (!candidates.length) {
-    if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(capability);
+    if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(routedTask(settings, capability));
     throw new NoCompletionCandidatesError();
   }
   const purpose = capability === "review" ? "review" : "writing";
@@ -475,7 +488,7 @@ export async function completeToolRouted<T>(
   try {
   const resolved = applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, capability));
   if (!resolved.length) {
-    if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(capability);
+    if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(routedTask(settings, capability));
     throw new NoCompletionCandidatesError();
   }
   // "Tools only" is on unless the author turned it off, as for the run: a model marked as without tool calls is left out, and if none is left the call is refused before anything is sent.

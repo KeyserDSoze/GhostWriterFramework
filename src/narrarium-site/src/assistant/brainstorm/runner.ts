@@ -8,13 +8,13 @@ import { brainstormContextText, loadBrainstormContext } from "@/assistant/brains
 import { brainstormLanguage, brainstormSystemPrompt } from "@/assistant/brainstorm/prompts";
 import { runBrainstormTool } from "@/assistant/brainstorm/tools";
 import type { BookStructure } from "@/types/book";
-import type { AppSettings, BookEntry } from "@/types/settings";
+import { BRAINSTORMING_CAPABILITY, type AppSettings, type BookEntry } from "@/types/settings";
 
 /**
  * Brainstorming's turn: what the author asks, answered from the Synopsis of the book and nothing else, with its own tools only. Each round asks the model
- * through the AI router like any request of the Copilot, with the Copilot's task (`copilot`: Brainstorming is a mode of the Copilot, not a task of its
- * own), so the same models, deadlines, retries and costs apply; the model answers with one JSON object, its reply and the tools it calls, which works with
- * any model. The results of the read tools come back to it in the next round; a proposal ends the turn. Loaded with the first request of the mode.
+ * through the AI router like any request of the Copilot, with the same deadlines, retries and costs, but for its own task (`brainstorming`), which has its row
+ * in the router and, while it has no route of its own, follows the Copilot's; the model answers with one JSON object, its reply and the tools it calls, which
+ * works with any model. The results of the read tools come back to it in the next round; a proposal ends the turn. Loaded with the first request of the mode.
  */
 
 export interface BrainstormPromptInput {
@@ -102,7 +102,7 @@ export async function runBrainstormPrompt(input: BrainstormPromptInput): Promise
   let answer = "";
   for (let round = 0; round < MAX_BRAINSTORM_ROUNDS; round += 1) {
     const last = round === MAX_BRAINSTORM_ROUNDS - 1;
-    const raw = await completeTextRouted(input.settings, messages(results, last), "copilot", { accountScope: input.accountScope, signal: input.signal, label: "copilot:brainstorming" });
+    const raw = await completeTextRouted(input.settings, messages(results, last), BRAINSTORMING_CAPABILITY, { accountScope: input.accountScope, signal: input.signal, label: BRAINSTORMING_CAPABILITY });
     const turn = parseBrainstormTurn(raw);
     answer = unescapePromptData(turn.reply) || answer;
     if (!turn.calls.length || last) break;

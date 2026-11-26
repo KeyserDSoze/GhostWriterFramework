@@ -1,4 +1,4 @@
-import type { AIIntegration, AppSettings, ChatCapability, ChatModel } from "@/types/settings";
+import { CAPABILITY_FOLLOWS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel } from "@/types/settings";
 
 export type LlmContentPart =
   | { type: "text"; text: string }
@@ -80,8 +80,26 @@ export function integrationChatModels(integration: AIIntegration): ChatModel[] {
   return models;
 }
 
+/**
+ * The task, then the task it follows (`CAPABILITY_FOLLOWS`): the order in which a task takes a route and a tag, as in the engine. Brainstorming takes its own route,
+ * else the Copilot's; a model tagged for it, else one tagged for the Copilot.
+ */
+export function followOrder(capability: ChatCapability): ChatCapability[] {
+  const follows = Object.prototype.hasOwnProperty.call(CAPABILITY_FOLLOWS, capability) ? CAPABILITY_FOLLOWS[capability] : undefined;
+  return follows ? [capability, follows] : [capability];
+}
+
+/** The model of a list for a task: the first tagged for it, else for the task it follows, else the first `default` one. */
+export function pickModelFor(models: readonly ChatModel[], capability: ChatCapability): ChatModel | undefined {
+  for (const tag of [...followOrder(capability), "default" as const]) {
+    const model = models.find((entry) => entry.capabilities?.includes(tag));
+    if (model) return model;
+  }
+  return undefined;
+}
+
 export function modelSupportsCapability(model: ChatModel, capability: ChatCapability): boolean {
-  return model.capabilities?.includes(capability) || model.capabilities?.includes("default");
+  return [...followOrder(capability), "default" as const].some((tag) => Boolean(model.capabilities?.includes(tag)));
 }
 
 export interface LlmUsageReport {

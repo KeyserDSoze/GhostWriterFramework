@@ -1,11 +1,12 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test, type Page } from "@playwright/test";
-import { engineModule, filesUnder, openApp, seed, settingsOf, waitForAiSettings, type SeedBook } from "./helpers/autopilot";
+import { engineModule, filesUnder, openApp, seed, settingsOf, TEXT_TASKS, waitForAiSettings, type SeedBook } from "./helpers/autopilot";
 
 // Brainstorming, the Copilot's mode on the Synopsis page, on a book kept on this device with GitHub out of reach and no credential: the author enters it
 // from the page, asks to move a chapter and to create one, sees the difference of every file and what the autopilot will do about each chapter before
-// anything is applied, confirms, and the Synopsis of the book changes. The mode wears its own colours, and the way back to the Copilot is there.
+// anything is applied, confirms, and the Synopsis of the book changes. The mode wears its own colours, and the way back to the Copilot is there. The settings are
+// as they were before Brainstorming had a task of its own in the AI router: no model is tagged for it and it has no route, so it follows the Copilot's.
 
 test.use({ serviceWorkers: "block" });
 
@@ -88,7 +89,13 @@ test.afterAll(async () => { await ai.close(); });
 test("Brainstorming moves a chapter and creates one in the Synopsis of a book kept on this device, after showing the difference and what the autopilot will do", async ({ page }) => {
   const github = watchGitHub(page);
   const books = await library();
-  const { openAi } = await seed(page, settingsOf(ai.url, books), books);
+  const base = settingsOf(ai.url, books);
+  const before = {
+    ...base,
+    aiIntegrations: base.aiIntegrations.map((integration) => ({ ...integration, chatModels: integration.chatModels.map((model) => ({ ...model, capabilities: TEXT_TASKS.filter((task) => task !== "brainstorming") })) })),
+    taskRouting: { copilot: { primary: { integrationId: "fake-ai", model: "fake-model" }, fallbacks: [] } },
+  };
+  const { openAi } = await seed(page, before, books);
   await openApp(page);
   await page.goto("app/books", { waitUntil: "domcontentloaded" });
   await waitForAiSettings(page, ai.url);
@@ -146,6 +153,9 @@ test("Brainstorming moves a chapter and creates one in the Synopsis of a book ke
   expect(ai.calls[0].system).toContain("propose_synopsis_edits");
   expect(ai.calls[0].system).not.toContain("multi-file-edit");
   expect(ai.calls[0].user).toContain("Mira opens the vault and finds the ledger.");
+  // It was a call for Brainstorming's own task of the router (with no route of its own it followed the Copilot's), and the debug history says so.
+  const debug = await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("narrarium-llm-debug-v2:")).flatMap((key) => JSON.parse(localStorage.getItem(key) ?? "[]") as Array<{ label?: string; task?: string; model?: string }>));
+  expect(debug.map((entry) => [entry.task, entry.label, entry.model])).toEqual([["brainstorming", "brainstorming", "fake-model"]]);
 
   // The way back to the Copilot, and the page shows the new Synopsis.
   await panel.locator("[data-brainstorm-back]").click();

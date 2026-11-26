@@ -47,6 +47,7 @@ function openDebugEntry(attempt: FetchAiAttempt, structured: boolean, route?: Br
     kind: "chat",
     contentKinds: hasImage ? ["text", "image"] : ["text"],
     label: attempt.label,
+    task: attempt.capability as ChatCapability,
     model: attempt.model,
     provider: attempt.provider,
     integrationId: attempt.integrationId,

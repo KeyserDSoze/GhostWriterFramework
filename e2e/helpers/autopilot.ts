@@ -190,7 +190,7 @@ export interface SeedBook {
 }
 
 /** The tasks of the text router: what a model has to be tagged with to be asked for one, and the rows of its table. */
-export const TEXT_TASKS = ["default", "editor-actions", "copilot", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director"];
+export const TEXT_TASKS = ["default", "editor-actions", "copilot", "brainstorming", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director"];
 
 const libraryOf = (books: readonly SeedBook[]) => ({
   ui: { language: "en", theme: "light" },

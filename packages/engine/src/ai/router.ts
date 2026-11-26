@@ -1,5 +1,5 @@
-import { normalizeApiProtocol, normalizeEndpointUrl, normalizeReasoningParameter, normalizeThinking, type AiChatModelConfig, type AiNoThinkingWithTools, type AiIntegrationConfig, type AiPricingConfig, type AiReasoningParameter, type AiRouteTarget, type AiRuntimeConfig, type AiThinking } from "./config.js";
-import type { AiUnusableWhy } from "./types.js";
+import { normalizeApiProtocol, normalizeEndpointUrl, normalizeReasoningParameter, normalizeThinking, type AiChatModelConfig, type AiNoThinkingWithTools, type AiIntegrationConfig, type AiPricingConfig, type AiReasoningParameter, type AiRouteTarget, type AiRuntimeConfig, type AiTaskRoute, type AiThinking } from "./config.js";
+import { AI_CAPABILITY_FOLLOWS, type AiUnusableWhy } from "./types.js";
 
 export interface AiCandidate {
   integration: AiIntegrationConfig;
@@ -39,8 +39,23 @@ export function integrationChatModels(integration: AiIntegrationConfig): AiChatM
   return models;
 }
 
+/**
+ * The task, then the task it follows (`AI_CAPABILITY_FOLLOWS`): the order in which a task takes a route and a tag. Brainstorming takes its own route, else the
+ * Copilot's; a model tagged for it, else one tagged for the Copilot.
+ */
+function followOrder(capability: string): string[] {
+  const follows = Object.prototype.hasOwnProperty.call(AI_CAPABILITY_FOLLOWS, capability) ? AI_CAPABILITY_FOLLOWS[capability] : undefined;
+  return follows === undefined ? [capability] : [capability, follows];
+}
+
 function supports(model: AiChatModelConfig, capability: string): boolean {
-  return model.capabilities.includes(capability) || model.capabilities.includes("default");
+  return [...followOrder(capability), "default"].some((tag) => model.capabilities.includes(tag));
+}
+
+/** The route a task has, or, while it has none, the route of the task it follows. */
+function routeOf(config: AiRuntimeConfig, capability: string): AiTaskRoute | undefined {
+  const written = (route: AiTaskRoute | undefined) => Boolean(route && (route.primary || route.fallbacks?.length));
+  return followOrder(capability).map((task) => config.taskRouting?.[task]).find(written) ?? config.taskRouting?.[capability];
 }
 
 function candidate(integration: AiIntegrationConfig, model: AiChatModelConfig, target?: AiRouteTarget): AiCandidate {
@@ -86,9 +101,14 @@ function writingIntegration(config: AiRuntimeConfig): AiIntegrationConfig | unde
     ?? integrations[0];
 }
 
+/** The model of an integration for a task: the first tagged for it, else for the task it follows, else the first `default` one. */
 function pick(integration: AiIntegrationConfig, capability: string): AiChatModelConfig | undefined {
   const models = integrationChatModels(integration);
-  return models.find((model) => model.capabilities.includes(capability)) ?? models.find((model) => model.capabilities.includes("default"));
+  for (const tag of [...followOrder(capability), "default"]) {
+    const model = models.find((entry) => entry.capabilities.includes(tag));
+    if (model) return model;
+  }
+  return undefined;
 }
 
 /** One place of the route of a task: the candidate that stands in it, or the target of the author that cannot be called and why. */
@@ -103,13 +123,14 @@ export interface AiRouteEntry {
 
 /**
  * The route of a task place by place, with the rules of the web app's router: an explicit route (primary + fallbacks) is used alone, and a target of it that cannot
- * be called keeps its place with the reason (`unusable`), so that the one that is called instead is never taken for the primary; otherwise models tagged with the
- * capability, then the default writing integration, then any `default` model. At most `maxCandidates` candidates (the same one twice counts once), and the entries
+ * be called keeps its place with the reason (`unusable`), so that the one that is called instead is never taken for the primary; a task with no route of its own that
+ * follows another (`AI_CAPABILITY_FOLLOWS`: Brainstorming the Copilot) uses the route of that one; otherwise models tagged with the capability, then those tagged with
+ * the one it follows, then the default writing integration, then any `default` model. At most `maxCandidates` candidates (the same one twice counts once), and the entries
  * that cannot be called do not count.
  */
 export function describeAiRoute(config: AiRuntimeConfig, capability: string): AiRouteEntry[] {
   const limit = Math.max(1, Math.min(8, config.routingExecution?.maxCandidates ?? config.maxCandidates ?? 4));
-  const route = config.taskRouting?.[capability];
+  const route = routeOf(config, capability);
   const seen = new Set<string>();
   const entries: AiRouteEntry[] = [];
   let usable = 0;
@@ -140,9 +161,11 @@ export function describeAiRoute(config: AiRuntimeConfig, capability: string): Ai
     const model = review ? pick(review, "review") : undefined;
     if (review && model) add(candidate(review, model));
   }
-  for (const integration of config.aiIntegrations) {
-    const exact = integrationChatModels(integration).find((model) => model.capabilities.includes(capability));
-    if (exact) add(candidate(integration, exact));
+  for (const tag of followOrder(capability)) {
+    for (const integration of config.aiIntegrations) {
+      const exact = integrationChatModels(integration).find((model) => model.capabilities.includes(tag));
+      if (exact) add(candidate(integration, exact));
+    }
   }
   const preferred = writingIntegration(config);
   const preferredModel = preferred ? pick(preferred, capability) : undefined;
@@ -156,8 +179,9 @@ export function describeAiRoute(config: AiRuntimeConfig, capability: string): Ai
 }
 
 /**
- * Ordered models to try for a capability (`describeAiRoute` without the targets that cannot be called): an explicit route (primary + fallbacks) is used alone;
- * otherwise models tagged with the capability, then the default writing integration, then any `default` model.
+ * Ordered models to try for a capability (`describeAiRoute` without the targets that cannot be called): an explicit route (primary + fallbacks) is used alone, the
+ * task's own or, while it has none, the one of the task it follows; otherwise models tagged with the capability (then with the one it follows), then the default writing
+ * integration, then any `default` model.
  */
 export function resolveAiCandidates(config: AiRuntimeConfig, capability: string): AiCandidate[] {
   return describeAiRoute(config, capability).flatMap((entry) => (entry.candidate ? [entry.candidate] : []));

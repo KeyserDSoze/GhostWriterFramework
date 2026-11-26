@@ -389,6 +389,22 @@ export class AiToolsRequiredError extends AiProviderError {
   }
 }
 
+/** The router's task of the Copilot. */
+export const COPILOT_CAPABILITY = "copilot";
+/**
+ * The router's task of Brainstorming, the Copilot's mode on the Synopsis page of the web app: a task of its own, with its row in the router, and a
+ * stable name, for whatever classifies a call by its task (the debug history, the costs). While it has no route of its own it follows the Copilot's
+ * (`AI_CAPABILITY_FOLLOWS`).
+ */
+export const BRAINSTORMING_CAPABILITY = "brainstorming";
+/**
+ * The task a task follows while it has no route of its own: its route is the followed task's, and a model the author allows the followed task is allowed
+ * it too (not the other way round). Without that route either, it is resolved as the followed task is, with its own tags first: the models tagged for it,
+ * then those tagged for the followed task, then the default writing integration and the `default` models. Brainstorming follows the Copilot, so nobody
+ * has to route it, and a setup made before it existed keeps working as it was.
+ */
+export const AI_CAPABILITY_FOLLOWS: Readonly<Record<string, string>> = Object.freeze({ [BRAINSTORMING_CAPABILITY]: COPILOT_CAPABILITY });
+
 /** Router capabilities used by the autopilot and the director. Missing routes fall back to `default` models. */
 export const AI_CAPABILITIES = {
   writer: "autopilot",

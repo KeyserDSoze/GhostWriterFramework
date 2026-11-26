@@ -1,6 +1,7 @@
 /** Texts of the attempt details of the debug panel, bundled with the panel that shows them (see `@/i18n/debugAttempt`). */
 const debugAttemptIt = {
   debug: {
+    task: "Attività",
     attempt: {
       title: "Come è stata chiesta",
       tools: "Richiesta come chiamata di funzione",

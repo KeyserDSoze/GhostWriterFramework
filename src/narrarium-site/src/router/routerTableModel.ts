@@ -1,5 +1,5 @@
 import { integrationChatModels, modelSupportsCapability } from "@/assistant/llm";
-import { BROWSER_ROUTING_ID, resolveEffectiveTaskCandidates } from "@/assistant/router";
+import { BROWSER_ROUTING_ID, followedRoute, resolveEffectiveTaskCandidates } from "@/assistant/router";
 import { matchKey } from "@/lib/matchText";
 import { AUTOPILOT_TASKS } from "@/router/autopilotTasks";
 import { normalizeThinking } from "@/router/thinking";
@@ -27,13 +27,14 @@ export type GroupFilter = "all" | TextGroupId;
  * Where each chat task is used. A task can belong to two groups when two flows use it:
  * - autopilot: what the engine's autopilot asks the router for (`AI_CAPABILITIES`): the writer, the director, the simulated readers and
  *   their summary, the specialists (review) and the summaries (simple-tasks);
- * - copilot: the interactive side: the Copilot, what it writes with the default model, the editor actions, quick decisions, chat resumes;
+ * - copilot: the interactive side: the Copilot and Brainstorming (its mode on the Synopsis page, which follows the Copilot's route while it has none), what it writes
+ *   with the default model, the editor actions, quick decisions, chat resumes;
  * - review: the judging side: evaluations of chapters and paragraphs, the readers, the audit, the rewrite from the readers' feedback;
  * - research: deep research and what is created from it.
  */
 export const TEXT_GROUPS: Readonly<Record<TextGroupId, readonly ChatCapability[]>> = {
   autopilot: AUTOPILOT_TASKS,
-  copilot: ["default", "copilot", "editor-actions", "simple-tasks", "chat-resume"],
+  copilot: ["default", "copilot", "brainstorming", "editor-actions", "simple-tasks", "chat-resume"],
   review: ["review", "reader-evaluation", "reader-evaluation-summary", "audit", "rewrite-from-reader-feedback"],
   research: ["deep-research", "create-from-research"],
 };
@@ -202,6 +203,8 @@ export interface EffectiveTarget {
   integrationName?: string;
   model?: string;
   browser?: boolean;
+  /** The level it goes out with, for a row that follows the route of another task: that route's (its target's own, else its endpoint's). */
+  thinking?: ThinkingLevel;
 }
 
 export interface RouterRow {
@@ -215,6 +218,8 @@ export interface RouterRow {
   routed: boolean;
   /** What the router would use on this tab, for a task without a route of its own. */
   effective?: EffectiveTarget;
+  /** The task whose route that is, for a task without a route of its own that follows one that has (Brainstorming the Copilot): the cells say so. */
+  follows?: ChatCapability;
   /** Why this empty cell cannot be filled yet. */
   blocked?: FillBlock;
   /** The task has fallbacks and no primary in front of them: the router then uses the first fallback as the first candidate. */
@@ -236,15 +241,17 @@ export function buildRow(settings: AppSettings, task: RoutingTaskKind, level: nu
   const integration = target ? integrations.find((entry) => entry.id === target.integrationId) : undefined;
   let effective: EffectiveTarget | undefined;
   let effectiveIntegration: AIIntegration | undefined;
+  let follows: ChatCapability | undefined;
   let blocked: FillBlock | undefined;
   if (!target) {
     if (!routed) {
       const candidate = resolveEffectiveTaskCandidates(settings, task)[level];
       if (candidate) {
+        follows = followedRoute(settings, task);
         effectiveIntegration = candidate.integration;
         effective = candidate.browser
           ? { browser: true, model: "browser" }
-          : { integrationId: candidate.integration?.id, integrationName: candidate.integration?.name || candidate.integration?.provider, model: candidate.model };
+          : { integrationId: candidate.integration?.id, integrationName: candidate.integration?.name || candidate.integration?.provider, model: candidate.model, ...(follows && candidate.thinking ? { thinking: candidate.thinking } : {}) };
       }
     }
     const fill = fillability(route, level);
@@ -258,6 +265,7 @@ export function buildRow(settings: AppSettings, task: RoutingTaskKind, level: nu
     custom: target !== undefined,
     routed,
     effective,
+    ...(follows ? { follows } : {}),
     blocked,
     orphan: !route?.primary && (route?.fallbacks?.length ?? 0) > 0,
     toolWarning: Boolean(target) && (AUTOPILOT_TASKS as readonly RoutingTaskKind[]).includes(task) && settings.aiToolsOnly !== false && usesNoToolCalls(integrations, target!),

@@ -28,9 +28,10 @@ interface CellProps {
   tabName: string;
 }
 
-/** The text a row without a target of its own shows in a cell: what the router would use, dimmed. */
+/** The text a row without a target of its own shows in a cell: what the router would use, dimmed, and the task whose route it is when the row follows one. */
 function effectiveText(row: RouterRow, value: string | undefined, t: (key: string, options?: Record<string, unknown>) => string): string | undefined {
   if (!row.effective || !value) return undefined;
+  if (row.follows) return t("routing.cell.follows", { task: t(`routing.task.${row.follows}`), value });
   return t(row.task === "default" ? "routing.cell.automatic" : "routing.cell.default", { value });
 }
 
@@ -108,6 +109,7 @@ export function thinkingText(level: ThinkingLevel | typeof INHERIT, row: RouterR
 export function ThinkingCell({ row, taskLabel, tabName, describedBy, onChange }: Omit<CellProps, "integrations"> & { describedBy?: string; onChange: (value: ThinkingLevel | "inherit") => void }) {
   const { t } = useTranslation();
   const target = row.target;
+  const followed = row.effective?.thinking ? effectiveText(row, thinkingText(row.effective.thinking, row, t), t) : undefined;
   return (
     <Select
       value={target ? target.thinking ?? INHERIT : ""}
@@ -115,7 +117,7 @@ export function ThinkingCell({ row, taskLabel, tabName, describedBy, onChange }:
       disabled={!target}
     >
       <SelectTrigger aria-label={t("routing.cell.thinking", { task: taskLabel, tab: tabName })} aria-describedby={describedBy} className={TRIGGER}>
-        <SelectValue placeholder={dim(thinkingText(INHERIT, row, t))} />
+        <SelectValue placeholder={dim(followed ?? thinkingText(INHERIT, row, t))} />
       </SelectTrigger>
       <SelectContent>
         <SelectItem value={INHERIT}>{thinkingText(INHERIT, row, t)}</SelectItem>

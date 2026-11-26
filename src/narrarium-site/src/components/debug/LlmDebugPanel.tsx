@@ -110,6 +110,7 @@ function RequestDetail({ entry }: { entry: LlmDebugEntry }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+        <Stat label={t("debug.task")} value={entry.task ? t(`routing.task.${entry.task}`) : "—"} />
         <Stat label={t("debug.model")} value={entry.model} />
         <Stat label={t("debug.provider")} value={entry.provider ?? "—"} />
         <Stat label={t("debug.integration")} value={entry.integrationId ?? "—"} />

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { CHAT_CAPABILITIES, type ChatCapability } from "@/types/settings";
 
 const LEGACY_LOCAL_KEY = "narrarium-llm-debug-v1";
 const LOCAL_KEY_PREFIX = "narrarium-llm-debug-v2:";
@@ -25,6 +26,8 @@ export interface LlmDebugEntry {
   contentKinds?: Array<"text" | "image" | "audio">;
   /** Short label of the calling task, e.g. "copilot", "script→draft", "confirm", "tts". */
   label?: string;
+  /** The task of the router the chat request was made for (`brainstorming`, `copilot`, `autopilot`…): one word of the closed list, absent for the media requests. */
+  task?: ChatCapability;
   model: string;
   /** Provider type and pseudonymous integration identity; endpoints and credentials are never retained. */
   provider?: string;
@@ -167,6 +170,7 @@ function redactError(value: unknown): string | undefined {
 }
 
 const THINKING = new Set(["low", "medium", "high", "xhigh", "none"]);
+const TASKS: ReadonlySet<string> = new Set(CHAT_CAPABILITIES);
 const THINKING_WHY = new Set(["tools"]);
 /** An identifier of a provider's error (a type, a parameter, a code): letters, digits and the signs of a name or a path, and no space, so that it can never be a sentence. */
 const PROVIDER_WORD = /^[A-Za-z0-9_.:/[\]-]{1,80}$/;
@@ -246,6 +250,7 @@ function providerErrorFields(value: unknown): LlmDebugProviderError | undefined 
 /** What the store keeps of how an attempt was asked: flags, numbers and the few words of the engine, and nothing else, whatever it is given. A field that is not valid is left out. */
 function attemptFields(entry: LlmDebugEntry): Partial<LlmDebugEntry> {
   const fields: Record<string, unknown> = {
+    task: word(entry.task, TASKS),
     structured: flag(entry.structured),
     tools: flag(entry.tools),
     stream: flag(entry.stream),
@@ -274,7 +279,7 @@ function storageErrorMessage(error: unknown, fallback: string): string {
 }
 
 export function redactLlmDebugEntry(entry: LlmDebugEntry): LlmDebugEntry {
-  const { structured: _s, tools: _t, stream: _st, streamMode: _sm, apiVersion: _av, protocol: _pr, thinking: _th, thinkingWhy: _tw, reasoningParameter: _rp, toolsOnly: _to, skipped: _sk, timeouts: _ti, streamed: _sd, firstByteMs: _fb, toolCalled: _tc, timeoutPhase: _tp, providerError: _pe, transport: _tr, ...rest } = entry;
+  const { task: _k, structured: _s, tools: _t, stream: _st, streamMode: _sm, apiVersion: _av, protocol: _pr, thinking: _th, thinkingWhy: _tw, reasoningParameter: _rp, toolsOnly: _to, skipped: _sk, timeouts: _ti, streamed: _sd, firstByteMs: _fb, toolCalled: _tc, timeoutPhase: _tp, providerError: _pe, transport: _tr, ...rest } = entry;
   return {
     ...rest,
     ...attemptFields(entry),
