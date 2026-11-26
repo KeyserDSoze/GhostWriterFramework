@@ -1,17 +1,24 @@
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { Suspense, lazy, useId, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { BookOpen, CheckCircle2, Clapperboard, Download, Plus, RotateCcw } from "lucide-react";
+import { BookOpen, CheckCircle2, Clapperboard, Download, Plus, RotateCcw, Target } from "lucide-react";
+import type { ReviewRecord } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { ReadFirstBlock } from "@/components/autopilot/result/ReadFirst";
 import { ScoresBlock } from "@/components/autopilot/result/Scores";
 import { useBandModel } from "@/components/autopilot/AutopilotControlBand";
 import { finalReviewOf, finalVerdict, workedSince, workedTime, type FinalVerdict } from "@/autopilot/bandModel";
-import { formatCost, formatCount, formatDate, formatDuration } from "@/autopilot/format";
+import { formatCost, formatCount, formatDate, formatDuration, voteText } from "@/autopilot/format";
 import { scalettaHref } from "@/autopilot/pageRoute";
-import { chapterScores, readFirst } from "@/autopilot/resultModel";
+import { chapterScores, readFirst, reviewRounds } from "@/autopilot/resultModel";
+import { withAutopilotTranslations } from "@/i18n/autopilot";
 import { openAskDirector } from "@/store/askDirectorStore";
 import { cn } from "@/lib/utils";
+import type { BookStructure } from "@/types/book";
+import type { BookEntry } from "@/types/settings";
+
+// «Review the book again» is a chunk of its own: nothing of it is loaded until the author opens it.
+const ReviewBookDialog = lazy(withAutopilotTranslations(() => import("@/components/autopilot/result/ReviewBookDialog")));
 
 /** The words of the director are cut to a few lines when they are longer than this: the rest is one button away. */
 const VERDICT_CLAMP_CHARACTERS = 280;
@@ -88,13 +95,31 @@ function NumbersBlock({ items }: { items: Array<[string, ReactNode]> }) {
   );
 }
 
-/** What to do with a book that is finished: read it, export it, ask the director, add chapters (the same way as the band: the configuration, with the number of chapters in front). */
-function ActionsBar({ bookId }: { bookId: string }) {
+/** How a review of the book ended, in one line: its rounds, its target, what the lowest chapter and the book came to. */
+function LastReviewLine({ record }: { record: ReviewRecord }) {
+  const { t } = useTranslation();
+  return (
+    <p data-result-review className="text-xs text-muted-foreground">
+      {t(`autopilot.result.review.${record.outcome}`, { count: record.rounds, target: voteText(record.targetScore), from: voteText(record.from.book), to: voteText(record.to.book), lowest: voteText(record.to.lowest) })}
+    </p>
+  );
+}
+
+/**
+ * What to do with a book that is finished: review it again (the first action, when the page can offer it), read it, export it, ask the director, add chapters (the
+ * same way as the band: the configuration, with the number of chapters in front).
+ */
+function ActionsBar({ bookId, onReview }: { bookId: string; onReview?: () => void }) {
   const { t } = useTranslation();
   const root = `/app/books/${encodeURIComponent(bookId)}`;
   return (
     <div role="group" aria-label={t("autopilot.result.actions.label")} className="flex flex-wrap items-center gap-2 border-t pt-4">
-      <Button asChild size="sm">
+      {onReview && (
+        <Button size="sm" data-result-review-again onClick={onReview}>
+          <Target className="h-4 w-4" aria-hidden="true" />{t("autopilot.result.actions.review")}
+        </Button>
+      )}
+      <Button asChild size="sm" variant={onReview ? "outline" : "default"}>
         <Link to={`${root}/reader`}><BookOpen className="h-4 w-4" aria-hidden="true" />{t("autopilot.result.actions.read")}</Link>
       </Button>
       <Button asChild size="sm" variant="outline">
@@ -116,6 +141,8 @@ export interface AutopilotResultProps {
   linkedSlugs: ReadonlySet<string>;
   /** The page has room for two columns. */
   wide?: boolean;
+  /** What «Review the book again» needs to say what it costs: the book, its working branch and its structure. Without it the action is not offered. */
+  review?: { book: BookEntry; branch: string; structure?: BookStructure };
 }
 
 /**
@@ -124,13 +151,16 @@ export interface AutopilotResultProps {
  * next. It reads what the engine says (`finalReview`, `workedMs`, the rounds of the plan) and, for a state that an older engine wrote, what the log says; it shows what is
  * there and nothing that is not.
  */
-export function AutopilotResult({ bookId, linkedSlugs, wide = true }: AutopilotResultProps) {
+export function AutopilotResult({ bookId, linkedSlugs, wide = true, review }: AutopilotResultProps) {
   const { t } = useTranslation();
   const titleId = useId();
   const model = useBandModel(bookId);
   const chapters = model?.state?.plan?.chapters;
   const scores = useMemo(() => chapterScores(chapters ?? []), [chapters]);
   const first = useMemo(() => readFirst(scores), [scores]);
+  const rounds = useMemo(() => reviewRounds(scores), [scores]);
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewOpened, setReviewOpened] = useState(false);
   // The title of a chapter is asked for the rows that are drawn: the plan is searched, and never read whole.
   const byNumber = useMemo(() => new Map((chapters ?? []).map((chapter) => [chapter.number, chapter] as const)), [chapters]);
   if (!model || !model.completed) return null;
@@ -153,13 +183,20 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true }: AutopilotR
   if (stats.cost > 0) numbers.push([t("autopilot.result.numbers.cost"), formatCost(stats.cost, currency)]);
   if (stats.inputTokens + stats.outputTokens > 0) numbers.push([t("autopilot.result.numbers.tokens"), formatCount(stats.inputTokens + stats.outputTokens)]);
   if (stats.aiCalls > 0) numbers.push([t("autopilot.result.numbers.calls"), formatCount(stats.aiCalls)]);
+  // The rounds of review, summed over the chapters, with the most a chapter had («3 rounds of review»; the table has each chapter's).
+  if (rounds) numbers.push([t("autopilot.result.numbers.rounds"), <>{formatCount(rounds.rounds)}<span className="ml-1.5 inline-block text-xs font-normal text-muted-foreground">{t("autopilot.result.numbers.roundsMost", { count: rounds.most })}</span></>]);
   const titleOf = (number: number) => byNumber.get(number)?.title;
+  const lastReview = state?.reviews?.[state.reviews.length - 1];
+  const openReview = review && state ? () => { setReviewOpened(true); setReviewing(true); } : undefined;
 
   return (
     <section data-autopilot-result aria-labelledby={titleId} className="space-y-5 rounded-2xl border border-layer bg-card p-4 shadow-sm sm:p-5">
       <h2 id={titleId} className="text-base font-semibold">{t("autopilot.result.title")}</h2>
       <div className={cn("grid gap-6", wide && "grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]")}>
-        {verdict && <VerdictBlock verdict={verdict} />}
+        <div className="min-w-0 space-y-2">
+          {verdict && <VerdictBlock verdict={verdict} />}
+          {lastReview && <LastReviewLine record={lastReview} />}
+        </div>
         <NumbersBlock items={numbers} />
       </div>
       {scores.length > 0 && (
@@ -168,7 +205,12 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true }: AutopilotR
           <ReadFirstBlock bookId={bookId} items={first} linkedSlugs={linkedSlugs} titleOf={titleOf} />
         </div>
       )}
-      <ActionsBar bookId={bookId} />
+      <ActionsBar bookId={bookId} onReview={openReview} />
+      {reviewOpened && review && state && (
+        <Suspense fallback={null}>
+          <ReviewBookDialog open={reviewing} onClose={() => setReviewing(false)} book={review.book} branch={review.branch} structure={review.structure} state={state} />
+        </Suspense>
+      )}
     </section>
   );
 }

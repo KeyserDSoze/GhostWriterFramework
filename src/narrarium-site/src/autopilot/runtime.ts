@@ -24,6 +24,7 @@ import {
   type InterventionInput,
   type NarrariumServerClient,
   type QuestionAnswer,
+  type ReviewBookInput,
   type ReviseChaptersInput,
   type RevisionCampaignResult,
   type ServerInfo,
@@ -53,7 +54,8 @@ import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
 import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
 import { AutopilotRulesUnsupportedError, serverEditsRules } from "@/autopilot/rules";
 import { AutopilotFrozenUnsupportedError, frozenErrorCode, serverHasFrozenChapters } from "@/autopilot/frozenChapters";
-import { AutopilotCampaignRefusedError, AutopilotOutlineApplyUnsupportedError, campaignRefusal, serverHasOutlineApply } from "@/autopilot/campaign";
+import { AutopilotCampaignRefusedError, AutopilotOutlineApplyUnsupportedError, AutopilotReviewUnsupportedError, campaignRefusal, serverHasOutlineApply } from "@/autopilot/campaign";
+import { serverHasReviewBook } from "@/autopilot/reviewPolicy";
 import { AutopilotRetryUnsupportedError, serverHasRetry } from "@/autopilot/retry";
 import { assertGithubConflicts, githubConflictFiles, isGithubConflict, noteGithubConflict } from "@/autopilot/githubConflictsServer";
 import { RefreshCoordinator } from "@/autopilot/refreshCoordinator";
@@ -1029,20 +1031,31 @@ export class BrowserAutopilotRuntime {
     return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "revise-chapters", input }));
   }
 
+  /**
+   * Review the finished book again to a target score: the engine's campaign of reason `review-target` (`reviewBook`), with the caps it is given (the options' own). The
+   * same ways as `reviseChapters`; a personal server that predates it is not asked (`AutopilotReviewUnsupportedError`). Nothing is started: `start` does it.
+   */
+  reviewBook(bookId: string, input: ReviewBookInput): Promise<RevisionCampaignResult> {
+    return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "review-book", input }));
+  }
+
   /** Cancel the chapters of the campaign that wait (the one being worked finishes): they are left for the author. The same ways as `reviseChapters`. */
   cancelRevisionCampaign(bookId: string): Promise<RevisionCampaignResult> {
     return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "cancel-campaign" }));
   }
 
-  private async campaignCommand(bookId: string, command: Extract<RelayedCommand, { type: "revise-chapters" | "cancel-campaign" }>): Promise<RevisionCampaignResult> {
+  private async campaignCommand(bookId: string, command: Extract<RelayedCommand, { type: "revise-chapters" | "review-book" | "cancel-campaign" }>): Promise<RevisionCampaignResult> {
     const book = findBook(bookId);
     try {
       if (autopilotHostOf(book) === "server") {
         const { info } = await this.requireServer();
-        if (!serverHasOutlineApply(info)) throw new AutopilotOutlineApplyUnsupportedError();
+        // Each command needs the feature of its campaign; a cancel, any campaign the server has.
+        if (command.type === "review-book" && !serverHasReviewBook(info)) throw new AutopilotReviewUnsupportedError();
+        if (command.type === "revise-chapters" && !serverHasOutlineApply(info)) throw new AutopilotOutlineApplyUnsupportedError();
+        if (command.type === "cancel-campaign" && !serverHasOutlineApply(info) && !serverHasReviewBook(info)) throw new AutopilotOutlineApplyUnsupportedError();
         await this.handToServer(book);
         const { client } = await this.requireServer();
-        const result = command.type === "revise-chapters" ? await client.reviseChapters(book.id, command.input) : await client.cancelRevisionCampaign(book.id);
+        const result = command.type === "revise-chapters" ? await client.reviseChapters(book.id, command.input) : command.type === "review-book" ? await client.reviewBook(book.id, command.input) : await client.cancelRevisionCampaign(book.id);
         await this.bringFromServer(book, client);
         await this.refresh(bookId);
         return result;
@@ -1050,7 +1063,7 @@ export class BrowserAutopilotRuntime {
       const session = this.localSession(book, resolveBookBranch(book));
       let result: RevisionCampaignResult;
       if (!session.running && await this.lockHeldElsewhere(book.id)) result = await this.relay(book.id, command) as RevisionCampaignResult;
-      else result = command.type === "revise-chapters" ? await session.reviseChapters(command.input) : await session.cancelRevisionCampaign();
+      else result = command.type === "revise-chapters" ? await session.reviseChapters(command.input) : command.type === "review-book" ? await session.reviewBook(command.input) : await session.cancelRevisionCampaign();
       await this.refresh(bookId);
       return result;
     } catch (error) {
@@ -1170,6 +1183,7 @@ export class BrowserAutopilotRuntime {
       else if (command.type === "resolve-frozen") await session.resolveFrozenChange(command.number, command.action, command.options);
       else if (command.type === "set-frozen") await (command.frozen ? session.freezeChapter(command.slug) : session.unfreezeChapter(command.slug));
       else if (command.type === "revise-chapters") result = await session.reviseChapters(command.input);
+      else if (command.type === "review-book") result = await session.reviewBook(command.input);
       else if (command.type === "cancel-campaign") result = await session.cancelRevisionCampaign();
       else await session.intervene(command.input);
       this.post({ kind: "command-result", id, ok: true, ...(result === undefined ? {} : { result }) });

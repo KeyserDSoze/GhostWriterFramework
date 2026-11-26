@@ -155,3 +155,59 @@ export function scoreSeries(scores: readonly ChapterScore[], bars = SERIES_BARS)
   }
   return series;
 }
+
+// ─── The rounds of review, and a review of the book launched later ───────────
+
+export interface ReviewRoundsSummary {
+  /** The rounds of review the chapters had, in all (the ones the plan keeps), and the most a chapter had. */
+  rounds: number;
+  most: number;
+  /** The chapters that had at least one round. */
+  chapters: number;
+}
+
+/** How many rounds of review the chapters of a finished book had («3 rounds of review»): `null` for a book whose plan keeps none. */
+export function reviewRounds(scores: readonly ChapterScore[]): ReviewRoundsSummary | null {
+  const reviewed = scores.filter((entry) => entry.roundCount > 0);
+  if (!reviewed.length) return null;
+  return { rounds: reviewed.reduce((total, entry) => total + entry.roundCount, 0), most: reviewed.reduce((most, entry) => Math.max(most, entry.roundCount), 0), chapters: reviewed.length };
+}
+
+/** The target a new review of the book starts from: one point over the one in force, 8 at least, between 5 and 10, by halves. */
+export function defaultReviewTarget(current: number): number {
+  const wanted = Math.max(8, current + 1);
+  return Math.min(10, Math.max(5, Math.round(wanted * 2) / 2));
+}
+
+/** A chapter a review of the book would look at: its number, its title, its vote (`null`: never voted), and why it is or is not reviewed again. */
+export interface ReviewCandidate {
+  number: number;
+  slug: string;
+  title: string;
+  vote: number | null;
+  /** `review`: it is reviewed again; `author`: the author's (frozen by the author, or written before the autopilot), reviewed only when included; `changed`: changed since it was frozen, it waits for the decision about that change. */
+  kind: "review" | "author" | "changed";
+}
+
+/**
+ * The chapters under the target that a review of the book would take, in the order of the book, as the engine takes them (`createReviewCampaign`): the autopilot's are
+ * reviewed again, the author's (frozen by the author, or imported and not frozen by the autopilot) only when the author includes them, and one changed since it was
+ * frozen never. `freezes` has who froze each chapter, by slug; `changed` the chapters (by number) changed since they were frozen. A chapter nobody voted is under any target.
+ */
+export function reviewCandidates(
+  chapters: readonly Pick<PlannedChapter, "number" | "slug" | "title" | "score" | "rounds" | "imported">[],
+  target: number,
+  freezes: ReadonlyMap<string, "author" | "autopilot">,
+  changed: ReadonlySet<number>,
+): ReviewCandidate[] {
+  const candidates: ReviewCandidate[] = [];
+  for (const chapter of chapters) {
+    const rounds = (chapter.rounds ?? []).map((round) => vote(round?.director));
+    const final = vote(chapter.score) ?? [...rounds].reverse().find((value) => value !== null) ?? null;
+    if (final !== null && final >= target) continue;
+    const by = freezes.get(chapter.slug);
+    const kind = changed.has(chapter.number) ? "changed" : by === "author" || (chapter.imported && by !== "autopilot") ? "author" : "review";
+    candidates.push({ number: chapter.number, slug: chapter.slug, title: chapter.title, vote: final, kind });
+  }
+  return candidates.sort((left, right) => left.number - right.number);
+}

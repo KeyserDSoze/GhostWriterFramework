@@ -192,7 +192,7 @@ function canonWordsOf(entries: number): number {
  * measured at on it), its director's rounds, its outline, where it is (a book that started counts only what is left, one that grows only the new chapters), the sizes of its files
  * and the readers of its panel. It reads nothing and changes nothing, and it is fast enough to be made at every pause in the typing, for a book of any length.
  */
-export function estimateRun(sources: EstimateSources, form: SetupFormValues): RunEstimate {
+export function estimateRun(sources: EstimateSources, form: SetupFormValues, override?: { progress?: EstimateProgress }): RunEstimate {
   const speeds = measuredSpeed(sources.activities, { ignoreTasks: TWO_CALL_TASKS });
   const tokens = measuredTokensPerWord(sources.activities);
   const models = estimateModelsFromConfig(sources.ai, speeds);
@@ -210,7 +210,7 @@ export function estimateRun(sources: EstimateSources, form: SetupFormValues): Ru
     currency: sources.currency,
     models,
     outline: sources.book.outline,
-    progress: progressOf(sources),
+    progress: override?.progress ?? progressOf(sources),
     context,
     readerPanelSize: sources.book.readerPanelSize,
     ...(tokens ? { tokensPerWord: tokens.value } : {}),
@@ -310,6 +310,26 @@ export function estimateRest(sources: EstimateSources, state: AutopilotState): R
   const lastChapter = Math.max(Math.max(0, (outline?.lastChapter ?? 0) - removed), planned);
   const book = { ...sources.book, outline: { entries: outline?.entries ?? 0, lastChapter, words: outline?.words ?? 0 } };
   return estimateRun({ ...sources, book, state, chapters: null }, { brief: state.brief, options: state.options, scenesPerChapter: restScenesPerChapter(state) });
+}
+
+// ─── A review of the finished book ───────────────────────────────────────────
+
+/**
+ * What a round of a review of the finished book will cost (`reviewBook`): the chapters under the target reviewed again (only reviewed: nothing is written, `reviewOnly`), each with
+ * up to `maxRounds` rounds and the readers in the first `readerRounds` (0: they do not read again), then the director's judgement of the whole book. The estimate of the setup form,
+ * with the models, the files and the log of the book, for the plan as it is. A review of several rounds costs about this for each round.
+ */
+export function estimateReview(sources: EstimateSources, state: AutopilotState, input: { chapters: number; maxRounds: number; readerRounds: number; scenesPerChapter?: number }): RunEstimate {
+  const planned = state.plan?.chapters.length ?? 0;
+  const chapters = Math.max(0, Math.min(planned, input.chapters));
+  const book = { ...sources.book, outline: { entries: sources.book.outline?.entries ?? planned, lastChapter: planned, words: sources.book.outline?.words ?? 0 } };
+  const options = {
+    ...state.options,
+    readers: state.options.readers && input.readerRounds > 0,
+    review: { maxRounds: input.maxRounds, readerRounds: Math.max(1, input.readerRounds) },
+  };
+  const progress: EstimateProgress = { chaptersDone: planned - chapters, planned, conceptDone: true, finalDone: false, reviewOnly: true };
+  return estimateRun({ ...sources, book, state, chapters: null }, { brief: state.brief, options, ...(input.scenesPerChapter ? { scenesPerChapter: input.scenesPerChapter } : {}) }, { progress });
 }
 
 // ─── What an author reads ────────────────────────────────────────────────────

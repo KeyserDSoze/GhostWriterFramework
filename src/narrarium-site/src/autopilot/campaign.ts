@@ -1,5 +1,6 @@
 import { RevisionCampaignError, ServerRequestError, isRevisionCampaignErrorCode, serverSupportsOutlineApply, type RevisionCampaignErrorCode, type ServerInfo } from "narrarium-engine";
 import i18n from "@/i18n";
+import { REVIEW_SERVER_VERSION } from "@/autopilot/reviewPolicy";
 
 /** The release of the personal server that applies the Synopsis to a book: the routes of the campaigns (`POST` and `DELETE …/autopilot/campaign`). */
 export const OUTLINE_APPLY_SERVER_VERSION = "0.1.19";
@@ -14,6 +15,14 @@ export class AutopilotOutlineApplyUnsupportedError extends Error {
   constructor() {
     super(i18n.t("autopilot.campaign.oldServer", { version: OUTLINE_APPLY_SERVER_VERSION }));
     this.name = "AutopilotOutlineApplyUnsupportedError";
+  }
+}
+
+/** The personal server that runs the book predates the review of a finished book: nothing is sent to it, and the author is told to update it. */
+export class AutopilotReviewUnsupportedError extends Error {
+  constructor() {
+    super(i18n.t("autopilot.reviewBook.oldServer", { version: REVIEW_SERVER_VERSION }));
+    this.name = "AutopilotReviewUnsupportedError";
   }
 }
 

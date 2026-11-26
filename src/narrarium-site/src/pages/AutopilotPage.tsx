@@ -235,7 +235,7 @@ export function AutopilotPage() {
     </div>
   );
 
-  const result = <AutopilotResult bookId={bookId} linkedSlugs={linkedChapters} wide={layout === "wide"} />;
+  const result = <AutopilotResult bookId={bookId} linkedSlugs={linkedChapters} wide={layout === "wide"} review={book ? { book, branch, structure } : undefined} />;
   // The band of the wide page shows the end of the text that streams (its lines, or one line with «Show the text» off): the history adds it only when there is more.
   const shownAbove = layout === "wide" ? (textDetail === "full" ? STREAM_CHARACTERS : PREVIEW_CHARACTERS) : 0;
   const timeline = <AutopilotTimeline bookId={bookId} loading={!loaded} activities={activities} chapterTitle={chapterTitle} chapterGhostwriter={chapterGhostwriter} chapterRounds={chapterRounds} finalReview={finalReview} currency={summary?.stats.currency ?? settings.costCurrency} shownAbove={shownAbove} />;

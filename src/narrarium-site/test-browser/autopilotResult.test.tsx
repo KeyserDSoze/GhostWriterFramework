@@ -178,11 +178,14 @@ describe("the verdict of the director", () => {
 });
 
 describe("the figures", () => {
-  it("are the chapters, the scenes, the words, the working time the engine counted, the cost, the tokens and the calls", () => {
+  it("are the chapters, the scenes, the words, the working time the engine counted, the cost, the tokens, the calls and the rounds of review", () => {
     done({ stats: { workedMs: 13_260_000 } });
     show();
     const labels = [...card().querySelectorAll("dt")].map((item) => item.textContent);
-    expect(labels).toEqual([t("autopilot.result.numbers.chapters"), t("autopilot.result.numbers.scenes"), t("autopilot.result.numbers.words"), t("autopilot.result.numbers.time"), t("autopilot.result.numbers.cost"), t("autopilot.result.numbers.tokens"), t("autopilot.result.numbers.calls")]);
+    expect(labels).toEqual([t("autopilot.result.numbers.chapters"), t("autopilot.result.numbers.scenes"), t("autopilot.result.numbers.words"), t("autopilot.result.numbers.time"), t("autopilot.result.numbers.cost"), t("autopilot.result.numbers.tokens"), t("autopilot.result.numbers.calls"), t("autopilot.result.numbers.rounds")]);
+    // Twenty rounds over the twelve chapters, three for the chapters that needed most.
+    expect(figure(t("autopilot.result.numbers.rounds"))).toHaveTextContent("20");
+    expect(figure(t("autopilot.result.numbers.rounds"))).toHaveTextContent("up to 3 for a chapter");
     expect(figure(t("autopilot.result.numbers.chapters"))).toHaveTextContent("12");
     expect(figure(t("autopilot.result.numbers.scenes"))).toHaveTextContent("24");
     expect(figure(t("autopilot.result.numbers.words"))).toHaveTextContent("16,800");
@@ -240,7 +243,7 @@ describe("the figures", () => {
     done({ stats: { workedMs: undefined, cost: 0, aiCalls: 0, inputTokens: 0, outputTokens: 0 }, activities: [] });
     show();
     const labels = [...card().querySelectorAll("dt")].map((item) => item.textContent);
-    expect(labels).toEqual([t("autopilot.result.numbers.chapters"), t("autopilot.result.numbers.scenes"), t("autopilot.result.numbers.words")]);
+    expect(labels).toEqual([t("autopilot.result.numbers.chapters"), t("autopilot.result.numbers.scenes"), t("autopilot.result.numbers.words"), t("autopilot.result.numbers.rounds")]);
   });
 
   it("are a list of terms and values, so that a screen reader says each with its name", () => {
