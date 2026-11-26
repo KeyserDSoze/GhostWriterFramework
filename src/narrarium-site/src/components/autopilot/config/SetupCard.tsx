@@ -19,17 +19,19 @@ import { bookStorageMode, type BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
 import { OUTLINE_BRIEF_NOTICE_ID } from "@/autopilot/outlineBrief";
 import { autoResumeOn, setAutoResume } from "@/autopilot/resume";
+import { policyUpdate, readReviewForm, reviewFormOf, samePolicy, type ReviewForm } from "@/autopilot/reviewPolicy";
+import type { ReviewCardHandle } from "@/components/autopilot/config/ReviewCard";
 import "@/i18n/autopilotCallsSettings";
 
 // The tab of the AI calls is a chunk of its own: nothing of it is loaded until the tab is drawn.
 const AiCallsCard = lazy(() => import("@/components/autopilot/config/AiCallsCard"));
+// So is the card of the review and the caps, with the estimate it shows when a value changes.
+const ReviewCard = lazy(() => import("@/components/autopilot/config/ReviewCard"));
 
 type RunAction = ReturnType<typeof useAutopilotActions>["run"];
 
 // A typo guard, not a product limit: a book has no maximum number of chapters. The engine accepts the same range.
 const MAX_CHAPTERS = 100_000;
-// The same kind of guard for the token budget: a trillion tokens is more than any book will ever use, and a typo stays a typo.
-const MAX_BUDGET_TOKENS = 1_000_000_000_000;
 
 /** Where the book can be published, in the order the choice lists them: the most often first. */
 const PUBLISH_MODES: readonly AutopilotPublishMode[] = ["step", "chapter", "off"];
@@ -64,6 +66,8 @@ export interface SetupCardProps {
   autoResume?: boolean;
   /** The personal server is too old to take the length of the book from its Scaletta: Save and Start are disabled, and the alert above says why. */
   outlineBriefUnsupported?: boolean;
+  /** The personal server predates the review policy of a run: the score and the rounds stay the director's, and are never sent. */
+  reviewPolicyUnsupported?: boolean;
   /** The run waits for a restart of «Retry later» now: turning it off would stop it, and the card says so beforehand. */
   waitingLong?: boolean;
   run: RunAction;
@@ -93,7 +97,7 @@ export interface SetupCardProps {
  * The start button at the bottom starts the autopilot with the brief of the Scaletta (for a book that never started) or resumes it, and `onStarted`
  * takes the author to the live page. Values of «Retry later» the server would refuse are never sent: the card says what is wrong instead.
  */
-export function SetupCard({ book, state, running, busy, disabled, asking = false, liveUnsupported = false, frozenUnsupported = false, retryUnsupported = false, autoResume = false, outlineBriefUnsupported = false, waitingLong = false, run, onStarted, outline, tab, onTab, onReset, rules, profiles, danger, branch, structure }: SetupCardProps) {
+export function SetupCard({ book, state, running, busy, disabled, asking = false, liveUnsupported = false, frozenUnsupported = false, retryUnsupported = false, autoResume = false, outlineBriefUnsupported = false, reviewPolicyUnsupported = false, waitingLong = false, run, onStarted, outline, tab, onTab, onReset, rules, profiles, danger, branch, structure }: SetupCardProps) {
   const { t } = useTranslation();
   const github = bookStorageMode(book) === "github";
   const host = book.autopilotHost === "server" ? "server" : "browser";
@@ -106,12 +110,16 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
     : { ...DEFAULT_OPTIONS, syncAfterChapter: github, ...(book.startPreset ? autopilotPresetSkeleton(book.startPreset)?.options : {}) }, [state, github, book.startPreset]);
   const [options, setOptions] = useState<AutopilotOptions>(initial);
   const [retry, setRetry] = useState<RetryLaterForm>(() => retryLaterForm(initial.longRetry));
+  // The review and the caps as the author types them: read when they are saved, as the engine reads them.
+  const [review, setReview] = useState<ReviewForm>(() => reviewFormOf(initial));
   const [dirty, setDirty] = useState(false);
   const retryCard = useRef<RetryLaterCardHandle>(null);
+  const reviewCard = useRef<ReviewCardHandle>(null);
   useEffect(() => {
     if (dirty) return;
     setOptions(initial);
     setRetry(retryLaterForm(initial.longRetry));
+    setReview(reviewFormOf(initial));
   }, [initial, dirty]);
 
   // What the run is started with: the Scaletta's brief and its chapter entries. Without a readable Scaletta the words of the state (or the defaults) stand.
@@ -135,6 +143,11 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
 
   const patchOptions = (patch: Partial<AutopilotOptions>) => { setOptions((current) => ({ ...current, ...patch })); setDirty(true); };
   const retryChange = (next: RetryLaterForm) => { setRetry(next); setDirty(true); };
+  const reviewChange = (next: ReviewForm) => { setReview(next); setDirty(true); };
+  const reviewReading = readReviewForm(review);
+  // The policy changed when it is not the one the state has; a server that predates it is never sent it.
+  const policyChanged = !reviewPolicyUnsupported && !samePolicy(reviewReading.policy, initial.review);
+  const reviewChanged = policyChanged || reviewReading.budgetLimit !== initial.budgetLimit || reviewReading.budgetTokens !== (initial.budgetTokens ?? 0);
   // While a run goes on, only where the book is published and the pause after every chapter can change (not on a server that predates it).
   const locked = running || busy;
   const liveLocked = busy || (running && liveUnsupported);
@@ -164,9 +177,20 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
    * when it stays off) and «Resume after a restart» as the switch says, `true` or `false`, for a server that has it and for no other host.
    */
   const sentOptions = (): StartOptions["options"] => {
-    const { longRetry: _saved, resumeAfterRestart: _resume, ...plain } = options;
-    const rest = autoResume ? { ...plain, resumeAfterRestart: resumeOn } : plain;
+    const { longRetry: _saved, resumeAfterRestart: _resume, review: _review, ...plain } = options;
+    // The caps as the review card says them, and the policy only when it changed (field by field: a value left blank goes back to the director's).
+    const capped = { ...plain, budgetLimit: reviewReading.budgetLimit, budgetTokens: reviewReading.budgetTokens, ...(policyChanged ? { review: policyUpdate(reviewReading.policy) } : {}) };
+    const rest = autoResume ? { ...capped, resumeAfterRestart: resumeOn } : capped;
     return retryUnsupported ? rest : retryReading.policy ? { ...rest, longRetry: retryReading.policy } : initial.longRetry ? { ...rest, longRetry: null } : rest;
+  };
+
+  /** Whether the review and the caps can be sent as they are; when they cannot, the card shows what is wrong and takes the focus there. */
+  const reviewReady = (): boolean => {
+    if (reviewReading.valid) return true;
+    if (tab !== "review") onTab("review");
+    // The card is drawn once its tab is: what is wrong is shown, and the focus goes to the first field with a problem.
+    window.setTimeout(() => reviewCard.current?.showProblems(), 0);
+    return false;
   };
 
   /** Whether «Retry later» can be sent as it is; when it cannot, the card shows what is wrong and takes the focus there. */
@@ -179,6 +203,7 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
   const save = () => {
     if (!running && !ready) return;
     if (!retryReady()) return;
+    if (!running && !reviewReady()) return;
     const changes = liveChanges();
     // During a run only the settings that can change are sent, and nothing when they are as they were (a server refuses an empty change).
     if (running && Object.keys(changes).length === 0) {
@@ -205,7 +230,7 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
           : t("autopilot.actions.resume");
   const canStart = !running && !asking && (fresh || !completed || extending);
   const start = () => {
-    if (!ready || !retryReady()) return;
+    if (!ready || !retryReady() || !reviewReady()) return;
     void run("start", async (runtime, id) => {
       if (fresh) {
         await runtime.start(id, { brief, options: sentOptions() });
@@ -223,7 +248,10 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
 
   const [callsOpened, setCallsOpened] = useState(tab === "calls");
   useEffect(() => { if (tab === "calls") setCallsOpened(true); }, [tab]);
-  const previewForm = useMemo(() => ({ brief, options }), [brief, options]);
+  // The preview of the run is made with the review of the form: its rounds and its readers change the calls.
+  const previewPolicy = reviewPolicyUnsupported ? initial.review : reviewReading.policy;
+  const previewKey = JSON.stringify(previewPolicy ?? null);
+  const previewForm = useMemo(() => ({ brief, options: { ...options, review: previewPolicy && Object.keys(previewPolicy).length ? previewPolicy : undefined } }), [brief, options, previewKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const tabs: ConfigTab[] = [
     {
       key: "overview",
@@ -265,12 +293,21 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
             <NumberField id="autopilot-readers" label={t("autopilot.setup.maxReaders")} value={options.maxReaders} min={1} max={20} disabled={locked} onChange={(value) => patchOptions({ maxReaders: value })} />
             <NumberField id="autopilot-per-run" label={t("autopilot.setup.chaptersPerRun")} value={options.chaptersPerRun} min={0} max={MAX_CHAPTERS} disabled={locked} onChange={(value) => patchOptions({ chaptersPerRun: value })} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <NumberField id="autopilot-budget" label={t("autopilot.setup.budget")} value={options.budgetLimit} min={0} max={1_000_000} step={0.5} disabled={locked} describedBy="autopilot-budget-hint" onChange={(value) => patchOptions({ budgetLimit: value })} />
-            <NumberField id="autopilot-budget-tokens" label={t("autopilot.setup.budgetTokens")} value={options.budgetTokens ?? 0} min={0} max={MAX_BUDGET_TOKENS} step={1000} disabled={locked} describedBy="autopilot-budget-tokens-hint" onChange={(value) => patchOptions({ budgetTokens: value })} />
-          </div>
-          <p id="autopilot-budget-hint" className="text-xs text-muted-foreground">{t("autopilot.setup.budgetHint")}</p>
-          <p id="autopilot-budget-tokens-hint" className="text-xs text-muted-foreground">{t("autopilot.setup.budgetTokensHint")}</p>
+          <Suspense fallback={<p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("autopilot.current.loading")}</p>}>
+            <ReviewCard
+              ref={reviewCard}
+              book={book}
+              form={review}
+              onChange={reviewChange}
+              locked={locked}
+              policyUnsupported={reviewPolicyUnsupported}
+              readers={options.readers}
+              spent={state?.stats?.cost ?? 0}
+              spentCurrency={state?.stats?.currency}
+              changed={reviewChanged}
+              estimate={{ branch, structure, state, options, brief }}
+            />
+          </Suspense>
           <fieldset className="space-y-2 pt-1" disabled={frozenLocked} aria-describedby="autopilot-frozen-edits-hint">
             <legend className="text-sm font-medium">{t("autopilot.config.frozenEdits.title")}</legend>
             <div className="grid gap-2 sm:grid-cols-3">

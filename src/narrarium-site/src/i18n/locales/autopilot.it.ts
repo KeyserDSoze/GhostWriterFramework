@@ -753,6 +753,8 @@ const autopilotIt = {
       rounds: {
         director_one: "Il tuo direttore permette al massimo {{count}} giro di revisione per capitolo.",
         director_other: "Il tuo direttore permette fino a {{count}} giri di revisione per capitolo.",
+        policy_one: "La revisione di questa corsa permette al massimo {{count}} giro di revisione per capitolo (il tuo direttore: {{director}}).",
+        policy_other: "La revisione di questa corsa permette fino a {{count}} giri di revisione per capitolo (il tuo direttore: {{director}}).",
         preset_one: "La misura «{{preset}}» consiglia {{count}} giro di revisione per capitolo; il tuo direttore ne permette {{rounds}}. Scegliere una misura non cambia mai il direttore.",
         preset_other: "La misura «{{preset}}» consiglia {{count}} giri di revisione per capitolo; il tuo direttore ne permette {{rounds}}. Scegliere una misura non cambia mai il direttore.",
         open: "Apri il Direttore",
@@ -943,6 +945,51 @@ const autopilotIt = {
       costUnknownHint: "Nessun costo misurato per queste chiamate: il modello non ha un prezzo in Integrazioni AI, o il provider non ne ha comunicato i token. Il budget in token vale comunque.",
     },
     current: { loading: "Caricamento dell'autopilot di questo libro…", working: "Sta lavorando su", preparing: "Prepara il prossimo passo…" },
+    review: {
+      title: "Revisione",
+      intro: "Fin dove arriva l'autopilot prima di approvare un capitolo e il libro, e quanto può spendere. Vuoto: i valori del direttore, e nessun tetto.",
+      oldServer: "Il tuo server personale è precedente alla {{version}}: voto e giri sono quelli del direttore e qui non si possono cambiare. Aggiornalo per sceglierli.",
+      unlimited: "Nessun limite",
+      target: {
+        label: "Voto da raggiungere",
+        placeholder: "{{score}} (del direttore)",
+        hint: "Il voto che serve a un capitolo e al libro intero per essere approvati: da 5 a 10, per mezzi punti.",
+      },
+      rounds: {
+        label: "Giri del direttore per capitolo",
+        placeholder_one: "{{count}} (del direttore)",
+        placeholder_other: "{{count}} (del direttore)",
+        hint: "Quanti giri di revisione ha un capitolo prima di essere chiuso comunque: da 1 a 10.",
+      },
+      readerRounds: {
+        label: "Giri dei lettori",
+        placeholder: "1 (il primo giro)",
+        hint: "In quanti dei primi giri i lettori simulati rileggono un capitolo: da 1 a 10.",
+        off: "I lettori simulati sono spenti: accendili qui sopra per sceglierne i giri.",
+      },
+      campaignRounds: {
+        label: "Giri di una revisione del libro",
+        hint: "Quanti giri fa «Rivedi di nuovo il libro» prima di aspettarti; riavviando ne concedi altrettanti.",
+      },
+      money: {
+        label: "Tetto di spesa ({{currency}})",
+        hint: "Il libro si ferma prima del passo successivo quando ha speso questa cifra, sommando tutte le sue corse. Non si azzera mai: alzalo per continuare. Speso finora: {{spent}}.",
+      },
+      tokens: {
+        label: "Tetto di token",
+        hint: "Lo stesso per i token (input e output), con qualsiasi modello, anche senza prezzo.",
+      },
+      problems: {
+        number: "Scrivi un numero.",
+        range: "Da {{min}} a {{max}}.",
+        step: "Per mezzi punti: 7; 7,5; 8…",
+      },
+      estimate: {
+        run: "La corsa con questi valori",
+        figures: "{{calls}} chiamate AI · {{cost}} · {{time}}",
+        nothing: "Non resta nulla da scrivere per una corsa: questi valori valgono per i capitoli che verranno e per «Rivedi di nuovo il libro», che dice quanto costa un giro.",
+      },
+    },
     campaign: {
       chip: {
         "outline-change": "Applico la Sinossi: {{done}} di {{total}}",

@@ -19,6 +19,7 @@ import { useServerConnection } from "@/autopilot/serverConnection";
 import { serverHasFrozenChapters } from "@/autopilot/frozenChapters";
 import { retryWaitOf, serverHasAutoResume, serverHasRetry } from "@/autopilot/retry";
 import { OUTLINE_BRIEF_NOTICE_ID, OUTLINE_BRIEF_SERVER_VERSION, serverHasOutlineBrief } from "@/autopilot/outlineBrief";
+import { serverHasReviewPolicy } from "@/autopilot/reviewPolicy";
 import { questionHeading } from "@/autopilot/format";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
@@ -78,6 +79,8 @@ export function AutopilotSettingsPage() {
   const autoResume = host === "server" && Boolean(server.info) && serverHasAutoResume(server.info);
   // A personal server older than the length of the book from its Scaletta plans twelve chapters and ignores the outline: nothing is started or saved on it.
   const outlineBriefUnsupported = host === "server" && Boolean(server.info) && !serverHasOutlineBrief(server.info);
+  // One older than the review policy drops it: the score and the rounds stay the director's, and the card says why.
+  const reviewPolicyUnsupported = host === "server" && Boolean(server.info) && !serverHasReviewPolicy(server.info);
   const waitingLong = Boolean(retryWaitOf(summary)?.long);
   const asking = Boolean(summary?.question);
 
@@ -155,6 +158,7 @@ export function AutopilotSettingsPage() {
           retryUnsupported={retryUnsupported}
           autoResume={autoResume}
           outlineBriefUnsupported={outlineBriefUnsupported}
+          reviewPolicyUnsupported={reviewPolicyUnsupported}
           waitingLong={waitingLong}
           run={run}
           onStarted={() => navigate(liveHref)}

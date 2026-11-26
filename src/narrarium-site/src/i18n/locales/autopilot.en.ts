@@ -753,6 +753,8 @@ const autopilotEn = {
       rounds: {
         director_one: "Your director allows at most {{count}} round of review per chapter.",
         director_other: "Your director allows up to {{count}} rounds of review per chapter.",
+        policy_one: "The review of this run allows at most {{count}} round of review per chapter (your director: {{director}}).",
+        policy_other: "The review of this run allows up to {{count}} rounds of review per chapter (your director: {{director}}).",
         preset_one: "The {{preset}} size recommends {{count}} round of review per chapter; your director allows {{rounds}}. Choosing a size never changes the director.",
         preset_other: "The {{preset}} size recommends {{count}} rounds of review per chapter; your director allows {{rounds}}. Choosing a size never changes the director.",
         open: "Open the Director",
@@ -943,6 +945,51 @@ const autopilotEn = {
       costUnknownHint: "No measured cost for these calls: the model has no price in AI Integrations, or the provider did not report their tokens. A token budget still applies.",
     },
     current: { loading: "Loading the autopilot of this book…", working: "Working on", preparing: "Preparing the next step…" },
+    review: {
+      title: "Review",
+      intro: "How far the autopilot goes before it approves a chapter and the book, and how much it may spend. Blank: the director's values, and no cap.",
+      oldServer: "Your personal server is older than {{version}}: the score and the rounds are the director's, and cannot be changed here. Update it to choose them.",
+      unlimited: "No limit",
+      target: {
+        label: "Score to reach",
+        placeholder: "{{score}} (the director's)",
+        hint: "The vote a chapter and the whole book need to be approved: 5 to 10, by halves.",
+      },
+      rounds: {
+        label: "Director's rounds per chapter",
+        placeholder_one: "{{count}} (the director's)",
+        placeholder_other: "{{count}} (the director's)",
+        hint: "How many rounds of review a chapter gets before it is closed anyway: 1 to 10.",
+      },
+      readerRounds: {
+        label: "Readers' rounds",
+        placeholder: "1 (the first round)",
+        hint: "In how many of the first rounds the simulated readers read a chapter again: 1 to 10.",
+        off: "The simulated readers are off: turn them on above to choose their rounds.",
+      },
+      campaignRounds: {
+        label: "Rounds of a review of the book",
+        hint: "How many rounds «Review the book again» makes before it waits for you; starting again allows as many more.",
+      },
+      money: {
+        label: "Money cap ({{currency}})",
+        hint: "The book stops before its next step once it has spent this, over all its runs. It never resets: raise it to go on. Spent so far: {{spent}}.",
+      },
+      tokens: {
+        label: "Token cap",
+        hint: "The same for tokens (input and output), with any model, even one without a price.",
+      },
+      problems: {
+        number: "Write a number.",
+        range: "From {{min}} to {{max}}.",
+        step: "By halves: 7, 7.5, 8…",
+      },
+      estimate: {
+        run: "The run with these values",
+        figures: "{{calls}} AI calls · {{cost}} · {{time}}",
+        nothing: "Nothing is left for a run to write: these values are for the chapters still to come and for «Review the book again», which says what a round costs.",
+      },
+    },
     campaign: {
       chip: {
         "outline-change": "Applying the Synopsis: {{done}} of {{total}}",

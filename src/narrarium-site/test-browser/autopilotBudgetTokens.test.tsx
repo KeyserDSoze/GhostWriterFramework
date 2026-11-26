@@ -58,8 +58,10 @@ function openForm(state: AutopilotState | null = null) {
 }
 
 const existing = (options: Record<string, unknown> = {}) => ({ ...createAutopilotState(new Date(T0), { ...DEFAULT_BRIEF, idea: "A glass harbor" }), options: { ...DEFAULT_OPTIONS, ...options } }) as AutopilotState;
-const tokensField = () => screen.getByLabelText(t("autopilot.setup.budgetTokens")) as HTMLInputElement;
-const moneyField = () => screen.getByLabelText(t("autopilot.setup.budget")) as HTMLInputElement;
+// The caps are in the card of the review (a chunk of its own): its fields are there once it is drawn.
+const tokensField = () => screen.getByLabelText(t("autopilot.review.tokens.label")) as HTMLInputElement;
+const moneyField = () => screen.getByLabelText(t("autopilot.review.money.label", { currency: "USD" })) as HTMLInputElement;
+const drawn = () => screen.findByLabelText(t("autopilot.review.tokens.label"));
 
 const escaped = (text: string) => new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
 
@@ -85,26 +87,28 @@ afterEach(async () => {
 });
 
 describe("the token budget in the form of the autopilot", () => {
-  it("is a field next to the money budget, with no limit as its starting value", () => {
+  it("is a field next to the money cap, blank (no limit) as its starting value", async () => {
     openForm();
-    expect(tokensField()).toHaveValue(0);
-    expect(tokensField()).toHaveAttribute("min", "0");
+    await drawn();
+    expect(tokensField()).toHaveValue("");
+    expect(tokensField()).toHaveAttribute("placeholder", t("autopilot.review.unlimited"));
     expect(moneyField().compareDocumentPosition(tokensField()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(moneyField().parentElement?.parentElement, "the two budgets are in the same row").toBe(tokensField().parentElement?.parentElement);
+    expect(moneyField().closest("[data-review-caps], .grid"), "the two caps are in the same grid").toBe(tokensField().closest(".grid"));
   });
 
-  it("is explained: it works with every model, the money budget needs prices", () => {
+  it("is explained: it works with every model, the money cap is the book's over all its runs and never resets", async () => {
     openForm();
-    const hint = t("autopilot.setup.budgetTokensHint");
+    await drawn();
+    const hint = t("autopilot.review.tokens.hint");
     expect(tokensField()).toHaveAccessibleDescription(escaped(hint));
-    expect(screen.getByText(hint)).toBeInTheDocument();
-    expect(t("autopilot.setup.budgetHint")).toMatch(/prices/);
-    expect(hint).toMatch(/every model/);
-    expect(hint).toMatch(/without prices/);
+    expect(hint).toMatch(/any model/);
+    expect(hint).toMatch(/without a price/);
+    expect(moneyField()).toHaveAccessibleDescription(/never resets/);
   });
 
   it("starts the autopilot with the tokens typed, as a whole number", async () => {
     openForm();
+    await drawn();
     type(tokensField(), "250000");
     expect(tokensField().value).toBe("250000");
     fireEvent.click(screen.getByRole("button", { name: t("autopilot.actions.start") }));
@@ -114,17 +118,22 @@ describe("the token budget in the form of the autopilot", () => {
     expect(normalizeOptions(started.options).budgetTokens, "the engine keeps it as it is").toBe(250000);
   });
 
-  it("takes a budget of millions of tokens, and never a negative one", () => {
+  it("takes a budget of millions of tokens, and never a negative one: it says so, and starts nothing", async () => {
     openForm();
+    await drawn();
     type(tokensField(), "40000000");
     expect(tokensField().value).toBe("40000000");
     type(tokensField(), "-5");
-    expect(tokensField().value).toBe("0");
+    expect(tokensField()).toHaveAttribute("aria-invalid", "true");
+    fireEvent.click(screen.getByRole("button", { name: t("autopilot.actions.start") }));
+    await waitFor(() => expect(tokensField()).toHaveFocus());
+    expect(runtime.start).not.toHaveBeenCalled();
   });
 
-  it("keeps the money budget and the token budget apart", async () => {
+  it("keeps the money cap and the token cap apart, and takes a decimal comma", async () => {
     openForm();
-    type(moneyField(), "12.5");
+    await drawn();
+    type(moneyField(), "12,5");
     type(tokensField(), "90000");
     fireEvent.click(screen.getByRole("button", { name: t("autopilot.actions.start") }));
     await waitFor(() => expect(runtime.start).toHaveBeenCalledTimes(1));
@@ -133,7 +142,8 @@ describe("the token budget in the form of the autopilot", () => {
 
   it("shows what the autopilot has saved, and saves a change with its settings", async () => {
     openForm(existing({ budgetTokens: 50000 }));
-    expect(tokensField()).toHaveValue(50000);
+    await drawn();
+    expect(tokensField()).toHaveValue("50000");
     type(tokensField(), "75000");
     fireEvent.click(screen.getByRole("button", { name: t("autopilot.setup.save") }));
     await waitFor(() => expect(runtime.configure).toHaveBeenCalledTimes(1));
@@ -144,24 +154,27 @@ describe("the token budget in the form of the autopilot", () => {
     const old = existing();
     delete (old.options as { budgetTokens?: number }).budgetTokens;
     openForm(old);
-    expect(tokensField()).toHaveValue(0);
+    await drawn();
+    expect(tokensField()).toHaveValue("");
     type(moneyField(), "3");
     fireEvent.click(screen.getByRole("button", { name: t("autopilot.setup.save") }));
     await waitFor(() => expect(runtime.configure).toHaveBeenCalledTimes(1));
-    const [, saved] = runtime.configure.mock.calls[0] as unknown as [string, { options: { budgetTokens?: number; budgetLimit: number } }];
+    const [, saved] = runtime.configure.mock.calls[0] as unknown as [string, { options: { budgetTokens?: number; budgetLimit: number; review?: unknown } }];
     expect(saved.options.budgetLimit).toBe(3);
     expect(saved.options.budgetTokens ?? 0).toBe(0);
+    expect(saved.options.review, "a review policy nobody changed is not sent").toBeUndefined();
   });
 
   it("is in Italian when the app is", async () => {
     await i18n.changeLanguage("it");
     openForm();
-    expect(screen.getByLabelText("Budget in token per libro (0 = nessun limite)")).toBeInTheDocument();
-    expect(screen.getByText(/Vale con qualsiasi modello, anche senza prezzi/)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Tetto di token")).toBeInTheDocument();
+    expect(screen.getByText(/con qualsiasi modello, anche senza prezzo/)).toBeInTheDocument();
   });
 
-  it("is locked while the autopilot runs, like the rest of the settings", () => {
+  it("is locked while the autopilot runs, like the rest of the settings", async () => {
     render(<MemoryRouter><SetupCard book={BOOK} state={existing({ budgetTokens: 1000 })} {...FORM} running busy={false} disabled={false} run={run as never} /></MemoryRouter>);
+    await drawn();
     expect(tokensField()).toBeDisabled();
   });
 });

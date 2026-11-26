@@ -251,13 +251,17 @@ describe("the overview of the configuration", () => {
 });
 
 describe("the review, the save and the reset", () => {
-  it("has how the autopilot reviews the book in Review: the readers, the plan, the specialists, the pauses, the sessions, the budgets and the fill of the Outline", () => {
+  it("has how the autopilot reviews the book in Review: the readers, the plan, the specialists, the pauses, the sessions, the score and the rounds, the caps and the fill of the Outline", async () => {
     seedRun({ status: "paused" });
     render(<Page />);
     choose("review");
     const review = panel("review");
     for (const key of ["readers", "readersOnPlan", "specialists", "pauseAfterPlan", "pauseAfterEachChapter", "fillOutline"]) expect(within(review).getByRole("switch", { name: t(`autopilot.setup.${key}`) }), key).toBeInTheDocument();
-    for (const key of ["maxReaders", "chaptersPerRun", "budget", "budgetTokens"]) expect(within(review).getByLabelText(t(`autopilot.setup.${key}`)), key).toBeInTheDocument();
+    for (const key of ["maxReaders", "chaptersPerRun"]) expect(within(review).getByLabelText(t(`autopilot.setup.${key}`)), key).toBeInTheDocument();
+    // The card of the review is a chunk of its own: its fields are there once it is drawn.
+    expect(await within(review).findByLabelText(t("autopilot.review.target.label"))).toBeInTheDocument();
+    for (const key of ["rounds", "readerRounds", "campaignRounds", "tokens"]) expect(within(review).getByLabelText(t(`autopilot.review.${key}.label`)), key).toBeInTheDocument();
+    expect(within(review).getByLabelText(t("autopilot.review.money.label", { currency: "USD" }))).toBeInTheDocument();
   });
 
   it("has the save and the reset at the top, in a bar that stays on the screen: «Save» is off until something changed", () => {
@@ -400,12 +404,15 @@ describe("while the autopilot runs", () => {
     seedRun({ book, status: "running", running: true, live: { activity: LIVE }, options: { syncAfterChapter: true } });
   };
 
-  it("locks what cannot change during a run, and says why", () => {
+  it("locks what cannot change during a run, and says why", async () => {
     running();
     render(<Page />);
     expect(screen.getByText(t("autopilot.config.runningNote"))).toBeInTheDocument();
     choose("review");
-    for (const key of ["budget", "budgetTokens", "maxReaders"]) expect(field(`autopilot.setup.${key}`), key).toBeDisabled();
+    expect(field("autopilot.setup.maxReaders")).toBeDisabled();
+    expect(await screen.findByLabelText(t("autopilot.review.target.label"))).toBeDisabled();
+    for (const key of ["rounds", "tokens"]) expect(field(`autopilot.review.${key}.label`), key).toBeDisabled();
+    expect(screen.getByLabelText(t("autopilot.review.money.label", { currency: "USD" }))).toBeDisabled();
     expect(screen.getByRole("switch", { name: t("autopilot.setup.specialists") })).toBeDisabled();
   });
 

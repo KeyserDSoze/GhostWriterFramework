@@ -82,9 +82,10 @@ export function RunPreview({ inputs, form, dirty, bookId, startPreset }: RunPrev
     max: pricedParts.reduce((total, capability) => total + (estimate.capabilities[capability].cost?.max ?? 0), 0),
   });
 
-  // The director's rounds, and the size the form is: a size recommends rounds, and never writes them.
+  // The director's rounds, and the size the form is: a size recommends rounds, and never writes them. The review policy of the form gives others.
   const preset = startPreset ? autopilotPresetSkeleton(startPreset) : undefined;
-  const rounds = sources.book.directorRounds;
+  const policyRounds = form.options.review?.maxRounds;
+  const rounds = policyRounds ?? sources.book.directorRounds;
   const directorHref = `/app/books/${encodeURIComponent(bookId)}/director`;
 
   // What a screen reader is told, once the figures stopped moving: the same figures in words, and how many problems there are.
@@ -147,8 +148,8 @@ export function RunPreview({ inputs, form, dirty, bookId, startPreset }: RunPrev
           <p className="text-xs text-muted-foreground">{t("autopilot.estimate.interval", { rounds })}</p>
           {rounds !== undefined && (
             <div data-estimate="rounds" className="space-y-1 text-xs text-muted-foreground">
-              <p>{t("autopilot.estimate.rounds.director", { count: rounds })}</p>
-              {preset && preset.maxReviewRounds !== rounds && (
+              <p>{policyRounds !== undefined ? t("autopilot.estimate.rounds.policy", { count: policyRounds, director: sources.book.directorRounds ?? 2 }) : t("autopilot.estimate.rounds.director", { count: rounds })}</p>
+              {preset && policyRounds === undefined && preset.maxReviewRounds !== rounds && (
                 <p data-estimate="preset-rounds">{t("autopilot.estimate.rounds.preset", { preset: t(`autopilot.presets.${preset.id}.name`), count: preset.maxReviewRounds, rounds })}</p>
               )}
               <Link to={directorHref} className="flex min-h-11 w-fit items-center font-medium text-foreground underline underline-offset-4">{t("autopilot.estimate.rounds.open")}</Link>
