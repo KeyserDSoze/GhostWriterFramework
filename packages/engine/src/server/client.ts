@@ -14,6 +14,7 @@ import {
   serverHasOutlineBrief,
   serverSupportsAutopilotAutoResume,
   serverSupportsAutopilotRetry,
+  serverSupportsDesign,
   serverSupportsGithubConflicts,
   serverSupportsOutlineApply,
   serverSupportsReviewBook,
@@ -265,12 +266,17 @@ export class NarrariumServerClient {
   /**
    * Start or resume the autopilot: `POST …/autopilot/start`. `limits` (`{ steps?, chapters? }`: pause after that many steps or chapters
    * of this run) need a server that announces `SERVER_FEATURE_AUTOPILOT_CONTROLS`: an older one ignores them and runs on. `options.longRetry`
-   * needs `SERVER_FEATURE_AUTOPILOT_RETRY` and `options.resumeAfterRestart` `SERVER_FEATURE_AUTOPILOT_AUTO_RESUME` (see `assertOptionsSupported`).
+   * needs `SERVER_FEATURE_AUTOPILOT_RETRY` and `options.resumeAfterRestart` `SERVER_FEATURE_AUTOPILOT_AUTO_RESUME` (see `assertOptionsSupported`); a design
+   * (`design`, other than `false`) needs `SERVER_FEATURE_AUTOPILOT_DESIGN`, and is refused before anything is sent to a server without it.
    */
   async startAutopilot(bookId: string, options: StartOptions & { force?: boolean } = {}): Promise<AutopilotSnapshot> {
     const info = await this.info();
     await this.assertOutlineBriefSupported(info);
     await this.assertOptionsSupported(options?.options, info);
+    // A design goes only to a server that designs: an older one would start a run that writes. Ending a design (`false`) is safe anywhere.
+    if (options?.design !== undefined && options.design !== false && !serverSupportsDesign(info)) {
+      throw new ServerRequestError("This personal server cannot design a book (it does not announce the feature autopilot-design): it would start a run that writes. Update the server, or design the book in the browser.", 501, "feature_unavailable");
+    }
     return this.request("POST", bookRoute(bookId, "/autopilot/start"), options, { timeoutMs: 300_000 });
   }
 

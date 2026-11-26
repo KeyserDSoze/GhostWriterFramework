@@ -848,6 +848,88 @@ export type AutopilotStopCause = "server-shutdown";
  */
 export type AutopilotRestartCause = "interrupted" | AutopilotStopCause;
 
+/**
+ * How a design run ended (`AutopilotDesign.outcome`): the director approved the design at the target (`target`), or with nothing left to change (`unchanged`); the
+ * rounds allowed were used (`rounds`); two reviews in a row did not raise its vote (`plateau`); or the author ended it and started writing (`author`).
+ */
+export type DesignOutcome = "target" | "unchanged" | "rounds" | "plateau" | "author";
+
+/** One review of the design by the director (`AutopilotDesign.rounds`). */
+export interface DesignRound {
+  round: number;
+  /** The director's vote, from 0 to 10. */
+  score: number;
+  /** What the round decided: `approve` ended the design, `revise` sent it back. */
+  verdict: "approve" | "revise";
+  /** The average vote of the simulated readers who read the design before this review. */
+  readers?: number;
+  /** Critical inconsistencies the director found. */
+  critical: number;
+  /** Findings of the deterministic checks (`designChecks`) when the review was made. */
+  findings: number;
+  at: string;
+}
+
+/** How the design is reviewed (`AutopilotDesign.review`): the review policy's fields that apply to a plan. Absent: the director's approval score, three reviews, readers before the first. */
+export type DesignPolicy = Pick<ReviewPolicy, "targetScore" | "maxRounds" | "readerRounds">;
+
+/** The reviews of a design when the policy says nothing: the director looks at it up to three times, as at a plan. */
+export const DESIGN_DEFAULT_ROUNDS = 3;
+
+/** Chapters one call of a design plans: a design says much more of a chapter than a plan, and its reply must fit the output of a modest model. */
+export const DESIGN_BATCH_CHAPTERS = 6;
+
+/**
+ * A design run (`StartOptions.design`): the autopilot designs the book, from its description, and writes no prose. The concept, the plan of every chapter with its
+ * design (`OutlineChapterDesign`, in the chapter entries of the Synopsis), the ledger of the secrets (`SecretLedger`) and the world (`bible/`), reviewed by the
+ * simulated readers and the director for the rounds of its policy; the run stops when the director approves it (`endedAt`), and waits for the author. Kept after
+ * it ends, for what it says; a start with `design` begins another (the plan is reviewed again).
+ */
+export interface AutopilotDesign {
+  startedAt: string;
+  /** The chapters the design was asked for (the Synopsis got an empty entry, the autopilot's, for each one it lacked). */
+  chapters: number;
+  review?: DesignPolicy;
+  /** The director's reviews of this design, oldest first. */
+  rounds: DesignRound[];
+  /** When it ended, and why. While it is absent the design run goes on: the plan never goes past its approval. */
+  endedAt?: string;
+  outcome?: DesignOutcome;
+  /** A critical inconsistency left at the last review was asked to the author, once. */
+  escalated?: boolean;
+  /**
+   * `options.pauseAfterPlan` as it was when the design began: the design turns it on while it goes on, so that an engine that does not know designs and resumes
+   * the run stops at the plan and writes no prose, and gives it back when it ends.
+   */
+  pauseAfterPlan?: boolean;
+  /** The fingerprint of the ledger (`secretLedgerDigest`) of every secret whose ledger the design wrote, by path: a ledger that changed since is the author's. */
+  ledgers?: Record<string, string>;
+}
+
+/** A design run asked with a start (`StartOptions.design`). */
+export interface DesignStartInput {
+  /** The chapters of the book: the Synopsis gets an empty entry for every one it lacks (never fewer than the entries it has). Absent: the entries it has, else 12. */
+  chapters?: number;
+  /** How the design is reviewed: a value sets it, `null` takes it back (`ReviewPolicyUpdate`). */
+  review?: ReviewPolicyUpdate | null;
+}
+
+/** What a summary says of the design run (`AutopilotStateSummary.design`). */
+export interface AutopilotDesignSummary {
+  /** The design run goes on. */
+  active: boolean;
+  chapters: number;
+  /** The reviews done, and the most the policy allows. */
+  rounds: number;
+  maxRounds: number;
+  /** The vote it must reach; absent: the director's approval score. */
+  targetScore?: number;
+  /** The director's last vote. */
+  lastScore?: number;
+  endedAt?: string;
+  outcome?: DesignOutcome;
+}
+
 export interface AutopilotState {
   schemaVersion: 1;
   status: AutopilotStatus;
@@ -892,6 +974,8 @@ export interface AutopilotState {
   limitReached?: AutopilotLimitReached;
   /** The reviews of the book that are over, oldest first (at most `MAX_REVIEW_RECORDS`). Absent when there was none. */
   reviews?: ReviewRecord[];
+  /** The design run of the book (`AutopilotDesign`): going on until `endedAt`, then kept for what it says. Absent when the book was never designed by the autopilot. */
+  design?: AutopilotDesign;
   runner: AutopilotRunnerInfo | null;
   stats: AutopilotStats;
   /** Short human message about the current status ("Plan ready for review"). */
@@ -995,7 +1079,12 @@ export type AutopilotMessageCode =
   | "serverShutdown"
   | "resumedAfterRestart"
   | "callsStoreFailed"
-  | "modelLearned";
+  | "modelLearned"
+  | "designReady"
+  | "designRound"
+  | "designChecks"
+  | "designAuthorEntries"
+  | "designEscalated";
 
 /**
  * Which candidate of the route a call asks now, and how: what the `call-attempt` event says and `AutopilotLive.trying` keeps, so that a client shows it as the request is sent. Only
@@ -1145,6 +1234,8 @@ export interface AutopilotStateSummary {
   campaign?: AutopilotCampaignSummary;
   /** The limit that stopped the run (`state.limitReached`), with its numbers. Absent otherwise. */
   limitReached?: AutopilotLimitReached;
+  /** The design run (`state.design`), going on or ended. Absent when the book was never designed by the autopilot. */
+  design?: AutopilotDesignSummary;
   /**
    * Not saved, and absent when nothing waits: while the run waits to try a failed step again, when the next attempt is and which retry it
    * is, so that a client can count down. Every change of it is a `state` event: it appears when the wait begins and goes when the attempt
@@ -1170,6 +1261,11 @@ export interface AutopilotInsightFigures {
   used?: number;
   limit?: number;
   currency?: string;
+  /** A design run: how it ended, the findings of its checks, the critical inconsistencies of a review, its chapters. */
+  designOutcome?: DesignOutcome;
+  findings?: number;
+  critical?: number;
+  chapters?: number;
 }
 
 /** A campaign as a summary says it: the chapters it works (`follow`), how many are over, the one being worked, and the ones that wait. */
@@ -1265,4 +1361,9 @@ export interface StartOptions {
   options?: Partial<Omit<AutopilotOptions, "longRetry" | "review">> & { longRetry?: AutopilotLongRetry | null; review?: ReviewPolicyUpdate | null };
   /** Limits of this run only: they are not saved. See `AutopilotRunLimits`. */
   limits?: AutopilotRunLimits;
+  /**
+   * A design run (`AutopilotDesign`): `true` or the chapters and the review policy begin one (a design that was over is reviewed again); `false` ends the one that goes
+   * on, and the run goes on to write. Absent: a design that goes on goes on (a resume, a restart), and any other run is what it always was.
+   */
+  design?: DesignStartInput | boolean;
 }

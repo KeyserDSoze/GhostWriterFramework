@@ -109,6 +109,8 @@ export interface FakeAiOptions {
   delayMs?: number;
   /** Fail the n-th call (1-based) with this error. */
   failOn?: { call: number; error: Error };
+  /** The director's review of a design, by the number of the review (default: approve at 8 with nothing to change). */
+  designReview?: (round: number, user: string) => Record<string, unknown>;
 }
 
 function prose(words: number, seed: string): string {
@@ -171,6 +173,73 @@ export function createFakeAutopilotAi(options: FakeAiOptions = {}): AiPort & { c
             reveals: start + index === 2 ? ["The Wall Is Failing"] : [],
           })),
         };
+      }
+      case "design_concept":
+        return {
+          logline: "A glassmaker's daughter must expose the harbor's oldest lie before the tide takes the town.",
+          premise: "In a harbor town built on glass, Mira discovers the lighthouse keeps a secret.",
+          themes: ["truth", "inheritance"],
+          tone: "Melancholic, tense",
+          conflict: "Mira against the council that profits from the lie.",
+          storyDesign: "# Story Design\n\n## Premise\n\nMira, a glassmaker's daughter, uncovers the harbor's oldest lie.\n\n## Main Conflict\n\nThe council hides the failing sea wall.\n\n## Character Arcs\n\nMira learns to speak.\n\n## Structure\n\nThree movements.",
+          context: "# World\n\nA cold northern harbor in an age of sail, where glass is the only trade that matters and the council controls the light.",
+          characters: [
+            { name: "Mira Vale", roleTier: "main", storyRole: "protagonist", description: "A stubborn young glassmaker.", desire: "The truth", fear: "Silence", arc: "From silence to voice", voice: "Short, exact sentences", relationships: ["Orrin Hale: her late father's partner, whom she distrusts"] },
+            { name: "Orrin Hale", roleTier: "main", storyRole: "antagonist", description: "The harbor master.", desire: "Control", fear: "Exposure", arc: "Falls", voice: "Smooth and patient", relationships: ["Mira Vale: the one person who could expose him"] },
+          ],
+          locations: [{ name: "Glass Harbor", description: "A town of glass workshops.", atmosphere: "Cold light" }],
+          factions: [],
+          items: [{ name: "The Tide Ledger", description: "The council's book of the sea wall's repairs.", significance: "It proves the lie." }],
+          worldRules: ["Glass is the only trade that matters", "The council controls the light of the lighthouse"],
+          secrets: [{ title: "The Wall Is Failing", truth: "The sea wall cracked years ago.", holders: ["Orrin Hale"], stakes: "The town floods", revealChapter: 2, consequences: ["The town turns on the council"] }],
+        };
+      case "chapter_design": {
+        const range = requestedRange(user);
+        const count = options.chapters ?? (range ? range[1] - range[0] + 1 : 2);
+        const start = range ? range[0] : 1;
+        const numbers = Array.from({ length: count }, (_, index) => start + index);
+        return {
+          chapters: numbers.map((number) => ({
+            number,
+            title: `Chapter Title ${number}`,
+            summary: `Summary of chapter ${number}.`,
+            design: {
+              goal: `Goal of chapter ${number}.`,
+              pov: ["Mira Vale"],
+              characters: ["Mira Vale", "Orrin Hale"],
+              setting: "Glass Harbor",
+              time: `Day ${number}`,
+              events: [`Event ${number}`],
+              scenes: [`Scene A of chapter ${number}`, `Scene B of chapter ${number}`],
+              conflicts: ["Mira against Orrin"],
+              emotions: "From doubt to resolve",
+              reveals: number === 2 ? ["The Wall Is Failing"] : [],
+              withholds: number < 2 ? ["Who knew about the wall"] : [],
+              clues: number === 1 ? ["Salt water in the cellar"] : [],
+              previous: number > 1 ? `Picks up chapter ${number - 1}.` : "",
+              next: `Sets up chapter ${number + 1}.`,
+              ending: `Chapter ${number} ends on a door closing.`,
+              cliffhanger: number === 1,
+              notes: "Keep Orrin calm on the surface.",
+            },
+          })),
+          secrets: numbers.includes(1) || numbers.includes(2)
+            ? [{
+              title: "The Wall Is Failing",
+              revealChapter: numbers.includes(2) ? 2 : 0,
+              learnedBy: numbers.includes(2) ? [{ character: "Mira Vale", chapter: 2 }] : [],
+              readerKnows: numbers.includes(1) ? [{ chapter: 1, note: "Something is wrong with the sea wall." }] : [],
+              clues: numbers.includes(1) ? [{ chapter: 1, note: "Salt water in the cellar." }] : [],
+              redHerrings: numbers.includes(1) ? [{ chapter: 1, note: "The storms are blamed." }] : [],
+            }]
+            : [],
+        };
+      }
+      case "design_reaction":
+        return { interest: 7, reaction: "I would read it.", concerns: ["Slow start?"], wishes: ["More of the harbor"], weakSpots: ["Chapter 1: the storm is a familiar opening"], counterProposal: "Open on the flood that has not happened yet." };
+      case "design_review": {
+        const round = Number(/review (\d+) of at most/.exec(user)?.[1] ?? "1");
+        return options.designReview?.(round, user) ?? { verdict: "approve", score: 8, summary: "A solid design.", strengths: ["Clear stakes"], changes: [], guidance: ["Keep every chapter ending on a turn."], critical: [], counterProposal: "Reveal the wall earlier and make the cost personal." };
       }
       case "plan_reaction":
         return { interest: 7, reaction: "I would read it.", concerns: ["Slow start?"], wishes: ["More of the harbor"] };

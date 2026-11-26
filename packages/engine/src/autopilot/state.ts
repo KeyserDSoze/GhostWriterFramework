@@ -4,9 +4,14 @@ import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, a
 import { clipText, countWords } from "../util/text.js";
 import { normalizeErrorDetail, normalizeErrorKind } from "./errors.js";
 import { normalizeReviewPolicy } from "./review-policy.js";
-import { AUTOPILOT_PUBLISH_MODES, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES, REVIEW_MAX_ROUNDS, REVISION_CHAPTER_MODES, REVISION_CHAPTER_STATUSES, REVISION_REASONS } from "./types.js";
+import { AUTOPILOT_PUBLISH_MODES, DESIGN_DEFAULT_ROUNDS, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, REVISION_CHAPTER_MODES, REVISION_CHAPTER_STATUSES, REVISION_REASONS } from "./types.js";
 import type {
   AutopilotActivity,
+  AutopilotDesign,
+  AutopilotDesignSummary,
+  DesignOutcome,
+  DesignPolicy,
+  DesignRound,
   AutopilotBrief,
   AutopilotCampaignSummary,
   AutopilotFinalReview,
@@ -903,6 +908,80 @@ export function withoutStopCause(state: AutopilotState): AutopilotState {
   return rest;
 }
 
+const DESIGN_OUTCOMES: readonly DesignOutcome[] = ["target", "unchanged", "rounds", "plateau", "author"];
+const DIGEST_SHAPE = /^[a-f0-9]{8,64}$/;
+
+/** The design run as a file says it (`AutopilotDesign`); `undefined` when it says none, or nothing that a design is made of. */
+export function normalizeDesign(value: unknown): AutopilotDesign | undefined {
+  const source = asRecord(value);
+  const startedAt = readMoment(source.startedAt);
+  if (!startedAt) return undefined;
+  const chapters = asInteger(source.chapters, 0, 0, MAX_BOOK_CHAPTERS);
+  const review = normalizeReviewPolicy(source.review);
+  const policy: DesignPolicy = {};
+  if (review?.targetScore !== undefined) policy.targetScore = review.targetScore;
+  if (review?.maxRounds !== undefined) policy.maxRounds = review.maxRounds;
+  if (review?.readerRounds !== undefined) policy.readerRounds = review.readerRounds;
+  const rounds: DesignRound[] = [];
+  for (const item of asArray(source.rounds).slice(-MAX_REVIEW_ROUNDS_KEPT)) {
+    const round = asRecord(item);
+    const score = readVote(round.score);
+    const at = readMoment(round.at);
+    if (score === undefined || !at) continue;
+    const readers = readVote(round.readers);
+    rounds.push({
+      round: asInteger(round.round, rounds.length + 1, 1, REVIEW_MAX_CAMPAIGN_ROUNDS),
+      score,
+      verdict: round.verdict === "approve" ? "approve" : "revise",
+      ...(readers !== undefined ? { readers } : {}),
+      critical: asInteger(round.critical, 0, 0, 1000),
+      findings: asInteger(round.findings, 0, 0, 100_000),
+      at,
+    });
+  }
+  const endedAt = readMoment(source.endedAt);
+  const outcome = endedAt ? asOneOf(source.outcome, DESIGN_OUTCOMES, "author") : undefined;
+  const ledgers: Record<string, string> = {};
+  for (const [path, digest] of Object.entries(asRecord(source.ledgers))) {
+    if (/^secrets\/[^/]+\.md$/.test(path) && typeof digest === "string" && DIGEST_SHAPE.test(digest)) ledgers[path] = digest;
+  }
+  return {
+    startedAt,
+    chapters,
+    ...(Object.keys(policy).length ? { review: policy } : {}),
+    rounds,
+    ...(endedAt ? { endedAt, outcome } : {}),
+    ...(source.escalated === true ? { escalated: true } : {}),
+    ...(typeof source.pauseAfterPlan === "boolean" ? { pauseAfterPlan: source.pauseAfterPlan } : {}),
+    ...(Object.keys(ledgers).length ? { ledgers } : {}),
+  };
+}
+
+/** Whether a design run goes on: the plan then never goes past its approval, and no prose is written. */
+export function designActive(state: Pick<AutopilotState, "design"> | null | undefined): boolean {
+  return Boolean(state?.design && !state.design.endedAt);
+}
+
+/** The reviews a design gets at most: its policy's, else `DESIGN_DEFAULT_ROUNDS`. */
+export function designMaxRounds(design: Pick<AutopilotDesign, "review"> | null | undefined): number {
+  return design?.review?.maxRounds ?? DESIGN_DEFAULT_ROUNDS;
+}
+
+/** The design run as the summary says it. */
+export function summarizeDesign(design: AutopilotDesign | undefined): AutopilotDesignSummary | undefined {
+  if (!design) return undefined;
+  const last = design.rounds[design.rounds.length - 1];
+  return {
+    active: !design.endedAt,
+    chapters: design.chapters,
+    rounds: design.rounds.length,
+    maxRounds: designMaxRounds(design),
+    ...(design.review?.targetScore !== undefined ? { targetScore: design.review.targetScore } : {}),
+    ...(last ? { lastScore: last.score } : {}),
+    ...(design.endedAt ? { endedAt: design.endedAt, outcome: design.outcome } : {}),
+  };
+}
+
 /** Tolerant reader for `autopilot/state.json`, including hand edits and older files. */
 export function normalizeAutopilotState(value: unknown, now = new Date()): AutopilotState {
   const source = asRecord(value);
@@ -928,6 +1007,7 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
   const deferredChanges = normalizeDeferredChanges(source.deferredChanges);
   const limitReached = normalizeLimitReached(source.limitReached);
   const reviews = normalizeReviewRecords(source.reviews);
+  const design = normalizeDesign(source.design);
   const frozenSince = readMoment(source.frozenSince);
   const frozenSeen = textList(source.frozenSeen, MAX_FROZEN_SEEN);
   const status = asOneOf(source.status, STATUSES, "idle");
@@ -956,6 +1036,7 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
     ...(deferredChanges ? { deferredChanges } : {}),
     ...(limitReached ? { limitReached } : {}),
     ...(reviews ? { reviews } : {}),
+    ...(design ? { design } : {}),
     runner: asString(runner.runId)
       ? {
         host: runner.host === "server" ? "server" : "browser",
@@ -1120,6 +1201,7 @@ export function summarizeAutopilotState(state: AutopilotState, context: Autopilo
     ...(typeof context.frozenChanges === "number" && context.frozenChanges > 0 ? { frozenChanges: context.frozenChanges } : {}),
     ...(summarizeCampaign(state.campaign, state.options) ? { campaign: summarizeCampaign(state.campaign, state.options) } : {}),
     ...(state.limitReached ? { limitReached: state.limitReached } : {}),
+    ...(state.design ? { design: summarizeDesign(state.design) } : {}),
   };
 }
 

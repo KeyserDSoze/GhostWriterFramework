@@ -307,3 +307,181 @@ export const IMPACT_TOOL: AiJsonSchema = {
     required: ["summary", "targets"],
   },
 };
+
+// ─── The design of a book (`AutopilotDesign`) ───────────────────────────────
+//
+// The prompts and the schemas of a design run: the steps are the autopilot's own (concept, plan, readers, director), each with its configured personality (the
+// director's profile, the readers' panel, the book's ghostwriter), and a role for the design of a book that is not written yet. Every reviewer must contest as well
+// as judge: a counter-proposal is part of every reply.
+
+const chapterNote = { type: "object", properties: { chapter: { type: "number" }, note: string }, required: ["chapter", "note"] } as const;
+
+const conceptProperties = CONCEPT_TOOL.parameters.properties as Record<string, Record<string, unknown>>;
+const conceptCharacter = conceptProperties.characters.items as { properties: Record<string, unknown>; required: string[] };
+const conceptSecret = conceptProperties.secrets.items as { properties: Record<string, unknown>; required: string[] };
+
+/** The foundation of a design: the concept's, with the relationships of the cast, the items that matter, the rules of the world and what each secret misleads and changes. */
+export const DESIGN_CONCEPT_TOOL: AiJsonSchema = {
+  name: "design_concept",
+  description: "Return the foundation of the design of the novel: story design, world frame and rules, cast with arcs and relationships, places, factions, items and secrets.",
+  parameters: {
+    type: "object",
+    properties: {
+      ...conceptProperties,
+      characters: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { ...conceptCharacter.properties, relationships: { ...strings, description: "How the character stands with the others, a line each (\"Elio: owes her his life, and hides it\")." } },
+          required: [...conceptCharacter.required, "relationships"],
+        },
+      },
+      items: { type: "array", items: { type: "object", properties: { name: string, description: string, significance: { ...string, description: "Why it matters to the story." } }, required: ["name", "description", "significance"] } },
+      worldRules: { ...strings, description: "The rules of the world the story must never break, a line each: how things work, what is possible and what is not." },
+      secrets: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            ...conceptSecret.properties,
+            redHerrings: { ...strings, description: "The false trails that will mislead the reader." },
+            consequences: { ...strings, description: "What the reveal changes in the story and for the characters." },
+          },
+          required: [...conceptSecret.required, "consequences"],
+        },
+      },
+    },
+    required: [...(CONCEPT_TOOL.parameters.required as string[]), "items", "worldRules"],
+  },
+};
+
+/** The fields of the design of one chapter (`OutlineChapterDesign`), as the model writes them. */
+const chapterDesign = {
+  type: "object",
+  properties: {
+    goal: { ...string, description: "The narrative goal: why the chapter exists in the book." },
+    pov: { ...strings, description: "Point-of-view character names." },
+    characters: { ...strings, description: "The characters on stage." },
+    setting: { ...string, description: "Where it happens (a place of the canon when there is one)." },
+    time: { ...string, description: "When it happens: its place in the time of the story." },
+    events: { ...strings, description: "The main events, in order." },
+    scenes: { ...strings, description: "The scenes it should have, one line each (2 to 4)." },
+    conflicts: strings,
+    emotions: { ...string, description: "How the characters change inside through the chapter." },
+    reveals: { ...strings, description: "What the reader learns here; name a secret by its exact title when it is revealed." },
+    withholds: { ...strings, description: "What is deliberately kept from the reader." },
+    clues: { ...strings, description: "Clues and foreshadowing planted here." },
+    previous: { ...string, description: "What it picks up from the chapters before." },
+    next: { ...string, description: "What it sets up for the chapters after." },
+    ending: { ...string, description: "How the chapter closes." },
+    cliffhanger: { type: "boolean", description: "Whether it closes on a cliffhanger." },
+    notes: { ...string, description: "Notes for the ghostwriter who will write it: what to stress, what to avoid." },
+  },
+  required: ["goal", "pov", "characters", "setting", "time", "events", "scenes", "conflicts", "emotions", "reveals", "withholds", "clues", "previous", "next", "ending", "cliffhanger", "notes"],
+} as const;
+
+/** The design of a batch of chapters (no prose), and where the secrets fall in it. */
+export const DESIGN_PLAN_TOOL: AiJsonSchema = {
+  name: "chapter_design",
+  description: "Return the design of the chapters of the novel (never their prose) and the ledger of the secrets in these chapters.",
+  parameters: {
+    type: "object",
+    properties: {
+      chapters: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            number: { type: "number" },
+            title: string,
+            summary: { ...string, description: "What happens, in 2-4 sentences." },
+            design: chapterDesign,
+          },
+          required: ["number", "title", "summary", "design"],
+        },
+      },
+      secrets: {
+        type: "array",
+        description: "The ledger of every secret that has something in these chapters.",
+        items: {
+          type: "object",
+          properties: {
+            title: { ...string, description: "The exact title of the secret." },
+            revealChapter: { type: "number", description: "The chapter where the reader learns the truth (0 when it is revealed outside these chapters)." },
+            learnedBy: { type: "array", items: { type: "object", properties: { character: string, chapter: { type: "number" } }, required: ["character", "chapter"] }, description: "Who learns it in these chapters, and where." },
+            readerKnows: { type: "array", items: chapterNote, description: "What the reader knows of it at each of these chapters where that changes." },
+            clues: { type: "array", items: chapterNote, description: "The clues planted in these chapters." },
+            redHerrings: { type: "array", items: chapterNote, description: "The false trails planted in these chapters." },
+          },
+          required: ["title", "revealChapter", "learnedBy", "readerKnows", "clues", "redHerrings"],
+        },
+      },
+    },
+    required: ["chapters", "secrets"],
+  },
+};
+
+const reactionProperties = PLAN_REACTION_TOOL.parameters.properties as Record<string, unknown>;
+
+/** A reader's reaction to a design: the plan's, with what falls flat and the reader's own proposal. */
+export const DESIGN_REACTION_TOOL: AiJsonSchema = {
+  name: "design_reaction",
+  description: "React, as the configured reader, to the design of a novel not written yet.",
+  parameters: {
+    type: "object",
+    properties: {
+      ...reactionProperties,
+      weakSpots: { ...strings, description: "What is predictable, inconsistent, superfluous or dull, chapter by chapter (\"Chapter 4: …\")." },
+      counterProposal: { ...string, description: "A concrete alternative you would prefer to the weakest part: never empty." },
+    },
+    required: [...(PLAN_REACTION_TOOL.parameters.required as string[]), "weakSpots", "counterProposal"],
+  },
+};
+
+const reviewProperties = PLAN_REVIEW_TOOL.parameters.properties as Record<string, unknown>;
+
+/** The director's review of a design: the plan's, with the critical inconsistencies and the devil's advocate. */
+export const DESIGN_REVIEW_TOOL: AiJsonSchema = {
+  name: "design_review",
+  description: "Review the design of the novel before any prose is written.",
+  parameters: {
+    type: "object",
+    properties: {
+      ...reviewProperties,
+      critical: {
+        type: "array",
+        description: "Every critical inconsistency still in the design (a contradiction, a plot hole, an impossible knowledge, a premature reveal, a mystery without a resolution). Empty when there is none.",
+        items: { type: "object", properties: { chapterNumber: { type: "number" }, issue: string }, required: ["issue"] },
+      },
+      counterProposal: { ...string, description: "Devil's advocate: the strongest alternative to the weakest part of the design, before you decide." },
+    },
+    required: [...(PLAN_REVIEW_TOOL.parameters.required as string[]), "critical", "counterProposal"],
+  },
+};
+
+/** The role of the architect in a design run: the Brainstormer of the writers' room. */
+export const DESIGN_ARCHITECT_ROLE = [
+  "This is the design of the book, before any prose: you are the brainstormer of a writers' room. Develop the author's idea into a complete, coherent, original and engaging design.",
+  "Propose, do not only confirm: when a better narrative choice exists, take it and say why. Every secret needs a truth, clues before its reveal, a reveal chapter and consequences; every setup needs a payoff.",
+  "Never write the prose of a chapter: only what a writer needs to write it later.",
+].join("\n");
+
+/** The role of a simulated reader reading a design: the reader keeps the personality of the panel. */
+export const DESIGN_READER_ROLE = [
+  "You are reading the design of a novel that is not written yet: the pitch, the cast, the world, the secrets and the design of every chapter.",
+  "React as this reader would: engagement, originality, pace, suspense, credibility, emotional impact. Point out what is predictable, inconsistent, superfluous or dull.",
+  "Do not merely agree: you must make at least one concrete counter-proposal.",
+].join("\n");
+
+/** The director's instructions for a review of a design. */
+export const DESIGN_DIRECTOR_RULES = [
+  "Play devil's advocate before you decide: name the strongest alternative to the weakest part of the design (counterProposal).",
+  "A score alone never approves: list every critical inconsistency still in the design (critical), and approve only when none is left. Every critical inconsistency becomes a change, chapter by chapter.",
+  "Weigh the DESIGN CHECKS: they are found without a model and may be noise; act on the real ones.",
+];
+
+/** What a design asks of every chapter. */
+export const DESIGN_CHAPTER_RULE = "For every chapter give its summary and its design: the narrative goal, the point of view, the characters on stage, the setting and the time, the main events, the planned scenes (2 to 4, a line each), the conflicts, the emotional evolution, what the reader learns, what stays hidden, the clues planted, what it picks up and what it sets up, how it ends (and whether on a cliffhanger), and notes for the ghostwriter. Never write the prose.";
+
+/** What a design asks of the secrets, batch by batch. */
+export const DESIGN_LEDGER_RULE = "For every secret that has something in these chapters, give its ledger for these chapters: who learns it and where, what the reader knows chapter by chapter, the clues and the red herrings planted, and the reveal chapter. Every secret needs clues before its reveal; nobody acts on a secret before learning it; no reveal comes before its chapter.";

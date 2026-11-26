@@ -11,6 +11,7 @@ import {
   mentionedCanon,
   readBody,
   readDocument,
+  referencedChapterNumber,
   secretRules,
   type LoadedParagraph,
 } from "../book/context.js";
@@ -42,7 +43,28 @@ import {
 import { chapterFreezeRecord, freezeChapterChanges, frozenChanges, markReviewedChanges, type ChapterFreeze } from "../book/freeze.js";
 import type { BookSnapshot, ChapterInfo } from "../book/snapshot.js";
 import type { BookFileChange, BookStore } from "../book/store.js";
-import { OUTLINE_TITLE_MAX_CHARS, OutlineReader, outlineBookDigest, outlineEntryDigest, serializeOutlineBook, serializeOutlineChapter, type OutlineChapterEntry } from "../book/outline.js";
+import { OUTLINE_TITLE_MAX_CHARS, OutlineReader, outlineBookDigest, outlineDesignOf, outlineEntryDigest, serializeOutlineBook, serializeOutlineChapter, wholeDesignPatch, type OutlineChapterEntry } from "../book/outline.js";
+import {
+  BIBLE_THEMES_FILE,
+  BIBLE_WORLD_FILE,
+  designChecks,
+  designFindingText,
+  designText,
+  mergeSecretLedger,
+  normalizeDesignPatch,
+  readBibleThemes,
+  readBibleWorld,
+  readSecretLedger,
+  secretLedgerDigest,
+  secretLedgerFrontmatter,
+  serializeBibleThemes,
+  serializeBibleWorld,
+  type DesignFinding,
+  type OutlineChapterDesign,
+  type SecretLedger,
+  type SecretLedgerLearner,
+  type SecretLedgerNote,
+} from "../book/design.js";
 import { appendOutlineJournal, outlineJournalChaptersOf, type OutlineJournalSeen } from "../book/outline-journal.js";
 import { askDirector, directorSystemPrompt, parseDirectorVerdict, renderDirectorOpinion, withheldApprovalNote, type DirectorOpinion } from "../director/opinion.js";
 import { assertFrontmatterReadable, frontmatterString, parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
@@ -65,12 +87,23 @@ import { bulletList, clipText, countWords, isItalian, languageName, OUTPUT_TOKEN
 import { chapterLines, layoutChapters, listSection, outlineList, type ChapterFormat } from "./outline.js";
 import { legacyChapters, queuedMarkReviewed, startedReview } from "./frozen.js";
 import { reviewMaxRounds, reviewTarget } from "./review-policy.js";
-import { SCENES_PER_CHAPTER, batchesNamed, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, sceneFile, scenesForChapter, type TaskDescriptor } from "./planner.js";
+import { PLAN_BATCH_CHAPTERS, SCENES_PER_CHAPTER, batchesNamed, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, sceneFile, scenesForChapter, type TaskDescriptor } from "./planner.js";
+import { designFindingsInsight, designLastRound, designPlateau, designReaderRounds, designTarget, endDesign, loadDesignCheckInput, planBatchChapters } from "./design.js";
+import { outlineDesignGaps } from "./outline-check.js";
 import {
   CHAPTER_REVIEW_TOOL,
   CHAPTER_SUMMARY_TOOL,
   CONCEPT_TOOL,
   CONSOLIDATION_TOOL,
+  DESIGN_ARCHITECT_ROLE,
+  DESIGN_CHAPTER_RULE,
+  DESIGN_CONCEPT_TOOL,
+  DESIGN_DIRECTOR_RULES,
+  DESIGN_LEDGER_RULE,
+  DESIGN_PLAN_TOOL,
+  DESIGN_REACTION_TOOL,
+  DESIGN_READER_ROLE,
+  DESIGN_REVIEW_TOOL,
   FINDINGS_TOOL,
   IMPACT_TOOL,
   PLAN_REACTION_TOOL,
@@ -83,9 +116,9 @@ import {
   specialistsSystemPrompt,
   writerSystemPrompt,
 } from "./prompts.js";
-import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES, CONCEPT_LOGLINE_CHARACTERS, closedRound, normalizeFinalReview, recordChapterRound } from "./state.js";
+import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES, CONCEPT_LOGLINE_CHARACTERS, closedRound, designActive, designMaxRounds, normalizeFinalReview, recordChapterRound } from "./state.js";
 import { STORY_SO_FAR_MAX_WORDS, STORY_SO_FAR_TARGET_WORDS, pruneStorySnapshots, readStorySoFar, renderTotalResumeBody, storySoFarExcess } from "./story-so-far.js";
-import type { AuthorIntervention, AutopilotMessageCode, AutopilotPlan, AutopilotState, FrozenChapterView, InsightTone, PlannedChapter, PlannedScene, ReviewDecision, ReviewFinding, RevisionRequest } from "./types.js";
+import type { AuthorIntervention, AutopilotInsightFigures, AutopilotMessageCode, AutopilotPlan, AutopilotState, DesignOutcome, FrozenChapterView, InsightTone, PlannedChapter, PlannedScene, ReviewDecision, ReviewFinding, RevisionRequest } from "./types.js";
 
 export type TaskAi = (request: Omit<AiRequest, "signal">) => Promise<AiResponse>;
 
@@ -94,6 +127,8 @@ export interface InsightExtra {
   code?: AutopilotMessageCode;
   chapterNumber?: number;
   ghostwriter?: string;
+  /** The numbers it is about (`AutopilotInsightFigures`). */
+  figures?: AutopilotInsightFigures;
 }
 
 export interface TaskContext {
@@ -327,8 +362,9 @@ function outlineGhostwriter(ctx: TaskContext, entry: OutlineChapterEntry | undef
 }
 
 /** What the autopilot writes in the outline for a chapter: its title, then its summary and its key events as a list. */
-function outlineContentOf(chapter: PlannedChapter): { title: string; body: string; ghostwriter?: string } {
-  const body = [chapter.summary.trim(), chapter.keyEvents.length ? bulletList(chapter.keyEvents) : ""].filter(Boolean).join("\n\n");
+function outlineContentOf(chapter: PlannedChapter, design?: OutlineChapterDesign): { title: string; body: string; ghostwriter?: string } {
+  // A designed chapter keeps its events in its design: the text says what happens, once.
+  const body = [chapter.summary.trim(), chapter.keyEvents.length && !design ? bulletList(chapter.keyEvents) : ""].filter(Boolean).join("\n\n");
   return { title: chapter.title, body, ...(chapter.ghostwriter ? { ghostwriter: chapter.ghostwriter } : {}) };
 }
 
@@ -341,20 +377,24 @@ function outlineContentOf(chapter: PlannedChapter): { title: string; body: strin
  * written. `outline/book.md` is written once, when it is missing, with the logline of the concept. The entries it writes are a series
  * of the journal of the Synopsis (`outline/changes.yml`), by the autopilot, in the same commit.
  */
-async function fillOutline(ctx: TaskContext, planned: PlannedChapter[], imported: PlannedChapter[]): Promise<BookFileChange[]> {
-  const fill = ctx.state.options.fillOutline !== false;
+async function fillOutline(ctx: TaskContext, planned: PlannedChapter[], imported: PlannedChapter[], designs?: ReadonlyMap<number, OutlineChapterDesign>): Promise<BookFileChange[]> {
+  // A design lives in the entries of the Synopsis: a design run writes them whatever `fillOutline` says.
+  const fill = ctx.state.options.fillOutline !== false || designActive(ctx.state);
   const outline = outlineOf(ctx);
   const entries = new Map((await outline.chapters()).map((entry) => [entry.number, entry]));
   const changes: BookFileChange[] = [];
   const was = new Map<number, OutlineJournalSeen>();
   const now = new Map<number, OutlineJournalSeen>();
   const write = async (chapter: PlannedChapter, existing?: OutlineChapterEntry) => {
-    const content = outlineContentOf(chapter);
-    const digest = await outlineEntryDigest(content);
+    const design = designs?.get(chapter.number);
+    const content = outlineContentOf(chapter, design);
+    // The design of the plan replaces the whole design of an entry of the autopilot; without one, the entry keeps the design it has.
+    const patch = design ? wholeDesignPatch(design) : undefined;
+    const digest = await outlineEntryDigest({ ...content, design: outlineDesignOf({ design: patch, frontmatter: existing?.frontmatter }) });
     if (!existing || digest !== existing.contentDigest) {
       changes.push({
         path: existing?.path ?? outlineChapterPath(chapter.number),
-        content: serializeOutlineChapter({ number: chapter.number, ...content, origin: "autopilot", digest, frontmatter: existing?.frontmatter }),
+        content: serializeOutlineChapter({ number: chapter.number, ...content, ...(patch ? { design: patch } : {}), origin: "autopilot", digest, frontmatter: existing?.frontmatter }),
         expectedHash: existing ? existing.hash : null,
       });
       if (existing) was.set(chapter.number, { title: existing.title, digest: existing.contentDigest });
@@ -622,13 +662,19 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
   // Both files are rewritten from what the model says: one whose frontmatter cannot be read is refused before the call.
   if (design) assertFrontmatterReadable(STORY_DESIGN_FILE, design.document, ctx.language);
   if (context && isThinDocument(context.document.body)) assertFrontmatterReadable(CONTEXT_FILE, context.document, ctx.language);
+  // A design run asks for more of the foundation: the relationships of the cast, the items that matter, the rules of the world, what each secret changes.
+  const designing = designActive(ctx.state);
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.writer,
     label: "autopilot:concept",
-    system: architectSystemPrompt(ctx.language),
+    system: designing ? `${architectSystemPrompt(ctx.language)}\n\n${DESIGN_ARCHITECT_ROLE}` : architectSystemPrompt(ctx.language),
     user: `${request([
-      `Design the foundation of this novel from the author's brief, for about ${view.lastChapter} chapters.`,
-      "Create 3 to 8 characters with clear desires, fears and arcs, the key locations, factions only when useful, and 1 to 5 secrets that drive the plot, each with the chapter where the reader learns it.",
+      designing
+        ? `Design the foundation of this novel from the author's description, for about ${view.lastChapter} chapters: no prose, only the design a writer needs.`
+        : `Design the foundation of this novel from the author's brief, for about ${view.lastChapter} chapters.`,
+      designing
+        ? "Create 3 to 8 characters with clear desires, fears, arcs and relationships, the key locations, factions only when useful, the items that matter, the rules of the world, and 1 to 5 secrets that drive the plot, each with its truth, who knows it, the chapter where the reader learns it and its consequences."
+        : "Create 3 to 8 characters with clear desires, fears and arcs, the key locations, factions only when useful, and 1 to 5 secrets that drive the plot, each with the chapter where the reader learns it.",
       ctx.state.brief.synopsis ? "The author's chapter-by-chapter synopsis is binding: the concept must make it possible exactly as written." : "",
       view.any ? "The author's outline (AUTHOR'S OUTLINE, in the data) is binding too, and wins over the synopsis: the concept must make it possible exactly as written." : "",
       "Reuse the existing canon names instead of duplicating them.",
@@ -644,8 +690,8 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
       ctx.snapshot.canon.length ? `EXISTING CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true })}` : "",
       `DIRECTOR (the author's taste):\n${directorTaste(ctx.director)}`,
     ])}`,
-    json: CONCEPT_TOOL,
-    maxOutputTokens: outputLimit(ctx, 9000),
+    json: designing ? DESIGN_CONCEPT_TOOL : CONCEPT_TOOL,
+    maxOutputTokens: outputLimit(ctx, designing ? 12000 : 9000),
     temperature: 0.8,
   });
   const output = requireStructuredFields(response.json, { storyDesign: "text" }, "The concept");
@@ -673,7 +719,7 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
   // File names that are taken, whatever their case: the book's own, and the ones this step creates.
   const taken = new Set([...ctx.snapshot.files.keys()].map((name) => name.toLowerCase()));
   const italian = isItalian(ctx.language);
-  const create = (kind: "character" | "location" | "faction" | "secret", name: string, frontmatter: Record<string, unknown>, body: string): string => {
+  const create = (kind: "character" | "location" | "faction" | "item" | "secret", name: string, frontmatter: Record<string, unknown>, body: string): string => {
     // An entity that already exists under this name, an alias or (for characters) a first name is reused, never duplicated.
     const existing = known.find((entry) => entry.kind === kind && sameCanonEntity(kind, name, entry.names));
     if (existing) return existing.slug;
@@ -690,9 +736,13 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
     if (kind === "character") counts.character += 1;
     else counts.other += 1;
     const label = kind === "secret" ? { title: name } : { name };
-    changes.push({ path, content: renderMarkdown({ type: kind, id: `${kind}:${slug}`, ...label, ...frontmatter, canon: "draft" }, body), expectedHash: null });
+    const content = renderMarkdown({ type: kind, id: `${kind}:${slug}`, ...label, ...frontmatter, canon: "draft" }, body);
+    changes.push({ path, content, expectedHash: null });
+    created.set(path, content);
     return slug;
   };
+  /** The files this step creates, by path, as it writes them. */
+  const created = new Map<string, string>();
   const characterSlug = (name: string) => known.find((entry) => entry.kind === "character" && sameCanonEntity("character", name, entry.names))?.slug ?? canonSlug("character", name);
   const characters = asArray(output.characters).slice(0, 10).map(asRecord);
   for (const character of characters) {
@@ -706,6 +756,7 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
       arc: asString(character.arc) || undefined,
       desires: asString(character.desire) ? [asString(character.desire)] : undefined,
       fears: asString(character.fear) ? [asString(character.fear)] : undefined,
+      relationships: designing && asStringList(character.relationships, 12).length ? asStringList(character.relationships, 12) : undefined,
     }, `# ${name}\n\n${asString(character.description)}`);
   }
   for (const location of asArray(output.locations).slice(0, 10).map(asRecord)) {
@@ -716,14 +767,37 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
     const name = asString(faction.name);
     if (name) create("faction", name, { mission: asString(faction.mission) || undefined }, `# ${name}\n\n${asString(faction.description)}`);
   }
+  if (designing) {
+    for (const item of asArray(output.items).slice(0, 8).map(asRecord)) {
+      const name = asString(item.name);
+      if (name) create("item", name, { significance: asString(item.significance) || undefined }, `# ${name}\n\n${asString(item.description)}`);
+    }
+  }
   const secrets: AutopilotState["concept"]["secrets"] = [];
   for (const secret of asArray(output.secrets).slice(0, 8).map(asRecord)) {
     const title = asString(secret.title);
     if (!title) continue;
     const holders = asStringList(secret.holders, 10).map((holder) => `character:${characterSlug(holder)}`);
-    const slug = create("secret", title, { holders, stakes: asString(secret.stakes) || undefined, status: "hidden" }, `# ${title}\n\n${asString(secret.truth)}`);
+    const consequences = designing ? asStringList(secret.consequences, 12) : [];
+    const slug = create("secret", title, { holders, stakes: asString(secret.stakes) || undefined, status: "hidden", ...(consequences.length ? { consequences } : {}) }, `# ${title}\n\n${asString(secret.truth)}`);
     const revealChapter = asInteger(secret.revealChapter, 0, 0, MAX_BOOK_CHAPTERS);
     secrets.push({ slug, title, revealChapter: revealChapter || undefined });
+  }
+  if (designing) {
+    // The ledgers this step wrote are the design's: a later step may rewrite them while nobody changes them.
+    const ledgers = { ...(ctx.state.design!.ledgers ?? {}) };
+    for (const secret of secrets) {
+      const path = canonPath("secret", secret.slug);
+      const content = created.get(path);
+      if (content) ledgers[path] = await secretLedgerDigest(parseMarkdown(content).frontmatter);
+    }
+    ctx.state.design!.ledgers = ledgers;
+    // The themes, the tone and the rules of the world have no other home: `bible/` gets them when it has none.
+    const themes = asStringList(output.themes, 12);
+    const tone = asString(output.tone);
+    if ((themes.length || tone) && !ctx.snapshot.files.has(BIBLE_THEMES_FILE)) changes.push({ path: BIBLE_THEMES_FILE, content: serializeBibleThemes({ themes, tone }), expectedHash: null });
+    const rules = asStringList(output.worldRules, 20);
+    if (rules.length && !ctx.snapshot.files.has(BIBLE_WORLD_FILE)) changes.push({ path: BIBLE_WORLD_FILE, content: serializeBibleWorld({ rules }), expectedHash: null });
   }
   // The pitch of the book, kept for the description of the outline that the plan writes when the author has none.
   const pitch = clipText(logline || asString(output.premise), CONCEPT_LOGLINE_CHARACTERS).trim();
@@ -830,7 +904,10 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
   const view = await authorOutline(ctx);
   const target = view.lastChapter;
   const range = planRange(imported, target);
-  const batch = nextPlanBatch(previous, range);
+  // A design run plans fewer chapters a call: it says much more of each.
+  const designing = designActive(ctx.state);
+  const size = planBatchChapters(ctx.state, PLAN_BATCH_CHAPTERS);
+  const batch = nextPlanBatch(previous, range, size);
   if (!batch) throw new Error("There is no chapter left to plan.");
   const { start: startNumber, last: lastNumber } = range;
   const { from, to, batched } = batch;
@@ -851,14 +928,19 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
   const plannedNumbers = new Set((previous?.chapters ?? []).map((chapter) => chapter.number));
   const unlisted = view.any ? Array.from({ length: batchCount }, (_, index) => from + index).filter((number) => !view.entries.has(number)) : [];
   const ahead = [...view.entries.values()].filter((entry) => entry.number >= startNumber && (entry.number < from || entry.number > to) && !plannedNumbers.has(entry.number));
+  const designData = designing ? await designContext(ctx) : null;
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.writer,
     label: "autopilot:plan",
-    system: architectSystemPrompt(ctx.language),
+    system: designing ? `${architectSystemPrompt(ctx.language)}\n\n${DESIGN_ARCHITECT_ROLE}` : architectSystemPrompt(ctx.language),
     user: `${request([
-      revising
-        ? `Revise the chapter plan (chapters ${from}-${to}) applying the director's changes:\n${bulletList(notes)}`
-        : `Plan the next ${batchCount} chapters of the novel, numbered ${from} to ${to}.`,
+      designing
+        ? (revising ? `Revise the design of chapters ${from}-${to} applying the director's changes:\n${bulletList(notes)}` : `Design the next ${batchCount} chapters of the novel, numbered ${from} to ${to}.`)
+        : revising
+          ? `Revise the chapter plan (chapters ${from}-${to}) applying the director's changes:\n${bulletList(notes)}`
+          : `Plan the next ${batchCount} chapters of the novel, numbered ${from} to ${to}.`,
+      designing ? DESIGN_CHAPTER_RULE : "",
+      designing ? DESIGN_LEDGER_RULE : "",
       batched ? `The novel will have ${target} chapters in all and is planned in batches: this call covers only chapters ${from} to ${to}.` : "",
       batched ? (to < lastNumber ? `The story must not end before chapter ${lastNumber}: leave room for what the following chapters have to tell.` : `These are the last chapters of the book: close its arcs and end the story in chapter ${lastNumber}.`) : "",
       batched && revising ? `Apply only the changes that concern chapters ${from} to ${to} or the whole book: the other chapters are revised in their own call. Return every chapter of the range.` : "",
@@ -883,30 +965,45 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
       resume ? `STORY SO FAR (before chapter ${startNumber}):\n${resume}` : "",
       batched ? (otherChapters?.chapters.length ? listSection(`PLAN SO FAR (the planned chapters outside ${from}-${to})`, outlineList(otherChapters, { around: from })) : "") : revising ? listSection("CURRENT PLAN", outlineList(previous, { around: startNumber })) : "",
       batched && revising ? `CURRENT VERSION OF CHAPTERS ${from}-${to} (revise it):\n${existing.map(chapterPlanBlock).join("\n\n")}` : "",
+      designing && revising ? await designedEntriesSection(ctx, from, to, `THE DESIGN OF CHAPTERS ${from}-${to} NOW (revise it)`) : "",
+      ...(designData ? designData.sections : []),
       `DIRECTOR (the author's taste):\n${directorTaste(ctx.director)}`,
     ])}`,
-    json: PLAN_TOOL,
-    maxOutputTokens: outputLimit(ctx, 9000),
+    json: designing ? DESIGN_PLAN_TOOL : PLAN_TOOL,
+    maxOutputTokens: outputLimit(ctx, designing ? 4000 + 1500 * batchCount : 9000),
     temperature: 0.7,
   });
-  const output = requireStructuredFields(response.json, { chapters: "list" }, "The chapter plan");
+  const output = requireStructuredFields(response.json, { chapters: "list" }, designing ? "The design of the chapters" : "The chapter plan");
   const proposed = asArray(output.chapters).map(asRecord).filter((chapter) => asString(chapter.title)).slice(0, batchCount);
   if (proposed.length < batchCount) throw new AiReplyRejectedError(`The chapter plan has ${proposed.length} chapters with a title, but ${batchCount} were requested (chapters ${from}-${to}).`);
+  // A design is checked whole before anything is written: a chapter without its design, or a design over the limits, is sent back to be repaired, never cut.
+  const designs = new Map<number, OutlineChapterDesign>();
+  if (designing) {
+    proposed.forEach((chapter, index) => {
+      const number = from + index;
+      const { patch, problems } = normalizeDesignPatch(asRecord(chapter.design));
+      if (problems.length) throw new AiReplyRejectedError(`The design of chapter ${number} is over the limits (${problems.join("; ")}): return it shorter, whole.`);
+      const design = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== null && value !== undefined)) as OutlineChapterDesign;
+      if (!design.goal || !design.events?.length) throw new AiReplyRejectedError(`The design of chapter ${number} has no narrative goal or no main events: return every chapter with its whole design.`);
+      designs.set(number, design);
+    });
+  }
   const planned: PlannedChapter[] = proposed.map((chapter, index) => {
     const number = from + index;
     // The hypothetical title of the author's entry is the chapter's: the model refines a title only where the entry has none.
     const entry = view.entries.get(number);
     const title = entry?.title ? clipText(entry.title, OUTLINE_TITLE_MAX_CHARS).trim() : asString(chapter.title);
     const ghostwriter = outlineGhostwriter(ctx, entry);
+    const design = designs.get(number);
     return {
       number,
       title,
       slug: chapterSlug(number, title),
       summary: asString(chapter.summary),
-      goal: asString(chapter.goal),
-      pov: asStringList(chapter.pov, 6),
-      keyEvents: asStringList(chapter.keyEvents, 12),
-      reveals: asStringList(chapter.reveals, 8),
+      goal: design ? design.goal ?? "" : asString(chapter.goal),
+      pov: design ? (design.pov ?? []).slice(0, 6) : asStringList(chapter.pov, 6),
+      keyEvents: design ? (design.events ?? []).slice(0, 12) : asStringList(chapter.keyEvents, 12),
+      reveals: design ? (design.reveals ?? []).slice(0, 8) : asStringList(chapter.reveals, 8),
       status: "planned",
       scenes: [],
       ...(ghostwriter ? { ghostwriter } : {}),
@@ -931,7 +1028,7 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
   if (!batched) {
     revisionNotes = [];
   } else if (revising) {
-    const pending = revisionBatchStarts(previous!, range).filter((start) => start !== from);
+    const pending = revisionBatchStarts(previous!, range, size).filter((start) => start !== from);
     if (pending.length) revisionBatches = pending;
     else revisionNotes = [];
   } else if (previous?.revisionBatches?.length) {
@@ -952,7 +1049,21 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
     ...(previous?.removedChapters?.length ? { removedChapters: previous.removedChapters } : {}),
   };
   // The outline is filled from the plan in the same commit: what the author did not write, the author can now correct.
-  changes.push(...await fillOutline(ctx, planned, imported));
+  changes.push(...await fillOutline(ctx, planned, imported, designs));
+  if (designing) {
+    changes.push(...await designLedgerChanges(ctx, asArray(output.secrets).map(asRecord), from, to));
+    // The entries of the author bind the design as they bind a plan: they are never rewritten, and the author is told which they are.
+    const yours = planned.filter((chapter) => view.entries.has(chapter.number)).map((chapter) => chapter.number);
+    if (yours.length) {
+      const italian = isItalian(ctx.language);
+      ctx.insight(
+        "info",
+        italian ? `${yours.length === 1 ? "La voce" : "Le voci"} ${yours.join(", ")} della Sinossi ${yours.length === 1 ? "è tua" : "sono tue"}: il progetto le segue e non le riscrive` : `The ${yours.length === 1 ? "entry" : "entries"} ${yours.join(", ")} of the Synopsis ${yours.length === 1 ? "is" : "are"} yours: the design follows ${yours.length === 1 ? "it" : "them"} and does not rewrite ${yours.length === 1 ? "it" : "them"}`,
+        italian ? "Per dare loro un progetto, compila la sezione «Progetto» della voce, o chiedi al Brainstorming di proporlo." : "To give them a design, fill the «Design» section of the entry, or ask the Brainstorming to propose one.",
+        { code: "designAuthorEntries" },
+      );
+    }
+  }
   changes.push(await planFileChange(ctx));
   // A batch of a long plan is reported under the chapters it covers; a short book's only batch, as ever, under their number.
   const italian = isItalian(ctx.language);
@@ -966,6 +1077,129 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
     changes: compact(changes),
     summary: batched ? `${single ? "Chapter" : "Chapters"} ${covered}: ${list}` : list,
   };
+}
+
+// ─── The design of the book (`AutopilotDesign`) ─────────────────────────────
+
+/** Characters of the designs of the chapters a prompt quotes, in all: the neighbourhood of what is designed keeps the most. */
+const DESIGN_ENTRIES_CHARS = 16_000;
+
+/**
+ * What every step of a design reads besides a plan's: the themes and the tone, the rules of the world (`bible/`), the secrets with their ledger, and the ghostwriter
+ * who will write the book (so that the design fits a voice it can be written in).
+ */
+async function designContext(ctx: TaskContext): Promise<{ sections: string[] }> {
+  const [themesFile, worldFile, secrets, ghostwriter] = await Promise.all([
+    ctx.store.read(BIBLE_THEMES_FILE),
+    ctx.store.read(BIBLE_WORLD_FILE),
+    secretsLedgerBlock(ctx),
+    loadGhostwriter(ctx.store, ctx.snapshot).catch(() => null),
+  ]);
+  const themes = readBibleThemes(themesFile?.content);
+  const world = readBibleWorld(worldFile?.content);
+  return {
+    sections: [
+      themes.themes.length || themes.tone ? `THEMES AND TONE:\n${[themes.themes.length ? `Themes: ${themes.themes.join("; ")}` : "", themes.tone ? `Tone: ${themes.tone}` : ""].filter(Boolean).join("\n")}` : "",
+      world.rules.length ? `RULES OF THE WORLD (never broken):\n${bulletList(world.rules)}` : "",
+      secrets ? `SECRETS AND THEIR LEDGER:\n${secrets}` : "",
+      ghostwriter ? `GHOSTWRITER WHO WILL WRITE THE BOOK (design what this voice can write well):\n${truncate(ghostwriterBlock(ghostwriter), 1500)}` : "",
+    ].filter(Boolean),
+  };
+}
+
+/** The secrets of the book with their truth and their ledger, a few lines each, for the steps of a design. */
+async function secretsLedgerBlock(ctx: TaskContext): Promise<string> {
+  const planned = new Map(ctx.state.concept.secrets.map((secret) => [secret.slug, secret.revealChapter]));
+  const lines = await Promise.all(ctx.snapshot.canon.filter((entry) => entry.kind === "secret").slice(0, 20).map(async (entry) => {
+    const file = await ctx.store.read(entry.path);
+    if (!file) return "";
+    const document = parseMarkdown(file.content);
+    const { ledger } = readSecretLedger(document.frontmatter);
+    const holders = Array.isArray(document.frontmatter.holders) ? document.frontmatter.holders.filter((item): item is string => typeof item === "string") : [];
+    const reveal = referencedChapterNumber(entry.revealIn) ?? planned.get(entry.slug);
+    const notes = (label: string, items: SecretLedgerNote[]) => (items.length ? `${label}: ${items.map((item) => `ch. ${item.chapter} ${truncate(item.note, 120)}`).join("; ")}` : "");
+    return [
+      `- ${entry.name}: ${truncate(document.body.replace(/^#[^\n]*\n+/, "").replace(/\s+/g, " ").trim(), 300) || "(no truth written)"}`,
+      holders.length ? `  Known from the start by: ${holders.join(", ")}` : "",
+      ledger.learnedBy.length ? `  Learned by: ${ledger.learnedBy.map((item) => `${item.character} (ch. ${item.chapter})`).join(", ")}` : "",
+      reveal ? `  Revealed to the reader in chapter ${reveal}` : "  Not placed yet: it needs a reveal chapter",
+      notes("  Clues", ledger.clues),
+      notes("  Red herrings", ledger.redHerrings),
+      ledger.consequences.length ? `  Consequences: ${ledger.consequences.join("; ")}` : "",
+    ].filter(Boolean).join("\n");
+  }));
+  return lines.filter(Boolean).join("\n");
+}
+
+/** The designs the entries of the Synopsis have for chapters `from` to `to` (all of them without a range), a block each, within the share of a prompt. */
+async function designedEntriesSection(ctx: TaskContext, from: number | undefined, to: number | undefined, label: string): Promise<string> {
+  const entries = (await outlineOf(ctx).chapters()).filter((entry) => entry.design && (from === undefined || entry.number >= from) && (to === undefined || entry.number <= to));
+  if (!entries.length) return "";
+  const share = Math.max(400, Math.floor(DESIGN_ENTRIES_CHARS / entries.length));
+  return `${label}:\n${entries.map((entry) => `Chapter ${entry.number}${entry.title ? ` «${entry.title}»` : ""}:\n${designText(entry.design, share)}`).join("\n\n")}`;
+}
+
+/** A ledger item of the model as the engine keeps it: a whole chapter from 0 and a note (or a character), or nothing. */
+function ledgerNotes(value: unknown): SecretLedgerNote[] {
+  return asArray(value).map(asRecord).map((item) => ({ chapter: asInteger(item.chapter, -1, -1, MAX_BOOK_CHAPTERS), note: asString(item.note) })).filter((item) => item.chapter >= 0 && item.note);
+}
+
+/**
+ * The ledgers of the secrets as the design of chapters `from` to `to` places them: the chapter that reveals each secret (in `state.concept.secrets`, which the approval
+ * of the plan writes as `reveal_in`), and, in the files of the secrets whose ledger the design owns (it wrote it, and nobody changed it since: `AutopilotDesign.ledgers`),
+ * what falls in those chapters. A secret of the author's keeps its ledger, and the author is told.
+ */
+async function designLedgerChanges(ctx: TaskContext, items: Record<string, unknown>[], from: number, to: number): Promise<BookFileChange[]> {
+  const design = ctx.state.design!;
+  const ledgers = { ...(design.ledgers ?? {}) };
+  const changes: BookFileChange[] = [];
+  const kept: string[] = [];
+  const characters = ctx.snapshot.canon.filter((entry) => entry.kind === "character");
+  const characterRef = (name: string) => {
+    const found = characters.find((entry) => sameCanonEntity("character", name, [entry.name, ...entry.aliases]));
+    return found ? `character:${found.slug}` : name.trim();
+  };
+  for (const item of items) {
+    const title = asString(item.title);
+    const secret = ctx.snapshot.canon.find((entry) => entry.kind === "secret" && sameCanonEntity("secret", title, [entry.name, ...entry.aliases]));
+    if (!secret) continue;
+    const reveal = asInteger(item.revealChapter, 0, 0, MAX_BOOK_CHAPTERS);
+    const planned = ctx.state.concept.secrets.find((entry) => entry.slug === secret.slug);
+    if (planned && reveal > 0 && (reveal >= from && reveal <= to || !planned.revealChapter)) planned.revealChapter = reveal;
+    const learnedBy: SecretLedgerLearner[] = asArray(item.learnedBy).map(asRecord)
+      .map((entry) => ({ character: characterRef(asString(entry.character)), chapter: asInteger(entry.chapter, -1, -1, MAX_BOOK_CHAPTERS) }))
+      .filter((entry) => entry.character && entry.chapter >= 0);
+    const batch: Partial<SecretLedger> = { learnedBy, readerKnows: ledgerNotes(item.readerKnows), clues: ledgerNotes(item.clues), redHerrings: ledgerNotes(item.redHerrings) };
+    const file = await ctx.store.read(secret.path);
+    if (!file) continue;
+    const document = parseMarkdown(file.content);
+    if (document.error) {
+      kept.push(secret.name);
+      continue;
+    }
+    const owned = ledgers[secret.path] !== undefined && ledgers[secret.path] === await secretLedgerDigest(document.frontmatter);
+    if (!owned) {
+      kept.push(secret.name);
+      continue;
+    }
+    const merged = mergeSecretLedger(readSecretLedger(document.frontmatter).ledger, batch, from, to);
+    const frontmatter: Record<string, unknown> = { ...document.frontmatter, ...secretLedgerFrontmatter(merged) };
+    const content = renderMarkdown(frontmatter, document.body);
+    if (content === file.content) continue;
+    changes.push({ path: secret.path, content, expectedHash: file.hash });
+    ledgers[secret.path] = await secretLedgerDigest(parseMarkdown(content).frontmatter);
+  }
+  design.ledgers = ledgers;
+  if (kept.length) {
+    const italian = isItalian(ctx.language);
+    ctx.insight(
+      "info",
+      italian ? `Il registro ${kept.length === 1 ? "del segreto" : "dei segreti"} ${kept.map((name) => `«${name}»`).join(", ")} è tuo: il progetto non lo riscrive` : `The ledger of ${kept.map((name) => `«${name}»`).join(", ")} is yours: the design does not rewrite it`,
+      italian ? "Il piano tiene conto di ciò che il progetto propone; il file resta com'è." : "The plan keeps what the design proposes; the file stays as it is.",
+      { code: "designAuthorEntries" },
+    );
+  }
+  return changes;
 }
 
 /** Where a review of the whole plan looks first: the start of what is being planned, not the chapters the author wrote. */
@@ -1002,31 +1236,41 @@ async function runPlanReader(ctx: TaskContext): Promise<TaskResult> {
     return { changes: [], summary: "Reader not available." };
   }
   const design = await readBody(ctx.store, STORY_DESIGN_FILE, 2500);
+  // A reader of a design reads the design of every chapter, and must contest it as well as judge it.
+  const designing = designActive(ctx.state);
+  const designSections = designing ? [...(await designContext(ctx)).sections.filter((section) => !section.startsWith("GHOSTWRITER")), await designedEntriesSection(ctx, undefined, undefined, "THE DESIGN OF EVERY CHAPTER")] : [];
   const asked = await readerReply(ctx, ctx.ai({
     capability: AI_CAPABILITIES.reader,
     label: `autopilot:plan-reader:${reader.slug}`,
-    system: `${readerPersonaSystemPrompt(reader, languageName(ctx.language), "brief")}\n\nYou are reading the pitch and the chapter plan of a novel that is not written yet. React honestly as this reader would.`,
-    user: `${request(["React as this reader: would you read this book? What excites you, what worries you, what would you wish for?"])}\n\n${data([
+    system: designing
+      ? `${readerPersonaSystemPrompt(reader, languageName(ctx.language), "brief")}\n\n${DESIGN_READER_ROLE}`
+      : `${readerPersonaSystemPrompt(reader, languageName(ctx.language), "brief")}\n\nYou are reading the pitch and the chapter plan of a novel that is not written yet. React honestly as this reader would.`,
+    user: `${request([designing
+      ? "React as this reader: would you read this book? What excites you, what worries you, what is predictable, inconsistent, superfluous or dull, and what would you do instead?"
+      : "React as this reader: would you read this book? What excites you, what worries you, what would you wish for?"])}\n\n${data([
       bookHeader(ctx),
       ctx.state.brief.idea ? `PITCH:\n${ctx.state.brief.idea}` : "",
       design ? `PREMISE:\n${design}` : "",
       listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
+      ...designSections,
     ])}`,
-    json: PLAN_REACTION_TOOL,
-    maxOutputTokens: outputLimit(ctx, 1500),
-  }), (response) => requireStructuredFields(response.json, { interest: "score", reaction: "text" }, "The reader's reaction"));
+    json: designing ? DESIGN_REACTION_TOOL : PLAN_REACTION_TOOL,
+    maxOutputTokens: outputLimit(ctx, designing ? 2500 : 1500),
+  }), (response) => requireStructuredFields(response.json, designing ? { interest: "score", reaction: "text", counterProposal: "text" } : { interest: "score", reaction: "text" }, "The reader's reaction"));
   if ("skipped" in asked) {
     plan.skippedReaders = [...new Set([...(plan.skippedReaders ?? []), reader.slug])];
     return skipReader(ctx, reader.name, asked.skipped);
   }
   const output = asked.value;
+  const counterProposal = designing ? asString(output.counterProposal) : "";
   const reaction = {
     slug: reader.slug,
     name: reader.name,
     interest: Math.round(Math.max(1, normalizeScore(output.interest) ?? 5)),
     reaction: asString(output.reaction),
-    concerns: asStringList(output.concerns, 8),
-    wishes: asStringList(output.wishes, 8),
+    concerns: [...asStringList(output.concerns, 8), ...(designing ? asStringList(output.weakSpots, 8) : [])].slice(0, 12),
+    // The counter-proposal of a reader of a design travels with its wishes, so that the director weighs it with the rest.
+    wishes: [...asStringList(output.wishes, 8), ...(counterProposal ? [`${isItalian(ctx.language) ? "Controproposta" : "Counter-proposal"}: ${counterProposal}`] : [])],
   };
   plan.readerReactions = [...plan.readerReactions.filter((entry) => entry.slug !== reader.slug), reaction];
   ctx.insight(reaction.interest >= 7 ? "ok" : reaction.interest >= 5 ? "info" : "warning", `${reader.name}: ${reaction.interest}/10`, reaction.reaction);
@@ -1034,16 +1278,10 @@ async function runPlanReader(ctx: TaskContext): Promise<TaskResult> {
 }
 
 async function runPlanReview(ctx: TaskContext): Promise<TaskResult> {
+  if (designActive(ctx.state)) return runDesignReview(ctx);
   const plan = ctx.state.plan!;
   // Approving the plan puts the chapter of its reveal into the secrets the concept made that have none: those must be readable first.
-  const toRewrite: string[] = [];
-  for (const secret of ctx.state.concept.secrets) {
-    const path = canonPath("secret", secret.slug);
-    if (!plan.chapters.some((entry) => entry.number === secret.revealChapter) || !ctx.snapshot.files.has(path)) continue;
-    const file = await ctx.store.read(path);
-    if (file && !frontmatterString(parseMarkdown(file.content).frontmatter, "reveal_in")) toRewrite.push(path);
-  }
-  await assertRewritable(ctx, toRewrite);
+  await assertRewritable(ctx, await secretsToPlace(ctx, plan));
   const [design, view] = await Promise.all([readBody(ctx.store, STORY_DESIGN_FILE, 5000), authorOutline(ctx)]);
   const style = evaluationStyleOf(ctx, "plan");
   const lastRound = plan.rounds >= 2;
@@ -1107,16 +1345,7 @@ async function runPlanReview(ctx: TaskContext): Promise<TaskResult> {
     delete plan.revisionBatches;
     plan.awaitingAuthor = ctx.state.options.pauseAfterPlan || ctx.director.autonomy === "ask-always";
     ctx.state.directorNotes = mergeNotes(ctx.state.directorNotes, [...guidance, ...(lastRound ? changesRequested : [])]);
-    for (const chapter of plan.chapters) if (!chapter.imported) changes.push(ensureChapterFile(ctx, chapter));
-    for (const secret of ctx.state.concept.secrets) {
-      const chapter = plan.chapters.find((entry) => entry.number === secret.revealChapter);
-      const path = canonPath("secret", secret.slug);
-      if (!chapter || !ctx.snapshot.files.has(path)) continue;
-      changes.push(await changeFor(ctx, path, (existing) => {
-        if (!existing || frontmatterString(existing.frontmatter, "reveal_in")) return null;
-        return renderMarkdown({ ...existing.frontmatter, reveal_in: `chapter:${chapter.slug}`, known_from: `chapter:${chapter.slug}` }, existing.body);
-      }));
-    }
+    changes.push(...await approvedPlanChanges(ctx, plan));
     ctx.insight("ok", isItalian(ctx.language) ? `Piano approvato dal direttore (${score}/10)` : `Plan approved by the director (${score}/10)`, summaryText);
   }
   const question = asRecord(output.questionForAuthor);
@@ -1132,6 +1361,199 @@ async function runPlanReview(ctx: TaskContext): Promise<TaskResult> {
   }
   changes.push(await planFileChange(ctx));
   return { changes: compact(changes), summary: `${approved ? "approve" : "revise"} ${score}/10 — ${summaryText}` };
+}
+
+/** The secrets the concept made whose reveal the approval of the plan writes (`reveal_in`, `known_from`): their files must be readable before the review. */
+async function secretsToPlace(ctx: TaskContext, plan: AutopilotPlan): Promise<string[]> {
+  const paths: string[] = [];
+  for (const secret of ctx.state.concept.secrets) {
+    const path = canonPath("secret", secret.slug);
+    if (!plan.chapters.some((entry) => entry.number === secret.revealChapter) || !ctx.snapshot.files.has(path)) continue;
+    const file = await ctx.store.read(path);
+    if (file && !frontmatterString(parseMarkdown(file.content).frontmatter, "reveal_in")) paths.push(path);
+  }
+  return paths;
+}
+
+/** What the approval of a plan writes: the folders of the chapters it plans (their `chapter.md`, no scene), and the chapter of the reveal of the secrets that have none. */
+async function approvedPlanChanges(ctx: TaskContext, plan: AutopilotPlan): Promise<Array<BookFileChange | null>> {
+  const changes: Array<BookFileChange | null> = [];
+  for (const chapter of plan.chapters) if (!chapter.imported) changes.push(ensureChapterFile(ctx, chapter));
+  for (const secret of ctx.state.concept.secrets) {
+    const chapter = plan.chapters.find((entry) => entry.number === secret.revealChapter);
+    const path = canonPath("secret", secret.slug);
+    if (!chapter || !ctx.snapshot.files.has(path)) continue;
+    changes.push(await changeFor(ctx, path, (existing) => {
+      if (!existing || frontmatterString(existing.frontmatter, "reveal_in")) return null;
+      return renderMarkdown({ ...existing.frontmatter, reveal_in: `chapter:${chapter.slug}`, known_from: `chapter:${chapter.slug}` }, existing.body);
+    }));
+  }
+  return changes;
+}
+
+/**
+ * The director's review of a design (`AutopilotDesign`): the plan's review, with the designs of the chapters, the ledgers of the secrets, the world and the findings of
+ * the deterministic checks in the data, and the design's policy (its target, its rounds, the readers' rounds). A score alone never approves: a critical inconsistency
+ * sends the design back, and one still there after the last round (or a plateau) is asked to the author, once; then the design is approved with what is left as
+ * standing guidance. The approval ends the design: the run stops there, and waits for the author.
+ */
+async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
+  const plan = ctx.state.plan!;
+  const design = ctx.state.design!;
+  const italian = isItalian(ctx.language);
+  await assertRewritable(ctx, await secretsToPlace(ctx, plan));
+  const outline = outlineOf(ctx);
+  const [storyDesign, view, checkInput, designData, entriesSection] = await Promise.all([
+    readBody(ctx.store, STORY_DESIGN_FILE, 5000),
+    authorOutline(ctx),
+    loadDesignCheckInput(ctx.store, ctx.snapshot, outline, ctx.state),
+    designContext(ctx),
+    designedEntriesSection(ctx, undefined, undefined, "THE DESIGN OF EVERY CHAPTER"),
+  ]);
+  const findings: DesignFinding[] = [...designChecks(checkInput), ...outlineDesignGaps(checkInput.chapters)];
+  const told = designFindingsInsight(findings, ctx.language);
+  if (told) ctx.insight(told.tone, told.title, told.detail, { code: "designChecks" });
+  const style = evaluationStyleOf(ctx, "plan");
+  const target = designTarget(ctx.state, ctx.director);
+  const maxRounds = designMaxRounds(design);
+  const roundNumber = plan.rounds + 1;
+  const lastRound = designLastRound(ctx.state);
+  const response = await ctx.ai({
+    capability: AI_CAPABILITIES.director,
+    label: "autopilot:plan-review",
+    system: directorSystemPrompt(ctx.director, ctx.language),
+    user: `${request([
+      `Review the design of the book before any prose is written (review ${roundNumber} of at most ${Math.max(maxRounds, roundNumber)}).`,
+      `Approve when the design delivers the brief and the vision with a satisfying shape and deserves ${target}/10 or more; otherwise list precise changes chapter by chapter. Weigh the simulated readers by their weights: do not chase every opinion.`,
+      ...DESIGN_DIRECTOR_RULES,
+      view.any ? "The author's outline (AUTHOR'S OUTLINE, in the data) binds the design: never ask to change its chapters, their order, their titles or their events; ask only for what enriches them." : "",
+      style.rule,
+      lastRound ? "This is the final review of the design: approve it unless a critical inconsistency is left, and turn anything still imperfect into standing guidance." : "",
+      ctx.director.autonomy === "full" ? "Never ask the author a question of taste: decide." : "Ask the author (questionForAuthor) only for a critical choice you cannot settle from the vision and the author's rules.",
+      authorRules(ctx, false),
+    ])}\n\n${data([
+      bookHeader(ctx),
+      briefBlock(ctx),
+      outlineBookSection(view),
+      outlineListSection([...view.entries.values()], planFocus(plan), "AUTHOR'S OUTLINE (binding)"),
+      style.block,
+      storyDesign ? `STORY DESIGN:\n${storyDesign}` : "",
+      `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true }) || "-"}`,
+      ...designData.sections,
+      listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
+      entriesSection,
+      findings.length ? `DESIGN CHECKS (found without a model):\n${findings.slice(0, 30).map((finding) => `- ${designFindingText(finding, "en")}`).join("\n")}${findings.length > 30 ? `\n- … and ${findings.length - 30} more` : ""}` : "DESIGN CHECKS (found without a model): nothing.",
+      plan.readerReactions.length
+        ? `SIMULATED READERS:\n${plan.readerReactions.map((reaction) => `- ${reaction.name} (weight ${ctx.director.readerWeights[reaction.slug] ?? 1}): ${reaction.interest}/10 — ${reaction.reaction}${reaction.concerns.length ? ` Concerns: ${reaction.concerns.join("; ")}.` : ""}${reaction.wishes.length ? ` Wishes: ${reaction.wishes.join("; ")}.` : ""}`).join("\n")}`
+        : "",
+    ])}`,
+    json: DESIGN_REVIEW_TOOL,
+    maxOutputTokens: outputLimit(ctx, 5000),
+  });
+  // Without a verdict and a score the design is never approved by default.
+  const output = requireStructuredFields(response.json, { verdict: "text", score: "score" }, "The director's review of the design");
+  const verdictGiven = verdictOf(output.verdict, "The director's review of the design");
+  const score = Math.round(normalizeScore(output.score)! * 10) / 10;
+  const summaryText = asString(output.summary);
+  const counterProposal = asString(output.counterProposal);
+  const requested = asArray(output.changes).map(asRecord)
+    .map((change) => ({ instruction: asString(change.instruction), chapterNumber: asInteger(change.chapterNumber, 0, 0, MAX_BOOK_CHAPTERS) }))
+    .filter((change) => change.instruction);
+  const critical = asArray(output.critical).map(asRecord)
+    .map((item) => ({ instruction: asString(item.issue), chapterNumber: asInteger(item.chapterNumber, 0, 0, MAX_BOOK_CHAPTERS) }))
+    .filter((item) => item.instruction);
+  const noteOf = (change: { instruction: string; chapterNumber: number }) => `${change.chapterNumber ? `Chapter ${change.chapterNumber}: ` : ""}${change.instruction}`;
+  const changesRequested = requested.map(noteOf);
+  const criticalNotes = critical.map((item) => `Critical — ${noteOf(item)}`);
+  const guidance = asStringList(output.guidance, 10);
+  const interests = plan.readerReactions.map((reaction) => reaction.interest);
+  const readers = interests.length ? Math.round((interests.reduce((sum, value) => sum + value, 0) / interests.length) * 10) / 10 : undefined;
+  const at = ctx.now().toISOString();
+  design.rounds = [...design.rounds, { round: roundNumber, score, verdict: "revise", ...(readers !== undefined ? { readers } : {}), critical: critical.length, findings: findings.length, at }];
+  const plateau = designPlateau(design);
+  // A score alone never approves: the target and no critical inconsistency; or nothing left to change at all.
+  let outcome: DesignOutcome | null = null;
+  let escalate = false;
+  if (!critical.length && verdictGiven === "approve" && score >= target) outcome = "target";
+  else if (!critical.length && !changesRequested.length) outcome = "unchanged";
+  else if (lastRound || plateau) {
+    if (critical.length && !design.escalated) escalate = true;
+    else outcome = lastRound ? "rounds" : "plateau";
+  }
+  if (verdictGiven === "approve" && score < target && !critical.length && changesRequested.length && !outcome) {
+    ctx.insight("warning", withheldApproval(ctx, score, italian ? "il progetto viene rivisto." : "the design is revised.", target));
+  }
+  const figures = { round: roundNumber, rounds: maxRounds, score, target, critical: critical.length, findings: findings.length };
+  const changes: Array<BookFileChange | null> = [];
+  const range = planRange(importedChapters(ctx.snapshot), view.lastChapter);
+  const size = planBatchChapters(ctx.state, PLAN_BATCH_CHAPTERS);
+  if (outcome) {
+    plan.approved = true;
+    plan.revisionNotes = [];
+    delete plan.revisionBatches;
+    // The design waits for the author, always: approving it, or starting to write, is the author's.
+    plan.awaitingAuthor = true;
+    const left = outcome === "rounds" || outcome === "plateau" ? [...criticalNotes, ...changesRequested] : [];
+    ctx.state.directorNotes = mergeNotes(ctx.state.directorNotes, [...guidance, ...left]);
+    design.rounds[design.rounds.length - 1].verdict = "approve";
+    changes.push(...await approvedPlanChanges(ctx, plan));
+    endDesign(ctx.state, outcome, at);
+    const chapters = plan.chapters.filter((chapter) => !chapter.imported).length;
+    const reached = outcome === "target" || outcome === "unchanged";
+    const tone = critical.length ? "warning" : reached ? "ok" : "info";
+    const title = italian
+      ? `Progetto pronto: ${chapters} capitoli, approvato dal direttore con ${score}/10${reached ? "" : outcome === "plateau" ? " (i giri non lo miglioravano più)" : " (dopo i giri permessi)"}`
+      : `Design ready: ${chapters} chapters, approved by the director with ${score}/10${reached ? "" : outcome === "plateau" ? " (the rounds stopped improving it)" : " (after the rounds allowed)"}`;
+    const leftDetail = left.length ? `${italian ? "Resta come indicazione per la scrittura" : "Left as guidance for the writing"}: ${left.slice(0, 4).join(" · ")}` : "";
+    ctx.insight(tone, title, [summaryText, leftDetail].filter(Boolean).join("\n"), { code: "designReady", figures: { ...figures, designOutcome: outcome, chapters } });
+  } else {
+    plan.rounds += 1;
+    plan.revisionNotes = [...criticalNotes, ...changesRequested];
+    plan.revisionBatches = batchesNamed(range, [...critical, ...requested].map((change) => change.chapterNumber), size);
+    // The readers read the design again before the next review while the policy says so.
+    if (plan.rounds < designReaderRounds(ctx.state)) {
+      plan.readersDone = false;
+      plan.readerReactions = [];
+      delete plan.skippedReaders;
+    }
+    ctx.insight(
+      "warning",
+      italian
+        ? `Giro ${roundNumber} del progetto: ${score}/10 (obiettivo ${target}/10), ${plan.revisionNotes.length} modifiche${critical.length ? `, ${critical.length} incoerenze critiche` : ""}`
+        : `Design round ${roundNumber}: ${score}/10 (target ${target}/10), ${plan.revisionNotes.length} changes${critical.length ? `, ${critical.length} critical inconsistencies` : ""}`,
+      [plan.revisionNotes.slice(0, 3).join(" · "), counterProposal ? `${italian ? "Avvocato del diavolo" : "Devil's advocate"}: ${counterProposal}` : ""].filter(Boolean).join("\n"),
+      { code: "designRound", figures },
+    );
+    if (escalate) {
+      design.escalated = true;
+      ctx.state.question = {
+        id: `question-${ctx.now().getTime()}`,
+        kind: "director",
+        question: italian
+          ? `Il progetto ha ${critical.length === 1 ? "un'incoerenza critica" : `${critical.length} incoerenze critiche`} che il direttore non è riuscito a risolvere nei giri permessi: come vuoi procedere?`
+          : `The design has ${critical.length === 1 ? "a critical inconsistency" : `${critical.length} critical inconsistencies`} the director could not resolve in the rounds allowed: how do you want to go on?`,
+        context: criticalNotes.join("\n"),
+        options: italian
+          ? ["Correggile come ritieni meglio", "Tieni il progetto com'è: la scrittura ne terrà conto"]
+          : ["Fix them as you see best", "Keep the design as it is: the writing will take them into account"],
+        askedAt: at,
+      };
+      ctx.insight("critical", italian ? "Il progetto aspetta te: un'incoerenza critica va decisa" : "The design waits for you: a critical inconsistency needs your decision", criticalNotes.slice(0, 3).join(" · "), { code: "designEscalated", figures });
+    }
+  }
+  const question = asRecord(output.questionForAuthor);
+  if (!ctx.state.question && ctx.director.autonomy !== "full" && asString(question.question)) {
+    ctx.state.question = {
+      id: `question-${ctx.now().getTime()}`,
+      kind: "director",
+      question: asString(question.question),
+      context: summaryText,
+      options: asStringList(question.options, 5),
+      askedAt: at,
+    };
+  }
+  changes.push(await planFileChange(ctx));
+  return { changes: compact(changes), summary: `${outcome ? "approve" : "revise"} ${score}/10 — ${summaryText}` };
 }
 
 // ─── The author changed the outline of a chapter not written yet ────────────

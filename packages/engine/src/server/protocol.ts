@@ -507,6 +507,18 @@ export function serverSupportsReviewPolicy(info: { features?: unknown } | readon
   return announces(info, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY);
 }
 
+/**
+ * The `ServerInfo.features` entry of a server whose engine designs a book (`StartOptions.design`: the design run of the autopilot, which writes no prose and stops when
+ * the director approves the design; `AutopilotStateSummary.design` says how far it got). An older one would drop `design` from `start` without a word and start a run
+ * that writes: the engine's client refuses to send it there.
+ */
+export const SERVER_FEATURE_AUTOPILOT_DESIGN = "autopilot-design";
+
+/** Whether the server announces the design run of the autopilot (`autopilot-design`). Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsDesign(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  return announces(info, SERVER_FEATURE_AUTOPILOT_DESIGN);
+}
+
 /** The feature a server announces for the campaigns of a reason: the routes of a campaign are there for it. */
 export const CAMPAIGN_FEATURES: Readonly<Record<RevisionReason, string>> = {
   "outline-change": SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY,

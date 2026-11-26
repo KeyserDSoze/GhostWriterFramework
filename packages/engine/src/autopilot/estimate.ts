@@ -15,11 +15,11 @@ import { sumCappedRamp, sumWindowedList, windowedList } from "./estimate-math.js
 import { estimateTexts } from "./estimate-texts.js";
 import { PLAN_BATCH_CHAPTERS, SCENES_PER_CHAPTER, bookChapters } from "./planner.js";
 import {
-  CHAPTER_REVIEW_TOOL, CHAPTER_SUMMARY_TOOL, CONCEPT_TOOL, CONSOLIDATION_TOOL, FINDINGS_TOOL, PLAN_REACTION_TOOL, PLAN_REVIEW_TOOL, PLAN_TOOL, SCENES_TOOL, SCENE_SUMMARY_TOOL,
+  CHAPTER_REVIEW_TOOL, CHAPTER_SUMMARY_TOOL, CONCEPT_TOOL, CONSOLIDATION_TOOL, DESIGN_CONCEPT_TOOL, DESIGN_PLAN_TOOL, DESIGN_REACTION_TOOL, DESIGN_REVIEW_TOOL, FINDINGS_TOOL, PLAN_REACTION_TOOL, PLAN_REVIEW_TOOL, PLAN_TOOL, SCENES_TOOL, SCENE_SUMMARY_TOOL,
   architectSystemPrompt, continuitySystemPrompt, specialistsSystemPrompt, writerSystemPrompt,
 } from "./prompts.js";
 import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES, normalizeBrief, normalizeOptions } from "./state.js";
-import { REVIEW_MAX_ROUNDS, type AutopilotBrief, type AutopilotOptions, type AutopilotState } from "./types.js";
+import { DESIGN_BATCH_CHAPTERS, DESIGN_DEFAULT_ROUNDS, REVIEW_MAX_ROUNDS, type AutopilotBrief, type AutopilotOptions, type AutopilotState } from "./types.js";
 
 // What a run will cost before it starts. The estimate is arithmetic over the pipeline: it counts the calls the steps of the autopilot make (the formulas
 // are written next to the step of `tasks.ts` and `planner.ts` they come from), weighs each call as the engine's router would weigh its prompt and as
@@ -158,6 +158,17 @@ export const ESTIMATE_TYPICAL = Object.freeze({
   recapSceneWords: 25,
   importedSummaryWords: 60,
   finalWords: 330,
+  /**
+   * A design run (`EstimateInput.design`): the foundation of a design (the concept with the relationships, the items and the rules of the world), the design of one chapter
+   * as the model writes it and as a prompt quotes it, the ledger of a secret in a batch, how many secrets a book has, a reader's reaction and the director's review.
+   */
+  designConceptWords: 2100,
+  designChapterReplyWords: 330,
+  designEntryWords: 260,
+  designLedgerWords: 90,
+  designSecrets: 3,
+  designReactionWords: 260,
+  designReviewWords: 520,
 });
 
 /** The sizes of the files of the book, in words, when the host has measured them (each defaults to `ESTIMATE_TYPICAL`). */
@@ -233,9 +244,22 @@ export interface EstimateOutline {
   words?: number;
 }
 
+/**
+ * A design run (`StartOptions.design`): the concept, the design of every chapter in batches of `DESIGN_BATCH_CHAPTERS`, the readers and the director's reviews for the
+ * rounds of its policy. Nothing is written and nothing is judged as a book: no scene, no review of a chapter, no final judgement.
+ */
+export interface EstimateDesign {
+  /** The reviews of the design at most (its policy's `maxRounds`; `DESIGN_DEFAULT_ROUNDS` when it says nothing). */
+  maxRounds?: number;
+  /** In how many of the first reviews the readers read it (its policy's `readerRounds`; 1 when it says nothing). */
+  readerRounds?: number;
+}
+
 export interface EstimateInput {
   /** The brief of the form: the words of a scene, and the idea and the synopsis, which weigh in the prompts that carry them. The chapters are `outline`'s. */
   brief?: Partial<AutopilotBrief>;
+  /** A design run instead of a run that writes (`EstimateDesign`; `true`: with the defaults of a design). */
+  design?: EstimateDesign | boolean;
   /** The scenes a chapter is expected to have (the planner's rule gives 2 to 4 for each chapter); the middle of the range when missing. */
   scenesPerChapter?: number;
   /**
@@ -411,6 +435,31 @@ const TOOL_OF: Partial<Record<EstimateCallKind, AiJsonSchema>> = {
   consolidate: CONSOLIDATION_TOOL,
   final: DIRECTOR_OPINION_TOOL,
 };
+
+/** The limits of the replies of a design run that are not a plan's (`runConcept`, `runPlan`, `runPlanReader`, `runDesignReview` ask for more). */
+const DESIGN_REPLY_LIMIT: Partial<Record<EstimateCallKind, number>> = {
+  concept: 12000,
+  plan: 4000 + 1500 * DESIGN_BATCH_CHAPTERS,
+  "plan-reader": 2500,
+  "plan-review": 5000,
+};
+
+function replyLimitOf(kind: EstimateCallKind, designing: boolean): number | undefined {
+  return (designing ? DESIGN_REPLY_LIMIT[kind] : undefined) ?? REPLY_LIMIT[kind];
+}
+
+let designTools: Partial<Record<EstimateCallKind, number>> | null = null;
+
+/** The tokens of the functions of a design run, for the steps that ask with them. */
+function designToolTokens(): Partial<Record<EstimateCallKind, number>> {
+  designTools ??= {
+    concept: functionTokens(DESIGN_CONCEPT_TOOL),
+    plan: functionTokens(DESIGN_PLAN_TOOL),
+    "plan-reader": functionTokens(DESIGN_REACTION_TOOL),
+    "plan-review": functionTokens(DESIGN_REVIEW_TOOL),
+  };
+  return designTools;
+}
 
 // ─── Sums over the chapters of a book ───────────────────────────────────────
 
@@ -641,6 +690,12 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   const outline = asRecord(source.outline);
   const scenario = asRecord(source.scenario);
   const T = ESTIMATE_TYPICAL;
+  // A design run: the plan of every chapter with its design, its readers and its reviews, and nothing written.
+  const designing = source.design === true || (typeof source.design === "object" && source.design !== null && !Array.isArray(source.design));
+  const designInput = asRecord(source.design);
+  const designRounds = whole(designInput.maxRounds, DESIGN_DEFAULT_ROUNDS, 1, MAX_ROUNDS);
+  const designReaderRounds = whole(designInput.readerRounds, 1, 1, MAX_ROUNDS);
+  const batchSize = designing ? DESIGN_BATCH_CHAPTERS : PLAN_BATCH_CHAPTERS;
 
   // The tokens a word costs, in the book's language: the engine's factor, or the host's own.
   const override = asNumber(source.tokensPerWord, Number.NaN);
@@ -675,10 +730,11 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   const importedChapterWords = withoutSummary > 0 ? Math.max(1, knob(progress.withoutSummaryWords, withoutSummary * chapterWords) / withoutSummary) : chapterWords;
 
   // What is planned: a fresh plan for the chapters that are left, or the extension of a plan that is approved. Chapters the plan holds are not planned again.
-  const extension = planned > 0 && chapters > planned;
-  const planCount = planned > 0 ? (extension ? chapters - planned : 0) : toWrite;
-  const planBatches = planCount > 0 ? Math.ceil(planCount / PLAN_BATCH_CHAPTERS) : 0;
-  const freshPlan = planned === 0 && planCount > 0;
+  // A design plans every chapter that is not written, whatever plan there was: a design that is over is reviewed again from its plan.
+  const extension = !designing && planned > 0 && chapters > planned;
+  const planCount = designing ? toWrite : planned > 0 ? (extension ? chapters - planned : 0) : toWrite;
+  const planBatches = planCount > 0 ? Math.ceil(planCount / batchSize) : 0;
+  const freshPlan = (designing || planned === 0) && planCount > 0;
 
   // The readers: those of the panel that are enabled, as many as the author asks. The readers of the plan do not depend on the readers of the chapters.
   const panel = whole(source.readerPanelSize, statics.readersEnabled, 0, 1000);
@@ -689,7 +745,7 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   // The reviews.
   const rounds = pin(scenario.rounds, [1, maxRounds], 1, maxRounds);
   const repairs = pin(scenario.repairs, [Math.max(0, rounds[0] - 1), rounds[1] * scenes], 0, rounds[1] * scenes);
-  const revisions = pin(scenario.planRevisions, [0, MAX_PLAN_REVISIONS], 0, MAX_PLAN_REVISIONS);
+  const revisions = designing ? pin(scenario.planRevisions, [0, designRounds - 1], 0, designRounds - 1) : pin(scenario.planRevisions, [0, MAX_PLAN_REVISIONS], 0, MAX_PLAN_REVISIONS);
   const pinned = rounds[0] === rounds[1] && repairs[0] === repairs[1] && revisions[0] === revisions[1];
 
   // What the files of the book weigh, in words.
@@ -716,7 +772,7 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   };
   /** The block of the director's taste that the writer's prompts carry. */
   const taste = customDirector ? w(Math.min(directorWords * statics.tasteShare, MAX_TASTE_WORDS)) : statics.tasteTokens;
-  const tool = (kind: EstimateCallKind): number => statics.tool[kind];
+  const tool = (kind: EstimateCallKind): number => (designing ? designToolTokens()[kind] ?? statics.tool[kind] : statics.tool[kind]);
   /** The fixed part of the tokens of a call of this kind: the system message, the function, the envelope of the request and its text, the labels of the sections. */
   const scaffold = (kind: EstimateCallKind): number => {
     const request = REQUEST[kind];
@@ -740,6 +796,10 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   const proposals = chapterReaders > 0 ? T.readerProposals : 0;
   const findingsLines = specialists ? T.findings : 0;
 
+  // A design: the designs of the chapters a reader and the director read (16 000 characters at most), and the ledger of the secrets with the world.
+  const designEntries = Math.min(chapters * T.designEntryWords, 16_000 / CHARS_PER_WORD);
+  const designLedgerContext = T.designSecrets * (T.designLedgerWords + 50) + Math.min(world, 2500 / CHARS_PER_WORD) / 2;
+
   // The outline, in the prompts that carry it: the description and the entries (12 000 characters at most), and the entries of a batch (24 000).
   const outlineWordsCapped = (cap: number): number => (outlineEntries > 0 ? w(Math.min(outlineWords, cap / CHARS_PER_WORD)) : 0);
 
@@ -751,9 +811,9 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
       case "summarize-imported":
         return prompt(scaffold(kind) + w(Math.min(importedChapterWords, 60_000 / CHARS_PER_WORD)) + scenes * SCENE_MARKER_TOKENS);
       case "plan-reader":
-        return prompt(scaffold(kind) + w(ideaWords + Math.min(design, 2500 / CHARS_PER_WORD)) + list(chapters));
+        return prompt(scaffold(kind) + w(ideaWords + Math.min(design, 2500 / CHARS_PER_WORD) + (designing ? designEntries + designLedgerContext : 0)) + list(chapters));
       case "plan-review":
-        return prompt(scaffold(kind) + w(ideaWords + synopsisWords + Math.min(design, 5000 / CHARS_PER_WORD) + canon + T.secretLineWords + style / 2 + rules + planReaders * (T.planReactionWords + 14)) + list(chapters) + outlineWordsCapped(12_000));
+        return prompt(scaffold(kind) + w(ideaWords + synopsisWords + Math.min(design, 5000 / CHARS_PER_WORD) + canon + T.secretLineWords + style / 2 + rules + planReaders * ((designing ? T.designReactionWords : T.planReactionWords) + 14) + (designing ? designEntries + designLedgerContext + 250 : 0)) + list(chapters) + outlineWordsCapped(12_000));
       case "scenes":
         // The chapter before and the chapter after, one line each; the last chapter of the book has no next one.
         return prompt(scaffold(kind) + w(notes + T.chapterWords + canon + secrets + rules + Math.min(design, 2500 / CHARS_PER_WORD)) + line, [story(5000), { slope: closedLine, cap: closedLine }, notesRamp], -line);
@@ -793,7 +853,7 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   // ─── The replies, in words ────────────────────────────────────────────────
   const replyCap = (kind: EstimateCallKind): number => {
     if (PROSE_KINDS.has(kind)) return OUTPUT_TOKENS_CEILING;
-    return scaleOutputTokens(REPLY_LIMIT[kind] ?? OUTPUT_TOKENS_CEILING, languageText);
+    return scaleOutputTokens(replyLimitOf(kind, designing) ?? OUTPUT_TOKENS_CEILING, languageText);
   };
   /** The tokens of a reply of `words` words, no more than the pipeline lets it be. */
   const reply = (kind: EstimateCallKind, words: number): number => Math.min(replyCap(kind), words * tpw);
@@ -802,20 +862,24 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   // The plan: a call for each batch of twenty chapters, asked again for every batch after each revision the director asks for. A revision of a plan in one batch
   // carries the plan as it is; one of a plan in several carries the batch as it is and the lines of the others.
   const planCalls = (() => {
-    const base = scaffold("plan") + w(ideaWords + synopsisWords + Math.min(design, 6000 / CHARS_PER_WORD) + Math.min(world, 2500 / CHARS_PER_WORD) + canon + T.secretLineWords + T.revealsWords + rules) + taste + outlineWordsCapped(36_000);
+    const base = scaffold("plan") + w(ideaWords + synopsisWords + Math.min(design, 6000 / CHARS_PER_WORD) + Math.min(world, 2500 / CHARS_PER_WORD) + canon + T.secretLineWords + T.revealsWords + rules) + taste + outlineWordsCapped(36_000)
+      // A design also reads the ledger of the secrets, the themes and the rules of the world, and the ghostwriter who will write the book.
+      + (designing ? w(designLedgerContext + 250) : 0);
     const alreadyWritten = written > 0 ? list(written, closedLine) + w(Math.min(T.storyWordsTarget, 4000 / CHARS_PER_WORD, T.storyWordsPerChapter * written)) : 0;
     const notesOfChanges = w(3 * 25);
     const result = { fresh: 0, revised: 0, output: 0, peakFresh: 0, peakRevised: 0 };
     for (let batch = 1; batch <= planBatches; batch += 1) {
-      const inBatch = Math.min(PLAN_BATCH_CHAPTERS, planCount - PLAN_BATCH_CHAPTERS * (batch - 1));
-      const before = planBatches > 1 ? planned + PLAN_BATCH_CHAPTERS * (batch - 1) : 0;
+      const inBatch = Math.min(batchSize, planCount - batchSize * (batch - 1));
+      const before = planBatches > 1 ? (designing ? 0 : planned) + batchSize * (batch - 1) : 0;
       const first = base + alreadyWritten + list(before) + (extension ? list(planned) + notesOfChanges : 0);
       const again = planBatches > 1
         ? base + alreadyWritten + w(inBatch * T.chapterWords) + list(chapters - inBatch) + notesOfChanges
         : base + alreadyWritten + list(chapters) + notesOfChanges;
+      // A design that is revised also reads the design of the chapters it revises.
+      const designAgain = designing ? w(inBatch * T.designEntryWords) : 0;
       result.fresh += first;
-      result.revised += again;
-      result.output += reply("plan", inBatch * T.chapterReplyWords + 10);
+      result.revised += again + designAgain;
+      result.output += designing ? reply("plan", inBatch * T.designChapterReplyWords + T.designSecrets * T.designLedgerWords + 10) : reply("plan", inBatch * T.chapterReplyWords + 10);
       result.peakFresh = Math.max(result.peakFresh, first);
       result.peakRevised = Math.max(result.peakRevised, again, first);
     }
@@ -847,15 +911,19 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
       point.output += output;
       point.prefix += prefix(kind) * calls;
     };
-    if (!conceptDone) add("concept", 1, promptOf("concept").base, reply("concept", T.conceptWords));
+    if (!conceptDone) add("concept", 1, promptOf("concept").base, reply("concept", designing ? T.designConceptWords : T.conceptWords));
     if (withoutSummary > 0) add("summarize-imported", withoutSummary, withoutSummary * promptOf("summarize-imported").base, withoutSummary * reply("summarize-imported", T.importedSummaryWords));
 
     if (planBatches > 0) {
       add("plan", planBatches * (1 + v), planCalls.fresh + v * planCalls.revised, planCalls.output * (1 + v));
-      add("plan-review", 1 + v, (1 + v) * promptOf("plan-review").base, (1 + v) * reply("plan-review", T.planReviewWords));
+      add("plan-review", 1 + v, (1 + v) * promptOf("plan-review").base, (1 + v) * reply("plan-review", designing ? T.designReviewWords : T.planReviewWords));
     }
-    if (freshPlan && planReaders > 0) add("plan-reader", planReaders, planReaders * promptOf("plan-reader").base, planReaders * reply("plan-reader", T.planReactionWords));
+    // The readers of a design read it before its first reviews, as many as its policy says.
+    const readings = designing ? Math.min(designReaderRounds, 1 + v) : 1;
+    if (freshPlan && planReaders > 0) add("plan-reader", planReaders * readings, planReaders * readings * promptOf("plan-reader").base, planReaders * readings * reply("plan-reader", designing ? T.designReactionWords : T.planReactionWords));
 
+    // A design writes no chapter, and nobody judges a book that is not written.
+    if (designing) return points;
     const count = toWrite;
     if (count > 0) {
       const to = chapters;
@@ -907,7 +975,7 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
 
   /** The largest answer a call of this kind may ask for, as the router sends it: the structured floor, the room for the reasoning, and the model's own maximum. */
   const requestLimit = (kind: EstimateCallKind, model: ResolvedModel): number => {
-    const requested = PROSE_KINDS.has(kind) ? Math.min(OUTPUT_TOKENS_CEILING, Math.ceil(Math.max(sceneWords, kind === "repair" ? 300 : 0) * tpw) + 800) : scaleOutputTokens(REPLY_LIMIT[kind] ?? OUTPUT_TOKENS_CEILING, languageText);
+    const requested = PROSE_KINDS.has(kind) ? Math.min(OUTPUT_TOKENS_CEILING, Math.ceil(Math.max(sceneWords, kind === "repair" ? 300 : 0) * tpw) + 800) : scaleOutputTokens(replyLimitOf(kind, designing) ?? OUTPUT_TOKENS_CEILING, languageText);
     let limit = PROSE_KINDS.has(kind) ? requested : Math.max(requested, STRUCTURED_OUTPUT_FLOOR);
     if (model.reasoning) limit += REASONING_OUTPUT_MARGIN;
     return model.maxOutput ? Math.min(limit, model.maxOutput) : limit;
@@ -1032,6 +1100,7 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   const currency = typeof source.currency === "string" && source.currency.trim() ? source.currency.trim() : undefined;
   const label = (range: EstimateRange): string => `${range.min}-${range.max}`;
   const assumptions = text.assumptions({
+    ...(designing ? { design: { batch: batchSize, rounds: designRounds, readerRounds: designReaderRounds } } : {}),
     chapters,
     written: Math.min(written, chapters),
     toWrite,
@@ -1056,8 +1125,8 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   return {
     language,
     chapters,
-    chaptersToWrite: toWrite,
-    words: toWrite * chapterWords,
+    chaptersToWrite: designing ? 0 : toWrite,
+    words: designing ? 0 : toWrite * chapterWords,
     calls: sumKinds((step) => step.calls),
     inputTokens: sumKinds((step) => step.inputTokens),
     cachedInputTokens: cachedTotal,

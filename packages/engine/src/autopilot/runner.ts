@@ -24,6 +24,7 @@ import { readBrief } from "./brief.js";
 import { applyFrozenDecision, authorHeldChapters, campaignGoesOn, frozenAnswerAction, isFrozenQuestion, settleFrozenChanges } from "./frozen.js";
 import { mergeCampaign, resumeCampaign } from "./campaign.js";
 import { outlinePlanStatus } from "./outline-check.js";
+import { beginDesign, designPlaceholderChanges, endDesign, normalizeDesignStart } from "./design.js";
 import { advanceState, bookChapters, extensionNote, nextStep, phaseOf, type PlanNote, type PlannerContext, type TaskDescriptor } from "./planner.js";
 import { profileProblems, profileProblemsMessage, profileProblemsTitle } from "./profile-check.js";
 import {
@@ -1113,6 +1114,8 @@ export class AutopilotRun {
   async execute(start: StartOptions & { afterRestart?: boolean } = {}): Promise<AutopilotState> {
     const { store } = this;
     this.limits = normalizeRunLimits(start.limits) ?? {};
+    // A design that is not one is refused before anything is read or written.
+    const design = normalizeDesignStart(start.design);
     const stored = await readStoredAutopilot(store);
     assertStoredStateReadable(stored);
     const { brief, changes: briefChanges } = await readBrief(store, stored.state);
@@ -1121,7 +1124,7 @@ export class AutopilotRun {
     // A run that starts is nobody's pause any more: what the server said of its stop goes, and so does the limit that stopped it (one still reached stops it
     // again, before its first step); a campaign held for the author goes on, and the rounds of a review it allows are counted again from here.
     const { limitReached: _limit, ...fresh } = resumeCampaign(withoutStopCause(state), startedAt);
-    state = extendPlanIfNeeded({
+    let next: AutopilotState = {
       ...fresh,
       brief,
       options: normalizeOptions(start.options ?? {}, state.options),
@@ -1130,9 +1133,23 @@ export class AutopilotRun {
       message: null,
       lastError: null,
       runner: { host: this.config.host, label: this.config.hostLabel, ...(this.config.hostId ? { hostId: this.config.hostId } : {}), runId: this.runId, startedAt, heartbeatAt: startedAt },
-    }, await this.outlineChapters());
+    };
+    let outlineChapters = await this.outlineChapters();
+    // A design run (`StartOptions.design`): it begins (or goes on with what the start says now), the Synopsis gets the empty entries of the chapters it lacks; `false` ends it.
+    const designChanges: BookFileChange[] = [];
+    if (design) {
+      const language = await loadBookSnapshot(store, this.cache).then((snapshot) => languageCode(snapshot.book.language), () => this.language);
+      const begun = beginDesign(next, design, { now: startedAt, outlineChapters, idea: brief.idea, language });
+      next = begun.state;
+      designChanges.push(...designPlaceholderChanges(outlineChapters, begun.chapters));
+      outlineChapters = Math.max(outlineChapters, begun.chapters);
+    } else if (design === false && next.design && !next.design.endedAt) {
+      next = structuredClone(next);
+      endDesign(next, "author", startedAt);
+    }
+    state = extendPlanIfNeeded(next, outlineChapters);
     state = stampState(this.drainQueue(state, "start"), this.now());
-    await store.commit([...briefChanges, stateChange(state, stored.stateHash)], "Autopilot: started");
+    await store.commit([...briefChanges, ...designChanges, stateChange(state, stored.stateHash)], "Autopilot: started");
     this.known = state;
     this.emit({ type: "run-started", runId: this.runId, host: this.config.host });
     this.emit({ type: "state", state: this.summarize(state) });
@@ -1449,6 +1466,7 @@ export class AutopilotRun {
             ...(extra?.code ? { code: extra.code } : {}),
             ...(extra?.chapterNumber !== undefined ? { chapterNumber: extra.chapterNumber } : {}),
             ...(extra?.ghostwriter ? { ghostwriter: extra.ghostwriter } : {}),
+            ...(extra?.figures ? { figures: extra.figures } : {}),
           }),
           evaluationStyle: context.evaluationStyle,
           outline: context.outline,

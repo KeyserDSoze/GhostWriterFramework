@@ -85,10 +85,20 @@ export function estimateTexts(italian: boolean) {
       const lines: string[] = [];
       const factor = formatFactor(facts.tokensPerWord, italian);
       const written = facts.written > 0;
-      lines.push(italian
+      if (facts.design) {
+        lines.push(italian
+          ? `Il progetto copre ${count(facts.chapters)} capitoli, ${count(facts.design.batch)} per chiamata, senza prosa: il concept, il progetto di ogni capitolo e il registro dei segreti. Nessuna scena è scritta e il libro non è giudicato.`
+          : `The design covers ${count(facts.chapters)} chapters, ${count(facts.design.batch)} a call, with no prose: the concept, the design of every chapter and the ledger of the secrets. No scene is written and the book is not judged.`);
+        lines.push(italian
+          ? `Il caso migliore approva il progetto alla prima revisione; il peggiore usa tutte le ${count(facts.design.rounds)} revisioni, riprogettando ogni volta tutti i capitoli. ${facts.planReaders > 0 ? `${count(facts.planReaders)} lettori simulati lo leggono prima ${facts.design.readerRounds === 1 ? "della prima revisione" : `delle prime ${count(facts.design.readerRounds)} revisioni`}.` : "Nessun lettore simulato lo legge."}`
+          : `The best case approves the design at its first review; the worst case uses all its ${count(facts.design.rounds)} reviews, designing every chapter again each time. ${facts.planReaders > 0 ? `${count(facts.planReaders)} simulated readers read it before ${facts.design.readerRounds === 1 ? "the first review" : `the first ${count(facts.design.readerRounds)} reviews`}.` : "No simulated reader reads it."}`);
+      }
+      if (!facts.design) lines.push(italian
         ? `Il libro ha ${count(facts.chapters)} capitoli di ${count(facts.scenes)} scene di circa ${count(facts.wordsPerScene)} parole${written ? `; ${count(facts.written)} sono già scritti e restano ${count(facts.toWrite)} da scrivere` : ""} (${count(facts.words)} parole da scrivere). Un capitolo scritto a metà conta per intero.`
         : `The book has ${count(facts.chapters)} chapters of ${count(facts.scenes)} scenes of about ${count(facts.wordsPerScene)} words${written ? `; ${count(facts.written)} are already written and ${count(facts.toWrite)} are left` : ""} (${count(facts.words)} words to write). A chapter written halfway counts as a whole one.`);
-      if (facts.pinned) {
+      if (facts.design) {
+        // Said above, for a design.
+      } else if (facts.pinned) {
         lines.push(italian
           ? `I giri di revisione (${facts.rounds}), le scene corrette per capitolo (${facts.repairs}) e le revisioni del piano (${facts.revisions}) sono quelli dati: il numero di chiamate è uno solo.`
           : `The rounds of review (${facts.rounds}), the scenes repaired in a chapter (${facts.repairs}) and the revisions of the plan (${facts.revisions}) are the ones given: the number of calls is a single one.`);
@@ -97,7 +107,7 @@ export function estimateTexts(italian: boolean) {
           ? `Le chiamate sono contate dalla pipeline passo per passo. Il caso migliore approva ogni capitolo alla prima revisione e il piano al primo sguardo; il peggiore dà a ogni capitolo ${count(facts.maxRounds)} giri di revisione con ogni scena corretta e fa rivedere il piano due volte. Una corsa vera sta in mezzo.`
           : `The calls are counted from the pipeline, step by step. The best case approves every chapter at its first review and the plan at its first look; the worst case gives every chapter ${count(facts.maxRounds)} rounds of review with every scene repaired and has the plan revised twice. A real run falls in between.`);
       }
-      lines.push(italian
+      if (!facts.design) lines.push(italian
         ? `${facts.readers > 0 ? `${count(facts.readers)} lettori simulati leggono ogni capitolo` : "Nessun lettore simulato legge i capitoli"}${facts.planReaders > 0 ? `, ${count(facts.planReaders)} leggono il piano` : ""}${facts.specialists ? "; gli specialisti rivedono ogni capitolo" : ""}. Il gruppo di lettori è di ${count(facts.panel)}.`
         : `${facts.readers > 0 ? `${count(facts.readers)} simulated readers read every chapter` : "No simulated reader reads the chapters"}${facts.planReaders > 0 ? `, ${count(facts.planReaders)} read the plan` : ""}${facts.specialists ? "; the specialists review every chapter" : ""}. The panel of readers has ${count(facts.panel)}.`);
       lines.push(italian
@@ -132,6 +142,8 @@ export function estimateTexts(italian: boolean) {
 
 /** What the assumptions say of the book, so that the words are built in one place. */
 export interface AssumptionFacts {
+  /** A design run: the chapters of a call, its reviews at most and the reviews the readers read before. */
+  design?: { batch: number; rounds: number; readerRounds: number };
   chapters: number;
   written: number;
   toWrite: number;
