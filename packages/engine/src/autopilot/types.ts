@@ -117,6 +117,66 @@ export interface PendingFrozenReview {
   };
 }
 
+/**
+ * Why chapters are revised now, in order, before the plan goes on (`RevisionCampaign`): `outline-change`, the author applied the Synopsis to the book,
+ * and each chapter the author chose is rewritten to follow its new entry. A reason is a word of `REVISION_REASONS` and an entry of the handlers of the
+ * campaigns (`REVISION_REASON_HANDLERS`, `campaign.ts`), which say how its chapters are checked, started, finished, stopped and cancelled.
+ */
+export type RevisionReason = "outline-change";
+
+export const REVISION_REASONS: readonly RevisionReason[] = ["outline-change"];
+
+/** What the author chose for a chapter of a campaign: work it now (`follow`), keep it as it is (`keep`), or decide later (`later`). */
+export type RevisionChapterMode = "follow" | "keep" | "later";
+
+export const REVISION_CHAPTER_MODES: readonly RevisionChapterMode[] = ["follow", "keep", "later"];
+
+/** Where a chapter of a campaign is: waiting for its turn, being worked, done, skipped (there was nothing left to do: `why`), or cancelled by the author. */
+export type RevisionChapterStatus = "waiting" | "working" | "done" | "skipped" | "cancelled";
+
+export const REVISION_CHAPTER_STATUSES: readonly RevisionChapterStatus[] = ["waiting", "working", "done", "skipped", "cancelled"];
+
+export interface RevisionCampaignChapter {
+  number: number;
+  mode: RevisionChapterMode;
+  /** The author's words for this chapter: the director reads them after the instruction of the reason. */
+  instruction?: string;
+  /** What the author saw when choosing: for `outline-change`, the digest of the new entry of the chapter. */
+  fingerprint?: string;
+  status: RevisionChapterStatus;
+  startedAt?: string;
+  endedAt?: string;
+  /** Why it was skipped: its change is not there any more (`gone`), or the chapter is not in the plan any more (`not-in-plan`). */
+  why?: "gone" | "not-in-plan";
+}
+
+/**
+ * Chapters the author asked to revise now, for one reason, one after the other in the order of the book, before the plan goes on
+ * (`AutopilotSession.reviseChapters`). The author's part of the state while it waits (saved at once, also while a run goes on); the run
+ * starts, finishes and skips its chapters, and takes it away once none waits or is being worked. Cancelling it ends the chapters that wait.
+ */
+export interface RevisionCampaign {
+  id: string;
+  reason: RevisionReason;
+  /** The author's words for every chapter: what changed, and why. */
+  note?: string;
+  createdAt: string;
+  /** In the order they are worked: the order of the book. */
+  chapters: RevisionCampaignChapter[];
+}
+
+/**
+ * A change the author chose to decide later (`later`): while it stays as it is, it is neither asked nor decided by the autopilot nor said again
+ * (`frozenEdits` does not apply to it), and it still waits for the author. A new change of the same chapter is a change like any other.
+ */
+export interface DeferredChange {
+  kind: FrozenChangeKind;
+  number: number;
+  /** The change: `FrozenChapterChange.fingerprint`, or the digest of the new outline entry. */
+  fingerprint: string;
+  at: string;
+}
+
 /** Where the book is published to GitHub: after every committed step (and again when a chapter is closed), after every chapter that is closed, or never. */
 export type AutopilotPublishMode = "off" | "chapter" | "step";
 
@@ -709,6 +769,10 @@ export interface AutopilotState {
   frozenSince?: string;
   /** The changes already said with `frozenEdits: "notify"` (their fingerprints), so that each is said once. The newest are kept. */
   frozenSeen?: string[];
+  /** The chapters the author asked to revise now, for one reason, in order, before the plan goes on (`RevisionCampaign`). Absent when none is going on. */
+  campaign?: RevisionCampaign;
+  /** The changes the author chose to decide later (`DeferredChange`). Absent when there is none. */
+  deferredChanges?: DeferredChange[];
   runner: AutopilotRunnerInfo | null;
   stats: AutopilotStats;
   /** Short human message about the current status ("Plan ready for review"). */
@@ -793,6 +857,10 @@ export type AutopilotMessageCode =
   | "frozenInvalid"
   | "frozenReviewed"
   | "frozenCleared"
+  | "campaignChapterDone"
+  | "campaignSkipped"
+  | "campaignDone"
+  | "campaignStopped"
   | "longRetryWait"
   | "longRetryExhausted"
   | "longRetryOff"
@@ -946,6 +1014,8 @@ export interface AutopilotStateSummary {
    * last step, or as the last `frozenStatus()` did. A change that has a decision recorded (`state.pendingReviews`) is not counted.
    */
   frozenChanges?: number;
+  /** The chapters revised now for one reason (`state.campaign`), as far as they got. Absent when none is going on. */
+  campaign?: AutopilotCampaignSummary;
   /**
    * Not saved, and absent when nothing waits: while the run waits to try a failed step again, when the next attempt is and which retry it
    * is, so that a client can count down. Every change of it is a `state` event: it appears when the wait begins and goes when the attempt
@@ -953,6 +1023,17 @@ export interface AutopilotStateSummary {
    * from a summary made from the state file alone.
    */
   retry?: AutopilotRetryInfo;
+}
+
+/** A campaign as a summary says it: the chapters it works (`follow`), how many are over, the one being worked, and the ones that wait. */
+export interface AutopilotCampaignSummary {
+  id: string;
+  reason: RevisionReason;
+  total: number;
+  /** Done, or skipped: over either way. */
+  done: number;
+  current: number | null;
+  waiting: number[];
 }
 
 /**

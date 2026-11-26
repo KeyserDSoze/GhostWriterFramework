@@ -21,7 +21,8 @@ import { describeErrorBody, suggestsResponsesApi } from "../ai/provider-error.js
 import { attemptInfoOf } from "./attempt.js";
 import { autopilotErrorFields } from "./errors.js";
 import { readBrief } from "./brief.js";
-import { applyFrozenDecision, frozenAnswerAction, isFrozenQuestion, settleFrozenChanges } from "./frozen.js";
+import { applyFrozenDecision, campaignGoesOn, frozenAnswerAction, isFrozenQuestion, settleFrozenChanges } from "./frozen.js";
+import { mergeCampaign } from "./campaign.js";
 import { outlinePlanStatus } from "./outline-check.js";
 import { advanceState, bookChapters, extensionNote, nextStep, phaseOf, type PlanNote, type PlannerContext, type TaskDescriptor } from "./planner.js";
 import { profileProblems, profileProblemsMessage, profileProblemsTitle } from "./profile-check.js";
@@ -278,7 +279,7 @@ function withoutLiveOptions(options: AutopilotState["options"]): unknown {
 
 /** The state without what only the author changes and what every write changes: what is left must be the same before and after. */
 function withoutAuthorParts(state: AutopilotState): unknown {
-  const { version: _version, updatedAt: _updatedAt, interventions: _interventions, constraints: _constraints, revision: _revision, finalDone: _finalDone, finalReview: _finalReview, pendingReviews: _pendingReviews, options, plan, runner, ...rest } = state;
+  const { version: _version, updatedAt: _updatedAt, interventions: _interventions, constraints: _constraints, revision: _revision, finalDone: _finalDone, finalReview: _finalReview, pendingReviews: _pendingReviews, campaign: _campaign, deferredChanges: _deferred, options, plan, runner, ...rest } = state;
   return {
     ...rest,
     options: withoutLiveOptions(options),
@@ -291,8 +292,9 @@ function withoutAuthorParts(state: AutopilotState): unknown {
  * What the author saved in the state file while a step ran, carried into the state that step produced. `base` is the state
  * as the run last read it, `stored` the file as it is now and `working` the run's own. The author owns the interventions,
  * the rules, what a rewrite changes and the settings that can change during a run (`LIVE_AUTOPILOT_OPTIONS`: where the book is
- * published, whether to pause after every chapter, what to do with frozen chapters, «Retry later»): they are merged (interventions by id, rules by text, the effects of a new
- * rewrite land on `working`, as they did when they were handed over in memory, a setting by its value as the author left it), and
+ * published, whether to pause after every chapter, what to do with frozen chapters, «Retry later»), the decisions about changes, the campaign of chapters to
+ * revise and the changes decided later: they are merged (interventions by id, rules by text, the effects of a new rewrite land on `working`, as they did when they
+ * were handed over in memory, a setting by its value as the author left it, a campaign by its chapters: the author's new one, the ones the author cancelled), and
  * the run wins on everything else. `foreign` says that `stored` differs from `base` in something the author does not own or the run
  * does not write by itself (its own heartbeat): that is a conflict.
  */
@@ -303,8 +305,20 @@ export function reconcileAuthorChanges(working: AutopilotState, base: AutopilotS
   const rulesChanged = stored.constraints.length !== base.constraints.length || stored.constraints.some((rule, index) => rule !== base.constraints[index]);
   const optionsChanged = LIVE_AUTOPILOT_OPTIONS.filter((key) => JSON.stringify(stored.options[key]) !== JSON.stringify(base.options[key]));
   const reviewsChanged = JSON.stringify(base.pendingReviews ?? []) !== JSON.stringify(stored.pendingReviews ?? []);
-  if (!added.length && !rulesChanged && !optionsChanged.length && !reviewsChanged) return { state: working, foreign };
+  const campaignChanged = JSON.stringify(base.campaign ?? null) !== JSON.stringify(stored.campaign ?? null);
+  const deferredChanged = JSON.stringify(base.deferredChanges ?? []) !== JSON.stringify(stored.deferredChanges ?? []);
+  if (!added.length && !rulesChanged && !optionsChanged.length && !reviewsChanged && !campaignChanged && !deferredChanged) return { state: working, foreign };
   const merged = structuredClone(working);
+  if (campaignChanged) {
+    const campaign = mergeCampaign(working.campaign, base.campaign, stored.campaign);
+    if (campaign) merged.campaign = campaign;
+    else delete merged.campaign;
+  }
+  // The changes decided later are the author's alone: as the author left them.
+  if (deferredChanged) {
+    if (stored.deferredChanges?.length) merged.deferredChanges = structuredClone(stored.deferredChanges);
+    else delete merged.deferredChanges;
+  }
   if (reviewsChanged) {
     const reviews = mergePendingReviews(working.pendingReviews ?? [], base.pendingReviews ?? [], stored.pendingReviews ?? []);
     if (reviews.length) merged.pendingReviews = reviews;
@@ -345,11 +359,12 @@ function mergePendingReviews(working: PendingFrozenReview[], base: PendingFrozen
 
 /**
  * When the outline has more chapters than a finished plan, extend the plan instead of stopping. `targetChapters` is the number of the book's
- * last chapter (`bookChapters`: the chapter entries of the outline).
+ * last chapter (`bookChapters`: the chapter entries of the outline). Not while a campaign goes on: the chapters the author chose come first,
+ * then the book grows.
  */
 export function extendPlanIfNeeded(state: AutopilotState, targetChapters = 0): AutopilotState {
   const plan = state.plan;
-  if (!plan?.approved || targetChapters === 0) return state;
+  if (!plan?.approved || targetChapters === 0 || campaignGoesOn(state)) return state;
   // The plan reaches the book's last chapter when its highest chapter is that one: the chapters are numbered, not counted (a book may go on from chapter 1200).
   const highest = plan.chapters.reduce((most, chapter) => Math.max(most, chapter.number), 0);
   if (highest >= targetChapters) return state;
@@ -1214,7 +1229,7 @@ export class AutopilotRun {
         context.planner.frozen = { outlineWritten: outlineStatus.written, now: at };
         // A decision about a change may start now (the chapter goes back to review, before the plan). Advancing is idempotent: it is done
         // again only when there is something new for it.
-        if (settled.state !== state || settled.state.pendingReviews?.some((entry) => !entry.started)) state = advanceState(settled.state, context.planner);
+        if (settled.state !== state || settled.state.pendingReviews?.some((entry) => !entry.started) || campaignGoesOn(settled.state)) state = advanceState(settled.state, context.planner);
         let step = nextStep(state, context.planner);
         if (this.queue.length) {
           // Interventions recorded during the previous step steer the choice of this one.

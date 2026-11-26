@@ -3,6 +3,7 @@ import type { EvaluationTarget } from "../book/paths.js";
 import type { BookFileChange, BookFileContent, BookFileEntry } from "../book/store.js";
 import type { DirectorOpinion } from "../director/opinion.js";
 import type { FrozenChapterResult, FrozenStatus } from "../autopilot/frozen.js";
+import type { ReviseChaptersInput, RevisionCampaignResult } from "../autopilot/campaign.js";
 import type { AutopilotEvent, AutopilotLiveOptions, AutopilotPauseMode, AutopilotSnapshot, AutopilotStateSummary, FrozenAction, FrozenChangeKind, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
 import type { AiCallField } from "../autopilot/calls/types.js";
 
@@ -462,6 +463,25 @@ export interface FreezeChapterRequest {
 
 /** The answer of `GET …/autopilot/frozen` and of `POST …/autopilot/frozen/:number`. */
 export type FrozenStatusResponse = FrozenStatus;
+
+/**
+ * The `ServerInfo.features` entry of a server that applies the Synopsis to a book: `POST /api/v1/books/:id/autopilot/campaign` with a campaign of reason
+ * `outline-change` (`ReviseChaptersRequest`: revise these chapters now, in order, then go on with the plan) and `DELETE` of the same route (cancel what waits).
+ * A server without it answers 404 to them: the engine's client refuses before sending (`feature_unavailable`). A later reason of the campaigns announces a
+ * feature of its own.
+ */
+export const SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY = "autopilot-outline-apply";
+
+/** Whether the server announces that it applies the Synopsis to a book. Takes its info or the list of its features. Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsOutlineApply(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  const features = Array.isArray(info) ? info : (info as { features?: unknown } | null | undefined)?.features;
+  return Array.isArray(features) && features.includes(SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY);
+}
+
+/** The body of `POST /api/v1/books/:id/autopilot/campaign` (`AutopilotSession.reviseChapters`). */
+export type ReviseChaptersRequest = ReviseChaptersInput;
+/** The answer of `POST` and `DELETE …/autopilot/campaign`: the campaign as it is saved (`null`: none goes on), and the changes after it. */
+export type RevisionCampaignResponse = RevisionCampaignResult;
 /** The answer of `POST …/chapters/:slug/freeze`. */
 export type FreezeChapterResponse = FrozenChapterResult;
 

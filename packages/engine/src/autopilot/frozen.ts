@@ -4,11 +4,12 @@ import { formatBookDate, isItalian, truncate } from "../util/text.js";
 import { inHands, startedReview } from "./chapter-state.js";
 import type { OutlineWrittenChange } from "./outline-check.js";
 import type { PlanNote } from "./planner.js";
-import { MAX_FROZEN_SEEN, MAX_PENDING_REVIEWS, capConstraints, normalizeRuleText } from "./state.js";
+import { MAX_DEFERRED_CHANGES, MAX_FROZEN_SEEN, MAX_PENDING_REVIEWS, capConstraints, normalizeRuleText } from "./state.js";
 import {
   FROZEN_ACTIONS,
   FROZEN_CHANGE_ACTIONS,
   type AutopilotState,
+  type DeferredChange,
   type DirectorQuestion,
   type FrozenAction,
   type FrozenChangeKind,
@@ -40,6 +41,8 @@ export interface FrozenWorkItem {
   change?: FrozenChapterChange;
   outline?: OutlineWrittenChange;
   pending?: PendingFrozenReview;
+  /** The author chose to decide about this change later (`DeferredChange`): it is not asked, decided by the autopilot or said again. */
+  deferred?: { at: string };
 }
 
 /** Whether a question is about a change of a frozen chapter or of the outline of a written one. */
@@ -47,9 +50,56 @@ export function isFrozenQuestion(question: DirectorQuestion | null | undefined):
   return Boolean(question && (question.kind === "frozen-change" || question.kind === "outline-change") && question.frozen);
 }
 
-/** The autopilot is finishing work the author asked for: a revision, the chapters it rewrote being reviewed again, or the review of a change. */
+/**
+ * The autopilot is finishing work the author asked for: a revision, the chapters it rewrote being reviewed again, the review of a change, or a
+ * campaign whose chapters wait or are being worked.
+ */
 function finishingWork(state: AutopilotState): boolean {
-  return Boolean(state.revision) || Boolean(startedReview(state)) || (state.plan?.chapters ?? []).some((chapter) => chapter.skipReaders && chapter.status !== "done");
+  return Boolean(state.revision) || Boolean(startedReview(state)) || campaignGoesOn(state) || (state.plan?.chapters ?? []).some((chapter) => chapter.skipReaders && chapter.status !== "done");
+}
+
+/** A campaign has chapters that wait for their turn, or one being worked (`state.campaign`). */
+export function campaignGoesOn(state: Pick<AutopilotState, "campaign">): boolean {
+  return Boolean(state.campaign?.chapters.some((chapter) => chapter.status === "waiting" || chapter.status === "working"));
+}
+
+/**
+ * The decision a campaign holds for the change of a chapter, as a decision that waits: the chapter is the campaign's until it is done (no question is
+ * asked about it, and the autopilot decides nothing for it). Only a campaign about the Synopsis holds changes of the outline.
+ */
+function campaignDecision(state: AutopilotState | null, kind: FrozenChangeKind, number: number): PendingFrozenReview | undefined {
+  const campaign = state?.campaign;
+  if (!campaign || campaign.reason !== "outline-change" || kind !== "outline") return undefined;
+  const item = campaign.chapters.find((entry) => entry.number === number && (entry.status === "waiting" || entry.status === "working") && entry.mode !== "later");
+  if (!item) return undefined;
+  return {
+    id: `${campaign.id}-${number}`,
+    kind,
+    number,
+    action: item.mode === "keep" ? "keep-text" : "rewrite-to-outline",
+    fingerprint: item.fingerprint ?? "",
+    at: campaign.createdAt,
+    ...(campaign.note ? { note: campaign.note } : {}),
+  };
+}
+
+/** The decision to decide later about this change, when the author made it and the change is still the one it was about. */
+function deferralOf(state: AutopilotState | null, kind: FrozenChangeKind, number: number, fingerprint: string): DeferredChange | undefined {
+  return state?.deferredChanges?.find((entry) => entry.kind === kind && entry.number === number && entry.fingerprint === fingerprint);
+}
+
+/** The state without the decisions to decide later about this chapter (of one kind, or all). */
+export function withoutDeferrals(state: AutopilotState, number: number, kind?: FrozenChangeKind): AutopilotState {
+  if (!state.deferredChanges?.some((entry) => entry.number === number && (kind === undefined || entry.kind === kind))) return state;
+  const deferredChanges = state.deferredChanges.filter((entry) => entry.number !== number || (kind !== undefined && entry.kind !== kind));
+  const { deferredChanges: _before, ...rest } = state;
+  return deferredChanges.length ? { ...rest, deferredChanges } : rest;
+}
+
+/** The state with the change of a chapter decided later (replacing an earlier decision to do so for the same chapter and kind). */
+export function withDeferral(state: AutopilotState, change: Omit<DeferredChange, "at">, at: string): AutopilotState {
+  const others = (state.deferredChanges ?? []).filter((entry) => entry.number !== change.number || entry.kind !== change.kind);
+  return { ...state, deferredChanges: [...others, { ...change, at }].slice(-MAX_DEFERRED_CHANGES) };
 }
 
 // What the state says of one chapter (`inRevision`, `startedReview`, and `inHands` here) is in `chapter-state.ts`, which has no import but types: the rule that tells the author what
@@ -61,7 +111,11 @@ export function frozenWork(state: AutopilotState | null, snapshot: BookSnapshot,
   const plan = state?.plan ?? null;
   const bySlug = new Map((plan?.chapters ?? []).map((chapter) => [chapter.slug, chapter]));
   const byNumber = new Map((plan?.chapters ?? []).map((chapter) => [chapter.number, chapter]));
-  const queued = (kind: FrozenChangeKind, number: number) => state?.pendingReviews?.find((entry) => !entry.started && entry.kind === kind && entry.number === number);
+  const queued = (kind: FrozenChangeKind, number: number) => state?.pendingReviews?.find((entry) => !entry.started && entry.kind === kind && entry.number === number) ?? campaignDecision(state, kind, number);
+  const later = (kind: FrozenChangeKind, number: number, fingerprint: string) => {
+    const deferral = deferralOf(state, kind, number, fingerprint);
+    return deferral ? { deferred: { at: deferral.at } } : {};
+  };
   const items: FrozenWorkItem[] = [];
   for (const change of frozenChanges(snapshot)) {
     const planned = bySlug.get(change.slug);
@@ -69,13 +123,13 @@ export function frozenWork(state: AutopilotState | null, snapshot: BookSnapshot,
     // A folder the plan does not use (a second folder with the number of a chapter) is not the chapter the autopilot knows.
     if (!planned && byNumber.get(change.number)) continue;
     const pending = queued("frozen", change.number);
-    items.push({ kind: "frozen", number: change.number, slug: change.slug, title: change.title, fingerprint: change.fingerprint, imported: planned?.imported === true || !planned, inPlan: Boolean(planned), change, ...(pending ? { pending } : {}) });
+    items.push({ kind: "frozen", number: change.number, slug: change.slug, title: change.title, fingerprint: change.fingerprint, imported: planned?.imported === true || !planned, inPlan: Boolean(planned), change, ...(pending ? { pending } : later("frozen", change.number, change.fingerprint)) });
   }
   for (const change of outlineWritten.values()) {
     const planned = byNumber.get(change.number);
     if (!planned || !state || inHands(state, planned)) continue;
     const pending = queued("outline", change.number);
-    items.push({ kind: "outline", number: change.number, slug: planned.slug, title: planned.title, fingerprint: change.digest, imported: planned.imported === true, inPlan: true, outline: change, ...(pending ? { pending } : {}) });
+    items.push({ kind: "outline", number: change.number, slug: planned.slug, title: planned.title, fingerprint: change.digest, imported: planned.imported === true, inPlan: true, outline: change, ...(pending ? { pending } : later("outline", change.number, change.digest)) });
   }
   return items.sort((left, right) => left.number - right.number || (left.kind === right.kind ? 0 : left.kind === "frozen" ? -1 : 1));
 }
@@ -253,7 +307,11 @@ export function applyFrozenDecision(state: AutopilotState, decision: FrozenDecis
     throw new FrozenChapterError("invalid_action", `${decision.action} is not something that can be done with a change of ${decision.kind === "frozen" ? "a frozen chapter" : "the outline of a written chapter"}.`);
   }
   const rule = decision.asRule && decision.note ? normalizeRuleText(decision.note) : null;
-  const next = structuredClone(state);
+  // The author's decision replaces the one to decide later, and the campaign's for the same chapter when it has not begun.
+  const next = structuredClone(withoutDeferrals(state, decision.number, decision.kind));
+  if (decision.kind === "outline" && next.campaign?.reason === "outline-change") {
+    for (const item of next.campaign.chapters) if (item.number === decision.number && item.status === "waiting") Object.assign(item, { status: "cancelled", endedAt: at });
+  }
   const others = (next.pendingReviews ?? []).filter((entry) => entry.started || entry.kind !== decision.kind || entry.number !== decision.number);
   const entry: PendingFrozenReview = {
     id,
@@ -284,7 +342,8 @@ export function withoutPendingReview(state: AutopilotState, id: string): Autopil
 }
 
 /** Remove the decisions that wait for this chapter (all, or of one kind) and close the question about it: the author decided otherwise. */
-export function forgetFrozenChapter(state: AutopilotState, number: number, kind?: FrozenChangeKind): AutopilotState {
+export function forgetFrozenChapter(input: AutopilotState, number: number, kind?: FrozenChangeKind): AutopilotState {
+  const state = withoutDeferrals(input, number, kind);
   const keep = (entry: PendingFrozenReview) => entry.started || entry.number !== number || (kind !== undefined && entry.kind !== kind);
   const pendingReviews = (state.pendingReviews ?? []).filter(keep);
   const { pendingReviews: _before, ...rest } = state;
@@ -341,7 +400,9 @@ export function settleFrozenChanges(input: AutopilotState, settle: FrozenSettleI
   if (!state.frozenSince && !legacyChapters(state, snapshot).length) state = { ...state, frozenSince: now };
 
   const items = frozenWork(state, snapshot, settle.outlineWritten).filter((item) => item.inPlan);
-  let waiting = items.filter((item) => !item.pending);
+  // What the author chose to decide later waits for the author, and only for the author: no question, no decision of the autopilot, nothing said again.
+  const deferred = items.filter((item) => !item.pending && item.deferred);
+  let waiting = items.filter((item) => !item.pending && !item.deferred);
 
   const asked = state.question;
   if (isFrozenQuestion(asked)) {
@@ -405,7 +466,7 @@ export function settleFrozenChanges(input: AutopilotState, settle: FrozenSettleI
     if (fresh.length) state = { ...state, frozenSeen: [...(state.frozenSeen ?? []), ...fresh].slice(-MAX_FROZEN_SEEN) };
   }
 
-  return { state, notes, waiting: new Set(waiting.map((item) => item.number)).size };
+  return { state, notes, waiting: new Set([...waiting, ...deferred].map((item) => item.number)).size };
 }
 
 // ─── Carrying out a decision: what advancing the state does ─────────────────
@@ -542,22 +603,8 @@ export function advancePendingReviews(state: AutopilotState, snapshot: BookSnaps
         Object.assign(entry, { started: { at: frozen.now, phase: "review" as const, before } });
       }
     } else {
-      const outline = frozen.outlineWritten.get(entry.number)!;
-      chapter.outlineDigest = outline.digest;
-      if (outline.body.trim()) {
-        chapter.goal = truncate(outline.body.trim(), PLAN_GOAL_CHARACTERS);
-        chapter.keyEvents = [];
-      }
+      beginOutlineRewrite(state, chapter, frozen.outlineWritten.get(entry.number)!, { id: entry.id, createdAt: entry.at, ...(entry.note ? { note: entry.note } : {}), ...(entry.auto ? { auto: true } : {}) });
       Object.assign(entry, { started: { at: frozen.now, phase: "rewrite" as const, before } });
-      state.revision = {
-        id: entry.id,
-        instruction: `Rewrite chapter ${chapter.number} to follow the new entry of the author's outline.`,
-        createdAt: entry.at,
-        targets: null,
-        cursor: 0,
-        onlyChapter: chapter.number,
-        source: { kind: "outline", chapterNumber: chapter.number, ...(entry.note ? { note: entry.note } : {}), ...(entry.auto ? { auto: true } : {}), before },
-      };
     }
     state.pendingReviews = (state.pendingReviews ?? []).map((other) => (other.id === entry.id ? entry : other));
     if (entry.action !== "review-only") {
@@ -566,6 +613,29 @@ export function advancePendingReviews(state: AutopilotState, snapshot: BookSnaps
     }
     return;
   }
+}
+
+/**
+ * Begin rewriting a written chapter to follow its new outline entry: the plan of the chapter follows the entry (its digest, and its text as the goal), and a
+ * revision of that chapter alone starts (`onlyChapter`), with the author's note for the director. What the decision about one change and a campaign about the
+ * Synopsis both do; the decision checks the later chapters after it, a campaign does not (the author chose each chapter that changes). Mutates `state`.
+ */
+export function beginOutlineRewrite(state: AutopilotState, chapter: PlannedChapter, outline: OutlineWrittenChange, input: { id: string; createdAt: string; note?: string; auto?: boolean }): void {
+  const before = viewOf(chapter);
+  chapter.outlineDigest = outline.digest;
+  if (outline.body.trim()) {
+    chapter.goal = truncate(outline.body.trim(), PLAN_GOAL_CHARACTERS);
+    chapter.keyEvents = [];
+  }
+  state.revision = {
+    id: input.id,
+    instruction: `Rewrite chapter ${chapter.number} to follow the new entry of the author's outline.`,
+    createdAt: input.createdAt,
+    targets: null,
+    cursor: 0,
+    onlyChapter: chapter.number,
+    source: { kind: "outline", chapterNumber: chapter.number, ...(input.note ? { note: input.note } : {}), ...(input.auto ? { auto: true } : {}), before },
+  };
 }
 
 /** When the revision that rewrites a chapter to follow its outline is over: whether it rewrote anything (else there is nothing to check after it). */
@@ -594,6 +664,8 @@ export interface FrozenStatusEntry {
   outline?: { title: string; digest: string };
   /** The decision recorded for it, which the next run carries out (a run in progress, at its next step). */
   pending?: { action: FrozenAction; at: string };
+  /** The author chose to decide about it later: the autopilot leaves it alone until the author does, or it changes again. */
+  deferred?: { at: string };
 }
 
 export interface FrozenStatus {

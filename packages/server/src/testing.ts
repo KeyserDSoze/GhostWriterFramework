@@ -51,6 +51,7 @@ export {
   AutopilotStateCorruptError,
   FrontmatterError,
   FrozenChapterError,
+  RevisionCampaignError,
 } from "narrarium-engine";
 export { McpBooks, assertSlug, slugFromTitle } from "./mcp-books.js";
 export { McpAudit } from "./mcp-audit.js";

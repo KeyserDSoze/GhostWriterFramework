@@ -3,10 +3,11 @@ import { isValidGhostwriterSlug } from "../book/paths.js";
 import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
 import { clipText, countWords } from "../util/text.js";
 import { normalizeErrorDetail, normalizeErrorKind } from "./errors.js";
-import { AUTOPILOT_PUBLISH_MODES, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES } from "./types.js";
+import { AUTOPILOT_PUBLISH_MODES, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES, REVISION_CHAPTER_MODES, REVISION_CHAPTER_STATUSES, REVISION_REASONS } from "./types.js";
 import type {
   AutopilotActivity,
   AutopilotBrief,
+  AutopilotCampaignSummary,
   AutopilotFinalReview,
   AutopilotLastErrorCode,
   AutopilotLastErrorSummary,
@@ -29,6 +30,7 @@ import type {
   ChapterReview,
   ChapterRound,
   ConceptSecret,
+  DeferredChange,
   DirectorQuestion,
   FrozenAction,
   FrozenChangeKind,
@@ -38,6 +40,8 @@ import type {
   PendingFrozenReview,
   PlannedChapter,
   PlannedScene,
+  RevisionCampaign,
+  RevisionCampaignChapter,
   QuestionChoice,
   RevisionRequest,
   RevisionSource,
@@ -62,6 +66,11 @@ export const CONCEPT_LOGLINE_CHARACTERS = 600;
 export const MAX_FROZEN_SEEN = 200;
 /** Decisions about changes that the state keeps at most (one per chapter and kind is the most there can usefully be). */
 export const MAX_PENDING_REVIEWS = 500;
+/** Changes decided later that the state keeps at most (one per chapter and kind), and the chapters of a campaign. */
+export const MAX_DEFERRED_CHANGES = 500;
+export const MAX_CAMPAIGN_CHAPTERS = 1000;
+/** Characters of the author's words for a campaign, and for one of its chapters. */
+export const CAMPAIGN_NOTE_CHARACTERS = 2000;
 /**
  * Upper bound for any chapter number or chapter count read from a file or a reply. It only guards against typos and
  * garbage: a book has no maximum length, and nothing below this value is ever clamped.
@@ -557,6 +566,64 @@ function normalizePendingReview(value: unknown): PendingFrozenReview | null {
   };
 }
 
+/** A change decided later, as a file says it; anything else is none. */
+function normalizeDeferredChange(value: unknown): DeferredChange | null {
+  const source = asRecord(value);
+  const kind = frozenKindOf(source.kind);
+  const number = asInteger(source.number, 0, 0, MAX_BOOK_CHAPTERS);
+  const fingerprint = readText(source.fingerprint, 128);
+  const at = readMoment(source.at);
+  return kind && number && fingerprint && at ? { kind, number, fingerprint, at } : null;
+}
+
+function normalizeDeferredChanges(value: unknown): DeferredChange[] | undefined {
+  const entries = asArray(value).map(normalizeDeferredChange).filter((entry): entry is DeferredChange => entry !== null).slice(-MAX_DEFERRED_CHANGES);
+  return entries.length ? entries : undefined;
+}
+
+function normalizeCampaignChapter(value: unknown): RevisionCampaignChapter | null {
+  const source = asRecord(value);
+  const number = asInteger(source.number, 0, 0, MAX_BOOK_CHAPTERS);
+  const mode = typeof source.mode === "string" ? REVISION_CHAPTER_MODES.find((entry) => entry === source.mode) : undefined;
+  const status = typeof source.status === "string" ? REVISION_CHAPTER_STATUSES.find((entry) => entry === source.status) : undefined;
+  if (!number || !mode || !status) return null;
+  const instruction = readText(source.instruction, CAMPAIGN_NOTE_CHARACTERS);
+  const fingerprint = readText(source.fingerprint, 128);
+  const startedAt = readMoment(source.startedAt);
+  const endedAt = readMoment(source.endedAt);
+  const why = source.why === "gone" || source.why === "not-in-plan" ? source.why : undefined;
+  return { number, mode, status, ...(instruction ? { instruction } : {}), ...(fingerprint ? { fingerprint } : {}), ...(startedAt ? { startedAt } : {}), ...(endedAt ? { endedAt } : {}), ...(why ? { why } : {}) };
+}
+
+/** A campaign as a file says it: a reason the engine knows and at least one chapter (each once); anything else is none, and a run goes on with the plan. */
+function normalizeCampaign(value: unknown): RevisionCampaign | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const id = readActivityId(source.id);
+  const reason = typeof source.reason === "string" ? REVISION_REASONS.find((entry) => entry === source.reason) : undefined;
+  const createdAt = readMoment(source.createdAt);
+  const seen = new Set<number>();
+  const chapters = asArray(source.chapters).map(normalizeCampaignChapter).filter((entry): entry is RevisionCampaignChapter => entry !== null && !seen.has(entry.number) && Boolean(seen.add(entry.number))).slice(0, MAX_CAMPAIGN_CHAPTERS);
+  if (!id || !reason || !createdAt || !chapters.length) return undefined;
+  const note = readText(source.note, CAMPAIGN_NOTE_CHARACTERS);
+  return { id, reason, createdAt, ...(note ? { note } : {}), chapters };
+}
+
+/** A campaign as a summary says it: the chapters it works, how far it got, the one being worked and the ones that wait. */
+export function summarizeCampaign(campaign: RevisionCampaign | undefined): AutopilotCampaignSummary | undefined {
+  if (!campaign) return undefined;
+  const worked = campaign.chapters.filter((chapter) => chapter.mode === "follow");
+  if (!worked.length || !worked.some((chapter) => chapter.status === "waiting" || chapter.status === "working")) return undefined;
+  return {
+    id: campaign.id,
+    reason: campaign.reason,
+    total: worked.filter((chapter) => chapter.status !== "cancelled").length,
+    done: worked.filter((chapter) => chapter.status === "done" || chapter.status === "skipped").length,
+    current: worked.find((chapter) => chapter.status === "working")?.number ?? null,
+    waiting: worked.filter((chapter) => chapter.status === "waiting").map((chapter) => chapter.number),
+  };
+}
+
 /** The decisions that wait, as a file says them: the valid ones, at most `MAX_PENDING_REVIEWS`; `undefined` when there is none. */
 function normalizePendingReviews(value: unknown): PendingFrozenReview[] | undefined {
   const entries = asArray(value).map(normalizePendingReview).filter((entry): entry is PendingFrozenReview => entry !== null).slice(-MAX_PENDING_REVIEWS);
@@ -746,6 +813,8 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
   const errorCode = readLastErrorCode(lastError.code);
   const runner = asRecord(source.runner);
   const pendingReviews = normalizePendingReviews(source.pendingReviews);
+  const campaign = normalizeCampaign(source.campaign);
+  const deferredChanges = normalizeDeferredChanges(source.deferredChanges);
   const frozenSince = readMoment(source.frozenSince);
   const frozenSeen = textList(source.frozenSeen, MAX_FROZEN_SEEN);
   const status = asOneOf(source.status, STATUSES, "idle");
@@ -770,6 +839,8 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
     ...(pendingReviews ? { pendingReviews } : {}),
     ...(frozenSince ? { frozenSince } : {}),
     ...(frozenSeen.length ? { frozenSeen } : {}),
+    ...(campaign ? { campaign } : {}),
+    ...(deferredChanges ? { deferredChanges } : {}),
     runner: asString(runner.runId)
       ? {
         host: runner.host === "server" ? "server" : "browser",
@@ -932,6 +1003,7 @@ export function summarizeAutopilotState(state: AutopilotState, context: Autopilo
     ...(context.retry ? { retry: context.retry } : {}),
     // Like `retry`, said only when something waits: a book with no change has the summary it always had.
     ...(typeof context.frozenChanges === "number" && context.frozenChanges > 0 ? { frozenChanges: context.frozenChanges } : {}),
+    ...(summarizeCampaign(state.campaign) ? { campaign: summarizeCampaign(state.campaign) } : {}),
   };
 }
 

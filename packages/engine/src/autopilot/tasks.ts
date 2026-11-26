@@ -335,7 +335,8 @@ function outlineContentOf(chapter: PlannedChapter): { title: string; body: strin
  * The outline after a plan: a planned chapter without an entry gets one, as the autopilot's (`origin: autopilot`, with the `digest`
  * of what it wrote); a chapter the author wrote gets one only when it has none, with its summary; an entry of the autopilot that
  * nobody touched follows the new plan of its chapter; an entry of the author is never touched. Every chapter remembers the digest
- * of its entry as it is after this step, so that a later change of the author is recognized. With `fillOutline` off nothing is
+ * of its entry as it is after this step, so that a later change of the author is recognized; a written chapter the plan knew keeps
+ * the digest it followed, so that a change nobody decided about yet is not taken for followed. With `fillOutline` off nothing is
  * written. `outline/book.md` is written once, when it is missing, with the logline of the concept. The entries it writes are a series
  * of the journal of the Synopsis (`outline/changes.yml`), by the autopilot, in the same commit.
  */
@@ -362,7 +363,7 @@ async function fillOutline(ctx: TaskContext, planned: PlannedChapter[], imported
   };
   for (const chapter of imported) {
     const entry = entries.get(chapter.number);
-    if (entry) chapter.outlineDigest = entry.contentDigest;
+    if (entry) chapter.outlineDigest ??= entry.contentDigest;
     else if (fill && chapter.summary.trim()) await write(chapter);
     else delete chapter.outlineDigest;
   }
@@ -820,8 +821,10 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
   const imported = importedChapters(ctx.snapshot).map((chapter) => {
     const earlier = known.get(chapter.slug);
     const kept = earlier?.storySoFarAtClose ? { ...chapter, storySoFarAtClose: earlier.storySoFarAtClose, ...(earlier.score !== undefined ? { score: earlier.score } : {}) } : chapter;
-    // The history of the rounds of a chapter that was reviewed outlives the plan being made again around it (the book is being extended).
-    return earlier?.rounds?.length ? { ...kept, rounds: earlier.rounds } : kept;
+    // The history of the rounds of a chapter that was reviewed outlives the plan being made again around it (the book is being extended), and so does the
+    // entry of the outline it follows: a change of its entry that nobody decided about yet (asked, left for later) is still one after the plan.
+    const followed = earlier?.outlineDigest ? { ...kept, outlineDigest: earlier.outlineDigest } : kept;
+    return earlier?.rounds?.length ? { ...followed, rounds: earlier.rounds } : followed;
   });
   // The author's outline binds the plan: its chapters, its order, its titles, its events, and as many chapters as it has.
   const view = await authorOutline(ctx);

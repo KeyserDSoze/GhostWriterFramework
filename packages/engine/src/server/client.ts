@@ -15,6 +15,7 @@ import {
   serverSupportsAutopilotAutoResume,
   serverSupportsAutopilotRetry,
   serverSupportsGithubConflicts,
+  serverSupportsOutlineApply,
   verifyServerIdentity,
   type AskDirectorRequest,
   type AskDirectorResponse,
@@ -24,6 +25,8 @@ import {
   type FreezeChapterRequest,
   type GithubConflictsResponse,
   type ResolveFrozenChangeRequest,
+  type ReviseChaptersRequest,
+  type RevisionCampaignResponse,
   type PairingRequest,
   type PairingResult,
   type PauseAutopilotMode,
@@ -445,6 +448,28 @@ export class NarrariumServerClient {
   resolveFrozenChange(bookId: string, number: number, action: FrozenAction, options: { kind?: FrozenChangeKind; note?: string } = {}): Promise<FrozenStatus> {
     const body: ResolveFrozenChangeRequest = { action, ...(options.kind ? { kind: options.kind } : {}), ...(options.note !== undefined ? { note: options.note } : {}) };
     return this.request("POST", bookRoute(bookId, `/autopilot/frozen/${encodeURIComponent(String(number))}`), body);
+  }
+
+  /**
+   * Revise these chapters now, for this reason, in order, then go on with the plan: `POST …/autopilot/campaign` (`ReviseChaptersRequest`, the engine's
+   * `AutopilotSession.reviseChapters`). The reason `outline-change` needs `SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY`, else `feature_unavailable` before anything is
+   * sent. A refusal is a `ServerRequestError` with the code of the engine's `RevisionCampaignError` (`invalid_request`, `campaign_active`, `not_changed`, `stale`).
+   */
+  async reviseChapters(bookId: string, request: ReviseChaptersRequest): Promise<RevisionCampaignResponse> {
+    await this.requireOutlineApply();
+    return this.request("POST", bookRoute(bookId, "/autopilot/campaign"), request);
+  }
+
+  /** Cancel the chapters of the campaign that wait (the one being worked finishes): `DELETE …/autopilot/campaign`. The same feature as `reviseChapters`. */
+  async cancelRevisionCampaign(bookId: string): Promise<RevisionCampaignResponse> {
+    await this.requireOutlineApply();
+    return this.request("DELETE", bookRoute(bookId, "/autopilot/campaign"));
+  }
+
+  private async requireOutlineApply(): Promise<void> {
+    if (!serverSupportsOutlineApply(await this.info())) {
+      throw new ServerRequestError("This personal server cannot apply the Synopsis to a book (it does not announce the feature autopilot-outline-apply): update the server.", 501, "feature_unavailable");
+    }
   }
 
   /** Freeze a chapter by hand (`frozen: true`), or take its record away: `POST …/chapters/:slug/freeze` with `{ frozen }`. Answers the chapter's record now. */

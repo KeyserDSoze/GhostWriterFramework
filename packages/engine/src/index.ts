@@ -50,6 +50,7 @@ export * from "./autopilot/outline.js";
 export * from "./autopilot/outline-check.js";
 export * from "./autopilot/outline-change.js";
 export * from "./autopilot/outline-compose.js";
+export * from "./autopilot/campaign.js";
 export * from "./autopilot/frozen.js";
 export * from "./autopilot/story-so-far.js";
 export { TASK_EXECUTORS, cleanProse, renderPlanMarkdown, sameCanonEntity, type TaskContext, type TaskResult, type TaskAi } from "./autopilot/tasks.js";

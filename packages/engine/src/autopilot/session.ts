@@ -28,6 +28,7 @@ import {
   type FrozenWorkItem,
 } from "./frozen.js";
 import { readBrief } from "./brief.js";
+import { RevisionCampaignError, cancelRevisionCampaign, createRevisionCampaign, recordRevisionCampaign, type ReviseChaptersInput, type RevisionCampaignResult } from "./campaign.js";
 import { createModelMemory, type AiModelMemory } from "../ai/memory.js";
 import { applyLiveAttempt, applyLiveProgress, startLive } from "./live.js";
 import { outlinePlanStatus, type OutlineWrittenChange } from "./outline-check.js";
@@ -174,6 +175,7 @@ async function bookFrozenStatus(store: BookStore, snapshot: BookSnapshot, state:
     ...(item.change ? { by: item.change.by, frozenAt: item.change.frozenAt, changed: item.change.changed } : {}),
     ...(item.outline ? { outline: { title: item.outline.title, digest: item.outline.digest } } : {}),
     ...(item.pending ? { pending: { action: item.pending.action, at: item.pending.at } } : {}),
+    ...(item.deferred ? { deferred: item.deferred } : {}),
   }));
   return {
     status: {
@@ -790,6 +792,36 @@ export class AutopilotSession {
       }
     }
     return null;
+  }
+
+  /**
+   * Revise these chapters now, for this reason, in order, then go on with the plan (`campaign.ts`): saved at once, also while a run goes on (which takes it at its next
+   * step), and carried out by the run before the plan, one chapter at a time. What can be done at once is done in the same commit (for the Synopsis: the chapters
+   * kept, when nobody runs, and the ones decided later). Refused with a `RevisionCampaignError`: `invalid_request`, `campaign_active` (one goes on), `not_changed`
+   * (a chapter has no such change now) and `stale` (it changed since the author looked at it). Answers the campaign as it is saved, and the changes after it.
+   */
+  async reviseChapters(input: ReviseChaptersInput): Promise<RevisionCampaignResult> {
+    if (this.starting) await this.starting.catch(() => undefined);
+    const { items, stored } = await this.frozenView();
+    if (!stored.state) throw new RevisionCampaignError("invalid_request", "This book has no autopilot yet: there is nothing to revise.");
+    const campaign = createRevisionCampaign(input, items, this.now());
+    const at = this.now().toISOString();
+    const numbers = campaign.chapters.map((chapter) => chapter.number);
+    await this.mutate(`Autopilot: revise chapter${numbers.length === 1 ? "" : "s"} ${numbers.join(", ")} (${campaign.reason})`, (state) => recordRevisionCampaign(state, campaign, at, this.running), { create: false });
+    return this.campaignResult();
+  }
+
+  /** Cancel the chapters of the campaign that wait (the one being worked finishes): what the reason does with them is its own (`cancel`). Answers as `reviseChapters`. */
+  async cancelRevisionCampaign(): Promise<RevisionCampaignResult> {
+    if (this.starting) await this.starting.catch(() => undefined);
+    const at = this.now().toISOString();
+    await this.mutate("Autopilot: revision cancelled", (state) => cancelRevisionCampaign(state, at), { create: false });
+    return this.campaignResult();
+  }
+
+  private async campaignResult(): Promise<RevisionCampaignResult> {
+    const view = await this.frozenView();
+    return { campaign: view.stored.state?.campaign ?? null, frozen: view.status };
   }
 
   /** Freeze a chapter by hand (`by: author`), as it is now: a change the author made to it is accepted, and the decisions that waited for it are dropped. */

@@ -3,6 +3,7 @@ import { chapterNumberFromSlug, chapterSlug, paragraphFilePath, paragraphSlug } 
 import type { DirectorProfile } from "../profiles/director.js";
 import { countWords, isItalian } from "../util/text.js";
 import { advancePendingReviews, frozenQuestionMessage, inRevision, isFrozenQuestion, needsFreezeStep, noteOutlineRewrite, startedReview, type PlannerFrozen } from "./frozen.js";
+import { advanceRevisionCampaign, campaignChapter } from "./campaign.js";
 import type { AutopilotMessageCode, AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, InsightTone, PlannedChapter, PlannedScene } from "./types.js";
 
 export interface PlannerReader {
@@ -619,6 +620,8 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
 
   // The decisions about the changes of frozen chapters: kept, finished, or started (the chapter goes back to review, before the plan).
   advancePendingReviews(state, snapshot, report, ctx.language, ctx.frozen);
+  // The chapters the author asked to revise now, for one reason, in order: the one being worked finished, the next started (before the plan).
+  advanceRevisionCampaign(state, report, ctx.language, ctx.frozen);
 
   const current = editedChapter(state) ?? (state.plan?.approved ? state.plan.chapters.find((chapter) => chapter.status !== "done") : undefined);
   if (current?.status === "review") {
@@ -654,11 +657,11 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
   return state;
 }
 
-/** The chapter of the decision being carried out, while the autopilot works on it (not closed again yet): it comes before the plan. */
+/** The chapter of the decision being carried out, or of the campaign, while the autopilot works on it (not closed again yet): it comes before the plan. */
 function editedChapter(state: AutopilotState): PlannedChapter | undefined {
   const editing = startedReview(state);
   const chapter = editing ? state.plan?.chapters.find((entry) => entry.number === editing.number) : undefined;
-  return chapter && chapter.status !== "done" ? chapter : undefined;
+  return chapter && chapter.status !== "done" ? chapter : campaignChapter(state);
 }
 
 export function phaseOf(state: AutopilotState): AutopilotPhase {
