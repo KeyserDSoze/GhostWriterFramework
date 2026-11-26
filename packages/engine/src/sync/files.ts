@@ -1,5 +1,16 @@
-import { isSafeBookPath, isTextBookPath } from "../book/paths.js";
+import { mergeOutlineJournals, pruneOutlineJournal, serializeOutlineJournal } from "../book/outline-journal.js";
+import { OUTLINE_CHANGES_FILE, isSafeBookPath, isTextBookPath } from "../book/paths.js";
 import type { BookFileChange, BookFileContent, BookFileEntry, BookStore } from "../book/store.js";
+import { sha256Hex } from "../util/hash.js";
+
+/**
+ * The text of a file that two sides changed apart, when the book can join the two without anyone choosing: the journal of the Synopsis
+ * (`outline/changes.yml`), which is append-only, is the series of both. `null` for every other file: a conflict to settle.
+ */
+export function mergeBookFileVersions(path: string, local: string, remote: string, now: Date = new Date()): string | null {
+  if (path === OUTLINE_CHANGES_FILE) return serializeOutlineJournal(pruneOutlineJournal(mergeOutlineJournals(local, remote), now));
+  return null;
+}
 
 export type SyncDirection = "upload" | "download";
 
@@ -63,6 +74,11 @@ export interface SyncStoresInput {
   base: ReadonlyMap<string, string>;
   /** How to settle a path changed on both sides; `skip` leaves it for later. */
   resolveConflict?: (path: string) => "local" | "remote" | "skip";
+  /**
+   * The text of a path changed on both sides that can be joined without anyone choosing (`mergeBookFileVersions` unless another is given; `null`: none is).
+   * A path it joins is written on both sides and is no conflict; a path it does not join goes to `resolveConflict`.
+   */
+  merge?: ((path: string, local: string, remote: string) => string | null) | null;
   message?: string;
   /**
    * Called after every chunk committed to either side: `done` files applied (found missing, or skipped) so far, out of `total`
@@ -79,6 +95,8 @@ export interface SyncStoresResult {
   conflicts: string[];
   /** Paths left out because they are not safe repository paths. */
   rejected: string[];
+  /** Paths changed on both sides that were joined and written on both (`SyncStoresInput.merge`). Absent from the result of an older engine. */
+  merged?: string[];
   /**
    * Every file the sync did not move and why, in path order: a file over the size limit (`too-large`, with its `size`), an unsafe
    * path (`unsafe-path`, the same ones as `rejected`) and a file that is not text (`not-text`). A skipped file does not fail the
@@ -87,6 +105,11 @@ export interface SyncStoresResult {
   skipped: SyncSkippedFile[];
   /** New base to remember for the next sync. */
   base: Map<string, string>;
+}
+
+/** The message of the commit that joins two versions of a file: the sync's own, and what it does. */
+function joinMessage(input: SyncStoresInput): string {
+  return input.message ? `${input.message}: join the two versions of the journal of the Synopsis` : "Join the two versions of the journal of the Synopsis";
 }
 
 /** Changes in one commit: far below the 5000 the personal server accepts. */
@@ -161,7 +184,21 @@ export async function syncBookStores(input: SyncStoresInput): Promise<SyncStores
   const upload = [...plan.upload];
   const download = [...plan.download];
   const unresolved: string[] = [];
+  // What both sides changed and the book can join (the journal of the Synopsis) is written on both, as one text.
+  const merge = input.merge === undefined ? mergeBookFileVersions : input.merge;
+  const joined = new Map<string, string>();
   for (const path of plan.conflicts) {
+    if (!merge || !local.has(path) || !remote.has(path)) continue;
+    const [mine, theirs] = await Promise.all([input.local.read(path), input.remote.read(path)]);
+    if (!mine || !theirs) continue;
+    const text = merge(path, mine.content, theirs.content);
+    if (text === null) continue;
+    await input.local.commit([{ path, content: text, expectedHash: local.get(path) ?? null }], joinMessage(input));
+    await input.remote.commit([{ path, content: text, expectedHash: remote.get(path) ?? null }], joinMessage(input));
+    joined.set(path, await sha256Hex(text));
+  }
+  for (const path of plan.conflicts) {
+    if (joined.has(path)) continue;
     const choice = input.resolveConflict?.(path) ?? "skip";
     if (choice === "local") upload.push({ path, hash: local.get(path) ?? null });
     else if (choice === "remote") download.push({ path, hash: remote.get(path) ?? null });
@@ -256,6 +293,11 @@ export async function syncBookStores(input: SyncStoresInput): Promise<SyncStores
   const next = new Map<string, string>();
   for (const path of new Set([...local.keys(), ...remote.keys(), ...input.base.keys()])) {
     if (rejected.has(path)) continue;
+    const both = joined.get(path);
+    if (both) {
+      next.set(path, both);
+      continue;
+    }
     if (unresolvedPaths.has(path)) {
       const previous = input.base.get(path);
       if (previous) next.set(path, previous);
@@ -265,5 +307,5 @@ export async function syncBookStores(input: SyncStoresInput): Promise<SyncStores
     if (hash) next.set(path, hash);
   }
   skipped.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
-  return { uploaded, downloaded, conflicts: unresolved, rejected: plan.rejected, skipped, base: next };
+  return { uploaded, downloaded, conflicts: unresolved, rejected: plan.rejected, skipped, base: next, ...(joined.size ? { merged: [...joined.keys()] } : {}) };
 }

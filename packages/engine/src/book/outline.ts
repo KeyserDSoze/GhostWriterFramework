@@ -1,7 +1,7 @@
 import { parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
 import { sha256Hex } from "../util/hash.js";
 import { clipText } from "../util/text.js";
-import { OUTLINE_BOOK_FILE, OUTLINE_BRAINSTORM_FILE, OUTLINE_BRIEF_FILE, OUTLINE_DIRECTORY, formatOrdinal, isValidGhostwriterSlug, outlineChapterPath, parseOutlineChapterPath } from "./paths.js";
+import { OUTLINE_BOOK_FILE, OUTLINE_BRAINSTORM_FILE, OUTLINE_BRIEF_FILE, OUTLINE_CHANGES_FILE, OUTLINE_DIRECTORY, formatOrdinal, isValidGhostwriterSlug, outlineChapterPath, parseOutlineChapterPath } from "./paths.js";
 import type { BookFileChange, BookStore } from "./store.js";
 
 /**
@@ -273,8 +273,8 @@ export async function parseOutline(files: ReadonlyArray<{ path: string; content:
       warnings.push(...read.warnings);
       continue;
     }
-    // The brief and the notes of Brainstorming are files of the outline that are never entries.
-    if (file.path === OUTLINE_BRIEF_FILE || file.path === OUTLINE_BRAINSTORM_FILE) continue;
+    // The brief, the notes of Brainstorming and the journal of the Synopsis are files of the outline that are never entries.
+    if (file.path === OUTLINE_BRIEF_FILE || file.path === OUTLINE_BRAINSTORM_FILE || file.path === OUTLINE_CHANGES_FILE) continue;
     if (!file.path.startsWith(`${OUTLINE_DIRECTORY}/`)) continue;
     const parsed = parseOutlineChapterPath(file.path);
     if (!parsed) {

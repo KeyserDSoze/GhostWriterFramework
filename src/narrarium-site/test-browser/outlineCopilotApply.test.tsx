@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
-import { BookConflictError, sha256Hex, type BookFileChange } from "narrarium-engine";
+import { BookConflictError, parseOutlineJournal, sha256Hex, type BookFileChange } from "narrarium-engine";
 
 const mocks = vi.hoisted(() => ({
   files: new Map<string, string>(),
@@ -53,6 +53,8 @@ import { DEFAULT_SETTINGS } from "@/types/settings";
 const FOUR = "---\ntype: outline-chapter\nnumber: 4\ntitle: Four\norigin: author\n---\n\nThe fourth.\n";
 const FIVE = "---\ntype: outline-chapter\nnumber: 5\ntitle: Five\norigin: author\n---\n\nThe fifth.\n";
 const FIVE_NEW = "---\ntype: outline-chapter\nnumber: 5\ntitle: Five, again\norigin: author\n---\n\nThe fifth, rewritten.\n";
+/** Who made each series of the journal of the Synopsis, and what it says of each chapter. */
+const journalLines = () => parseOutlineJournal(mocks.files.get("outline/changes.yml")).series.map((series) => [series.by, series.chapters.map((item) => [item.chapter, item.change, item.title])]);
 
 async function proposal(): Promise<AssistantMessage> {
   return {
@@ -111,10 +113,14 @@ describe("a proposal of the Copilot for the outline", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "assistant.applyAllFiles" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
-    expect(mocks.save.mock.calls[0][0]).toEqual([
+    expect(mocks.save.mock.calls[0][0].slice(0, 2)).toEqual([
       { path: "outline/chapters/004.md", content: null, expectedHash: await sha256Hex(FOUR) },
       { path: "outline/chapters/005.md", content: FIVE_NEW, expectedHash: await sha256Hex(FIVE) },
     ]);
+    // In the same commit, the series of the journal of the Synopsis: the author's (the Copilot only proposed it).
+    const applied = mocks.save.mock.calls[0][0][2];
+    expect([applied.path, applied.expectedHash]).toEqual(["outline/changes.yml", null]);
+    expect(journalLines()).toEqual([["author", [[4, "removed", "Four"], [5, "modified", "Five, again"]]]]);
     expect(mocks.files.has("outline/chapters/004.md")).toBe(false);
     expect(mocks.files.get("outline/chapters/005.md")).toBe(FIVE_NEW);
     expect(mocks.push, "the outline is published with the book, like the page's saves").not.toHaveBeenCalled();
@@ -122,10 +128,13 @@ describe("a proposal of the Copilot for the outline", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "assistant.undoChanges" }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2));
-    expect(mocks.save.mock.calls[1][0]).toEqual([
+    expect(mocks.save.mock.calls[1][0].slice(0, 2)).toEqual([
       { path: "outline/chapters/004.md", content: FOUR, expectedHash: null },
       { path: "outline/chapters/005.md", content: FIVE, expectedHash: await sha256Hex(FIVE_NEW) },
     ]);
+    // Taking it back is a series of its own: the history keeps both.
+    expect(mocks.save.mock.calls[1][0][2]).toMatchObject({ path: "outline/changes.yml", expectedHash: await sha256Hex(applied.content) });
+    expect(journalLines()).toEqual([["author", [[4, "removed", "Four"], [5, "modified", "Five, again"]]], ["author", [[4, "created", "Four"], [5, "modified", "Five"]]]]);
     expect(mocks.files.get("outline/chapters/004.md")).toBe(FOUR);
     expect(mocks.files.get("outline/chapters/005.md")).toBe(FIVE);
     expect(await screen.findAllByText(/assistant\.undoApplied/)).not.toHaveLength(0);

@@ -1,7 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createAutopilotState, outlineChapterPath, outlineEntryDigest, parseMarkdown, serializeOutlineBook, serializeOutlineChapter, type PlannedChapter } from "narrarium-engine";
+import { OUTLINE_CHANGES_FILE, createAutopilotState, outlineChapterPath, outlineEntryDigest, parseMarkdown, parseOutlineJournal, serializeOutlineBook, serializeOutlineChapter, type PlannedChapter } from "narrarium-engine";
+
+const withoutJournal = (files: Record<string, string>) => Object.fromEntries(Object.entries(files).filter(([path]) => path !== OUTLINE_CHANGES_FILE));
 import { MemoryBookStore } from "narrarium-engine/testing";
 import { chooseOption, optionNames, polyfillRadix } from "./helpers/radix";
 
@@ -189,7 +191,10 @@ describe("an outline of mixed entries", () => {
     expect(frontmatterOf(3).title).toBeUndefined();
     await waitFor(() => expect(document.activeElement).toBe(titleField(3)));
     fireEvent.click(button(t("outline.actions.undo")));
-    await waitFor(() => expect(mocks.store.toObject()).toEqual(before));
+    // The entries are as they were; the journal of the Synopsis keeps both series, the insert and its undo, the author's.
+    await waitFor(() => expect(withoutJournal(mocks.store.toObject())).toEqual(before));
+    const journal = parseOutlineJournal(mocks.store.toObject()[OUTLINE_CHANGES_FILE]);
+    expect(journal.series.map((series) => [series.by, series.chapters[0]?.chapter, series.chapters[0]?.change])).toEqual([["author", 3, "created"], ["author", 3, "moved"]]);
 
     fireEvent.click(button(t("outline.entry.moveDown", { number: 5 })));
     await waitFor(() => expect(frontmatterOf(6).title).toBe("Planned 5"));

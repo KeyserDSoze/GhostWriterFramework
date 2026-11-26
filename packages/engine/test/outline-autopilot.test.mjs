@@ -199,6 +199,10 @@ test("the plan fills the chapter the outline leaves without an entry, in the sam
   const commit = store.commits.find((entry) => entry.message.startsWith("Autopilot: Planning"));
   assert.ok(["outline/book.md", "outline/chapters/002.md", "autopilot/state.json"].every((path) => commit.paths.includes(path)), "one commit for the plan and its outline");
   assert.deepEqual(outline.warnings, []);
+  // The entry it wrote is a series of the journal of the Synopsis, by the autopilot, in the same commit.
+  assert.ok(commit.paths.includes(engine.OUTLINE_CHANGES_FILE), "the journal in the commit of the plan");
+  const journal = engine.parseOutlineJournal(store.files.get(engine.OUTLINE_CHANGES_FILE));
+  assert.deepEqual(journal.series.map((series) => [series.by, series.at, series.chapters.map((item) => [item.chapter, item.change, item.title, item.after])]), [["autopilot", "2026-01-01T00:00:00.000Z", [[2, "created", "Chapter Title 2", outline.chapters[1].contentDigest]]]]);
 });
 
 test("the option fillOutline is on by default, saved, and off leaves the outline alone", async () => {

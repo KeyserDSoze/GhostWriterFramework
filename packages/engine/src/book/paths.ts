@@ -34,6 +34,13 @@ export const OUTLINE_BRIEF_FILE = "outline/_brief.md";
  * section after the other. Like the brief it is a file of the outline that is never an entry: no outline tool counts, moves or warns about it.
  */
 export const OUTLINE_BRAINSTORM_FILE = "outline/brainstorm.md";
+/**
+ * The journal of the Synopsis: every series of edits of its entries, oldest first, with when, who (the author, Brainstorming, the autopilot, an
+ * assistant through the personal server's MCP) and what happened to each chapter (`outline-journal.ts`). Like the brief and the notes of
+ * Brainstorming it is a file of the outline that is never an entry; it is not Markdown, so the book's content (`CONTENT_GLOB`) leaves it out too.
+ * The autopilot does not decide from it: it is the readable history, for the author and for every device of the book.
+ */
+export const OUTLINE_CHANGES_FILE = "outline/changes.yml";
 
 /** The file of the outline entry of a chapter: `outline/chapters/007.md`, `outline/chapters/1500.md`. */
 export function outlineChapterPath(number: number): string {

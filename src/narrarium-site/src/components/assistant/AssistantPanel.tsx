@@ -180,10 +180,11 @@ export function diffRevertRevisionsMatch(pending: { sourceHash: string | null; d
  * Where the Outline page reads and saves the outline (the book's working copy: one local commit, published with the book), for a proposal of the
  * Copilot for it. Loaded with the first such proposal the author applies, undoes or compares, not with the panel.
  */
-async function outlineWorkingCopy(book: BookEntry, branch: string) {
-  const { browserOutlineSource, outlineFilesAt } = await import("@/outline/outlineSource");
+async function outlineWorkingCopy(book: BookEntry, branch: string, journal: { by: "author" | "brainstorming"; language?: string }) {
+  const [{ browserOutlineSource, outlineFilesAt }, { commitWithJournal }] = await Promise.all([import("@/outline/outlineSource"), import("@/outline/outlineJournal")]);
   const source = browserOutlineSource(book, branch);
-  return { read: (paths: readonly string[]) => outlineFilesAt(source, paths), commit: source.commit };
+  // A proposal applied, or taken back, is a series of the journal of the Synopsis too, in the same commit: the author's, or Brainstorming's.
+  return { read: (paths: readonly string[]) => outlineFilesAt(source, paths), commit: (changes: Parameters<typeof commitWithJournal>[1], message: string) => commitWithJournal(source, changes, message, journal) };
 }
 
 // Brainstorming's own parts (the Copilot's mode on the Synopsis page): loaded the first time the panel is in that mode, and only the Synopsis page enters it.
@@ -2154,7 +2155,7 @@ export function AssistantPanel() {
     try {
       // The outline is saved where the Outline page saves it: one local commit in the book's working copy, published with the book. The usual
       // path refuses while local commits wait to be published (the page's own saves among them) and cannot publish a book kept on this device.
-      const outline = isOutlineProposal(action) ? await outlineWorkingCopy(book, branch) : null;
+      const outline = isOutlineProposal(action) ? await outlineWorkingCopy(book, branch, { by: currentSession?.mode === "brainstorming" ? "brainstorming" : "author", language: structures[book.id]?.language }) : null;
       const currentFiles = outline
         ? await outline.read(updates.map((update) => update.path))
         : await Promise.all(updates.map((update) => optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path, signal))));
@@ -2408,7 +2409,7 @@ export function AssistantPanel() {
     try {
       const applied = action.updates.filter((update) => update.status === "applied" || update.appliedHash);
       if (!applied.length) throw new Error("No applied file updates are available to undo.");
-      const outline = isOutlineProposal(action) ? await outlineWorkingCopy(book, branch) : null;
+      const outline = isOutlineProposal(action) ? await outlineWorkingCopy(book, branch, { by: currentSession?.mode === "brainstorming" ? "brainstorming" : "author", language: structures[book.id]?.language }) : null;
       const currentFiles = outline
         ? await outline.read(applied.map((update) => update.path))
         : await Promise.all(applied.map((update) => optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path, signal))));
@@ -2560,7 +2561,7 @@ export function AssistantPanel() {
         try {
           // An entry of the outline is read where the Outline page keeps it, so a new one needs no request to the remote.
           const existing = OUTLINE_FILE.test(update.path)
-            ? (await (await outlineWorkingCopy(book, branch)).read([update.path]))[0]
+            ? (await (await outlineWorkingCopy(book, branch, { by: "author" })).read([update.path]))[0]
             : await optionalRepositoryRead(() => readFileWithSha(token, book.owner, book.repo, branch, update.path));
           setPreviousContents((current) => ({ ...current, [key]: existing?.content ?? update.previousContent ?? "" }));
         } finally {

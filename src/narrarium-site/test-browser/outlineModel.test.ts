@@ -186,6 +186,28 @@ describe("the outline after a commit", () => {
     expect(after.outline.chapters.map((entry) => [entry.number, entry.title, entry.hash, entry.contentDigest])).toEqual(fresh.chapters.map((entry) => [entry.number, entry.title, entry.hash, entry.contentDigest]));
     expect(after.outline.book?.body).toBe("About sand.");
   });
+
+  it("reads no entry again when the commit only adds the journal, the brief or Brainstorming's notes to it", async () => {
+    const files = await Promise.all([1, 2, 3].map((number) => autopilotEntry(number, `T${number}`, `B${number}`)));
+    const snapshot = await snapshotOf(files);
+    const { changes } = await compose(snapshot, [{ kind: "update", number: 2, entry: { title: "Two" } }]);
+    const after = await applyToSnapshot(snapshot, [
+      ...changes,
+      { path: "outline/changes.yml", content: "version: 1\nseries: []\n", expectedHash: null },
+      { path: "outline/_brief.md", content: "---\ngenre: Noir\n---\n", expectedHash: null },
+      { path: "outline/brainstorm.md", content: "Notes.", expectedHash: null },
+    ]);
+    expect(after.outline.chapters[0], "the entry nobody changed is the same object: the outline was not read again whole").toBe(snapshot.outline.chapters[0]);
+    expect(after.outline.chapters[2]).toBe(snapshot.outline.chapters[2]);
+    expect(after.outline.chapters[1].title).toBe("Two");
+    expect([...after.files.keys()]).toEqual(expect.arrayContaining(["outline/changes.yml", "outline/_brief.md", "outline/brainstorm.md"]));
+    const fresh = await parseOutline([...after.files.values()]);
+    expect(after.outline.chapters.map((entry) => [entry.number, entry.hash])).toEqual(fresh.chapters.map((entry) => [entry.number, entry.hash]));
+    expect(after.outline.warnings).toEqual(fresh.warnings);
+    const removed = await applyToSnapshot(after, [{ path: "outline/changes.yml", content: null, expectedHash: null }]);
+    expect(removed.outline.chapters[0]).toBe(snapshot.outline.chapters[0]);
+    expect(removed.files.has("outline/changes.yml")).toBe(false);
+  });
 });
 
 describe("the chapter-by-chapter synopsis of the brief", () => {

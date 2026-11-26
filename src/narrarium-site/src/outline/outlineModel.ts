@@ -1,5 +1,8 @@
 import {
   OUTLINE_BOOK_FILE,
+  OUTLINE_BRAINSTORM_FILE,
+  OUTLINE_BRIEF_FILE,
+  OUTLINE_CHANGES_FILE,
   changeOfWritten,
   outlineIndex,
   parseChapterFreeze,
@@ -50,6 +53,9 @@ export function isOutlinePath(path: string): boolean {
   return path === OUTLINE_BOOK_FILE || path.startsWith("outline/");
 }
 
+/** The files of `outline/` that are no entry and that the engine's reading skips (the brief, Brainstorming's notes, the journal): saving one reads no entry again. */
+const OUTLINE_SIDE_FILES: ReadonlySet<string> = new Set([OUTLINE_BRIEF_FILE, OUTLINE_BRAINSTORM_FILE, OUTLINE_CHANGES_FILE]);
+
 /** Two files for one chapter, or a file that is no entry: the outline is read again whole, as the engine reads it, instead of entry by entry. */
 function needsFullReading(outline: ParsedOutline): boolean {
   return outline.warnings.some((warning) => warning.code === "duplicate" || warning.code === "not-an-entry");
@@ -74,7 +80,7 @@ export async function applyToSnapshot(snapshot: OutlineSnapshot, changes: readon
       written.push(file);
     }
   }
-  if (needsFullReading(snapshot.outline) || [...written, ...removed.map((path) => ({ path }))].some(({ path }) => path !== OUTLINE_BOOK_FILE && !parseOutlineChapterPath(path)?.canonical)) {
+  if (needsFullReading(snapshot.outline) || [...written, ...removed.map((path) => ({ path }))].some(({ path }) => path !== OUTLINE_BOOK_FILE && !OUTLINE_SIDE_FILES.has(path) && !parseOutlineChapterPath(path)?.canonical)) {
     return { files, outline: await parseOutline([...files.values()]) };
   }
   const changed = new Set([...written.map((file) => file.path), ...removed]);
@@ -82,6 +88,7 @@ export async function applyToSnapshot(snapshot: OutlineSnapshot, changes: readon
   const byNumber = new Map(snapshot.outline.chapters.map((entry) => [entry.number, entry]));
   const warnings = snapshot.outline.warnings.filter((warning) => warning.code !== "gap" && !(warning.path && changed.has(warning.path)));
   for (const path of removed) {
+    if (OUTLINE_SIDE_FILES.has(path)) continue;
     if (path === OUTLINE_BOOK_FILE) book = null;
     else {
       const number = parseOutlineChapterPath(path)?.number;
@@ -89,6 +96,7 @@ export async function applyToSnapshot(snapshot: OutlineSnapshot, changes: readon
     }
   }
   for (const file of written) {
+    if (OUTLINE_SIDE_FILES.has(file.path)) continue;
     if (file.path === OUTLINE_BOOK_FILE) {
       const read = await readOutlineBook(file.content, file.hash);
       book = read.book;

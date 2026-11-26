@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookConflictError, composeOutlineEdits, remapOutlineNumber, type AutopilotState, type BookFileChange, type OutlineChapterEntry, type OutlineEdit, type OutlineWarning } from "narrarium-engine";
 import { applyToSnapshot, composeOptions, composerSource, restoreChanges, snapshotOf, type OutlineFile, type OutlineSnapshot } from "@/outline/outlineModel";
+import { withJournal } from "@/outline/outlineJournal";
 import type { OutlineSource } from "@/outline/outlineSource";
 
 /** What the author typed in an entry and has not saved: the version of the file it started from is `baseHash` (none for a new entry). */
@@ -53,6 +54,8 @@ export interface OutlineEditorOptions {
   describe: (key: string, options?: Record<string, unknown>) => string;
   /** What the page adds to the announcement of the entries saved (what the autopilot will do with a written chapter's), or nothing. */
   afterSave?: (numbers: readonly number[]) => string;
+  /** The language of the book: the lines of the journal of the Synopsis are in it. */
+  language?: string;
 }
 
 /**
@@ -60,7 +63,7 @@ export interface OutlineEditorOptions {
  * what the page says of it. Every save goes through the engine (`composeOutlineEdits`: one commit) and through the source's commit,
  * which never overwrites a file that changed since it was read: then the edits are kept and the page says that the outline changed elsewhere.
  */
-export function useOutlineEditor({ source, ghostwriters, describe, afterSave }: OutlineEditorOptions) {
+export function useOutlineEditor({ source, ghostwriters, describe, afterSave, language }: OutlineEditorOptions) {
   const [snapshot, setSnapshotState] = useState<OutlineSnapshot | null>(null);
   const snapshotRef = useRef<OutlineSnapshot | null>(null);
   const setSnapshot = useCallback((next: OutlineSnapshot | null) => {
@@ -91,8 +94,8 @@ export function useOutlineEditor({ source, ghostwriters, describe, afterSave }: 
   const [changedElsewhere, setChangedElsewhere] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const [failure, setFailure] = useState<string | null>(null);
-  const latest = useRef({ source, ghostwriters, describe, afterSave });
-  latest.current = { source, ghostwriters, describe, afterSave };
+  const latest = useRef({ source, ghostwriters, describe, afterSave, language });
+  latest.current = { source, ghostwriters, describe, afterSave, language };
 
   const entries = snapshot?.outline.chapters;
   const byNumber = useMemo(() => new Map((entries ?? []).map((entry) => [entry.number, entry])), [entries]);
@@ -182,9 +185,11 @@ export function useOutlineEditor({ source, ghostwriters, describe, afterSave }: 
     try {
       const composed = await composeOutlineEdits(composerSource(before), edits, composeOptions(latest.current.ghostwriters));
       if (!composed.changes.length) return { ok: true, next: before };
+      // The series is a series of the journal of the Synopsis too, by the author, in the same commit; the undo puts back the entries, not the journal.
+      const committed = await withJournal(before.files, composed.changes, { by: "author", language: latest.current.language, hints: { created: composed.created, moved: composed.moved } });
       // The outline once the commit is saved: the files that changed, read again from their final texts.
-      const saved = await applyToSnapshot(before, composed.changes);
-      await from.commit(composed.changes, words.message);
+      const saved = await applyToSnapshot(before, committed);
+      await from.commit(committed, words.message);
       const restore = await restoreChanges(before, composed.changes);
       const previousNumber = new Map<number, number>();
       for (const entry of before.outline.chapters) {
@@ -234,8 +239,10 @@ export function useOutlineEditor({ source, ghostwriters, describe, afterSave }: 
     setBusy(true);
     setFailure(null);
     try {
-      await from.commit(record.restore, `Outline: undo ${record.label}`);
-      const next = await applyToSnapshot(before, record.restore);
+      // Taking an action back is a series of its own in the journal: what the entries say now is told, and the series before it stays.
+      const committed = await withJournal(before.files, record.restore, { by: "author", language: latest.current.language });
+      await from.commit(committed, `Outline: undo ${record.label}`);
+      const next = await applyToSnapshot(before, committed);
       setDrafts((current) => {
         const back = new Map<number, EntryDraft>();
         for (const [number, draft] of current) {

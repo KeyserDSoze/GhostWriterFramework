@@ -1,6 +1,7 @@
 import {
   OUTLINE_BOOK_FILE,
   OUTLINE_BRIEF_FILE,
+  OUTLINE_CHANGES_FILE,
   OUTLINE_ENTRY_MAX_CHARS,
   OutlineReader,
   readOutlineBrief,
@@ -10,6 +11,7 @@ import {
   isValidGhostwriterSlug,
   outlineChapterPath,
   outlineIndex,
+  outlineJournalChange,
   parseOutline,
   parseOutlineChapterPath,
   type AutopilotState,
@@ -334,13 +336,26 @@ const editOutline: McpTool = {
     context.touch(...addressedPaths(edits));
     const snapshot = await context.snapshot();
     const { store } = context.runtime;
-    const composed = await composeToolEdits({ index: snapshot.outline ?? outlineIndex(snapshot.files), paths: snapshot.files.keys(), read: (path) => store.read(path) }, edits, snapshot.ghostwriterSlugs);
+    // What the composer reads is kept: the journal compares the entries as they were with what the series writes, and reads again only what the series did not read (an entry it deletes).
+    const read = new Map<string, string>();
+    const composed = await composeToolEdits({
+      index: snapshot.outline ?? outlineIndex(snapshot.files),
+      paths: snapshot.files.keys(),
+      read: async (path) => {
+        const file = await store.read(path);
+        if (file) read.set(path, file.content);
+        return file;
+      },
+    }, edits, snapshot.ghostwriterSlugs);
     const warnings = composed.warnings.map(warningView);
     if (!composed.changes.length) {
       return json({ edited: false, applied: composed.applied, created: [], updated: [], removed: [], moved: [], files: 0, warnings, message: "Nothing to change: the synopsis already says this." });
     }
-    context.touch(...composed.changes.map((change) => change.path));
-    const commit = await context.commit(composed.changes, `edit outline: ${composed.applied.join("; ")}`.slice(0, 200));
+    // The series is a series of the journal of the Synopsis too, by an assistant through MCP, in the same commit.
+    const journal = await journalOf(store, composed, read, snapshot.book.language);
+    const changes = journal ? [...composed.changes, journal] : composed.changes;
+    context.touch(...changes.map((change) => change.path));
+    const commit = await context.commit(changes, `edit outline: ${composed.applied.join("; ")}`.slice(0, 200));
     // What the autopilot will do is told as a courtesy: the change is made, and it is not undone by a state that cannot be read.
     const notes = await writtenNotes(context, snapshot, composed).catch(() => []);
     return json({
@@ -359,6 +374,31 @@ const editOutline: McpTool = {
     });
   },
 };
+
+/**
+ * The change of the journal of the Synopsis for a series of the tool (`null` when it changes no chapter's entry): the entries as the composer read them, and the ones it
+ * did not read (an entry it deletes, which it knows by its hash) read now.
+ */
+async function journalOf(store: ToolContext["runtime"]["store"], composed: ComposedToolEdits, read: ReadonlyMap<string, string>, language: string) {
+  const before = new Map<string, string>();
+  for (const change of composed.changes) {
+    const known = read.get(change.path);
+    if (known !== undefined) before.set(change.path, known);
+    else if (change.expectedHash) {
+      const file = await store.read(change.path);
+      if (file) before.set(change.path, file.content);
+    }
+  }
+  const journal = await store.read(OUTLINE_CHANGES_FILE);
+  return outlineJournalChange({
+    journal: journal ? { content: journal.content, hash: journal.hash } : null,
+    before,
+    changes: composed.changes,
+    by: "mcp",
+    language,
+    hints: { created: composed.created, moved: composed.moved },
+  });
+}
 
 /** The files the edits name, so that the audit has them even when the call fails: the entries by their number, the description of the book. */
 function addressedPaths(edits: readonly OutlineToolEdit[]): string[] {

@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
-import { BookConflictError, sha256Hex, type BookFileChange } from "narrarium-engine";
+import { BookConflictError, parseOutlineJournal, sha256Hex, type BookFileChange } from "narrarium-engine";
 
 const mocks = vi.hoisted(() => ({
   chats: new Map<string, unknown>(),
@@ -241,10 +241,13 @@ describe("a proposal of Brainstorming", () => {
     expect(mocks.commit, "nothing is applied before the author confirms").not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole("button", { name: "brainstorm.proposal.confirm" }));
     await waitFor(() => expect(mocks.commit).toHaveBeenCalledTimes(1));
-    expect(mocks.commit.mock.calls[0][0]).toEqual([
+    expect(mocks.commit.mock.calls[0][0].slice(0, 2)).toEqual([
       { path: "outline/chapters/002.md", content: entry(2, "The vault", "Mira opens the vault."), expectedHash: await sha256Hex(KEY) },
       { path: "outline/chapters/003.md", content: entry(3, "The key", "Mira finds the key."), expectedHash: await sha256Hex(VAULT) },
     ]);
+    // The same commit adds a series to the journal of the Synopsis: Brainstorming's, the two entries moved.
+    const journal = parseOutlineJournal(mocks.commit.mock.calls[0][0][2].content);
+    expect(journal.series.map((series) => [series.by, series.chapters.map((item) => [item.chapter, item.change, item.from])])).toEqual([["brainstorming", [[2, "moved", 3], [3, "moved", 2]]]]);
     expect(mocks.files.get("outline/chapters/002.md")).toContain("The vault");
     expect(await within(card).findByText("brainstorm.proposal.applied")).toBeInTheDocument();
 

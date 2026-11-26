@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { parseMarkdown } from "narrarium-engine";
+import { parseMarkdown, parseOutlineJournal } from "narrarium-engine";
 import { until, withServer } from "./helpers.mjs";
 import { finished, seededBook } from "./fake-provider.mjs";
 import { fakeAi, holdingAi, startOf } from "./hold.mjs";
@@ -22,6 +22,7 @@ const exists = (server, number) => onDisk(server, entryPath(number)).then(() => 
 const hashOf = async (rpc, number) => done(await rpc.call("read_outline_entry", { number })).hash;
 const bookHash = async (rpc) => done(await rpc.call("read_outline")).book.hash;
 const edit = (rpc, ...edits) => rpc.call("edit_outline", { edits });
+const JOURNAL = "outline/changes.yml";
 
 /** An outline of four entries of the author and a description, for the tests of each edit. */
 const plain = () => [
@@ -58,6 +59,27 @@ test("S9: edit_outline changes an entry as one commit: the engine writes the fil
     const entry = done(await rpc.call("read_outline_entry", { number: 3 }));
     assert.deepEqual([entry.hash, entry.origin, entry.intact, entry.binds, entry.title], [answer.entries[0].hash, "author", false, true, "The Keeper's Fear"]);
     assert.equal(await onDisk(server, "chapters/001-arrival/chapter.md"), chapterBefore, "an edit of the outline never touches a chapter: the freeze of chapter 1 is as it was");
+  });
+});
+
+test("S9: each series of edit_outline is a series of the journal of the Synopsis, by an assistant through MCP, in the same commit, with what happened to each chapter", async () => {
+  await withPlain(async (server, _client, { rpc }) => {
+    const before = commitCount(server);
+    done(await edit(rpc, { kind: "move", from: 3, to: 2 }, { kind: "append", title: "Five", body: "text five" }));
+    assert.equal(commitCount(server), before + 1, "one commit");
+    const journal = parseOutlineJournal(await onDisk(server, JOURNAL));
+    assert.deepEqual(journal.series.map((series) => [series.by, series.chapters.map((item) => [item.chapter, item.change, item.from ?? null, item.title])]), [
+      ["mcp", [[2, "moved", 3, "Three"], [3, "moved", 2, "Two"], [5, "created", null, "Five"]]],
+    ]);
+    const removable = await hashOf(rpc, 4);
+    done(await edit(rpc, { kind: "remove", number: 4, expectedHash: removable }));
+    const after = parseOutlineJournal(await onDisk(server, JOURNAL));
+    assert.deepEqual(after.series.map((series) => series.chapters.map((item) => [item.chapter, item.change, item.title])), [[[2, "moved", "Three"], [3, "moved", "Two"], [5, "created", "Five"]], [[4, "removed", "Four"]]], "appended");
+    const book = done(await edit(rpc, { kind: "book", title: "Another working title" }));
+    assert.equal(book.edited, true);
+    assert.equal(parseOutlineJournal(await onDisk(server, JOURNAL)).series.length, 2, "the description of the book alone is no news of chapters");
+    const outline = done(await rpc.call("read_outline"));
+    assert.equal(JSON.stringify(outline).includes("changes.yml"), false, "the journal is no entry of the synopsis");
   });
 });
 
@@ -571,11 +593,12 @@ test("S9: the audit says which files an edit asked for and changed, with the com
     refused(await edit(rpc, { kind: "remove", number: 9, expectedHash: "a".repeat(64) }), "not_found");
     done(await edit(rpc, { kind: "insert", at: 4, title: marker }, { kind: "book", title: "Another" }));
     const entries = (await server.mcp.audit.recent(10)).reverse().filter((entry) => entry.tool === "edit_outline");
+    // A series that changed entries changed the journal of the Synopsis too.
     assert.deepEqual(entries.map((entry) => [entry.tool, entry.ok, entry.code ?? null, [...(entry.paths ?? [])].sort(), entry.commit ?? null]), [
-      ["edit_outline", true, null, [entryPath(2)], answer.commit],
+      ["edit_outline", true, null, [JOURNAL, entryPath(2)].sort(), answer.commit],
       ["edit_outline", false, "expected_hash_required", [entryPath(3)], null],
       ["edit_outline", false, "not_found", [entryPath(9)], null],
-      ["edit_outline", true, null, ["outline/book.md", entryPath(4), entryPath(5)].sort(), entries[3].commit],
+      ["edit_outline", true, null, ["outline/book.md", JOURNAL, entryPath(4), entryPath(5)].sort(), entries[3].commit],
     ]);
     assert.match(entries[3].commit, /^[0-9a-f]{7,64}$/);
     const log = await readFile(path.join(server.data.root, "mcp-audit.jsonl"), "utf8");
@@ -722,21 +745,22 @@ test("S9: an edit of an outline of 5000 chapters reads the files it rewrites and
       reads.reset();
       const updated = done(await edit(rpc, { kind: "update", number: 2500, body: "A new plan for chapter 2500.", expectedHash: hash }));
       assert.deepEqual([updated.updated, updated.files], [[2500], 1]);
-      assert.deepEqual(reads.outline, [entryPath(2500)], "one file");
+      // Each series also reads the journal of the Synopsis, once, to add itself to it.
+      assert.deepEqual(reads.outline, [entryPath(2500), JOURNAL], "one file");
 
       reads.reset();
       const appended = done(await edit(rpc, { kind: "append", title: "The last chapter" }));
-      assert.deepEqual([appended.created, reads.outline], [[5001], []], "none");
+      assert.deepEqual([appended.created, reads.outline], [[5001], [JOURNAL]], "none");
 
       const removable = await hashOf(rpc, 700);
       reads.reset();
       const removed = done(await edit(rpc, { kind: "remove", number: 700, expectedHash: removable }));
-      assert.deepEqual([removed.removed, removed.files, reads.outline], [[700], 1, []], "a removal needs the hash it was given and reads nothing");
+      assert.deepEqual([removed.removed, removed.files, reads.outline], [[700], 1, [entryPath(700), JOURNAL]], "a removal needs the hash it was given, and reads the entry it removes only for the journal");
 
       reads.reset();
       const inserted = done(await edit(rpc, { kind: "insert", at: 4999, title: "Before the end" }));
       assert.deepEqual([inserted.created, inserted.moved, inserted.files], [[4999], [{ from: 4999, to: 5000, count: 3 }], 4]);
-      assert.deepEqual([...reads.outline].sort(), [entryPath(4999), entryPath(5000), entryPath(5001)], "the three that move");
+      assert.deepEqual([...reads.outline].sort(), [JOURNAL, entryPath(4999), entryPath(5000), entryPath(5001)].sort(), "the three that move");
     } finally {
       reads.stop();
     }

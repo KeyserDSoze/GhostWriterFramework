@@ -19,6 +19,7 @@ import {
   BOOK_FILE,
   CONTEXT_FILE,
   OUTLINE_BOOK_FILE,
+  OUTLINE_CHANGES_FILE,
   PLOT_FILE,
   STORY_DESIGN_FILE,
   TOTAL_RESUME_FILE,
@@ -42,6 +43,7 @@ import { chapterFreezeRecord, freezeChapterChanges, frozenChanges, markReviewedC
 import type { BookSnapshot, ChapterInfo } from "../book/snapshot.js";
 import type { BookFileChange, BookStore } from "../book/store.js";
 import { OUTLINE_TITLE_MAX_CHARS, OutlineReader, outlineBookDigest, outlineEntryDigest, serializeOutlineBook, serializeOutlineChapter, type OutlineChapterEntry } from "../book/outline.js";
+import { appendOutlineJournal, outlineJournalChaptersOf, type OutlineJournalSeen } from "../book/outline-journal.js";
 import { askDirector, directorSystemPrompt, parseDirectorVerdict, renderDirectorOpinion, withheldApprovalNote, type DirectorOpinion } from "../director/opinion.js";
 import { assertFrontmatterReadable, frontmatterString, parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
 import { directorPrompt, type DirectorProfile } from "../profiles/director.js";
@@ -334,13 +336,16 @@ function outlineContentOf(chapter: PlannedChapter): { title: string; body: strin
  * of what it wrote); a chapter the author wrote gets one only when it has none, with its summary; an entry of the autopilot that
  * nobody touched follows the new plan of its chapter; an entry of the author is never touched. Every chapter remembers the digest
  * of its entry as it is after this step, so that a later change of the author is recognized. With `fillOutline` off nothing is
- * written. `outline/book.md` is written once, when it is missing, with the logline of the concept.
+ * written. `outline/book.md` is written once, when it is missing, with the logline of the concept. The entries it writes are a series
+ * of the journal of the Synopsis (`outline/changes.yml`), by the autopilot, in the same commit.
  */
 async function fillOutline(ctx: TaskContext, planned: PlannedChapter[], imported: PlannedChapter[]): Promise<BookFileChange[]> {
   const fill = ctx.state.options.fillOutline !== false;
   const outline = outlineOf(ctx);
   const entries = new Map((await outline.chapters()).map((entry) => [entry.number, entry]));
   const changes: BookFileChange[] = [];
+  const was = new Map<number, OutlineJournalSeen>();
+  const now = new Map<number, OutlineJournalSeen>();
   const write = async (chapter: PlannedChapter, existing?: OutlineChapterEntry) => {
     const content = outlineContentOf(chapter);
     const digest = await outlineEntryDigest(content);
@@ -350,6 +355,8 @@ async function fillOutline(ctx: TaskContext, planned: PlannedChapter[], imported
         content: serializeOutlineChapter({ number: chapter.number, ...content, origin: "autopilot", digest, frontmatter: existing?.frontmatter }),
         expectedHash: existing ? existing.hash : null,
       });
+      if (existing) was.set(chapter.number, { title: existing.title, digest: existing.contentDigest });
+      now.set(chapter.number, { title: content.title, digest });
     }
     chapter.outlineDigest = digest;
   };
@@ -368,6 +375,17 @@ async function fillOutline(ctx: TaskContext, planned: PlannedChapter[], imported
   if (fill && !outline.index.book) {
     const body = clipText(ctx.state.concept.logline || ctx.state.brief.idea, CONCEPT_LOGLINE_CHARACTERS).trim();
     if (body) changes.push({ path: OUTLINE_BOOK_FILE, content: serializeOutlineBook({ body, origin: "autopilot", digest: await outlineBookDigest({ body }) }), expectedHash: null });
+  }
+  const { chapters, more } = outlineJournalChaptersOf(was, now, ctx.language);
+  if (chapters.length) {
+    const journal = await ctx.store.read(OUTLINE_CHANGES_FILE);
+    const at = ctx.now();
+    changes.push({
+      path: OUTLINE_CHANGES_FILE,
+      // The id comes from the moment of the step: one runner writes at a time, and a run with a fixed clock writes the same file.
+      content: appendOutlineJournal(journal?.content, { id: `autopilot-${at.getTime().toString(36)}`, at: at.toISOString(), by: "autopilot", chapters, ...(more ? { more } : {}) }, at),
+      expectedHash: journal?.hash ?? null,
+    });
   }
   return changes;
 }

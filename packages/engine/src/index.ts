@@ -14,6 +14,7 @@ export * from "./book/freeze.js";
 export * from "./book/context.js";
 export * from "./book/outline.js";
 export * from "./book/outline-brief.js";
+export * from "./book/outline-journal.js";
 
 export * from "./profiles/ghostwriter.js";
 export * from "./profiles/readers.js";

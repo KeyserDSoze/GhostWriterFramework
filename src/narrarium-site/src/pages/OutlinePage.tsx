@@ -61,7 +61,7 @@ export function OutlinePage() {
     .filter((group): group is OutlineChangeGroup & { outcome: ToldOutcome } => isToldOutcome(group.outcome))
     .map((group) => t(`outline.written.${group.outcome}`, { count: group.numbers.length, numbers: group.numbers.map(formatCount) }))
     .join(" "), [t]);
-  const editor = useOutlineEditor({ source, ghostwriters: ghostwriterSlugs, describe, afterSave });
+  const editor = useOutlineEditor({ source, ghostwriters: ghostwriterSlugs, describe, afterSave, language: structure?.language });
   const { entries, byNumber, drafts, busy } = editor;
   // The brief of the book is a file of the outline: it is read with the outline and saved with its commits, and what it says is the author's.
   const briefEditor = useOutlineBriefEditor({ file: editor.snapshot?.files.get(OUTLINE_BRIEF_FILE), source, refresh: editor.refresh });

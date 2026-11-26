@@ -147,6 +147,11 @@ test("Brainstorming moves a chapter and creates one in the Synopsis of a book ke
   expect(outline["outline/chapters/003.md"]).toContain("title: The key");
   expect(outline["outline/chapters/004.md"]).toContain("title: The flood");
   expect(outline["outline/chapters/004.md"]).toContain("origin: author");
+  // The same commit wrote a series of the journal of the Synopsis: Brainstorming's, with what happened to each chapter.
+  const { parseOutlineJournal } = await engineModule("index.js");
+  const [journal] = await filesUnder(page, BOOK.repo, "outline/changes.yml");
+  expect(parseOutlineJournal(journal?.text).series.map((series: { by: string; chapters: Array<{ chapter: number; change: string; from?: number }> }) => [series.by, series.chapters.map((item) => [item.chapter, item.change, item.from ?? null])]))
+    .toEqual([["brainstorming", [[2, "moved", 3], [3, "moved", 2], [4, "created", null]]]]);
 
   // Brainstorming asked through the AI router with its own instructions and only its own tools, and the Copilot was never asked.
   expect(ai.calls).toHaveLength(1);
