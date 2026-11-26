@@ -200,7 +200,7 @@ export function describeOutlineEdits(steps: readonly OutlineSeriesStep[], before
     const title = origin === undefined ? undefined : before.outline.chapters.find((entry) => entry.number === origin)?.title;
     return italian ? `il capitolo ${number}${title ? ` «${title}»` : ""}` : `chapter ${number}${title ? ` «${title}»` : ""}`;
   };
-  const fieldName = (field: "title" | "body" | "ghostwriter") => (field === "title" ? (italian ? "titolo" : "title") : field === "body" ? (italian ? "cosa succede" : "what happens") : "ghostwriter");
+  const fieldName = (field: "title" | "body" | "ghostwriter" | "design") => (field === "title" ? (italian ? "titolo" : "title") : field === "body" ? (italian ? "cosa succede" : "what happens") : field === "design" ? (italian ? "progetto" : "design") : "ghostwriter");
   return steps.map((step) => {
     switch (step.kind) {
       case "update": {

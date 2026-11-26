@@ -1,4 +1,5 @@
 import type { OutlineReader } from "../book/outline.js";
+import { missingDesignFields, type DesignFinding, type OutlineChapterDesign } from "../book/design.js";
 import { isItalian } from "../util/text.js";
 import { isPlannedChapterWritten } from "./chapter-state.js";
 import type { PlanNote } from "./planner.js";
@@ -105,4 +106,18 @@ export async function outlinePlanStatus(outline: OutlineReader, state: Autopilot
     });
   }
   return { changed, written, notes };
+}
+
+/**
+ * The soft warnings of the designs of the outline: an entry that has a design without some of its key fields (`OUTLINE_DESIGN_KEY_FIELDS`: the narrative goal, the
+ * point of view, the main events, the ending) is a `design-incomplete` finding. An entry with no design at all is an entry as it always was, and says nothing.
+ */
+export function outlineDesignGaps(chapters: ReadonlyArray<{ number: number; design?: OutlineChapterDesign }>): DesignFinding[] {
+  const findings: DesignFinding[] = [];
+  for (const chapter of [...chapters].sort((left, right) => left.number - right.number)) {
+    if (!chapter.design) continue;
+    const fields = missingDesignFields(chapter.design);
+    if (fields.length) findings.push({ code: "design-incomplete", severity: "info", chapter: chapter.number, fields });
+  }
+  return findings;
 }

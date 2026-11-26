@@ -73,8 +73,9 @@ async function readAll(store: EstimateBookInput["store"], paths: string[]): Prom
 async function readOutline(input: EstimateBookInput): Promise<EstimateBook["outline"]> {
   try {
     const parsed = await parseOutline(await input.outlineFiles());
-    // The entries the autopilot wrote and nobody changed since are its own: they bind nothing, and they are not the author's outline.
-    const author = parsed.chapters.filter((entry) => !entry.intact);
+    // The entries the autopilot wrote and nobody changed since are its own: they bind nothing, and they are not the author's outline. The empty ones it made with
+    // no digest (a new book of a given size, the chapters a design adds) are the chapters of the book all the same: they give its length.
+    const author = parsed.chapters.filter((entry) => !entry.intact || (!entry.digest && !entry.title && !entry.body.trim() && !entry.ghostwriter && !entry.design));
     if (author.length === 0) return undefined;
     // The description of the book is the idea, which the estimate takes from the brief: it is not counted again among the outline's words.
     return {

@@ -84,6 +84,14 @@ annotations/
   tags.yml
   chapters/
     001-chapter-title.yml
+outline/
+  book.md
+  _brief.md
+  chapters/
+    001.md
+bible/
+  themes.md
+  world.md
 assets/
   book/
   characters/
@@ -188,6 +196,38 @@ tags:
 ```
 
 The `description` of a tag says what it means and is also the instruction for the AI when it works on an annotation with that tag. The `mark` is how the reader draws it: an underline (`wavy`, `double`, `dashed`, `dotted`, `solid`), an icon and a colour, never the colour alone. A value of the mark that a version does not know (one that a newer version added) is drawn as the mark of a removed tag and written back as it was while the author does not change that part of the mark.
+
+## The Synopsis and the Story Bible
+
+The Story Bible is the book's own files composed, plus `bible/` for what has no other home. Nothing is copied: the app's Bible reads the description and the Synopsis (`outline/`), `story-design.md`, `context.md`, the canon and the secrets, and edits each part where it lives.
+
+- `outline/chapters/<NNN>.md` may carry `design:`, the design of the chapter (what a writer needs to write it, never its prose): `goal`, `pov`, `characters`, `setting`, `time`, `events`, `scenes`, `conflicts`, `emotions`, `reveals`, `withholds`, `clues`, `previous`, `next`, `ending`, `cliffhanger` (true or false), `notes` (for the ghostwriter). Texts, lists of lines, all optional; a key the engine does not know is kept. An entry without `design:` is an entry as it always was, with the same `digest`.
+- `outline/book.md` may carry `design_approved: { at, run }`: the author approved the design run that started at `run` (the autopilot's `state.design.startedAt`).
+- `secrets/<slug>.md` may carry the ledger of the secret, chapters as numbers (0: before the book begins): `learned_by` (`- { character: character:<slug>, chapter: 7 }`), `reader_knows`, `clues`, `red_herrings` (`- { chapter: 3, note: … }`) and `consequences` (a list of lines), beside `holders` (who knows it from the start), `known_from` and `reveal_in`.
+- `bible/themes.md` (`type: bible`, `id: bible:themes`): `themes` (a list) and `tone`; `bible/world.md` (`type: bible`, `id: bible:world`): `rules`, the rules of the world the story never breaks. The body of each is free notes.
+
+```md
+---
+type: outline-chapter
+id: outline-chapter:003
+number: 3
+title: The Lighthouse
+origin: author
+design:
+  goal: Mara learns the keeper lied about the wreck.
+  pov:
+    - Mara
+  events:
+    - Mara climbs to the lamp room.
+    - She finds the logbook torn out.
+  clues:
+    - The keeper's boots are wet on a dry day.
+  ending: The lamp goes out.
+  cliffhanger: true
+---
+
+Mara climbs to the lamp room at dusk and finds the logbook torn out.
+```
 
 ## Markdown frontmatter
 

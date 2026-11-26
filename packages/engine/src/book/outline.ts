@@ -1,6 +1,7 @@
 import { parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
 import { sha256Hex } from "../util/hash.js";
 import { clipText } from "../util/text.js";
+import { OUTLINE_DESIGN_KEYS, applyDesignPatch, designFingerprint, normalizeDesignPatch, readOutlineDesign, type OutlineChapterDesign, type OutlineDesignPatch } from "./design.js";
 import { OUTLINE_BOOK_FILE, OUTLINE_BRAINSTORM_FILE, OUTLINE_BRIEF_FILE, OUTLINE_CHANGES_FILE, OUTLINE_DIRECTORY, formatOrdinal, isValidGhostwriterSlug, outlineChapterPath, parseOutlineChapterPath } from "./paths.js";
 import type { BookFileChange, BookStore } from "./store.js";
 
@@ -46,6 +47,7 @@ export type OutlineWarningCode =
   | "title-too-long"
   | "ghostwriter-missing"
   | "ghostwriter-invalid"
+  | "design-invalid"
   | "not-found";
 
 /** Something odd in the outline. Never an error: the outline is read, and written, all the same. The message is in English and names the file. */
@@ -68,6 +70,8 @@ export interface OutlineChapterEntry {
   body: string;
   /** The slug of `ghostwriters/<slug>.md`; absent: the book's. */
   ghostwriter?: string;
+  /** The design of the chapter (`design:`, see `OutlineChapterDesign`), as far as it can be read; absent: the entry has none. */
+  design?: OutlineChapterDesign;
   origin: OutlineOrigin;
   /** The digest the autopilot wrote with the entry. */
   digest?: string;
@@ -112,12 +116,14 @@ function canonicalText(value: string | null | undefined): string {
 }
 
 /**
- * The fingerprint of what an entry says: its title, its text and its ghostwriter (line endings and the spaces around them do not
- * count). Sixteen hexadecimal characters of a SHA-256. The autopilot writes it with the entries it writes (`digest`), and the plan
- * keeps it for the chapters that come from an entry (`PlannedChapter.outlineDigest`).
+ * The fingerprint of what an entry says: its title, its text, its ghostwriter and its design (line endings and the spaces around them do not
+ * count, nor how the YAML of the design is written). Sixteen hexadecimal characters of a SHA-256. The autopilot writes it with the entries it
+ * writes (`digest`), and the plan keeps it for the chapters that come from an entry (`PlannedChapter.outlineDigest`). An entry with no design
+ * (or an empty one) has the fingerprint it had before designs existed.
  */
-export async function outlineEntryDigest(entry: { title?: string; body?: string; ghostwriter?: string | null }): Promise<string> {
-  return (await sha256Hex(JSON.stringify(["outline-chapter", canonicalText(entry.title), canonicalText(entry.ghostwriter), canonicalText(entry.body)]))).slice(0, 16);
+export async function outlineEntryDigest(entry: { title?: string; body?: string; ghostwriter?: string | null; design?: unknown }): Promise<string> {
+  const design = designFingerprint(entry.design);
+  return (await sha256Hex(JSON.stringify(["outline-chapter", canonicalText(entry.title), canonicalText(entry.ghostwriter), canonicalText(entry.body), ...(design ? [design] : [])]))).slice(0, 16);
 }
 
 /** The fingerprint of the description of the book: its working title and its text. */
@@ -188,8 +194,14 @@ export async function readOutlineChapter(path: string, number: number, content: 
   if (declared !== undefined && declared !== null && Number(declared) !== number) {
     reading.warn("number-mismatch", `the frontmatter says chapter ${quoted(declared)}, the name of the file says ${number}: the name wins`);
   }
-  const contentDigest = await outlineEntryDigest({ title: reading.title, body: reading.body, ghostwriter });
-  const intact = !reading.unreadable && reading.origin === "autopilot" && reading.digest === contentDigest;
+  const rawDesign = reading.frontmatter.design;
+  const { design, problems } = readOutlineDesign(rawDesign);
+  for (const problem of problems) reading.warn("design-invalid", problem);
+  const contentDigest = await outlineEntryDigest({ title: reading.title, body: reading.body, ghostwriter, design: rawDesign });
+  // An entry the autopilot made with nothing in it and no digest (the empty entries a new book of a given size starts with, the ones a design run adds) is a place
+  // the autopilot fills: its own. Any word in it, a design included, makes it the author's.
+  const placeholder = !reading.digest && !reading.title && !reading.body && !ghostwriter && !designFingerprint(rawDesign);
+  const intact = !reading.unreadable && reading.origin === "autopilot" && (reading.digest === contentDigest || placeholder);
   return {
     entry: {
       number,
@@ -198,6 +210,7 @@ export async function readOutlineChapter(path: string, number: number, content: 
       title: reading.title,
       body: reading.body,
       ...(ghostwriter ? { ghostwriter } : {}),
+      ...(design ? { design } : {}),
       origin: reading.origin,
       ...(reading.digest ? { digest: reading.digest } : {}),
       contentDigest,
@@ -312,16 +325,38 @@ export interface OutlineChapterInput {
   title?: string;
   body?: string;
   ghostwriter?: string | null;
+  /**
+   * The design: a change of the one the file has (`frontmatter.design`), field by field (`OutlineDesignPatch`: a value sets a field, `null` takes it away, a field not
+   * given stays); `null` takes the whole design away; absent: the design stays as it is.
+   */
+  design?: OutlineDesignPatch | null;
   origin?: OutlineOrigin;
   digest?: string;
   /** The keys the file has now: kept, but for the ones the format manages. */
   frontmatter?: Record<string, unknown>;
 }
 
+/** The value of `design:` an entry has once `input` is written (`undefined`: none): what the file will say, and what its fingerprint is made of. */
+export function outlineDesignOf(input: Pick<OutlineChapterInput, "design" | "frontmatter">): unknown {
+  const base = input.frontmatter?.design;
+  return input.design === undefined ? base ?? undefined : applyDesignPatch(base, input.design);
+}
+
+/** A design written whole: every field of the engine is set or taken away, the keys it does not know are kept. What the autopilot writes. */
+export function wholeDesignPatch(design: OutlineChapterDesign | null | undefined): OutlineDesignPatch {
+  const { patch } = normalizeDesignPatch(design ?? {});
+  const whole: Record<string, unknown> = {};
+  for (const key of OUTLINE_DESIGN_KEYS) whole[key] = patch[key] ?? null;
+  return whole as OutlineDesignPatch;
+}
+
 export function serializeOutlineChapter(entry: OutlineChapterInput): string {
   const origin: OutlineOrigin = entry.origin === "autopilot" ? "autopilot" : "author";
+  // The design comes last, after the keys of the entry: it is the longest part of the frontmatter.
+  const { design: base, ...frontmatter } = entry.frontmatter ?? {};
+  const design = entry.design === undefined ? base : applyDesignPatch(base, entry.design);
   return renderMarkdown({
-    ...(entry.frontmatter ?? {}),
+    ...frontmatter,
     type: "outline-chapter",
     id: `outline-chapter:${formatOrdinal(entry.number)}`,
     number: entry.number,
@@ -329,6 +364,7 @@ export function serializeOutlineChapter(entry: OutlineChapterInput): string {
     ghostwriter: entry.ghostwriter?.trim() || undefined,
     origin,
     digest: origin === "autopilot" ? entry.digest?.trim() || undefined : undefined,
+    ...(design !== undefined && design !== null ? { design } : {}),
   }, canonicalText(entry.body));
 }
 
@@ -359,6 +395,8 @@ export interface OutlineEntryInput {
   body?: string;
   /** `null` takes the ghostwriter away: the book's writes the chapter. */
   ghostwriter?: string | null;
+  /** A change of the design, field by field (`OutlineDesignPatch`); `null` takes the whole design away. */
+  design?: OutlineDesignPatch | null;
 }
 
 /**
@@ -400,8 +438,8 @@ interface Placement {
   input?: OutlineEntryInput;
 }
 
-/** The text and the title of an edit within their limits, and its ghostwriter checked: what is cut or odd is a warning. */
-function checkedInput(number: number, input: OutlineEntryInput, base: OutlineChapterEntry | undefined, ghostwriters: readonly string[] | undefined, warnings: OutlineWarning[]): { title: string; body: string; ghostwriter?: string } {
+/** The text and the title of an edit within their limits, its ghostwriter checked and its design made what the files keep: what is cut or odd is a warning. */
+function checkedInput(number: number, input: OutlineEntryInput, base: OutlineChapterEntry | undefined, ghostwriters: readonly string[] | undefined, warnings: OutlineWarning[]): { title: string; body: string; ghostwriter?: string; design?: OutlineDesignPatch | null } {
   const path = outlineChapterPath(number);
   let title = (input.title !== undefined ? input.title : base?.title ?? "").trim();
   let body = canonicalText(input.body !== undefined ? input.body : base?.body ?? "");
@@ -422,7 +460,14 @@ function checkedInput(number: number, input: OutlineEntryInput, base: OutlineCha
   if (base?.unreadable) {
     warnings.push({ code: "unreadable", path, number, message: `${path}: its frontmatter could not be read, so the entry is written anew from this edit; keys that could not be read are not kept.` });
   }
-  return { title, body, ...(ghostwriter ? { ghostwriter } : {}) };
+  let design: OutlineDesignPatch | null | undefined;
+  if (input.design === null) design = null;
+  else if (input.design !== undefined) {
+    const normalized = normalizeDesignPatch(input.design);
+    for (const problem of normalized.problems) warnings.push({ code: "text-too-long", path, number, message: `${path}: ${problem}.` });
+    design = normalized.patch;
+  }
+  return { title, body, ...(ghostwriter ? { ghostwriter } : {}), ...(design !== undefined ? { design } : {}) };
 }
 
 /**

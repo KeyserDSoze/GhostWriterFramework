@@ -50,15 +50,15 @@ export type OutlineSeriesEdit =
   | (Extract<OutlineEdit, { kind: "remove" | "update" | "book" }> & { expectedHash?: string });
 
 /**
- * Whether an edit replaces what someone must have read: the text of an entry that exists, an entry that is deleted, the description of the book. The rule of a caller that
- * never overwrites what changed meanwhile (`OutlineComposeOptions.requireHash`): a title or a ghostwriter changes no text, and a new entry has no file to compare.
+ * Whether an edit replaces what someone must have read: the text or the design of an entry that exists, an entry that is deleted, the description of the book. The rule
+ * of a caller that never overwrites what changed meanwhile (`OutlineComposeOptions.requireHash`): a title or a ghostwriter changes no text, and a new entry has no file to compare.
  */
 export function outlineEditNeedsHash(edit: OutlineSeriesEdit): boolean {
   switch (edit.kind) {
     case "remove":
       return true;
     case "update":
-      return edit.entry.body !== undefined;
+      return edit.entry.body !== undefined || edit.entry.design !== undefined;
     case "book":
       return edit.body !== undefined;
     default:
@@ -170,7 +170,7 @@ export type OutlineSeriesStep =
   | { kind: "move"; from: number; to: number; unchanged: boolean; origin?: number; missing?: true }
   | { kind: "remove"; number: number; renumber: boolean; origin?: number; missing?: true }
   /** `created`: the chapter had no entry. `fields`: what the edit set. */
-  | { kind: "update"; number: number; created: boolean; fields: Array<"title" | "body" | "ghostwriter">; origin?: number }
+  | { kind: "update"; number: number; created: boolean; fields: Array<"title" | "body" | "ghostwriter" | "design">; origin?: number }
   | { kind: "book"; created: boolean; fields: Array<"title" | "body"> };
 
 /** Entries that moved together: `count` entries from chapter `from` are now from chapter `to`. */
@@ -352,7 +352,7 @@ function runs(pairs: ReadonlyArray<readonly [number, number]>): OutlineMovedRun[
 /** The number an entry had when the series began, as a step says it (nothing for an entry the series made). */
 const originOf = (live: Live | undefined): { origin?: number } => (live && live.origin !== null ? { origin: live.origin } : {});
 
-const fieldsOfEntry = (entry: OutlineEntryInput): Array<"title" | "body" | "ghostwriter"> => (["title", "body", "ghostwriter"] as const).filter((key) => entry[key] !== undefined);
+const fieldsOfEntry = (entry: OutlineEntryInput): Array<"title" | "body" | "ghostwriter" | "design"> => (["title", "body", "ghostwriter", "design"] as const).filter((key) => entry[key] !== undefined);
 
 /** The chapters from 1 to the last that have no entry, as runs (`2-3,6`): only to tell whether two outlines have the same gaps. */
 function gapsOf(numbers: Iterable<number>): string {

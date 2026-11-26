@@ -111,8 +111,8 @@ test("the rule of what the autopilot does when an entry changes needs the state 
   assert.deepEqual(closure("autopilot/outline-change.js"), ["autopilot/chapter-state.js", "autopilot/outline-change.js", "autopilot/types.js"]);
 });
 
-test("the composer of the outline needs the outline, its paths, its frontmatter and the small utilities, and no other part of the autopilot", () => {
-  const allowed = [/^autopilot\/outline-compose\.js$/, /^book\/outline\.js$/, /^book\/paths\.js$/, /^markdown\//, /^util\//, /^pkg:(?:yaml|narrarium\/slug)$/];
+test("the composer of the outline needs the outline (the design of its entries too), its paths, its frontmatter and the small utilities, and no other part of the autopilot", () => {
+  const allowed = [/^autopilot\/outline-compose\.js$/, /^book\/outline\.js$/, /^book\/design\.js$/, /^book\/paths\.js$/, /^markdown\//, /^util\//, /^pkg:(?:yaml|narrarium\/slug)$/];
   const unexpected = closure("autopilot/outline-compose.js").filter((file) => !allowed.some((pattern) => pattern.test(file)));
   assert.deepEqual(unexpected, [], "something that is no part of the outline came in: a page that shows the outline would carry it");
 });

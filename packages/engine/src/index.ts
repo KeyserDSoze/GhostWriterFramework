@@ -13,6 +13,7 @@ export * from "./book/snapshot.js";
 export * from "./book/freeze.js";
 export * from "./book/context.js";
 export * from "./book/outline.js";
+export * from "./book/design.js";
 export * from "./book/outline-brief.js";
 export * from "./book/outline-journal.js";
 
