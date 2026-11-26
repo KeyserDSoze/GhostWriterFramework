@@ -21,8 +21,8 @@ import { describeErrorBody, suggestsResponsesApi } from "../ai/provider-error.js
 import { attemptInfoOf } from "./attempt.js";
 import { autopilotErrorFields } from "./errors.js";
 import { readBrief } from "./brief.js";
-import { applyFrozenDecision, campaignGoesOn, frozenAnswerAction, isFrozenQuestion, settleFrozenChanges } from "./frozen.js";
-import { mergeCampaign } from "./campaign.js";
+import { applyFrozenDecision, authorHeldChapters, campaignGoesOn, frozenAnswerAction, isFrozenQuestion, settleFrozenChanges } from "./frozen.js";
+import { mergeCampaign, resumeCampaign } from "./campaign.js";
 import { outlinePlanStatus } from "./outline-check.js";
 import { advanceState, bookChapters, extensionNote, nextStep, phaseOf, type PlanNote, type PlannerContext, type TaskDescriptor } from "./planner.js";
 import { profileProblems, profileProblemsMessage, profileProblemsTitle } from "./profile-check.js";
@@ -50,6 +50,7 @@ import {
   type AutopilotActivity,
   type AutopilotEventBody,
   type AutopilotLastErrorCode,
+  type AutopilotLimitReached,
   type AutopilotLimitsSummary,
   type AutopilotMessageCode,
   type AutopilotOptions,
@@ -1002,7 +1003,7 @@ export class AutopilotRun {
   private announce(note: PlanNote): void {
     if (this.reported.has(note.key)) return;
     this.reported.add(note.key);
-    this.emit({ type: "insight", tone: note.tone, title: note.title, ...(note.detail ? { detail: note.detail } : {}), ...(note.code ? { code: note.code } : {}), ...(note.chapterNumber !== undefined ? { chapterNumber: note.chapterNumber } : {}) });
+    this.emit({ type: "insight", tone: note.tone, title: note.title, ...(note.detail ? { detail: note.detail } : {}), ...(note.code ? { code: note.code } : {}), ...(note.chapterNumber !== undefined ? { chapterNumber: note.chapterNumber } : {}), ...(note.figures ? { figures: note.figures } : {}) });
   }
 
   /**
@@ -1117,9 +1118,11 @@ export class AutopilotRun {
     const { brief, changes: briefChanges } = await readBrief(store, stored.state);
     let state = stored.state ?? createAutopilotState(this.now(), brief, start.options);
     const startedAt = this.now().toISOString();
+    // A run that starts is nobody's pause any more: what the server said of its stop goes, and so does the limit that stopped it (one still reached stops it
+    // again, before its first step); a campaign held for the author goes on, and the rounds of a review it allows are counted again from here.
+    const { limitReached: _limit, ...fresh } = resumeCampaign(withoutStopCause(state), startedAt);
     state = extendPlanIfNeeded({
-      // A run that starts is nobody's pause any more: what the server said of its stop goes.
-      ...withoutStopCause(state),
+      ...fresh,
       brief,
       options: normalizeOptions(start.options ?? {}, state.options),
       plan: state.plan ? { ...state.plan, awaitingAuthor: false } : null,
@@ -1226,7 +1229,8 @@ export class AutopilotRun {
         const settled = settleFrozenChanges(state, { snapshot, outlineWritten: outlineStatus.written, language: context.planner.language, now: at });
         for (const note of settled.notes) this.announce(note);
         this.frozenWaitingCount = settled.waiting;
-        context.planner.frozen = { outlineWritten: outlineStatus.written, now: at };
+        // A review of the book leaves the author's chapters to the author: it learns which they are now.
+        context.planner.frozen = { outlineWritten: outlineStatus.written, now: at, ...(settled.state.campaign?.review ? authorHeldChapters(snapshot) : {}) };
         // A decision about a change may start now (the chapter goes back to review, before the plan). Advancing is idempotent: it is done
         // again only when there is something new for it.
         if (settled.state !== state || settled.state.pendingReviews?.some((entry) => !entry.started) || campaignGoesOn(settled.state)) state = advanceState(settled.state, context.planner);
@@ -1237,7 +1241,7 @@ export class AutopilotRun {
           step = nextStep(state, context.planner);
         }
         if (step.kind === "stop") {
-          state = await this.finish(state, step.status, step.message);
+          state = await this.finish(state, step.status, step.message, step.code);
           break;
         }
         const italian = isItalian(context.planner.language);
@@ -1259,12 +1263,17 @@ export class AutopilotRun {
           state = await this.finish(state, "waiting-author", profileProblemsMessage(problems, context.planner.language));
           break;
         }
+        // The caps of the book: what it spent in all its runs (`stats`, never set back by a restart) against the caps of the options. The stop says the numbers.
         if (state.options.budgetLimit > 0 && state.stats.cost >= state.options.budgetLimit) {
-          state = await this.finish(state, "paused", italian ? "Budget raggiunto: alza il limite per continuare." : "Budget reached: raise the limit to continue.");
+          const limit: AutopilotLimitReached = { kind: "money", used: state.stats.cost, limit: state.options.budgetLimit, ...(state.stats.currency ? { currency: state.stats.currency } : {}), at: this.now().toISOString() };
+          this.emit({ type: "insight", tone: "warning", code: "budgetReached", title: italian ? "Budget raggiunto: alza il limite per continuare." : "Budget reached: raise the limit to continue.", figures: { used: limit.used, limit: limit.limit, ...(limit.currency ? { currency: limit.currency } : {}) } });
+          state = await this.finish({ ...state, limitReached: limit }, "paused", italian ? "Budget raggiunto: alza il limite per continuare." : "Budget reached: raise the limit to continue.", "budgetReached");
           break;
         }
         if ((state.options.budgetTokens ?? 0) > 0 && state.stats.inputTokens + state.stats.outputTokens >= (state.options.budgetTokens ?? 0)) {
-          state = await this.finish(state, "paused", italian ? "Budget di token raggiunto: alza il limite per continuare." : "Token budget reached: raise the limit to continue.");
+          const limit: AutopilotLimitReached = { kind: "tokens", used: state.stats.inputTokens + state.stats.outputTokens, limit: state.options.budgetTokens ?? 0, at: this.now().toISOString() };
+          this.emit({ type: "insight", tone: "warning", code: "tokenBudgetReached", title: italian ? "Budget di token raggiunto: alza il limite per continuare." : "Token budget reached: raise the limit to continue.", figures: { used: limit.used, limit: limit.limit } });
+          state = await this.finish({ ...state, limitReached: limit }, "paused", italian ? "Budget di token raggiunto: alza il limite per continuare." : "Token budget reached: raise the limit to continue.", "tokenBudgetReached");
           break;
         }
         task = step.task;

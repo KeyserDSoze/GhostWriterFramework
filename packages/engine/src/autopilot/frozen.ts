@@ -60,7 +60,8 @@ function finishingWork(state: AutopilotState): boolean {
 
 /** A campaign has chapters that wait for their turn, or one being worked (`state.campaign`). */
 export function campaignGoesOn(state: Pick<AutopilotState, "campaign">): boolean {
-  return Boolean(state.campaign?.chapters.some((chapter) => chapter.status === "waiting" || chapter.status === "working"));
+  // A review of the book goes on between its rounds too (the book is judged, or the author is waited for), until it is taken away.
+  return Boolean(state.campaign?.review) || Boolean(state.campaign?.chapters.some((chapter) => chapter.status === "waiting" || chapter.status === "working"));
 }
 
 /**
@@ -477,6 +478,20 @@ export interface PlannerFrozen {
   outlineWritten: ReadonlyMap<number, OutlineWrittenChange>;
   /** The moment the step begins. */
   now: string;
+  /**
+   * While a review of the book goes on: the chapters (their slugs) the author froze, and the frozen ones changed since they were frozen (a change of the author's,
+   * which its own rules decide about first). The review leaves them to the author.
+   */
+  authorFrozen?: ReadonlySet<string>;
+  changedFrozen?: ReadonlySet<string>;
+}
+
+/** What a review of the book needs to know of the frozen chapters (`PlannerFrozen.authorFrozen`, `changedFrozen`): the ones the author froze, and the ones changed since. */
+export function authorHeldChapters(snapshot: BookSnapshot): Required<Pick<PlannerFrozen, "authorFrozen" | "changedFrozen">> {
+  return {
+    authorFrozen: new Set(snapshot.chapters.filter((chapter) => chapter.frozen?.by === "author").map((chapter) => chapter.slug)),
+    changedFrozen: new Set(frozenChanges(snapshot).map((change) => change.slug)),
+  };
 }
 
 const PLAN_GOAL_CHARACTERS = 1200;

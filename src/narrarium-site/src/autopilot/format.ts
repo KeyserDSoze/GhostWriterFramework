@@ -99,6 +99,11 @@ export function formatCount(value: number): string {
   return new Intl.NumberFormat(locale(), { notation: value >= 100_000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(value);
 }
 
+/** A whole number as it is, with the separators of the app's language: «1,200,300». */
+export function formatWhole(value: number): string {
+  return new Intl.NumberFormat(locale(), { maximumFractionDigits: 0 }).format(value);
+}
+
 /**
  * An amount of money that is `currency` (the currency it was recorded in; absent: the setting's), written by the one formatter of the app (`costs/money.ts`)
  * with the settings as they are now: in the currency of the setting when it is that one or has an exchange rate to it, else in its own. Nothing is «—».
@@ -219,8 +224,53 @@ function resumedText(t: TFunction, event: Notice): string {
   return t("autopilot.insight.resumedAfterRestart", { ...(book && book.autopilotHost !== "server" ? { context: "browser" } : {}), defaultValue: event.title });
 }
 
+/** A vote as the review says it: «6.5/10», in the numbers of the app; «—» for one nobody gave. */
+export function voteText(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${formatCount(value)}/10` : "—";
+}
+
+/**
+ * The insights of a review of the book (`review-target`) and of the caps of the book, with their numbers (`figures`): the vote of a chapter and the target, the
+ * votes of a round, how it ended, what a cap compared (money in the currency it was counted in). Without the numbers (an older engine) its own words stay.
+ */
+const REVIEW_CODES = new Set(["reviewChapterDone", "reviewChapterSkipped", "reviewRoundDone", "reviewDone", "reviewStopped", "reviewHeld", "budgetReached", "tokenBudgetReached"]);
+
+function reviewText(t: TFunction, event: Extract<Notice, { type: "insight" }>): string {
+  const figures = event.figures;
+  const key = `autopilot.insight.${event.code}`;
+  const title = event.title;
+  switch (event.code) {
+    case "reviewChapterDone":
+      if (typeof event.chapterNumber !== "number" || typeof figures?.score !== "number" || typeof figures.target !== "number") return title;
+      return t(key, { number: event.chapterNumber, score: voteText(figures.score), target: voteText(figures.target), defaultValue: title });
+    case "reviewChapterSkipped":
+      return typeof event.chapterNumber === "number" ? t(key, { number: event.chapterNumber, defaultValue: title }) : title;
+    case "reviewRoundDone":
+      if (!figures || typeof figures.round !== "number" || typeof figures.target !== "number") return title;
+      return t(key, { round: figures.round, lowest: voteText(figures.lowest), book: voteText(figures.book), target: voteText(figures.target), defaultValue: title });
+    case "reviewDone":
+      if (!figures || typeof figures.rounds !== "number" || typeof figures.target !== "number") return title;
+      return t(key, { count: figures.rounds, book: voteText(figures.book), target: voteText(figures.target), defaultValue: title });
+    case "reviewStopped":
+      if (!figures || typeof figures.target !== "number") return title;
+      return t(key, { ...(figures.outcome === "plateau" || figures.outcome === "chapters" ? { context: figures.outcome } : {}), lowest: voteText(figures.lowest), book: voteText(figures.book), target: voteText(figures.target), defaultValue: title });
+    case "reviewHeld":
+      return typeof figures?.rounds === "number" ? t(key, { count: figures.rounds, defaultValue: title }) : title;
+    case "budgetReached":
+      if (typeof figures?.used !== "number" || typeof figures.limit !== "number") return title;
+      return t(key, { used: formatCost(figures.used, figures.currency), limit: formatCost(figures.limit, figures.currency), defaultValue: title });
+    case "tokenBudgetReached":
+      if (typeof figures?.used !== "number" || typeof figures.limit !== "number") return title;
+      // Whole, not compact: a cap is compared to the token.
+      return t(key, { used: formatWhole(figures.used), limit: formatWhole(figures.limit), defaultValue: title });
+    default:
+      return title;
+  }
+}
+
 function noticeText(t: TFunction, event: Notice): string {
   if (!event.code) return event.title;
+  if (REVIEW_CODES.has(event.code)) return event.type === "insight" ? reviewText(t, event) : event.title;
   if (event.type === "insight" && event.code === "resumedAfterRestart") return resumedText(t, event);
   if (event.type === "insight" && event.code === "failureRetry") return retryText(t, event);
   if (event.type === "insight" && event.code === "callsStoreFailed") return callsStoreText(t, event);

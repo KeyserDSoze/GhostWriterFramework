@@ -28,7 +28,7 @@ import {
   type FrozenWorkItem,
 } from "./frozen.js";
 import { readBrief } from "./brief.js";
-import { RevisionCampaignError, cancelRevisionCampaign, createRevisionCampaign, recordRevisionCampaign, type ReviseChaptersInput, type RevisionCampaignResult } from "./campaign.js";
+import { RevisionCampaignError, cancelRevisionCampaign, createReviewCampaign, createRevisionCampaign, recordRevisionCampaign, type ReviewBookInput, type ReviseChaptersInput, type RevisionCampaignResult } from "./campaign.js";
 import { createModelMemory, type AiModelMemory } from "../ai/memory.js";
 import { applyLiveAttempt, applyLiveProgress, startLive } from "./live.js";
 import { outlinePlanStatus, type OutlineWrittenChange } from "./outline-check.js";
@@ -811,6 +811,38 @@ export class AutopilotSession {
     return this.campaignResult();
   }
 
+  /**
+   * Review the finished book again to a target score (`ReviewBookInput`): the chapters whose vote is under the target (the autopilot's, and the author's the author
+   * includes) are reviewed again round after round, then the director judges the whole book, until the target is reached, no chapter is under it, or two rounds raise
+   * nothing (a plateau); the rounds allowed since a run began make it wait for the author, and the money cap of the book stops the run as it always does. Saved at once
+   * (the money and token caps given are the options' own), carried out by the next run. Refused with a `RevisionCampaignError`: `invalid_request`, `not_finished`,
+   * `campaign_active`, `nothing_to_review`. Answers as `reviseChapters`; nothing is started.
+   */
+  async reviewBook(input: ReviewBookInput): Promise<RevisionCampaignResult> {
+    if (this.starting) await this.starting.catch(() => undefined);
+    // A finished book has no run going on; one that does is about to stop, and the caps of the options are not changed under it.
+    if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
+    const stored = await readStoredAutopilot(this.config.store);
+    assertStoredStateReadable(stored);
+    if (!stored.state) throw new RevisionCampaignError("not_finished", "This book has no autopilot yet: there is no finished book to review.");
+    const snapshot = await loadBookSnapshot(this.config.store, this.bookCache);
+    const now = this.now();
+    const campaign = createReviewCampaign(input, stored.state, snapshot, now);
+    const at = now.toISOString();
+    // The caps are the options' own fields: the configuration shows what the review was given, and the next review starts from it.
+    const caps = {
+      ...(input.budgetLimit !== undefined ? { budgetLimit: input.budgetLimit } : {}),
+      ...(input.budgetTokens !== undefined ? { budgetTokens: input.budgetTokens } : {}),
+      ...(input.campaignMaxRounds !== undefined ? { review: { campaignMaxRounds: input.campaignMaxRounds } } : {}),
+    };
+    await this.mutate(`Autopilot: review the book again to ${campaign.review!.targetScore}/10 (${campaign.chapters.length === 1 ? "1 chapter" : `${campaign.chapters.length} chapters`})`, (state) => {
+      // Made again from the state as it is saved now (it may have changed since it was read): the same review, of the book as it is.
+      const next = recordRevisionCampaign(state, createReviewCampaign(input, state, snapshot, now, campaign.id), at, this.running);
+      return Object.keys(caps).length ? { ...next, options: normalizeOptions(caps, next.options) } : next;
+    }, { create: false });
+    return this.campaignResult();
+  }
+
   /** Cancel the chapters of the campaign that wait (the one being worked finishes): what the reason does with them is its own (`cancel`). Answers as `reviseChapters`. */
   async cancelRevisionCampaign(): Promise<RevisionCampaignResult> {
     if (this.starting) await this.starting.catch(() => undefined);
@@ -896,7 +928,7 @@ export class AutopilotSession {
     const source: Record<string, unknown> = input && typeof input === "object" ? { ...input } : {};
     if (this.running) {
       const live = new Set<string>(LIVE_AUTOPILOT_OPTIONS);
-      const options = new Set<string>([...Object.keys(DEFAULT_OPTIONS), "publishEvery", "longRetry"]);
+      const options = new Set<string>([...Object.keys(DEFAULT_OPTIONS), "publishEvery", "longRetry", "review"]);
       if (Object.keys(source).some((key) => options.has(key) && !live.has(key) && source[key] !== undefined)) throw new AutopilotBusyError(this.config.hostLabel);
       for (const key of Object.keys(source)) if (!live.has(key)) delete source[key];
     }

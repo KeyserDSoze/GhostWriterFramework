@@ -31,8 +31,10 @@ const INITIAL_GRAPH_GZIP_BUDGET = 211_000;
 // is carried) and about the thinking level that a model refuses when the request carries tools (the retry, the memory of the session, the setting, the event). The text is the contract of those two behaviours.
 // Raised on 0.115.0, from 242_000/79_000 to 250_000/81_500: the README as a chunk is 242_385/79_074, with what the engine says about the API protocol of a model and the address it may have of its own (where its
 // requests go, how a request of the Responses API is built, how its events are read as the pieces that Chat Completions has, where the trail says it). The text is the contract of that behaviour.
-const DOCUMENT_CHUNK_RAW_BUDGET = 250_000;
-const DOCUMENT_CHUNK_GZIP_BUDGET = 81_500;
+// Raised on 0.123.0, from 250_000/81_500 to 258_000/84_000: the README as a chunk is 251_794/82_279, with what the engine says about the review policy of a run
+// and the review of a finished book to a target score (its rounds, the rules that stop it, the caps of the book and the limit that stopped a run). The text is the contract of that behaviour.
+const DOCUMENT_CHUNK_RAW_BUDGET = 258_000;
+const DOCUMENT_CHUNK_GZIP_BUDGET = 84_000;
 const baseline = { entry: { rawBytes: 2_209_160, gzipBytes: 623_927 }, initialGraph: { rawBytes: 3_243_152, gzipBytes: 913_574 } };
 // Vite turns an `import()` into a call that first preloads every file the imported chunk needs, all at once (without it the browser finds them one
 // level of imports at a time: up to a dozen round trips for a page of the app), and writes their names in the chunk of the call. The entry is in

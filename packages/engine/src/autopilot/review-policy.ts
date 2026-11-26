@@ -5,7 +5,8 @@ import { REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, type AutopilotState, typ
 /**
  * How the chapters and the book are reviewed (`ReviewPolicy`): the vote they must reach, the rounds of review of a chapter, the rounds the simulated readers
  * read in, the rounds a review of the book makes before it waits for the author. The director's profile gives the defaults (its approval score, its rounds);
- * the run's options (`options.review`) say otherwise for a run. One place says which wins, for the planner and the tasks alike. Pure.
+ * the run's options (`options.review`) say otherwise for a run, and a review of the book launched later (`state.campaign.review`) for itself. One place says
+ * which wins, for the planner and the tasks alike. Pure.
  */
 
 /** The policy as the options keep it: each value in its range, a value that is not a number left out; `null` (or nothing usable) is no policy. */
@@ -30,19 +31,27 @@ export function normalizeReviewPolicy(value: unknown, base?: ReviewPolicy): Revi
   return Object.keys(policy).length ? policy : undefined;
 }
 
-type PolicyState = Pick<AutopilotState, "options">;
+type PolicyState = Pick<AutopilotState, "options"> & Partial<Pick<AutopilotState, "campaign">>;
 
-/** The vote a chapter and the book must reach: the run's policy, else the director's approval score. */
+/** The review of the book in progress, when there is one: its policy wins over the run's. */
+function reviewInProgress(state: PolicyState) {
+  return state.campaign?.reason === "review-target" ? state.campaign.review : undefined;
+}
+
+/** The vote a chapter and the book must reach: the review of the book in progress, else the run's policy, else the director's approval score. */
 export function reviewTarget(state: PolicyState, director: Pick<DirectorProfile, "approvalScore">): number {
-  return state.options.review?.targetScore ?? director.approvalScore;
+  return reviewInProgress(state)?.targetScore ?? state.options.review?.targetScore ?? director.approvalScore;
 }
 
-/** The rounds of review of a chapter before it is closed anyway: the run's policy, else the director's. */
+/** The rounds of review of a chapter before it is closed anyway: the review of the book in progress, else the run's policy, else the director's. */
 export function reviewMaxRounds(state: PolicyState, director: Pick<DirectorProfile, "maxReviewRounds">): number {
-  return state.options.review?.maxRounds ?? director.maxReviewRounds;
+  return reviewInProgress(state)?.maxRounds ?? state.options.review?.maxRounds ?? director.maxReviewRounds;
 }
 
-/** In how many of the first rounds of a chapter's review the simulated readers read it (when they read at all, `options.readers`): the run's policy, else 1 (the first round only, as it always was). */
+/**
+ * In how many of the first rounds of a chapter's review the simulated readers read it (when they read at all, `options.readers`): the review of the book in
+ * progress (0: they do not read again), else the run's policy, else 1 (the first round only, as it always was).
+ */
 export function reviewReaderRounds(state: PolicyState): number {
-  return state.options.review?.readerRounds ?? 1;
+  return reviewInProgress(state)?.readerRounds ?? state.options.review?.readerRounds ?? 1;
 }

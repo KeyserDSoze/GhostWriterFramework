@@ -4,7 +4,7 @@ import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, a
 import { clipText, countWords } from "../util/text.js";
 import { normalizeErrorDetail, normalizeErrorKind } from "./errors.js";
 import { normalizeReviewPolicy } from "./review-policy.js";
-import { AUTOPILOT_PUBLISH_MODES, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES, REVISION_CHAPTER_MODES, REVISION_CHAPTER_STATUSES, REVISION_REASONS } from "./types.js";
+import { AUTOPILOT_PUBLISH_MODES, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES, REVIEW_MAX_ROUNDS, REVISION_CHAPTER_MODES, REVISION_CHAPTER_STATUSES, REVISION_REASONS } from "./types.js";
 import type {
   AutopilotActivity,
   AutopilotBrief,
@@ -43,6 +43,11 @@ import type {
   PlannedScene,
   RevisionCampaign,
   RevisionCampaignChapter,
+  AutopilotLimitReached,
+  ReviewCampaign,
+  ReviewRecord,
+  ReviewRoundRecord,
+  ReviewVotes,
   QuestionChoice,
   RevisionRequest,
   RevisionSource,
@@ -72,6 +77,9 @@ export const MAX_DEFERRED_CHANGES = 500;
 export const MAX_CAMPAIGN_CHAPTERS = 1000;
 /** Characters of the author's words for a campaign, and for one of its chapters. */
 export const CAMPAIGN_NOTE_CHARACTERS = 2000;
+/** The rounds of a review of the book the state keeps (`ReviewCampaign.history`), and the reviews over it remembers (`AutopilotState.reviews`). */
+export const MAX_REVIEW_ROUNDS_KEPT = 50;
+export const MAX_REVIEW_RECORDS = 20;
 /**
  * Upper bound for any chapter number or chapter count read from a file or a reply. It only guards against typos and
  * garbage: a book has no maximum length, and nothing below this value is ever clamped.
@@ -596,8 +604,49 @@ function normalizeCampaignChapter(value: unknown): RevisionCampaignChapter | nul
   const fingerprint = readText(source.fingerprint, 128);
   const startedAt = readMoment(source.startedAt);
   const endedAt = readMoment(source.endedAt);
-  const why = source.why === "gone" || source.why === "not-in-plan" ? source.why : undefined;
+  const why = source.why === "gone" || source.why === "not-in-plan" || source.why === "author" ? source.why : undefined;
   return { number, mode, status, ...(instruction ? { instruction } : {}), ...(fingerprint ? { fingerprint } : {}), ...(startedAt ? { startedAt } : {}), ...(endedAt ? { endedAt } : {}), ...(why ? { why } : {}) };
+}
+
+/** The votes of a review, as a file says them: a vote is on the 0-10 scale (or `null`), the chapters under the target a whole number. */
+function normalizeReviewVotes(value: unknown): ReviewVotes {
+  const source = asRecord(value);
+  return { lowest: readVote(source.lowest) ?? null, book: readVote(source.book) ?? null, below: asInteger(source.below, 0, 0, MAX_BOOK_CHAPTERS) };
+}
+
+/** A review of the book as a campaign keeps it; anything that is not one (no target, no round) is none, and the campaign is no review. */
+function normalizeReviewCampaign(value: unknown): ReviewCampaign | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const targetScore = readVote(source.targetScore);
+  const round = asInteger(source.round, 0, 0, 100_000);
+  if (targetScore === undefined || targetScore < 1 || !round) return undefined;
+  const maxRounds = asInteger(source.maxRounds, 0, 0, REVIEW_MAX_ROUNDS);
+  const readerRounds = typeof source.readerRounds === "number" ? asInteger(source.readerRounds, 0, 0, REVIEW_MAX_ROUNDS) : undefined;
+  const chapterList = (list: unknown) => [...new Set(asArray(list).map((entry) => asInteger(entry, 0, 0, MAX_BOOK_CHAPTERS)).filter((entry) => entry > 0))].sort((left, right) => left - right).slice(0, MAX_CAMPAIGN_CHAPTERS);
+  const include = chapterList(source.include);
+  const scope = chapterList(source.scope);
+  const history: ReviewRoundRecord[] = asArray(source.history).map((entry) => {
+    const record = asRecord(entry);
+    const at = readMoment(record.endedAt);
+    const number = asInteger(record.round, 0, 0, 100_000);
+    if (!at || !number) return null;
+    const chapters = asArray(record.chapters).map((chapter) => asInteger(chapter, 0, 0, MAX_BOOK_CHAPTERS)).filter((chapter) => chapter > 0).slice(0, MAX_CAMPAIGN_CHAPTERS);
+    return { round: number, chapters, ...normalizeReviewVotes(record), endedAt: at };
+  }).filter((entry): entry is ReviewRoundRecord => entry !== null).slice(-MAX_REVIEW_ROUNDS_KEPT);
+  return {
+    targetScore,
+    ...(maxRounds ? { maxRounds } : {}),
+    ...(readerRounds !== undefined ? { readerRounds } : {}),
+    ...(include.length ? { include } : {}),
+    scope,
+    round,
+    windowStart: Math.min(round, Math.max(1, asInteger(source.windowStart, round, 1, 100_000))),
+    phase: source.phase === "verdict" ? "verdict" : "chapters",
+    start: normalizeReviewVotes(source.start),
+    history,
+    stalled: asInteger(source.stalled, 0, 0, 100_000),
+  };
 }
 
 /** A campaign as a file says it: a reason the engine knows and at least one chapter (each once); anything else is none, and a run goes on with the plan. */
@@ -611,14 +660,55 @@ function normalizeCampaign(value: unknown): RevisionCampaign | undefined {
   const chapters = asArray(source.chapters).map(normalizeCampaignChapter).filter((entry): entry is RevisionCampaignChapter => entry !== null && !seen.has(entry.number) && Boolean(seen.add(entry.number))).slice(0, MAX_CAMPAIGN_CHAPTERS);
   if (!id || !reason || !createdAt || !chapters.length) return undefined;
   const note = readText(source.note, CAMPAIGN_NOTE_CHARACTERS);
-  return { id, reason, createdAt, ...(note ? { note } : {}), chapters };
+  // A review of the book without its review is no review: the campaign is none.
+  const review = reason === "review-target" ? normalizeReviewCampaign(source.review) : undefined;
+  if (reason === "review-target" && !review) return undefined;
+  const heldSource = asRecord(source.held);
+  const heldAt = readMoment(heldSource.at);
+  const held = heldAt ? { at: heldAt, message: readText(heldSource.message, 600) ?? "" } : undefined;
+  const cancelledAt = readMoment(source.cancelledAt);
+  return { id, reason, createdAt, ...(note ? { note } : {}), chapters, ...(held ? { held } : {}), ...(cancelledAt ? { cancelledAt } : {}), ...(review ? { review } : {}) };
 }
 
-/** A campaign as a summary says it: the chapters it works, how far it got, the one being worked and the ones that wait. */
-export function summarizeCampaign(campaign: RevisionCampaign | undefined): AutopilotCampaignSummary | undefined {
+/** The limit that stopped the run, as a file says it; anything else is none. */
+function normalizeLimitReached(value: unknown): AutopilotLimitReached | undefined {
+  const source = asRecord(value);
+  const kind = source.kind === "money" || source.kind === "tokens" || source.kind === "review-rounds" ? source.kind : undefined;
+  const at = readMoment(source.at);
+  const used = readNumber(source.used);
+  const limit = readNumber(source.limit);
+  if (!kind || !at || used === undefined || limit === undefined) return undefined;
+  const currency = readText(source.currency, 12);
+  return { kind, used: Math.max(0, used), limit: Math.max(0, limit), ...(currency ? { currency } : {}), at };
+}
+
+/** The reviews of the book that are over, as a file says them: the valid ones, the newest `MAX_REVIEW_RECORDS`. */
+function normalizeReviewRecords(value: unknown): ReviewRecord[] | undefined {
+  const records = asArray(value).map((entry): ReviewRecord | null => {
+    const source = asRecord(entry);
+    const targetScore = readVote(source.targetScore);
+    const startedAt = readMoment(source.startedAt);
+    const endedAt = readMoment(source.endedAt);
+    const outcome = source.outcome === "target" || source.outcome === "chapters" || source.outcome === "plateau" || source.outcome === "cancelled" ? source.outcome : undefined;
+    if (targetScore === undefined || !startedAt || !endedAt || !outcome) return null;
+    return { targetScore, rounds: asInteger(source.rounds, 0, 0, 100_000), outcome, from: normalizeReviewVotes(source.from), to: normalizeReviewVotes(source.to), startedAt, endedAt };
+  }).filter((entry): entry is ReviewRecord => entry !== null).slice(-MAX_REVIEW_RECORDS);
+  return records.length ? records : undefined;
+}
+
+/**
+ * A campaign as a summary says it: the chapters it works, how far it got, the one being worked and the ones that wait; for a review of the book, its round, the
+ * rounds allowed since the run began, the target, the latest votes and the money cap of the book (the options' `review.campaignMaxRounds` and `budgetLimit`, when
+ * they are given).
+ */
+export function summarizeCampaign(campaign: RevisionCampaign | undefined, options?: Pick<AutopilotOptions, "budgetLimit" | "review">): AutopilotCampaignSummary | undefined {
   if (!campaign) return undefined;
   const worked = campaign.chapters.filter((chapter) => chapter.mode === "follow");
-  if (!worked.length || !worked.some((chapter) => chapter.status === "waiting" || chapter.status === "working")) return undefined;
+  const review = campaign.review;
+  // A review that judges the book has no chapter waiting, and goes on all the same.
+  const goesOn = worked.some((chapter) => chapter.status === "waiting" || chapter.status === "working") || (review?.phase === "verdict");
+  if (!worked.length || !goesOn) return undefined;
+  const last = review?.history[review.history.length - 1] ?? review?.start;
   return {
     id: campaign.id,
     reason: campaign.reason,
@@ -626,6 +716,22 @@ export function summarizeCampaign(campaign: RevisionCampaign | undefined): Autop
     done: worked.filter((chapter) => chapter.status === "done" || chapter.status === "skipped").length,
     current: worked.find((chapter) => chapter.status === "working")?.number ?? null,
     waiting: worked.filter((chapter) => chapter.status === "waiting").map((chapter) => chapter.number),
+    ...(campaign.held ? { held: true } : {}),
+    ...(review
+      ? {
+        review: {
+          round: review.round,
+          // A round held for the author has not begun: the rounds of this run are the ones before it.
+          roundsThisRun: campaign.held ? Math.max(0, review.round - review.windowStart) : Math.max(1, review.round - review.windowStart + 1),
+          ...(options?.review?.campaignMaxRounds ? { maxRounds: options.review.campaignMaxRounds } : {}),
+          targetScore: review.targetScore,
+          phase: review.phase,
+          lowest: last?.lowest ?? null,
+          book: last?.book ?? null,
+          budgetLimit: options?.budgetLimit ?? 0,
+        },
+      }
+      : {}),
   };
 }
 
@@ -820,6 +926,8 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
   const pendingReviews = normalizePendingReviews(source.pendingReviews);
   const campaign = normalizeCampaign(source.campaign);
   const deferredChanges = normalizeDeferredChanges(source.deferredChanges);
+  const limitReached = normalizeLimitReached(source.limitReached);
+  const reviews = normalizeReviewRecords(source.reviews);
   const frozenSince = readMoment(source.frozenSince);
   const frozenSeen = textList(source.frozenSeen, MAX_FROZEN_SEEN);
   const status = asOneOf(source.status, STATUSES, "idle");
@@ -846,6 +954,8 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
     ...(frozenSeen.length ? { frozenSeen } : {}),
     ...(campaign ? { campaign } : {}),
     ...(deferredChanges ? { deferredChanges } : {}),
+    ...(limitReached ? { limitReached } : {}),
+    ...(reviews ? { reviews } : {}),
     runner: asString(runner.runId)
       ? {
         host: runner.host === "server" ? "server" : "browser",
@@ -1008,7 +1118,8 @@ export function summarizeAutopilotState(state: AutopilotState, context: Autopilo
     ...(context.retry ? { retry: context.retry } : {}),
     // Like `retry`, said only when something waits: a book with no change has the summary it always had.
     ...(typeof context.frozenChanges === "number" && context.frozenChanges > 0 ? { frozenChanges: context.frozenChanges } : {}),
-    ...(summarizeCampaign(state.campaign) ? { campaign: summarizeCampaign(state.campaign) } : {}),
+    ...(summarizeCampaign(state.campaign, state.options) ? { campaign: summarizeCampaign(state.campaign, state.options) } : {}),
+    ...(state.limitReached ? { limitReached: state.limitReached } : {}),
   };
 }
 

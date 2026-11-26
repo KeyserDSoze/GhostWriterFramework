@@ -5,7 +5,7 @@ import { countWords, isItalian } from "../util/text.js";
 import { advancePendingReviews, frozenQuestionMessage, inRevision, isFrozenQuestion, needsFreezeStep, noteOutlineRewrite, startedReview, type PlannerFrozen } from "./frozen.js";
 import { advanceRevisionCampaign, campaignChapter } from "./campaign.js";
 import { reviewMaxRounds, reviewReaderRounds } from "./review-policy.js";
-import type { AutopilotMessageCode, AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, InsightTone, PlannedChapter, PlannedScene } from "./types.js";
+import type { AutopilotInsightFigures, AutopilotMessageCode, AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, InsightTone, PlannedChapter, PlannedScene } from "./types.js";
 
 export interface PlannerReader {
   slug: string;
@@ -22,6 +22,8 @@ export interface PlanNote {
   /** A code a client can say in its own language, and the chapter it is about. */
   code?: AutopilotMessageCode;
   chapterNumber?: number;
+  /** The numbers it is about (`AutopilotInsightFigures`). */
+  figures?: AutopilotInsightFigures;
 }
 
 export interface PlannerContext {
@@ -94,7 +96,7 @@ export interface TaskDescriptor {
 
 export type PlannedStep =
   | { kind: "task"; task: TaskDescriptor }
-  | { kind: "stop"; status: "paused" | "waiting-author" | "completed"; message: string };
+  | { kind: "stop"; status: "paused" | "waiting-author" | "completed"; message: string; code?: AutopilotMessageCode };
 
 /** The steps that write: the author's "next step" notes go to the first of them, once. Closing a chapter and repairing a scene that is already written take none. */
 const NOTE_TASKS = new Set<AutopilotTaskKind>(["concept", "plan", "replan", "scenes", "write", "revise"]);
@@ -625,6 +627,7 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
   advancePendingReviews(state, snapshot, report, ctx.language, ctx.frozen);
   // The chapters the author asked to revise now, for one reason, in order: the one being worked finished, the next started (before the plan).
   advanceRevisionCampaign(state, report, ctx.language, ctx.frozen);
+  // A review of the book that waits for the author: the run stops (`nextStep`), and starting it again releases it.
 
   const current = editedChapter(state) ?? (state.plan?.approved ? state.plan.chapters.find((chapter) => chapter.status !== "done") : undefined);
   if (current?.status === "review") {
@@ -636,7 +639,7 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
     if (!state.options.specialists) review.specialistsDone = true;
     // The review of the author's change is one round whose fixes are never applied: it goes to the closing, whatever the verdict.
     if (review.directorDone && review.verdict === "revise" && review.repairQueue.length === 0 && !review.authorEdit) {
-      // The rounds of the review policy (`options.review`), else the director's.
+      // The rounds of the review policy (`options.review`, or the review of the book in progress), else the director's.
       const maxRounds = reviewMaxRounds(state, ctx.director);
       if (review.round < maxRounds) {
         review.round += 1;
@@ -688,6 +691,10 @@ export function phaseOf(state: AutopilotState): AutopilotPhase {
 /** The next AI step, or the reason to stop. Never calls AI and never mutates the state. */
 export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedStep {
   const italian = isItalian(ctx.language);
+  // A campaign held for the author (the rounds of a review of the book the author allowed are done): nothing goes on until the author starts the run again.
+  if (state.campaign?.held && !state.revision && !state.review) {
+    return { kind: "stop", status: "paused", message: state.campaign.held.message || (italian ? "La revisione aspetta te: riavvia l'autopilot per continuare." : "The review waits for you: start the autopilot again to go on."), code: "reviewHeld" };
+  }
   if (state.question) {
     if (isFrozenQuestion(state.question)) return { kind: "stop", status: "waiting-author", message: frozenQuestionMessage(state.question, ctx.language) };
     return { kind: "stop", status: "waiting-author", message: italian ? "Il direttore ha una domanda per te." : "The director has a question for you." };

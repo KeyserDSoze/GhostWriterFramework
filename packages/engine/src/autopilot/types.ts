@@ -119,12 +119,13 @@ export interface PendingFrozenReview {
 
 /**
  * Why chapters are revised now, in order, before the plan goes on (`RevisionCampaign`): `outline-change`, the author applied the Synopsis to the book,
- * and each chapter the author chose is rewritten to follow its new entry. A reason is a word of `REVISION_REASONS` and an entry of the handlers of the
+ * and each chapter the author chose is rewritten to follow its new entry; `review-target`, the author asked to review the finished book again until it
+ * reaches a target score, round after round (`AutopilotSession.reviewBook`). A reason is a word of `REVISION_REASONS` and an entry of the handlers of the
  * campaigns (`REVISION_REASON_HANDLERS`, `campaign.ts`), which say how its chapters are checked, started, finished, stopped and cancelled.
  */
-export type RevisionReason = "outline-change";
+export type RevisionReason = "outline-change" | "review-target";
 
-export const REVISION_REASONS: readonly RevisionReason[] = ["outline-change"];
+export const REVISION_REASONS: readonly RevisionReason[] = ["outline-change", "review-target"];
 
 /** What the author chose for a chapter of a campaign: work it now (`follow`), keep it as it is (`keep`), or decide later (`later`). */
 export type RevisionChapterMode = "follow" | "keep" | "later";
@@ -146,8 +147,11 @@ export interface RevisionCampaignChapter {
   status: RevisionChapterStatus;
   startedAt?: string;
   endedAt?: string;
-  /** Why it was skipped: its change is not there any more (`gone`), or the chapter is not in the plan any more (`not-in-plan`). */
-  why?: "gone" | "not-in-plan";
+  /**
+   * Why it was skipped: its change is not there any more (`gone`), the chapter is not in the plan any more (`not-in-plan`), or the author has it (`author`: frozen by
+   * the author, or changed since it was frozen, which its own rules decide about first).
+   */
+  why?: "gone" | "not-in-plan" | "author";
 }
 
 /**
@@ -161,8 +165,90 @@ export interface RevisionCampaign {
   /** The author's words for every chapter: what changed, and why. */
   note?: string;
   createdAt: string;
-  /** In the order they are worked: the order of the book. */
+  /** In the order they are worked: the order of the book. For a campaign of rounds (`review`), the chapters of the round in progress. */
   chapters: RevisionCampaignChapter[];
+  /**
+   * The campaign waits for the author before it goes on (its reason held it: the rounds the author allowed are done). The run stops, paused, with
+   * these words; starting it again releases the campaign, which goes on. Absent while it goes on.
+   */
+  held?: { at: string; message: string };
+  /** The author cancelled it while a chapter was being worked: once that chapter is over, the campaign ends (a campaign of rounds begins no other). */
+  cancelledAt?: string;
+  /** A review of the book to a target (`review-target`): its policy, the round in progress and what each round over came to. */
+  review?: ReviewCampaign;
+}
+
+/**
+ * A review of the finished book to a target score (`review-target`, `AutopilotSession.reviewBook`): round after round, the chapters whose vote is under the target are
+ * reviewed again (in the order of the book, each with up to `maxRounds` rounds of review), then the director judges the whole book again; it ends when the target is
+ * reached, when no chapter is under it any more, or when two rounds in a row raised neither the lowest vote of a chapter nor the vote of the book (a plateau); it waits for
+ * the author when the rounds allowed since the run began are done (`options.review.campaignMaxRounds`); the money cap (`options.budgetLimit`) stops the run as it
+ * always does. The caps are the options' own: the configuration and the review launched later write the same fields.
+ */
+export interface ReviewCampaign {
+  /** The vote a chapter and the book must reach. */
+  targetScore: number;
+  /** Rounds of review of a chapter of this campaign (absent: the run's policy, else the director's). */
+  maxRounds?: number;
+  /** In how many of the first rounds of a chapter the simulated readers read it again (0: not at all; absent: the run's policy, else 1). */
+  readerRounds?: number;
+  /** Chapters of the author's (written before the autopilot, or frozen by the author) that the author chose to have reviewed too. */
+  include?: number[];
+  /** The chapters the review may revise, in the order of the book: the autopilot's, and the author's the author included. Its votes are of these chapters. */
+  scope: number[];
+  /** The round in progress, from 1. */
+  round: number;
+  /** The round the current run began with: the rounds the cap counts are `round - windowStart + 1`. A start moves it to the round in progress. */
+  windowStart: number;
+  /** The chapters of the round are reviewed (`chapters`), or the book is judged again (`verdict`). */
+  phase: "chapters" | "verdict";
+  /** The votes before the campaign. */
+  start: ReviewVotes;
+  /** The rounds over, oldest first (at most `MAX_REVIEW_ROUNDS_KEPT`). */
+  history: ReviewRoundRecord[];
+  /** Rounds over in a row that raised neither the lowest vote of a chapter nor the vote of the book. */
+  stalled: number;
+}
+
+/** The votes a round of a review is judged by: the lowest vote of a chapter of the review, the book's, and how many chapters are under the target. */
+export interface ReviewVotes {
+  lowest: number | null;
+  book: number | null;
+  below: number;
+}
+
+export interface ReviewRoundRecord extends ReviewVotes {
+  round: number;
+  /** The chapters the round reviewed. */
+  chapters: number[];
+  endedAt: string;
+}
+
+/** How a review of the book ended: the target reached, no chapter under it (the book's own vote is not), a plateau, or the author cancelled it. */
+export type ReviewOutcome = "target" | "chapters" | "plateau" | "cancelled";
+
+/** A review of the book that is over, as the state remembers it (`AutopilotState.reviews`): what the author asked, how many rounds, and what it came to. */
+export interface ReviewRecord {
+  targetScore: number;
+  rounds: number;
+  outcome: ReviewOutcome;
+  from: ReviewVotes;
+  to: ReviewVotes;
+  startedAt: string;
+  endedAt: string;
+}
+
+/**
+ * A limit stopped the run (paused): the money cap (`options.budgetLimit`, compared with the book's cumulative cost `stats.cost`, in the currency of the prices),
+ * the token cap (`options.budgetTokens`), or the rounds of a review allowed since the run began (`options.review.campaignMaxRounds`). The numbers are what
+ * the stop compared. A start takes it away (a limit that is still reached stops the run again).
+ */
+export interface AutopilotLimitReached {
+  kind: "money" | "tokens" | "review-rounds";
+  used: number;
+  limit: number;
+  currency?: string;
+  at: string;
 }
 
 /**
@@ -245,7 +331,7 @@ export interface AutopilotOptions {
 
 /**
  * How the chapters and the book are reviewed in a run (`AutopilotOptions.review`): the director's profile gives the defaults (its approval score and its rounds),
- * and a review of the book launched later can ask for others. What is not said is the profile's (or today's for the readers).
+ * and a review of the book launched later can ask for others (`ReviewBookInput`). What is not said is the profile's (or today's for the readers).
  */
 export interface ReviewPolicy {
   /** The vote a chapter and the book must reach to be approved: from 1 to 10, to a tenth. Absent: the director's approval score. The plan keeps the director's. */
@@ -802,6 +888,10 @@ export interface AutopilotState {
   campaign?: RevisionCampaign;
   /** The changes the author chose to decide later (`DeferredChange`). Absent when there is none. */
   deferredChanges?: DeferredChange[];
+  /** A limit stopped the run (`AutopilotLimitReached`): the money cap, the token cap, the rounds of a review. Absent otherwise; a start takes it away. */
+  limitReached?: AutopilotLimitReached;
+  /** The reviews of the book that are over, oldest first (at most `MAX_REVIEW_RECORDS`). Absent when there was none. */
+  reviews?: ReviewRecord[];
   runner: AutopilotRunnerInfo | null;
   stats: AutopilotStats;
   /** Short human message about the current status ("Plan ready for review"). */
@@ -890,6 +980,14 @@ export type AutopilotMessageCode =
   | "campaignSkipped"
   | "campaignDone"
   | "campaignStopped"
+  | "reviewChapterDone"
+  | "reviewChapterSkipped"
+  | "reviewRoundDone"
+  | "reviewDone"
+  | "reviewStopped"
+  | "reviewHeld"
+  | "budgetReached"
+  | "tokenBudgetReached"
   | "longRetryWait"
   | "longRetryExhausted"
   | "longRetryOff"
@@ -975,7 +1073,7 @@ export type AutopilotEventBody =
   | ({ type: "call-attempt"; activityId: string; callId?: string; callSeq?: number } & AutopilotAttemptInfo)
   | { type: "call-ended"; activityId: string; callId: string; status: AiCallStatus; attempts: number; characters: number; storedBytes: number; partial: boolean; durationMs: number; dropped: AiCallDropReason | null }
   | { type: "task-finished"; activity: AutopilotActivity }
-  | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode; attempt?: number; retries?: number; waitMs?: number; cycle?: number; cycles?: number | null; chapterNumber?: number; ghostwriter?: string; model?: string }
+  | { type: "insight"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode; attempt?: number; retries?: number; waitMs?: number; cycle?: number; cycles?: number | null; chapterNumber?: number; ghostwriter?: string; model?: string; figures?: AutopilotInsightFigures }
   | { type: "state"; state: AutopilotStateSummary }
   | { type: "sync"; activityId?: string; tone: InsightTone; title: string; detail?: string; code?: AutopilotMessageCode };
 
@@ -1045,6 +1143,8 @@ export interface AutopilotStateSummary {
   frozenChanges?: number;
   /** The chapters revised now for one reason (`state.campaign`), as far as they got. Absent when none is going on. */
   campaign?: AutopilotCampaignSummary;
+  /** The limit that stopped the run (`state.limitReached`), with its numbers. Absent otherwise. */
+  limitReached?: AutopilotLimitReached;
   /**
    * Not saved, and absent when nothing waits: while the run waits to try a failed step again, when the next attempt is and which retry it
    * is, so that a client can count down. Every change of it is a `state` event: it appears when the wait begins and goes when the attempt
@@ -1052,6 +1152,24 @@ export interface AutopilotStateSummary {
    * from a summary made from the state file alone.
    */
   retry?: AutopilotRetryInfo;
+}
+
+/**
+ * The numbers an insight is about, for a client that says it in its own words: the vote and the target of a chapter or of the book, the round and the rounds of a review,
+ * the lowest vote of a chapter and the book's, the outcome of a review, what a limit compared. Only what the insight is about is there.
+ */
+export interface AutopilotInsightFigures {
+  score?: number;
+  target?: number;
+  round?: number;
+  rounds?: number;
+  lowest?: number;
+  book?: number;
+  below?: number;
+  outcome?: ReviewOutcome;
+  used?: number;
+  limit?: number;
+  currency?: string;
 }
 
 /** A campaign as a summary says it: the chapters it works (`follow`), how many are over, the one being worked, and the ones that wait. */
@@ -1063,6 +1181,13 @@ export interface AutopilotCampaignSummary {
   done: number;
   current: number | null;
   waiting: number[];
+  /** The campaign waits for the author (`RevisionCampaign.held`): starting the run releases it. */
+  held?: boolean;
+  /**
+   * A review of the book: the round in progress and the rounds allowed since the run began (`maxRounds`: absent, no limit), the target, whether the book is
+   * being judged, the latest votes (the lowest vote of a chapter of the review, the book's), and the money cap of the book (`options.budgetLimit`; 0: none).
+   */
+  review?: { round: number; roundsThisRun: number; maxRounds?: number; targetScore: number; phase: "chapters" | "verdict"; lowest: number | null; book: number | null; budgetLimit: number };
 }
 
 /**

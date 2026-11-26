@@ -5,7 +5,7 @@ import { MemoryBookStore, seedBookFiles } from "../dist/testing/index.js";
 import { FAST, brief, run, votingAi } from "./review-fakes.mjs";
 
 // The review policy of a run (`options.review`): the vote a chapter and the book must reach, the rounds of a chapter and the rounds the readers read in. The
-// director's profile gives the defaults; without a policy every prompt is the one it always was.
+// director's profile gives the defaults, a review of the book in progress its own; without a policy every prompt is the one it always was.
 
 const { defaultDirector, serializeDirector } = engine;
 
@@ -27,13 +27,17 @@ test("the review policy of the options is kept in its ranges, follows what is se
   assert.equal("review" in normalizeOptions({}, DEFAULT_OPTIONS), false, "a book without a policy has none");
 });
 
-test("which value wins: the run's policy, else the director's profile", () => {
+test("which value wins: the review of the book in progress, else the run's policy, else the director's profile", () => {
   const { reviewTarget, reviewMaxRounds, reviewReaderRounds } = engine;
   const director = { approvalScore: 7, maxReviewRounds: 2 };
   const none = { options: {} };
   assert.deepEqual([reviewTarget(none, director), reviewMaxRounds(none, director), reviewReaderRounds(none)], [7, 2, 1], "the director's, and the readers in the first round only");
   const run = { options: { review: { targetScore: 8, maxRounds: 4, readerRounds: 2 } } };
   assert.deepEqual([reviewTarget(run, director), reviewMaxRounds(run, director), reviewReaderRounds(run)], [8, 4, 2]);
+  const campaign = { ...run, campaign: { reason: "review-target", review: { targetScore: 9, maxRounds: 6, readerRounds: 0 } } };
+  assert.deepEqual([reviewTarget(campaign, director), reviewMaxRounds(campaign, director), reviewReaderRounds(campaign)], [9, 6, 0]);
+  const other = { ...run, campaign: { reason: "outline-change", chapters: [] } };
+  assert.deepEqual([reviewTarget(other, director), reviewMaxRounds(other, director)], [8, 4], "another campaign has no policy of its own");
 });
 
 test("a run with a review policy: the director approves at the target, a chapter has the rounds the policy gives, the readers read again in the rounds it says, and the book is judged at the target", async () => {
