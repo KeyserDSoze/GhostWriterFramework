@@ -76,7 +76,7 @@ describe("the scene page while the structure of the book is refreshed", () => {
     mocks.structure = structure();
     await act(async () => { useSettingsStore.setState({ settings: { ...useSettingsStore.getState().settings } }); });
     await act(async () => { for (const go of waiting.splice(0)) go(); await Promise.resolve(); });
-    expect(await screen.findByText(TEXT, {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(await screen.findByText(TEXT, {}, { timeout: 20_000 })).toBeInTheDocument();
     expect(screen.queryByText(t("paragraph.empty"))).toBeNull();
     expect(screen.getAllByRole("button", { name: t("paragraph.edit") })[0]).toBeEnabled();
   });

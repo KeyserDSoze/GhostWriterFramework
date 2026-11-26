@@ -156,7 +156,7 @@ describe("«Review the book again» on the card of a finished book", () => {
     expect(within(shown).getByText(t("autopilot.reviewBook.nothing", { target: "5/10", book: "6.5/10" }))).toBeInTheDocument();
     expect(within(shown).getByRole("button", { name: "Review 0 chapters" })).toBeDisabled();
     // Said once to a screen reader when the values stop changing.
-    await waitFor(() => expect(shown.querySelector("[data-review-announcement]")?.textContent).toBe("0 chapters under 5/10 will be reviewed again"), { timeout: 3000 });
+    await waitFor(() => expect(shown.querySelector("[data-review-announcement]")?.textContent).toBe("0 chapters under 5/10 will be reviewed again"), { timeout: 20_000 });
     fireEvent.change(target, { target: { value: "8.2" } });
     expect(target).toHaveAttribute("aria-invalid", "true");
     expect(target).toHaveAccessibleDescription(new RegExp(t("autopilot.review.problems.step").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

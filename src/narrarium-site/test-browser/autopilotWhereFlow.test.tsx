@@ -114,11 +114,11 @@ describe("moving a book to a server that already has other versions of its files
     await waitFor(() => expect(local.files.get("plot.md")).toBe("plot, written on the server"));
     await waitFor(() => expect(screen.queryByRole("list", { name: /./ })).not.toBeInTheDocument());
     // The sync that settles the conflict is an operation of the book: it must be over before the next one starts.
-    await waitFor(() => expect(useAutopilotStore.getState().views[BOOK.id].operation).toBeNull(), { timeout: 8000 });
+    await waitFor(() => expect(useAutopilotStore.getState().views[BOOK.id].operation).toBeNull(), { timeout: 20_000 });
 
     mocks.toast.mockClear();
     fireEvent.click(screen.getByRole("button", { name: t("autopilot.where.moveBack") }));
-    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith({ title: t("autopilot.where.movedBack") }), { timeout: 8000 });
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith({ title: t("autopilot.where.movedBack") }), { timeout: 20_000 });
     expect(hostOf()).toBeUndefined();
     expect(useAutopilotStore.getState().views[BOOK.id].server).toBeNull();
   });

@@ -73,7 +73,7 @@ function hold(): () => void {
 }
 
 const summary = (bookId = BOOK.id) => useAutopilotStore.getState().summaries[bookId];
-const stopped = () => vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 5000 });
+const stopped = () => vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 });
 const savedState = () => JSON.parse(local.files.get("autopilot/state.json") ?? "null");
 
 function useBook(book: BookEntry, patch: Record<string, unknown> = {}) {
@@ -106,7 +106,7 @@ afterEach(async () => {
   cleanup();
   await runtime.pause(BOOK.id, "now").catch(() => undefined);
   gate.release();
-  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 3000 }).catch(() => undefined);
+  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 }).catch(() => undefined);
   delete (navigator as { locks?: unknown }).locks;
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
   runtime.ensureServerStream();

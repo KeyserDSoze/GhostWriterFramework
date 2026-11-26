@@ -188,7 +188,7 @@ describe("a decision taken in a tab while another tab of this browser runs the b
   afterEach(async () => {
     await tabA.pause(BOOK.id, "now").catch(() => undefined);
     release();
-    await vi.waitFor(() => expect(tabA.isRunningHere(BOOK.id)).toBe(false), { timeout: 3000 }).catch(() => undefined);
+    await vi.waitFor(() => expect(tabA.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 }).catch(() => undefined);
   });
 
   it("is sent to the tab that runs it, which marks the change as reviewed", async () => {

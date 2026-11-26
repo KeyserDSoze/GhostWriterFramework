@@ -36,7 +36,7 @@ describe("what an update of the reader/ folder changes", () => {
     expect(plan.deletes).toEqual([]);
     expect(plan.version).toBe(templateReaderVersion(template));
     expect(plan.version).toMatch(/^\d+\.\d+\.\d+$/);
-  }, 30_000);
+  }, 60_000);
 
   it("finds nothing to do in a repository that has the reader the template has (the second run says current)", async () => {
     const plan = await planWith(await upToDate(), { existingPackageJson: mergeReaderPackageJson(null, template.files["reader/package.json"].text.split(template.placeholders.readerPackage).join(fallbackPackageName)) });

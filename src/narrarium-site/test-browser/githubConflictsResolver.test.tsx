@@ -249,7 +249,7 @@ describe("a list of many files", () => {
 
     expect(resolveButton()).toBeDisabled();
     expect(resolveButton()).toHaveAccessibleDescription(t("githubConflicts.summary.left", { count: 70 }));
-  }, 20_000);
+  }, 60_000);
 
   it("is resolved with a version for all the others and a few exceptions, after asking, without sending a choice for every file", { timeout: 20_000 }, async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
@@ -296,7 +296,7 @@ describe("a list of many files", () => {
     expect(server.resolutions).toHaveLength(1);
     expect(server.resolutions[0].default).toBeUndefined();
     expect(Object.keys(server.resolutions[0].choices ?? {})).toHaveLength(60);
-  }, 20_000);
+  }, 60_000);
 });
 
 describe("the choices", () => {

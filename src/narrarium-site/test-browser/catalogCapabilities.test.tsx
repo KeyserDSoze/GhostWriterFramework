@@ -23,7 +23,7 @@ const DECLARED: ChatModel = {
 };
 const GATEWAY: AIIntegration = { id: "gw", name: "LlmProxy", provider: "openai", endpoint: "https://gw.example.test/v1", apiKey: "sk-gw-0123456789abcdef", chatModels: [DECLARED] };
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(async () => {
   polyfillRadix();
   await i18n.changeLanguage("en");

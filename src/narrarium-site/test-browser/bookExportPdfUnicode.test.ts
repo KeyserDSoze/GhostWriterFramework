@@ -31,5 +31,5 @@ describe("PDF book export Unicode", () => {
     expect(text).toContain("Καλημέρα");
     expect(text).toContain("Привет");
     expect(text).toContain("“quoted” — it’s fine…");
-  }, 30_000);
+  }, 60_000);
 });

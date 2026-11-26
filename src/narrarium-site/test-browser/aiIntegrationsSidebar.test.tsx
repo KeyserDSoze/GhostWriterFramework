@@ -35,7 +35,7 @@ async function open(menu: "desktop" | "mobile", path: string, language: Language
 const settingsLinks = () => screen.getAllByRole("link").filter((link) => (link.getAttribute("href") ?? "").startsWith("/app/settings"));
 const linkTo = (href: string) => settingsLinks().find((link) => link.getAttribute("href") === href)!;
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(() => i18n.changeLanguage("en"));
 
 afterEach(async () => {

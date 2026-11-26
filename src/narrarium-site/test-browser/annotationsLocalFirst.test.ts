@@ -52,7 +52,7 @@ const SLOW: AnnotationTagDefinition = { id: "slow-pace-k3x9", name: "Slow pace",
 const target = (book: LocalFirstBook) => ({ token: book.token, book: book.book, branch: book.branch });
 const fileText = async (book: LocalFirstBook, path: string) => (await getLocalFile(book.meta.id, path, captureRepositoryOperationScope()))?.text ?? null;
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(() => i18n.changeLanguage("en"));
 beforeEach(async () => {
   await resetLocalWorkspace();

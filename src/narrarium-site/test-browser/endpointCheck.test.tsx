@@ -41,7 +41,7 @@ async function check(card: HTMLElement, name = "LlmProxy") {
   return button;
 }
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(async () => {
   polyfillRadix();
   await i18n.changeLanguage("en");

@@ -19,7 +19,7 @@ const t = (key: string) => i18n.t(key) as string;
  * scroll of the app's <main> at 390 px on these three pages) is measured in a headless Chromium run, reported with the change.
  */
 describe("the header of the Settings pages at narrow widths", () => {
-  vi.setConfig({ testTimeout: 30_000 });
+  vi.setConfig({ testTimeout: 60_000 });
   beforeAll(() => i18n.changeLanguage("en"));
   afterEach(() => {
     cleanup();

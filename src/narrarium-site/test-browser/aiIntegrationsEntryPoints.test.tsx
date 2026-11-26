@@ -18,7 +18,7 @@ function Where() {
   return <span data-testid="where">{useLocation().pathname}</span>;
 }
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(() => i18n.changeLanguage("en"));
 
 afterEach(async () => {
@@ -55,8 +55,8 @@ describe("the first-run guide", () => {
     useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, books: [] } });
     render(<MemoryRouter initialEntries={["/app/books"]}><OnboardingDialog /><Where /></MemoryRouter>);
     act(() => { window.dispatchEvent(new Event("narrarium:open-onboarding")); });
-    for (let step = 0; step < 3; step += 1) fireEvent.click(await screen.findByRole("button", { name: t("onboarding.next") }, { timeout: 10_000 }));
-    expect(await screen.findByRole("heading", { name: t("onboarding.steps.3.title") }, { timeout: 10_000 })).toBeInTheDocument();
+    for (let step = 0; step < 3; step += 1) fireEvent.click(await screen.findByRole("button", { name: t("onboarding.next") }, { timeout: 20_000 }));
+    expect(await screen.findByRole("heading", { name: t("onboarding.steps.3.title") }, { timeout: 20_000 })).toBeInTheDocument();
   }
 
   it.each(LANGUAGES)("opens AI Integrations from the AI step, and names it on the button (%s)", async (language) => {

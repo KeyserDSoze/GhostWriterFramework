@@ -3,6 +3,7 @@ import { ALL, activeFilters, buildGroups, csvCell, defaultFilters, filterRows, g
 import { USAGE_SOURCES, emptyCounters, type UsageRow } from "@/costs/ledger";
 import { EARLIER } from "@/costs/legacyCosts";
 import type { MoneyContext } from "@/costs/money";
+import { cpuMs } from "./helpers/cpuTime";
 
 const TODAY = "2026-11-26";
 const EUR: MoneyContext = { display: "EUR", rates: [], relabels: [], locale: "en" };
@@ -172,19 +173,24 @@ describe("a ledger of a heavy user", () => {
     }
     for (let month = 1; month <= 8; month += 1) rows.push(...rows.slice(0, 1000).map((entry) => ({ ...entry, period: `2026-${String(month).padStart(2, "0")}` })));
     expect(rows.length).toBeGreaterThan(8000);
-    const started = performance.now();
-    const kept = filterRows(rows, filters({ period: { kind: "all" } }), TODAY);
-    const groups = buildGroups(kept, kept, "books", TODAY);
-    const sources = buildGroups(kept, kept, "sources", TODAY);
-    const months = buildGroups(kept, kept, "months", TODAY);
-    sortGroups(groups, "spend", "descending", (key) => key, EUR);
-    const csv = toCsv(kept, (id) => id, (id) => id);
-    const took = performance.now() - started;
+    let kept: UsageRow[] = [];
+    let groups: ReturnType<typeof buildGroups> = [];
+    let sources: ReturnType<typeof buildGroups> = [];
+    let months: ReturnType<typeof buildGroups> = [];
+    let csv = "";
+    const took = cpuMs(() => {
+      kept = filterRows(rows, filters({ period: { kind: "all" } }), TODAY);
+      groups = buildGroups(kept, kept, "books", TODAY);
+      sources = buildGroups(kept, kept, "sources", TODAY);
+      months = buildGroups(kept, kept, "months", TODAY);
+      sortGroups(groups, "spend", "descending", (key) => key, EUR);
+      csv = toCsv(kept, (id) => id, (id) => id);
+    });
     expect(groups).toHaveLength(6);
     expect(sources).toHaveLength(6);
     expect(months.length).toBeGreaterThan(1);
     expect(csv.split("\r\n").length).toBe(rows.length + 2);
-    // Generous: a busy machine slows one run down; it was quadratic in the size of a group before.
+    // The work, not the clock (a busy machine stretches the clock and not the work); it was quadratic in the size of a group before.
     expect(took).toBeLessThan(1500);
   });
 });

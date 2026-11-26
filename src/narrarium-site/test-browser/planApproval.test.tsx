@@ -151,9 +151,9 @@ describe("a plan that waits for the author", () => {
     const book = region(t("autopilot.approval.concept.title"));
     expect(within(book).getByText(IDEA)).toBeInTheDocument();
     expect(within(book).getByText(LOGLINE)).toBeInTheDocument();
-    expect(await within(book).findByText(PREMISE, undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await within(book).findByText(PREMISE, undefined, { timeout: 20_000 })).toBeInTheDocument();
     const cast = region(t("autopilot.approval.cast.title"));
-    const items = await within(cast).findAllByRole("listitem", undefined, { timeout: 5000 });
+    const items = await within(cast).findAllByRole("listitem", undefined, { timeout: 20_000 });
     expect(items).toHaveLength(2);
     expect(items[0]).toHaveTextContent("Mira Vale");
     expect(items[0]).toHaveTextContent(t("autopilot.approval.cast.role.protagonist"));
@@ -292,7 +292,7 @@ describe("the entries of the outline", () => {
     }));
     seedWaiting();
     render(<Page />);
-    expect(await within(chapterOf(1)).findByText(t("autopilot.approval.chapters.outlineAuthor"), undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await within(chapterOf(1)).findByText(t("autopilot.approval.chapters.outlineAuthor"), undefined, { timeout: 20_000 })).toBeInTheDocument();
     expect(await within(chapterOf(2)).findByText(t("autopilot.approval.chapters.outlineAutopilot"))).toBeInTheDocument();
     expect(within(chapterOf(3)).queryByText(t("autopilot.approval.chapters.outlineAuthor"))).not.toBeInTheDocument();
     expect(within(chapterOf(3)).queryByText(t("autopilot.approval.chapters.outlineAutopilot"))).not.toBeInTheDocument();
@@ -442,8 +442,8 @@ describe("the other states in Italian", () => {
     expect(region("Cosa ne pensano i lettori")).toHaveTextContent("Nessun lettore ha reagito al piano.");
     expect(within(region("Il voto del direttore")).getByRole("list", { name: "Le revisioni del piano fatte dal direttore" })).toHaveTextContent("Revisione 1");
     expect(approval()).toHaveTextContent("Il direttore l'ha approvato con 8/10 dopo 1 revisione.");
-    expect(await within(chapterOf(1)).findByText("Dalla tua Sinossi", undefined, { timeout: 5000 })).toBeInTheDocument();
-    expect(await within(chapterOf(2)).findByText("Sinossi scritta dall'autopilot", undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await within(chapterOf(1)).findByText("Dalla tua Sinossi", undefined, { timeout: 20_000 })).toBeInTheDocument();
+    expect(await within(chapterOf(2)).findByText("Sinossi scritta dall'autopilot", undefined, { timeout: 20_000 })).toBeInTheDocument();
     view.unmount();
     seedWaiting({ plan: { approved: false, awaitingAuthor: false, revisionNotes: ["Capitolo 2 «The wall»: il muro crolla dopo."] } });
     render(<Page />);

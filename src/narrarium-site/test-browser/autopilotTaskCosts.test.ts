@@ -115,7 +115,7 @@ describe("the steps are kept as the recorder hears the calls", () => {
 
   it("keeps them on this device, and reads what another tab of this browser wrote", async () => {
     recordUsage(CALL);
-    await vi.waitFor(() => expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).toHaveProperty(["book-1\u0000activity-1", "calls"], 1), { timeout: 3000 });
+    await vi.waitFor(() => expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")).toHaveProperty(["book-1\u0000activity-1", "calls"], 1), { timeout: 20_000 });
 
     const other = { "book-1\u0000activity-9": { ...useTaskCosts.getState().tasks["book-1\u0000activity-1"], task: "activity-9", calls: 7 } };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(other));

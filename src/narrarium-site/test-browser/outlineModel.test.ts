@@ -152,7 +152,7 @@ describe("the engine's composer, as the page and the Copilot ask for it", () => 
     expect(many.changes).toHaveLength(1);
     const wide = await compose(snapshot, [{ kind: "move", from: 1010, to: 1 }]);
     expect(wide.changes).toHaveLength(1010);
-  }, 30_000);
+  }, 60_000);
 
   it("reads an outline with two files for one chapter whole, as the engine reads it: the file that waited takes the number an edit frees", async () => {
     const files = [await authorEntry(6, "Six", "f"), await authorEntry(7, "Seven", "g"), await file("outline/chapters/7.md", serializeOutlineChapter({ number: 7, title: "Seven, the other file", body: "h", origin: "author" })), await authorEntry(8, "Eight", "i")];

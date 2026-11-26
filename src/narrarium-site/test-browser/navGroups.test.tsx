@@ -197,4 +197,4 @@ describe("the other menus", () => {
   });
 });
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });

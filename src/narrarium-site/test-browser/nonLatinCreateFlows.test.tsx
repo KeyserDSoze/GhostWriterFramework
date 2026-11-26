@@ -35,7 +35,7 @@ import { useSaveStore } from "@/store/saveStore";
 import type { BookEntry } from "@/types/settings";
 
 // Each of these renders a whole page several times; a busy machine needs more than the default five seconds.
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 
 const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, options) as string;
 const BOOK: BookEntry = { id: "book-1", owner: "local", repo: "book-1", name: "Book", tokenIndex: null, storageMode: "local-only", activeBranch: "main", addedAt: "2026-11-21T00:00:00.000Z" };

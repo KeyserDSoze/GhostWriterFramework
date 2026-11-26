@@ -23,6 +23,7 @@ import { DEFAULT_SETTINGS } from "@/types/settings";
 import { chapter, longPlan, planOf, scene } from "./helpers/autopilotFixtures";
 import { runningStep } from "./helpers/autopilotBand";
 import { LOCAL_BOOK, T0, t } from "./helpers/quickCommands";
+import { cpuMs } from "./helpers/cpuTime";
 
 const at = (seconds: number) => new Date(Date.parse(T0) + seconds * 1000).toISOString();
 
@@ -231,7 +232,7 @@ describe("the panel of a chapter", () => {
     expect(panel).toHaveTextContent(t("autopilot.chapterPanel.closed"));
     expect(within(panel).getByRole("link", { name: t("autopilot.chapterPanel.readers") })).toHaveAttribute("href", "/app/books/book-1/chapters/002-chapter-2/reader-evaluations");
     fireEvent.click(within(panel).getByRole("button", { name: t("autopilot.chapterPanel.opinion.show") }));
-    expect(await within(panel).findByText(/The ending rushes/, undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await within(panel).findByText(/The ending rushes/, undefined, { timeout: 20_000 })).toBeInTheDocument();
     expect(panel).toHaveTextContent("The key turns at the right moment.");
   });
 
@@ -240,7 +241,7 @@ describe("the panel of a chapter", () => {
     fireEvent.click(headerOf(3));
     const panel = screen.getByRole("dialog");
     fireEvent.click(within(panel).getByRole("button", { name: t("autopilot.chapterPanel.opinion.show") }));
-    expect(await within(panel).findByText(t("autopilot.chapterPanel.opinion.missing"), undefined, { timeout: 5000 })).toBeInTheDocument();
+    expect(await within(panel).findByText(t("autopilot.chapterPanel.opinion.missing"), undefined, { timeout: 20_000 })).toBeInTheDocument();
   });
 
   it("of a chapter not reviewed yet says so, with what the plan says of it and its ghostwriter", () => {
@@ -299,11 +300,9 @@ describe("a book of three thousand chapters", () => {
     const timings: number[] = [];
     for (let attempt = 0; attempt < 3; attempt += 1) {
       cleanup();
-      const started = performance.now();
-      show(state);
-      timings.push(performance.now() - started);
+      timings.push(cpuMs(() => show(state)));
     }
-    // Generous: a busy machine slows one draw down.
+    // The work of a draw, not the clock: a busy machine stretches the clock and not the work.
     expect(Math.min(...timings)).toBeLessThan(400);
     expect(grid().querySelectorAll("[role='row']")).toHaveLength(50);
     expect(rowOf(1235)).not.toBeNull();

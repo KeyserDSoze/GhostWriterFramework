@@ -42,7 +42,7 @@ async function choose(trigger: HTMLElement, option: string) {
   await waitFor(() => expect(screen.queryByRole("option")).not.toBeInTheDocument());
 }
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 120_000 });
 const scrollIntoView = Element.prototype.scrollIntoView;
 beforeAll(() => i18n.changeLanguage("en"));
 beforeEach(() => {

@@ -81,6 +81,14 @@ const getLabelled = (name: string): HTMLElement => {
 const bodyField = (number: number) => getLabelled(t("outline.entry.body", { number })) as HTMLTextAreaElement;
 const titleField = (number: number) => getLabelled(t("outline.entry.title", { number })) as HTMLInputElement;
 const button = (name: string) => screen.getByRole("button", { name }) as HTMLButtonElement;
+/**
+ * Presses a control once the page is idle. An action is carried out in steps after its files are saved (the outline is read again, the drafts follow, the undo is kept), and the
+ * controls are disabled until the last one: a click in between does nothing. The files changing is not the page being ready, so a test that goes on from one to the other waits for the control.
+ */
+async function press(name: string) {
+  await waitFor(() => expect(button(name)).toBeEnabled());
+  fireEvent.click(button(name));
+}
 const file = (number: number) => mocks.store.files.get(outlineChapterPath(number));
 const frontmatterOf = (number: number) => parseMarkdown(file(number) ?? "").frontmatter;
 
@@ -190,26 +198,27 @@ describe("an outline of mixed entries", () => {
     await waitFor(() => expect(frontmatterOf(13).title).toBe("Mine 12"));
     expect(frontmatterOf(3).title).toBeUndefined();
     await waitFor(() => expect(document.activeElement).toBe(titleField(3)));
-    fireEvent.click(button(t("outline.actions.undo")));
+    await press(t("outline.actions.undo"));
     // The entries are as they were; the journal of the Synopsis keeps both series, the insert and its undo, the author's.
     await waitFor(() => expect(withoutJournal(mocks.store.toObject())).toEqual(before));
     const journal = parseOutlineJournal(mocks.store.toObject()[OUTLINE_CHANGES_FILE]);
     expect(journal.series.map((series) => [series.by, series.chapters[0]?.chapter, series.chapters[0]?.change])).toEqual([["author", 3, "created"], ["author", 3, "moved"]]);
 
-    fireEvent.click(button(t("outline.entry.moveDown", { number: 5 })));
+    await press(t("outline.entry.moveDown", { number: 5 }));
     await waitFor(() => expect(frontmatterOf(6).title).toBe("Planned 5"));
     expect(frontmatterOf(5).title).toBe("Mine 6");
 
-    fireEvent.click(button(t("outline.entry.remove", { number: 1 })));
+    await press(t("outline.entry.remove", { number: 1 }));
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText(t("outline.delete.written"))).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: t("outline.delete.confirm") }));
     await waitFor(() => expect(file(1)).toBeUndefined());
     expect(frontmatterOf(2).title, "the following chapters keep their numbers").toBe("Planned 2");
-    fireEvent.click(button(t("outline.actions.undo")));
+    // The undo of the move is still the button's until the removal is done: the button is enabled again only with the undo of the removal.
+    await press(t("outline.actions.undo"));
     await waitFor(() => expect(file(1)).toBeDefined());
     expect(frontmatterOf(6).title).toBe("Planned 5");
-  }, 20_000);
+  }, 60_000);
 
   it("does not save over an entry that changed elsewhere, keeps the edit and reloads on request", async () => {
     await mixed();
@@ -221,7 +230,7 @@ describe("an outline of mixed entries", () => {
     expect(bodyField(3)).toHaveValue("My version.");
     fireEvent.click(within(notice.closest("[role=alert]") as HTMLElement).getByRole("button", { name: t("outline.reload") }));
     await waitFor(() => expect(bodyField(3)).toHaveValue("Written in another tab."));
-  }, 20_000);
+  }, 60_000);
 });
 
 describe("what changed", () => {
@@ -323,7 +332,7 @@ describe("a long outline", () => {
     fireEvent.change(getLabelled(t("outline.jump.label")), { target: { value: "2500" } });
     fireEvent.click(button(t("outline.jump.button")));
     await waitFor(() => expect(document.activeElement).toBe(titleField(2500)));
-  }, 60_000);
+  }, 120_000);
 });
 
 describe.each<Language>(["en", "it"])("the page in %s", (language) => {

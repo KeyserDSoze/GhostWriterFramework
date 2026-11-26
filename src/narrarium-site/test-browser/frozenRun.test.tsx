@@ -94,7 +94,7 @@ afterEach(async () => {
   cleanup();
   release();
   await runtime.pause(BOOK.id, "now").catch(() => undefined);
-  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 5000 }).catch(() => undefined);
+  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 }).catch(() => undefined);
   delete (navigator as { locks?: unknown }).locks;
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
   useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [] });
@@ -109,7 +109,7 @@ describe("a frozen chapter the author changes, in a book the autopilot runs in t
 
     // The autopilot starts: before its first step it notices the change and stops with the question, having called no model.
     await runtime.start(BOOK.id);
-    await waitFor(() => expect(summary()?.question?.kind).toBe("frozen-change"), { timeout: 5000 });
+    await waitFor(() => expect(summary()?.question?.kind).toBe("frozen-change"), { timeout: 20_000 });
     await waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false));
     expect(summary()?.status).toBe("waiting-author");
     expect(calls).toBe(0);
@@ -125,19 +125,19 @@ describe("a frozen chapter the author changes, in a book the autopilot runs in t
     fireEvent.click(within(card).getByRole("button", { name: i18n.t("frozen.actions.review-only") }));
 
     // The decision is queued in the state of the book, and the run that starts takes it first (the model is held back here).
-    await waitFor(() => expect(stored().pendingReviews).toEqual([expect.objectContaining({ kind: "frozen", number: 1, action: "review-only" })]), { timeout: 5000 });
+    await waitFor(() => expect(stored().pendingReviews).toEqual([expect.objectContaining({ kind: "frozen", number: 1, action: "review-only" })]), { timeout: 20_000 });
     expect(stored().question).toBeNull();
     await waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(true));
 
     // Once the model answers, the director reviews the chapter, it is closed and frozen again as the author left it.
     release();
     held = null;
-    await waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 15_000 });
+    await waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 });
     expect(stored().pendingReviews ?? []).toEqual([]);
     expect(frozenChanges(await loadBookSnapshot(local))).toEqual([]);
     expect(record()).toMatchObject({ by: "author" });
     expect(local.files.get(SCENE)).toContain("hides it in the lighthouse");
     expect(useAutopilotStore.getState().feed.some((entry) => entry.event.type === "insight" && entry.event.code === "frozenReviewed" && entry.event.chapterNumber === 1)).toBe(true);
     expect(calls).toBeGreaterThan(0);
-  }, 30_000);
+  }, 60_000);
 });

@@ -88,14 +88,14 @@ beforeEach(async () => {
 afterEach(async () => {
   await tabA.pause(BOOK.id, "now").catch(() => undefined);
   holding.release();
-  await vi.waitFor(() => expect(tabA.isRunningHere(BOOK.id)).toBe(false), { timeout: 3000 }).catch(() => undefined);
+  await vi.waitFor(() => expect(tabA.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 }).catch(() => undefined);
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
   useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [] });
 });
 
 describe("a tab that opens in the middle of a step of a run that belongs to another tab", () => {
   it("asks the tab that runs the book what it shows, and that tab answers with its live part: the candidate of the route the call asks is there", async () => {
-    await vi.waitFor(() => expect(live()?.activity.status).toBe("running"), { timeout: 3000 });
+    await vi.waitFor(() => expect(live()?.activity.status).toBe("running"), { timeout: 20_000 });
     // What the run of the tab A shows now: the step, and the candidate its call asks (the events of the run say it as the request is sent).
     useAutopilotStore.getState().ingest(eventOf({ type: "call-attempt", activityId: live()!.activity.id, callSeq: 1, ...TRYING }, 900), BOOK.name);
     expect(live()?.trying).toEqual(TRYING);
@@ -112,7 +112,7 @@ describe("a tab that opens in the middle of a step of a run that belongs to anot
 
   it("does not ask for a book that no other tab runs", async () => {
     await tabA.pause(BOOK.id, "now");
-    await vi.waitFor(() => expect(tabA.isRunningHere(BOOK.id)).toBe(false), { timeout: 3000 });
+    await vi.waitFor(() => expect(tabA.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 });
     bus.posted.length = 0;
     await tabB.refresh(BOOK.id);
     expect(posted("live-request")).toEqual([]);

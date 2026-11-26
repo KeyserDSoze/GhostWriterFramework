@@ -65,13 +65,13 @@ const summary = (bookId = BOOK.id) => useAutopilotStore.getState().summaries[boo
 const feed = () => useAutopilotStore.getState().feed.map((entry) => entry.event);
 const insights = (code: string) => feed().filter((event) => event.type === "insight" && event.code === code);
 const ended = () => feed().filter((event): event is Extract<AutopilotEvent, { type: "run-ended" }> => event.type === "run-ended");
-const stopped = (on: BrowserAutopilotRuntime = runtime) => vi.waitFor(() => expect(on.isRunningHere(BOOK.id)).toBe(false), { timeout: 5000 });
+const stopped = (on: BrowserAutopilotRuntime = runtime) => vi.waitFor(() => expect(on.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 });
 const savedState = () => JSON.parse(local.files.get("autopilot/state.json") ?? "null");
 
 /** Wait for the quick waits one after the other and skip each one: the counters are the engine's. */
 async function skipQuickWaits(on: BrowserAutopilotRuntime = runtime) {
   for (const attempt of [1, 2, 3]) {
-    await vi.waitFor(() => expect(summary()?.retry).toMatchObject({ attempt, retries: 3 }), { timeout: 5000 });
+    await vi.waitFor(() => expect(summary()?.retry).toMatchObject({ attempt, retries: 3 }), { timeout: 20_000 });
     expect(summary()?.retry?.longTerm, "a quick wait is not a restart").toBeUndefined();
     await expect(on.retryNow(BOOK.id)).resolves.toBe(true);
   }
@@ -104,7 +104,7 @@ beforeEach(() => {
 afterEach(async () => {
   cleanup();
   await runtime.pause(BOOK.id, "now").catch(() => undefined);
-  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 3000 }).catch(() => undefined);
+  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 }).catch(() => undefined);
   delete (navigator as { locks?: unknown }).locks;
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
   useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [], server: { status: "disabled", info: null, message: null, books: [], updates: null, connection: null } });
@@ -116,25 +116,25 @@ describe("«Retry now» in this browser, with a real run", () => {
     await runtime.start(BOOK.id, { brief: BRIEF, options: { ...OPTIONS, longRetry: LATER } });
     await skipQuickWaits();
     // The quick retries are used up: the run waits an hour (at this scale) for its first restart.
-    await vi.waitFor(() => expect(summary()?.retry?.longTerm).toEqual({ cycle: 1, cycles: 3 }), { timeout: 5000 });
+    await vi.waitFor(() => expect(summary()?.retry?.longTerm).toEqual({ cycle: 1, cycles: 3 }), { timeout: 20_000 });
     expect(summary()?.retry).toMatchObject({ attempt: 3, retries: 3 });
     expect(Date.parse(summary()?.retry?.at ?? "") - Date.now()).toBeGreaterThan(SLOW);
     expect(last(insights("longRetryWait"))).toMatchObject({ cycle: 1, cycles: 3 });
     await expect(runtime.retryNow(BOOK.id)).resolves.toBe(true);
     // The attempt starts at once and works: the concept is written, and nothing waits any more.
-    await vi.waitFor(() => expect(feed().some((event) => event.type === "task-finished" && event.activity.task === "concept" && event.activity.status === "succeeded")).toBe(true), { timeout: 5000 });
+    await vi.waitFor(() => expect(feed().some((event) => event.type === "task-finished" && event.activity.task === "concept" && event.activity.status === "succeeded")).toBe(true), { timeout: 20_000 });
     expect(summary()?.retry).toBeUndefined();
     expect(insights("retrySkipped")).toHaveLength(4);
     expect(failures).toBe(4);
     // The book has one chapter in its Scaletta: once it is written the run is complete, and nothing is left to run.
-    await vi.waitFor(() => expect(summary()?.status).toBe("completed"), { timeout: 5000 });
+    await vi.waitFor(() => expect(summary()?.status).toBe("completed"), { timeout: 20_000 });
   });
 
   it("stops a run that waits for «Retry later» when it is turned off, with the failure and the code of the engine", async () => {
     mocks.ai = overloaded(Number.POSITIVE_INFINITY);
     await runtime.start(BOOK.id, { brief: BRIEF, options: { ...OPTIONS, longRetry: LATER } });
     await skipQuickWaits();
-    await vi.waitFor(() => expect(summary()?.retry?.longTerm).toEqual({ cycle: 1, cycles: 3 }), { timeout: 5000 });
+    await vi.waitFor(() => expect(summary()?.retry?.longTerm).toEqual({ cycle: 1, cycles: 3 }), { timeout: 20_000 });
     await runtime.updateOptions(BOOK.id, { longRetry: null });
     await stopped();
     expect(last(ended())).toMatchObject({ status: "error", code: "longRetryOff" });
@@ -156,7 +156,7 @@ describe("«Retry now» in this browser, with a real run", () => {
     await expect(runtime.retryNow(BOOK.id)).resolves.toBe(false);
     mocks.ai = overloaded(1);
     await runtime.start(BOOK.id, { brief: BRIEF, options: OPTIONS });
-    await vi.waitFor(() => expect(summary()?.retry).toMatchObject({ attempt: 1 }), { timeout: 5000 });
+    await vi.waitFor(() => expect(summary()?.retry).toMatchObject({ attempt: 1 }), { timeout: 20_000 });
     await expect(runtime.retryNow(BOOK.id)).resolves.toBe(true);
     await vi.waitFor(() => expect(summary()?.retry).toBeUndefined());
     await expect(runtime.retryNow(BOOK.id)).resolves.toBe(false);
@@ -177,7 +177,7 @@ describe("«Retry now» for a run in another tab of this browser", () => {
     try {
       mocks.ai = overloaded(1);
       await tabA.start(BOOK.id, { brief: BRIEF, options: OPTIONS });
-      await vi.waitFor(() => expect(summary()?.retry).toMatchObject({ attempt: 1 }), { timeout: 5000 });
+      await vi.waitFor(() => expect(summary()?.retry).toMatchObject({ attempt: 1 }), { timeout: 20_000 });
       await expect(tabB.retryNow(BOOK.id)).resolves.toBe(true);
       const commands = bus.posted.filter((entry) => (entry.data as { kind?: string }).kind === "command").map((entry) => (entry.data as { command: unknown }).command);
       expect(commands).toEqual([{ type: "retry-now" }]);

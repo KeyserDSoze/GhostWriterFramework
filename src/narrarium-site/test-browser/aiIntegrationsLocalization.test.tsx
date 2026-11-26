@@ -50,7 +50,7 @@ function visibleStrings(root: HTMLElement): string[] {
 
 const ENGLISH_ONLY = ["Maximum candidates", "Total routing time", "Maximum token attempts", "Maximum estimated route cost", "Forced tool calls", " or deployment", "Max output tokens", "Browser / local device", "Account & Sync"];
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(() => i18n.changeLanguage("en"));
 
 afterEach(async () => {

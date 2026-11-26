@@ -272,7 +272,10 @@ describe("the review rounds, which are the director's", () => {
 describe("the cost and the time that are not known", () => {
   it("say Not known, with the reason, for a model that has no price: the owner's computer is not free, it is not priced, and the calls and the tokens stay", async () => {
     await showFresh("en", [HOME]);
-    const expected = engineSays({}, {});
+    // The numbers are those of the form once its typing pause is over, with the brief of the Scaletta in it (as in every other test of the preview): for the first moments after
+    // the draw they are those of the form as it first was, with no idea in it, so a test that does not wait reads one or the other depending on how fast the machine is.
+    await pause();
+    const expected = engineSays(SCALETTA_BRIEF, {});
     expect(expected.cost).toBeNull();
     expect(statValue("cost")).toHaveTextContent(t("autopilot.estimate.notKnown"));
     expect(statValue("cost").dataset.known).toBe("false");
@@ -331,12 +334,13 @@ describe("a book that is started, or that grows", () => {
     const state = seeded.state as AutopilotState;
     // A book that has a plan has been through its concept: the planner does not plan before it.
     const expected = engineSays(state.brief, state.options, { progress: { ...estimateProgressFromState(state), conceptDone: true }, context: { ...estimateContextFromState(state), directorWords: countWords(directorPrompt(parseDirector(ADA, "en"))) } });
-    const headline = preview().querySelector("[data-estimate='book']") as HTMLElement;
-    expect(Number(headline.dataset.toWrite)).toBe(8);
-    expect(Number(headline.dataset.chapters)).toBe(12);
-    expect(headline).toHaveTextContent(t("autopilot.estimate.remaining", { count: 8, total: 12, words: new Intl.NumberFormat("en").format(expected.words) }));
-    expect(range("calls")).toEqual(expected.calls);
-    expect(range("input-tokens")).toEqual(expected.inputTokens);
+    // The files of the book are read after the draw, and the estimate is made again with them: wait for it, not for a moment.
+    const headline = () => preview().querySelector("[data-estimate='book']") as HTMLElement;
+    await waitFor(() => expect(Number(headline().dataset.toWrite)).toBe(8));
+    expect(Number(headline().dataset.chapters)).toBe(12);
+    expect(headline()).toHaveTextContent(t("autopilot.estimate.remaining", { count: 8, total: 12, words: new Intl.NumberFormat("en").format(expected.words) }));
+    await waitFor(() => expect(range("calls")).toEqual(expected.calls));
+    await waitFor(() => expect(range("input-tokens")).toEqual(expected.inputTokens));
   });
 
   it("counts only the new chapters when «Add chapters» asks for more than a finished book has", async () => {
@@ -347,13 +351,13 @@ describe("a book that is started, or that grows", () => {
     await screen.findByRole("region", { name: t("autopilot.estimate.title") });
     await read();
     const headline = () => preview().querySelector("[data-estimate='book']") as HTMLElement;
-    expect(preview()).toHaveTextContent(t("autopilot.estimate.nothingLeft"));
+    await waitFor(() => expect(preview()).toHaveTextContent(t("autopilot.estimate.nothingLeft")));
     expect(Number(headline().dataset.toWrite)).toBe(0);
     // The author adds four entries to the Scaletta, and comes back to the configuration: the page reads them again when the window is back.
     const store = mocks.local as MemoryBookStore;
     for (const number of [13, 14, 15, 16]) store.files.set(`outline/chapters/${String(number).padStart(3, "0")}.md`, serializeOutlineChapter({ number, origin: "author" }));
     await act(async () => { window.dispatchEvent(new Event("focus")); });
-    await waitFor(() => expect(Number(headline().dataset.toWrite)).toBe(4), { timeout: 3000 });
+    await waitFor(() => expect(Number(headline().dataset.toWrite)).toBe(4));
     expect(Number(headline().dataset.chapters)).toBe(16);
     expect(preview()).not.toHaveTextContent(t("autopilot.estimate.nothingLeft"));
   });
@@ -362,8 +366,8 @@ describe("a book that is started, or that grows", () => {
     mocks.structure = structureOf({ chapters: [{ slug: "001-one", title: "One", paragraphs: [{}], hasResume: true }, { slug: "002-two", title: "Two", paragraphs: [{}], hasResume: false }, { slug: "003-three", title: "Three", paragraphs: [{}], hasResume: false }] });
     await showFresh();
     const expected = engineSays({ targetChapters: 12 }, {}, { progress: { chaptersDone: 3, withoutSummary: 2 }, context: { directorWords: countWords(directorPrompt(parseDirector(ADA, "en"))) } });
-    expect(Number((preview().querySelector("[data-estimate='book']") as HTMLElement).dataset.toWrite)).toBe(expected.chaptersToWrite);
-    expect(range("calls")).toEqual(expected.calls);
+    await waitFor(() => expect(Number((preview().querySelector("[data-estimate='book']") as HTMLElement).dataset.toWrite)).toBe(expected.chaptersToWrite));
+    await waitFor(() => expect(range("calls")).toEqual(expected.calls));
   });
 
 });

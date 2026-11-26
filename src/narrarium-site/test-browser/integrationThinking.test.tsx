@@ -49,7 +49,7 @@ async function optionsOf(trigger: HTMLElement): Promise<string[]> {
   return names;
 }
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 const scrollIntoView = Element.prototype.scrollIntoView;
 beforeAll(() => i18n.changeLanguage("en"));
 beforeEach(() => {

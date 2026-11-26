@@ -113,7 +113,8 @@ describe("a page of an older version whose files are gone", () => {
     expect(alert).toHaveAttribute("data-route-error");
     expect(alert).toHaveTextContent(t("pwa.staleDescription"));
     expect(alert.closest("main")).toBeNull();
-    expect(useAppUpdateStore.getState()).toMatchObject({ stale: true, promptOpen: true });
+    // The page learns it is out of date in an effect of the fallback, which runs after the alert is drawn: wait for what it says, not for the draw.
+    await vi.waitFor(() => expect(useAppUpdateStore.getState()).toMatchObject({ stale: true, promptOpen: true }));
     fireEvent.click(screen.getByRole("button", { name: t("pwa.reloadNow") }));
     await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
   });

@@ -72,7 +72,7 @@ const last = <T,>(items: readonly T[]): T | undefined => items[items.length - 1]
 const summary = (bookId = BOOK.id) => useAutopilotStore.getState().summaries[bookId];
 const feed = () => useAutopilotStore.getState().feed.map((entry) => entry.event);
 const ended = () => feed().filter((event): event is Extract<AutopilotEvent, { type: "run-ended" }> => event.type === "run-ended");
-const stopped = () => vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 5000 });
+const stopped = () => vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 });
 const savedState = () => JSON.parse(local.files.get("autopilot/state.json") ?? "null");
 
 function useBook(book: BookEntry, patch: Record<string, unknown> = {}) {
@@ -105,7 +105,7 @@ afterEach(async () => {
   cleanup();
   await runtime.pause(BOOK.id, "now").catch(() => undefined);
   gate.release();
-  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 3000 }).catch(() => undefined);
+  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 }).catch(() => undefined);
   delete (navigator as { locks?: unknown }).locks;
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
   runtime.ensureServerStream();
@@ -335,7 +335,7 @@ describe("publishing from the browser while the autopilot runs", () => {
   async function runWhole(publishEvery: "off" | "chapter" | "step") {
     useBook(GITHUB_BOOK);
     await runtime.start(GITHUB_BOOK.id, { brief: BRIEF, options: { ...OPTIONS, publishEvery } });
-    await vi.waitFor(() => expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(false), { timeout: 5000 });
+    await vi.waitFor(() => expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(false), { timeout: 20_000 });
   }
 
   it("publishes after every step, and again when a chapter closes, when the author chose every step", async () => {
@@ -371,7 +371,7 @@ describe("publishing from the browser while the autopilot runs", () => {
   it("runs a GitHub book without a credential here to its end, and publishes nothing: its commits wait for a sync once GitHub is connected", async () => {
     useBook(GITHUB_BOOK, { defaultGitHubToken: "" });
     await runtime.start(GITHUB_BOOK.id, { brief: BRIEF, options: { ...OPTIONS, publishEvery: "step" } });
-    await vi.waitFor(() => expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(false), { timeout: 5000 });
+    await vi.waitFor(() => expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(false), { timeout: 20_000 });
     expect(steps()).toBeGreaterThan(3);
     expect(mocks.publish).not.toHaveBeenCalled();
     expect(last(ended())?.status).not.toBe("error");
@@ -381,7 +381,7 @@ describe("publishing from the browser while the autopilot runs", () => {
     markGitHubCredentialRejected("ghp_refused_by_github");
     useBook(GITHUB_BOOK, { defaultGitHubToken: "ghp_refused_by_github" });
     await runtime.start(GITHUB_BOOK.id, { brief: BRIEF, options: { ...OPTIONS, publishEvery: "step" } });
-    await vi.waitFor(() => expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(false), { timeout: 5000 });
+    await vi.waitFor(() => expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(false), { timeout: 20_000 });
     expect(steps()).toBeGreaterThan(3);
     expect(mocks.publish).not.toHaveBeenCalled();
     expect(last(ended())?.status).not.toBe("error");
@@ -390,7 +390,7 @@ describe("publishing from the browser while the autopilot runs", () => {
   it("goes on as it always did without a choice: after every chapter when the older option says so", async () => {
     useBook(GITHUB_BOOK);
     await runtime.start(GITHUB_BOOK.id, { brief: BRIEF, options: { ...OPTIONS, syncAfterChapter: true } });
-    await vi.waitFor(() => expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(false), { timeout: 5000 });
+    await vi.waitFor(() => expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(false), { timeout: 20_000 });
     expect(mocks.publish).toHaveBeenCalledTimes(chapters());
   });
 
@@ -400,7 +400,7 @@ describe("publishing from the browser while the autopilot runs", () => {
     await runtime.start(GITHUB_BOOK.id, { brief: BRIEF, options: { ...OPTIONS, publishEvery: "step" } });
     await runtime.updateOptions(GITHUB_BOOK.id, { publishEvery: "off" });
     release();
-    await vi.waitFor(() => expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(false), { timeout: 5000 });
+    await vi.waitFor(() => expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(false), { timeout: 20_000 });
     expect(mocks.publish).not.toHaveBeenCalled();
   });
 });

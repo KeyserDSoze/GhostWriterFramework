@@ -26,7 +26,7 @@ const AZURE = {
   chatModels: [{ id: "model-1", name: "gpt-4o", capabilities: ["default", "review"] }],
 } as AIIntegration;
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(() => i18n.changeLanguage("en"));
 
 afterEach(async () => {

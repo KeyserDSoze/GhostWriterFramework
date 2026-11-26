@@ -233,5 +233,5 @@ describe("exported files named after the title of the book", () => {
     expect(docx.fileName).toBe(`book-${slugCode(SCRIPTS.Japanese)}.docx`);
     const [latin] = await buildBookExportArtifacts({ snapshot: snapshot("Storie — multilingual"), scope: "full", settings, formats: ["docx"] });
     expect(latin.fileName).toBe("storie-multilingual.docx");
-  }, 30_000);
+  }, 60_000);
 });

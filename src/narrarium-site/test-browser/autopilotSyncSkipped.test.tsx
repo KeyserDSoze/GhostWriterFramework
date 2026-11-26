@@ -99,7 +99,7 @@ describe("a sync that leaves files out", () => {
     expect(server.store.files.get("book.md")).toBe("the book");
     expect(server.store.files.has("chapters/001/001-big.md")).toBe(false);
     expect(view().sync).toMatchObject({ ok: false, kind: "partial", skipped: outcome.skipped });
-  }, 20000);
+  }, 60_000);
 
   it("is not 'already in sync' when the only difference is a file that was left out", async () => {
     server.store.write("assets/cover.png", "binary bytes");

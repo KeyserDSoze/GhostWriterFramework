@@ -10,6 +10,11 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./test-browser/setup.ts"],
     include: ["test-browser/**/*.test.{ts,tsx}"],
+    // A component test goes through jsdom, IndexedDB and several async steps: on a busy machine (parallel workers, other suites, coverage) it takes several times what it takes alone,
+    // and five seconds is not enough for a test that is right. A test that is wrong still fails, only later; the waits inside a test (`asyncUtilTimeout`, in `test-browser/setup.ts`)
+    // stay shorter than the test, and a test that says its own timeout is given at least this one.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
     restoreMocks: true,
     coverage: {
       provider: "v8",

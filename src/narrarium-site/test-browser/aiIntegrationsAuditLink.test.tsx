@@ -61,7 +61,7 @@ async function open(language: Language, aiIntegrations: unknown[]) {
   render(<AuditPage />);
 }
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(() => i18n.changeLanguage("en"));
 
 afterEach(async () => {

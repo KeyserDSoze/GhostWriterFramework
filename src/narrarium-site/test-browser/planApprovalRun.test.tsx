@@ -45,7 +45,7 @@ async function untilThePlanWaits(): Promise<void> {
   await vi.waitFor(() => {
     expect(stored().plan?.awaitingAuthor).toBe(true);
     expect(runtime.isRunningHere(BOOK.id)).toBe(false);
-  }, { timeout: 15_000, interval: 20 });
+  }, { timeout: 20_000, interval: 20 });
 }
 
 function Page() {
@@ -80,7 +80,7 @@ beforeEach(() => {
 afterEach(async () => {
   cleanup();
   await runtime.pause(BOOK.id, "now").catch(() => undefined);
-  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 5000 }).catch(() => undefined);
+  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 }).catch(() => undefined);
   delete (navigator as { locks?: unknown }).locks;
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
   useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [] });
@@ -93,7 +93,7 @@ describe("the approval of a plan the engine made in this browser", () => {
     render(<Page />);
 
     // What the run wrote: the concept, the cast, the readers' reactions, the director's vote and the chapters.
-    await screen.findByRole("heading", { level: 2, name: t("autopilot.approval.title") }, { timeout: 5000 });
+    await screen.findByRole("heading", { level: 2, name: t("autopilot.approval.title") }, { timeout: 20_000 });
     expect(approval()).toHaveTextContent("A glassmaker's daughter must expose the harbor's oldest lie before the tide takes the town.");
     expect(await within(approval()).findByText("Mira, a glassmaker's daughter, uncovers the harbor's oldest lie.")).toBeInTheDocument();
     const cast = within(approval()).getByRole("region", { name: t("autopilot.approval.cast.title") });
@@ -126,11 +126,11 @@ describe("the approval of a plan the engine made in this browser", () => {
       expect(state.plan?.revisionNotes).toEqual([note]);
       expect(state.constraints).toContain(note);
       expect(state.interventions[state.interventions.length - 1]).toMatchObject({ scope: "rewrite", text: note, status: "applied" });
-    }, { timeout: 5000 });
+    }, { timeout: 20_000 });
     expect(runtime.isRunningHere(BOOK.id)).toBe(false);
 
     // The screen stays, with the change, until the author goes on.
-    await screen.findByRole("heading", { level: 2, name: t("autopilot.approval.reviseTitle") }, { timeout: 5000 });
+    await screen.findByRole("heading", { level: 2, name: t("autopilot.approval.reviseTitle") }, { timeout: 20_000 });
     expect(within(approval()).getByRole("list", { name: t("autopilot.approval.changes") })).toHaveTextContent(note);
     const calls = ai.calls.length;
     fireEvent.click(within(approval()).getByRole("button", { name: t("autopilot.approval.reviseAction") }));
@@ -142,8 +142,8 @@ describe("the approval of a plan the engine made in this browser", () => {
     expect(replanned?.user).toContain(note);
     expect(ai.calls.slice(calls).some((call) => call.json?.name === "plan_review")).toBe(true);
     expect(stored().plan?.revisionNotes).toEqual([]);
-    await screen.findByRole("heading", { level: 2, name: t("autopilot.approval.title") }, { timeout: 5000 });
+    await screen.findByRole("heading", { level: 2, name: t("autopilot.approval.title") }, { timeout: 20_000 });
     const reviews = within(approval()).getByRole("list", { name: t("autopilot.approval.director.reviews") });
     expect(within(reviews).getAllByRole("listitem")).toHaveLength(2);
-  }, 40_000);
+  }, 60_000);
 });

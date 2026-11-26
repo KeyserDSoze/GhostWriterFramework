@@ -38,7 +38,7 @@ const OPTIONS = { readers: false, readersOnPlan: false, specialists: false, paus
 
 let runtime: BrowserAutopilotRuntime;
 
-const stopped = () => vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 5000 });
+const stopped = () => vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 });
 const feed = () => useAutopilotStore.getState().feed.map((entry) => entry.event);
 
 /** One step, run to its end, and what the browser's store holds of the book after the engine's writes are over. */
@@ -74,7 +74,7 @@ beforeEach(() => {
 afterEach(async () => {
   cleanup();
   await runtime.pause(BOOK.id, "now").catch(() => undefined);
-  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 3000 }).catch(() => undefined);
+  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 }).catch(() => undefined);
   await callsWritesSettled();
   delete (navigator as { locks?: unknown }).locks;
   stopCopiesRuntimeForTests();

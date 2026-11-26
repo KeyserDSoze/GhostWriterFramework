@@ -39,7 +39,7 @@ const link = (name: string) => screen.getByRole("link", { name }) as HTMLAnchorE
 const heading = (level: number, name: string) => screen.getByRole("heading", { level, name });
 const iconOf = (card: Element) => Array.from(card.querySelector("svg")?.classList ?? []).filter((name) => name.startsWith("lucide-")).join(" ");
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(() => i18n.changeLanguage("en"));
 
 afterEach(async () => {

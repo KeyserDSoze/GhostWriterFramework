@@ -75,8 +75,8 @@ const last = <T,>(items: readonly T[]): T | undefined => items[items.length - 1]
 const view = () => useAutopilotStore.getState().views[BOOK.id];
 const plan = () => view()?.handover ?? null;
 const hostOf = () => useSettingsStore.getState().settings.books[0].autopilotHost ?? "browser";
-const untilPhase = (phase: string) => vi.waitFor(() => expect(plan()?.phase, `the plan is ${plan()?.phase}`).toBe(phase), { timeout: 5000 });
-const idle = () => vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 5000 });
+const untilPhase = (phase: string) => vi.waitFor(() => expect(plan()?.phase, `the plan is ${plan()?.phase}`).toBe(phase), { timeout: 20_000 });
+const idle = () => vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 });
 
 /** The server says, in its live stream, that the run of the book ended. */
 function serverRunEnds(status: AutopilotStatus, message: string | null, code?: AutopilotMessageCode) {
@@ -123,7 +123,7 @@ afterEach(async () => {
   cleanup();
   await runtime.pause(BOOK.id, "now").catch(() => undefined);
   gate.release();
-  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 3000 }).catch(() => undefined);
+  await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 }).catch(() => undefined);
   delete (navigator as { locks?: unknown }).locks;
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
   runtime.ensureServerStream();

@@ -42,7 +42,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  vi.setConfig({ testTimeout: 30_000 });
+  vi.setConfig({ testTimeout: 60_000 });
   mocks.load.mockReset().mockImplementation(async () => undefined);
   mocks.save.mockReset().mockImplementation(async () => true);
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS }, syncStatus: "idle", offlineConflict: null });

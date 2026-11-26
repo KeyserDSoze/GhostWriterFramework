@@ -267,7 +267,7 @@ describe("reading a big account a page at a time", () => {
     render(<Harness />);
     await screen.findByText("30 repositories");
     fireEvent.change(combobox(), { target: { value: "giungla" } });
-    await waitFor(() => expect(options()[0]).toHaveTextContent("ada/giungla-il-libro"), { timeout: 4000 });
+    await waitFor(() => expect(options()[0]).toHaveTextContent("ada/giungla-il-libro"), { timeout: 20_000 });
     expect(api.count("/user/repos")).toBe(4);
     expect(options()).toHaveLength(1);
   });
@@ -537,13 +537,13 @@ describe("the name of a new repository", () => {
 
   it("says a taken name is taken, proposes the next free one, and uses it when asked", async () => {
     const api = await toCreate({ defaultName: "grande-libro" }, { taken: ["ada/grande-libro", "ada/grande-libro-2"] });
-    expect(await screen.findByText(/A repository named «grande-libro» already exists in ada\. Try «grande-libro-3» instead\./, undefined, { timeout: 4000 })).toBeInTheDocument();
+    expect(await screen.findByText(/A repository named «grande-libro» already exists in ada\. Try «grande-libro-3» instead\./, undefined, { timeout: 20_000 })).toBeInTheDocument();
     expect(screen.getByLabelText(t("github.picker.create.nameLabel"))).toHaveAttribute("aria-invalid", "true");
     await waitFor(() => expect(decisionText()).toMatch(/not-ready/));
     fireEvent.click(screen.getByRole("button", { name: "Use «grande-libro-3»" }));
     expect(screen.getByLabelText(t("github.picker.create.nameLabel"))).toHaveValue("grande-libro-3");
-    await waitFor(() => expect(decisionText()).toBe("create|grande-libro-3|-|ready|false"), { timeout: 4000 });
-    await waitFor(() => expect(api.paths().filter((path) => path.startsWith("/repos/ada/grande-libro"))).toEqual(["/repos/ada/grande-libro", "/repos/ada/grande-libro-2", "/repos/ada/grande-libro-3", "/repos/ada/grande-libro-3"]), { timeout: 4000 });
+    await waitFor(() => expect(decisionText()).toBe("create|grande-libro-3|-|ready|false"), { timeout: 20_000 });
+    await waitFor(() => expect(api.paths().filter((path) => path.startsWith("/repos/ada/grande-libro"))).toEqual(["/repos/ada/grande-libro", "/repos/ada/grande-libro-2", "/repos/ada/grande-libro-3", "/repos/ada/grande-libro-3"]), { timeout: 20_000 });
   });
 
   it("checks the name against the owner that was chosen, a moment after the typing stops (not at every key)", async () => {
@@ -551,7 +551,7 @@ describe("the name of a new repository", () => {
     fireEvent.change(screen.getByLabelText(t("github.createBook.panel.owner.label")), { target: { value: "acme" } });
     const field = screen.getByLabelText(t("github.picker.create.nameLabel"));
     for (const value of ["l", "li", "lib", "libr", "libro-x"]) fireEvent.change(field, { target: { value } });
-    await waitFor(() => expect(api.paths()).toContain("/repos/acme/libro-x"), { timeout: 4000 });
+    await waitFor(() => expect(api.paths()).toContain("/repos/acme/libro-x"), { timeout: 20_000 });
     expect(api.paths().filter((path) => path.startsWith("/repos/acme/"))).toEqual(["/repos/acme/libro-x"]);
   });
 

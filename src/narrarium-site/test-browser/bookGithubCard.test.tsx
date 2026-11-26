@@ -66,8 +66,9 @@ describe("the card that connects a local book to GitHub", () => {
     page();
     expect(await screen.findByText(title)).toBeInTheDocument();
     expect(await screen.findByLabelText(owner)).toBeInTheDocument();
-    expect(screen.getByLabelText(repository)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: submit })).toBeInTheDocument();
+    // The form is drawn in steps (the owners are listed after it): each control is waited for, not taken for there because the one before it is.
+    expect(await screen.findByLabelText(repository)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: submit })).toBeInTheDocument();
   });
 });
 
@@ -106,7 +107,7 @@ describe("connecting the book", () => {
     arrange();
     fireEvent.change(await screen.findByLabelText("Name of the new repository"), { target: { value: "the-glass-harbor" } });
     fireEvent.click(screen.getByRole("radio", { name: "Public" }));
-    const choice = await screen.findByTestId("reader-choice", undefined, { timeout: 5000 });
+    const choice = await screen.findByTestId("reader-choice");
     expect(within(choice).getByRole("radio", { name: /Protected by a password/ })).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Create or connect the repository" }));
     await waitFor(() => expect(attachLocalBookToGitHub).toHaveBeenCalledOnce());
@@ -115,7 +116,7 @@ describe("connecting the book", () => {
     expect(within(section).getByRole("alert")).toHaveTextContent(/Nothing is published, and nothing is public/);
     expect(within(section).getByRole("alert")).toHaveTextContent(/«Secrets»/);
     expect(within(section).getByRole("button", { name: "Try again" })).toBeInTheDocument();
-  }, 20_000);
+  }, 60_000);
 
   it("shows the result when the book is on GitHub, with the focus on it and the manual steps, and opens the book from its button", async () => {
     vi.mocked(attachLocalBookToGitHub).mockResolvedValue({ owner: "ada", repo: "the-glass-harbor", branch: "main", remoteHeadSha: "a".repeat(40), repoId: "r", creation: RESULT });

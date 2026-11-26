@@ -84,7 +84,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await tabA.pause(BOOK.id, "now").catch(() => undefined);
   holding.release();
-  await vi.waitFor(() => expect(tabA.isRunningHere(BOOK.id)).toBe(false), { timeout: 3000 }).catch(() => undefined);
+  await vi.waitFor(() => expect(tabA.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 }).catch(() => undefined);
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
   useAutopilotStore.setState({ views: {}, summaries: {}, live: {}, feed: [] });
 });

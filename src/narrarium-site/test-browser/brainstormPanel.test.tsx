@@ -253,8 +253,9 @@ describe("a proposal of Brainstorming", () => {
 
     fireEvent.click(within(card).getByRole("button", { name: /brainstorm\.proposal\.undo/ }));
     await waitFor(() => expect(mocks.commit).toHaveBeenCalledTimes(2));
-    expect(mocks.files.get("outline/chapters/002.md")).toBe(KEY);
-    expect(mocks.files.get("outline/chapters/003.md")).toBe(VAULT);
+    // The commit is called before it has written the files (it hashes them first): wait for the files, not for the call.
+    await waitFor(() => expect(mocks.files.get("outline/chapters/002.md")).toBe(KEY));
+    await waitFor(() => expect(mocks.files.get("outline/chapters/003.md")).toBe(VAULT));
   });
 
   it("starts from a suggestion: it fills in the request, which the author sends or changes", async () => {

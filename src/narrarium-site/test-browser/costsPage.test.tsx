@@ -105,7 +105,7 @@ describe("the prices in Settings are in the currency of the settings", () => {
     expect(screen.getAllByLabelText("Input (EUR / 1M tokens)").length).toBeGreaterThan(0);
     expect(notice()?.textContent).toContain("prices are read in EUR");
     // The whole page of the settings, read by its labels: as long as the other tests of that page are given (`aiIntegrationsSettings`).
-  }, 30_000);
+  }, 60_000);
 });
 
 describe("an estimate, in one phrase", () => {

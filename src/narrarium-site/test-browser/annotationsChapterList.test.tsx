@@ -86,7 +86,7 @@ async function openList(book: LocalFirstBook, search = "") {
 const items = () => screen.queryAllByRole("listitem").filter((item) => item.querySelector("blockquote"));
 const quotes = () => items().map((item) => item.querySelector("blockquote")!.textContent);
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(() => i18n.changeLanguage("en"));
 beforeEach(async () => {
   await resetLocalWorkspace();

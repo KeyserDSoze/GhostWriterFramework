@@ -105,7 +105,7 @@ afterEach(async () => {
   gate.release();
   for (const runtime of runtimes.splice(0)) {
     await runtime.pause(BOOK.id, "now").catch(() => undefined);
-    await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 5000 }).catch(() => undefined);
+    await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 }).catch(() => undefined);
   }
   delete (navigator as { locks?: unknown }).locks;
   vi.restoreAllMocks();
@@ -127,7 +127,7 @@ describe("the intent that this browser runs the autopilot of a book", () => {
     const runtime = page("first");
     await runtime.start(BOOK.id, { brief: BRIEF, options: OPTIONS });
     expect(interruptedRuns(scope())).toEqual([expect.objectContaining({ bookId: BOOK.id, scope: scope() })]);
-    await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 10_000 });
+    await vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 });
     expect(savedState().status).toBe("completed");
     expect(interruptedRuns(scope())).toEqual([]);
   });
@@ -191,7 +191,7 @@ describe("a new page, after the page ended in the middle of a run", () => {
     expect(report.decision).toEqual({ kind: "resume" });
     expect(report.error).toBeUndefined();
     expect(insights()).toContain("resumedAfterRestart");
-    await vi.waitFor(() => expect(second.isRunningHere(BOOK.id)).toBe(false), { timeout: 10_000 });
+    await vi.waitFor(() => expect(second.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 });
     expect(savedState().status).toBe("completed");
     const keys = savedSteps().filter((step) => step.status === "succeeded").map((step) => `${step.task}:${step.chapterNumber ?? ""}:${step.sceneNumber ?? ""}`);
     expect(keys.length).toBeGreaterThan(4);

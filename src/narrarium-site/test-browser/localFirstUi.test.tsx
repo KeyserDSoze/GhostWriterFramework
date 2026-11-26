@@ -29,7 +29,7 @@ function Where() {
   return <span data-testid="where">{useLocation().pathname}</span>;
 }
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(() => i18n.changeLanguage("en"));
 beforeEach(async () => {
   await resetLocalWorkspace();

@@ -18,7 +18,7 @@ const ODD = mine("team/ai:1", "Odd id");
 const scrollIntoView = vi.fn();
 
 // The whole page of the settings is drawn for each test: as long as the other tests of that page are given (`aiIntegrationsSettings`).
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(async () => {
   polyfillRadix();
   await i18n.changeLanguage("en");

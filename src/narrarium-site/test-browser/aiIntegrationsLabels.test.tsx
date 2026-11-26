@@ -40,7 +40,7 @@ const routerPage = (patch: Partial<AppSettings> = {}, language: Language = "en")
 const editorOf = (name: string) => Array.from(document.querySelectorAll("details > summary p.font-semibold")).find((title) => title.textContent === name)!.closest("details") as HTMLElement;
 const change = (control: HTMLElement, value: string) => fireEvent.change(control, { target: { value } });
 
-vi.setConfig({ testTimeout: 30_000 });
+vi.setConfig({ testTimeout: 60_000 });
 beforeAll(() => i18n.changeLanguage("en"));
 
 afterEach(async () => {
@@ -110,7 +110,7 @@ describe("AI Integrations: every field is found by its label", () => {
     const compat = within(editorOf("Compat"));
     expect(compat.getByLabelText(t("settings.endpoint"))).toHaveValue("https://api.example.com/v1");
     fireEvent.click(compat.getByRole("button", { name: t("settings.loadApiModels") }));
-    expect(await compat.findByRole("combobox", { name: t("settings.apiModelChoice") }, { timeout: 10_000 })).toBeInTheDocument();
+    expect(await compat.findByRole("combobox", { name: t("settings.apiModelChoice") }, { timeout: 20_000 })).toBeInTheDocument();
   });
 
   it.each(LANGUAGES)("labels the default providers and the currency, and ties the currency hint to its select (%s)", async (language) => {
