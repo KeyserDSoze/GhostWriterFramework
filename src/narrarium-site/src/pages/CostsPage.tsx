@@ -3,10 +3,13 @@ import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { AlertTriangle, Coins, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BudgetsPanel } from "@/components/costs/budget/BudgetsPanel";
 import { CostsTable } from "@/components/costs/dashboard/CostsTable";
 import { DashboardFiltersBar } from "@/components/costs/dashboard/DashboardFilters";
 import { useBookAutopilots } from "@/components/costs/dashboard/useBookAutopilots";
 import { EstimatedMoney, MoneyText } from "@/components/costs/MoneyText";
+import { unrecordedCosts } from "@/costs/budgets";
+import { useBudgetLines } from "@/costs/useBudgets";
 import { useCostsStore } from "@/costs/costsStore";
 import { buildGroups, defaultFilters, filterRows, optionsOf, periodRange, sortGroups, todayOf, toCsv, type DashboardFilters, type GroupBy, type SortDirection, type SortKey } from "@/costs/dashboardModel";
 import { USAGE_SOURCES } from "@/costs/ledger";
@@ -74,6 +77,12 @@ export function CostsPage() {
   const history = useMemo(() => filterRows(rows, { ...filters, period: { kind: "all" } }, today), [rows, filters, today]);
   const totals = useMemo(() => summarize(kept, undefined, money.relabels), [kept, money.relabels]);
   const autopilots = useBookAutopilots(books);
+  // The budgets count the autopilot of a book on the personal server by the server's own summary, for what the ledger of this browser does not hold of it.
+  const unrecorded = useMemo(
+    () => unrecordedCosts(rows, books.filter((book) => book.autopilotHost === "server").flatMap((book) => { const stats = autopilots[book.id]?.stats; return stats ? [{ bookId: book.id, currency: stats.currency || money.display, cost: stats.cost }] : []; })),
+    [rows, books, autopilots, money.display],
+  );
+  const budgets = useBudgetLines(rows, unrecorded);
 
   const bookName = (bookId: string) => (bookId ? books.find((book) => book.id === bookId)?.name ?? file.books[bookId]?.bookName ?? bookId : t("costs.dashboard.noBook"));
   const integrationName = (integrationId: string) => integrations.find((entry) => entry.id === integrationId)?.name ?? integrationId;
@@ -180,6 +189,8 @@ export function CostsPage() {
         {server.count > 0 && <p data-server-totals className="mt-1 text-xs text-muted-foreground">{t("costs.dashboard.server.totals", { count: server.count, spend: money.totals(server.spend, { empty: "—" }) })}</p>}
       </section>
 
+      <BudgetsPanel lines={budgets.lines} budgets={budgets.budgets} warnAt={budgets.warnAt} bookName={bookName} currency={money.display} rates={money.rates} serverBooks={books.some((book) => book.autopilotHost === "server")} />
+
       <div className="flex flex-wrap items-center justify-between gap-2">
         <fieldset className="inline-flex rounded-lg border p-0.5">
           <legend className="sr-only">{t("costs.dashboard.groupBy.label")}</legend>
@@ -205,7 +216,7 @@ export function CostsPage() {
       {groups.length === 0 ? (
         <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{rows.length === 0 ? t("costs.empty") : t("costs.dashboard.table.emptyFiltered")}</p>
       ) : (
-        <CostsTable groups={groups} by={by} nameOf={nameOf} sort={sort} onSort={onSort} caption={caption} books={books} autopilots={autopilots} integrations={integrations} wide={wide} />
+        <CostsTable groups={groups} by={by} nameOf={nameOf} sort={sort} onSort={onSort} caption={caption} books={books} autopilots={autopilots} integrations={integrations} budgetLines={budgets.lines} wide={wide} />
       )}
       <p className="text-xs text-muted-foreground">{t("costs.serverNote")}</p>
     </div>

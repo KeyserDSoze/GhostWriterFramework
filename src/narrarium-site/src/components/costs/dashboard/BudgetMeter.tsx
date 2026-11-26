@@ -1,5 +1,7 @@
 import { useTranslation } from "react-i18next";
+import { BudgetBar } from "@/components/costs/budget/BudgetBar";
 import type { BookAutopilot } from "@/components/costs/dashboard/useBookAutopilots";
+import { worstLine, type BudgetLine } from "@/costs/budgets";
 import { useMoney } from "@/costs/useMoney";
 import { cn } from "@/lib/utils";
 
@@ -8,14 +10,20 @@ function compact(value: number, locale: string): string {
 }
 
 /**
- * The budget of a book's autopilot, read-only (it is set in the configuration of the autopilot): its money cap (`budgetLimit`, the one the run stops at)
- * against the autopilot's own count of what it spent, in the currency of that count; else its token cap; «No budget» without one. A meter for a screen
- * reader, with the figures in words.
+ * The budget of a book (spec point 5), as its row shows it: the budget the person set for the book, against what the ledger says it spent (the one of the line that is furthest on),
+ * with the words «Warning» and «Over budget» and, when the engine stopped the autopilot at the cap the budgets gave it, «stopped». A book with no budget of its own shows the
+ * money cap of its autopilot (`budgetLimit`, the one the run stops at) against the autopilot's own count, in the currency of that count; else its token cap; «No budget» without one.
+ * A meter for a screen reader, with the figures in words.
  */
-export function BudgetMeter({ autopilot, name, className }: { autopilot: BookAutopilot | undefined; name: string; className?: string }) {
+export function BudgetMeter({ autopilot, name, lines, className }: { autopilot: BookAutopilot | undefined; name: string; lines?: readonly BudgetLine[]; className?: string }) {
   const { t, i18n } = useTranslation();
   const money = useMoney();
   const locale = i18n.resolvedLanguage || i18n.language || "en";
+  const own = worstLine(lines ?? []);
+  if (own) {
+    const engineStopped = autopilot?.limitReached && (autopilot.limitReached.kind === "money" || autopilot.limitReached.kind === "tokens");
+    return <BudgetBar line={own} name={name} className={className} {...(engineStopped ? { extra: t("costs.dashboard.budget.stopped") } : {})} />;
+  }
   if (autopilot?.unavailable) {
     return <span data-budget="unavailable" className={cn("text-xs text-muted-foreground", className)}>{t("costs.dashboard.budget.unavailable")}</span>;
   }

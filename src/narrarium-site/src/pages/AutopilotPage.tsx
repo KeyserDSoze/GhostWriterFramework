@@ -37,6 +37,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { AutopilotResult } from "@/components/autopilot/AutopilotResult";
 import { LimitPanel } from "@/components/autopilot/LimitPanel";
+import { BudgetNotice } from "@/components/costs/budget/BudgetNotice";
 import { AutopilotTimeline } from "@/components/autopilot/AutopilotTimeline";
 import { AutopilotBandDetails, AutopilotControlBand } from "@/components/autopilot/AutopilotControlBand";
 import { Card } from "@/components/autopilot/Card";
@@ -290,6 +291,7 @@ export function AutopilotPage() {
     <div ref={setRoot} className="mx-auto max-w-6xl space-y-4">
       {header}
       {band}
+      <BudgetNotice bookId={bookId} bookName={book.name} hidden={Boolean(summary.limitReached)} />
       <LimitPanel bookId={bookId} summary={summary} />
       {alerts}
       {layout === "wide" && result}

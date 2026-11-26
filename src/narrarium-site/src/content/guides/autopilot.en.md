@@ -137,7 +137,7 @@ When you change the Synopsis entry of a chapter already written, the autopilot a
 
 ## Budgets and costs
 
-Each book can have a money budget (it needs the prices of your models in AI Integrations) and a **token budget** (it works with every model, even without prices), both in **Review** of the configuration; 0 means no limit. The autopilot stops before the next call once a budget is reached.
+Each book can have a money budget (it needs the prices of your models in AI Integrations) and a **token budget** (it works with every model, even without prices), both in **Review** of the configuration; 0 means no limit. The autopilot stops before the next step once a budget is reached. The budgets of the **Costs** page (per month, in total, for all your books or for one, in each currency) are turned into this same cap when the autopilot starts: see *Budgets* in the AI Router guide.
 
 The cost line of the band says what the autopilot has spent against the budget, its tokens and its calls and, while a step runs in this browser, what that step has spent so far («this step $0.0012 · 2 calls»), as its calls end. The line under it is the whole book: **This run**, **This month** and **Book to date**, every use of the book included (the autopilot, the Copilot, the actions of the editor, the readers, research, images and voice), as your browsers recorded them. In **Everything that happened** every step says on its line what it cost and how many calls it made, the retries and the fallbacks that were billed included; open it for its money, its tokens, its calls and where these numbers come from (this browser, the autopilot's own record, or the summary of your personal server).
 
@@ -147,7 +147,7 @@ Every amount keeps the currency it was priced in. The currency of **Settings ›
 
 For a book whose autopilot runs on your personal server, the cost of the run is the server's summary: the server prices its calls in the currency of the AI configuration you last sent it, and when that is not the currency of your settings the band says so and offers **Send the current AI configuration to the server** (Settings › Costs offers it too when you change the currency). **This month** and **Book to date** count the calls made in your browsers.
 
-Every book's budget, with what its autopilot spent against it, is also on the **Costs** page, one bar for each book, read only (see *Costs* in the AI Router guide).
+Every book's budget, with what was spent against it, is also on the **Costs** page, one bar for each book, and you can set it there (see *Costs* and *Budgets* in the AI Router guide). When a budget has stopped the autopilot, the panel under the band names it and offers **Raise the budget to** … **and continue** or **Continue anyway**; and before it stops, a notice above the panel warns when a budget is at the share it warns at.
 
 ## Personal server
 

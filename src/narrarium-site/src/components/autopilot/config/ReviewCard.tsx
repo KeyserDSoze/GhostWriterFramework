@@ -10,6 +10,8 @@ import { formatCount } from "@/autopilot/format";
 import { useMoney } from "@/costs/useMoney";
 import type { BookStructure } from "@/types/book";
 import type { BookEntry } from "@/types/settings";
+import { isAppliedCap } from "@/costs/budgetCaps";
+import "@/i18n/costs";
 
 const ID = "autopilot-review";
 const FIELDS: ReviewField[] = ["target", "rounds", "readerRounds", "campaignRounds", "money", "tokens"];
@@ -132,7 +134,7 @@ const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function Review
           {...field("money")}
           label={t("autopilot.review.money.label", { currency })}
           placeholder={t("autopilot.review.unlimited")}
-          hint={t("autopilot.review.money.hint", { spent: money.amount(spent, spentCurrency, { zero: "amount" }) })}
+          hint={`${t("autopilot.review.money.hint", { spent: money.amount(spent, spentCurrency, { zero: "amount" }) })}${isAppliedCap(book.id, reading.budgetLimit) ? ` ${t("costs.budget.capHint")}` : ""}`}
           problem={problemOf("money", 0, MAX_MONEY_CAP)}
           unit={currency}
           decimals

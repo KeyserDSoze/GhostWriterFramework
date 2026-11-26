@@ -360,6 +360,9 @@ export interface AutopilotFacts {
   done: string[];
   /** What the state counted of the run: the calls, their tokens and what they cost. */
   stats: { aiCalls: number; inputTokens: number; outputTokens: number; cost: number; usageUnknownCalls?: number; costUnknownCalls?: number } | null;
+  /** The money cap the state holds (`options.budgetLimit`, 0: none) and the limit that stopped the run, with the numbers the stop compared. */
+  budgetLimit: number;
+  limitReached: { kind: string; used: number; limit: number } | null;
 }
 
 /** What the book's local repository says of its autopilot: its state and the log of its steps. */
@@ -372,7 +375,7 @@ export const autopilotFacts = (page: Page, repo: string) => page.evaluate((repo)
       const files = (all.result as Array<{ repoId: string; path: string; text: string }>).filter((entry) => entry.repoId.endsWith(`::local:${repo}`));
       db.close();
       try {
-        const state = JSON.parse(files.find((entry) => entry.path === "autopilot/state.json")?.text ?? "null") as { status: string; phase: string; lastError?: unknown; stats?: { aiCalls: number; inputTokens: number; outputTokens: number; cost: number; usageUnknownCalls?: number; costUnknownCalls?: number } } | null;
+        const state = JSON.parse(files.find((entry) => entry.path === "autopilot/state.json")?.text ?? "null") as { status: string; phase: string; lastError?: unknown; stats?: { aiCalls: number; inputTokens: number; outputTokens: number; cost: number; usageUnknownCalls?: number; costUnknownCalls?: number }; options?: { budgetLimit?: number }; limitReached?: { kind: string; used: number; limit: number } } | null;
         const log = JSON.parse(files.find((entry) => entry.path === "autopilot/activity.json")?.text ?? "{\"activities\":[]}") as { activities: Array<{ task: string; status: string; chapterNumber?: number; sceneNumber?: number }> };
         resolveFacts(state ? {
           status: state.status,
@@ -381,6 +384,8 @@ export const autopilotFacts = (page: Page, repo: string) => page.evaluate((repo)
           steps: log.activities.map((entry) => `${entry.task}:${entry.status}`),
           done: log.activities.filter((entry) => entry.status === "succeeded").map((entry) => `${entry.task}:${entry.chapterNumber ?? ""}:${entry.sceneNumber ?? ""}`),
           stats: state.stats ?? null,
+          budgetLimit: state.options?.budgetLimit ?? 0,
+          limitReached: state.limitReached ?? null,
         } : null);
       } catch { resolveFacts(null); }
     };

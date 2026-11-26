@@ -137,7 +137,7 @@ Quando cambi la voce della Sinossi di un capitolo già scritto, l'autopilot chie
 
 ## Budget e costi
 
-Ogni libro può avere un budget in denaro (richiede i prezzi dei tuoi modelli in Integrazioni AI) e un **budget in token** (vale con qualsiasi modello, anche senza prezzi), entrambi in **Revisione** della configurazione; 0 significa nessun limite. L'autopilot si ferma prima della chiamata successiva quando un budget è raggiunto.
+Ogni libro può avere un budget in denaro (richiede i prezzi dei tuoi modelli in Integrazioni AI) e un **budget in token** (vale con qualsiasi modello, anche senza prezzi), entrambi in **Revisione** della configurazione; 0 significa nessun limite. L'autopilot si ferma prima del passo successivo quando un budget è raggiunto. I budget della pagina **Costi** (al mese, in totale, per tutti i tuoi libri o per uno, in ogni valuta) diventano questo stesso tetto quando l'autopilot parte: vedi *Budget* nella guida del Router AI.
 
 La riga del costo nella fascia dice quanto ha speso l'autopilot rispetto al budget, i suoi token e le sue chiamate e, mentre un passo gira in questo browser, quanto ha speso finora quel passo («questo passo 0,0012 USD · 2 chiamate»), man mano che le sue chiamate finiscono. La riga sotto è il libro intero: **Questa corsa**, **Questo mese** e **Libro finora**, ogni uso del libro compreso (l'autopilot, il Copilot, le azioni dell'editor, i lettori, la ricerca, le immagini e la voce), come li hanno registrati i tuoi browser. In **Tutto ciò che è successo** ogni passo dice sulla sua riga quanto è costato e quante chiamate ha fatto, compresi i nuovi tentativi e i fallback che sono stati fatturati; aprilo per il suo denaro, i suoi token, le sue chiamate e da dove vengono questi numeri (questo browser, il registro dell'autopilot o il riepilogo del tuo server personale).
 
@@ -147,7 +147,7 @@ Ogni importo tiene la valuta in cui è stato prezzato. La valuta di **Impostazio
 
 Per un libro il cui autopilot gira sul tuo server personale, il costo della corsa è il riepilogo del server: il server prezza le sue chiamate nella valuta della configurazione AI che gli hai inviato l'ultima volta, e quando non è la valuta delle tue impostazioni la fascia lo dice e propone **Invia al server la configurazione AI attuale** (lo propone anche Impostazioni › Costi quando cambi la valuta). **Questo mese** e **Libro finora** contano le chiamate fatte nei tuoi browser.
 
-Il budget di ogni libro, con quanto il suo autopilot ha speso rispetto ad esso, è anche nella pagina **Costi**, una barra per ogni libro, in sola lettura (vedi *Costi* nella guida del Router AI).
+Il budget di ogni libro, con quanto è stato speso rispetto ad esso, è anche nella pagina **Costi**, una barra per ogni libro, e lì puoi impostarlo (vedi *Costi* e *Budget* nella guida del Router AI). Quando un budget ha fermato l'autopilot, il pannello sotto la barra lo nomina e offre **Alza il budget a** … **e continua** o **Continua comunque**; e prima che si fermi, un avviso sopra il pannello segnala quando un budget è alla percentuale a cui avvisa.
 
 ## Server personale
 

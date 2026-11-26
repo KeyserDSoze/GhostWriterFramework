@@ -6,6 +6,7 @@ import { BudgetMeter } from "@/components/costs/dashboard/BudgetMeter";
 import { Sparkline } from "@/components/costs/dashboard/Sparkline";
 import type { BookAutopilot } from "@/components/costs/dashboard/useBookAutopilots";
 import { EstimatedMoney, MoneyText } from "@/components/costs/MoneyText";
+import type { BudgetLine } from "@/costs/budgets";
 import type { DashboardGroup, GroupBy, SortDirection, SortKey } from "@/costs/dashboardModel";
 import { useMoney } from "@/costs/useMoney";
 import { cn } from "@/lib/utils";
@@ -21,6 +22,8 @@ export interface TableProps {
   books: readonly BookEntry[];
   autopilots: Record<string, BookAutopilot>;
   integrations: readonly AIIntegration[];
+  /** The limits of the budgets against what was spent: a book's own are in its row, and all of them in its settings. */
+  budgetLines: readonly BudgetLine[];
   /** A table on a wide screen; stacked cards on a phone. */
   wide: boolean;
 }
@@ -83,7 +86,7 @@ function SortHeader({ column, label, sort, onSort, align = "right" }: { column: 
  * The rows of the dashboard: a dense table on a wide screen (its headers sort it, `aria-sort` says how), stacked cards on a phone. A row of a book opens
  * the settings of the book at a glance; a book on the personal server says what the server's own summary counts, apart.
  */
-export function CostsTable({ groups, by, nameOf, sort, onSort, caption, books, autopilots, integrations, wide }: TableProps) {
+export function CostsTable({ groups, by, nameOf, sort, onSort, caption, books, autopilots, integrations, budgetLines, wide }: TableProps) {
   const { t } = useTranslation();
   const figures = useFigures();
   const id = useId();
@@ -91,6 +94,7 @@ export function CostsTable({ groups, by, nameOf, sort, onSort, caption, books, a
   const bookOf = (key: string) => (by === "books" && key ? books.find((book) => book.id === key) : undefined);
   const toggle = (key: string) => setOpen((current) => ({ ...current, [key]: !current[key] }));
   const nameHeader = t(`costs.dashboard.table.name.${by}`);
+  const ownLines = (bookId: string) => budgetLines.filter((line) => line.scope === "book" && line.bookId === bookId);
 
   const nameCell = (group: DashboardGroup, detailsId: string) => {
     const book = bookOf(group.key);
@@ -133,10 +137,10 @@ export function CostsTable({ groups, by, nameOf, sort, onSort, caption, books, a
                 </dl>
                 <div className="mt-2 flex flex-wrap items-end justify-between gap-2">
                   <Sparkline points={group.trend} />
-                  {book && <BudgetMeter autopilot={autopilots[book.id]} name={book.name} />}
+                  {book && <BudgetMeter autopilot={autopilots[book.id]} name={book.name} lines={ownLines(book.id)} />}
                 </div>
                 <Unknowns group={group} />
-                {book && open[group.key] && <div id={detailsId} className="mt-2 border-t pt-2"><BookSettings book={book} autopilot={autopilots[book.id]} models={group.models} integrations={integrations} /></div>}
+                {book && open[group.key] && <div id={detailsId} className="mt-2 border-t pt-2"><BookSettings book={book} autopilot={autopilots[book.id]} models={group.models} integrations={integrations} budgetLines={budgetLines} /></div>}
               </li>
             );
           })}
@@ -179,12 +183,12 @@ export function CostsTable({ groups, by, nameOf, sort, onSort, caption, books, a
                   <td className="px-2 py-1.5 text-right align-top tabular-nums">{figures.whole(summary.calls)}</td>
                   <td className="px-2 py-1.5 text-right align-top tabular-nums" title={figures.whole(summary.inputTokens + summary.outputTokens)}>{figures.compact(summary.inputTokens + summary.outputTokens)}</td>
                   <td className="px-2 py-1.5 align-middle"><Sparkline points={group.trend} /></td>
-                  {by === "books" && <td className="px-2 py-1.5 align-top">{book ? <BudgetMeter autopilot={autopilots[book.id]} name={book.name} /> : null}</td>}
+                  {by === "books" && <td className="px-2 py-1.5 align-top">{book ? <BudgetMeter autopilot={autopilots[book.id]} name={book.name} lines={ownLines(book.id)} /> : null}</td>}
                 </tr>
                 {book && open[group.key] && (
                   <tr id={detailsId} className="border-b bg-muted/20">
                     <td colSpan={columns} className="px-3 py-2">
-                      <BookSettings book={book} autopilot={autopilots[book.id]} models={group.models} integrations={integrations} />
+                      <BookSettings book={book} autopilot={autopilots[book.id]} models={group.models} integrations={integrations} budgetLines={budgetLines} />
                     </td>
                   </tr>
                 )}
