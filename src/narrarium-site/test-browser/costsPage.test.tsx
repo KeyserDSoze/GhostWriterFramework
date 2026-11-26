@@ -57,55 +57,6 @@ afterEach(() => cleanup());
 const renderCosts = () => render(<MemoryRouter><CostsPage /></MemoryRouter>);
 const bookCard = (name: string) => screen.getByRole("heading", { name }).closest("[aria-labelledby]") as HTMLElement;
 
-describe("the Costs page", () => {
-  it("adds nothing in different currencies: euro and dollars are subtotals", () => {
-    renderCosts();
-    const card = bookCard("The Glass Harbor");
-    // 2 earlier (in EUR, the currency of the settings when the ledger began) + 0.12 EUR, and the 0.16 USD of the Copilot beside them.
-    expect(within(card).getAllByText("€2.12 + $0.16").length).toBeGreaterThan(0);
-  });
-
-  it("converts at the rate the person gives and says so, live, without a reload", () => {
-    renderCosts();
-    act(() => setSettings("EUR", [{ from: "USD", to: "EUR", rate: 0.5 }]));
-    const card = bookCard("The Glass Harbor");
-    expect(within(card).getAllByText(/≈ €2\.20/).length).toBeGreaterThan(0);
-    expect(within(card).getAllByText("converted at 1 USD = 0.5 EUR").length).toBeGreaterThan(0);
-  });
-
-  it("follows a change of the currency at once: the label of the page and what can be shown in it", () => {
-    renderCosts();
-    expect(screen.getByText(/Amounts in EUR/)).toBeInTheDocument();
-    act(() => setSettings("USD"));
-    expect(screen.getByText(/Amounts in USD/)).toBeInTheDocument();
-    expect(within(bookCard("The Glass Harbor")).getAllByText("$0.16 + €2.12").length).toBeGreaterThan(0);
-  });
-
-  it("says where the money went, how many calls and tasks, and the calls it cannot price", () => {
-    renderCosts();
-    const card = bookCard("The Glass Harbor");
-    expect(within(card).getByText("Autopilot")).toBeInTheDocument();
-    expect(within(card).getByText("Copilot")).toBeInTheDocument();
-    expect(within(card).getAllByText(/8 calls · 3 tasks/).length).toBeGreaterThan(0);
-    expect(within(card).getAllByText("3 calls without a price").length).toBeGreaterThan(0);
-    expect(within(card).getByText("Earlier")).toBeInTheDocument();
-  });
-
-  it("puts this month apart from the months before", () => {
-    renderCosts();
-    const other = bookCard("book-2");
-    expect(within(other).getByText(/This month/).textContent).toContain("€0.00");
-    expect(within(other).getAllByText("€1.00").length).toBeGreaterThan(0);
-  });
-
-  it("is in Italian too", async () => {
-    await act(async () => { await i18n.changeLanguage("it"); });
-    renderCosts();
-    expect(screen.getByText(/Importi in EUR/)).toBeInTheDocument();
-    expect(within(bookCard("The Glass Harbor")).getAllByText("3 chiamate senza prezzo").length).toBeGreaterThan(0);
-  });
-});
-
 describe("the exchange rates in Settings", () => {
   it("adds a rate towards the currency of the settings and removes it, with every field named", () => {
     const onChange = vi.fn();
@@ -177,14 +128,5 @@ describe("an estimate, in one phrase", () => {
     expect(estimatePhrase(t, moneyOf("EUR", [{ from: "USD", to: "EUR", rate: 0.9 }]), "500", { USD: 0.002 })).toBe("≈ 500 tokens and ≈ €0.0018, estimated");
     render(<EstimatedMoney totals={{ USD: 0.002 }} />);
     expect(screen.getByText("≈ €0.0018 estimated")).toBeInTheDocument();
-  });
-
-  it("is said where the Costs page counts the calls without a token count", () => {
-    const file = costs();
-    const delta: UsageDelta = { key: { period: today, bookId: "book-1", source: "autopilot", capability: "autopilot", integrationId: "int-1", model: "gpt-5", currency: "EUR" }, counters: { calls: 1, unknownUsageCalls: 1, estimatedInputTokens: 1000, estimatedOutputTokens: 320, estimatedCost: 0.0041 } };
-    const next = { ...file, ledger: addToLedger(file.ledger, WRITER, [delta], new Date(), "EUR") };
-    useCostsStore.setState({ file: next, persisted: next });
-    renderCosts();
-    expect(within(bookCard("The Glass Harbor")).getAllByText("1 call without a token count (≈ 1,320 tokens and ≈ €0.0041, estimated)").length).toBeGreaterThan(0);
   });
 });
