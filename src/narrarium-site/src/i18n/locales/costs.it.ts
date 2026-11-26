@@ -187,6 +187,13 @@ export default {
         open: "Apri l'autopilota",
       },
     },
+    indicator: {
+      today: "Spesa di oggi",
+      month: "questo mese",
+      open: "apri i costi",
+      todayShort: "oggi",
+      monthShort: "mese",
+    },
     money: {
       estimated: "≈ {{amount}} stimati",
     },

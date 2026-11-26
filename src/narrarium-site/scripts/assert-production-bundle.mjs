@@ -97,6 +97,10 @@ for (const file of staticPaths) {
   for (const marker of ["LiberationSerif-Regular.ttf", "font/ttf;base64", "submission-package.zip", "application/epub+zip"]) {
     if (text.includes(marker)) throw new Error(`[production-bundle] Eager export implementation marker '${marker}' found in ${path.relative(distRoot, file)}.`);
   }
+  // The spend in the top bar and the dashboard of the costs load after the page is drawn (their own chunks): none of their markup is in the initial graph.
+  for (const marker of ["data-costs-indicator", "data-costs-table", "data-dashboard-filters"]) {
+    if (text.includes(marker)) throw new Error(`[production-bundle] Lazy costs marker '${marker}' found in the initial graph, in ${path.relative(distRoot, file)}.`);
+  }
   graphRawBytes += content.byteLength;
   graphGzipBytes += gzipSync(content).byteLength;
 }

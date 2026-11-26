@@ -147,6 +147,8 @@ Ogni importo tiene la valuta in cui è stato prezzato. La valuta di **Impostazio
 
 Per un libro il cui autopilot gira sul tuo server personale, il costo della corsa è il riepilogo del server: il server prezza le sue chiamate nella valuta della configurazione AI che gli hai inviato l'ultima volta, e quando non è la valuta delle tue impostazioni la fascia lo dice e propone **Invia al server la configurazione AI attuale** (lo propone anche Impostazioni › Costi quando cambi la valuta). **Questo mese** e **Libro finora** contano le chiamate fatte nei tuoi browser.
 
+Il budget di ogni libro, con quanto il suo autopilot ha speso rispetto ad esso, è anche nella pagina **Costi**, una barra per ogni libro, in sola lettura (vedi *Costi* nella guida del Router AI).
+
 ## Server personale
 
 Esegui `npx narrarium-server` sul computer che custodirà i tuoi libri (Node.js 22.14 o successivo). Installa una copia verificata su npm e apre un pannello di amministrazione su `http://127.0.0.1:24243` su quel computer; `npx narrarium-server admin-code` mostra il codice per accedere.

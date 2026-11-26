@@ -187,6 +187,13 @@ export default {
         open: "Open the autopilot",
       },
     },
+    indicator: {
+      today: "Spend today",
+      month: "this month",
+      open: "open the costs",
+      todayShort: "today",
+      monthShort: "month",
+    },
     money: {
       estimated: "≈ {{amount}} estimated",
     },

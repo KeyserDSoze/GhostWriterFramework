@@ -51,6 +51,7 @@ const RepositoryStatusDialog = lazy(() => import("@/components/repository/Reposi
 // The switcher of branches loads when it is opened, and what the automatic sync did when the menu of the pill opens: the top bar carries only the button.
 const BranchSwitcherDialog = lazy(() => import("@/components/branches/BranchSwitcherDialog").then((module) => ({ default: module.BranchSwitcherDialog })));
 const AutoSyncStatus = lazy(() => import("@/components/branches/AutoSyncStatus").then((module) => ({ default: module.AutoSyncStatus })));
+const CostsIndicator = lazy(() => import("@/components/costs/CostsIndicator").then((module) => ({ default: module.CostsIndicator })));
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -95,6 +96,17 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
   // The branch on the screen was made on this device and is not on GitHub yet.
   const [branchPending, setBranchPending] = useState(false);
+  // What was spent today and this month: its code loads once the page is drawn and the browser is idle, never with the bar.
+  const [costsShown, setCostsShown] = useState(false);
+  useEffect(() => {
+    const show = () => setCostsShown(true);
+    if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(show, { timeout: 3000 });
+      return () => window.cancelIdleCallback(handle);
+    }
+    const timer = window.setTimeout(show, 200);
+    return () => window.clearTimeout(timer);
+  }, []);
   const [branchDialogOpen, setBranchDialogOpen] = useState(false);
   const [branchDialogLoaded, setBranchDialogLoaded] = useState(false);
   if (branchDialogOpen && !branchDialogLoaded) setBranchDialogLoaded(true);
@@ -366,6 +378,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       </div>
 
       <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2">
+        {costsShown && <Suspense fallback={null}><CostsIndicator /></Suspense>}
         {previousDocument && (
           <Button
             variant="outline"

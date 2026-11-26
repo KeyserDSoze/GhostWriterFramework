@@ -147,6 +147,8 @@ Every amount keeps the currency it was priced in. The currency of **Settings ›
 
 For a book whose autopilot runs on your personal server, the cost of the run is the server's summary: the server prices its calls in the currency of the AI configuration you last sent it, and when that is not the currency of your settings the band says so and offers **Send the current AI configuration to the server** (Settings › Costs offers it too when you change the currency). **This month** and **Book to date** count the calls made in your browsers.
 
+Every book's budget, with what its autopilot spent against it, is also on the **Costs** page, one bar for each book, read only (see *Costs* in the AI Router guide).
+
 ## Personal server
 
 Run `npx narrarium-server` on the computer that will keep your books (Node.js 22.14 or newer). It installs a copy verified on npm and opens an admin panel at `http://127.0.0.1:24243` on that computer; `npx narrarium-server admin-code` shows the code to sign in.
