@@ -190,7 +190,7 @@ function retryLaterText(t: TFunction, event: Extract<Notice, { type: "insight" }
  */
 const CHAPTER_CODES = new Set([
   "outlineGhostwriter", "outlineChanged", "outlineRemoved", "outlineWrittenChanged", "outlineWarnings", "outlineWrittenAuto", "outlineChangedWhileWriting", "outlineRemovedWritten",
-  "frozenChanged", "frozenAuto", "frozenReviewed", "frozenCleared", "frozenInvalid",
+  "frozenChanged", "frozenAuto", "frozenReviewed", "frozenCleared", "frozenInvalid", "campaignChapterDone", "campaignSkipped",
 ]);
 
 function chapterText(t: TFunction, event: Extract<Notice, { type: "insight" }>): string {

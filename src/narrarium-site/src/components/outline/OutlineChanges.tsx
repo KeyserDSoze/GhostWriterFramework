@@ -1,12 +1,12 @@
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowRightLeft, CheckCheck, ChevronDown, ChevronUp, FileMinus2, FilePen, FilePlus2, History, Info } from "lucide-react";
-import { groupOutlineChanges, type OutlineChangeState } from "narrarium-engine";
+import { ArrowRightLeft, CheckCheck, ChevronDown, ChevronUp, CircleStop, FileMinus2, FilePen, FilePlus2, History, Info, ListChecks, Loader2, Wand2 } from "lucide-react";
+import { groupOutlineChanges, type AutopilotCampaignSummary, type OutlineChangeState } from "narrarium-engine";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatAgo, formatCount, formatDateTime } from "@/autopilot/format";
 import { isToldOutcome } from "@/outline/outlineModel";
-import type { WhatChanged, WhatChangedOutcome, WhatChangedRow } from "@/outline/whatChanged";
+import type { WhatChanged, WhatChangedHeld, WhatChangedOutcome, WhatChangedRow } from "@/outline/whatChanged";
 
 /** The outcomes that are said as a sentence for their chapters together (the engine's rule, grouped as `groupOutlineChanges` groups a series), besides the told ones. */
 const GROUP_SENTENCES: readonly WhatChangedOutcome[] = ["replan", "unplan", "stays", "extends"];
@@ -38,6 +38,7 @@ export function changeKindText(t: (key: string, options?: Record<string, unknown
  * says it already (a chapter planned again has its own status), or nothing is worth a label (what the journal tells as far as it goes back, before any review).
  */
 export function changeBadge(t: (key: string, options?: Record<string, unknown>) => string, row: WhatChangedRow, view: Pick<WhatChanged, "since">): string | null {
+  if (row.held) return t(`outline.changes.badge.held.${row.held}`);
   if (row.outcome === "replan" || row.outcome === "unplan" || row.outcome === "stays") return null;
   if (row.pending) return t(`outline.changes.badge.${row.outcome}`);
   if (view.since.kind === "always" || !row.fresh) return null;
@@ -55,14 +56,26 @@ export interface OutlineChangesProps {
   hasEntry: (number: number) => boolean;
   onReveal: (number: number) => void;
   onMarkReviewed: () => void;
+  /** «Apply to the book…»: the written chapters whose entry changed can be decided about now. */
+  onApply?: () => void;
+  /** The chapters the Synopsis is being applied to, while it goes on, and cancelling the ones that wait. */
+  campaign?: { summary: AutopilotCampaignSummary; onCancel: () => void; busy: boolean } | null;
 }
+
+/** What the author already decided holds a chapter: said in a sentence of its own, together with the other chapters held the same way. */
+const HELD_GROUPS: ReadonlyArray<{ key: string; held: readonly WhatChangedHeld[] }> = [
+  { key: "applying", held: ["rewriting", "applying"] },
+  { key: "keeping", held: ["keeping"] },
+  { key: "deferred", held: ["deferred"] },
+  { key: "decided", held: ["decided"] },
+];
 
 /**
  * «What changed» on the Synopsis page: the chapters the autopilot has not followed yet and what else changed (see `whatChanged`), each with what happened, who did
  * it, when, and what the autopilot will do about it. The sentences of the groups are the engine's rule, as the page says it after a save. Folded once the author
  * marked everything as reviewed; the summary line still counts what the autopilot has not followed yet.
  */
-export function OutlineChanges({ view, autopilot, outlineEmpty, busy, hasEntry, onReveal, onMarkReviewed }: OutlineChangesProps) {
+export function OutlineChanges({ view, autopilot, outlineEmpty, busy, hasEntry, onReveal, onMarkReviewed, onApply, campaign }: OutlineChangesProps) {
   const { t } = useTranslation();
   const id = useId();
   const listId = `${id}-list`;
@@ -74,10 +87,14 @@ export function OutlineChanges({ view, autopilot, outlineEmpty, busy, hasEntry, 
   const now = Date.now();
   const say = (key: string, options?: Record<string, unknown>) => t(key, options) as string;
 
-  const told = pending.filter((row) => row.outcome !== "extends");
+  const told = pending.filter((row) => row.outcome !== "extends" && !row.held);
   const groups = groupOutlineChanges(autopilot, told.map((row) => ({ number: row.number, entry: row.change === "removed" ? "removed" as const : "changed" as const })), { outlineEmpty });
   const extending = pending.filter((row) => row.outcome === "extends").map((row) => row.number);
   const sentences: string[] = [];
+  for (const group of HELD_GROUPS) {
+    const numbers = pending.filter((row) => row.held && group.held.includes(row.held)).map((row) => formatCount(row.number));
+    if (numbers.length) sentences.push(t(`outline.changes.heldGroups.${group.key}`, { count: numbers.length, numbers }));
+  }
   for (const group of groups) {
     const numbers = group.numbers.map(formatCount);
     if (isToldOutcome(group.outcome)) sentences.push(t(`outline.written.${group.outcome}`, { count: group.numbers.length, numbers }));
@@ -90,21 +107,49 @@ export function OutlineChanges({ view, autopilot, outlineEmpty, busy, hasEntry, 
 
   return (
     <section aria-labelledby={headingId} data-outline-changes="" className="space-y-3 rounded-2xl border border-layer bg-card p-4 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0 flex-1 space-y-1">
-          <h2 id={headingId} className="flex flex-wrap items-center gap-2 text-base font-semibold">
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 id={headingId} className="flex min-w-0 flex-wrap items-center gap-2 text-base font-semibold">
             <History className="h-4 w-4 text-primary" aria-hidden="true" />
             {t("outline.changes.title")}
             <Badge variant="outline">{t("outline.changes.count", { count: view.rows.length })}</Badge>
             {pending.length > 0 && view.mode === "plan" && <Badge variant="outline" className="border-amber-500/50 text-amber-900 dark:text-amber-200">{t("outline.changes.pending", { count: pending.length })}</Badge>}
           </h2>
-          <p className="max-w-3xl text-sm text-muted-foreground">{intro}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {onApply && (
+              <Button type="button" size="sm" onClick={onApply} disabled={busy} data-outline-apply-open="">
+                <Wand2 className="h-4 w-4" aria-hidden="true" />{t("outline.changes.applyOpen")}
+              </Button>
+            )}
+            <Button type="button" variant="ghost" size="sm" aria-expanded={expanded} aria-controls={listId} onClick={() => setOpen(!expanded)}>
+              {expanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
+              {expanded ? t("outline.changes.hide") : t("outline.changes.show")}
+            </Button>
+          </div>
         </div>
-        <Button type="button" variant="ghost" size="sm" aria-expanded={expanded} aria-controls={listId} onClick={() => setOpen(!expanded)}>
-          {expanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
-          {expanded ? t("outline.changes.hide") : t("outline.changes.show")}
-        </Button>
+        <p className="max-w-3xl text-sm text-muted-foreground">{intro}</p>
       </div>
+
+      {campaign && (
+        <div data-outline-campaign={campaign.summary.reason} className="space-y-2 rounded-xl border border-primary/30 bg-primary/5 p-3">
+          <p role="status" className="flex min-w-0 items-start gap-2 text-sm">
+            <ListChecks className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+            <span className="min-w-0">
+              <span className="font-medium">{t("outline.changes.campaign.progress", { done: campaign.summary.done, total: campaign.summary.total })}</span>
+              {campaign.summary.current !== null && <> {t("outline.changes.campaign.current", { number: campaign.summary.current })}</>}
+              {campaign.summary.waiting.length > 0 && <> {t("outline.changes.campaign.waiting", { count: campaign.summary.waiting.length, numbers: campaign.summary.waiting.map(formatCount) })}</>}
+            </span>
+          </p>
+          {campaign.summary.waiting.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-6">
+              <Button type="button" size="sm" variant="outline" onClick={campaign.onCancel} disabled={campaign.busy} aria-describedby={`${id}-cancel-hint`}>
+                {campaign.busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <CircleStop className="h-4 w-4" aria-hidden="true" />}{t("outline.changes.campaign.cancel")}
+              </Button>
+              <p id={`${id}-cancel-hint`} className="min-w-[12rem] flex-1 text-xs text-muted-foreground">{t("outline.changes.campaign.cancelHint")}</p>
+            </div>
+          )}
+        </div>
+      )}
 
       <div id={listId} hidden={!expanded} className="space-y-3">
         {sentences.length > 0 && (
@@ -117,7 +162,7 @@ export function OutlineChanges({ view, autopilot, outlineEmpty, busy, hasEntry, 
         <ol className="space-y-1.5">
           {view.rows.map((row) => {
             const label = `${t("outline.changes.chapter", { number: row.number })}${row.title ? ` — ${row.title}` : ""}`;
-            const outcome = t(`outline.changes.outcome.${row.outcome}`);
+            const outcome = row.held ? t(`outline.changes.held.${row.held}`) : t(`outline.changes.outcome.${row.outcome}`);
             return (
               <li key={row.number} data-outline-change={row.number} className="flex flex-col gap-1 rounded-xl border border-layer/70 px-3 py-2 sm:flex-row sm:items-start sm:gap-3">
                 <div className="min-w-0 flex-1 space-y-0.5">
@@ -144,7 +189,7 @@ export function OutlineChanges({ view, autopilot, outlineEmpty, busy, hasEntry, 
                     )}
                   </p>
                 </div>
-                <p className={`text-xs sm:max-w-[45%] sm:text-right ${OUTCOME_TONE[row.outcome] ?? "text-muted-foreground"}`}>{outcome}</p>
+                <p className={`text-xs sm:max-w-[45%] sm:text-right ${row.held ? "text-foreground" : OUTCOME_TONE[row.outcome] ?? "text-muted-foreground"}`}>{outcome}</p>
               </li>
             );
           })}

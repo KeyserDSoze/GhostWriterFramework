@@ -46,6 +46,7 @@ const autopilotEn = {
       moveToBrowser: "Bringing the book back to this browser…",
       sync: "Syncing with the server…",
       frozen: "Saving your decision about the frozen chapter…",
+      campaign: "Applying the Synopsis to the book…",
       githubConflicts: "Resolving the conflicts with GitHub…",
     },
     actions: {
@@ -930,6 +931,19 @@ const autopilotEn = {
       costUnknownHint: "No measured cost for these calls: the model has no price in AI Integrations, or the provider did not report their tokens. A token budget still applies.",
     },
     current: { loading: "Loading the autopilot of this book…", working: "Working on", preparing: "Preparing the next step…" },
+    campaign: {
+      chip: {
+        "outline-change": "Applying the Synopsis: {{done}} of {{total}}",
+      },
+      current: "chapter {{number}} now",
+      oldServer: "Your personal server is older than {{version}} and cannot apply the Synopsis to the book: update it to do this from here.",
+      errors: {
+        invalid_request: "These choices cannot be applied: look at them again.",
+        campaign_active: "Chapters are already being revised: wait until they are done, or cancel the ones that wait.",
+        not_changed: "A chapter has no change to apply any more: the autopilot already follows its entry, or is working on it. Look at what changed again.",
+        stale: "The Synopsis changed again since you looked at it: look at what changed again.",
+      },
+    },
     frozen: {
       changed_one: "{{count}} frozen chapter changed",
       changed_other: "{{count}} frozen chapters changed",
@@ -1317,6 +1331,7 @@ const autopilotEn = {
         moveToBrowser: "The book is being brought back to this browser: wait until it is done.",
         sync: "The book is being synced with the server: wait until it is done.",
         frozen: "Your decision about a frozen chapter is being saved: wait a moment.",
+        campaign: "The Synopsis is being applied to the book: wait a moment.",
         githubConflicts: "The conflicts with GitHub are being resolved: wait until it is done.",
         otherTab: "Another tab of this browser is running or moving this book. Use that tab, or wait until it is done.",
       },

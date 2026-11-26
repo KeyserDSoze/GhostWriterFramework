@@ -10,7 +10,7 @@ import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useAutopilotControl, type AutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useTextDetail } from "@/autopilot/useLiveText";
 import { AttemptNow } from "@/components/autopilot/band/Attempt";
-import { CycleList, FrozenChangesChip, HostChip, PhaseList, PreviewLine, ProgressBars, SignalAge, StatusMessage, StatusPill, StepElapsed, StepNow } from "@/components/autopilot/band/parts";
+import { CampaignChip, CycleList, FrozenChangesChip, HostChip, PhaseList, PreviewLine, ProgressBars, SignalAge, StatusMessage, StatusPill, StepElapsed, StepNow } from "@/components/autopilot/band/parts";
 import { CostLine } from "@/components/autopilot/costs/CostLine";
 import { LastDone } from "@/components/autopilot/live/LastDone";
 import { LiveAnnouncer, TextDetailToggle } from "@/components/autopilot/live/LiveControls";
@@ -136,6 +136,7 @@ export function AutopilotControlBand({ bookId, variant = "full", commands }: Aut
       <StatusPill status={status} />
       <HostLine model={model} />
       <FrozenChangesChip count={summary.frozenChanges} />
+      <CampaignChip campaign={summary.campaign} />
       <TextDetailToggle labelled className="ml-auto" />
     </div>
   );
@@ -149,6 +150,7 @@ export function AutopilotControlBand({ bookId, variant = "full", commands }: Aut
               <StatusPill status={status} />
               {summary.progress.chapters > 0 && <span className="text-xs font-medium tabular-nums text-muted-foreground">{t("autopilot.band.phases.chapters", { done: summary.progress.chaptersDone, total: summary.progress.chapters })}</span>}
               <FrozenChangesChip count={summary.frozenChanges} />
+              <CampaignChip campaign={summary.campaign} />
               {running && <StepElapsed bookId={bookId} className="ml-auto" />}
             </div>
             {running ? <StepNow bookId={bookId} compact hideElapsed wait={model.wait} /> : model.message ? <StatusMessage compact>{model.message}</StatusMessage> : null}

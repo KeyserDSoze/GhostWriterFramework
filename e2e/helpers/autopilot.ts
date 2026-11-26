@@ -94,7 +94,7 @@ async function answerResponses(response: import("node:http").ServerResponse, rep
  * for the first pieces of a reply (so that a page can be seen to read it as it comes), and as one JSON body when it does not. A model that refuses thinking with tools refuses it
  * on Chat Completions only, as the providers of those models do.
  */
-export async function startProvider(options: { delayMs?: number; chapters?: number; scenes?: number; words?: number; name?: string; timeline?: StubCall[]; behavior?: StubBehavior; pieceGapMs?: number } = {}): Promise<StubProvider> {
+export async function startProvider(options: { delayMs?: number; chapters?: number; scenes?: number; words?: number; name?: string; timeline?: StubCall[]; behavior?: StubBehavior; pieceGapMs?: number; answers?: Partial<Record<string, (user: string) => unknown>> } = {}): Promise<StubProvider> {
   const { createFakeAutopilotAi } = await engineModule("testing/index.js");
   const fake = createFakeAutopilotAi({ reviewVerdict: () => "approve", scenes: options.scenes ?? 1, words: options.words ?? 120, chapters: options.chapters ?? 1 });
   const asked: string[] = [];
@@ -148,7 +148,9 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
     }
     const wait = state.behavior.kind === "slow" ? state.behavior.ms : state.delayMs;
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
-    const answer = await fake.complete({ system, user, label: "e2e", ...(tool ? { json: { name: tool.name } } : {}) } as never);
+    // A spec may answer a schema itself (`answers`, by the name of the function), from the request; the engine's fake answers the others.
+    const own = tool ? options.answers?.[tool.name]?.(user) : undefined;
+    const answer = own !== undefined ? { text: JSON.stringify(own), json: own } : await fake.complete({ system, user, label: "e2e", ...(tool ? { json: { name: tool.name } } : {}) } as never);
     if (response.destroyed) return;
     if (responses) {
       await answerResponses(response, { stream: body.stream === true, tool: tool?.name, answer, gapMs: options.pieceGapMs ?? 0 });

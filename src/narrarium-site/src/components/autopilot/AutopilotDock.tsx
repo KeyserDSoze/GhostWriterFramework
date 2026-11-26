@@ -25,7 +25,7 @@ import { useUiStore } from "@/store/uiStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { AutopilotFeed } from "@/components/autopilot/AutopilotFeed";
 import { useBandModel } from "@/components/autopilot/AutopilotControlBand";
-import { FrozenChangesChip, HostChip, ProgressBars, StatusMessage, StatusPill, StepNow } from "@/components/autopilot/band/parts";
+import { CampaignChip, FrozenChangesChip, HostChip, ProgressBars, StatusMessage, StatusPill, StepNow } from "@/components/autopilot/band/parts";
 import { OperationNotice } from "@/components/autopilot/OperationNotice";
 import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
@@ -323,6 +323,7 @@ function MiniPlayer({ bookId, announce, heading, compact = false }: { bookId: st
         {view.loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden="true" />}
         {model ? <StatusPill status={model.status} /> : <span className="text-xs text-muted-foreground">{t("autopilot.notStarted")}</span>}
         <FrozenChangesChip count={summary?.frozenChanges} />
+        <CampaignChip campaign={summary?.campaign} />
       </div>
       {model && (model.running ? <StepNow bookId={bookId} compact announce={announce} wait={model.wait} countdown /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null)}
       {text && model?.running && !model.wait && <StreamLines bookId={bookId} />}

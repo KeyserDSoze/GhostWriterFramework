@@ -1,6 +1,6 @@
 import { memo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronRight, CheckCircle2, Circle, CircleDot, CircleHelp, Laptop, Loader2, Lock, Pause, Server, XCircle } from "lucide-react";
+import { Check, ChevronRight, CheckCircle2, Circle, CircleDot, CircleHelp, Laptop, ListChecks, Loader2, Lock, Pause, Server, XCircle } from "lucide-react";
 import type { AutopilotActivity, AutopilotStateSummary, AutopilotStatus } from "narrarium-engine";
 import { useElapsed, useNow } from "@/autopilot/hooks";
 import { CYCLE_STAGES, bandPhases, cycleItems, type ChapterCycle } from "@/autopilot/bandModel";
@@ -45,6 +45,22 @@ export function FrozenChangesChip({ count }: { count: number | undefined }) {
     <span data-frozen-changes className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-800 dark:text-amber-200">
       <Lock className="h-3 w-3 shrink-0" aria-hidden="true" />
       {t("autopilot.frozen.changed", { count })}
+    </span>
+  );
+}
+
+/**
+ * The chapters the author asked to revise now, for one reason (a campaign: the Synopsis applied to the book), and how far they got: the summary's `campaign`, while
+ * one goes on. Nothing when none does.
+ */
+export function CampaignChip({ campaign }: { campaign: AutopilotStateSummary["campaign"] }) {
+  const { t } = useTranslation();
+  if (!campaign) return null;
+  return (
+    <span data-campaign={campaign.reason} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-foreground">
+      <ListChecks className="h-3 w-3 shrink-0" aria-hidden="true" />
+      {t(`autopilot.campaign.chip.${campaign.reason}`, { done: campaign.done, total: campaign.total })}
+      {campaign.current !== null && <span className="text-muted-foreground">· {t("autopilot.campaign.current", { number: campaign.current })}</span>}
     </span>
   );
 }

@@ -13,6 +13,7 @@ import {
   readOutlineChapter,
   sha256Hex,
   type BookFileChange,
+  type ChapterFreeze,
   type OutlineChangeOutcome,
   type OutlineChangeState,
   type OutlineChapterEntry,
@@ -201,6 +202,22 @@ export function frozenChapterSlugs(files: ReadonlyArray<{ path: string; content:
     }
   }
   return frozen;
+}
+
+/** The records of the written chapters among these files of chapter.md that are frozen, by slug, as the engine reads them (one that cannot be read is no freeze). */
+export function chapterFreezes(files: ReadonlyArray<{ path: string; content: string }>): Map<string, ChapterFreeze> {
+  const records = new Map<string, ChapterFreeze>();
+  for (const file of files) {
+    const slug = /^chapters\/([^/]+)\/chapter\.md$/.exec(file.path)?.[1];
+    if (!slug) continue;
+    try {
+      const freeze = parseChapterFreeze(parseMarkdown(file.content).frontmatter.frozen).freeze;
+      if (freeze) records.set(slug, freeze);
+    } catch {
+      // A frontmatter that cannot be read holds no record.
+    }
+  }
+  return records;
 }
 
 /** The chapters of the book that have text, by number (the number of the folder: `007-the-key`). */

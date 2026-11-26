@@ -3,6 +3,7 @@ import {
   AutopilotBusyError,
   AutopilotSession,
   ServerRequestError,
+  isRevisionCampaignErrorCode,
   pickAiRuntimeConfig,
   readStoredAutopilot,
   remoteBookStore,
@@ -23,6 +24,8 @@ import {
   type InterventionInput,
   type NarrariumServerClient,
   type QuestionAnswer,
+  type ReviseChaptersInput,
+  type RevisionCampaignResult,
   type ServerInfo,
   type ResolveGithubConflictsRequest,
   type ResolveGithubConflictsResponse,
@@ -50,6 +53,7 @@ import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
 import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
 import { AutopilotRulesUnsupportedError, serverEditsRules } from "@/autopilot/rules";
 import { AutopilotFrozenUnsupportedError, frozenErrorCode, serverHasFrozenChapters } from "@/autopilot/frozenChapters";
+import { AutopilotCampaignRefusedError, AutopilotOutlineApplyUnsupportedError, campaignRefusal, serverHasOutlineApply } from "@/autopilot/campaign";
 import { AutopilotRetryUnsupportedError, serverHasRetry } from "@/autopilot/retry";
 import { assertGithubConflicts, githubConflictFiles, isGithubConflict, noteGithubConflict } from "@/autopilot/githubConflictsServer";
 import { RefreshCoordinator } from "@/autopilot/refreshCoordinator";
@@ -205,6 +209,7 @@ export function describeAutopilotError(error: unknown): string {
   if (error instanceof ServerIdentityError) return i18n.t(`personalServer.identity.${error.reason}`);
   if (error instanceof ServerAddressError) return i18n.t(`personalServer.address.${error.reason}`);
   if (error instanceof AutopilotBusyError) return i18n.t("autopilot.errors.busy", { label: error.runnerLabel });
+  if (error instanceof AutopilotCampaignRefusedError) return i18n.t(`autopilot.campaign.errors.${error.code}`);
   const frozenCode = frozenErrorCode(error);
   if (frozenCode) return i18n.t(`autopilot.frozen.errors.${frozenCode}`);
   if (error instanceof ServerRequestError) {
@@ -1014,6 +1019,45 @@ export class BrowserAutopilotRuntime {
     });
   }
 
+  /**
+   * Revise these chapters now, for this reason, in order, then go on with the plan: the engine's campaign (`reviseChapters`), the Synopsis applied to the book. It is
+   * recorded also while a run goes on (the run takes it at its next step); a book run by another tab of this browser records it through that tab; on the personal server
+   * the author's latest edits are handed to it first (it checks the campaign against its own copy of the book), a server that predates the campaigns is not asked, and what
+   * it wrote comes back. A refusal of the engine, here or there, is an `AutopilotCampaignRefusedError` with its code. Nothing is started: `start` does it.
+   */
+  reviseChapters(bookId: string, input: ReviseChaptersInput): Promise<RevisionCampaignResult> {
+    return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "revise-chapters", input }));
+  }
+
+  /** Cancel the chapters of the campaign that wait (the one being worked finishes): they are left for the author. The same ways as `reviseChapters`. */
+  cancelRevisionCampaign(bookId: string): Promise<RevisionCampaignResult> {
+    return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "cancel-campaign" }));
+  }
+
+  private async campaignCommand(bookId: string, command: Extract<RelayedCommand, { type: "revise-chapters" | "cancel-campaign" }>): Promise<RevisionCampaignResult> {
+    const book = findBook(bookId);
+    try {
+      if (autopilotHostOf(book) === "server") {
+        const { info } = await this.requireServer();
+        if (!serverHasOutlineApply(info)) throw new AutopilotOutlineApplyUnsupportedError();
+        await this.handToServer(book);
+        const { client } = await this.requireServer();
+        const result = command.type === "revise-chapters" ? await client.reviseChapters(book.id, command.input) : await client.cancelRevisionCampaign(book.id);
+        await this.bringFromServer(book, client);
+        await this.refresh(bookId);
+        return result;
+      }
+      const session = this.localSession(book, resolveBookBranch(book));
+      let result: RevisionCampaignResult;
+      if (!session.running && await this.lockHeldElsewhere(book.id)) result = await this.relay(book.id, command) as RevisionCampaignResult;
+      else result = command.type === "revise-chapters" ? await session.reviseChapters(command.input) : await session.cancelRevisionCampaign();
+      await this.refresh(bookId);
+      return result;
+    } catch (error) {
+      throw campaignRefusal(error);
+    }
+  }
+
   /** The server decides on its own copy of the book: the author's latest edits go there first, and files changed on both sides stop the decision. */
   private async handToServer(book: BookEntry): Promise<void> {
     const outcome = await this.syncNow(book.id, { push: true, throwOnError: true });
@@ -1097,6 +1141,7 @@ export class BrowserAutopilotRuntime {
         window.clearTimeout(timer);
         channel.removeEventListener("message", onMessage as EventListener);
         if (data.ok) resolve(data.result);
+        else if (isRevisionCampaignErrorCode(data.code)) reject(new AutopilotCampaignRefusedError(data.code, data.error ?? ""));
         else reject(new Error(data.error || i18n.t("autopilot.errors.action")));
       };
       const timer = window.setTimeout(() => {
@@ -1112,7 +1157,7 @@ export class BrowserAutopilotRuntime {
     const session = this.sessions.get(bookId)?.session;
     if (!session?.running) return;
     try {
-      let result: boolean | undefined;
+      let result: boolean | RevisionCampaignResult | undefined;
       if (command.type === "pause") {
         session.pause(command.mode);
         this.notePause(bookId, command.mode);
@@ -1124,10 +1169,13 @@ export class BrowserAutopilotRuntime {
       else if (command.type === "update-options") await session.updateOptions(command.options);
       else if (command.type === "resolve-frozen") await session.resolveFrozenChange(command.number, command.action, command.options);
       else if (command.type === "set-frozen") await (command.frozen ? session.freezeChapter(command.slug) : session.unfreezeChapter(command.slug));
+      else if (command.type === "revise-chapters") result = await session.reviseChapters(command.input);
+      else if (command.type === "cancel-campaign") result = await session.cancelRevisionCampaign();
       else await session.intervene(command.input);
       this.post({ kind: "command-result", id, ok: true, ...(result === undefined ? {} : { result }) });
     } catch (error) {
-      this.post({ kind: "command-result", id, ok: false, error: describeAutopilotError(error) });
+      const refusal = campaignRefusal(error);
+      this.post({ kind: "command-result", id, ok: false, error: refusal instanceof AutopilotCampaignRefusedError ? refusal.message : describeAutopilotError(error), ...(refusal instanceof AutopilotCampaignRefusedError ? { code: refusal.code } : {}) });
     }
   }
 

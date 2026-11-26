@@ -34,6 +34,8 @@ const ACTION_OF_OPERATION: Record<AutopilotOperationKind, AutopilotActionName> =
   sync: "sync",
   // A decision about a frozen chapter is an answer about it, as the answer to its question would be.
   frozen: "answer",
+  // The Synopsis applied to the book is the author's decision about the changes of its entries, as the answers to their questions would be.
+  campaign: "answer",
   // The author is settling the conflicts with GitHub: nothing else holds the book, and no other button reads as busy for it.
   githubConflicts: "conflicts",
 };

@@ -14,6 +14,8 @@ import { FileChangedNotice } from "@/components/book/FileChangedNotice";
 import { OutlineEntryCard, type OutlineEntryHandlers } from "@/components/outline/OutlineEntryCard";
 import { OutlineBookSection } from "@/components/outline/OutlineBookSection";
 import { OutlineChanges, changeBadge } from "@/components/outline/OutlineChanges";
+import { ApplyToBookDialog } from "@/components/outline/ApplyToBookDialog";
+import { useOutlineApply } from "@/components/outline/useOutlineApply";
 import { useOutlineBriefEditor } from "@/components/outline/useOutlineBriefEditor";
 import { ConvertSynopsisDialog, DeleteEntryDialog } from "@/components/outline/OutlineDialogs";
 import { draftChanged, useOutlineEditor } from "@/components/outline/useOutlineEditor";
@@ -119,6 +121,9 @@ export function OutlinePage() {
     }
     return labels;
   }, [changes, describe]);
+
+  // «Apply to the book»: the written chapters whose entry changed, revised now in the order of the book (the engine's campaign), then the plan goes on.
+  const outlineApply = useOutlineApply({ book, source, view: changes, state: editor.autopilot, written, refresh: editor.refresh });
 
   // ─── The window of entries ─────────────────────────────────────────────────
   const [query, setQuery] = useState("");
@@ -357,6 +362,8 @@ export function OutlinePage() {
               hasEntry={(number) => byNumber.has(number)}
               onReveal={(number) => reveal(number, "entry")}
               onMarkReviewed={() => void editor.markReviewed()}
+              onApply={outlineApply.decidable > 0 && !outlineApply.campaign ? () => outlineApply.setOpen(true) : undefined}
+              campaign={outlineApply.campaign ? { summary: outlineApply.campaign, onCancel: () => void outlineApply.cancel(), busy: outlineApply.busy } : null}
             />
           )}
 
@@ -450,6 +457,21 @@ export function OutlinePage() {
       />
       <ConvertSynopsisDialog converted={converted} busy={busy} onCancel={() => setConverted(null)} onConfirm={() => void confirmConvert()} />
       <OutlineAssistDialog controller={assist} />
+      {outlineApply.open && (
+        <ApplyToBookDialog
+          open
+          onClose={() => outlineApply.setOpen(false)}
+          book={book}
+          branch={branch}
+          structure={structure}
+          model={outlineApply.model}
+          state={editor.autopilot}
+          running={outlineApply.running}
+          unsupported={outlineApply.unsupported}
+          busy={outlineApply.busy}
+          onApply={outlineApply.apply}
+        />
+      )}
       {descriptionDialogs}
     </div>
   );

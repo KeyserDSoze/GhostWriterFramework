@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { applyLiveAttempt, applyLiveProgress, normalizeLive, startLive } from "narrarium-engine";
-import type { AutopilotEvent, AutopilotLive, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, FrozenAction, FrozenChangeKind, InterventionInput, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
+import type { AutopilotEvent, AutopilotLive, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, FrozenAction, FrozenChangeKind, InterventionInput, ReviseChaptersInput, RevisionCampaignResult, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
 import type { HandoverPlan, HandoverSide } from "@/autopilot/handover";
 import type { BookOperation } from "@/autopilot/operations";
 import type { PersonalServerSettings } from "@/types/settings";
@@ -288,7 +288,9 @@ export type RelayedCommand =
   | { type: "update-options"; options: AutopilotLiveOptions }
   | { type: "intervene"; input: InterventionInput }
   | { type: "resolve-frozen"; number: number; action: FrozenAction; options?: { kind?: FrozenChangeKind; note?: string } }
-  | { type: "set-frozen"; slug: string; frozen: boolean };
+  | { type: "set-frozen"; slug: string; frozen: boolean }
+  | { type: "revise-chapters"; input: ReviseChaptersInput }
+  | { type: "cancel-campaign" };
 
 /** What the tab that holds the live connection tells the others about it. */
 export type SharedServerState = Pick<ServerConnectionState, "status" | "info" | "message" | "books" | "updates">;
@@ -300,8 +302,11 @@ export type SharedServerState = Pick<ServerConnectionState, "status" | "info" | 
 export type AutopilotChannelMessage =
   | { kind: "event"; event: AutopilotEvent; bookTitle: string }
   | { kind: "command"; id: string; bookId: string; command: RelayedCommand }
-  /** `result` is what the command answers, when it answers something (whether «Retry now» skipped a wait). */
-  | { kind: "command-result"; id: string; ok: boolean; error?: string; result?: boolean }
+  /**
+   * `result` is what the command answers, when it answers something (whether «Retry now» skipped a wait, the campaign as it was saved); `code` is the code of a
+   * refusal of the engine that the tab which asked tells in its own words (a campaign that cannot be recorded).
+   */
+  | { kind: "command-result"; id: string; ok: boolean; error?: string; code?: string; result?: boolean | RevisionCampaignResult }
   | { kind: "server-message"; stream: string; message: ServerStreamMessage }
   | { kind: "server-state"; stream: string; state: SharedServerState }
   | { kind: "server-state-request"; stream: string }

@@ -46,6 +46,7 @@ const autopilotIt = {
       moveToBrowser: "Il libro sta tornando in questo browser…",
       sync: "Sincronizzazione con il server…",
       frozen: "Salvataggio della tua decisione sul capitolo congelato…",
+      campaign: "Applicazione della Sinossi al libro…",
       githubConflicts: "Risoluzione dei conflitti con GitHub…",
     },
     actions: {
@@ -930,6 +931,19 @@ const autopilotIt = {
       costUnknownHint: "Nessun costo misurato per queste chiamate: il modello non ha un prezzo in Integrazioni AI, o il provider non ne ha comunicato i token. Il budget in token vale comunque.",
     },
     current: { loading: "Caricamento dell'autopilot di questo libro…", working: "Sta lavorando su", preparing: "Prepara il prossimo passo…" },
+    campaign: {
+      chip: {
+        "outline-change": "Applico la Sinossi: {{done}} di {{total}}",
+      },
+      current: "ora il capitolo {{number}}",
+      oldServer: "Il tuo server personale è più vecchio della {{version}} e non sa applicare la Sinossi al libro: aggiornalo per farlo da qui.",
+      errors: {
+        invalid_request: "Queste scelte non si possono applicare: riguardale.",
+        campaign_active: "Ci sono già capitoli in revisione: aspetta che finiscano, oppure annulla quelli che aspettano.",
+        not_changed: "Un capitolo non ha più una modifica da applicare: l'autopilot segue già la sua voce, o ci sta lavorando. Guarda di nuovo cosa è cambiato.",
+        stale: "La Sinossi è cambiata di nuovo da quando l'hai guardata: guarda di nuovo cosa è cambiato.",
+      },
+    },
     frozen: {
       changed_one: "{{count}} capitolo congelato modificato",
       changed_other: "{{count}} capitoli congelati modificati",
@@ -1317,6 +1331,7 @@ const autopilotIt = {
         moveToBrowser: "Il libro sta tornando in questo browser: aspetta che finisca.",
         sync: "Il libro si sta sincronizzando con il server: aspetta che finisca.",
         frozen: "Si sta salvando la tua decisione su un capitolo congelato: aspetta un momento.",
+        campaign: "La Sinossi si sta applicando al libro: aspetta un momento.",
         githubConflicts: "I conflitti con GitHub si stanno risolvendo: aspetta che finisca.",
         otherTab: "Un'altra scheda di questo browser sta eseguendo o spostando questo libro. Usa quella scheda, oppure aspetta che finisca.",
       },

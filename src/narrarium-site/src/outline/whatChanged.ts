@@ -2,6 +2,7 @@ import {
   changeOfWritten,
   isPlannedChapterWritten,
   type AutopilotState,
+  type FrozenAction,
   type OutlineChangeOutcome,
   type OutlineChapterEntry,
   type OutlineJournal,
@@ -19,6 +20,9 @@ import {
  * - What else changed is listed since the author last marked the changes as reviewed (`journal.reviewedAt`), else since the autopilot last worked (the state's
  *   `updatedAt`), else as far as the journal goes back.
  * - A book without an approved plan has nothing the autopilot follows yet: only the journal is told, and the autopilot follows the Synopsis when it plans the book.
+ * - What the author already decided about a change holds it (`held`): the chapters the Synopsis is being applied to (the campaign of the engine, `state.campaign`),
+ *   the changes left for later (`state.deferredChanges`) and the decisions recorded for the next run (`state.pendingReviews`). The rule of the setting then says
+ *   nothing more about them.
  *
  * The journal only tells the story: when it does not know the last change of an entry (the file was changed elsewhere), the row says the entry changed and nothing
  * more. Pure.
@@ -26,6 +30,12 @@ import {
 
 /** What the autopilot does about a listed chapter: the engine's outcome, an entry beyond the plan (`extends`), a change it already took into account (`followed`), no plan yet (`no-plan`). */
 export type WhatChangedOutcome = OutlineChangeOutcome | "extends" | "followed" | "no-plan";
+
+/**
+ * What the author already decided about a change that the autopilot has not followed yet: it is being rewritten now (`rewriting`), waits for its turn (`applying`) or to be
+ * kept at the run's next step (`keeping`) in the chapters the Synopsis is being applied to; it is left for later (`deferred`); or a decision waits for the next run (`decided`).
+ */
+export type WhatChangedHeld = "rewriting" | "applying" | "keeping" | "deferred" | "decided";
 
 /** Since when the view tells what changed: the author's «reviewed», the autopilot's last work, or as far as the journal goes back. */
 export type WhatChangedSince = { kind: "review" | "autopilot"; at: string } | { kind: "always" };
@@ -54,6 +64,10 @@ export interface WhatChangedRow {
   imported: boolean;
   /** The digest of the entry it has now: the change a decision is about. */
   digest?: string;
+  /** What the author already decided about it (only for a change the autopilot has not followed yet). */
+  held?: WhatChangedHeld;
+  /** `decided`: the decision recorded. */
+  decision?: FrozenAction;
 }
 
 export interface WhatChanged {
@@ -111,6 +125,15 @@ function rowOf(number: number, entry: OutlineChapterEntry | undefined, history: 
   };
 }
 
+/** What the author already decided about the change of the entry of chapter `number` (its digest now: `digest`), as the state keeps it. */
+function heldOf(state: AutopilotState | null, number: number, digest: string | undefined): Pick<WhatChangedRow, "held" | "decision"> {
+  const item = state?.campaign?.chapters.find((entry) => entry.number === number && (entry.status === "waiting" || entry.status === "working"));
+  if (item) return { held: item.status === "working" ? "rewriting" : item.mode === "keep" ? "keeping" : "applying" };
+  if (digest && state?.deferredChanges?.some((entry) => entry.kind === "outline" && entry.number === number && entry.fingerprint === digest)) return { held: "deferred" };
+  const decided = state?.pendingReviews?.find((entry) => entry.kind === "outline" && entry.number === number && !entry.started);
+  return decided ? { held: "decided", decision: decided.action } : {};
+}
+
 /** The view of a book now (see the module). */
 export function whatChanged({ entries, journal, state, written }: WhatChangedInput): WhatChanged {
   const byNumber = new Map(entries.map((entry) => [entry.number, entry]));
@@ -138,8 +161,10 @@ export function whatChanged({ entries, journal, state, written }: WhatChangedInp
         // The rule of `outlinePlanStatus`: a chapter follows its entry while its digest is the plan's; for a plan that does not remember one, an entry the
         // autopilot wrote is the chapter's own, only an entry of the author binds a chapter not written yet, and a written one changes nothing.
         const changed = chapter.outlineDigest ? entry.contentDigest !== chapter.outlineDigest : !isWritten && !entry.intact;
-        if (!changed) continue;
-        add(rowOf(chapter.number, entry, historyOf(journal, chapter.number, { followed: chapter.outlineDigest }), reviewedAt, { ...base, outcome: changeOfWritten(state, chapter.number), digest: entry.contentDigest }));
+        const held = heldOf(state, chapter.number, entry.contentDigest);
+        // The chapter being rewritten follows its new entry already (its plan keeps it from the start of the rewrite): it is listed until it is closed again.
+        if (!changed && held.held !== "rewriting") continue;
+        add(rowOf(chapter.number, entry, historyOf(journal, chapter.number, changed ? { followed: chapter.outlineDigest } : {}), reviewedAt, { ...base, outcome: changeOfWritten(state, chapter.number), digest: entry.contentDigest, ...held }));
       } else if (chapter.outlineDigest && hasEntries) {
         add(rowOf(chapter.number, undefined, historyOf(journal, chapter.number, { followed: chapter.outlineDigest }), reviewedAt, { ...base, outcome: changeOfWritten(state, chapter.number, { entry: "removed" }) }));
       }

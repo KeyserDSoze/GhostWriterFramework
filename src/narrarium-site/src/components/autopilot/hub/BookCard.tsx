@@ -6,7 +6,7 @@ import type { AutopilotActivity } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
-import { FrozenChangesChip, HostChip, ModelAnswering, ProgressBar } from "@/components/autopilot/band/parts";
+import { CampaignChip, FrozenChangesChip, HostChip, ModelAnswering, ProgressBar } from "@/components/autopilot/band/parts";
 import { LastDone } from "@/components/autopilot/live/LastDone";
 import { StreamLines } from "@/components/autopilot/live/StreamLines";
 import { ProgressRing } from "@/components/autopilot/hub/ProgressRing";
@@ -118,6 +118,7 @@ export const BookCard = memo(function BookCard({ book }: { book: BookEntry }) {
             <div className="flex flex-wrap items-center gap-2">
               <HubStatus state={hub} />
               <FrozenChangesChip count={summary?.frozenChanges} />
+              <CampaignChip campaign={summary?.campaign} />
               <HostChip host={host} />
             </div>
           )}
