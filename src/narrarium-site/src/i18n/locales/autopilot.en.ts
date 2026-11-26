@@ -958,6 +958,44 @@ const autopilotEn = {
       costUnknownHint: "No measured cost for these calls: the model has no price in AI Integrations, or the provider did not report their tokens. A token budget still applies.",
     },
     current: { loading: "Loading the autopilot of this book…", working: "Working on", preparing: "Preparing the next step…" },
+    limit: {
+      title: {
+        money: "The money cap stopped the autopilot",
+        tokens: "The token cap stopped the autopilot",
+        "review-rounds": "The review of the book waits for you",
+      },
+      body: {
+        money: "This book has spent {{used}} over all its runs, and its cap is {{limit}}. The cap never resets: raise it to go on.",
+        tokens: "This book has used {{used}} tokens over all its runs, and its cap is {{limit}}. The cap never resets: raise it to go on.",
+        "review-rounds_one": "{{count}} round of the review done since the start, as many as you allowed ({{limit}}).",
+        "review-rounds_other": "{{count}} rounds of the review done since the start, as many as you allowed ({{limit}}).",
+      },
+      review: "Review to {{target}}, round {{round}} next: the lowest chapter is {{lowest}}, the book {{book}}.",
+      field: {
+        money: "New cap ({{currency}})",
+        tokens: "New token cap",
+        "review-rounds": "More rounds",
+      },
+      goCap: "Raise to {{amount}} and go on",
+      goRounds_one: "Go on for {{count}} more round",
+      goRounds_other: "Go on for {{count}} more rounds",
+      stop: "Stop the review",
+      hint: {
+        money: "The autopilot starts again with the new cap, and stops again when the book reaches it.",
+        tokens: "The autopilot starts again with the new cap, and stops again when the book reaches it.",
+        "review-rounds": "The autopilot starts again and makes at most these rounds before it waits for you. Stopping the review keeps the book as it is now.",
+      },
+      problems: {
+        cap: "Write a cap over {{used}}, what the book has already used.",
+        rounds: "Write a whole number of rounds, from 1 to {{max}}.",
+      },
+      dock: {
+        money: "Money cap reached: {{used}} of {{limit}}. Open to raise it.",
+        tokens: "Token cap reached: {{used}} of {{limit}}. Open to raise it.",
+        "review-rounds_one": "The review waits for you after {{count}} round. Open to go on.",
+        "review-rounds_other": "The review waits for you after {{count}} rounds. Open to go on.",
+      },
+    },
     reviewBook: {
       title: "Review the book again",
       intro: "The director judged the book {{book}}, and approves chapters and book at {{target}} now. Choose the score to reach: the chapters under it are reviewed again, round after round, in the order of the book, and then the director judges the whole book again.",
@@ -1033,7 +1071,12 @@ const autopilotEn = {
     campaign: {
       chip: {
         "outline-change": "Applying the Synopsis: {{done}} of {{total}}",
+        "review-target": "Review to {{target}}: round {{round}}",
       },
+      allowed: "({{done}} of {{max}} allowed now)",
+      verdict: "the director judges the book",
+      held: "waits for you",
+      spent: "{{spent}} of {{cap}}",
       current: "chapter {{number}} now",
       oldServer: "Your personal server is older than {{version}} and cannot apply the Synopsis to the book: update it to do this from here.",
       errors: {

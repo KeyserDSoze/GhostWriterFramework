@@ -31,7 +31,8 @@ import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice, RunErrorNotice } from "@/components/autopilot/StopNotices";
 import { isErrorKind } from "@/autopilot/errorModel";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
-import { questionHeading } from "@/autopilot/format";
+import { formatCost, formatCount, questionHeading } from "@/autopilot/format";
+import { LIMIT_PANEL_ID } from "@/autopilot/reviewPolicy";
 import { cn } from "@/lib/utils";
 
 /** The events the “Live” tab lists: the last ones, one line each. The page of the autopilot has all of them. */
@@ -323,7 +324,7 @@ function MiniPlayer({ bookId, announce, heading, compact = false }: { bookId: st
         {view.loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden="true" />}
         {model ? <StatusPill status={model.status} /> : <span className="text-xs text-muted-foreground">{t("autopilot.notStarted")}</span>}
         <FrozenChangesChip count={summary?.frozenChanges} />
-        <CampaignChip campaign={summary?.campaign} />
+        <CampaignChip campaign={summary?.campaign} spent={summary?.stats} />
       </div>
       {model && (model.running ? <StepNow bookId={bookId} compact announce={announce} wait={model.wait} countdown /> : model.message ? <StatusMessage>{model.message}</StatusMessage> : null)}
       {text && model?.running && !model.wait && <StreamLines bookId={bookId} />}
@@ -331,6 +332,12 @@ function MiniPlayer({ bookId, announce, heading, compact = false }: { bookId: st
       {text && <LastDone bookId={bookId} />}
       {announce && <LiveAnnouncer bookIds={[bookId]} />}
       {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} compact hintId={profileHintId} />}
+      {summary?.limitReached && summary.status !== "running" && (
+        <Link to={{ pathname: pageHref, hash: LIMIT_PANEL_ID }} data-dock-limit={summary.limitReached.kind} className="flex items-start gap-1.5 rounded-md bg-amber-500/10 p-2 text-xs text-amber-800 hover:bg-amber-500/20 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>{t(`autopilot.limit.dock.${summary.limitReached.kind}`, { used: summary.limitReached.kind === "money" ? formatCost(summary.limitReached.used, summary.limitReached.currency) : formatCount(summary.limitReached.used), limit: summary.limitReached.kind === "money" ? formatCost(summary.limitReached.limit, summary.limitReached.currency) : formatCount(summary.limitReached.limit), count: summary.limitReached.used })}</span>
+        </Link>
+      )}
       {failure && <RunErrorNotice bookId={bookId} message={failure.message} kind={isErrorKind(failure.kind ?? failure.errorKind) ? failure.kind ?? failure.errorKind : undefined} pageHref={pageHref} />}
       <OperationNotice bookId={bookId} />
       {view.busyInAnotherTab && <p className="text-xs text-muted-foreground">{t("autopilot.anotherTab")}</p>}

@@ -958,6 +958,44 @@ const autopilotIt = {
       costUnknownHint: "Nessun costo misurato per queste chiamate: il modello non ha un prezzo in Integrazioni AI, o il provider non ne ha comunicato i token. Il budget in token vale comunque.",
     },
     current: { loading: "Caricamento dell'autopilot di questo libro…", working: "Sta lavorando su", preparing: "Prepara il prossimo passo…" },
+    limit: {
+      title: {
+        money: "Il tetto di spesa ha fermato l'autopilot",
+        tokens: "Il tetto di token ha fermato l'autopilot",
+        "review-rounds": "La revisione del libro aspetta te",
+      },
+      body: {
+        money: "Questo libro ha speso {{used}} sommando tutte le sue corse, e il suo tetto è {{limit}}. Il tetto non si azzera mai: alzalo per continuare.",
+        tokens: "Questo libro ha usato {{used}} token sommando tutte le sue corse, e il suo tetto è {{limit}}. Il tetto non si azzera mai: alzalo per continuare.",
+        "review-rounds_one": "{{count}} giro della revisione fatto dall'avvio, quanti ne hai permessi ({{limit}}).",
+        "review-rounds_other": "{{count}} giri della revisione fatti dall'avvio, quanti ne hai permessi ({{limit}}).",
+      },
+      review: "Revisione a {{target}}, prossimo il giro {{round}}: il capitolo più basso ha {{lowest}}, il libro {{book}}.",
+      field: {
+        money: "Nuovo tetto ({{currency}})",
+        tokens: "Nuovo tetto di token",
+        "review-rounds": "Altri giri",
+      },
+      goCap: "Alza a {{amount}} e continua",
+      goRounds_one: "Continua per {{count}} altro giro",
+      goRounds_other: "Continua per altri {{count}} giri",
+      stop: "Ferma la revisione",
+      hint: {
+        money: "L'autopilot riparte con il nuovo tetto, e si ferma di nuovo quando il libro lo raggiunge.",
+        tokens: "L'autopilot riparte con il nuovo tetto, e si ferma di nuovo quando il libro lo raggiunge.",
+        "review-rounds": "L'autopilot riparte e fa al massimo questi giri prima di aspettarti. Fermare la revisione lascia il libro com'è adesso.",
+      },
+      problems: {
+        cap: "Scrivi un tetto oltre {{used}}, quanto il libro ha già usato.",
+        rounds: "Scrivi un numero intero di giri, da 1 a {{max}}.",
+      },
+      dock: {
+        money: "Tetto di spesa raggiunto: {{used}} su {{limit}}. Apri per alzarlo.",
+        tokens: "Tetto di token raggiunto: {{used}} su {{limit}}. Apri per alzarlo.",
+        "review-rounds_one": "La revisione ti aspetta dopo {{count}} giro. Apri per continuare.",
+        "review-rounds_other": "La revisione ti aspetta dopo {{count}} giri. Apri per continuare.",
+      },
+    },
     reviewBook: {
       title: "Rivedi di nuovo il libro",
       intro: "Il direttore ha giudicato il libro {{book}}, e ora approva capitoli e libro a {{target}}. Scegli il voto da raggiungere: i capitoli sotto quel voto vengono rivisti di nuovo, giro dopo giro, nell'ordine del libro, e poi il direttore giudica di nuovo il libro intero.",
@@ -1033,7 +1071,12 @@ const autopilotIt = {
     campaign: {
       chip: {
         "outline-change": "Applico la Sinossi: {{done}} di {{total}}",
+        "review-target": "Revisione a {{target}}: giro {{round}}",
       },
+      allowed: "({{done}} di {{max}} concessi ora)",
+      verdict: "il direttore giudica il libro",
+      held: "aspetta te",
+      spent: "{{spent}} su {{cap}}",
       current: "ora il capitolo {{number}}",
       oldServer: "Il tuo server personale è più vecchio della {{version}} e non sa applicare la Sinossi al libro: aggiornalo per farlo da qui.",
       errors: {

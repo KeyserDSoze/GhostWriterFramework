@@ -136,7 +136,7 @@ export function AutopilotControlBand({ bookId, variant = "full", commands }: Aut
       <StatusPill status={status} />
       <HostLine model={model} />
       <FrozenChangesChip count={summary.frozenChanges} />
-      <CampaignChip campaign={summary.campaign} />
+      <CampaignChip campaign={summary.campaign} spent={summary.stats} />
       <TextDetailToggle labelled className="ml-auto" />
     </div>
   );
@@ -150,7 +150,7 @@ export function AutopilotControlBand({ bookId, variant = "full", commands }: Aut
               <StatusPill status={status} />
               {summary.progress.chapters > 0 && <span className="text-xs font-medium tabular-nums text-muted-foreground">{t("autopilot.band.phases.chapters", { done: summary.progress.chaptersDone, total: summary.progress.chapters })}</span>}
               <FrozenChangesChip count={summary.frozenChanges} />
-              <CampaignChip campaign={summary.campaign} />
+              <CampaignChip campaign={summary.campaign} spent={summary.stats} />
               {running && <StepElapsed bookId={bookId} className="ml-auto" />}
             </div>
             {running ? <StepNow bookId={bookId} compact hideElapsed wait={model.wait} /> : model.message ? <StatusMessage compact>{model.message}</StatusMessage> : null}

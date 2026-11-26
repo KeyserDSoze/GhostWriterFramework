@@ -362,7 +362,8 @@ export function OutlinePage() {
               hasEntry={(number) => byNumber.has(number)}
               onReveal={(number) => reveal(number, "entry")}
               onMarkReviewed={() => void editor.markReviewed()}
-              onApply={outlineApply.decidable > 0 && !outlineApply.campaign ? () => outlineApply.setOpen(true) : undefined}
+              onApply={outlineApply.decidable > 0 && !outlineApply.campaign && !outlineApply.otherCampaign ? () => outlineApply.setOpen(true) : undefined}
+              heldBy={outlineApply.decidable > 0 ? outlineApply.otherCampaign : null}
               campaign={outlineApply.campaign ? { summary: outlineApply.campaign, onCancel: () => void outlineApply.cancel(), busy: outlineApply.busy } : null}
             />
           )}

@@ -215,4 +215,14 @@ describe("Apply to the book", () => {
     fireEvent.click(within(progress).getByRole("button", { name: t("outline.changes.campaign.cancel") }));
     await waitFor(() => expect(mocks.runtime.cancelRevisionCampaign).toHaveBeenCalledWith("book-1"));
   });
+
+  it("does not take a review of the book for the Synopsis being applied: no progress, no chapter held, and the apply waits for the review to end", async () => {
+    const review = { targetScore: 8, scope: [1, 2, 3, 4], round: 1, windowStart: 1, phase: "chapters", start: { lowest: 6, book: 6.5, below: 2 }, history: [], stalled: 0 };
+    await open({ status: "running", campaign: { id: "r", reason: "review-target", createdAt: "2026-11-21T00:00:00.000Z", chapters: [{ number: 1, mode: "follow", status: "working" }, { number: 3, mode: "follow", status: "waiting" }], review } });
+    await waitFor(() => expect(changes().querySelector("[data-outline-apply-held]")).not.toBeNull());
+    expect(changes().querySelector("[data-outline-campaign]"), "the box of the Synopsis is not the review's").toBeNull();
+    expect(changes().querySelector("[data-outline-apply-held]")).toHaveTextContent(t("outline.changes.applyHeld"));
+    expect(within(changes()).queryByRole("button", { name: t("outline.changes.applyOpen") })).toBeNull();
+    expect(changes().querySelector('[data-outline-change="3"]')).not.toHaveTextContent(t("outline.changes.held.applying"));
+  });
 });

@@ -5,7 +5,7 @@ import type { AutopilotActivity, AutopilotStateSummary, AutopilotStatus } from "
 import { useElapsed, useNow } from "@/autopilot/hooks";
 import { CYCLE_STAGES, bandPhases, cycleItems, type ChapterCycle } from "@/autopilot/bandModel";
 import { formatCountdown, secondsLeft } from "@/autopilot/errorModel";
-import { STATUS_BADGE, activityTitle, formatAgo, formatBytes, formatDuration } from "@/autopilot/format";
+import { STATUS_BADGE, activityTitle, formatAgo, formatBytes, formatCost, formatDuration, voteText } from "@/autopilot/format";
 import { waitLineText, type RetryWait } from "@/autopilot/retry";
 import { lastSignalAt, useAutopilotStore } from "@/autopilot/store";
 import { useTextDetail } from "@/autopilot/useLiveText";
@@ -51,16 +51,20 @@ export function FrozenChangesChip({ count }: { count: number | undefined }) {
 
 /**
  * The chapters the author asked to revise now, for one reason (a campaign: the Synopsis applied to the book), and how far they got: the summary's `campaign`, while
- * one goes on. Nothing when none does.
+ * one goes on. A review of the book says its target and its round (of the rounds allowed since the start, when there is a limit), the chapter being worked or the
+ * director judging the book, that it waits for the author, and what the book spent of its money cap (`spent`, the summary's statistics). Nothing when none goes on.
  */
-export function CampaignChip({ campaign }: { campaign: AutopilotStateSummary["campaign"] }) {
+export function CampaignChip({ campaign, spent }: { campaign: AutopilotStateSummary["campaign"]; spent?: Pick<AutopilotStateSummary["stats"], "cost" | "currency"> }) {
   const { t } = useTranslation();
   if (!campaign) return null;
+  const review = campaign.review;
   return (
-    <span data-campaign={campaign.reason} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-foreground">
+    <span data-campaign={campaign.reason} className="inline-flex flex-wrap items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-foreground">
       <ListChecks className="h-3 w-3 shrink-0" aria-hidden="true" />
-      {t(`autopilot.campaign.chip.${campaign.reason}`, { done: campaign.done, total: campaign.total })}
-      {campaign.current !== null && <span className="text-muted-foreground">· {t("autopilot.campaign.current", { number: campaign.current })}</span>}
+      {review ? t("autopilot.campaign.chip.review-target", { target: voteText(review.targetScore), round: review.round }) : t(`autopilot.campaign.chip.${campaign.reason}`, { done: campaign.done, total: campaign.total })}
+      {review?.maxRounds !== undefined && <span className="text-muted-foreground">{t("autopilot.campaign.allowed", { done: review.roundsThisRun, max: review.maxRounds })}</span>}
+      {campaign.held ? <span className="text-muted-foreground">· {t("autopilot.campaign.held")}</span> : review?.phase === "verdict" ? <span className="text-muted-foreground">· {t("autopilot.campaign.verdict")}</span> : campaign.current !== null && <span className="text-muted-foreground">· {t("autopilot.campaign.current", { number: campaign.current })}</span>}
+      {review && review.budgetLimit > 0 && spent && <span className="text-muted-foreground">· {t("autopilot.campaign.spent", { spent: formatCost(spent.cost, spent.currency), cap: formatCost(review.budgetLimit, spent.currency) })}</span>}
     </span>
   );
 }

@@ -60,6 +60,8 @@ export interface OutlineChangesProps {
   onApply?: () => void;
   /** The chapters the Synopsis is being applied to, while it goes on, and cancelling the ones that wait. */
   campaign?: { summary: AutopilotCampaignSummary; onCancel: () => void; busy: boolean } | null;
+  /** Chapters are being revised for another reason (a review of the book): the Synopsis can be applied once it is over. */
+  heldBy?: AutopilotCampaignSummary["reason"] | null;
 }
 
 /** What the author already decided holds a chapter: said in a sentence of its own, together with the other chapters held the same way. */
@@ -75,7 +77,7 @@ const HELD_GROUPS: ReadonlyArray<{ key: string; held: readonly WhatChangedHeld[]
  * it, when, and what the autopilot will do about it. The sentences of the groups are the engine's rule, as the page says it after a save. Folded once the author
  * marked everything as reviewed; the summary line still counts what the autopilot has not followed yet.
  */
-export function OutlineChanges({ view, autopilot, outlineEmpty, busy, hasEntry, onReveal, onMarkReviewed, onApply, campaign }: OutlineChangesProps) {
+export function OutlineChanges({ view, autopilot, outlineEmpty, busy, hasEntry, onReveal, onMarkReviewed, onApply, campaign, heldBy = null }: OutlineChangesProps) {
   const { t } = useTranslation();
   const id = useId();
   const listId = `${id}-list`;
@@ -128,6 +130,7 @@ export function OutlineChanges({ view, autopilot, outlineEmpty, busy, hasEntry, 
           </div>
         </div>
         <p className="max-w-3xl text-sm text-muted-foreground">{intro}</p>
+        {heldBy && <p data-outline-apply-held={heldBy} className="max-w-3xl text-xs text-muted-foreground">{t("outline.changes.applyHeld")}</p>}
       </div>
 
       {campaign && (

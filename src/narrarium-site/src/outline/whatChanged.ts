@@ -127,7 +127,8 @@ function rowOf(number: number, entry: OutlineChapterEntry | undefined, history: 
 
 /** What the author already decided about the change of the entry of chapter `number` (its digest now: `digest`), as the state keeps it. */
 function heldOf(state: AutopilotState | null, number: number, digest: string | undefined): Pick<WhatChangedRow, "held" | "decision"> {
-  const item = state?.campaign?.chapters.find((entry) => entry.number === number && (entry.status === "waiting" || entry.status === "working"));
+  // Only the Synopsis being applied holds a change of an entry: a review of the book revises chapters for another reason.
+  const item = state?.campaign?.reason === "outline-change" ? state.campaign.chapters.find((entry) => entry.number === number && (entry.status === "waiting" || entry.status === "working")) : undefined;
   if (item) return { held: item.status === "working" ? "rewriting" : item.mode === "keep" ? "keeping" : "applying" };
   if (digest && state?.deferredChanges?.some((entry) => entry.kind === "outline" && entry.number === number && entry.fingerprint === digest)) return { held: "deferred" };
   const decided = state?.pendingReviews?.find((entry) => entry.kind === "outline" && entry.number === number && !entry.started);

@@ -36,7 +36,10 @@ export function useOutlineApply({ book, source, view, state, written, refresh }:
   const unsupported = server && ((serverInfo !== null && !serverHasOutlineApply(serverInfo)) || refused);
   const fresher = live && (!state || live.updatedAt >= state.updatedAt);
   const running = (fresher ? live.status : state?.status) === "running";
-  const campaign: AutopilotCampaignSummary | null = (fresher ? live.campaign : summarizeCampaign(state?.campaign)) ?? null;
+  const going: AutopilotCampaignSummary | null = (fresher ? live.campaign : summarizeCampaign(state?.campaign, state?.options)) ?? null;
+  // The page shows the Synopsis being applied; a campaign of another reason (a review of the book) only holds the apply back until it is over.
+  const campaign = going?.reason === "outline-change" ? going : null;
+  const otherCampaign = going && going.reason !== "outline-change" ? going.reason : null;
 
   const [open, setOpen] = useState(false);
   const [freezes, setFreezes] = useState<ReadonlyMap<number, ChapterFreeze | null> | null>(null);
@@ -102,6 +105,7 @@ export function useOutlineApply({ book, source, view, state, written, refresh }:
     model,
     decidable: decidable.length,
     campaign,
+    otherCampaign,
     running,
     unsupported,
     busy: busy !== null,

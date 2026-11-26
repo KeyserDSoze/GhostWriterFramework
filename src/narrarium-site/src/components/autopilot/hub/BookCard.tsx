@@ -118,7 +118,7 @@ export const BookCard = memo(function BookCard({ book }: { book: BookEntry }) {
             <div className="flex flex-wrap items-center gap-2">
               <HubStatus state={hub} />
               <FrozenChangesChip count={summary?.frozenChanges} />
-              <CampaignChip campaign={summary?.campaign} />
+              <CampaignChip campaign={summary?.campaign} spent={summary?.stats} />
               <HostChip host={host} />
             </div>
           )}

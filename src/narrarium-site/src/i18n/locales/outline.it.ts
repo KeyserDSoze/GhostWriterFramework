@@ -171,6 +171,7 @@ const outlineIt = {
         decided_one: "La tua decisione sul capitolo {{numbers, list}} è registrata: l'autopilot la esegue alla prossima corsa.",
         decided_other: "Le tue decisioni sui capitoli {{numbers, list}} sono registrate: l'autopilot le esegue alla prossima corsa.",
       },
+      applyHeld: "L'autopilot sta rivedendo di nuovo il libro: potrai applicare la Sinossi quando quella revisione sarà finita.",
       campaign: {
         progress: "Applico la Sinossi al libro: {{done}} capitoli fatti su {{total}}.",
         current: "Ora si riscrive il capitolo {{number}}.",

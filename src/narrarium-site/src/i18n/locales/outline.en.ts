@@ -171,6 +171,7 @@ const outlineEn = {
         decided_one: "Your decision about chapter {{numbers, list}} is recorded: the autopilot carries it out at its next run.",
         decided_other: "Your decisions about chapters {{numbers, list}} are recorded: the autopilot carries them out at its next run.",
       },
+      applyHeld: "The autopilot is reviewing the book again: you can apply the Synopsis once that review is over.",
       campaign: {
         progress: "Applying the Synopsis to the book: {{done}} of {{total}} chapters done.",
         current: "Chapter {{number}} is being rewritten now.",

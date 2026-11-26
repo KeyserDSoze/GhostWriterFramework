@@ -19,6 +19,9 @@ export function serverHasReviewBook(info: Pick<ServerInfo, "features"> | null | 
   return serverSupportsReviewBook(info);
 }
 
+/** The id of the panel of the limit that stopped a run, on the page of the autopilot: a link from the dock brings it into view. */
+export const LIMIT_PANEL_ID = "autopilot-limit";
+
 /** The target the configuration and the review offer: from 5 to 10, by halves (the engine takes any tenth from 1). */
 export const TARGET_MIN = 5;
 export const TARGET_MAX = 10;
