@@ -376,6 +376,8 @@ export interface AskDirectorInput {
    * autopilot's final judgement passes it; without it the request is what it always was.
    */
   evaluationStyle?: EvaluationStyle | null;
+  /** The score an approval needs (the target of the autopilot's review policy). Absent: the director's approval score. */
+  approvalScore?: number;
 }
 
 export interface AskDirectorResult {
@@ -415,7 +417,7 @@ export async function askDirector(input: AskDirectorInput): Promise<AskDirectorR
   const response = await input.ai.complete({
     capability: AI_CAPABILITIES.director,
     label: `director:${input.target.kind}`,
-    system: directorSystemPrompt(director, language),
+    system: directorSystemPrompt(input.approvalScore === undefined || input.approvalScore === director.approvalScore ? director : { ...director, approvalScore: input.approvalScore }, language),
     user: `${currentRequest(request)}\n\n${untrustedData("repository_content", [...material.sections, style].filter(Boolean).join("\n\n"))}`,
     json: DIRECTOR_OPINION_TOOL,
     maxOutputTokens: scaleOutputTokens(4000, language),
@@ -428,9 +430,10 @@ export async function askDirector(input: AskDirectorInput): Promise<AskDirectorR
   const reply = requireStructuredFields(unescapePromptDataDeep(response.json), { verdict: "text", summary: "text", score: "score" }, subject);
   if (parseDirectorVerdict(reply.verdict) === null) throw new AiReplyRejectedError(`${subject} was rejected: the field "verdict" must be one of "approve", "revise" or "rewrite".`);
   const output = normalizeDirectorOpinionOutput(reply);
-  if (output.verdict === "approve" && output.score < director.approvalScore) {
+  const approvalScore = input.approvalScore ?? director.approvalScore;
+  if (output.verdict === "approve" && output.score < approvalScore) {
     output.verdict = "revise";
-    output.decisions = [withheldApprovalNote(output.score, director.approvalScore, language), ...output.decisions];
+    output.decisions = [withheldApprovalNote(output.score, approvalScore, language), ...output.decisions];
   }
   const opinion: DirectorOpinion = {
     target: input.target,

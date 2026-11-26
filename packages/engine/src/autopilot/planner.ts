@@ -4,6 +4,7 @@ import type { DirectorProfile } from "../profiles/director.js";
 import { countWords, isItalian } from "../util/text.js";
 import { advancePendingReviews, frozenQuestionMessage, inRevision, isFrozenQuestion, needsFreezeStep, noteOutlineRewrite, startedReview, type PlannerFrozen } from "./frozen.js";
 import { advanceRevisionCampaign, campaignChapter } from "./campaign.js";
+import { reviewMaxRounds, reviewReaderRounds } from "./review-policy.js";
 import type { AutopilotMessageCode, AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, InsightTone, PlannedChapter, PlannedScene } from "./types.js";
 
 export interface PlannerReader {
@@ -277,10 +278,12 @@ function cloneState(state: AutopilotState): AutopilotState {
 }
 
 function newReview(chapter: PlannedChapter, ctx: PlannerContext, readersEnabled: boolean, authorEdit = false): ChapterReview {
+  const readers = readersEnabled && !chapter.skipReaders ? ctx.readers.map((reader) => reader.slug) : [];
   return {
     chapterNumber: chapter.number,
     round: 1,
-    readersPending: readersEnabled && !chapter.skipReaders ? ctx.readers.map((reader) => reader.slug) : [],
+    readersPending: readers,
+    ...(readers.length ? { readersRound: 1 } : {}),
     readerScores: [],
     readersSummaryDone: false,
     findings: [],
@@ -633,7 +636,8 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
     if (!state.options.specialists) review.specialistsDone = true;
     // The review of the author's change is one round whose fixes are never applied: it goes to the closing, whatever the verdict.
     if (review.directorDone && review.verdict === "revise" && review.repairQueue.length === 0 && !review.authorEdit) {
-      const maxRounds = ctx.director.maxReviewRounds;
+      // The rounds of the review policy (`options.review`), else the director's.
+      const maxRounds = reviewMaxRounds(state, ctx.director);
       if (review.round < maxRounds) {
         review.round += 1;
         review.previousFixes = review.decisions
@@ -644,6 +648,13 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
         review.specialistsDone = !state.options.specialists;
         review.directorDone = false;
         review.verdict = undefined;
+        // The simulated readers read the chapter again in the first rounds the policy says (the first only, unless the author asked for more).
+        if (state.options.readers && !current.skipReaders && review.round <= reviewReaderRounds(state) && ctx.readers.length) {
+          review.readersPending = ctx.readers.map((reader) => reader.slug);
+          review.readerScores = [];
+          review.readersSummaryDone = false;
+          review.readersRound = review.round;
+        }
       } else {
         review.verdict = "approve";
         review.summary = [review.summary, isItalian(ctx.language)

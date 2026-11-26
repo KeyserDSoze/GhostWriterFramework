@@ -193,22 +193,23 @@ test("a chapter that is rewritten adds the rounds of its new review to the ones 
   ], "the first review is still there, and the rewrite's two rounds follow it");
 });
 
-test("a chapter never keeps more than eight rounds: the oldest leave first", async () => {
-  const cycle = (first) => [["revise", first, true], ["revise", first + 1, true], ["approve", first + 2, false]];
-  const ai = scriptedAi({ 1: [...cycle(1), ...cycle(4), ...cycle(7)] });
-  const { session, store } = await run(ai, ONE);
-  assert.deepEqual(stateOf(store).plan.chapters[0].rounds.map((round) => round.director), [1, 2, 3]);
-  for (const text of ["Make Orrin kinder.", "Make the harbor colder."]) {
+test("a chapter never keeps more than thirty rounds: the oldest leave first", async () => {
+  // Ten rounds to a review (the most the review policy gives), four reviews: forty rounds judged, the newest thirty kept.
+  const votes = Array.from({ length: 40 }, (_, index) => ["revise", Math.round((1 + index * 0.2) * 10) / 10, true]);
+  const ai = scriptedAi({ 1: votes });
+  const { session, store } = await run(ai, { ...ONE, options: { ...READERS, review: { maxRounds: 10 } } });
+  assert.deepEqual(stateOf(store).plan.chapters[0].rounds.map((round) => round.director), votes.slice(0, 10).map(([, score]) => score));
+  for (const text of ["Make Orrin kinder.", "Make the harbor colder.", "Make Mira braver."]) {
     await session.intervene({ scope: "rewrite", text });
     await session.start();
     await session.waitForIdle();
     assert.equal(stateOf(store).status, "completed", stateOf(store).lastError?.message);
   }
   const rounds = stateOf(store).plan.chapters[0].rounds;
-  assert.equal(engine.MAX_CHAPTER_ROUNDS, 8);
-  assert.equal(ai.decided.length, 9, "nine rounds were judged");
-  assert.equal(rounds.length, 8, "and eight are kept");
-  assert.deepEqual(rounds.map((round) => round.director), [2, 3, 4, 5, 6, 7, 8, 9], "the newest, in the order they happened");
+  assert.equal(engine.MAX_CHAPTER_ROUNDS, 30);
+  assert.equal(ai.decided.length, 40, "forty rounds were judged");
+  assert.equal(rounds.length, 30, "and thirty are kept");
+  assert.deepEqual(rounds.map((round) => round.director), votes.slice(10).map(([, score]) => score), "the newest, in the order they happened");
 });
 
 test("the rounds of a chapter go on being there when the author raises the number of chapters of the finished book, even for chapters that no longer keep their closing synopsis", async () => {
@@ -243,17 +244,17 @@ test("a plan saved before the rounds existed is read as it was: chapters with no
   for (const rounds of [[], null, "no", {}, 7, [null, 5, "x", []], [{}], [{ verdict: "approve" }]]) assert.equal("rounds" in readRounds(rounds), false, JSON.stringify(rounds));
 });
 
-test("the rounds are read as compact data: at most eight, a vote of 0-10 with one decimal at most, whole counters, and only those four numbers and the verdict", () => {
-  const many = Array.from({ length: 12 }, (_, index) => ({ director: (index % 10) + 1, accepted: index, rejected: 1 }));
-  assert.deepEqual(readRounds(many).rounds.map((round) => round.accepted), [4, 5, 6, 7, 8, 9, 10, 11], "the eight newest");
+test("the rounds are read as compact data: at most thirty, a vote of 0-10 with one decimal at most, whole counters, and only those four numbers and the verdict", () => {
+  const many = Array.from({ length: 34 }, (_, index) => ({ director: (index % 10) + 1, accepted: index, rejected: 1 }));
+  assert.deepEqual(readRounds(many).rounds.map((round) => round.accepted), Array.from({ length: 30 }, (_, index) => index + 4), "the thirty newest");
   assert.deepEqual(readRounds([{ director: 7.26, readers: 6.04, accepted: 2.6, rejected: -3 }]).rounds, [{ director: 7.3, readers: 6, accepted: 3, rejected: 0 }]);
   assert.deepEqual(readRounds([{ director: 12, readers: -1 }]).rounds, [{ director: 10, readers: 0 }], "the votes are limited to 0-10");
   assert.deepEqual(readRounds([{ director: "8", accepted: "2" }]).rounds, [{ director: 8, accepted: 2 }], "a number written as text is a number");
   assert.deepEqual(readRounds([{ director: 7, verdict: "approve", note: "x".repeat(5000), accepted: 1 }]).rounds, [{ director: 7, verdict: "approve", accepted: 1 }], "nothing else is kept: the verdict is, the note is not");
   assert.deepEqual(readRounds([null, { director: "good", accepted: "many" }, { director: 6 }, 3, { readers: 7 }]).rounds, [{ director: 6 }, { readers: 7 }], "what holds no number is no round");
   assert.deepEqual(readRounds([{ accepted: 1 }, { rejected: 2 }]).rounds, [{ accepted: 1 }, { rejected: 2 }], "every field is optional");
-  const kept = readRounds(Array.from({ length: 30 }, () => ({ director: 5, accepted: 1, rejected: 1 }))).rounds;
-  assert.equal(kept.length, 8);
+  const kept = readRounds(Array.from({ length: 60 }, () => ({ director: 5, accepted: 1, rejected: 1 }))).rounds;
+  assert.equal(kept.length, 30);
   let current = planWith([{ ...CHAPTER, rounds: [{ director: 6, readers: 7, accepted: 1, rejected: 2 }, { director: 8, accepted: 0, rejected: 3 }] }]);
   for (let pass = 0; pass < 3; pass += 1) current = parseAutopilotState(serializeAutopilotState(current));
   assert.deepEqual(current.plan.chapters[0].rounds, [{ director: 6, readers: 7, accepted: 1, rejected: 2 }, { director: 8, accepted: 0, rejected: 3 }], "they survive every save");

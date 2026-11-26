@@ -19,7 +19,7 @@ import {
   architectSystemPrompt, continuitySystemPrompt, specialistsSystemPrompt, writerSystemPrompt,
 } from "./prompts.js";
 import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES, normalizeBrief, normalizeOptions } from "./state.js";
-import type { AutopilotBrief, AutopilotOptions, AutopilotState } from "./types.js";
+import { REVIEW_MAX_ROUNDS, type AutopilotBrief, type AutopilotOptions, type AutopilotState } from "./types.js";
 
 // What a run will cost before it starts. The estimate is arithmetic over the pipeline: it counts the calls the steps of the autopilot make (the formulas
 // are written next to the step of `tasks.ts` and `planner.ts` they come from), weighs each call as the engine's router would weigh its prompt and as
@@ -195,7 +195,7 @@ export type EstimateCount = number | { min?: number; max?: number };
  * first review, the plan at its first look) to the most (every round used, every scene repaired, the plan revised twice).
  */
 export interface EstimateScenario {
-  /** Rounds of review of a chapter, from 1 to the director's `maxReviewRounds`. */
+  /** Rounds of review of a chapter, from 1 to the director's `maxReviewRounds` (or the review policy's). */
   rounds?: EstimateCount;
   /** Scenes repaired in a chapter, in all its rounds. */
   repairs?: EstimateCount;
@@ -217,6 +217,11 @@ export interface EstimateProgress {
   withoutSummary?: number;
   /** Their words, in all (not said: the length of a chapter of the brief). */
   withoutSummaryWords?: number;
+  /**
+   * The chapters left are written already and are only reviewed again (a review of the book): no scenes are planned or written for them, only their review, the
+   * repairs it asks for and their closing. Not said: they are written.
+   */
+  reviewOnly?: boolean;
 }
 
 export interface EstimateOutline {
@@ -233,9 +238,12 @@ export interface EstimateInput {
   brief?: Partial<AutopilotBrief>;
   /** The scenes a chapter is expected to have (the planner's rule gives 2 to 4 for each chapter); the middle of the range when missing. */
   scenesPerChapter?: number;
-  /** `readers`, `maxReaders`, `readersOnPlan` and `specialists` change the calls; the others (`pauseAfterPlan`, `chaptersPerRun`, the budgets…) do not. */
+  /**
+   * `readers`, `maxReaders`, `readersOnPlan`, `specialists` and the review policy (`review`: the rounds of a chapter, and the rounds the readers read in) change the
+   * calls; the others (`pauseAfterPlan`, `chaptersPerRun`, the budgets…) do not.
+   */
   options?: Partial<AutopilotOptions>;
-  /** `maxReviewRounds` of the director's profile (1 to 3, 2 when it says nothing). */
+  /** `maxReviewRounds` of the director's profile (1 to 3, 2 when it says nothing): the rounds of review of a chapter unless the review policy (`options.review.maxRounds`) says others. */
   maxReviewRounds?: number;
   /** The language of the book: its name or its code. The texts of the estimate are in Italian for an Italian book and in English for every other. */
   language?: string;
@@ -323,8 +331,11 @@ export interface EstimateResult {
 
 // ─── What the pipeline asks of the models ───────────────────────────────────
 
-/** The most rounds of review of a chapter, and the most times the plan is sent back (the third review of the plan is an approval). */
-const MAX_ROUNDS = 3;
+/** The most rounds of review of a chapter (the review policy's limit, `REVIEW_MAX_ROUNDS`). */
+const MAX_ROUNDS = REVIEW_MAX_ROUNDS;
+/** The most rounds a director's profile gives a chapter (`max_review_rounds`). */
+const DIRECTOR_MAX_ROUNDS = 3;
+/** The most times the plan is sent back (the third review of the plan is an approval). */
 const MAX_PLAN_REVISIONS = 2;
 /** A word of the book is six characters, the space included: what a limit in characters of a prompt is in words. */
 const CHARS_PER_WORD = 6;
@@ -642,7 +653,10 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   const scenes = whole(source.scenesPerChapter, Math.round((SCENES_PER_CHAPTER.min + SCENES_PER_CHAPTER.max) / 2), 1, 20);
   const sceneWords = brief.wordsPerScene;
   const chapterWords = scenes * sceneWords;
-  const maxRounds = whole(source.maxReviewRounds, 2, 1, MAX_ROUNDS);
+  // The rounds of the review policy, else the director's (1 to 3, as its profile keeps them); the readers read a chapter in its first rounds (the first only,
+  // unless the policy says more).
+  const maxRounds = options.review?.maxRounds !== undefined ? whole(options.review.maxRounds, 2, 1, MAX_ROUNDS) : whole(source.maxReviewRounds, 2, 1, DIRECTOR_MAX_ROUNDS);
+  const readerRounds = whole(options.review?.readerRounds, 1, 1, MAX_ROUNDS);
 
   // The book: the chapters of the outline (its chapter entries), or the chapters already planned when the outline has none.
   const outlineChapters = outlineChaptersOf(outline);
@@ -849,16 +863,22 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
         if (calls <= 0) return;
         add(kind, calls * count, calls * promptTotal(call, from, to), calls * count * reply(kind, replyWords));
       };
-      perChapter("scenes", 1, scenes * T.sceneReplyWords + 5);
-      // The scenes: each is written with what the scenes before it did, and summarized after; a repair is summarized too.
-      let writeInput = 0;
-      for (let k = 1; k <= scenes; k += 1) writeInput += promptTotal(writePrompt(k), from, to);
-      add("write", scenes * count, writeInput, scenes * count * reply("write", sceneWords));
-      perChapter("scene-summary", scenes + p, T.summaryWords);
-      perChapter("reader", chapterReaders, T.readerWords);
-      perChapter("readers-summary", chapterReaders > 0 ? 1 : 0, T.readersSummaryWords);
-      // The rounds after the first: the proposals of the readers are gone (they are made once, in the first round) and the fixes of the round before are told to the
-      // specialists and to the director.
+      // A chapter only reviewed again (a review of the book) has its scenes already: no plan of scenes, no writing, only the summaries of its repairs.
+      const reviewOnly = progress.reviewOnly === true;
+      if (!reviewOnly) {
+        perChapter("scenes", 1, scenes * T.sceneReplyWords + 5);
+        // The scenes: each is written with what the scenes before it did, and summarized after; a repair is summarized too.
+        let writeInput = 0;
+        for (let k = 1; k <= scenes; k += 1) writeInput += promptTotal(writePrompt(k), from, to);
+        add("write", scenes * count, writeInput, scenes * count * reply("write", sceneWords));
+      }
+      perChapter("scene-summary", (reviewOnly ? 0 : scenes) + p, T.summaryWords);
+      // The readers read in the first rounds the policy says, as many as the rounds of this scenario.
+      const readingRounds = Math.min(readerRounds, r);
+      perChapter("reader", chapterReaders * readingRounds, T.readerWords);
+      perChapter("readers-summary", chapterReaders > 0 ? readingRounds : 0, T.readersSummaryWords);
+      // The rounds after the first: the proposals of the readers are gone (counted in the first round only, also when the policy has them read again: a little
+      // under) and the fixes of the round before are told to the specialists and to the director.
       const carried = r > 1 ? Math.min(scenes, p / (r - 1)) : 0;
       const fixes = w(carried * (T.fixWords + 3));
       const later = (call: Prompt, dropped = 0): Prompt => ({ ...call, base: call.base - dropped + fixes });
@@ -1105,7 +1125,7 @@ export function estimateModelsFromConfig(config: AiRuntimeConfig | null | undefi
  * Where a book is, read from the state of the autopilot: the chapters done, the chapters of the plan when it is approved, whether the concept and the judgement of
  * the whole book are done, and the chapters the author wrote that have no summary yet. What `EstimateInput.progress` takes for a book that is already started.
  */
-export function estimateProgressFromState(state: Pick<AutopilotState, "plan" | "concept" | "finalDone"> | null | undefined): Required<Omit<EstimateProgress, "withoutSummaryWords">> {
+export function estimateProgressFromState(state: Pick<AutopilotState, "plan" | "concept" | "finalDone"> | null | undefined): Required<Omit<EstimateProgress, "withoutSummaryWords" | "reviewOnly">> {
   const source = asRecord(state);
   const plan = asRecord(source.plan);
   const chapters = Array.isArray(plan.chapters) ? plan.chapters.map(asRecord) : [];

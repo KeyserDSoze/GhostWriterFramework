@@ -64,6 +64,7 @@ import { asArray, asInteger, asNumber, asOneOf, asRecord, asString, asStringList
 import { bulletList, clipText, countWords, isItalian, languageName, OUTPUT_TOKENS_CEILING, sceneCharacterLimit, scaleOutputTokens, tokensPerWord, truncate } from "../util/text.js";
 import { chapterLines, layoutChapters, listSection, outlineList, type ChapterFormat } from "./outline.js";
 import { legacyChapters, queuedMarkReviewed, startedReview } from "./frozen.js";
+import { reviewMaxRounds, reviewTarget } from "./review-policy.js";
 import { SCENES_PER_CHAPTER, batchesNamed, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, sceneFile, scenesForChapter, type TaskDescriptor } from "./planner.js";
 import {
   CHAPTER_REVIEW_TOOL,
@@ -430,9 +431,8 @@ function verdictOf(value: unknown, subject: string): "approve" | "revise" {
   throw new AiReplyRejectedError(`${subject} was rejected: the field "verdict" must be "approve" or "revise".`);
 }
 
-/** Why an approval is not accepted as it was given, in the book's language. */
-function withheldApproval(ctx: TaskContext, score: number, outcome: string): string {
-  const needed = ctx.director.approvalScore;
+/** Why an approval is not accepted as it was given, in the book's language. `needed`: the score it needed (the director's approval score unless the review policy says another). */
+function withheldApproval(ctx: TaskContext, score: number, outcome: string, needed = ctx.director.approvalScore): string {
   return isItalian(ctx.language)
     ? `Il direttore ha approvato con ${score}/10, sotto il punteggio di approvazione (${needed}/10): ${outcome}`
     : `The director approved with ${score}/10, below the approval score of ${needed}/10: ${outcome}`;
@@ -1648,7 +1648,9 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
     secretRules(ctx.store, ctx.snapshot, chapter.number),
     review.readerScores.length ? readBody(ctx.store, readerSummaryPath({ kind: "chapter", chapter: chapter.slug }), 2500) : Promise.resolve(""),
   ]);
-  const maxRounds = ctx.director.maxReviewRounds;
+  // The target and the rounds of the review policy (the run's, or the review of the book in progress), else the director's.
+  const maxRounds = reviewMaxRounds(ctx.state, ctx.director);
+  const target = reviewTarget(ctx.state, ctx.director);
   const last = review.round >= maxRounds;
   const perScene = sceneLimit(ctx, Math.max(3000, Math.floor(60000 / Math.max(1, source.paragraphs.length))));
   const style = evaluationStyleOf(ctx, "chapter");
@@ -1656,11 +1658,12 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.director,
     label: `autopilot:director-review:${chapter.number}`,
-    system: directorSystemPrompt(ctx.director, ctx.language),
+    // The profile as the policy makes it: its approval score is the target (the same profile, word for word, without a policy).
+    system: directorSystemPrompt(target === ctx.director.approvalScore ? ctx.director : { ...ctx.director, approvalScore: target }, ctx.language),
     user: `${request([
       `Decide on chapter ${chapter.number} «${chapter.title}» (review round ${review.round} of ${maxRounds}).`,
       "For EVERY finding decide exactly once: accept it with a precise, minimal remediation for the ghostwriter and its scene number, or reject it with the reason. Reject unfounded or unanchored findings, findings against the vision or the author's rules, and single-reader taste the intended audience would not share.",
-      `Score the chapter from 1 to 10. Verdict "approve" when it deserves at least ${ctx.director.approvalScore}/10 and nothing critical remains; otherwise "revise".`,
+      `Score the chapter from 1 to 10. Verdict "approve" when it deserves at least ${target}/10 and nothing critical remains; otherwise "revise".`,
       style.rule,
       review.authorEdit
         ? "The author changed this chapter after it was approved: judge the chapter as it is now. The author's text stays as it is: no fix will be applied and there is no other round, so your accepted fixes are advice for the author."
@@ -1733,14 +1736,14 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   const rejected = decisions.filter((decision) => decision.action === "reject");
   const score = Math.round(normalizeScore(output.score)! * 10) / 10;
   let verdict = verdictGiven;
-  // The approval score is a rule of the director's profile, not only a line of the prompt.
-  const withheld = verdict === "approve" && score < ctx.director.approvalScore;
+  // The approval score (the target of the review policy) is a rule, not only a line of the prompt.
+  const withheld = verdict === "approve" && score < target;
   if (withheld) verdict = "revise";
-  let withheldNote = withheld ? withheldApprovalNote(score, ctx.director.approvalScore, ctx.language) : "";
+  let withheldNote = withheld ? withheldApprovalNote(score, target, ctx.language) : "";
   if (verdict === "revise" && !accepted.length) {
     verdict = "approve";
     if (withheld) {
-      withheldNote = withheldApproval(ctx, score, italian ? "non c'è alcuna correzione applicabile, quindi il capitolo è approvato così com'è." : "no fix could be applied, so the chapter is approved as it is.");
+      withheldNote = withheldApproval(ctx, score, italian ? "non c'è alcuna correzione applicabile, quindi il capitolo è approvato così com'è." : "no fix could be applied, so the chapter is approved as it is.", target);
       ctx.insight("warning", withheldNote);
     } else {
       ctx.insight("warning", italian
@@ -1748,7 +1751,7 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
         : "The director asked for a revision without any applicable fix: the chapter is approved as it is.");
     }
   } else if (withheld) {
-    ctx.insight("warning", withheldApproval(ctx, score, italian ? "il capitolo è trattato come da rivedere." : "the chapter is treated as a revision."));
+    ctx.insight("warning", withheldApproval(ctx, score, italian ? "il capitolo è trattato come da rivedere." : "the chapter is treated as a revision.", target));
   }
   if (undecided.length) {
     ctx.insight("warning", italian ? `Rilievi senza decisione del direttore, respinti: ${undecided.join(", ")}` : `Findings the director did not decide, rejected: ${undecided.join(", ")}`);
@@ -1766,8 +1769,10 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   review.summary = summaryText;
   // The fixes of a review of the author's change are advice: the author's text is never rewritten for them.
   review.repairQueue = review.authorEdit ? [] : [...new Set(accepted.map((decision) => decision.sceneNumber!))].sort((left, right) => left - right);
-  // The readers read the chapter once, in the first round of its review: their average is in the record of that round and of no other. The verdict is the one the plan acts on.
-  recordChapterRound(chapter, closedRound({ director: score, readers: review.history.length === 0 ? review.readerScores.map((entry) => entry.score) : undefined, verdict, accepted: accepted.length, rejected: rejected.length }));
+  // The readers' average is in the record of the round they read the chapter in (the first, and the others the review policy says) and of no other: a state that
+  // does not say which round they read in (an older engine) had them read in the first. The verdict is the one the plan acts on.
+  const readersReadNow = review.readersRound !== undefined ? review.readersRound === review.round : review.history.length === 0;
+  recordChapterRound(chapter, closedRound({ director: score, readers: readersReadNow ? review.readerScores.map((entry) => entry.score) : undefined, verdict, accepted: accepted.length, rejected: rejected.length }));
   review.history = [...review.history, { round: review.round, verdict, score, accepted: accepted.length, rejected: rejected.length }];
   ctx.state.directorNotes = mergeNotes(ctx.state.directorNotes, asStringList(output.guidance, 6));
   const question = asRecord(output.questionForAuthor);
@@ -2163,6 +2168,8 @@ async function runRevise(ctx: TaskContext): Promise<TaskResult> {
 
 async function runFinal(ctx: TaskContext): Promise<TaskResult> {
   await assertRewritable(ctx, [directorOpinionPath({ kind: "book" })]);
+  // The book is approved at the target of the review policy (the run's, or the review of the book in progress), else at the director's approval score.
+  const bookTarget = reviewTarget(ctx.state, ctx.director);
   const result = await askDirector({
     store: ctx.store,
     ai: { complete: (aiRequest) => ctx.ai(aiRequest) },
@@ -2171,7 +2178,9 @@ async function runFinal(ctx: TaskContext): Promise<TaskResult> {
     signal: ctx.signal,
     now: ctx.now,
     source: "autopilot",
-    instruction: "Every chapter has been approved: judge the arcs, the promises made to the reader, the open threads and the ending, and list what the author should still consider.",
+    // The target is said only when the review policy sets one: without it the director's approval score is the rule, as it always was.
+    instruction: `Every chapter has been approved: judge the arcs, the promises made to the reader, the open threads and the ending, and list what the author should still consider.${bookTarget === ctx.director.approvalScore ? "" : ` Approve the book when it deserves at least ${bookTarget}/10.`}`,
+    approvalScore: bookTarget,
     ...(ctx.evaluationStyle ? { evaluationStyle: ctx.evaluationStyle } : {}),
   });
   ctx.state.finalDone = true;

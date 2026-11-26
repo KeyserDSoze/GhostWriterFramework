@@ -3,6 +3,7 @@ import { isValidGhostwriterSlug } from "../book/paths.js";
 import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
 import { clipText, countWords } from "../util/text.js";
 import { normalizeErrorDetail, normalizeErrorKind } from "./errors.js";
+import { normalizeReviewPolicy } from "./review-policy.js";
 import { AUTOPILOT_PUBLISH_MODES, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES, REVISION_CHAPTER_MODES, REVISION_CHAPTER_STATUSES, REVISION_REASONS } from "./types.js";
 import type {
   AutopilotActivity,
@@ -56,7 +57,7 @@ export const MAX_CONSTRAINTS = 80;
 export const MAX_RULE_CHARACTERS = 800;
 export const MAX_REVISION_NOTES = 40;
 /** The rounds of review a chapter keeps in the plan (`PlannedChapter.rounds`): when there are more, the oldest leave. */
-export const MAX_CHAPTER_ROUNDS = 8;
+export const MAX_CHAPTER_ROUNDS = 30;
 /** Characters of the text of the final review in the state, and in the summary the live events carry. */
 export const FINAL_REVIEW_TEXT_CHARACTERS = 1200;
 export const FINAL_REVIEW_SUMMARY_CHARACTERS = 400;
@@ -230,6 +231,8 @@ export function normalizeOptions(value: unknown, base: AutopilotOptions = DEFAUL
   const longRetry = source.longRetry === null ? undefined : readLongRetry(source.longRetry) ?? readLongRetry(base.longRetry);
   // Off unless the author turned it on: what is not true or false leaves it as it was (off, for a file read on its own).
   const resumeAfterRestart = asBoolean(source.resumeAfterRestart, base.resumeAfterRestart === true);
+  // `null` takes the review policy back (the director's again); a field that is not a number keeps what it was.
+  const review = source.review === undefined ? base.review : normalizeReviewPolicy(source.review, base.review);
   return {
     readers: asBoolean(source.readers, base.readers),
     maxReaders: asInteger(source.maxReaders, base.maxReaders, 1, 20),
@@ -246,6 +249,7 @@ export function normalizeOptions(value: unknown, base: AutopilotOptions = DEFAUL
     ...(publishEvery ? { publishEvery } : {}),
     ...(longRetry ? { longRetry } : {}),
     ...(resumeAfterRestart ? { resumeAfterRestart: true } : {}),
+    ...(review ? { review } : {}),
   };
 }
 
@@ -493,6 +497,7 @@ function normalizeReview(value: unknown): ChapterReview | null {
     }),
     repairQueue: asArray(source.repairQueue).map((entry) => asInteger(entry, 0, 0, 999)).filter((entry) => entry > 0),
     previousFixes: asStringList(source.previousFixes, 40),
+    ...(asInteger(source.readersRound, 0, 0, 99) ? { readersRound: asInteger(source.readersRound, 0, 0, 99) } : {}),
     history: asArray(source.history).map((entry) => {
       const item = asRecord(entry);
       return {

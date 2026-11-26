@@ -239,7 +239,31 @@ export interface AutopilotOptions {
    * with the other options, and it can change while a run goes on.
    */
   resumeAfterRestart?: boolean;
+  /** How the chapters and the book are reviewed (`ReviewPolicy`): the target, the rounds, the readers' rounds, the rounds of a review of the book. Absent: the director's. */
+  review?: ReviewPolicy;
 }
+
+/**
+ * How the chapters and the book are reviewed in a run (`AutopilotOptions.review`): the director's profile gives the defaults (its approval score and its rounds),
+ * and a review of the book launched later can ask for others. What is not said is the profile's (or today's for the readers).
+ */
+export interface ReviewPolicy {
+  /** The vote a chapter and the book must reach to be approved: from 1 to 10, to a tenth. Absent: the director's approval score. The plan keeps the director's. */
+  targetScore?: number;
+  /** Rounds of review of a chapter before it is closed anyway: 1 to `REVIEW_MAX_ROUNDS`. Absent: the director's `maxReviewRounds`. */
+  maxRounds?: number;
+  /** In how many of the first rounds of a chapter the simulated readers read it (when they read at all): 1 to `REVIEW_MAX_ROUNDS`. Absent: 1, the first round only. */
+  readerRounds?: number;
+  /** The most rounds a review of the book makes since the run began, before it waits for the author (absent or 0: no limit); a start allows as many again. */
+  campaignMaxRounds?: number;
+}
+
+/** The most rounds of review of a chapter, of the readers' and of a review of the book that the policy accepts. */
+export const REVIEW_MAX_ROUNDS = 10;
+export const REVIEW_MAX_CAMPAIGN_ROUNDS = 100;
+
+/** A change of the review policy (`StartOptions.options.review`): a value sets it, `null` takes it back (the director's again); `null` for the whole policy takes all of it back. */
+export type ReviewPolicyUpdate = { [Key in keyof ReviewPolicy]?: number | null };
 
 /** The longest wait of «Retry later», in minutes (a week), and the most cycles that are not "unlimited". */
 export const LONG_RETRY_MAX_MINUTES = 10_080;
@@ -346,7 +370,10 @@ export interface PlannedChapter {
 export interface ChapterRound {
   /** The director's vote. */
   director?: number;
-  /** The average of the simulated readers' votes. They read a chapter once, in the first round of its review: later rounds have none. */
+  /**
+   * The average of the simulated readers' votes. They read a chapter in the first round of its review, and again in the next rounds the review policy says
+   * (`ReviewPolicy.readerRounds`): the other rounds have none.
+   */
   readers?: number;
   /**
    * What the round decided: `approve` closed the chapter, `revise` sent it back for fixes. It is the verdict the plan acted on, which is
@@ -439,6 +466,8 @@ export interface ChapterReview {
   /** Fixes accepted and applied in the previous round, verified by the next one. */
   previousFixes: string[];
   history: Array<{ round: number; verdict: "approve" | "revise"; score: number; accepted: number; rejected: number }>;
+  /** The round the simulated readers read the chapter in (their scores are of that round): the first, and again in the rounds the review policy says. */
+  readersRound?: number;
   /**
    * The review of a change the author made to a frozen chapter: one round of the director (and of the specialists), whose fixes are
    * advice for the author and are never applied (the author's text stays as it is); then the chapter is closed and frozen again.
@@ -1104,8 +1133,11 @@ export interface QuestionAnswer {
 
 export interface StartOptions {
   brief?: Partial<AutopilotBrief>;
-  /** `longRetry: null` turns «Retry later» off, as the engine has always read it (the policy the book had is taken back: `normalizeOptions`). */
-  options?: Partial<Omit<AutopilotOptions, "longRetry">> & { longRetry?: AutopilotLongRetry | null };
+  /**
+   * `longRetry: null` turns «Retry later» off, as the engine has always read it (the policy the book had is taken back: `normalizeOptions`); `review` changes the review
+   * policy field by field (`ReviewPolicyUpdate`), and `null` takes it back.
+   */
+  options?: Partial<Omit<AutopilotOptions, "longRetry" | "review">> & { longRetry?: AutopilotLongRetry | null; review?: ReviewPolicyUpdate | null };
   /** Limits of this run only: they are not saved. See `AutopilotRunLimits`. */
   limits?: AutopilotRunLimits;
 }
