@@ -1,5 +1,37 @@
 [
   {
+    "version": "0.123.0",
+    "date": "2026-11-26",
+    "en": {
+      "title": "Review the book again to a score you choose, and decide how far the autopilot goes: the score to reach, the rounds of review, the money cap of the book",
+      "summary": "A Review card in the autopilot's configuration sets the score chapters and the book must reach, the director's and the readers' rounds, how many rounds a review of the book makes before it waits for you, and the money and token caps of the book. A finished book says how many rounds of review it had and offers «Review the book again»: the chapters under the target are reviewed again, round after round, and the director judges the whole book again, until the target is reached, two rounds gain nothing, or a cap stops it; then a panel says why, with the numbers, and goes on with one click.",
+      "changes": [
+        "The Review card (Autopilot › Configuration › Review): the score to reach (5 to 10, by halves; blank: the director's), the director's rounds per chapter (1 to 10), the rounds the simulated readers read a chapter again, the rounds of a review of the book before it waits for you, the money cap in the currency of your settings (with what the book spent so far) and the token cap. Each has one line that says what it does, and as soon as one changes the card shows the estimate of the run with the new values. Blank means the director's values, and no cap.",
+        "The money cap is the book's: it compares what the book spent over all its runs, it never resets when you start again, and you raise it to go on. It is the same budget the Costs page shows.",
+        "«How the book turned out» now says how many rounds of review the chapters had («20 rounds of review, up to 3 for a chapter») and, after a review of the book, how it ended: in how many rounds, and where the book went.",
+        "«Review the book again» opens a dialog with the score to reach (one point over the one in force, 8 at least), the rounds of a chapter, the readers' rounds, the rounds allowed, the money cap with what was spent, what one round costs, and the chapters under the target that will be reviewed again, in the order of the book. A chapter you froze or wrote yourself is reviewed only if you tick it; one you changed since it was frozen waits for your decision about that change.",
+        "The review goes round after round: the chapters under the target, then the director's judgement of the whole book. It ends when the target is reached, when every chapter has it, or when two rounds in a row raise neither the lowest chapter nor the book, so that it does not spend for nothing. The timeline says each chapter and each round with its votes.",
+        "When a cap stops the autopilot (the money cap, the token cap, or the rounds of a review you allowed since the start), a panel on the autopilot's page says which, with the numbers, and goes on with one click: raise the cap to a suggested value, go on for more rounds, or stop the review. The mini-player links to it.",
+        "The band, the mini-player and the books overview show a review in progress: its target, its round and the rounds allowed, the chapter being reviewed or the director judging the book, and what the book spent of its cap. The Synopsis waits for a review to end before applying itself to the book.",
+        "On a personal server older than 0.1.19 the score and the rounds stay the director's and a review of the book cannot be launched: the pages say so. Labelled fields with their descriptions, problems said under the field, keyboard and phone friendly, in the light and the dark theme."
+      ]
+    },
+    "it": {
+      "title": "Rivedi di nuovo il libro fino al voto che scegli, e decidi fin dove arriva l'autopilot: il voto da raggiungere, i giri di revisione, il tetto di spesa del libro",
+      "summary": "Una scheda Revisione nella configurazione dell'autopilot imposta il voto che capitoli e libro devono raggiungere, i giri del direttore e dei lettori, quanti giri fa una revisione del libro prima di aspettarti, e i tetti di spesa e di token del libro. Un libro finito dice quanti giri di revisione ha avuto e offre «Rivedi di nuovo il libro»: i capitoli sotto l'obiettivo vengono rivisti di nuovo, giro dopo giro, e il direttore giudica di nuovo il libro intero, finché l'obiettivo è raggiunto, due giri non guadagnano nulla, o un tetto lo ferma; allora un pannello dice perché, con i numeri, e si riparte con un clic.",
+      "changes": [
+        "La scheda Revisione (Autopilot › Configurazione › Revisione): il voto da raggiungere (da 5 a 10, per mezzi punti; vuoto: quello del direttore), i giri del direttore per capitolo (da 1 a 10), i giri in cui i lettori simulati rileggono un capitolo, i giri di una revisione del libro prima di aspettarti, il tetto di spesa nella valuta delle tue impostazioni (con quanto il libro ha speso finora) e il tetto di token. Ognuno ha una riga che dice cosa fa, e appena uno cambia la scheda mostra la stima della corsa con i nuovi valori. Vuoto significa i valori del direttore, e nessun tetto.",
+        "Il tetto di spesa è del libro: confronta quanto il libro ha speso in tutte le sue corse, non si azzera mai quando riparti, e lo alzi per continuare. È lo stesso budget che mostra la pagina Costi.",
+        "«Com'è venuto il libro» ora dice quanti giri di revisione hanno avuto i capitoli («20 giri di revisione, fino a 3 per capitolo») e, dopo una revisione del libro, com'è finita: in quanti giri, e dove è arrivato il libro.",
+        "«Rivedi di nuovo il libro» apre una finestra con il voto da raggiungere (un punto sopra quello in vigore, almeno 8), i giri di un capitolo, i giri dei lettori, i giri concessi, il tetto di spesa con quanto è stato speso, quanto costa un giro, e i capitoli sotto l'obiettivo che verranno rivisti di nuovo, nell'ordine del libro. Un capitolo che hai congelato o scritto tu viene rivisto solo se lo spunti; uno che hai modificato dopo il congelamento aspetta la tua decisione su quella modifica.",
+        "La revisione va avanti giro dopo giro: i capitoli sotto l'obiettivo, poi il giudizio del direttore sul libro intero. Finisce quando l'obiettivo è raggiunto, quando ogni capitolo l'ha raggiunto, o quando due giri di fila non alzano né il capitolo più basso né il libro, così non spende per niente. La cronologia dice ogni capitolo e ogni giro con i suoi voti.",
+        "Quando un tetto ferma l'autopilot (il tetto di spesa, il tetto di token, o i giri di una revisione che hai concesso dall'avvio), un pannello nella pagina dell'autopilot dice quale, con i numeri, e si riparte con un clic: alzare il tetto a un valore proposto, continuare per altri giri, o fermare la revisione. Il mini-player porta lì.",
+        "La banda, il mini-player e la panoramica dei libri mostrano una revisione in corso: il suo obiettivo, il suo giro e quelli concessi, il capitolo che si sta rivedendo o il direttore che giudica il libro, e quanto il libro ha speso del suo tetto. La Sinossi aspetta che una revisione finisca prima di applicarsi al libro.",
+        "Su un server personale precedente alla 0.1.19 voto e giri restano quelli del direttore e una revisione del libro non si può avviare: le pagine lo dicono. Campi con etichette e descrizioni, problemi detti sotto il campo, comodi da tastiera e da telefono, nel tema chiaro e scuro."
+      ]
+    }
+  },
+  {
     "version": "0.121.0",
     "date": "2026-11-26",
     "en": {
