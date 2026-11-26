@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { OUTLINE_CHANGES_FILE, createAutopilotState, outlineChapterPath, outlineEntryDigest, parseMarkdown, parseOutlineJournal, serializeOutlineBook, serializeOutlineChapter, type PlannedChapter } from "narrarium-engine";
+import { OUTLINE_CHANGES_FILE, createAutopilotState, outlineChapterPath, outlineEntryDigest, parseMarkdown, parseOutlineJournal, serializeOutlineBook, serializeOutlineChapter, serializeOutlineJournal, type PlannedChapter } from "narrarium-engine";
 
 const withoutJournal = (files: Record<string, string>) => Object.fromEntries(Object.entries(files).filter(([path]) => path !== OUTLINE_CHANGES_FILE));
 import { MemoryBookStore } from "narrarium-engine/testing";
@@ -222,6 +222,89 @@ describe("an outline of mixed entries", () => {
     fireEvent.click(within(notice.closest("[role=alert]") as HTMLElement).getByRole("button", { name: t("outline.reload") }));
     await waitFor(() => expect(bodyField(3)).toHaveValue("Written in another tab."));
   }, 20_000);
+});
+
+describe("what changed", () => {
+  const ENTRIES: Array<[number, string, string]> = [[1, "Dawn", "Mira wakes."], [2, "Key", "Mira finds the key."], [3, "Vault", "The vault opens."]];
+  const section = () => document.querySelector<HTMLElement>("[data-outline-changes]");
+  const rows = () => Array.from(section()?.querySelectorAll<HTMLElement>("[data-outline-change]") ?? []).map((row) => Number(row.dataset.outlineChange));
+
+  /** Three chapters the autopilot wrote and approved from its entries; then Brainstorming changed the entry of chapter 1 and added chapter 4. */
+  async function changedBook(withPlan = true) {
+    const files: Record<string, string> = {};
+    const digests = new Map<number, string>();
+    for (const [number, title, body] of ENTRIES) {
+      files[outlineChapterPath(number)] = await autopilot(number, title, body);
+      digests.set(number, await outlineEntryDigest({ title, body }));
+    }
+    files[outlineChapterPath(1)] = author(1, "Dawn", "Mira wakes at night.");
+    files[outlineChapterPath(4)] = author(4, "Return", "Mira comes back.");
+    const after = new Map([[1, await outlineEntryDigest({ title: "Dawn", body: "Mira wakes at night." })], [4, await outlineEntryDigest({ title: "Return", body: "Mira comes back." })]]);
+    files[OUTLINE_CHANGES_FILE] = serializeOutlineJournal({
+      series: [
+        { id: "fill", at: "2026-11-19T00:00:00.000Z", by: "autopilot", chapters: ENTRIES.map(([chapter, title]) => ({ chapter, change: "created" as const, title, after: digests.get(chapter)!, summary: "" })) },
+        { id: "brainstorm", at: "2026-11-21T00:00:00.000Z", by: "brainstorming", chapters: [
+          { chapter: 1, change: "modified", title: "Dawn", before: digests.get(1)!, after: after.get(1)!, summary: "" },
+          { chapter: 4, change: "created", title: "Return", after: after.get(4)!, summary: "" },
+        ] },
+      ],
+    });
+    if (withPlan) {
+      const state = createAutopilotState(new Date("2026-11-20T00:00:00.000Z"), { idea: "Glass" });
+      state.plan = {
+        chapters: ENTRIES.map(([number, title]) => ({ number, title, slug: `00${number}-${title.toLowerCase()}`, summary: "", goal: "", pov: [], keyEvents: [], reveals: [], status: "done", outlineDigest: digests.get(number), scenes: [{ number: 1, title: "S", goal: "", beats: [], characters: [], revisions: 0, status: "reviewed" }] }) as PlannedChapter),
+        approved: true, rounds: 0, revisionNotes: [], readerReactions: [], readersDone: true, awaitingAuthor: false,
+      };
+      files["autopilot/state.json"] = JSON.stringify(state);
+    }
+    return open(files, ENTRIES.map(([number, title]) => ({ slug: `00${number}-${title.toLowerCase()}`, title, paragraphs: [{}] })));
+  }
+
+  it("lists what the autopilot has not followed yet, with who changed it, when, and what the autopilot will do, and labels the chapters of the list", async () => {
+    await changedBook();
+    const changes = section()!;
+    expect(within(changes).getByRole("heading", { level: 2 })).toHaveTextContent(t("outline.changes.title"));
+    expect(rows()).toEqual([1, 4]);
+    const first = changes.querySelector<HTMLElement>('[data-outline-change="1"]')!;
+    for (const text of [t("outline.changes.kind.modified"), t("outline.changes.by.brainstorming"), t("outline.changes.outcome.ask")]) expect(first).toHaveTextContent(text);
+    expect(first.querySelector("time")).toHaveAttribute("datetime", "2026-11-21T00:00:00.000Z");
+    expect(changes).toHaveTextContent(t("outline.written.ask", { count: 1, numbers: ["1"] }));
+    expect(changes).toHaveTextContent(t("outline.changes.groups.extends", { count: 1, numbers: ["4"] }));
+    expect(within(entryOf(1)).getByText(t("outline.changes.badge.ask"))).toBeInTheDocument();
+    expect(within(entryOf(4)).getByText(t("outline.changes.badge.extends"))).toBeInTheDocument();
+    expect(within(entryOf(2)).queryByText(t("outline.changes.badge.ask"))).toBeNull();
+
+    fireEvent.click(within(changes).getByRole("button", { name: `${t("outline.changes.goTo", { number: 1 })} — Dawn` }));
+    await waitFor(() => expect(document.activeElement).toBe(entryOf(1)));
+  });
+
+  it("marks what changed as reviewed in the journal: the list folds, and what the autopilot has not followed yet stays counted and labelled", async () => {
+    await changedBook();
+    const toggle = within(section()!).getByRole("button", { name: t("outline.changes.hide") });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(within(section()!).getByRole("button", { name: t("outline.changes.markReviewed") }));
+    await waitFor(() => expect(parseOutlineJournal(mocks.store.files.get(OUTLINE_CHANGES_FILE)).reviewedAt).toBeDefined());
+    expect(parseOutlineJournal(mocks.store.files.get(OUTLINE_CHANGES_FILE)).series.map((series) => series.id), "the series stay").toEqual(["fill", "brainstorm"]);
+    await waitFor(() => expect(within(section()!).getByRole("button", { name: t("outline.changes.show") })).toHaveAttribute("aria-expanded", "false"));
+    expect(screen.getByRole("status")).toHaveTextContent(t("outline.changes.reviewedDone"));
+    expect(within(section()!).queryByRole("button", { name: t("outline.changes.markReviewed") })).toBeNull();
+    expect(section()).toHaveTextContent(t("outline.changes.pending", { count: 2 }));
+    expect(within(entryOf(1)).getByText(t("outline.changes.badge.ask"))).toBeInTheDocument();
+  });
+
+  it("says, for a book without a plan, that the autopilot follows the Synopsis when it plans the book, folded and without labels", async () => {
+    await changedBook(false);
+    const changes = section()!;
+    expect(changes).toHaveTextContent(t("outline.changes.intro.journal.always"));
+    const toggle = within(changes).getByRole("button", { name: t("outline.changes.show") });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(rows()).toEqual([1, 2, 3, 4]);
+    expect(changes.querySelector('[data-outline-change="2"]')).toHaveTextContent(t("outline.changes.outcome.no-plan"));
+    expect(changes.querySelector('[data-outline-change="2"]')).toHaveTextContent(t("outline.changes.by.autopilot"));
+    expect(changes).not.toHaveTextContent(t("outline.changes.pending", { count: 2 }));
+    expect(within(entryOf(1)).queryByText(t("outline.changes.badge.no-plan"))).toBeNull();
+  });
 });
 
 describe("a long outline", () => {

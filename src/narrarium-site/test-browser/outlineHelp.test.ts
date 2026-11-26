@@ -45,6 +45,8 @@ const LABELS = [
   "outline.assist.develop",
   "outline.assist.check",
   "outline.assist.apply",
+  "outline.changes.title",
+  "outline.changes.markReviewed",
   "autopilot.setup.fillOutline",
   "assistant.applyAllFiles",
   "assistant.undoChanges",

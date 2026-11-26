@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookConflictError, composeOutlineEdits, remapOutlineNumber, type AutopilotState, type BookFileChange, type OutlineChapterEntry, type OutlineEdit, type OutlineWarning } from "narrarium-engine";
+import { BookConflictError, OUTLINE_CHANGES_FILE, composeOutlineEdits, markOutlineJournalReviewed, remapOutlineNumber, type AutopilotState, type BookFileChange, type OutlineChapterEntry, type OutlineEdit, type OutlineWarning } from "narrarium-engine";
 import { applyToSnapshot, composeOptions, composerSource, restoreChanges, snapshotOf, type OutlineFile, type OutlineSnapshot } from "@/outline/outlineModel";
 import { withJournal } from "@/outline/outlineJournal";
 import type { OutlineSource } from "@/outline/outlineSource";
@@ -273,6 +273,40 @@ export function useOutlineEditor({ source, ghostwriters, describe, afterSave, la
     }
   }, [announce, refresh, setDrafts, setSnapshot, undo]);
 
+  /**
+   * Mark what changed as reviewed: the journal of the Synopsis keeps the moment (`reviewedAt`), and «What changed» tells only what comes after it. One commit
+   * of the journal alone, which is no entry: what was typed and the last action stay. A journal that changed meanwhile is not written over: the page reads it
+   * again, so that the author sees what came, and marks it again.
+   */
+  const markReviewed = useCallback(async (at: Date = new Date()): Promise<boolean> => {
+    const from = latest.current.source;
+    const before = snapshotRef.current;
+    if (!from || !before || busyRef.current) return false;
+    busyRef.current = true;
+    setBusy(true);
+    setFailure(null);
+    try {
+      const journal = before.files.get(OUTLINE_CHANGES_FILE);
+      const change = markOutlineJournalReviewed(journal ? { content: journal.content, hash: journal.hash } : null, at);
+      await from.commit([change], "Synopsis: mark the changes as reviewed");
+      setSnapshot(await applyToSnapshot(before, [change]));
+      announce(latest.current.describe("outline.changes.reviewedDone"));
+      return true;
+    } catch (error) {
+      if (error instanceof BookConflictError) {
+        announce(latest.current.describe("outline.changes.reviewConflict"));
+        busyRef.current = false;
+        void refresh();
+      } else {
+        setFailure(error instanceof Error ? error.message : String(error));
+      }
+      return false;
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }, [announce, refresh, setSnapshot]);
+
   const editEntry = useCallback((number: number, patch: Partial<Omit<EntryDraft, "baseHash">>) => {
     setDrafts((current) => {
       const next = new Map(current);
@@ -393,6 +427,7 @@ export function useOutlineEditor({ source, ghostwriters, describe, afterSave, la
     refresh,
     act,
     undoLast,
+    markReviewed,
     editEntry,
     discardEntry,
     editBook,

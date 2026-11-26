@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Link, useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ChevronLeft, ChevronRight, CircleHelp, FileInput, ListTree, Loader2, Plus, Rocket, Save, Search, Undo2, X } from "lucide-react";
-import { changeOfWritten, chapterFilePath, groupOutlineChanges, type AutopilotState, type OutlineChangeGroup, type OutlineEdit } from "narrarium-engine";
+import { OUTLINE_CHANGES_FILE, changeOfWritten, chapterFilePath, groupOutlineChanges, parseOutlineJournal, type AutopilotState, type OutlineChangeGroup, type OutlineEdit } from "narrarium-engine";
 import "@/i18n/outline";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAle
 import { FileChangedNotice } from "@/components/book/FileChangedNotice";
 import { OutlineEntryCard, type OutlineEntryHandlers } from "@/components/outline/OutlineEntryCard";
 import { OutlineBookSection } from "@/components/outline/OutlineBookSection";
+import { OutlineChanges, changeBadge } from "@/components/outline/OutlineChanges";
 import { useOutlineBriefEditor } from "@/components/outline/useOutlineBriefEditor";
 import { ConvertSynopsisDialog, DeleteEntryDialog } from "@/components/outline/OutlineDialogs";
 import { draftChanged, useOutlineEditor } from "@/components/outline/useOutlineEditor";
@@ -25,6 +26,7 @@ import { useBookStructure } from "@/hooks/useBookStructure";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { browserOutlineSource } from "@/outline/outlineSource";
 import { convertSynopsis, entryStatus, filterEntries, frozenChapterSlugs, isToldOutcome, missingNumbers, warningsByPath, writtenChapters, type ConvertedSynopsis, type StatusContext, type ToldOutcome } from "@/outline/outlineModel";
+import { whatChanged } from "@/outline/whatChanged";
 import { useOutlineFocusStore } from "@/store/outlineFocusStore";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { BrainstormPageButton, useBrainstormLauncher } from "@/components/assistant/brainstorm/BrainstormLauncher";
@@ -104,6 +106,19 @@ export function OutlinePage() {
 
   autopilotRef.current = editor.autopilot;
   const written = useMemo(() => writtenChapters(structure?.chapters ?? []), [structure?.chapters]);
+
+  // «What changed»: what the autopilot has not followed yet and what else changed, told with the journal of the Synopsis; and the label of each card it lists.
+  const journalText = editor.snapshot?.files.get(OUTLINE_CHANGES_FILE)?.content;
+  const journal = useMemo(() => parseOutlineJournal(journalText), [journalText]);
+  const changes = useMemo(() => (editor.snapshot ? whatChanged({ entries, journal, state: editor.autopilot, written: new Set(written.keys()) }) : null), [editor.snapshot, entries, journal, editor.autopilot, written]);
+  const changeLabels = useMemo(() => {
+    const labels = new Map<number, string>();
+    if (changes) for (const row of changes.rows) {
+      const label = changeBadge(describe, row, changes);
+      if (label) labels.set(row.number, label);
+    }
+    return labels;
+  }, [changes, describe]);
 
   // ─── The window of entries ─────────────────────────────────────────────────
   const [query, setQuery] = useState("");
@@ -333,6 +348,18 @@ export function OutlinePage() {
         (editor.loading || structureLoading || !source) && !editor.loadFailed ? <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("outline.loading")}</p> : null
       ) : (
         <>
+          {changes && changes.rows.length > 0 && (
+            <OutlineChanges
+              view={changes}
+              autopilot={editor.autopilot}
+              outlineEmpty={entries.length === 0}
+              busy={busy}
+              hasEntry={(number) => byNumber.has(number)}
+              onReveal={(number) => reveal(number, "entry")}
+              onMarkReviewed={() => void editor.markReviewed()}
+            />
+          )}
+
           <OutlineBookSection
             workingTitle={bookTitle}
             idea={bookBody}
@@ -394,6 +421,7 @@ export function OutlinePage() {
                         draft={draft}
                         dirty={draftChanged(draft, entry)}
                         status={statuses.get(entry.number)!}
+                        change={changeLabels.get(entry.number)}
                         ghostwriters={ghostwriters}
                         first={entries[0]?.number === entry.number}
                         last={entries[entries.length - 1]?.number === entry.number}

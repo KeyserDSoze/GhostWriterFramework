@@ -1,7 +1,7 @@
 import { memo, useId, useRef, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowDown, ArrowUp, BetweenHorizontalEnd, BetweenHorizontalStart, BookOpen, Bot, CheckCircle2, Info, Loader2, Lock, PenLine, RefreshCcw, Save, Trash2, TriangleAlert, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, BetweenHorizontalEnd, BetweenHorizontalStart, BookOpen, Bot, CheckCircle2, History, Info, Loader2, Lock, PenLine, RefreshCcw, Save, Trash2, TriangleAlert, Undo2 } from "lucide-react";
 import type { OutlineChapterEntry } from "narrarium-engine";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,8 @@ export interface OutlineEntryCardProps extends OutlineEntryHandlers {
   first: boolean;
   last: boolean;
   busy: boolean;
+  /** What changed in the entry, as «What changed» tells it (what the autopilot will do about a change it has not followed yet): absent when nothing is worth saying. */
+  change?: string;
   /** What the page adds to the text of the entry (the assistant of the context menu registers it). */
   renderBody?: (props: { number: number; textareaRef: React.RefObject<HTMLTextAreaElement | null>; value: string; onChange: (value: string) => void }) => ReactNode;
 }
@@ -113,6 +115,7 @@ export const OutlineEntryCard = memo(function OutlineEntryCard(props: OutlineEnt
         {status.frozen && <StatusItem icon={<Lock className="h-3.5 w-3.5" aria-hidden="true" />} className="text-foreground">{t("outline.status.frozen")}</StatusItem>}
         {status.approved && <StatusItem icon={<CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />} className="text-emerald-700 dark:text-emerald-400">{t("outline.status.approved")}</StatusItem>}
         {status.replan && <StatusItem icon={<RefreshCcw className="h-3.5 w-3.5" aria-hidden="true" />} className="text-amber-800 dark:text-amber-300">{t("outline.status.replan")}</StatusItem>}
+        {props.change && <StatusItem icon={<History className="h-3.5 w-3.5" aria-hidden="true" />} className="border-amber-500/50 text-amber-900 dark:text-amber-200">{props.change}</StatusItem>}
       </ul>
 
       <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,16rem)]">
