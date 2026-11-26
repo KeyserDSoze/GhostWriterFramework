@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ChevronLeft, ChevronRight, CircleHelp, FileInput, ListTree, Loader2, Plus, Rocket, Save, Search, Undo2, X } from "lucide-react";
 import { OUTLINE_CHANGES_FILE, changeOfWritten, chapterFilePath, groupOutlineChanges, parseOutlineJournal, type AutopilotState, type OutlineChangeGroup, type OutlineEdit } from "narrarium-engine";
@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { FileChangedNotice } from "@/components/book/FileChangedNotice";
 import { OutlineEntryCard, type OutlineEntryHandlers } from "@/components/outline/OutlineEntryCard";
@@ -33,6 +34,13 @@ import { useOutlineFocusStore } from "@/store/outlineFocusStore";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { BrainstormPageButton, useBrainstormLauncher } from "@/components/assistant/brainstorm/BrainstormLauncher";
 
+// The Bible loads when its tab is opened: the Synopsis opens as fast as it always did.
+const BibleTab = lazy(() => import("@/components/outline/bible/BibleTab").then((module) => ({ default: module.BibleTab })));
+
+/** The tabs of the page: the Synopsis itself and the Bible that composes the book's files. */
+const TABS = ["synopsis", "bible"] as const;
+type OutlineTab = (typeof TABS)[number];
+
 /** The entries drawn at once: an outline has no maximum, and a book of 5000 chapters opens as fast as one of ten. */
 export const OUTLINE_PAGE_SIZE = 50;
 /** The runs of chapters without an entry the page lists before it says how many more there are. */
@@ -47,6 +55,17 @@ export function OutlinePage() {
   const { bookId = "" } = useParams<{ bookId: string }>();
   const { t } = useTranslation();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const tab: OutlineTab = TABS.includes(requestedTab as OutlineTab) ? (requestedTab as OutlineTab) : "synopsis";
+  const showTab = useCallback((next: string) => {
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current);
+      if (next === "synopsis") params.delete("tab");
+      else params.set("tab", next);
+      return params;
+    }, { replace: true, preventScrollReset: true });
+  }, [setSearchParams]);
   const { branch, ready } = useWorkingBranch(bookId);
   const { book, structure, error, reload: reloadStructure, loading: structureLoading } = useBookStructure(bookId);
   const loaded = Boolean(structure);
@@ -198,8 +217,11 @@ export function OutlinePage() {
     const match = /^#outline-chapter-(\d+)$/.exec(location.hash);
     if (!match || !editor.snapshot || followedHash.current === location.key) return;
     followedHash.current = location.key;
-    if (byNumber.has(Number(match[1]))) reveal(Number(match[1]), "entry");
-  }, [location.hash, location.key, editor.snapshot, byNumber, reveal]);
+    if (byNumber.has(Number(match[1]))) {
+      if (tab !== "synopsis") showTab("synopsis");
+      reveal(Number(match[1]), "entry");
+    }
+  }, [location.hash, location.key, editor.snapshot, byNumber, reveal, tab, showTab]);
 
   // ─── Actions ───────────────────────────────────────────────────────────────
   const [deleting, setDeleting] = useState<number | null>(null);
@@ -340,112 +362,135 @@ export function OutlinePage() {
         </div>
       </header>
 
-      {editor.changedElsewhere && <FileChangedNotice message={t("outline.changedElsewhere")} reloadLabel={t("outline.reload")} onReload={() => void editor.reload()} />}
-      {editor.failure && <Alert variant="destructive"><AlertDescription><span className="font-medium">{t("outline.saveFailed")}</span> {editor.failure}</AlertDescription></Alert>}
-      {briefFailure !== null && <Alert variant="destructive"><AlertDescription><span className="font-medium">{t("outline.brief.saveFailed")}</span> {briefFailure || t("outline.brief.result.conflict")}</AlertDescription></Alert>}
-      {editor.loadFailed && !snapshot && (
-        <Alert variant="destructive">
-          <AlertDescription className="flex flex-wrap items-center gap-3"><span>{t("outline.loadFailed")}</span><Button size="sm" variant="outline" onClick={() => void editor.reload()}>{t("common.retry")}</Button></AlertDescription>
-        </Alert>
-      )}
-
-      {!snapshot ? (
-        (editor.loading || structureLoading || !source) && !editor.loadFailed ? <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("outline.loading")}</p> : null
-      ) : (
-        <>
-          {changes && changes.rows.length > 0 && (
-            <OutlineChanges
-              view={changes}
-              autopilot={editor.autopilot}
-              outlineEmpty={entries.length === 0}
-              busy={busy}
-              hasEntry={(number) => byNumber.has(number)}
-              onReveal={(number) => reveal(number, "entry")}
-              onMarkReviewed={() => void editor.markReviewed()}
-              onApply={outlineApply.decidable > 0 && !outlineApply.campaign && !outlineApply.otherCampaign ? () => outlineApply.setOpen(true) : undefined}
-              heldBy={outlineApply.decidable > 0 ? outlineApply.otherCampaign : null}
-              campaign={outlineApply.campaign ? { summary: outlineApply.campaign, onCancel: () => void outlineApply.cancel(), busy: outlineApply.busy } : null}
-            />
+      <Tabs value={tab} onValueChange={showTab} className="flex flex-col gap-5">
+        <TabsList aria-label={t("outline.tabs.label")} className="h-auto w-full justify-start gap-1 self-start sm:w-auto">
+          <TabsTrigger value="synopsis" data-outline-tab="synopsis" className="min-h-9">{t("outline.tabs.synopsis")}</TabsTrigger>
+          <TabsTrigger value="bible" data-outline-tab="bible" className="min-h-9">{t("outline.tabs.bible")}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="synopsis" className="mt-0 flex flex-col gap-5 focus-visible:ring-offset-0">
+          {editor.changedElsewhere && <FileChangedNotice message={t("outline.changedElsewhere")} reloadLabel={t("outline.reload")} onReload={() => void editor.reload()} />}
+          {editor.failure && <Alert variant="destructive"><AlertDescription><span className="font-medium">{t("outline.saveFailed")}</span> {editor.failure}</AlertDescription></Alert>}
+          {briefFailure !== null && <Alert variant="destructive"><AlertDescription><span className="font-medium">{t("outline.brief.saveFailed")}</span> {briefFailure || t("outline.brief.result.conflict")}</AlertDescription></Alert>}
+          {editor.loadFailed && !snapshot && (
+            <Alert variant="destructive">
+              <AlertDescription className="flex flex-wrap items-center gap-3"><span>{t("outline.loadFailed")}</span><Button size="sm" variant="outline" onClick={() => void editor.reload()}>{t("common.retry")}</Button></AlertDescription>
+            </Alert>
           )}
 
-          <OutlineBookSection
-            workingTitle={bookTitle}
-            idea={bookBody}
-            brief={briefEditor.brief}
-            dirty={editor.bookDirty || briefEditor.dirty}
-            busy={busy}
-            ideaRef={descriptionRef}
-            onTitle={(title) => editor.editBook({ title })}
-            onIdea={(body) => editor.editBook({ body })}
-            onBrief={briefEditor.edit}
-            onSave={() => void saveAll()}
-          />
-
-          {entries.length === 0 ? (
-            <section aria-labelledby="outline-empty-title" className="space-y-3 rounded-2xl border border-dashed border-layer p-5 sm:p-6">
-              <h2 id="outline-empty-title" className="text-lg font-semibold">{t("outline.empty.title")}</h2>
-              <p className="max-w-3xl text-sm text-muted-foreground">{t("outline.empty.body")}</p>
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={() => void addAtEnd()} disabled={busy}><Plus className="h-4 w-4" aria-hidden="true" />{t("outline.empty.addFirst")}</Button>
-                <Button asChild variant="outline"><Link to={autopilotSettingsHref(bookId)}><Rocket className="h-4 w-4" aria-hidden="true" />{t("outline.empty.autopilot")}</Link></Button>
-                {synopsis && <Button variant="outline" onClick={() => setConverted(convertSynopsis(synopsis))} disabled={busy}><FileInput className="h-4 w-4" aria-hidden="true" />{t("outline.empty.convert")}</Button>}
-              </div>
-            </section>
+          {!snapshot ? (
+            (editor.loading || structureLoading || !source) && !editor.loadFailed ? <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("outline.loading")}</p> : null
           ) : (
-            <section aria-labelledby="outline-chapters-title" className="space-y-3">
-              <h2 id="outline-chapters-title" className="sr-only">{t("outline.count", { count: entries.length })}</h2>
-              <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-layer bg-card p-3 shadow-sm">
-                <div className="min-w-[12rem] flex-1 space-y-1">
-                  <Label htmlFor="outline-filter" className="text-xs">{t("outline.filter.label")}</Label>
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                    <Input id="outline-filter" type="search" value={query} onChange={(event) => { setQuery(event.target.value); setStart(0); }} className="h-9 pl-8" aria-describedby={query ? "outline-filter-results" : undefined} />
+            <>
+              {changes && changes.rows.length > 0 && (
+                <OutlineChanges
+                  view={changes}
+                  autopilot={editor.autopilot}
+                  outlineEmpty={entries.length === 0}
+                  busy={busy}
+                  hasEntry={(number) => byNumber.has(number)}
+                  onReveal={(number) => reveal(number, "entry")}
+                  onMarkReviewed={() => void editor.markReviewed()}
+                  onApply={outlineApply.decidable > 0 && !outlineApply.campaign && !outlineApply.otherCampaign ? () => outlineApply.setOpen(true) : undefined}
+                  heldBy={outlineApply.decidable > 0 ? outlineApply.otherCampaign : null}
+                  campaign={outlineApply.campaign ? { summary: outlineApply.campaign, onCancel: () => void outlineApply.cancel(), busy: outlineApply.busy } : null}
+                />
+              )}
+
+              <OutlineBookSection
+                workingTitle={bookTitle}
+                idea={bookBody}
+                brief={briefEditor.brief}
+                dirty={editor.bookDirty || briefEditor.dirty}
+                busy={busy}
+                ideaRef={descriptionRef}
+                onTitle={(title) => editor.editBook({ title })}
+                onIdea={(body) => editor.editBook({ body })}
+                onBrief={briefEditor.edit}
+                onSave={() => void saveAll()}
+              />
+
+              {entries.length === 0 ? (
+                <section aria-labelledby="outline-empty-title" className="space-y-3 rounded-2xl border border-dashed border-layer p-5 sm:p-6">
+                  <h2 id="outline-empty-title" className="text-lg font-semibold">{t("outline.empty.title")}</h2>
+                  <p className="max-w-3xl text-sm text-muted-foreground">{t("outline.empty.body")}</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => void addAtEnd()} disabled={busy}><Plus className="h-4 w-4" aria-hidden="true" />{t("outline.empty.addFirst")}</Button>
+                    <Button asChild variant="outline"><Link to={autopilotSettingsHref(bookId)}><Rocket className="h-4 w-4" aria-hidden="true" />{t("outline.empty.autopilot")}</Link></Button>
+                    {synopsis && <Button variant="outline" onClick={() => setConverted(convertSynopsis(synopsis))} disabled={busy}><FileInput className="h-4 w-4" aria-hidden="true" />{t("outline.empty.convert")}</Button>}
                   </div>
-                </div>
-                <form className="flex items-end gap-2" onSubmit={(event) => { event.preventDefault(); goTo(); }}>
-                  <div className="space-y-1">
-                    <Label htmlFor="outline-jump" className="text-xs">{t("outline.jump.label")}</Label>
-                    <Input id="outline-jump" inputMode="numeric" pattern="[0-9]*" value={jump} onChange={(event) => setJump(event.target.value.replace(/[^\d]/g, ""))} className="h-9 w-24" />
+                </section>
+              ) : (
+                <section aria-labelledby="outline-chapters-title" className="space-y-3">
+                  <h2 id="outline-chapters-title" className="sr-only">{t("outline.count", { count: entries.length })}</h2>
+                  <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-layer bg-card p-3 shadow-sm">
+                    <div className="min-w-[12rem] flex-1 space-y-1">
+                      <Label htmlFor="outline-filter" className="text-xs">{t("outline.filter.label")}</Label>
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                        <Input id="outline-filter" type="search" value={query} onChange={(event) => { setQuery(event.target.value); setStart(0); }} className="h-9 pl-8" aria-describedby={query ? "outline-filter-results" : undefined} />
+                      </div>
+                    </div>
+                    <form className="flex items-end gap-2" onSubmit={(event) => { event.preventDefault(); goTo(); }}>
+                      <div className="space-y-1">
+                        <Label htmlFor="outline-jump" className="text-xs">{t("outline.jump.label")}</Label>
+                        <Input id="outline-jump" inputMode="numeric" pattern="[0-9]*" value={jump} onChange={(event) => setJump(event.target.value.replace(/[^\d]/g, ""))} className="h-9 w-24" />
+                      </div>
+                      <Button type="submit" variant="outline" size="sm" className="h-9">{t("outline.jump.button")}</Button>
+                    </form>
+                    {query && (
+                      <p id="outline-filter-results" className="flex w-full items-center gap-2 text-xs text-muted-foreground">
+                        {filtered.length ? t("outline.filter.results", { count: filtered.length }) : t("outline.filter.none")}
+                        <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setQuery(""); setStart(0); }}><X className="h-3.5 w-3.5" aria-hidden="true" />{t("outline.filter.clear")}</Button>
+                      </p>
+                    )}
                   </div>
-                  <Button type="submit" variant="outline" size="sm" className="h-9">{t("outline.jump.button")}</Button>
-                </form>
-                {query && (
-                  <p id="outline-filter-results" className="flex w-full items-center gap-2 text-xs text-muted-foreground">
-                    {filtered.length ? t("outline.filter.results", { count: filtered.length }) : t("outline.filter.none")}
-                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setQuery(""); setStart(0); }}><X className="h-3.5 w-3.5" aria-hidden="true" />{t("outline.filter.clear")}</Button>
-                  </p>
-                )}
-              </div>
-              {gaps.length > 0 && !query && <p className="text-xs text-muted-foreground">{t("outline.gaps", { ranges: gapText })}</p>}
-              {windowed && <WindowNav label={t("outline.window.label")} range={rangeText} first={first} total={filtered.length} onMove={setStart} />}
-              <ol className="space-y-3">
-                {visible.map((entry) => {
-                  const draft = drafts.get(entry.number);
-                  return (
-                    <li key={entry.path}>
-                      <OutlineEntryCard
-                        bookId={bookId}
-                        entry={entry}
-                        draft={draft}
-                        dirty={draftChanged(draft, entry)}
-                        status={statuses.get(entry.number)!}
-                        change={changeLabels.get(entry.number)}
-                        ghostwriters={ghostwriters}
-                        first={entries[0]?.number === entry.number}
-                        last={entries[entries.length - 1]?.number === entry.number}
-                        busy={busy}
-                        renderBody={renderBody}
-                        {...handlers}
-                      />
-                    </li>
-                  );
-                })}
-              </ol>
-              {windowed && <WindowNav label={t("outline.window.label")} range={rangeText} first={first} total={filtered.length} onMove={setStart} />}
-            </section>
+                  {gaps.length > 0 && !query && <p className="text-xs text-muted-foreground">{t("outline.gaps", { ranges: gapText })}</p>}
+                  {windowed && <WindowNav label={t("outline.window.label")} range={rangeText} first={first} total={filtered.length} onMove={setStart} />}
+                  <ol className="space-y-3">
+                    {visible.map((entry) => {
+                      const draft = drafts.get(entry.number);
+                      return (
+                        <li key={entry.path}>
+                          <OutlineEntryCard
+                            bookId={bookId}
+                            entry={entry}
+                            draft={draft}
+                            dirty={draftChanged(draft, entry)}
+                            status={statuses.get(entry.number)!}
+                            change={changeLabels.get(entry.number)}
+                            ghostwriters={ghostwriters}
+                            first={entries[0]?.number === entry.number}
+                            last={entries[entries.length - 1]?.number === entry.number}
+                            busy={busy}
+                            renderBody={renderBody}
+                            {...handlers}
+                          />
+                        </li>
+                      );
+                    })}
+                  </ol>
+                  {windowed && <WindowNav label={t("outline.window.label")} range={rangeText} first={first} total={filtered.length} onMove={setStart} />}
+                </section>
+              )}
+            </>
           )}
-        </>
-      )}
+        </TabsContent>
+        <TabsContent value="bible" className="mt-0 focus-visible:ring-offset-0">
+          <Suspense fallback={<TabLoading />}>
+            {tab === "bible" && (
+              <BibleTab
+                bookId={bookId}
+                source={source}
+                entries={entries}
+                state={editor.autopilot}
+                refreshKey={`${finishedSteps}|${lastSync}|${focusCount}`}
+                onShowEntry={(number) => { showTab("synopsis"); reveal(number, "entry"); }}
+                onShowSynopsis={() => showTab("synopsis")}
+              />
+            )}
+          </Suspense>
+        </TabsContent>
+      </Tabs>
 
       <DeleteEntryDialog
         number={deleting}
@@ -490,4 +535,10 @@ function WindowNav({ label, range, first, total, onMove }: { label: string; rang
       <Button type="button" variant="outline" size="sm" disabled={next >= total} onClick={() => onMove(next)}>{t("outline.window.next", { count: Math.min(OUTLINE_PAGE_SIZE, Math.max(0, total - next)) || OUTLINE_PAGE_SIZE })}<ChevronRight className="h-4 w-4" aria-hidden="true" /></Button>
     </nav>
   );
+}
+
+/** What a tab shows while its part of the page is loading. */
+function TabLoading() {
+  const { t } = useTranslation();
+  return <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("outline.tabs.loading")}</p>;
 }

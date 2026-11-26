@@ -19,6 +19,8 @@ export interface OutlineSource {
   readState(): Promise<AutopilotState | null>;
   /** Other files of the book (the canon an entry mentions, for the assistant), the ones that exist. */
   readFiles(paths: string[]): Promise<Array<{ path: string; content: string }>>;
+  /** The text files of a folder of the book (`characters/`, `bible/`…), with their text and hash: what the Bible composes. Absent: the source cannot list a folder. */
+  readFolder?(prefix: string): Promise<OutlineFile[]>;
 }
 
 async function readFrom(store: BookStore, paths: string[]): Promise<Array<{ path: string; content: string }>> {
@@ -63,6 +65,12 @@ export function storeOutlineSource(store: BookStore): OutlineSource {
       return stateOf((await store.read(AUTOPILOT_STATE_FILE))?.content);
     },
     readFiles: (paths) => readFrom(store, paths),
+    async readFolder(prefix) {
+      const paths = (await store.list()).map((entry) => entry.path).filter((path) => path.startsWith(prefix));
+      if (!paths.length) return [];
+      const files = store.readMany ? await store.readMany(paths) : (await Promise.all(paths.map((path) => store.read(path)))).filter((file) => file !== null);
+      return files.map((file) => ({ path: file.path, content: file.content, hash: file.hash })).sort((left, right) => left.path.localeCompare(right.path));
+    },
   };
 }
 
@@ -86,5 +94,15 @@ export function browserOutlineSource(book: BookEntry, branch: string): OutlineSo
       return stateOf((await store.read(AUTOPILOT_STATE_FILE))?.content);
     },
     readFiles: (paths) => readFrom(store, paths),
+    async readFolder(prefix) {
+      const scope = captureRepositoryOperationScope();
+      const meta = await getLocalRepository(book.owner, book.repo, branch, scope);
+      if (!meta || meta.bookId !== book.id || meta.cloneComplete !== true) throw new LocalWorkingCopyMissingError();
+      const files = await listLocalFilesUnder(meta.id, prefix, scope);
+      return files
+        .filter((file) => file.kind === "text" && file.text !== undefined)
+        .map((file) => ({ path: file.path, content: file.text!, hash: file.currentHash }))
+        .sort((left, right) => left.path.localeCompare(right.path));
+    },
   };
 }

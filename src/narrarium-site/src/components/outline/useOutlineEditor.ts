@@ -3,6 +3,7 @@ import { BookConflictError, OUTLINE_CHANGES_FILE, composeOutlineEdits, markOutli
 import { applyToSnapshot, composeOptions, composerSource, restoreChanges, snapshotOf, type OutlineFile, type OutlineSnapshot } from "@/outline/outlineModel";
 import { withJournal } from "@/outline/outlineJournal";
 import type { OutlineSource } from "@/outline/outlineSource";
+import { designPatchOf, sameDesign, type DesignDraft } from "@/outline/designModel";
 
 /** What the author typed in an entry and has not saved: the version of the file it started from is `baseHash` (none for a new entry). */
 export interface EntryDraft {
@@ -10,6 +11,8 @@ export interface EntryDraft {
   body: string;
   /** `null`: the book's ghostwriter. */
   ghostwriter: string | null;
+  /** The design as the card edits it: absent until the author changes it (`DesignDraft`). */
+  design?: DesignDraft;
   baseHash: string | undefined;
 }
 
@@ -29,8 +32,13 @@ export function draftOf(entry: OutlineChapterEntry): EntryDraft {
 /** Whether a draft says something its entry does not (spaces around a text, and the kind of line ending, do not count: the engine drops them). */
 export function draftChanged(draft: EntryDraft | undefined, entry: OutlineChapterEntry | undefined): boolean {
   if (!draft) return false;
-  if (!entry) return Boolean(draft.title.trim() || draft.body.trim() || draft.ghostwriter);
-  return !same(draft.title, entry.title) || !same(draft.body, entry.body) || (draft.ghostwriter ?? null) !== (entry.ghostwriter ?? null);
+  if (!entry) return Boolean(draft.title.trim() || draft.body.trim() || draft.ghostwriter || !sameDesign(draft.design, undefined));
+  return !same(draft.title, entry.title) || !same(draft.body, entry.body) || (draft.ghostwriter ?? null) !== (entry.ghostwriter ?? null) || !sameDesign(draft.design, entry.design);
+}
+
+/** The fields of an entry a save writes: the design only when the author changed it (every field of it then, the keys it does not know kept). */
+function entryInputOf(draft: EntryDraft, entry: OutlineChapterEntry | undefined) {
+  return { title: draft.title, body: draft.body, ghostwriter: draft.ghostwriter, ...(draft.design && !sameDesign(draft.design, entry?.design) ? { design: designPatchOf(draft.design) } : {}) };
 }
 
 /** The last action, and how to take it back: the files as they were, each expecting the version the action left. */
@@ -348,7 +356,7 @@ export function useOutlineEditor({ source, ghostwriters, describe, afterSave, la
       return false;
     }
     const { describe: say, afterSave: then } = latest.current;
-    const result = await act([{ kind: "update", number, entry: { title: draft.title, body: draft.body, ghostwriter: draft.ghostwriter } }], {
+    const result = await act([{ kind: "update", number, entry: entryInputOf(draft, byNumberRef.current.get(number)) }], {
       done: sentences(say("outline.done.saved", { number }), then?.([number])),
       undo: say("outline.undo.save", { number }),
       message: `Outline: update chapter ${number}`,
@@ -371,7 +379,7 @@ export function useOutlineEditor({ source, ghostwriters, describe, afterSave, la
     if (bookChanged && book) edits.push({ kind: "book", title: book.title.trim() ? book.title : null, body: book.body });
     for (const number of numbers) {
       const draft = draftsRef.current.get(number)!;
-      edits.push({ kind: "update", number, entry: { title: draft.title, body: draft.body, ghostwriter: draft.ghostwriter } });
+      edits.push({ kind: "update", number, entry: entryInputOf(draft, byNumberRef.current.get(number)) });
     }
     const { describe: say, afterSave: then } = latest.current;
     const count = edits.length;

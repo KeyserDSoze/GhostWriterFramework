@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { serializeOutlineBook, serializeOutlineChapter } from "narrarium-engine";
+import { readOutlineChapter, serializeOutlineBook, serializeOutlineChapter } from "narrarium-engine";
 import { MemoryBookStore } from "narrarium-engine/testing";
 
 const mocks = vi.hoisted(() => ({ store: null as unknown, complete: vi.fn() }));
@@ -135,6 +135,21 @@ describe("Brainstorming's tools", () => {
     expect(outcome.message.text).toContain("The vault first.");
     expect(outcome.message.text).toContain("In the synopsis, chapter 3 «The vault» becomes chapter 2.");
     expect(await (mocks.store as MemoryBookStore).list(), "nothing is written").toEqual(before);
+  });
+
+  it("read the design of an entry, and propose a design field by field: the fields it does not give stay, and the check of the Synopsis says what a design lacks", async () => {
+    seed({ "outline/chapters/003.md": serializeOutlineChapter({ number: 3, title: "The vault", body: "Mira opens the vault.", origin: "author", design: { goal: "Open the vault", ending: "The door slams.", pov: ["Mira"] } }) });
+    const tools = await env();
+    const entry = await runBrainstormTool({ tool: "read_synopsis_entry", args: { number: 3 } }, tools);
+    expect(entry.text).toContain("Design:\nNarrative goal: Open the vault\nPoint of view: Mira\nEnding: The door slams.");
+    const outcome = await runBrainstormTool({ tool: "propose_synopsis_edits", args: { summary: "A clue in the vault.", edits: [{ kind: "update", number: 3, design: { clues: ["A wet footprint"], events: "Mira picks the lock\nThe vault is empty", ending: null } }] } }, tools);
+    expect(outcome.kind).toBe("proposal");
+    if (outcome.kind !== "proposal" || outcome.message.action?.kind !== "apply-file-updates") return;
+    const { entry: proposed } = await readOutlineChapter("outline/chapters/003.md", 3, outcome.message.action.updates[0].content);
+    expect(proposed.design).toEqual({ goal: "Open the vault", pov: ["Mira"], events: ["Mira picks the lock", "The vault is empty"], clues: ["A wet footprint"] });
+    expect(outcome.message.text).toContain("In the synopsis, chapter 3 «The vault» changes: design.");
+    const findings = (await synopsisFindings(tools.context)).map((finding) => finding.en);
+    expect(findings).toContain("The design of chapter 3 does not say: main events.");
   });
 
   it("propose nothing while the author keeps «Edit the Synopsis» off, and say so", async () => {

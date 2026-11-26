@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { EntryStatus } from "@/outline/outlineModel";
 import type { EntryDraft } from "@/components/outline/useOutlineEditor";
+import { DesignSection } from "@/components/outline/DesignSection";
 import type { Ghostwriter } from "@/types/book";
 import { cn } from "@/lib/utils";
 import { formatCount } from "@/autopilot/format";
@@ -18,7 +19,7 @@ import { formatCount } from "@/autopilot/format";
 const BOOK_GHOSTWRITER = "__book__";
 
 export interface OutlineEntryHandlers {
-  onEdit: (number: number, patch: Partial<Pick<EntryDraft, "title" | "body" | "ghostwriter">>) => void;
+  onEdit: (number: number, patch: Partial<Pick<EntryDraft, "title" | "body" | "ghostwriter" | "design">>) => void;
   onSave: (number: number) => void;
   onDiscard: (number: number) => void;
   onInsert: (number: number, where: "before" | "after") => void;
@@ -152,6 +153,8 @@ export const OutlineEntryCard = memo(function OutlineEntryCard(props: OutlineEnt
           className="text-sm leading-6"
         />
       </div>
+
+      <DesignSection number={number} design={entry.design} draft={draft?.design} busy={busy} onChange={(design) => props.onEdit(number, { design })} />
 
       {(missing || status.warnings.length > 0) && (
         <ul className="space-y-1 text-xs text-amber-800 dark:text-amber-300">

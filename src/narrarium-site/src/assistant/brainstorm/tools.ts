@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { OUTLINE_BRAINSTORM_FILE, OutlineReader, changeOfWritten, chapterFilePath, clipMiddle, outlinePlanStatus, unescapePromptDataDeep, type BookStore, type OutlineChangeOutcome, type OutlineChapterEntry } from "narrarium-engine";
+import { OUTLINE_BRAINSTORM_FILE, OutlineReader, changeOfWritten, chapterFilePath, clipMiddle, designFindingText, designText, outlineDesignGaps, outlinePlanStatus, unescapePromptDataDeep, type BookStore, type OutlineChangeOutcome, type OutlineChapterEntry } from "narrarium-engine";
 import { sourceRevisionFromFiles } from "@/assistant/actionValidation";
 import { composeOutlineProposal, modelOutlineEditSchema, outlineProposalMessage, toOutlineEdits } from "@/assistant/outlineProposal";
 import type { AssistantMessage } from "@/assistant/store";
@@ -57,7 +57,8 @@ const data = (tool: BrainstormToolId, text: string, note?: string): BrainstormTo
 const refused = (tool: string, text: string, unknown = false): BrainstormToolOutcome => ({ tool, kind: "refused", text, unknown });
 
 function entryText(entry: OutlineChapterEntry, chars: number): string {
-  return `Chapter ${entry.number}${entry.title ? ` — ${entry.title}` : ""}${entry.ghostwriter ? ` [ghostwriter: ${entry.ghostwriter}]` : ""}${entry.intact ? " [written by the autopilot, untouched]" : " [the author's]"}:\n${clipMiddle(entry.body.trim(), chars) || "(no text yet)"}`;
+  const design = entry.design ? `\nDesign:\n${designText(entry.design, chars)}` : "";
+  return `Chapter ${entry.number}${entry.title ? ` — ${entry.title}` : ""}${entry.ghostwriter ? ` [ghostwriter: ${entry.ghostwriter}]` : ""}${entry.intact ? " [written by the autopilot, untouched]" : " [the author's]"}:\n${clipMiddle(entry.body.trim(), chars) || "(no text yet)"}${design}`;
 }
 
 const OUTCOMES: Record<OutlineChangeOutcome, string> = {
@@ -91,7 +92,7 @@ const readSynopsis: BrainstormTool<{ from?: number; to?: number; query?: string 
 
 const readSynopsisEntry: BrainstormTool<{ number: number }> = {
   id: "read_synopsis_entry",
-  description: "one entry of the Synopsis whole, with whether its chapter is written, approved, frozen or imported, and what the autopilot does if the entry changes",
+  description: "one entry of the Synopsis whole (its design too: goal, point of view, characters, setting, time, events, scenes, conflicts, emotions, reveals, what stays hidden, clues, links, ending, cliffhanger, notes for the ghostwriter), with whether its chapter is written, approved, frozen or imported, and what the autopilot does if the entry changes",
   args: '{"number":N}',
   schema: z.object({ number }).strict(),
   async run({ number: wanted }, { context }) {
@@ -149,7 +150,7 @@ const disabledEdits = (tool: BrainstormToolId) => refused(tool, "Changes of the 
 
 const proposeSynopsisEdits: BrainstormTool<{ summary?: string; edits: Array<z.infer<typeof modelOutlineEditSchema>> }> = {
   id: "propose_synopsis_edits",
-  description: "a series of edits of the Synopsis, made in order (each on what the one before left), shown to the author with the files and what the autopilot will do about each chapter, and applied only if the author confirms. Edits: {\"kind\":\"update\",\"number\":3,\"title\":\"…\",\"body\":\"…\",\"ghostwriter\":\"slug\"|null} (only the fields given change; a new body replaces the whole text); {\"kind\":\"append\",\"title\":\"…\",\"body\":\"…\"}; {\"kind\":\"insert\",\"at\":4,\"title\":\"…\",\"body\":\"…\"} (the entries from 4 on move one number up); {\"kind\":\"move\",\"from\":5,\"to\":7}; {\"kind\":\"remove\",\"number\":4,\"renumber\":false}; {\"kind\":\"book\",\"title\":\"…\",\"body\":\"…\"} (the working title and the idea of the book)",
+  description: "a series of edits of the Synopsis, made in order (each on what the one before left), shown to the author with the files and what the autopilot will do about each chapter, and applied only if the author confirms. Edits: {\"kind\":\"update\",\"number\":3,\"title\":\"…\",\"body\":\"…\",\"ghostwriter\":\"slug\"|null,\"design\":{\"goal\":\"…\",\"pov\":[\"…\"],\"events\":[\"…\"],\"clues\":[\"…\"],\"ending\":\"…\",\"cliffhanger\":true}} (only the fields given change, the design field by field, null takes one away; a new body replaces the whole text; the design fields are goal, pov, characters, setting, time, events, scenes, conflicts, emotions, reveals, withholds, clues, previous, next, ending, cliffhanger, notes); {\"kind\":\"append\",\"title\":\"…\",\"body\":\"…\"}; {\"kind\":\"insert\",\"at\":4,\"title\":\"…\",\"body\":\"…\"} (the entries from 4 on move one number up); {\"kind\":\"move\",\"from\":5,\"to\":7}; {\"kind\":\"remove\",\"number\":4,\"renumber\":false}; {\"kind\":\"book\",\"title\":\"…\",\"body\":\"…\"} (the working title and the idea of the book)",
   args: '{"summary":"one sentence for the author","edits":[…]}',
   schema: z.object({ summary: z.string().max(4_000).optional(), edits: z.array(modelOutlineEditSchema).min(1).max(60) }).strict(),
   async run(args, { context, settings, italian }) {
@@ -195,6 +196,8 @@ export async function synopsisFindings(context: BrainstormContext): Promise<Syno
     if (!entry.body.trim()) findings.push({ number: entry.number, en: `Chapter ${entry.number} has no text: nothing says what happens in it.`, it: `Il capitolo ${entry.number} non ha testo: niente dice cosa succede.` });
     if (entry.ghostwriter && !ghostwriters.has(entry.ghostwriter)) findings.push({ number: entry.number, en: `Chapter ${entry.number} names the ghostwriter «${entry.ghostwriter}», which the book does not have.`, it: `Il capitolo ${entry.number} indica il ghostwriter «${entry.ghostwriter}», che il libro non ha.` });
   }
+  // The designs of the entries that lack a key field (the engine's soft warnings of the Synopsis).
+  for (const gap of outlineDesignGaps(outline.chapters)) findings.push({ number: gap.chapter, en: designFindingText(gap, "en"), it: designFindingText(gap, "it") });
   const entries = new Set(outline.chapters.map((entry) => entry.number));
   if (entries.size) {
     for (const chapter of context.written) {

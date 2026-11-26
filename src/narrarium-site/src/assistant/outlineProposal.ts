@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { clipMiddle, composeOutlineEdits, type BookFileChange, type OutlineEdit, type OutlineSeriesStep, type OutlineWarning } from "narrarium-engine";
+import { OUTLINE_DESIGN_KEYS, clipMiddle, composeOutlineEdits, designText, normalizeDesignPatch, type BookFileChange, type OutlineDesignKey, type OutlineEdit, type OutlineSeriesStep, type OutlineWarning } from "narrarium-engine";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import type { LlmMessage } from "@/assistant/llm";
 import { sourceRevisionFromFiles } from "@/assistant/actionValidation";
@@ -62,10 +62,16 @@ export function parseOutlineCommand(prompt: string, numbers: readonly number[]):
   return null;
 }
 
+/** A field of the design of an entry as a model writes it: a text, a list of lines, or `null` to take it away (the engine reads it, and cuts what is over its limits). */
+const designValue = z.union([z.string().max(8_000), z.array(z.string().max(4_000)).max(60), z.boolean(), z.null()]);
+const designFields = z.object(Object.fromEntries(OUTLINE_DESIGN_KEYS.map((key) => [key, designValue.optional()])) as Record<OutlineDesignKey, z.ZodOptional<typeof designValue>>).strict();
+
 const fields = {
   title: z.string().max(400).optional(),
   body: z.string().max(40_000).optional(),
   ghostwriter: z.string().max(200).nullable().optional(),
+  /** The design of the entry, field by field (`OutlineChapterDesign`): only the fields given change; `null` takes the whole design away. */
+  design: designFields.nullable().optional(),
 };
 const number = z.number().int().min(1).max(1_000_000);
 
@@ -88,10 +94,11 @@ export type ModelOutlineEdits = z.infer<typeof outlineEditSchema>;
 
 /** The edits of the model as the engine's edits: only the fields it gave, so that what it did not mention stays. */
 export function toOutlineEdits(edits: ModelOutlineEdits["edits"]): OutlineEdit[] {
-  const entry = (value: { title?: string; body?: string; ghostwriter?: string | null }) => ({
+  const entry = (value: { title?: string; body?: string; ghostwriter?: string | null; design?: Record<string, unknown> | null }) => ({
     ...(value.title !== undefined ? { title: value.title } : {}),
     ...(value.body !== undefined ? { body: value.body } : {}),
     ...(value.ghostwriter !== undefined ? { ghostwriter: value.ghostwriter || null } : {}),
+    ...(value.design !== undefined ? { design: value.design === null ? null : normalizeDesignPatch(value.design).patch } : {}),
   });
   return edits.map((edit): OutlineEdit => {
     switch (edit.kind) {
@@ -120,7 +127,7 @@ export function outlineData(snapshot: OutlineSnapshot, prompt: string, ghostwrit
   const others = entries.filter((entry) => !wholeNumbers.has(entry.number));
   return [
     `DESCRIPTION OF THE BOOK (outline/book.md)${snapshot.outline.book?.title ? `, working title «${snapshot.outline.book.title}»` : ""}:\n${clipMiddle(snapshot.outline.book?.body.trim() ?? "", DESCRIPTION_CHARS) || "(none)"}`,
-    `ENTRIES OF THE OUTLINE (${entries.length}; the numbers are the chapters):\n${whole.map((entry) => `Chapter ${entry.number}${entry.title ? ` — ${entry.title}` : ""}${entry.ghostwriter ? ` [ghostwriter: ${entry.ghostwriter}]` : ""}:\n${clipMiddle(entry.body.trim(), ENTRY_CHARS) || "(no text)"}`).join("\n\n") || "(none)"}`,
+    `ENTRIES OF THE OUTLINE (${entries.length}; the numbers are the chapters):\n${whole.map((entry) => `Chapter ${entry.number}${entry.title ? ` — ${entry.title}` : ""}${entry.ghostwriter ? ` [ghostwriter: ${entry.ghostwriter}]` : ""}:\n${clipMiddle(entry.body.trim(), ENTRY_CHARS) || "(no text)"}${entry.design ? `\nDesign:\n${designText(entry.design, ENTRY_CHARS)}` : ""}`).join("\n\n") || "(none)"}`,
     others.length ? `OTHER ENTRIES (titles only):\n${others.slice(0, LISTED_TITLES).map((entry) => `${entry.number}. ${entry.title || "(untitled)"}`).join("\n")}${others.length > LISTED_TITLES ? `\n… and ${others.length - LISTED_TITLES} more` : ""}` : "",
     `GHOSTWRITERS OF THE BOOK (slugs; null is the book's own): ${ghostwriters.join(", ") || "(none)"}`,
   ].filter(Boolean).join("\n\n");
@@ -134,6 +141,7 @@ export function outlineEditMessages(input: { prompt: string; route: { kind: stri
         "You edit the Synopsis (the outline) of a book in Narrarium on behalf of the author, turning their request into edits of it.",
         "An entry is a plan in plain text: a hypothetical title, what happens in the chapter (not prose, no dialogue) and, optionally, the slug of the ghostwriter that writes it (null: the book's own).",
         "An update replaces only the fields it gives: when you change what happens, give the whole new text, keeping every event the entry already has unless the request removes it.",
+        "An entry may have a design (\"design\": {\"goal\",\"pov\",\"characters\",\"setting\",\"time\",\"events\",\"scenes\",\"conflicts\",\"emotions\",\"reveals\",\"withholds\",\"clues\",\"previous\",\"next\",\"ending\",\"cliffhanger\",\"notes\"}: texts, lists of lines, cliffhanger true or false); in an update only the design fields given change, null takes a field away.",
         "Edits: {\"kind\":\"update\",\"number\":3,\"title\":\"…\",\"body\":\"…\",\"ghostwriter\":\"slug\"|null}; {\"kind\":\"append\",\"title\":\"…\",\"body\":\"…\"}; {\"kind\":\"insert\",\"at\":4,\"title\":\"…\",\"body\":\"…\"} (the entries from 4 on move one number up); {\"kind\":\"move\",\"from\":5,\"to\":7}; {\"kind\":\"remove\",\"number\":4,\"renumber\":false}; {\"kind\":\"book\",\"title\":\"…\",\"body\":\"…\"} (the working title and the description).",
         `Write the texts in the language of the book (${input.language || "the one the outline is written in"}); the summary in the language of the request.`,
         "If the request is not a change of the outline, or names a chapter the outline does not have, return no edits and say why in the summary.",
