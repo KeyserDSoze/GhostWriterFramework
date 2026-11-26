@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, ChevronRight, CircleHelp, FileInput, ListTree, Loader2, Plus, Rocket, Save, Search, Undo2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleHelp, Compass, FileInput, ListTree, Loader2, Plus, Rocket, Save, Search, Undo2, X } from "lucide-react";
 import { OUTLINE_CHANGES_FILE, changeOfWritten, chapterFilePath, groupOutlineChanges, parseOutlineJournal, type AutopilotState, type OutlineChangeGroup, type OutlineEdit } from "narrarium-engine";
 import "@/i18n/outline";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -33,12 +33,15 @@ import { whatChanged } from "@/outline/whatChanged";
 import { useOutlineFocusStore } from "@/store/outlineFocusStore";
 import { useRegisterPageSave } from "@/store/saveStore";
 import { BrainstormPageButton, useBrainstormLauncher } from "@/components/assistant/brainstorm/BrainstormLauncher";
+import { designBlockOf, designStatusOf } from "@/outline/designModel";
+import { withAutopilotTranslations } from "@/i18n/autopilot";
 
-// The Bible loads when its tab is opened: the Synopsis opens as fast as it always did.
+// The Bible and the Studio load when their tab is opened: the Synopsis opens as fast as it always did.
 const BibleTab = lazy(() => import("@/components/outline/bible/BibleTab").then((module) => ({ default: module.BibleTab })));
+const StudioTab = lazy(withAutopilotTranslations(() => import("@/components/outline/studio/StudioTab").then((module) => ({ default: module.StudioTab }))));
 
-/** The tabs of the page: the Synopsis itself and the Bible that composes the book's files. */
-const TABS = ["synopsis", "bible"] as const;
+/** The tabs of the page: the Synopsis itself, the Bible that composes the book's files, the Studio of the design. */
+const TABS = ["synopsis", "bible", "studio"] as const;
 type OutlineTab = (typeof TABS)[number];
 
 /** The entries drawn at once: an outline has no maximum, and a book of 5000 chapters opens as fast as one of ten. */
@@ -332,6 +335,8 @@ export function OutlinePage() {
   const gapText = gaps.slice(0, LISTED_GAPS).map(([from, to]) => (from === to ? formatCount(from) : `${formatCount(from)}–${formatCount(to)}`)).join(", ") + (gaps.length > LISTED_GAPS ? ", …" : "");
   const windowed = filtered.length > OUTLINE_PAGE_SIZE;
   const rangeText = t("outline.window.range", { from: formatCount(visible[0]?.number ?? 0), to: formatCount(visible[visible.length - 1]?.number ?? 0), total: formatCount(filtered.length) });
+  const designStatus = designStatusOf(editor.autopilot);
+  const designBlock = designBlockOf({ description: bookBody, state: editor.autopilot });
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-5">
@@ -366,6 +371,7 @@ export function OutlinePage() {
         <TabsList aria-label={t("outline.tabs.label")} className="h-auto w-full justify-start gap-1 self-start sm:w-auto">
           <TabsTrigger value="synopsis" data-outline-tab="synopsis" className="min-h-9">{t("outline.tabs.synopsis")}</TabsTrigger>
           <TabsTrigger value="bible" data-outline-tab="bible" className="min-h-9">{t("outline.tabs.bible")}</TabsTrigger>
+          <TabsTrigger value="studio" data-outline-tab="studio" className="min-h-9">{t("outline.tabs.studio")}</TabsTrigger>
         </TabsList>
         <TabsContent value="synopsis" className="mt-0 flex flex-col gap-5 focus-visible:ring-offset-0">
           {editor.changedElsewhere && <FileChangedNotice message={t("outline.changedElsewhere")} reloadLabel={t("outline.reload")} onReload={() => void editor.reload()} />}
@@ -408,6 +414,17 @@ export function OutlinePage() {
                 onBrief={briefEditor.edit}
                 onSave={() => void saveAll()}
               />
+
+              {designStatus.kind === "none" && designBlock !== "written" && (
+                <section aria-labelledby="outline-design-cta" data-design-cta className="flex flex-col gap-3 rounded-2xl border border-primary/30 bg-primary/5 p-4 sm:flex-row sm:items-center">
+                  <Compass className="hidden h-6 w-6 shrink-0 text-primary sm:block" aria-hidden="true" />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <h2 id="outline-design-cta" className="text-base font-semibold">{t("outline.designCta.title")}</h2>
+                    <p className="text-sm text-muted-foreground">{t("outline.designCta.body")}</p>
+                  </div>
+                  <Button type="button" variant="outline" className="shrink-0" onClick={() => showTab("studio")}>{t("outline.designCta.open")}</Button>
+                </section>
+              )}
 
               {entries.length === 0 ? (
                 <section aria-labelledby="outline-empty-title" className="space-y-3 rounded-2xl border border-dashed border-layer p-5 sm:p-6">
@@ -486,6 +503,26 @@ export function OutlinePage() {
                 refreshKey={`${finishedSteps}|${lastSync}|${focusCount}`}
                 onShowEntry={(number) => { showTab("synopsis"); reveal(number, "entry"); }}
                 onShowSynopsis={() => showTab("synopsis")}
+              />
+            )}
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="studio" className="mt-0 focus-visible:ring-offset-0">
+          <Suspense fallback={<TabLoading />}>
+            {tab === "studio" && (
+              <StudioTab
+                book={book}
+                branch={branch}
+                structure={structure}
+                source={source}
+                snapshot={editor.snapshot}
+                state={editor.autopilot}
+                description={bookBody}
+                entries={entries}
+                refresh={editor.refresh}
+                refreshKey={`${finishedSteps}|${lastSync}|${focusCount}`}
+                brainstormTarget={brainstormTarget}
+                onShowTab={showTab}
               />
             )}
           </Suspense>

@@ -309,10 +309,16 @@ const outlineEn = {
       next: "Next {{count}}",
     },
     tabs: {
-      label: "Synopsis and Bible",
+      label: "Synopsis, Bible and Studio",
       synopsis: "Synopsis",
       bible: "Bible",
+      studio: "Studio",
       loading: "Loading…",
+    },
+    designCta: {
+      title: "Design the book with the autopilot",
+      body: "From your description, the autopilot designs every chapter (goal, point of view, events, scenes, reveals, clues, ending), the cast, the world and the secrets with their reveals. No prose is written.",
+      open: "Open the Studio",
     },
     design: {
       toggle: "Design of chapter {{number}}",

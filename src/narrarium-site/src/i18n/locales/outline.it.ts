@@ -309,10 +309,16 @@ const outlineIt = {
       next: "Successivi {{count}}",
     },
     tabs: {
-      label: "Sinossi e Bibbia",
+      label: "Sinossi, Bibbia e Studio",
       synopsis: "Sinossi",
       bible: "Bibbia",
+      studio: "Studio",
       loading: "Caricamento…",
+    },
+    designCta: {
+      title: "Progetta il libro con l'autopilot",
+      body: "Dalla tua descrizione l'autopilot progetta ogni capitolo (obiettivo, punto di vista, eventi, scene, rivelazioni, indizi, chiusura), i personaggi, il mondo e i segreti con le loro rivelazioni. Non scrive prosa.",
+      open: "Apri lo Studio",
     },
     design: {
       toggle: "Progetto del capitolo {{number}}",

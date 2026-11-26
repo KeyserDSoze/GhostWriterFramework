@@ -34,7 +34,9 @@ test("the texts of the tabs speak both languages, with the same keys and the sam
 
 test("the Italian of the tabs is written in Italian, not copied from English", () => {
   const italian = new Map(leaves(designIt));
-  assert.deepEqual(leaves(designEn).filter(([key, value]) => italian.get(key) === value).map(([key]) => key), []);
+  // A text made only of its placeholders (a list of figures) is the same in both languages.
+  const words = (text) => /\p{L}/u.test(text.replace(/\{\{[^}]*\}\}/g, ""));
+  assert.deepEqual(leaves(designEn).filter(([key, value]) => italian.get(key) === value && words(value)).map(([key]) => key), []);
 });
 
 test("every text the tabs ask for is in the catalogue, the labels of the facts of the canon and the parts of the Bible included", () => {
@@ -62,4 +64,18 @@ test("the texts of the tabs come with them, never with the app or with the Synop
   const tabs = tabFiles().filter((name) => /Tab\.tsx$/.test(name));
   assert.ok(tabs.length > 0);
   for (const file of tabs) assert.match(source(file), /^import "@\/i18n\/design";$/m, file);
+});
+
+test("the Studio says every end of a design the engine gives, and loads with the autopilot's texts", () => {
+  const engineTypes = readFileSync(new URL("../../../packages/engine/src/autopilot/types.ts", import.meta.url), "utf8");
+  const declaration = /export type DesignOutcome =((?:\s*\|?\s*"[a-z]+")+);/.exec(engineTypes);
+  assert.ok(declaration, "the engine declares the outcomes of a design as a union of strings");
+  const outcomes = [...declaration[1].matchAll(/"([a-z]+)"/g)].map((match) => match[1]);
+  assert.ok(outcomes.includes("plateau") && outcomes.includes("author"), `outcomes read: ${outcomes.join(", ")}`);
+  // The author's end is not an approval: the Studio says it with the date, not with a vote.
+  for (const locale of [designEn, designIt]) {
+    assert.deepEqual(Object.keys(locale.design.studio.ready.outcome).sort(), outcomes.filter((outcome) => outcome !== "author").sort());
+    assert.deepEqual(Object.keys(locale.design.studio.rounds.verdict).sort(), ["approve", "revise"]);
+  }
+  assert.match(source("pages/OutlinePage.tsx"), /lazy\(withAutopilotTranslations\(\(\) => import\("@\/components\/outline\/studio\/StudioTab"\)/);
 });

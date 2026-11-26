@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createAutopilotState, serializeBibleThemes, type AutopilotState } from "narrarium-engine";
-import { designDraftOf, designOfDraft, designPatchOf, filledDesignFields, sameDesign } from "@/outline/designModel";
+import { OUTLINE_BOOK_FILE, createAutopilotState, parseMarkdown, serializeBibleThemes, serializeOutlineBook, type AutopilotState } from "narrarium-engine";
+import { approveDesignChange, defaultDesignChapters, designApprovalOf, designBlockOf, designDraftOf, designOfDraft, designPatchOf, designStatusOf, filledDesignFields, readDesignForm, sameDesign, type DesignForm } from "@/outline/designModel";
 import { composeBible, worldEntries } from "@/outline/bibleModel";
 
 const at = new Date("2026-11-26T10:00:00.000Z");
@@ -25,6 +25,55 @@ describe("the design of an entry, as its card edits it", () => {
     expect(designOfDraft({ goal: "  x  ", scenes: "a\n\nb" })).toEqual({ goal: "x", scenes: ["a", "b"] });
     expect(filledDesignFields(design)).toBe(3);
     expect(filledDesignFields(undefined)).toBe(0);
+  });
+});
+
+describe("the design run as the Studio reads it", () => {
+  it("is none, active, ready or ended by the author, with its reviews and its policy", () => {
+    expect(designStatusOf(null)).toEqual({ kind: "none" });
+    const rounds = [{ round: 1, score: 7, verdict: "revise" as const, critical: 1, findings: 2, at: at.toISOString() }];
+    expect(designStatusOf(stateWith({ design: { startedAt: at.toISOString(), chapters: 8, rounds, review: { maxRounds: 4, targetScore: 8.5 } } }))).toEqual({ kind: "active", startedAt: at.toISOString(), chapters: 8, rounds, maxRounds: 4, target: 8.5 });
+    const ready = designStatusOf(stateWith({ design: { startedAt: at.toISOString(), chapters: 8, rounds, endedAt: at.toISOString(), outcome: "plateau" } }));
+    expect(ready).toMatchObject({ kind: "ready", outcome: "plateau", maxRounds: 3 });
+    expect(designStatusOf(stateWith({ design: { startedAt: at.toISOString(), chapters: 8, rounds: [], endedAt: at.toISOString(), outcome: "author" } })).kind).toBe("ended");
+  });
+
+  it("cannot begin without a description, once the autopilot wrote a chapter, or on a personal server that does not design", () => {
+    expect(designBlockOf({ description: " ", state: null })).toBe("description");
+    const written = stateWith({ plan: { chapters: [{ number: 1, title: "One", slug: "001-one", summary: "", goal: "", pov: [], keyEvents: [], reveals: [], status: "writing", scenes: [{ number: 1, title: "S", goal: "", beats: [], characters: [], status: "written", revisions: 0 }] }], approved: true, rounds: 0, revisionNotes: [], readerReactions: [], readersDone: true, awaitingAuthor: false } });
+    expect(designBlockOf({ description: "An idea.", state: written })).toBe("written");
+    expect(designBlockOf({ description: "An idea.", state: null, serverWithoutDesign: true })).toBe("server");
+    expect(designBlockOf({ description: "An idea.", state: null })).toBeNull();
+  });
+
+  it("reads the dialog's form: the chapters from the entries the Synopsis has, the policy of the design, and the money cap", () => {
+    const form: DesignForm = { chapters: "10", readers: true, target: "8,5", rounds: "4", readerRounds: "", campaignRounds: "", money: "2", tokens: "" };
+    const reading = readDesignForm(form, 6);
+    expect(reading.valid).toBe(true);
+    expect(reading.input).toEqual({ chapters: 10, review: { targetScore: 8.5, maxRounds: 4 } });
+    expect(reading.budgetLimit).toBe(2);
+    expect(readDesignForm({ ...form, chapters: "4" }, 6).chaptersProblem).toBe("range");
+    expect(readDesignForm({ ...form, chapters: "ten" }, 6).chaptersProblem).toBe("number");
+    expect(readDesignForm({ ...form, target: "", rounds: "" }, 0).input.review).toBeNull();
+    expect(defaultDesignChapters(0)).toBe(12);
+    expect(defaultDesignChapters(7)).toBe(7);
+  });
+});
+
+describe("the author's approval of a design", () => {
+  it("is kept in outline/book.md beside the description, names the run it approves, and leaves the rest of the file as it was", () => {
+    const file = serializeOutlineBook({ title: "Glass", body: "A harbor town built on glass.", origin: "author", frontmatter: { mood: "grey" } });
+    const change = approveDesignChange({ content: file, hash: "h1" }, "2026-11-26T09:00:00.000Z", at);
+    expect(change).toMatchObject({ path: OUTLINE_BOOK_FILE, expectedHash: "h1" });
+    const document = parseMarkdown(change.content!);
+    expect(document.body).toBe("A harbor town built on glass.");
+    expect(document.frontmatter.mood).toBe("grey");
+    expect(designApprovalOf(change.content!)).toEqual({ at: at.toISOString(), run: "2026-11-26T09:00:00.000Z" });
+    expect(designApprovalOf(file)).toBeNull();
+    const created = approveDesignChange(undefined, "run", at);
+    expect(created.expectedHash).toBeNull();
+    expect(designApprovalOf(created.content!)?.run).toBe("run");
+    expect(() => approveDesignChange({ content: "---\ntitle: [broken\n---\n", hash: "h" }, "run", at)).toThrow();
   });
 });
 

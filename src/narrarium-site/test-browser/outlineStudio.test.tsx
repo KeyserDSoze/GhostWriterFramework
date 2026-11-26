@@ -1,17 +1,23 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { OUTLINE_BOOK_FILE, createAutopilotState, outlineChapterPath, outlineEntryDigest, readOutlineChapter, serializeBibleWorld, serializeOutlineBook, serializeOutlineChapter, wholeDesignPatch, outlineDesignOf, type AutopilotState, type PlannedChapter } from "narrarium-engine";
+import { OUTLINE_BOOK_FILE, createAutopilotState, outlineChapterPath, outlineEntryDigest, parseMarkdown, readOutlineChapter, serializeBibleWorld, serializeOutlineBook, serializeOutlineChapter, wholeDesignPatch, outlineDesignOf, type AutopilotState, type PlannedChapter } from "narrarium-engine";
 import { MemoryBookStore } from "narrarium-engine/testing";
 import { polyfillRadix } from "./helpers/radix";
 
-// The Synopsis page with its tabs: the design of an entry in its card and the Bible (the book's files composed, the rules of the world edited, the findings of the
-// checks).
+// The Synopsis page with its tabs: the design of an entry in its card, the Studio (the design run of the autopilot: the dialog that starts it, its progress, the design ready
+// to approve or to write from) and the Bible (the book's files composed, the rules of the world edited, the findings of the checks).
 
 const mocks = vi.hoisted(() => ({
   store: null as unknown as InstanceType<typeof import("narrarium-engine/testing").MemoryBookStore>,
   book: null as unknown,
   structure: null as unknown,
+  runtime: {
+    start: null as unknown as ReturnType<typeof import("vitest").vi.fn>,
+    pause: null as unknown as ReturnType<typeof import("vitest").vi.fn>,
+    refresh: null as unknown as ReturnType<typeof import("vitest").vi.fn>,
+    describeError: (error: unknown) => (error instanceof Error ? error.message : String(error)),
+  },
 }));
 
 vi.mock("@/hooks/useBookStructure", () => ({ useBookStructure: () => ({ book: mocks.book, structure: mocks.structure, loading: false, error: undefined, reload: vi.fn() }) }));
@@ -20,10 +26,14 @@ vi.mock("@/outline/outlineSource", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/outline/outlineSource")>();
   return { ...original, browserOutlineSource: () => original.storeOutlineSource(mocks.store) };
 });
+vi.mock("@/autopilot/loader", () => ({ loadAutopilotRuntime: async () => mocks.runtime }));
+vi.mock("@/autopilot/useBookFiles", () => ({ useBookFiles: () => ({ files: new Map(), failed: false }) }));
 
 import i18n from "@/i18n";
 import "@/i18n/outline";
 import "@/i18n/design";
+import { loadAutopilotTranslations } from "@/i18n/autopilot";
+import { useAutopilotStore } from "@/autopilot/store";
 import { OutlinePage } from "@/pages/OutlinePage";
 import type { BookEntry } from "@/types/settings";
 
@@ -31,7 +41,7 @@ const t = (key: string, options?: Record<string, unknown>) => i18n.t(key, option
 const BOOK: BookEntry = { id: "book-1", owner: "local", repo: "book-1", name: "The Glass Harbor", tokenIndex: null, storageMode: "local-only", addedAt: "2026-11-21T00:00:00.000Z" };
 const IDEA = "A harbor town built on glass hides a lie that the tide will tell.";
 const at = "2026-11-26T09:00:00.000Z";
-const TAB_NAMES = ["Synopsis", "Bible"];
+const TAB_NAMES = ["Synopsis", "Bible", "Studio"];
 
 let search = "";
 function Where() {
@@ -75,10 +85,15 @@ function readyState(): AutopilotState {
 beforeAll(async () => {
   polyfillRadix();
   await i18n.changeLanguage("en");
+  await loadAutopilotTranslations();
 });
 
 beforeEach(() => {
   mocks.book = { ...BOOK };
+  mocks.runtime.start = vi.fn(async () => undefined);
+  mocks.runtime.pause = vi.fn(async () => undefined);
+  mocks.runtime.refresh = vi.fn(async () => null);
+  useAutopilotStore.setState((state) => ({ views: {}, summaries: {}, server: { ...state.server, info: null } }));
 });
 
 afterEach(() => {
@@ -98,6 +113,17 @@ describe("the tabs of the Synopsis page", () => {
     fireEvent.mouseDown(within(tabs).getByRole("tab", { name: "Synopsis" }), { button: 0 });
     await waitFor(() => expect(search).toBe(""));
     expect(screen.getByLabelText(t("outline.book.idea"))).toHaveValue(IDEA);
+  });
+
+  it("calls the author to design the book, and the call opens the Studio", async () => {
+    await open({ [OUTLINE_BOOK_FILE]: serializeOutlineBook({ body: IDEA, origin: "author" }) });
+    const tabs = screen.getByRole("tablist", { name: t("outline.tabs.label") });
+    const cta = document.querySelector<HTMLElement>("[data-design-cta]")!;
+    expect(within(cta).getByRole("heading", { name: t("outline.designCta.title") })).toBeInTheDocument();
+    fireEvent.click(within(cta).getByRole("button", { name: t("outline.designCta.open") }));
+    await screen.findByRole("heading", { name: t("design.studio.title") });
+    expect(search).toBe("?tab=studio");
+    expect(within(tabs).getByRole("tab", { name: "Studio" })).toHaveAttribute("aria-selected", "true");
   });
 });
 
@@ -121,6 +147,86 @@ describe("the design of an entry in its card", () => {
       expect(entry.body).toBe("The storm breaks.");
       expect(entry.origin).toBe("author");
     });
+  });
+});
+
+describe("the Studio", () => {
+  it("cannot design a book without a description, and says why", async () => {
+    await open({}, "/app/books/book-1/outline?tab=studio");
+    const button = await screen.findByRole("button", { name: t("design.studio.start") });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription(t("design.studio.blocked.description"));
+  });
+
+  it("cannot design a book on a personal server that does not announce it, and says from which version it can", async () => {
+    mocks.book = { ...BOOK, autopilotHost: "server" };
+    useAutopilotStore.setState((state) => ({ server: { ...state.server, info: { serverId: "s", name: "Home", version: "0.1.19", protocol: 1, features: ["autopilot", "autopilot-review-policy"] } as never } }));
+    await open({ [OUTLINE_BOOK_FILE]: serializeOutlineBook({ body: IDEA, origin: "author" }) }, "/app/books/book-1/outline?tab=studio");
+    const button = await screen.findByRole("button", { name: t("design.studio.start") });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription("Your personal server is older than 0.1.20 and cannot design a book: update it to do this from here.");
+  });
+
+  it("starts a design run with the chapters and the policy of the dialog, and nothing that writes", async () => {
+    await open({ [OUTLINE_BOOK_FILE]: serializeOutlineBook({ body: IDEA, origin: "author" }) }, "/app/books/book-1/outline?tab=studio");
+    fireEvent.click(await screen.findByRole("button", { name: t("design.studio.start") }));
+    const dialog = await screen.findByRole("dialog", { name: t("design.dialog.title") });
+    expect(within(dialog).getByLabelText(t("design.dialog.chapters.label"))).toHaveValue("12");
+    fireEvent.change(within(dialog).getByLabelText(t("design.dialog.chapters.label")), { target: { value: "8" } });
+    fireEvent.change(within(dialog).getByLabelText(t("autopilot.review.target.label")), { target: { value: "8.5" } });
+    fireEvent.change(within(dialog).getByLabelText(t("design.dialog.rounds.label")), { target: { value: "4" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: t("design.dialog.submit", { count: 8 }) }));
+    await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledTimes(1));
+    expect(mocks.runtime.start).toHaveBeenCalledWith("book-1", { design: { chapters: 8, review: { targetScore: 8.5, maxRounds: 4 } }, options: { readersOnPlan: true, budgetLimit: 0 } });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("follows a design that goes on: its reviews, its last vote, and the way to go on with it", async () => {
+    const state = readyState();
+    delete state.design!.endedAt;
+    delete state.design!.outcome;
+    state.design!.rounds = state.design!.rounds.slice(0, 1);
+    state.plan!.approved = false;
+    state.message = "Budget reached: raise the limit to continue.";
+    await open({ [OUTLINE_BOOK_FILE]: serializeOutlineBook({ body: IDEA, origin: "author" }), "autopilot/state.json": JSON.stringify(state) }, "/app/books/book-1/outline?tab=studio");
+    const progress = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-design-progress]");
+      if (!found) throw new Error("no progress yet");
+      return found;
+    });
+    expect(progress).toHaveTextContent(t("design.studio.status.paused"));
+    expect(progress).toHaveTextContent("Budget reached: raise the limit to continue.");
+    expect(progress).toHaveTextContent("Review 1 of 3 done · Last vote of the director: 7/10 (target the director's)");
+    fireEvent.click(within(progress).getByRole("button", { name: t("design.studio.status.resume") }));
+    await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledWith("book-1"));
+  });
+
+  it("shows the design ready with what it made, records the author's approval in the Synopsis, and starts the writing autopilot", async () => {
+    await open({
+      [OUTLINE_BOOK_FILE]: serializeOutlineBook({ body: IDEA, origin: "author" }),
+      [outlineChapterPath(1)]: await designed(1, "Dawn"),
+      [outlineChapterPath(2)]: await designed(2, "Storm"),
+      "autopilot/state.json": JSON.stringify(readyState()),
+      "secrets/the-wall.md": "---\ntype: secret\ntitle: The Wall Is Failing\n---\n\nThe sea wall cracked.",
+      "locations/glass-harbor.md": "---\ntype: location\nname: Glass Harbor\n---\n",
+      "items/the-ledger.md": "---\ntype: item\nname: The Ledger\n---\n",
+    }, "/app/books/book-1/outline?tab=studio");
+    const ready = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-design-ready]");
+      if (!found) throw new Error("not ready yet");
+      return found;
+    });
+    expect(within(ready).getByRole("heading", { name: t("design.studio.ready.title") })).toBeInTheDocument();
+    await waitFor(() => expect(ready.querySelector("[data-design-counts]")).toHaveTextContent("2 chapters, 1 secret, 2 world entries"));
+    expect(ready).toHaveTextContent(t("design.studio.ready.outcome.target", { score: "8.5/10" }));
+    expect(document.querySelector("[data-design-rounds]")).toHaveTextContent("Review 1: 7/10, sent back · 1 critical inconsistency · 2 findings of the checks");
+    fireEvent.click(within(ready).getByRole("button", { name: t("design.studio.ready.approve") }));
+    await waitFor(() => expect(ready.querySelector("[data-design-approved]")).not.toBeNull());
+    expect(parseMarkdown(mocks.store.files.get(OUTLINE_BOOK_FILE)!).frontmatter.design_approved).toMatchObject({ run: at });
+    expect(parseMarkdown(mocks.store.files.get(OUTLINE_BOOK_FILE)!).body).toBe(IDEA);
+    fireEvent.click(within(ready).getByRole("button", { name: t("design.studio.ready.write") }));
+    await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledWith("book-1"));
+    expect(mocks.runtime.start.mock.calls[0]).toHaveLength(1);
   });
 });
 

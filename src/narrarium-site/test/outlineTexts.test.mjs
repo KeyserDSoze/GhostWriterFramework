@@ -29,7 +29,7 @@ test("the Outline speaks both languages, with the same texts and the same placeh
 
 test("the Italian of the Synopsis is written in Italian, not copied from English", () => {
   // The words that are the same in both languages: the name of a profile and a label of one word.
-  const same = new Set(["outline.entry.ghostwriterLabel"]);
+  const same = new Set(["outline.entry.ghostwriterLabel", "outline.tabs.studio"]);
   const italian = new Map(italianTexts());
   const copied = englishTexts().filter(([key, value]) => !same.has(key) && italian.get(key) === value).map(([key]) => key);
   assert.deepEqual(copied, []);

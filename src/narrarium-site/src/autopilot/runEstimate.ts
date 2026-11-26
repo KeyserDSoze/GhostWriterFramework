@@ -1,4 +1,6 @@
 import {
+  DEFAULT_BRIEF,
+  DEFAULT_OPTIONS,
   ESTIMATE_TYPICAL,
   TWO_CALL_TASKS,
   estimateAutopilotRun,
@@ -18,6 +20,7 @@ import {
   type AutopilotState,
   type EstimateCapability,
   type EstimateContext,
+  type EstimateDesign,
   type EstimateProgress,
   type EstimateResult,
   type EstimateWarning,
@@ -192,7 +195,7 @@ function canonWordsOf(entries: number): number {
  * measured at on it), its director's rounds, its outline, where it is (a book that started counts only what is left, one that grows only the new chapters), the sizes of its files
  * and the readers of its panel. It reads nothing and changes nothing, and it is fast enough to be made at every pause in the typing, for a book of any length.
  */
-export function estimateRun(sources: EstimateSources, form: SetupFormValues, override?: { progress?: EstimateProgress }): RunEstimate {
+export function estimateRun(sources: EstimateSources, form: SetupFormValues, override?: { progress?: EstimateProgress; design?: EstimateDesign }): RunEstimate {
   const speeds = measuredSpeed(sources.activities, { ignoreTasks: TWO_CALL_TASKS });
   const tokens = measuredTokensPerWord(sources.activities);
   const models = estimateModelsFromConfig(sources.ai, speeds);
@@ -214,6 +217,7 @@ export function estimateRun(sources: EstimateSources, form: SetupFormValues, ove
     context,
     readerPanelSize: sources.book.readerPanelSize,
     ...(tokens ? { tokensPerWord: tokens.value } : {}),
+    ...(override?.design ? { design: override.design } : {}),
   });
   const measured = [...new Set(Object.values(models).flatMap((model) => (model && speeds.has(model.model) ? [model.model] : [])))];
   return {
@@ -330,6 +334,19 @@ export function estimateReview(sources: EstimateSources, state: AutopilotState, 
   };
   const progress: EstimateProgress = { chaptersDone: planned - chapters, planned, conceptDone: true, finalDone: false, reviewOnly: true };
   return estimateRun({ ...sources, book, state, chapters: null }, { brief: state.brief, options, ...(input.scenesPerChapter ? { scenesPerChapter: input.scenesPerChapter } : {}) }, { progress });
+}
+
+/**
+ * What a design run will cost (`StartOptions.design`): the concept when it is not done, the design of every chapter not written in batches, its reviews and the readers' readings
+ * for the rounds of its policy, nothing written. `chapters` is the length the design asks for (the Synopsis gets the entries it lacks).
+ */
+export function estimateDesign(sources: EstimateSources, state: AutopilotState | null, input: { chapters: number; maxRounds: number; readerRounds: number; readers: boolean }): RunEstimate {
+  const entries = sources.book.outline?.entries ?? 0;
+  const lastChapter = Math.max(sources.book.outline?.lastChapter ?? 0, input.chapters);
+  const book = { ...sources.book, outline: { entries, lastChapter, words: sources.book.outline?.words ?? 0 } };
+  const options = { ...(state?.options ?? {}), readersOnPlan: input.readers };
+  const progress: EstimateProgress = { conceptDone: state?.concept?.done === true || sources.book.designWritten === true };
+  return estimateRun({ ...sources, book, state, chapters: null }, { brief: state?.brief ?? DEFAULT_BRIEF, options: { ...DEFAULT_OPTIONS, ...options } }, { progress, design: { maxRounds: input.maxRounds, readerRounds: input.readerRounds } });
 }
 
 // ─── What an author reads ────────────────────────────────────────────────────
