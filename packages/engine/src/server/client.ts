@@ -16,6 +16,9 @@ import {
   serverSupportsAutopilotRetry,
   serverSupportsGithubConflicts,
   serverSupportsOutlineApply,
+  serverSupportsReviewBook,
+  serverSupportsReviewPolicy,
+  CAMPAIGN_FEATURES,
   verifyServerIdentity,
   type AskDirectorRequest,
   type AskDirectorResponse,
@@ -26,6 +29,7 @@ import {
   type GithubConflictsResponse,
   type ResolveFrozenChangeRequest,
   type ReviseChaptersRequest,
+  type ReviewBookRequest,
   type RevisionCampaignResponse,
   type PairingRequest,
   type PairingResult,
@@ -244,9 +248,12 @@ export class NarrariumServerClient {
    */
   private async assertOptionsSupported(options: unknown, known?: ServerInfo): Promise<void> {
     if (!options || typeof options !== "object") return;
-    const { longRetry, resumeAfterRestart } = options as { longRetry?: unknown; resumeAfterRestart?: unknown };
-    if (longRetry === undefined && resumeAfterRestart === undefined) return;
+    const { longRetry, resumeAfterRestart, review } = options as { longRetry?: unknown; resumeAfterRestart?: unknown; review?: unknown };
+    if (longRetry === undefined && resumeAfterRestart === undefined && review === undefined) return;
     const info = known ?? await this.info();
+    if (review !== undefined && !serverSupportsReviewPolicy(info)) {
+      throw new ServerRequestError(`This personal server does not know the review policy of a run (it does not announce the feature autopilot-review-policy): update the server, or leave review out.`, 501, "feature_unavailable");
+    }
     if (longRetry !== undefined && !serverSupportsAutopilotRetry(info)) {
       throw new ServerRequestError(`This personal server does not have "Retry later" (it does not announce the feature autopilot-retry): update the server, or leave longRetry out.`, 501, "feature_unavailable");
     }
@@ -456,20 +463,33 @@ export class NarrariumServerClient {
    * sent. A refusal is a `ServerRequestError` with the code of the engine's `RevisionCampaignError` (`invalid_request`, `campaign_active`, `not_changed`, `stale`).
    */
   async reviseChapters(bookId: string, request: ReviseChaptersRequest): Promise<RevisionCampaignResponse> {
-    await this.requireOutlineApply();
+    // The feature of the reason: a server announces each reason it has (`CAMPAIGN_FEATURES`); one nobody knows is refused by the server itself.
+    const feature = CAMPAIGN_FEATURES[request?.reason as keyof typeof CAMPAIGN_FEATURES] ?? CAMPAIGN_FEATURES["outline-change"];
+    if (!((await this.info()).features ?? []).includes(feature)) {
+      throw new ServerRequestError(`This personal server cannot revise chapters for this reason (it does not announce the feature ${feature}): update the server.`, 501, "feature_unavailable");
+    }
     return this.request("POST", bookRoute(bookId, "/autopilot/campaign"), request);
   }
 
-  /** Cancel the chapters of the campaign that wait (the one being worked finishes): `DELETE …/autopilot/campaign`. The same feature as `reviseChapters`. */
-  async cancelRevisionCampaign(bookId: string): Promise<RevisionCampaignResponse> {
-    await this.requireOutlineApply();
-    return this.request("DELETE", bookRoute(bookId, "/autopilot/campaign"));
+  /**
+   * Review the finished book again to a target: `POST …/autopilot/review` (`ReviewBookRequest`, the engine's `AutopilotSession.reviewBook`). Needs
+   * `SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK`, else `feature_unavailable` before anything is sent. A refusal carries the code of the engine's `RevisionCampaignError`
+   * (`invalid_request`, `not_finished`, `campaign_active`, `nothing_to_review`). Nothing is started.
+   */
+  async reviewBook(bookId: string, request: ReviewBookRequest): Promise<RevisionCampaignResponse> {
+    if (!serverSupportsReviewBook(await this.info())) {
+      throw new ServerRequestError("This personal server cannot review a finished book again (it does not announce the feature autopilot-review-book): update the server.", 501, "feature_unavailable");
+    }
+    return this.request("POST", bookRoute(bookId, "/autopilot/review"), request);
   }
 
-  private async requireOutlineApply(): Promise<void> {
-    if (!serverSupportsOutlineApply(await this.info())) {
-      throw new ServerRequestError("This personal server cannot apply the Synopsis to a book (it does not announce the feature autopilot-outline-apply): update the server.", 501, "feature_unavailable");
+  /** Cancel the chapters of the campaign that wait (the one being worked finishes; a review of the book ends with it): `DELETE …/autopilot/campaign`. A server with the campaigns of any reason has it. */
+  async cancelRevisionCampaign(bookId: string): Promise<RevisionCampaignResponse> {
+    const info = await this.info();
+    if (!serverSupportsOutlineApply(info) && !serverSupportsReviewBook(info)) {
+      throw new ServerRequestError("This personal server cannot apply the Synopsis to a book or review it again (it announces neither autopilot-outline-apply nor autopilot-review-book): update the server.", 501, "feature_unavailable");
     }
+    return this.request("DELETE", bookRoute(bookId, "/autopilot/campaign"));
   }
 
   /** Freeze a chapter by hand (`frozen: true`), or take its record away: `POST …/chapters/:slug/freeze` with `{ frozen }`. Answers the chapter's record now. */

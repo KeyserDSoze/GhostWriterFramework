@@ -3,7 +3,8 @@ import type { EvaluationTarget } from "../book/paths.js";
 import type { BookFileChange, BookFileContent, BookFileEntry } from "../book/store.js";
 import type { DirectorOpinion } from "../director/opinion.js";
 import type { FrozenChapterResult, FrozenStatus } from "../autopilot/frozen.js";
-import type { ReviseChaptersInput, RevisionCampaignResult } from "../autopilot/campaign.js";
+import type { ReviewBookInput, ReviseChaptersInput, RevisionCampaignResult } from "../autopilot/campaign.js";
+import type { RevisionReason } from "../autopilot/types.js";
 import type { AutopilotEvent, AutopilotLiveOptions, AutopilotPauseMode, AutopilotSnapshot, AutopilotStateSummary, FrozenAction, FrozenChangeKind, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
 import type { AiCallField } from "../autopilot/calls/types.js";
 
@@ -478,8 +479,44 @@ export function serverSupportsOutlineApply(info: { features?: unknown } | readon
   return Array.isArray(features) && features.includes(SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY);
 }
 
+/**
+ * The `ServerInfo.features` entry of a server that reviews a finished book again to a target (`POST /api/v1/books/:id/autopilot/review`, the campaign of reason
+ * `review-target`: `AutopilotSession.reviewBook`); `DELETE …/autopilot/campaign` cancels it. A server without it answers 404: the engine's client refuses before sending.
+ */
+export const SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK = "autopilot-review-book";
+
+/**
+ * The `ServerInfo.features` entry of a server whose engine knows the review policy of a run (`AutopilotOptions.review`: the target, the rounds of a chapter, the
+ * readers' rounds, the rounds of a review of the book) and says the limit that stopped a run (`state.limitReached`). An older one drops `options.review` from
+ * `configure` and `start` without a word: the engine's client refuses to send it there.
+ */
+export const SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY = "autopilot-review-policy";
+
+function announces(info: { features?: unknown } | readonly unknown[] | null | undefined, feature: string): boolean {
+  const features = Array.isArray(info) ? info : (info as { features?: unknown } | null | undefined)?.features;
+  return Array.isArray(features) && features.includes(feature);
+}
+
+/** Whether the server announces that it reviews a finished book again (`autopilot-review-book`). Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsReviewBook(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  return announces(info, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK);
+}
+
+/** Whether the server announces the review policy of a run (`autopilot-review-policy`). Never throws. */
+export function serverSupportsReviewPolicy(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  return announces(info, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY);
+}
+
+/** The feature a server announces for the campaigns of a reason: the routes of a campaign are there for it. */
+export const CAMPAIGN_FEATURES: Readonly<Record<RevisionReason, string>> = {
+  "outline-change": SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY,
+  "review-target": SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK,
+};
+
 /** The body of `POST /api/v1/books/:id/autopilot/campaign` (`AutopilotSession.reviseChapters`). */
 export type ReviseChaptersRequest = ReviseChaptersInput;
+/** The body of `POST /api/v1/books/:id/autopilot/review` (`AutopilotSession.reviewBook`). */
+export type ReviewBookRequest = ReviewBookInput;
 /** The answer of `POST` and `DELETE …/autopilot/campaign`: the campaign as it is saved (`null`: none goes on), and the changes after it. */
 export type RevisionCampaignResponse = RevisionCampaignResult;
 /** The answer of `POST …/chapters/:slug/freeze`. */

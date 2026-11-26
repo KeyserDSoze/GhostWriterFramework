@@ -82,6 +82,7 @@ import { SERVER_VERSION } from "./version.js";
 import { OutlineTextLimitError } from "narrarium-engine";
 import { FROZEN_ACTIONS, FROZEN_EDITS_MODES, FrozenChapterError, SERVER_FEATURE_AUTOPILOT_FROZEN, type FrozenAction, type FrozenChangeKind, type FrozenEditsMode } from "narrarium-engine";
 import { REVISION_CHAPTER_MODES, REVISION_REASONS, RevisionCampaignError, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, type ReviseChaptersInput } from "narrarium-engine";
+import { REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, type ReviewBookInput } from "narrarium-engine";
 
 /** Tuning of the server's own limits (the defaults are the ones to run with; tests shorten them). */
 export interface ServerLimits {
@@ -296,8 +297,11 @@ function describeUnknown(error: unknown): string {
 const RULE_ERROR_STATUS: Record<string, number> = { rule_empty: 400, rule_too_long: 400, rule_duplicate: 400, rule_not_found: 404, rule_changed: 409 };
 /** A decision about a frozen chapter that cannot be taken: the chapter is not there (404), nothing waits for a decision (409), the action does not fit (400). */
 const FROZEN_ERROR_STATUS: Record<string, number> = { chapter_not_found: 404, not_changed: 409, invalid_action: 400 };
-/** A campaign that cannot be recorded: what was asked is not one (400), one goes on already, or a chapter has no such change now or it changed since (409). */
-const CAMPAIGN_ERROR_STATUS: Record<string, number> = { invalid_request: 400, campaign_active: 409, not_changed: 409, stale: 409 };
+/**
+ * A campaign that cannot be recorded: what was asked is not one (400), one goes on already, a chapter has no such change now or it changed since, the book is not
+ * finished, or every chapter has the target of a review already (409).
+ */
+const CAMPAIGN_ERROR_STATUS: Record<string, number> = { invalid_request: 400, campaign_active: 409, not_changed: 409, stale: 409, not_finished: 409, nothing_to_review: 409 };
 
 /**
  * What a failure is answered with. Only errors this server knows keep their meaning: its own HttpError, the engine's
@@ -553,6 +557,32 @@ function asReviseChapters(body: Record<string, unknown>): ReviseChaptersInput {
     };
   });
   return { reason: body.reason as ReviseChaptersInput["reason"], chapters, ...(typeof body.note === "string" ? { note: body.note.slice(0, MAX_CAMPAIGN_NOTE_CHARACTERS) } : {}) };
+}
+
+/** The keys of a review of the book (`POST …/autopilot/review`). */
+const REVIEW_BOOK_KEYS = ["targetScore", "maxRounds", "readerRounds", "campaignMaxRounds", "budgetLimit", "budgetTokens", "include", "note"];
+
+/**
+ * The body of a review of the book, `{ targetScore, maxRounds?, readerRounds?, campaignMaxRounds?, budgetLimit?, budgetTokens?, include?, note? }`: the shape, which is
+ * checked here (a misspelt key is refused, not ignored: the review would run without it), and what it asks, which the engine judges (its `RevisionCampaignError`).
+ */
+function asReviewBook(body: Record<string, unknown>): ReviewBookInput {
+  const refuse = (problem: string): never => {
+    throw new HttpError(400, "invalid_request", `${problem} A review is { "targetScore": 1 to 10, "maxRounds"?: 1 to ${REVIEW_MAX_ROUNDS}, "readerRounds"?: 0 to ${REVIEW_MAX_ROUNDS}, "campaignMaxRounds"?: 0 to ${REVIEW_MAX_CAMPAIGN_ROUNDS}, "budgetLimit"?: number, "budgetTokens"?: number, "include"?: [chapter numbers], "note"?: string }.`);
+  };
+  const unknown = Object.keys(body).filter((key) => !REVIEW_BOOK_KEYS.includes(key));
+  if (unknown.length) refuse(`${unknown.slice(0, 3).map(named).join(", ")} cannot be sent here.`);
+  const numeric = (key: string) => body[key] === undefined || (typeof body[key] === "number" && Number.isFinite(body[key]));
+  if (typeof body.targetScore !== "number") refuse("`targetScore` is the vote to reach, a number.");
+  for (const key of ["maxRounds", "readerRounds", "campaignMaxRounds", "budgetLimit", "budgetTokens"]) if (!numeric(key)) refuse(`\`${key}\` must be a number.`);
+  if (body.include !== undefined && (!Array.isArray(body.include) || body.include.length > MAX_CAMPAIGN_REQUEST_CHAPTERS)) refuse(`\`include\` is a list of at most ${MAX_CAMPAIGN_REQUEST_CHAPTERS} chapter numbers.`);
+  if (body.note !== undefined && typeof body.note !== "string") refuse("`note`, the author's words for the director, must be a string.");
+  return {
+    targetScore: body.targetScore as number,
+    ...Object.fromEntries(["maxRounds", "readerRounds", "campaignMaxRounds", "budgetLimit", "budgetTokens"].filter((key) => body[key] !== undefined).map((key) => [key, body[key]])),
+    ...(body.include !== undefined ? { include: body.include as number[] } : {}),
+    ...(typeof body.note === "string" ? { note: body.note.slice(0, MAX_CAMPAIGN_NOTE_CHARACTERS) } : {}),
+  };
 }
 
 /** The folder of a chapter in the address (`…/chapters/:slug/freeze`): a name in `chapters/`, not a path (no separator, no control character), and short. */
@@ -854,7 +884,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -1303,6 +1333,14 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
         method: "DELETE", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/campaign$/, scope: "run", handler: async ({ params }) => {
           books.assertNotInMaintenance();
           return books.get(params[0]).session.cancelRevisionCampaign();
+        },
+      },
+      // Review the finished book again to a target score: the campaign of reason `review-target`, which the next run carries out (and `DELETE …/campaign` cancels).
+      {
+        method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/review$/, scope: "run", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          return runtime.session.reviewBook(asReviewBook(asObject(await readBody(request, SMALL_BODY))));
         },
       },
       {

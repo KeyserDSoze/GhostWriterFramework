@@ -296,7 +296,7 @@ test("the readers read again in the rounds of a review the author asks for, and 
   assert.equal(readersOf(noReads, mark), 0);
 });
 
-// ─── What is saved ──────────────────────────────────────────────────────────
+// ─── What is saved, and the client of the personal server ───────────────────
 
 test("a state with a review in progress, a held review, its limit and the reviews over reads back as it was, and an odd one is none", () => {
   const review = { targetScore: 8.5, maxRounds: 3, readerRounds: 0, include: [4], scope: [1, 2, 4], round: 2, windowStart: 2, phase: "verdict", start: { lowest: 6, book: 6.5, below: 2 }, history: [{ round: 1, chapters: [1, 2], lowest: 7, book: 7, below: 1, endedAt: "2026-01-01T00:00:00.000Z" }], stalled: 0 };
@@ -310,4 +310,39 @@ test("a state with a review in progress, a held review, its limit and the review
   assert.equal(parseAutopilotState(JSON.stringify({ limitReached: { kind: "time", used: 1, limit: 1, at: "2026-01-01T00:00:00.000Z" } })).limitReached, undefined);
   assert.equal(parseAutopilotState(JSON.stringify({ reviews: [{ outcome: "target" }] })).reviews, undefined);
   assert.equal(parseAutopilotState(JSON.stringify({ campaign: { ...campaign, review: { ...review, windowStart: 9 } } })).campaign.review.windowStart, 2, "the window never starts after the round in progress");
+});
+
+test("the client of the personal server sends a review where the server has it, the policy of a run only to a server that knows it, and refuses before sending otherwise", async () => {
+  const log = [];
+  const makeClient = (features) => new engine.NarrariumServerClient({
+    baseUrl: "http://127.0.0.1:24242",
+    token: "nrs_me",
+    fetch: async (input, init = {}) => {
+      const url = new URL(input);
+      if (url.pathname === "/api/v1/info") return Response.json({ serverId: "s", name: "Home", version: "0.1.19", protocol: 1, features });
+      log.push({ method: init.method ?? "GET", path: url.pathname, body: init.body ? JSON.parse(init.body) : undefined });
+      return Response.json(url.pathname.endsWith("/review") || url.pathname.endsWith("/campaign") ? { campaign: null, frozen: { mode: "ask", changes: [], pending: [], warnings: [] } } : { state: null });
+    },
+  });
+  const all = ["autopilot", "autopilot-outline-brief", engine.SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, engine.SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, engine.SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY];
+  const client = makeClient(all);
+  const request = { targetScore: 8, maxRounds: 3, readerRounds: 1, budgetLimit: 4 };
+  await client.reviewBook("my book", request);
+  await client.cancelRevisionCampaign("my book");
+  await client.configureAutopilot("my book", { options: { review: { targetScore: 8 } } });
+  assert.deepEqual(log.map((entry) => [entry.method, entry.path]), [["POST", "/api/v1/books/my%20book/autopilot/review"], ["DELETE", "/api/v1/books/my%20book/autopilot/campaign"], ["POST", "/api/v1/books/my%20book/autopilot/configure"]]);
+  assert.deepEqual(log[0].body, request);
+
+  const older = makeClient(["autopilot", "autopilot-outline-brief", engine.SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY]);
+  await assert.rejects(older.reviewBook("my book", request), (error) => error.code === "feature_unavailable" && error.status === 501 && /autopilot-review-book/.test(error.message));
+  await assert.rejects(older.configureAutopilot("my book", { options: { review: { targetScore: 8 } } }), (error) => error.code === "feature_unavailable" && /autopilot-review-policy/.test(error.message));
+  await assert.rejects(older.startAutopilot("my book", { options: { review: { maxRounds: 4 } } }), (error) => error.code === "feature_unavailable");
+  await assert.rejects(older.reviseChapters("my book", { reason: "review-target", chapters: [{ number: 1, mode: "follow" }] }), (error) => error.code === "feature_unavailable" && /autopilot-review-book/.test(error.message), "the feature of the reason");
+  await older.cancelRevisionCampaign("my book");
+  const reviewOnly = makeClient(["autopilot", engine.SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK]);
+  await reviewOnly.cancelRevisionCampaign("my book");
+  await assert.rejects(makeClient(["autopilot"]).cancelRevisionCampaign("my book"), (error) => error.code === "feature_unavailable");
+  assert.equal(log.length, 5, "nothing else was sent");
+  assert.deepEqual([engine.serverSupportsReviewBook(all), engine.serverSupportsReviewPolicy({ features: all }), engine.serverSupportsReviewBook(null), engine.serverSupportsReviewPolicy({ features: ["autopilot"] })], [true, true, false, false]);
+  assert.deepEqual(engine.CAMPAIGN_FEATURES, { "outline-change": "autopilot-outline-apply", "review-target": "autopilot-review-book" });
 });
