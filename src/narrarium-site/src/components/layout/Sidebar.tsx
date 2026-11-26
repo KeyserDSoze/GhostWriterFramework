@@ -14,7 +14,6 @@ import {
   EyeOff,
   FileEdit,
   FileText,
-  Highlighter,
   Library,
   MapPin,
   Network,
@@ -108,6 +107,16 @@ function NavSection({ title, open, onToggle, children }: { title: string; open: 
   );
 }
 
+/** The highlighter of the annotations, drawn here (Lucide's, ISC): the library's own icon would be a chunk that the shell shares with the lazy pages that also use it. */
+function HighlighterIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="lucide lucide-highlighter h-4 w-4">
+      <path d="m9 11-6 6v3h9l3-3" />
+      <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
+    </svg>
+  );
+}
+
 function SidebarContent({ onNavigate, headerAction }: { onNavigate?: () => void; headerAction?: ReactNode }) {
   const { t, i18n } = useTranslation();
   const replaceHistory = useContext(ReplaceHistory);
@@ -159,7 +168,7 @@ function SidebarContent({ onNavigate, headerAction }: { onNavigate?: () => void;
         { label: t("chapter.resume"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/resume`, icon: <NotebookText className="h-4 w-4" /> },
         { label: t("chapter.evaluation"), href: `/app/books/${bookId}/chapters/${chapterId}/workspace/evaluation`, icon: <ClipboardCheck className="h-4 w-4" /> },
         { label: t("readerEvaluations.title"), href: `/app/books/${bookId}/chapters/${chapterId}/reader-evaluations`, icon: <Users className="h-4 w-4" /> },
-        { label: t("nav.annotations"), href: `/app/books/${bookId}/chapters/${chapterId}/annotations`, icon: <Highlighter className="h-4 w-4" /> },
+        { label: t("nav.annotations"), href: `/app/books/${bookId}/chapters/${chapterId}/annotations`, icon: <HighlighterIcon /> },
       ]
     : [];
 
@@ -189,7 +198,7 @@ function SidebarContent({ onNavigate, headerAction }: { onNavigate?: () => void;
     { label: t("repoSettings.title"), href: "/app/settings/repository", icon: <Network className="h-4 w-4" /> },
     { label: t("personalServer.title"), href: "/app/settings/server", icon: <Server className="h-4 w-4" /> },
     { label: t("settings.costSettings.title"), href: "/app/settings/costs", icon: <Coins className="h-4 w-4" /> },
-    { label: t("nav.annotationTags"), href: "/app/settings/annotations", icon: <Highlighter className="h-4 w-4" /> },
+    { label: t("nav.annotationTags"), href: "/app/settings/annotations", icon: <HighlighterIcon /> },
   ];
 
   return (

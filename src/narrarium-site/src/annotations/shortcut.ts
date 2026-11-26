@@ -8,19 +8,9 @@
  * and by their place second, so that Option or AltGr changing the character does not hide them.
  */
 
-function platformName(): string {
-  if (typeof navigator === "undefined") return "";
-  const data = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
-  return data?.platform || navigator.platform || navigator.userAgent || "";
-}
+import { annotateShortcutLabel, isMacPlatform } from "./shortcutLabel";
 
-export function isMacPlatform(platform: string = platformName()): boolean {
-  return /mac|iphone|ipad|ipod/i.test(platform);
-}
-
-export function annotateShortcutLabel(mac: boolean = isMacPlatform()): string {
-  return mac ? "⌥⌘A" : "Ctrl+Alt+M";
-}
+export { annotateShortcutLabel, isMacPlatform };
 
 export function isAnnotateShortcut(event: Pick<KeyboardEvent, "key" | "code" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey">, mac: boolean = isMacPlatform()): boolean {
   if (event.shiftKey || !event.altKey) return false;

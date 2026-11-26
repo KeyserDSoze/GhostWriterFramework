@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import i18n from "@/i18n";
 import { GlobalContextMenu } from "@/components/editor/GlobalContextMenu";
-import { useSelectionMenuStore, type SelectionMenuExtension } from "@/components/editor/selectionMenuStore";
+import { selectionMenuRegistry, type SelectionMenuExtension } from "@/components/editor/selectionMenuStore";
 
 // The menu of a selection takes items from the page the selection is in (the reader adds «Annotate»): what the page captured when the menu opened, at
 // the top, only in its own region; the page can open the menu from a button of its own.
@@ -50,7 +50,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   window.getSelection()?.removeAllRanges();
-  useSelectionMenuStore.setState({ extensions: [] });
+  selectionMenuRegistry.setState({ extensions: [] });
 });
 
 describe("the items a page adds to the menu of a selection", () => {
@@ -58,7 +58,7 @@ describe("the items a page adds to the menu of a selection", () => {
     await i18n.changeLanguage("en");
     const onPick = vi.fn();
     const added = extension(onPick);
-    const unregister = useSelectionMenuStore.getState().register(added);
+    const unregister = selectionMenuRegistry.getState().register(added);
     page();
     const prose = screen.getByTestId("prose");
     select(prose.firstChild!, "the color of old steel");
@@ -91,14 +91,14 @@ describe("the items a page adds to the menu of a selection", () => {
   it("can be opened by the page from a button of its own, and a second registration of the same page replaces the first", () => {
     const first = extension();
     const second = { ...extension(), render: () => <button type="button">Second</button> };
-    useSelectionMenuStore.getState().register(first);
-    useSelectionMenuStore.getState().register(second);
-    expect(useSelectionMenuStore.getState().extensions).toEqual([second]);
+    selectionMenuRegistry.getState().register(first);
+    selectionMenuRegistry.getState().register(second);
+    expect(selectionMenuRegistry.getState().extensions).toEqual([second]);
     page();
     const prose = screen.getByTestId("prose");
     select(prose.firstChild!, "The gate");
     let opened = false;
-    act(() => { opened = useSelectionMenuStore.getState().openMenu!(20, 20, prose); });
+    act(() => { opened = selectionMenuRegistry.getState().openMenu!(20, 20, prose); });
     expect(opened).toBe(true);
     expect(screen.getByRole("button", { name: "Second" })).toBeInTheDocument();
   });

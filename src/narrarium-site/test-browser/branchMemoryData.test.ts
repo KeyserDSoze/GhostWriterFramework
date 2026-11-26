@@ -97,12 +97,12 @@ describe("the memory of the branches in the account data that syncs", () => {
 describe("two devices whose copies of the account data both changed", () => {
   const otherBook = { ...book, id: "book-2", repo: "other" };
 
-  it("keep for each book the memory changed last, whichever copy the person chooses for the rest", () => {
+  it("keep for each book the memory changed last, whichever copy the person chooses for the rest", async () => {
     const local = { ...DEFAULT_SETTINGS, books: [book, otherBook], branchMemory: { "writer/novel": recordBranchUse(undefined, "local-newer", T3, { current: true }), "writer/other": recordBranchUse(undefined, "local-older", T1, { current: true }) } };
     const remote = { ...DEFAULT_SETTINGS, ui: { ...DEFAULT_SETTINGS.ui, language: "it" as const }, books: [book, otherBook], branchMemory: { "writer/novel": recordBranchUse(undefined, "remote-older", T1, { current: true }), "writer/other": recordBranchUse(undefined, "remote-newer", T2, { current: true }) } };
     const request = { local: snapshot(local), remotes: [{ backend: "google-drive" as const, manifest: snapshot(remote).manifest, data: snapshot(remote).data }] };
     for (const choice of ["local", "google-drive"] as const) {
-      const data = reconciledAccountData(request as never, choice);
+      const data = await reconciledAccountData(request as never, choice);
       expect(data.settings.ui.language).toBe(choice === "local" ? "en" : "it");
       expect(data.settings.branchMemory?.["writer/novel"]?.lastWorkingBranch).toBe("local-newer");
       expect(data.settings.branchMemory?.["writer/other"]?.lastWorkingBranch).toBe("remote-newer");

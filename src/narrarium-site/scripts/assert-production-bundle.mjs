@@ -196,7 +196,13 @@ report.budgets.routes = {
   // Raised in 0.112.0 by the same rule (it was 2_718_000/829_000; 0.110.0 and 0.111.0 brought the shell to 2_688_636/823_284): the branch of the book in
   // the top bar, the triggers of the automatic sync of its branches and the memory of the branches that the settings load with, 18_437/5_690 bytes. The
   // switcher, the sync itself (and GitHub's client with it), their texts and the settings of the branches load when they are used.
-  appShell: { rawBytes: 2_735_000, gzipBytes: 837_500 }, // 2_707_073/828_974
+  // Raised in 0.124.0 by the same rule, but by less than 1 % (it was 2_735_000/837_500; 0.119.0 brought the shell to 2_727_538/836_205): the annotations of the
+  // reader put 4_306/1_608 bytes in it, which is the entry «Annotate» of the menu of a selection (and the registry that lets a page add items to it), the label
+  // of the shortcut in the list of the keyboard shortcuts, the two entries of the side menus, the annotation files in the structure of a book and the merge of
+  // their two copies at the sync. Taken out of the shell before raising: the rule that merges the tags of two copies of the account data (729 bytes, loaded where
+  // a divergence is resolved), the keys of the shortcut and the library's store (about 430). The reader, the dialogs, the list of a chapter, the tags in
+  // Settings and their texts load when they are used.
+  appShell: { rawBytes: 2_745_000, gzipBytes: 842_000 }, // 2_731_844/837_813
 };
 for (const [name, budget] of Object.entries(report.budgets.routes)) {
   const actual = routeGraphs[name];

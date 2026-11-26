@@ -113,7 +113,7 @@ describe("the tags of the annotations in the account data that syncs", () => {
 });
 
 describe("two devices whose copies of the account data both changed", () => {
-  it("keep every tag of both, of each its newest version and a deletion over an edit of the same moment, whichever copy is chosen", () => {
+  it("keep every tag of both, of each its newest version and a deletion over an edit of the same moment, whichever copy is chosen", async () => {
     const local = withAnnotations(DEFAULT_SETTINGS, {
       tags: [tag("doubt-1a2b", { name: "Doubt (renamed here)", updatedAt: T3 }), tag("local-only-1111"), tag("pace-3c4d", { name: "Pace", updatedAt: T2 })],
       publicNoticeSeen: ["writer/novel"],
@@ -125,7 +125,7 @@ describe("two devices whose copies of the account data both changed", () => {
     const request = { local: snapshot(local), remotes: [{ backend: "google-drive" as const, manifest: snapshot(remote).manifest, data: snapshot(remote).data }] };
 
     for (const choice of ["local", "google-drive"] as const) {
-      const data = reconciledAccountData(request as never, choice);
+      const data = await reconciledAccountData(request as never, choice);
       expect(data.settings.ui.language).toBe(choice === "local" ? "en" : "it");
       const tags = data.settings.annotations?.tags ?? [];
       // The chosen copy's order first, then what only the other has.
@@ -136,8 +136,8 @@ describe("two devices whose copies of the account data both changed", () => {
     }
   });
 
-  it("add nothing to copies that never had annotations", () => {
+  it("add nothing to copies that never had annotations", async () => {
     const request = { local: snapshot(DEFAULT_SETTINGS), remotes: [{ backend: "github" as const, manifest: snapshot(DEFAULT_SETTINGS).manifest, data: snapshot(DEFAULT_SETTINGS).data }] };
-    expect(reconciledAccountData(request as never, "github").settings).not.toHaveProperty("annotations");
+    expect((await reconciledAccountData(request as never, "github")).settings).not.toHaveProperty("annotations");
   });
 });

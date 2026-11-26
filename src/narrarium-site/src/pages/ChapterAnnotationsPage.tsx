@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, ArrowLeft, BookOpen, PencilLine, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BookOpen, PencilLine, Plus, Trash2 } from "lucide-react";
 import "@/i18n/annotations";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -150,7 +150,7 @@ export function ChapterAnnotationsPage() {
 
   if (loading && !structure) return <div className="space-y-4"><Skeleton className="h-10 w-2/3" /><Skeleton className="h-40 w-full" /></div>;
   if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
-  if (!chapter) return <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
+  if (!chapter) return <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 
   const sceneHref = (slug: string) => {
     const scene = scenes.find((entry) => entry.slug === slug);
@@ -167,9 +167,9 @@ export function ChapterAnnotationsPage() {
       </div>
 
       {state?.error && (
-        <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{t("annotations.reader.unreadable", { chapter: chapter.title, path: state.path, detail: state.error })}</AlertDescription></Alert>
+        <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{t("annotations.reader.unreadable", { chapter: chapter.title, path: state.path, detail: state.error })}</AlertDescription></Alert>
       )}
-      {readFailed && <Alert><AlertCircle className="h-4 w-4" /><AlertDescription>{t("annotations.list.readFailed")}</AlertDescription></Alert>}
+      {readFailed && <Alert><AlertTriangle className="h-4 w-4" /><AlertDescription>{t("annotations.list.readFailed")}</AlertDescription></Alert>}
 
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="grid gap-1.5">
@@ -248,7 +248,7 @@ export function ChapterAnnotationsPage() {
           </div>
           {!tagEditor && <Button size="sm" onClick={() => setTagEditor({})} className="[@media(pointer:coarse)]:h-11"><Plus aria-hidden="true" />{t("annotations.list.newTag")}</Button>}
         </div>
-        {annotations.tagsError && <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{t("annotations.reader.unreadable", { chapter: t("annotations.list.bookTags"), path: "annotations/tags.yml", detail: annotations.tagsError })}</AlertDescription></Alert>}
+        {annotations.tagsError && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{t("annotations.reader.unreadable", { chapter: t("annotations.list.bookTags"), path: "annotations/tags.yml", detail: annotations.tagsError })}</AlertDescription></Alert>}
         {tagEditor && (
           <div className="rounded-lg border p-3">
             <TagEditor

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { useSelectionMenuStore } from "@/components/editor/selectionMenuStore";
+import { selectionMenuRegistry } from "@/components/editor/selectionMenuStore";
 import { useBookAnnotations } from "@/annotations/useBookAnnotations";
 import { AnnotationsFileError, deviceTag } from "@/annotations/repository";
 import { annotationStatus, createAnnotationId, isPendingStatus, type Annotation, type AnnotationTagDefinition } from "@/annotations/model";
@@ -231,7 +231,7 @@ export function useReaderAnnotations(input: ReaderAnnotationsInput) {
       }
     },
   };
-  useEffect(() => useSelectionMenuStore.getState().register({
+  useEffect(() => selectionMenuRegistry.getState().register({
     id: "reader-annotations",
     capture: (target, current): ReaderMenuContext | null => {
       const flow = flowRef.current;
@@ -473,7 +473,7 @@ function SelectionToolbar({ selection, onAnnotate }: { selection: ReaderSelectio
   const below = last.bottom + 12;
   const top = below + height > window.innerHeight - 8 ? Math.max(8, (rects[0]?.top ?? last.top) - height - 56) : below;
   const left = Math.max(8, Math.min(last.left + last.width / 2 - width / 2, window.innerWidth - width - 8));
-  const openMenu = () => useSelectionMenuStore.getState().openMenu?.(left, top + height, document.body);
+  const openMenu = () => selectionMenuRegistry.getState().openMenu?.(left, top + height, document.body);
   return (
     <div
       role="toolbar"

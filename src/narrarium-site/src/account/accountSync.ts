@@ -13,7 +13,6 @@ import { refreshAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { localWorkspaceScope } from "@/account/deviceIdentity";
 import { mergeLocalDeviceSettings } from "@/account/dataProjection";
 import { mergeBranchMemories } from "@/branches/memory";
-import { mergeAccountAnnotations } from "@/annotations/accountTags";
 import { acquireMicrosoftConnectionToken } from "@/account/microsoftConnectionToken";
 import { acquireGoogleConnectionToken } from "@/account/googleConnectionToken";
 import { acquireGitHubConnectionToken } from "@/account/githubConnectionToken";
@@ -326,12 +325,14 @@ async function syncAccountReplicas(activeKinds: AccountSyncBackendKind[]): Promi
  * The data a resolved divergence keeps: the copy the person chose, with this device's own fields put back, and for each book the memory of its branches
  * that changed last among all the copies (last write wins per book: a branch chosen on one device is not lost because another copy was preferred).
  */
-export function reconciledAccountData(request: Pick<AccountReconciliationRequest, "local" | "remotes">, authoritative: "local" | AccountSyncBackendKind): LocalAccountSnapshot["data"] {
+export async function reconciledAccountData(request: Pick<AccountReconciliationRequest, "local" | "remotes">, authoritative: "local" | AccountSyncBackendKind): Promise<LocalAccountSnapshot["data"]> {
   const selected = authoritative === "local" ? request.local : request.remotes.find((remote) => remote.backend === authoritative);
   if (!selected) throw new Error("The selected account replica is unavailable.");
   const settings = authoritative === "local" ? selected.data.settings : mergeLocalDeviceSettings(request.local.data.settings, selected.data.settings);
   const branchMemory = mergeBranchMemories(selected.data.settings.branchMemory, request.local.data.settings.branchMemory, ...request.remotes.map((remote) => remote.data.settings.branchMemory));
-  // The tags of the annotations are not lost either: every tag of every copy, of one tag its newest version.
+  // The tags of the annotations are not lost either: every tag of every copy, of one tag its newest version. The rule is loaded here, where a divergence
+  // is resolved, and not with the shell (it is 1.5 KB that nothing else of the shell needs).
+  const { mergeAccountAnnotations } = await import("@/annotations/accountTags");
   const annotations = mergeAccountAnnotations(selected.data.settings.annotations, request.local.data.settings.annotations, ...request.remotes.map((remote) => remote.data.settings.annotations));
   return { ...selected.data, settings: { ...settings, ...(branchMemory ? { branchMemory } : {}), ...(annotations ? { annotations } : {}) } };
 }
@@ -340,7 +341,7 @@ export async function resolveAccountReconciliation(authoritative: "local" | Acco
   const request = useAccountSyncStore.getState().reconciliation;
   if (!request) return;
   const allManifests = [request.local.manifest, ...request.remotes.map((remote) => remote.manifest)];
-  const chosen = reconciledAccountData(request, authoritative);
+  const chosen = await reconciledAccountData(request, authoritative);
   // The person chooses which copy to keep; what every copy recorded of the usage is kept whatever the choice.
   const selected = authoritative === "local" ? request.local : request.remotes.find((remote) => remote.backend === authoritative);
   const copies = [request.local, ...request.remotes].filter((copy) => copy !== selected).map((copy) => copy.data.costs);

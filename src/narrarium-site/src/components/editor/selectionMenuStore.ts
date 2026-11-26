@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { create } from "zustand";
 
 /**
  * What a page adds to the menu of a selection (the right-click menu, and on a touch screen the menu of its floating button) for the text of one of its
@@ -24,12 +23,21 @@ interface SelectionMenuState {
   setOpenMenu: (open: SelectionMenuState["openMenu"]) => void;
 }
 
-export const useSelectionMenuStore = create<SelectionMenuState>()((set) => ({
+/**
+ * Read only when an event happens (the menu opens, a selection changes), never rendered from: a plain object, not a store of the shell's state library,
+ * which would add a chunk of its own to every page of the app for 35 lines.
+ */
+let state: SelectionMenuState = {
   extensions: [],
   register: (extension) => {
-    set((state) => ({ extensions: [...state.extensions.filter((entry) => entry.id !== extension.id), extension] }));
-    return () => set((state) => ({ extensions: state.extensions.filter((entry) => entry !== extension) }));
+    state = { ...state, extensions: [...state.extensions.filter((entry) => entry.id !== extension.id), extension] };
+    return () => { state = { ...state, extensions: state.extensions.filter((entry) => entry !== extension) }; };
   },
   openMenu: null,
-  setOpenMenu: (openMenu) => set({ openMenu }),
-}));
+  setOpenMenu: (openMenu) => { state = { ...state, openMenu }; },
+};
+
+export const selectionMenuRegistry = {
+  getState: (): SelectionMenuState => state,
+  setState: (patch: Partial<SelectionMenuState>): void => { state = { ...state, ...patch }; },
+};

@@ -21,7 +21,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { CustomActionRunner, type CustomActionInvocation } from "@/components/custom-actions/CustomActionRunner";
 import { compatibleCustomActions, customActionRecordIdentity, customActionTargetIdentity, resolveCustomActionTarget } from "@/custom-actions/customActions";
 import type { CustomAction } from "@/types/settings";
-import { useSelectionMenuStore, type SelectionMenuExtension } from "@/components/editor/selectionMenuStore";
+import { selectionMenuRegistry, type SelectionMenuExtension } from "@/components/editor/selectionMenuStore";
 
 type Editable = HTMLTextAreaElement | HTMLInputElement;
 
@@ -50,7 +50,7 @@ const CLOSED: MenuState = { open: false, x: 0, y: 0, editable: null, selection: 
 
 function capturedExtensions(target: EventTarget | null): Array<{ extension: SelectionMenuExtension; context: unknown }> {
   const selection = typeof window !== "undefined" ? window.getSelection() : null;
-  return useSelectionMenuStore.getState().extensions
+  return selectionMenuRegistry.getState().extensions
     .map((extension) => ({ extension, context: extension.capture(target, selection) }))
     .filter((entry) => entry.context !== null && entry.context !== undefined);
 }
@@ -169,8 +169,8 @@ export function GlobalContextMenu() {
 
   // Pages open the menu from a button of their own (the toolbar of a selection on a touch screen).
   useEffect(() => {
-    useSelectionMenuStore.getState().setOpenMenu((x, y, target) => openAtRef.current(x, y, target));
-    return () => useSelectionMenuStore.getState().setOpenMenu(null);
+    selectionMenuRegistry.getState().setOpenMenu((x, y, target) => openAtRef.current(x, y, target));
+    return () => selectionMenuRegistry.getState().setOpenMenu(null);
   }, []);
 
   // ── Desktop: right-click ───────────────────────────────────────────────────
@@ -205,7 +205,7 @@ export function GlobalContextMenu() {
       // Non-editable selected text
       const sel = window.getSelection();
       // A page that shows its own toolbar for this selection (the reader) gets no second floating button.
-      if (useSelectionMenuStore.getState().extensions.some((extension) => extension.ownsTouchSelection?.(sel))) { setFab(null); return; }
+      if (selectionMenuRegistry.getState().extensions.some((extension) => extension.ownsTouchSelection?.(sel))) { setFab(null); return; }
       if (sel && !sel.isCollapsed && sel.toString().trim().length > 0 && sel.rangeCount > 0) {
         const r = sel.getRangeAt(0).getBoundingClientRect();
         if (r.width || r.height) {
