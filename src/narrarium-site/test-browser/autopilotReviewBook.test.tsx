@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { defaultDirector, serializeDirector, type AutopilotFinalReview, type ReviewRecord } from "narrarium-engine";
+import { DEFAULT_OPTIONS, defaultDirector, serializeDirector, type AutopilotFinalReview, type ReviewRecord } from "narrarium-engine";
 
 const mocks = vi.hoisted(() => ({
   files: new Map<string, string>(),
@@ -171,6 +171,91 @@ describe("«Review the book again» on the card of a finished book", () => {
     expect(within(shown).getByText(t("autopilot.reviewBook.oldServer", { version: "0.1.19" }))).toBeInTheDocument();
     await waitFor(() => expect(shown.querySelectorAll("[data-review-chapter]").length).toBeGreaterThan(0));
     expect(within(shown).getByRole("button", { name: /Review \d+ chapters/ })).toBeDisabled();
+  });
+
+  describe("with targets for the readers", () => {
+    const average = (shown: HTMLElement) => within(shown).getByLabelText(t("autopilot.review.readers.average.label")) as HTMLInputElement;
+    const heading = (shown: HTMLElement) => shown.querySelector<HTMLElement>("h3[id$='-chapters']") as HTMLElement;
+
+    it("offers the average and each reader, and takes up the chapters whose readers' vote is under a target, saying why: the director may be content with them", async () => {
+      finished();
+      show();
+      const shown = await openDialog();
+      expect(within(shown).getByRole("heading", { level: 3, name: t("autopilot.review.readers.title") })).toBeInTheDocument();
+      expect(within(shown).getByRole("table", { name: t("autopilot.review.readers.table.label") })).toBeInTheDocument();
+      // Chapter 6 changed since it was frozen: it waits for the decision about that change, and is not among the ones reviewed.
+      await waitFor(() => expect(heading(shown)).toHaveTextContent("5 chapters under 8/10 will be reviewed again"));
+      fireEvent.change(average(shown), { target: { value: "8" } });
+      // The readers' last vote of chapters 1 and 7 is a 7 and a 7.6, under 8: the director is content with them (8), so the readers are asked, and the review is whole only if a target is missed.
+      const expected = reviewCandidates(judgedPlan(), 8, new Map(), new Set([6]), { average: 8, each: {}, excluded: new Set() }).filter((entry) => entry.kind === "review");
+      await waitFor(() => expect(heading(shown)).toHaveTextContent(`${expected.length} chapters under 8/10 or under a target of the readers will be taken up`));
+      expect([...shown.querySelectorAll("[data-review-chapter]")].map((item) => Number(item.getAttribute("data-review-chapter")))).toEqual(expected.map((entry) => entry.number));
+      const first = shown.querySelector("[data-review-chapter='1']") as HTMLElement;
+      expect(first).toHaveTextContent("readers 7/10");
+      expect(first).toHaveTextContent(t("autopilot.reviewBook.readersOnly"));
+      expect(shown.querySelector("[data-review-chapter='2']")).not.toHaveTextContent(t("autopilot.reviewBook.readersOnly"));
+      // The estimate says how many only need their readers' vote, and what the targets add.
+      expect(shown.querySelector("[data-review-estimate]")?.textContent).toContain(t("autopilot.reviewBook.estimateReadersOnly", { count: expected.filter((entry) => entry.why === "readers").length }));
+      expect(shown.querySelector("[data-review-readers-delta]")).not.toBeNull();
+    });
+
+    it("sends the review's own targets with it: the average, a target for a reader and a reader that does not count", async () => {
+      finished();
+      show();
+      const shown = await openDialog();
+      fireEvent.change(average(shown), { target: { value: "7,5" } });
+      fireEvent.change(within(shown).getByLabelText(t("autopilot.review.readers.table.targetLabel", { name: "Emotional Reader" })), { target: { value: "8" } });
+      fireEvent.click(within(shown).getByLabelText(t("autopilot.review.readers.table.countsLabel", { name: "Critical Reader" })));
+      await waitFor(() => expect(within(shown).getByRole("button", { name: /^Review \d+ chapters?$/ })).toBeEnabled());
+      fireEvent.click(within(shown).getByRole("button", { name: /^Review \d+ chapters?$/ }));
+      await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledTimes(1));
+      expect(mocks.runtime.reviewBook).toHaveBeenCalledWith("book-1", expect.objectContaining({ targetScore: 8, readersTarget: 7.5, readerTargets: { "standard-emotional": 8 }, readersExcluded: ["standard-critical"] }));
+    });
+
+    it("starts from the targets of the run, and sends nothing of them when there are none", async () => {
+      finished({ options: { ...DEFAULT_OPTIONS, review: { readersTarget: 7, readerTargets: { "standard-general": 8 }, readersExcluded: ["standard-critical"] } } });
+      show();
+      const shown = await openDialog();
+      expect(average(shown).value).toBe("7");
+      expect((within(shown).getByLabelText(t("autopilot.review.readers.table.targetLabel", { name: "General Reader" })) as HTMLInputElement).value).toBe("8");
+      expect(within(shown).getByLabelText(t("autopilot.review.readers.table.countsLabel", { name: "Critical Reader" }))).not.toBeChecked();
+    });
+
+    it("says what is wrong with a vote for the readers, and does not let the review go on", async () => {
+      finished();
+      show();
+      const shown = await openDialog();
+      fireEvent.change(average(shown), { target: { value: "7.25" } });
+      expect(average(shown)).toHaveAttribute("aria-invalid", "true");
+      expect(average(shown)).toHaveAccessibleDescription(new RegExp(t("autopilot.review.problems.tenth").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      await waitFor(() => expect(within(shown).getByRole("button", { name: /^Review \d+ chapters?$/ })).toBeDisabled());
+    });
+
+    it("on a personal server that reviews the book but predates the targets: says so, offers none, and sends none", async () => {
+      const server = { ...LOCAL_BOOK, autopilotHost: "server" as const };
+      finished({ options: { ...DEFAULT_OPTIONS, review: { readersTarget: 7 } } }, server, "online");
+      useAutopilotStore.setState((store) => ({ server: { ...store.server, info: SERVER_INFO_OF(["autopilot", "autopilot-outline-apply", "autopilot-review-book", "autopilot-review-policy"]) } }));
+      show(server);
+      const shown = await openDialog();
+      expect(within(shown).getByText(t("autopilot.reviewBook.oldServerTargets", { version: "0.1.21" }))).toBeInTheDocument();
+      expect(average(shown)).toBeDisabled();
+      expect(average(shown).value, "what the run has of them is not the review's: none is sent").toBe("");
+      await waitFor(() => expect(shown.querySelectorAll("[data-review-chapter]").length).toBeGreaterThan(0));
+      fireEvent.click(within(shown).getByRole("button", { name: /^Review \d+ chapters?$/ }));
+      await waitFor(() => expect(mocks.runtime.reviewBook).toHaveBeenCalledTimes(1));
+      const input = mocks.runtime.reviewBook.mock.calls[0][1] as Record<string, unknown>;
+      expect(Object.keys(input).filter((key) => key.startsWith("readers") || key === "readerTargets")).toEqual([]);
+    });
+
+    it("is in Italian when the app is", async () => {
+      await act(async () => { await i18n.changeLanguage("it"); });
+      finished();
+      show();
+      fireEvent.click(screen.getByRole("button", { name: "Rivedi di nuovo il libro" }));
+      const shown = await screen.findByRole("dialog", { name: "Rivedi di nuovo il libro" });
+      fireEvent.change(within(shown).getByLabelText("Media dei lettori da raggiungere"), { target: { value: "8" } });
+      await waitFor(() => expect(within(shown).getByRole("heading", { name: /sotto 8\/10 o sotto un obiettivo dei lettori verranno ripresi/ })).toBeInTheDocument());
+    });
   });
 
   it("says how the last review of the book ended, under the verdict", () => {

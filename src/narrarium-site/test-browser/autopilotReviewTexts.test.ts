@@ -59,6 +59,27 @@ describe("the insights of a review of the book and of the caps", () => {
     expect(text("en", SAID[5])).toContain("the book as a whole got 7/10");
   });
 
+  it("keep the engine's words for a review with targets for the readers (its round, its end, its stop): they say the readers' part and name the readers, in the language of the book", async () => {
+    const readers = { readers: 6.4, readersTarget: 7.5 };
+    for (const language of ["en", "it"] as const) {
+      await act(async () => { await i18n.changeLanguage(language); });
+      expect(text(language, { ...SAID[2], figures: { ...SAID[2].figures, readers: 6.4 } }), `${language}: a round with the readers' lowest average`).toBe(ENGINE_WORDS);
+      expect(text(language, { ...SAID[3], figures: { ...SAID[3].figures, ...readers } }), `${language}: the book reached the target with the readers at theirs`).toBe(ENGINE_WORDS);
+      expect(text(language, { ...SAID[4], figures: { ...SAID[4].figures, readers: 5 } }), `${language}: a plateau the readers did not raise`).toBe(ENGINE_WORDS);
+      expect(text(language, { ...SAID[5], figures: { ...SAID[5].figures, ...readers } }), `${language}: every chapter reached it with its readers`).toBe(ENGINE_WORDS);
+    }
+    await act(async () => { await i18n.changeLanguage("en"); });
+    expect(text("en", SAID[2]), "without the readers the words of the app are said as ever").toBe("Round 2 of the review is over: lowest chapter 6.5/10, the book 7/10 (target 8/10).");
+  });
+
+  it("keep the engine's words for a chapter closed under a target of the readers: they name each reader that stood in the way, in the language of the book", async () => {
+    for (const language of ["en", "it"] as const) {
+      await act(async () => { await i18n.changeLanguage(language); });
+      expect(text(language, { code: "readersTargetMissed", chapterNumber: 5, figures: { round: 2, readers: 6.4, readersTarget: 7.5 } }), `${language}: the average stood in the way`).toBe(ENGINE_WORDS);
+      expect(text(language, { code: "readersTargetMissed", chapterNumber: 5, figures: { round: 2, readersUnder: 2 } }), `${language}: readers under their own targets`).toBe(ENGINE_WORDS);
+    }
+  });
+
   it("write the money of a cap in the currency it was counted in, and the tokens as a count", () => {
     expect(text("en", SAID[7])).toBe("Money cap reached: $2.50 spent of $2.50. Raise the cap to go on.");
     expect(text("en", SAID[8])).toContain("1,200,300 tokens of 1,200,000");

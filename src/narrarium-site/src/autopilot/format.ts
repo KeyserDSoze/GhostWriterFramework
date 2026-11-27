@@ -245,14 +245,15 @@ function reviewText(t: TFunction, event: Extract<Notice, { type: "insight" }>): 
       return t(key, { number: event.chapterNumber, score: voteText(figures.score), target: voteText(figures.target), defaultValue: title });
     case "reviewChapterSkipped":
       return typeof event.chapterNumber === "number" ? t(key, { number: event.chapterNumber, defaultValue: title }) : title;
+    // With the readers' targets in play (`readers`, `readersTarget`) the engine's own words stay: they say the readers' part, and name them, in the language of the book.
     case "reviewRoundDone":
-      if (!figures || typeof figures.round !== "number" || typeof figures.target !== "number") return title;
+      if (!figures || typeof figures.round !== "number" || typeof figures.target !== "number" || figures.readers !== undefined) return title;
       return t(key, { round: figures.round, lowest: voteText(figures.lowest), book: voteText(figures.book), target: voteText(figures.target), defaultValue: title });
     case "reviewDone":
-      if (!figures || typeof figures.rounds !== "number" || typeof figures.target !== "number") return title;
+      if (!figures || typeof figures.rounds !== "number" || typeof figures.target !== "number" || figures.readersTarget !== undefined) return title;
       return t(key, { count: figures.rounds, book: voteText(figures.book), target: voteText(figures.target), defaultValue: title });
     case "reviewStopped":
-      if (!figures || typeof figures.target !== "number") return title;
+      if (!figures || typeof figures.target !== "number" || figures.readers !== undefined || figures.readersTarget !== undefined) return title;
       return t(key, { ...(figures.outcome === "plateau" || figures.outcome === "chapters" ? { context: figures.outcome } : {}), lowest: voteText(figures.lowest), book: voteText(figures.book), target: voteText(figures.target), defaultValue: title });
     case "reviewHeld":
       return typeof figures?.rounds === "number" ? t(key, { count: figures.rounds, defaultValue: title }) : title;

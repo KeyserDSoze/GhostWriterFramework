@@ -62,6 +62,28 @@ function ScoreCell({ value, none, strong = false, revised }: { value: number | n
 }
 
 /**
+ * The readers' vote of a chapter: the last time they read it, with the round of the review it was in when the engine says it. A vote of an earlier text (they read the chapter
+ * before its last corrections: the first draft's, or an earlier round's) has a star, with its words for a screen reader and in the tooltip, and the legend under the table says it
+ * once; the vote of the chapter as it is now has none. The round is a small tag: «r3» («g3»).
+ */
+function ReadersCell({ entry, none }: { entry: ChapterScore; none: string }) {
+  const { t } = useTranslation();
+  const reading = entry.readersReading;
+  if (entry.readers === null) return <ScoreCell value={null} none={none} />;
+  const current = reading?.current ?? true;
+  const round = reading?.round;
+  const tip = t(current ? (round !== undefined ? "autopilot.result.scores.readersNowRound" : "autopilot.result.scores.readersNow") : (round !== undefined ? "autopilot.result.scores.readersBeforeRound" : "autopilot.result.scores.readersBefore"), { round });
+  return (
+    <td data-readers-cell="" data-readers-current={current ? "true" : "false"} title={tip} className="whitespace-nowrap px-2 py-1 text-right tabular-nums">
+      {formatCount(entry.readers)}
+      {!current && <span aria-hidden="true" data-readers-before="">*</span>}
+      {round !== undefined && <span aria-hidden="true" data-readers-round="" className="ml-1 text-xs text-muted-foreground">{t("autopilot.result.scores.readersRoundTag", { round })}</span>}
+      <span className="sr-only"> ({t(current ? "autopilot.result.scores.readersSrNow" : "autopilot.result.scores.readersSrBefore")}{round !== undefined ? `, ${t("autopilot.result.scores.round", { number: round })}` : ""})</span>
+    </td>
+  );
+}
+
+/**
  * How the director judged the chapters: the picture of the final scores, the order they are listed in, and the table of all of them (the final score, the score of each
  * round of the review, the readers' average). A long book is a window of the table with a button for the rest; the lowest scores first is one click.
  */
@@ -82,6 +104,9 @@ export function ScoresBlock({ bookId, scores, linkedSlugs, titleOf }: { bookId: 
   const revised = t("autopilot.result.scores.revised");
   // The sign is explained once, when a cell on show has it.
   const anyRevised = sorted.slice(0, limit).some((entry) => entry.verdicts?.includes("revise"));
+  // The same for the readers' column: the star and the round tag are explained once, when a row on show has one.
+  const anyBefore = sorted.slice(0, limit).some((entry) => entry.readers !== null && entry.readersReading?.current === false);
+  const anyRound = sorted.slice(0, limit).some((entry) => entry.readers !== null && entry.readersReading?.round !== undefined);
   if (!total) return null;
 
   return (
@@ -111,7 +136,7 @@ export function ScoresBlock({ bookId, scores, linkedSlugs, titleOf }: { bookId: 
                   </th>
                   <ScoreCell value={entry.final} none={none} strong />
                   {Array.from({ length: rounds }, (_, index) => <ScoreCell key={index} value={entry.rounds[index] ?? null} none={none} revised={entry.verdicts?.[index] === "revise" ? revised : undefined} />)}
-                  {readers && <ScoreCell value={entry.readers} none={none} />}
+                  {readers && <ReadersCell entry={entry} none={none} />}
                 </tr>
               );
             })}
@@ -119,6 +144,8 @@ export function ScoresBlock({ bookId, scores, linkedSlugs, titleOf }: { bookId: 
         </table>
       </div>
       {anyRevised && <p className="text-xs text-muted-foreground">{t("autopilot.result.scores.reviseLegend")}</p>}
+      {anyBefore && <p data-readers-legend="before" className="text-xs text-muted-foreground">{t("autopilot.result.scores.readersLegendBefore")}</p>}
+      {anyRound && <p data-readers-legend="round" className="text-xs text-muted-foreground">{t("autopilot.result.scores.readersLegendRound")}</p>}
       {(limit < total || total > first) && (
         <button type="button" onClick={() => setShown(limit < total ? next : null)} className="inline-flex min-h-8 items-center rounded-md border px-3 text-xs font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           {limit < total ? (next === total ? t("autopilot.result.scores.showAll", { count: total }) : t("autopilot.result.scores.showMore", { count: next - limit })) : t("autopilot.result.scores.showFewer")}

@@ -94,7 +94,7 @@ async function answerResponses(response: import("node:http").ServerResponse, rep
  * for the first pieces of a reply (so that a page can be seen to read it as it comes), and as one JSON body when it does not. A model that refuses thinking with tools refuses it
  * on Chat Completions only, as the providers of those models do.
  */
-export async function startProvider(options: { delayMs?: number; chapters?: number; scenes?: number; words?: number; name?: string; timeline?: StubCall[]; behavior?: StubBehavior; pieceGapMs?: number; answers?: Partial<Record<string, (user: string) => unknown>> } = {}): Promise<StubProvider> {
+export async function startProvider(options: { delayMs?: number; chapters?: number; scenes?: number; words?: number; name?: string; timeline?: StubCall[]; behavior?: StubBehavior; pieceGapMs?: number; answers?: Partial<Record<string, (user: string, system: string) => unknown>> } = {}): Promise<StubProvider> {
   const { createFakeAutopilotAi } = await engineModule("testing/index.js");
   const fake = createFakeAutopilotAi({ reviewVerdict: () => "approve", scenes: options.scenes ?? 1, words: options.words ?? 120, chapters: options.chapters ?? 1 });
   const asked: string[] = [];
@@ -149,7 +149,7 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
     const wait = state.behavior.kind === "slow" ? state.behavior.ms : state.delayMs;
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
     // A spec may answer a schema itself (`answers`, by the name of the function), from the request; the engine's fake answers the others.
-    const own = tool ? options.answers?.[tool.name]?.(user) : undefined;
+    const own = tool ? options.answers?.[tool.name]?.(user, system) : undefined;
     const answer = own !== undefined ? { text: JSON.stringify(own), json: own } : await fake.complete({ system, user, label: "e2e", ...(tool ? { json: { name: tool.name } } : {}) } as never);
     if (response.destroyed) return;
     if (responses) {
@@ -363,6 +363,9 @@ export interface AutopilotFacts {
   /** The money cap the state holds (`options.budgetLimit`, 0: none) and the limit that stopped the run, with the numbers the stop compared. */
   budgetLimit: number;
   limitReached: { kind: string; used: number; limit: number } | null;
+  /** The review policy the state holds (`options.review`), and the rounds of review each chapter kept (by chapter number). */
+  review: Record<string, unknown> | null;
+  rounds: Record<number, Array<Record<string, unknown>>>;
 }
 
 /** What the book's local repository says of its autopilot: its state and the log of its steps. */
@@ -375,7 +378,7 @@ export const autopilotFacts = (page: Page, repo: string) => page.evaluate((repo)
       const files = (all.result as Array<{ repoId: string; path: string; text: string }>).filter((entry) => entry.repoId.endsWith(`::local:${repo}`));
       db.close();
       try {
-        const state = JSON.parse(files.find((entry) => entry.path === "autopilot/state.json")?.text ?? "null") as { status: string; phase: string; lastError?: unknown; stats?: { aiCalls: number; inputTokens: number; outputTokens: number; cost: number; usageUnknownCalls?: number; costUnknownCalls?: number }; options?: { budgetLimit?: number }; limitReached?: { kind: string; used: number; limit: number } } | null;
+        const state = JSON.parse(files.find((entry) => entry.path === "autopilot/state.json")?.text ?? "null") as { status: string; phase: string; lastError?: unknown; stats?: { aiCalls: number; inputTokens: number; outputTokens: number; cost: number; usageUnknownCalls?: number; costUnknownCalls?: number }; options?: { budgetLimit?: number; review?: Record<string, unknown> }; limitReached?: { kind: string; used: number; limit: number }; plan?: { chapters?: Array<{ number: number; rounds?: Array<Record<string, unknown>> }> } } | null;
         const log = JSON.parse(files.find((entry) => entry.path === "autopilot/activity.json")?.text ?? "{\"activities\":[]}") as { activities: Array<{ task: string; status: string; chapterNumber?: number; sceneNumber?: number }> };
         resolveFacts(state ? {
           status: state.status,
@@ -386,6 +389,8 @@ export const autopilotFacts = (page: Page, repo: string) => page.evaluate((repo)
           stats: state.stats ?? null,
           budgetLimit: state.options?.budgetLimit ?? 0,
           limitReached: state.limitReached ?? null,
+          review: state.options?.review ?? null,
+          rounds: Object.fromEntries((state.plan?.chapters ?? []).map((chapter) => [chapter.number, chapter.rounds ?? []])),
         } : null);
       } catch { resolveFacts(null); }
     };

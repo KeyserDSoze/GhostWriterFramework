@@ -3,6 +3,7 @@ import {
   AutopilotBusyError,
   AutopilotSession,
   ServerRequestError,
+  asksReviewTargets,
   isRevisionCampaignErrorCode,
   pickAiRuntimeConfig,
   readStoredAutopilot,
@@ -10,6 +11,7 @@ import {
   resolveAiCandidates,
   runnerActivity,
   serverHasCalls,
+  serverSupportsReviewTargets,
   syncBookStores,
   type AiPort,
   type AskDirectorResult,
@@ -54,7 +56,7 @@ import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
 import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
 import { AutopilotRulesUnsupportedError, serverEditsRules } from "@/autopilot/rules";
 import { AutopilotFrozenUnsupportedError, frozenErrorCode, serverHasFrozenChapters } from "@/autopilot/frozenChapters";
-import { AutopilotCampaignRefusedError, AutopilotOutlineApplyUnsupportedError, AutopilotReviewUnsupportedError, campaignRefusal, serverHasOutlineApply } from "@/autopilot/campaign";
+import { AutopilotCampaignRefusedError, AutopilotOutlineApplyUnsupportedError, AutopilotReviewTargetsUnsupportedError, AutopilotReviewUnsupportedError, campaignRefusal, serverHasOutlineApply } from "@/autopilot/campaign";
 import { serverHasReviewBook } from "@/autopilot/reviewPolicy";
 import { AutopilotRetryUnsupportedError, serverHasRetry } from "@/autopilot/retry";
 import { assertGithubConflicts, githubConflictFiles, isGithubConflict, noteGithubConflict } from "@/autopilot/githubConflictsServer";
@@ -1066,6 +1068,7 @@ export class BrowserAutopilotRuntime {
         const { info } = await this.requireServer();
         // Each command needs the feature of its campaign; a cancel, any campaign the server has.
         if (command.type === "review-book" && !serverHasReviewBook(info)) throw new AutopilotReviewUnsupportedError();
+        if (command.type === "review-book" && asksReviewTargets(command.input) && !serverSupportsReviewTargets(info)) throw new AutopilotReviewTargetsUnsupportedError();
         if (command.type === "revise-chapters" && !serverHasOutlineApply(info)) throw new AutopilotOutlineApplyUnsupportedError();
         if (command.type === "cancel-campaign" && !serverHasOutlineApply(info) && !serverHasReviewBook(info)) throw new AutopilotOutlineApplyUnsupportedError();
         await this.handToServer(book);

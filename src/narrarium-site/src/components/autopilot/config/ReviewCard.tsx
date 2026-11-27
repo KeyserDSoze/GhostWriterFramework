@@ -4,7 +4,9 @@ import { Target } from "lucide-react";
 import { DIRECTOR_FILE, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, defaultDirector, parseDirector, type AutopilotOptions, type AutopilotState } from "narrarium-engine";
 import { Card } from "@/components/autopilot/Card";
 import { FormRunEstimate, OptionalNumberField, useProblemText } from "@/components/autopilot/review/ReviewFields";
+import { READER_TARGET_RANGE, ReaderTargetsFields } from "@/components/autopilot/review/ReaderTargetsFields";
 import { useBookFiles } from "@/autopilot/useBookFiles";
+import { useActiveReaders } from "@/autopilot/useActiveReaders";
 import { MAX_MONEY_CAP, MAX_TOKEN_CAP, REVIEW_SERVER_VERSION, TARGET_MAX, TARGET_MIN, readReviewForm, type ReviewField, type ReviewForm } from "@/autopilot/reviewPolicy";
 import { formatCount } from "@/autopilot/format";
 import { useMoney } from "@/costs/useMoney";
@@ -14,7 +16,7 @@ import { isAppliedCap } from "@/costs/budgetCaps";
 import "@/i18n/costs";
 
 const ID = "autopilot-review";
-const FIELDS: ReviewField[] = ["target", "rounds", "readerRounds", "campaignRounds", "money", "tokens"];
+const FIELDS: ReviewField[] = ["target", "rounds", "readerRounds", "campaignRounds", "money", "tokens", "readersTarget"];
 
 export interface ReviewCardHandle {
   /** Show every problem, and give the focus to the first field that has one. */
@@ -29,6 +31,8 @@ export interface ReviewCardProps {
   locked: boolean;
   /** The personal server that runs the book predates the review policy: the score and the rounds are the director's, and cannot be chosen here. */
   policyUnsupported: boolean;
+  /** The personal server has the review policy but predates the targets for the readers: it would ignore them, so they cannot be chosen here. */
+  targetsUnsupported?: boolean;
   /** The simulated readers read the chapters (`options.readers`): their rounds mean something only then. */
   readers: boolean;
   /** What the book spent so far (`stats.cost`, every run's), in the currency of its prices (`stats.currency`). */
@@ -47,14 +51,16 @@ export interface ReviewCardProps {
  * with one line that says what it does. What the book spent is next to the money cap, which never resets: it is raised. Once a value changed, the estimate of the run
  * with the new values is under the fields. A personal server that predates the policy keeps the director's values, and says so.
  */
-const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function ReviewCard({ book, form, onChange, locked, policyUnsupported, readers, spent, spentCurrency, changed, estimate }, ref) {
+const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function ReviewCard({ book, form, onChange, locked, policyUnsupported, targetsUnsupported = false, readers, spent, spentCurrency, changed, estimate }, ref) {
   const { t } = useTranslation();
   const money = useMoney();
   const problemText = useProblemText();
   const inputs = useRef<Partial<Record<ReviewField, HTMLInputElement | null>>>({});
-  const [touched, setTouched] = useState<ReadonlySet<ReviewField>>(new Set());
+  const [touched, setTouched] = useState<ReadonlySet<ReviewField | `reader:${string}`>>(new Set());
   const [focusAsked, setFocusAsked] = useState(0);
   const reading = readReviewForm(form);
+  // Who reads the book in a run: the readers' table is made of them.
+  const active = useActiveReaders(book.id, estimate.structure, estimate.options.maxReaders);
 
   // The director's score and rounds are what a blank field means: read from its profile, the defaults of its language when the book has none.
   const language = estimate.structure?.language;
@@ -66,14 +72,20 @@ const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function Review
 
   useImperativeHandle(ref, () => ({
     showProblems: () => {
-      setTouched(new Set(FIELDS));
+      setTouched(new Set([...FIELDS, ...Object.keys(reading.readerProblems).map((slug) => `reader:${slug}` as const)]));
       setFocusAsked((count) => count + 1);
     },
-  }), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [reading.readerProblems]);
   useEffect(() => {
     if (!focusAsked) return;
     const first = FIELDS.find((field) => reading.problems[field]);
     if (first) inputs.current[first]?.focus();
+    else {
+      // A target of a reader that is wrong: the focus goes to its field.
+      const slug = Object.keys(reading.readerProblems)[0];
+      if (slug) document.getElementById(`${ID}-target-${slug}`)?.focus();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusAsked]);
 
@@ -82,10 +94,21 @@ const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function Review
     onChange({ ...form, [field]: value });
   };
   const problemOf = (field: ReviewField, min: number, max: number) => (touched.has(field) ? problemText(reading.problems[field], { min, max }) : null);
+  const readerProblemTexts = Object.fromEntries(Object.entries(reading.readerProblems).filter(([slug]) => touched.has(`reader:${slug}`)).map(([slug, problem]) => [slug, problemText(problem, READER_TARGET_RANGE) ?? ""]));
+  const changeReaderTarget = (slug: string, value: string) => {
+    setTouched((current) => new Set(current).add(`reader:${slug}`));
+    onChange({ ...form, readerTargets: { ...(form.readerTargets ?? {}), [slug]: value } });
+  };
+  const changeCounts = (slug: string, counts: boolean) => {
+    const left = new Set(form.readersExcluded ?? []);
+    if (counts) left.delete(slug);
+    else left.add(slug);
+    onChange({ ...form, readersExcluded: [...left] });
+  };
   const policyOff = locked || policyUnsupported;
   // The cap is in the currency the book's costs are counted in; a book that spent nothing yet has the settings' currency.
   const currency = spentCurrency || money.display;
-  const field = (name: ReviewField) => ({ id: `${ID}-${name}`, value: form[name], ref: (element: HTMLInputElement | null) => { inputs.current[name] = element; } });
+  const field = (name: ReviewField) => ({ id: `${ID}-${name}`, value: form[name] ?? "", ref: (element: HTMLInputElement | null) => { inputs.current[name] = element; } });
 
   return (
     <Card id={ID} title={t("autopilot.review.title")} icon={<Target className="h-4 w-4 text-primary" aria-hidden="true" />}>
@@ -151,6 +174,23 @@ const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function Review
           onChange={(value) => change("tokens", value)}
         />
       </div>
+      <ReaderTargetsFields
+        id={ID}
+        readers={active.readers}
+        loading={!active.ready}
+        readersOff={!readers}
+        unsupported={targetsUnsupported && !policyUnsupported}
+        disabled={policyOff}
+        average={form.readersTarget ?? ""}
+        targets={form.readerTargets ?? {}}
+        excluded={form.readersExcluded ?? []}
+        averageProblem={problemOf("readersTarget", READER_TARGET_RANGE.min, READER_TARGET_RANGE.max)}
+        readerProblems={readerProblemTexts}
+        onAverage={(value) => change("readersTarget", value)}
+        onTarget={changeReaderTarget}
+        onCounts={changeCounts}
+        averageRef={(element) => { inputs.current.readersTarget = element; }}
+      />
       {changed && reading.valid && estimate.branch !== undefined && (
         <FormRunEstimate
           book={book}

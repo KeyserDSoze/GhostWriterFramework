@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { AutopilotFinalReview, ChapterRound, PlannedChapter } from "narrarium-engine";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_OPTIONS, defaultDirector, serializeDirector, type AutopilotFinalReview, type ChapterRound, type PlannedChapter } from "narrarium-engine";
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { AutopilotResult } from "@/components/autopilot/AutopilotResult";
@@ -12,6 +12,13 @@ import { DEFAULT_SETTINGS } from "@/types/settings";
 import { judgedPlan, longPlan } from "./helpers/autopilotFixtures";
 import { activityOf, seedRun } from "./helpers/autopilotBand";
 import { t } from "./helpers/quickCommands";
+
+const mocks = vi.hoisted(() => ({ director: null as string | null }));
+
+// The card of the targets reads the director's file (its approval score, the weights of the readers) from the working copy of the book.
+vi.mock("@/autopilot/useBookFiles", () => ({
+  useBookFiles: (_bookId: string, paths: readonly string[]) => ({ files: new Map(paths.includes("director.md") && mocks.director ? [["director.md", mocks.director]] : []), failed: false }),
+}));
 
 const WORDS = "The arc holds: the lighthouse ledger pays off in the last chapter and the open threads are closed with care.";
 const LONG_WORDS = `${WORDS} The middle of the book drags a little, chapters 8 to 11 repeat the same fog-and-doubt beat without moving the keeper's decision forward, and the epilogue is rushed. The prose is steady and the secret of the third light is revealed at the right moment. Consider a longer epilogue and trimming one of the fog chapters.`;
@@ -49,6 +56,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  mocks.director = null;
   await i18n.changeLanguage("en");
 });
 
@@ -267,7 +275,7 @@ describe("the scores of the chapters", () => {
     expect(within(table()).getAllByRole("columnheader").map((header) => header.textContent)).toEqual([t("autopilot.result.scores.chapter"), t("autopilot.result.scores.final"), t("autopilot.result.scores.round", { number: 1 }), t("autopilot.result.scores.round", { number: 2 }), t("autopilot.result.scores.round", { number: 3 }), t("autopilot.result.scores.readers")]);
     const fourth = rowsOf()[3];
     expect(within(fourth).getByRole("rowheader")).toHaveTextContent("4 · Title 4");
-    expect([...fourth.querySelectorAll("td")].map((cell) => cell.textContent?.replace(/\s+/g, " ").trim())).toEqual(["6", "4.5", "5.5", "6", "6.5"]);
+    expect([...fourth.querySelectorAll("td")].map((cell) => cell.textContent?.replace(/\s+/g, " ").trim())).toEqual(["6", "4.5", "5.5", "6", "6.5* (before the corrections)"]);
   });
 
   describe("and what each round decided, when the plan says it", () => {
@@ -308,7 +316,7 @@ describe("the scores of the chapters", () => {
       done({ chapters: withVerdicts(judged()) });
       show();
       const fourth = rowsOf()[3];
-      expect([...fourth.querySelectorAll("td")].map((cell) => cell.textContent?.replace(/\s+/g, " ").trim())).toEqual(["6", "↻ 4.5 sent back for revision", "↻ 5.5 sent back for revision", "6", "6.5"]);
+      expect([...fourth.querySelectorAll("td")].map((cell) => cell.textContent?.replace(/\s+/g, " ").trim())).toEqual(["6", "↻ 4.5 sent back for revision", "↻ 5.5 sent back for revision", "6", "6.5* (before the corrections)"]);
     });
 
     it("puts the sign before the score, so that the digits of a right-aligned column stay under one another, and says the score first to a screen reader, then the words", () => {
@@ -543,7 +551,124 @@ describe("what a screen reader is told", () => {
     const headings = within(card()).getAllByRole("heading").map((heading) => [heading.tagName, heading.textContent]);
     expect(headings[0]).toEqual(["H2", t("autopilot.result.title")]);
     expect(headings.slice(1).every(([tag]) => tag === "H3")).toBe(true);
-    expect(headings.map(([, text]) => text)).toEqual([t("autopilot.result.title"), t("autopilot.result.verdict.title"), t("autopilot.result.numbers.title"), t("autopilot.result.scores.title"), t("autopilot.result.read.title")]);
+    // The readers gave their votes: the targets are a part of their own, before the scores.
+    expect(headings.map(([, text]) => text)).toEqual([t("autopilot.result.title"), t("autopilot.result.verdict.title"), t("autopilot.result.numbers.title"), t("autopilot.result.targets.title"), t("autopilot.result.scores.title"), t("autopilot.result.read.title")]);
   });
 });
 
+describe("the readers' column", () => {
+  const table = () => screen.getByRole("table", { name: t("autopilot.result.scores.title") });
+  const readersCell = (index: number) => [...table().querySelectorAll("tbody tr")][index].querySelector<HTMLElement>("[data-readers-cell]") as HTMLElement;
+  const chapterOf = (number: number, rounds: ChapterRound[], score = 9) => ({ ...judged(1)[0], number, slug: `${String(number).padStart(3, "0")}-chapter-${number}`, title: `Title ${number}`, score, rounds });
+
+  it("shows the readers' LAST vote with its round: the one after the corrections, not the first draft's, which stays in the history of the plan", () => {
+    done({ chapters: [chapterOf(1, [
+      { director: 6, readers: 5.8, readerVotes: { a: 5.6, b: 6 }, round: 1, verdict: "revise", accepted: 2, rejected: 0 },
+      { director: 9, verdict: "approve", accepted: 0, rejected: 0 },
+      { readers: 7.4, readerVotes: { a: 7, b: 7.8 }, round: 2, reading: "end" },
+    ])] });
+    show();
+    const cell = readersCell(0);
+    expect(cell).toHaveAttribute("data-readers-current", "true");
+    expect(cell.textContent?.replace(/\s+/g, " ").trim()).toBe("7.4r2 (as the chapter is now, Round 2)");
+    expect(cell).toHaveAttribute("title", t("autopilot.result.scores.readersNowRound", { round: 2 }));
+    expect(cell.querySelector("[data-readers-before]")).toBeNull();
+    // The director's own rounds are two: the reading is not one of them.
+    expect(within(table()).getAllByRole("columnheader").map((header) => header.textContent)).toEqual([t("autopilot.result.scores.chapter"), t("autopilot.result.scores.final"), t("autopilot.result.scores.round", { number: 1 }), t("autopilot.result.scores.round", { number: 2 }), t("autopilot.result.scores.readers")]);
+  });
+
+  it("marks a vote of an earlier text with a star, says why to a screen reader and in the tooltip, and explains it once under the table", () => {
+    done({ chapters: [chapterOf(1, [{ director: 6, readers: 5.8, round: 1, verdict: "revise", accepted: 2, rejected: 0 }, { director: 9, verdict: "approve", accepted: 0, rejected: 0 }])] });
+    show();
+    const cell = readersCell(0);
+    expect(cell).toHaveAttribute("data-readers-current", "false");
+    expect(cell.querySelector("[data-readers-before]")).toHaveAttribute("aria-hidden", "true");
+    expect(cell.textContent?.replace(/\s+/g, " ").trim()).toBe("5.8*r1 (before the corrections, Round 1)");
+    expect(cell).toHaveAttribute("title", t("autopilot.result.scores.readersBeforeRound", { round: 1 }));
+    expect(screen.getAllByText(t("autopilot.result.scores.readersLegendBefore"))).toHaveLength(1);
+    expect(screen.getAllByText(t("autopilot.result.scores.readersLegendRound"))).toHaveLength(1);
+  });
+
+  it("says no round for a plan that does not say it (an older engine), and no legend for a vote of the chapter as it is", () => {
+    done({ chapters: [chapterOf(1, [{ director: 9, readers: 7, accepted: 0, rejected: 0 }])] });
+    show();
+    const cell = readersCell(0);
+    expect(cell.textContent?.replace(/\s+/g, " ").trim()).toBe("7 (as the chapter is now)");
+    expect(cell).toHaveAttribute("title", t("autopilot.result.scores.readersNow"));
+    expect(card().querySelector("[data-readers-legend]")).toBeNull();
+  });
+
+  it.each([["en", "r2"], ["it", "g2"]] as const)("is told in the language of the app, with the tag of the round (%s)", async (language, tag) => {
+    await i18n.changeLanguage(language);
+    done({ chapters: [chapterOf(1, [{ director: 8, accepted: 1, rejected: 0 }, { readers: 6.5, readerVotes: { a: 6.5 }, round: 2, reading: "check" }])] });
+    show();
+    expect(readersCell(0).querySelector("[data-readers-round]")).toHaveTextContent(tag);
+    expect(readersCell(0)).toHaveAttribute("title", t("autopilot.result.scores.readersNowRound", { round: 2 }));
+    expect(t("autopilot.result.scores.readersNow")).toBe(language === "en" ? "The readers' vote on the chapter as it is now: nothing was corrected after they read it." : "Il voto dei lettori sul capitolo com'è ora: dopo che l'hanno letto non è stato corretto nulla.");
+  });
+
+  it("leaves out of the average a reader that does not count, when the votes of each reader are known", () => {
+    done({ chapters: [chapterOf(1, [{ director: 8, readers: 6, readerVotes: { a: 9, b: 3 }, round: 1, accepted: 0, rejected: 0 }])], statePatch: { options: { ...DEFAULT_OPTIONS, review: { readersExcluded: ["b"] } } } });
+    show();
+    expect(readersCell(0).textContent).toContain("9");
+  });
+});
+
+describe("the card of the targets", () => {
+  const targets = () => document.querySelector<HTMLElement>("[data-result-targets]");
+  const row = (key: string) => document.querySelector<HTMLElement>(`[data-target-row="${key}"]`) as HTMLElement;
+  const chapterOf = (number: number, score: number, rounds: ChapterRound[]) => ({ ...judged(1)[0], number, slug: `${String(number).padStart(3, "0")}-chapter-${number}`, title: `Title ${number}`, score, rounds });
+  // Two chapters at 9 and 8.5 for the director; the readers gave 5.8 and 7.4 (the first chapter's vote is of the first draft), and the emotional reader 6 and 8.
+  const CHAPTERS = [
+    chapterOf(1, 9, [{ director: 9, readers: 5.8, readerVotes: { "standard-general": 5.6, "standard-emotional": 6 }, round: 1, verdict: "revise", accepted: 2, rejected: 0 }, { director: 9, verdict: "approve", accepted: 0, rejected: 0 }]),
+    chapterOf(2, 8.5, [{ director: 8, readers: 6.9, readerVotes: { "standard-general": 5.8, "standard-emotional": 8 }, round: 1, accepted: 1, rejected: 0 }, { readers: 7.4, readerVotes: { "standard-general": 6.8, "standard-emotional": 8 }, round: 1, reading: "end" }]),
+  ];
+  const withTargets = (review: Record<string, unknown>) => ({ ...DEFAULT_OPTIONS, review });
+
+  it("says each subject against its target: the director's, the readers' average, and each reader that has one, in words and not by colour", async () => {
+    mocks.director = serializeDirector({ ...defaultDirector("en"), approvalScore: 8 });
+    done({ chapters: CHAPTERS, statePatch: { options: withTargets({ readersTarget: 7.5, readerTargets: { "standard-emotional": 8 } }) } });
+    show();
+    expect(await screen.findByRole("table", { name: t("autopilot.result.targets.title") })).toBeInTheDocument();
+    expect(within(row("director")).getByText(t("autopilot.result.targets.director"))).toBeInTheDocument();
+    expect(row("director")).toHaveTextContent("8/10");
+    expect(row("director").querySelector("[data-target-status]")).toHaveAttribute("data-target-status", "reached");
+    // The chapters' last vote of the readers: 5.8 (the first draft's) and 7.4: 6.6 on average, under 7.5, with one chapter under it (the one with the first-draft vote).
+    expect(row("average")).toHaveTextContent("6.6/10");
+    expect(row("average")).toHaveTextContent("7.5/10");
+    expect(row("average")).toHaveTextContent(t("autopilot.result.targets.under", { count: 2, total: 2 }));
+    expect(row("average").querySelector("[data-target-status]")).toHaveAttribute("data-target-status", "missed");
+    expect(row("average")).toHaveTextContent(t("autopilot.result.targets.missed"));
+    expect(row("standard-emotional")).toHaveTextContent("Emotional Reader");
+    expect(row("standard-emotional")).toHaveTextContent("7/10");
+    expect(row("standard-emotional").querySelector("[data-target-status]")).toHaveAttribute("data-target-status", "missed");
+  });
+
+  it("says how many chapters the readers last read before their corrections: the answer to «the director gave 9 and the readers a low vote»", async () => {
+    mocks.director = serializeDirector(defaultDirector("en"));
+    done({ chapters: CHAPTERS });
+    show();
+    expect(await screen.findByText(t("autopilot.result.targets.before", { count: 1 }))).toBeInTheDocument();
+    expect(card().querySelector("[data-targets-before]")).toBeInTheDocument();
+    expect(screen.getByText(t("autopilot.result.targets.hint"))).toBeInTheDocument();
+    // Without a target for the readers their average is shown all the same, with no target and no status.
+    expect(row("average")).toHaveTextContent(t("autopilot.result.targets.noTarget"));
+    expect(row("average").querySelector("[data-target-status]")).toBeNull();
+  });
+
+  it("shows a reader that does not count as such, with no target and no status", async () => {
+    mocks.director = serializeDirector(defaultDirector("en"));
+    done({ chapters: CHAPTERS, statePatch: { options: withTargets({ readersExcluded: ["standard-general"], readerTargets: { "standard-general": 9 } }) } });
+    show();
+    expect(await screen.findByRole("table", { name: t("autopilot.result.targets.title") })).toBeInTheDocument();
+    expect(row("standard-general")).toHaveTextContent(t("autopilot.result.targets.notCounted"));
+    expect(row("standard-general").querySelector("[data-target-status]")).toBeNull();
+  });
+
+  it("is not there for a book whose readers gave no vote and that asked nothing of them", () => {
+    mocks.director = serializeDirector(defaultDirector("en"));
+    done({ chapters: judged(12, false) });
+    show();
+    expect(targets()).toBeNull();
+  });
+});

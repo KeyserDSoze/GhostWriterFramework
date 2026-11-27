@@ -19,7 +19,7 @@ import { bookStorageMode, type BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
 import { OUTLINE_BRIEF_NOTICE_ID } from "@/autopilot/outlineBrief";
 import { autoResumeOn, setAutoResume } from "@/autopilot/resume";
-import { policyUpdate, readReviewForm, reviewFormOf, samePolicy, type ReviewForm } from "@/autopilot/reviewPolicy";
+import { policyUpdate, policyWithoutReaderTargets, readReviewForm, reviewFormOf, samePolicy, type ReviewForm } from "@/autopilot/reviewPolicy";
 import type { ReviewCardHandle } from "@/components/autopilot/config/ReviewCard";
 import "@/i18n/autopilotCallsSettings";
 
@@ -68,6 +68,8 @@ export interface SetupCardProps {
   outlineBriefUnsupported?: boolean;
   /** The personal server predates the review policy of a run: the score and the rounds stay the director's, and are never sent. */
   reviewPolicyUnsupported?: boolean;
+  /** The personal server has the review policy but predates the targets for the readers: they are not offered, and never sent. */
+  reviewTargetsUnsupported?: boolean;
   /** The run waits for a restart of «Retry later» now: turning it off would stop it, and the card says so beforehand. */
   waitingLong?: boolean;
   run: RunAction;
@@ -97,7 +99,7 @@ export interface SetupCardProps {
  * The start button at the bottom starts the autopilot with the brief of the Scaletta (for a book that never started) or resumes it, and `onStarted`
  * takes the author to the live page. Values of «Retry later» the server would refuse are never sent: the card says what is wrong instead.
  */
-export function SetupCard({ book, state, running, busy, disabled, asking = false, liveUnsupported = false, frozenUnsupported = false, retryUnsupported = false, autoResume = false, outlineBriefUnsupported = false, reviewPolicyUnsupported = false, waitingLong = false, run, onStarted, outline, tab, onTab, onReset, rules, profiles, danger, branch, structure }: SetupCardProps) {
+export function SetupCard({ book, state, running, busy, disabled, asking = false, liveUnsupported = false, frozenUnsupported = false, retryUnsupported = false, autoResume = false, outlineBriefUnsupported = false, reviewPolicyUnsupported = false, reviewTargetsUnsupported = false, waitingLong = false, run, onStarted, outline, tab, onTab, onReset, rules, profiles, danger, branch, structure }: SetupCardProps) {
   const { t } = useTranslation();
   const github = bookStorageMode(book) === "github";
   const host = book.autopilotHost === "server" ? "server" : "browser";
@@ -145,8 +147,9 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
   const retryChange = (next: RetryLaterForm) => { setRetry(next); setDirty(true); };
   const reviewChange = (next: ReviewForm) => { setReview(next); setDirty(true); };
   const reviewReading = readReviewForm(review);
-  // The policy changed when it is not the one the state has; a server that predates it is never sent it.
-  const policyChanged = !reviewPolicyUnsupported && !samePolicy(reviewReading.policy, initial.review);
+  // The policy changed when it is not the one the state has; a server that predates it is never sent it, nor the targets for the readers when only these are missing.
+  const keepTargets = (policy: typeof initial.review) => (reviewTargetsUnsupported ? policyWithoutReaderTargets(policy) : policy);
+  const policyChanged = !reviewPolicyUnsupported && !samePolicy(keepTargets(reviewReading.policy), keepTargets(initial.review));
   const reviewChanged = policyChanged || reviewReading.budgetLimit !== initial.budgetLimit || reviewReading.budgetTokens !== (initial.budgetTokens ?? 0);
   // While a run goes on, only where the book is published and the pause after every chapter can change (not on a server that predates it).
   const locked = running || busy;
@@ -179,7 +182,7 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
   const sentOptions = (): StartOptions["options"] => {
     const { longRetry: _saved, resumeAfterRestart: _resume, review: _review, ...plain } = options;
     // The caps as the review card says them, and the policy only when it changed (field by field: a value left blank goes back to the director's).
-    const capped = { ...plain, budgetLimit: reviewReading.budgetLimit, budgetTokens: reviewReading.budgetTokens, ...(policyChanged ? { review: policyUpdate(reviewReading.policy) } : {}) };
+    const capped = { ...plain, budgetLimit: reviewReading.budgetLimit, budgetTokens: reviewReading.budgetTokens, ...(policyChanged ? { review: policyUpdate(keepTargets(reviewReading.policy) ?? {}, keepTargets(initial.review)) } : {}) };
     const rest = autoResume ? { ...capped, resumeAfterRestart: resumeOn } : capped;
     return retryUnsupported ? rest : retryReading.policy ? { ...rest, longRetry: retryReading.policy } : initial.longRetry ? { ...rest, longRetry: null } : rest;
   };
@@ -301,6 +304,7 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
               onChange={reviewChange}
               locked={locked}
               policyUnsupported={reviewPolicyUnsupported}
+              targetsUnsupported={reviewTargetsUnsupported}
               readers={options.readers}
               spent={state?.stats?.cost ?? 0}
               spentCurrency={state?.stats?.currency}

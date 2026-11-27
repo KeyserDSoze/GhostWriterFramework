@@ -2,10 +2,11 @@ import { Suspense, lazy, useId, useMemo, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { BookOpen, CheckCircle2, Clapperboard, Download, Plus, RotateCcw, Target } from "lucide-react";
-import type { ReviewRecord } from "narrarium-engine";
+import { chapterReading, type ReviewRecord } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { ReadFirstBlock } from "@/components/autopilot/result/ReadFirst";
 import { ScoresBlock } from "@/components/autopilot/result/Scores";
+import { TargetsBlock } from "@/components/autopilot/result/Targets";
 import { useBandModel } from "@/components/autopilot/AutopilotControlBand";
 import { finalReviewOf, finalVerdict, workedSince, workedTime, type FinalVerdict } from "@/autopilot/bandModel";
 import { formatCost, formatCount, formatDate, formatDuration, voteText } from "@/autopilot/format";
@@ -156,7 +157,11 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true, review }: Au
   const titleId = useId();
   const model = useBandModel(bookId);
   const chapters = model?.state?.plan?.chapters;
-  const scores = useMemo(() => chapterScores(chapters ?? []), [chapters]);
+  // The readers that do not count are left out of the average of a vote whose readers are known.
+  const left = model?.state?.options.review?.readersExcluded;
+  const scores = useMemo(() => chapterScores(chapters ?? [], new Set(left)), [chapters, left]);
+  // The targets are shown when the readers gave a vote, or the author asked something of them.
+  const hasReadings = useMemo(() => (chapters ?? []).some((chapter) => chapterReading(chapter.rounds) !== null), [chapters]);
   const first = useMemo(() => readFirst(scores), [scores]);
   const rounds = useMemo(() => reviewRounds(scores), [scores]);
   const [reviewing, setReviewing] = useState(false);
@@ -199,6 +204,7 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true, review }: Au
         </div>
         <NumbersBlock items={numbers} />
       </div>
+      {state && (hasReadings || state.options.review?.readersTarget !== undefined || Object.keys(state.options.review?.readerTargets ?? {}).length > 0) && <TargetsBlock bookId={bookId} state={state} structure={review?.structure} />}
       {scores.length > 0 && (
         <div className={cn("grid gap-6", wide && "grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]")}>
           <ScoresBlock bookId={bookId} scores={scores} linkedSlugs={linkedSlugs} titleOf={titleOf} />

@@ -1,4 +1,4 @@
-import type { PlannedChapter } from "narrarium-engine";
+import { chapterReading, chapterStanding, chapterVote, countingAverage, type ChapterRound, type PlannedChapter, type ReaderTargets } from "narrarium-engine";
 
 /**
  * How the director judged the chapters of a finished book, worked out from the plan: the final score of each chapter and, from engine 0.1.6, the vote of each
@@ -24,8 +24,10 @@ export interface ChapterScore {
   final: number | null;
   /** The director's vote of each round of the review, oldest first; `null` for a round that has none. */
   rounds: Array<number | null>;
-  /** The average of the readers' votes, which they give in the first round; `null` when the plan has none. */
+  /** The average of the readers' votes the last time they read the chapter (the first draft, or after its corrections: `readersReading` says which); `null` when the plan has none. */
   readers: number | null;
+  /** When they read it last: the round of its review (an engine before 0.1.25 did not say), whether it was after the last corrections, and how (`end`: at the end of the review; `check`: only for their vote). */
+  readersReading?: { round?: number; current: boolean; reading?: ChapterRound["reading"]; votes?: Readonly<Record<string, number>> };
   roundCount: number;
   /**
    * What each round decided, in the order of the votes: `approve` closed the chapter, `revise` sent it back. Only there when the plan says it for at least one round (an engine that
@@ -37,17 +39,43 @@ export interface ChapterScore {
 const vote = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
 const verdictOf = (value: unknown): "approve" | "revise" | null => (value === "approve" || value === "revise" ? value : null);
 
-/** The chapters the director scored, in the order of the plan. */
-export function chapterScores(chapters: readonly Pick<PlannedChapter, "number" | "slug" | "score" | "rounds">[]): ChapterScore[] {
+/** A round with only the votes that are numbers (a plan is read as it was saved: a vote that is not one is not shown). */
+function cleanRound(round: ChapterRound | undefined): ChapterRound {
+  const source = round ?? {};
+  const readers = vote(source.readers);
+  const votes = source.readerVotes ? Object.fromEntries(Object.entries(source.readerVotes).filter(([, entry]) => vote(entry) !== null)) : undefined;
+  const { readers: _readers, readerVotes: _votes, ...rest } = source;
+  return { ...rest, ...(readers !== null ? { readers } : {}), ...(votes && Object.keys(votes).length ? { readerVotes: votes } : {}) };
+}
+
+/**
+ * The chapters the director scored, in the order of the plan. A round that is a reading of the readers on their own (`ChapterRound.reading`) is not a round of review: it has no
+ * vote of the director, and it is not one of the rounds counted or listed. `excluded` are the readers that do not count (`ReviewPolicy.readersExcluded`): the average of a reading
+ * whose votes are known is made of the others.
+ */
+export function chapterScores(chapters: readonly Pick<PlannedChapter, "number" | "slug" | "score" | "rounds">[], excluded: ReadonlySet<string> = new Set()): ChapterScore[] {
   const scores: ChapterScore[] = [];
   for (const chapter of chapters) {
-    const rounds = (chapter.rounds ?? []).map((round) => vote(round?.director));
+    const all = (chapter.rounds ?? []).map(cleanRound);
+    const reviewRounds = all.filter((round) => !round.reading);
+    const rounds = reviewRounds.map((round) => vote(round?.director));
     const lastRound = [...rounds].reverse().find((value) => value !== null) ?? null;
     const final = vote(chapter.score) ?? lastRound;
-    const readers = (chapter.rounds ?? []).map((round) => vote(round?.readers)).find((value) => value !== null) ?? null;
+    const last = chapterReading(all);
+    const votes = last?.votes ? Object.fromEntries(last.votes.map((entry) => [entry.slug, entry.score])) : undefined;
+    const readers = last ? (last.votes ? countingAverage(last.votes, excluded) : last.average) : null;
     if (final === null && rounds.every((value) => value === null) && readers === null) continue;
-    const verdicts = (chapter.rounds ?? []).map((round) => verdictOf(round?.verdict));
-    scores.push({ number: chapter.number, slug: chapter.slug, final, rounds, readers, roundCount: rounds.length, ...(verdicts.some((entry) => entry !== null) ? { verdicts } : {}) });
+    const verdicts = reviewRounds.map((round) => verdictOf(round?.verdict));
+    scores.push({
+      number: chapter.number,
+      slug: chapter.slug,
+      final,
+      rounds,
+      readers,
+      ...(last ? { readersReading: { ...(last.round !== undefined ? { round: last.round } : {}), current: last.current, ...(last.reading ? { reading: last.reading } : {}), ...(votes ? { votes } : {}) } } : {}),
+      roundCount: rounds.length,
+      ...(verdicts.some((entry) => entry !== null) ? { verdicts } : {}),
+    });
   }
   return scores;
 }
@@ -187,6 +215,10 @@ export interface ReviewCandidate {
   vote: number | null;
   /** `review`: it is reviewed again; `author`: the author's (frozen by the author, or written before the autopilot), reviewed only when included; `changed`: changed since it was frozen, it waits for the decision about that change. */
   kind: "review" | "author" | "changed";
+  /** Why it is taken up: its vote is under the target (`director`: it is reviewed), or only the readers' vote asks for it (`readers`: they read it, and it is reviewed whole if a target is missed). */
+  why: "director" | "readers";
+  /** The average the readers gave it the last time they read it, when a review has targets for them. */
+  readers?: number | null;
 }
 
 /**
@@ -199,15 +231,84 @@ export function reviewCandidates(
   target: number,
   freezes: ReadonlyMap<string, "author" | "autopilot">,
   changed: ReadonlySet<number>,
+  /** The review's targets for the readers (`gateFor`), when it has them: a chapter is also taken up when their vote of its text is under one, or has to be asked of them. */
+  gate?: ReaderTargets,
 ): ReviewCandidate[] {
   const candidates: ReviewCandidate[] = [];
   for (const chapter of chapters) {
     const rounds = (chapter.rounds ?? []).map((round) => vote(round?.director));
     const final = vote(chapter.score) ?? [...rounds].reverse().find((value) => value !== null) ?? null;
-    if (final !== null && final >= target) continue;
+    const under = final === null || final < target;
+    const standing = gate ? chapterStanding(chapter.rounds, gate) : null;
+    const askedByReaders = Boolean(standing && (standing.needsReading || (standing.standing?.blockers.length ?? 0) > 0));
+    if (!under && !askedByReaders) continue;
     const by = freezes.get(chapter.slug);
     const kind = changed.has(chapter.number) ? "changed" : by === "author" || (chapter.imported && by !== "autopilot") ? "author" : "review";
-    candidates.push({ number: chapter.number, slug: chapter.slug, title: chapter.title, vote: final, kind });
+    candidates.push({
+      number: chapter.number,
+      slug: chapter.slug,
+      title: chapter.title,
+      vote: final,
+      kind,
+      why: under ? "director" : "readers",
+      ...(gate ? { readers: standing?.standing?.average ?? standing?.reading?.average ?? null } : {}),
+    });
   }
   return candidates.sort((left, right) => left.number - right.number);
+}
+
+// ─── The targets and where the book stands against them ──────────────────────
+
+/** One subject of the author's targets, and where the book stands against its target. */
+export interface TargetRow {
+  kind: "director" | "average" | "reader";
+  /** The reader, for a row of one reader. */
+  slug?: string;
+  /** The vote now: the director's vote of the whole book, or the average of what the readers gave the chapters. `null`: nobody gave one. */
+  vote: number | null;
+  /** The vote asked of it: `null` when the author asked none (the readers' average is shown all the same, and a reader that does not count has none). */
+  target: number | null;
+  /** How many chapters are under the target, of how many have a vote of this subject. */
+  under: number;
+  of: number;
+  /** The reader counts in the average and in the targets (always so for the director and for the average). */
+  counts: boolean;
+}
+
+export interface BookTargets {
+  rows: TargetRow[];
+  /** The chapters the readers gave a vote, and, of them, those whose vote is of the text before its last corrections (the first draft's, or an earlier round's): not today's. */
+  read: number;
+  before: number;
+}
+
+const mean = (values: readonly number[]): number | null => (values.length ? tenth(values.reduce((sum, value) => sum + value, 0) / values.length) : null);
+
+/**
+ * What the book comes to against the targets: the director's (the vote of the whole book, and the chapters under its target), the readers' average (of the last vote the readers
+ * gave each chapter, with the target when there is one) and each reader that has a target or does not count (from the votes of each reader, which a policy with targets for the
+ * readers records). Pure: a chapter nobody voted has no say.
+ */
+export function bookTargets(input: { chapters: readonly Pick<PlannedChapter, "score" | "rounds">[]; book: number | null; directorTarget: number; readers?: ReaderTargets }): BookTargets {
+  const rows: TargetRow[] = [];
+  const votes = input.chapters.map((chapter) => chapterVote(chapter));
+  rows.push({ kind: "director", vote: input.book, target: input.directorTarget, under: votes.filter((entry) => entry === null || entry < input.directorTarget).length, of: input.chapters.length, counts: true });
+
+  const excluded = input.readers?.excluded ?? new Set<string>();
+  const readings = input.chapters.map((chapter) => chapterReading(chapter.rounds)).filter((reading): reading is NonNullable<ReturnType<typeof chapterReading>> => reading !== null);
+  const averages = readings.map((reading) => (reading.votes ? countingAverage(reading.votes, excluded) : reading.average)).filter((entry): entry is number => entry !== null);
+  if (readings.length) {
+    const target = input.readers?.average ?? null;
+    rows.push({ kind: "average", vote: mean(averages), target, under: target === null ? 0 : averages.filter((entry) => entry < target).length, of: averages.length, counts: true });
+  }
+  // The readers that have a target, or that do not count: their votes by chapter, from the readings that say them.
+  const slugs = [...new Set([...Object.keys(input.readers?.each ?? {}), ...excluded])];
+  for (const slug of slugs) {
+    const own = readings.flatMap((reading) => reading.votes?.filter((entry) => entry.slug === slug).map((entry) => entry.score) ?? []);
+    if (!own.length && !(input.readers?.each[slug] !== undefined && !excluded.has(slug))) continue;
+    const counts = !excluded.has(slug);
+    const target = counts ? input.readers?.each[slug] ?? null : null;
+    rows.push({ kind: "reader", slug, vote: mean(own), target, under: target === null ? 0 : own.filter((entry) => entry < target).length, of: own.length, counts });
+  }
+  return { rows, read: readings.length, before: readings.filter((reading) => !reading.current).length };
 }

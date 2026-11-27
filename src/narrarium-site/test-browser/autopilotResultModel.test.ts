@@ -8,9 +8,29 @@ const round = (director?: number, readers?: number, accepted = 0, rejected = 0):
 const scoreOf = (number: number, final: number | null, rounds: Array<number | null> = [], readers: number | null = null): ChapterScore => ({ number, slug: `${pad(number)}-chapter-${number}`, final, rounds, readers, roundCount: rounds.length });
 
 describe("the scores of the chapters, read from the plan", () => {
-  it("takes the final score of a chapter, and the vote of each round, oldest first, with the readers of the first round", () => {
+  it("takes the final score of a chapter, and the vote of each round, oldest first, with the readers' last vote and whether it is of the chapter as it is now", () => {
     const [first] = chapterScores([chapter(1, 8, [round(6, 7.2, 3, 1), round(8, undefined, 0, 0)])]);
-    expect(first).toEqual({ number: 1, slug: "001-chapter-1", final: 8, rounds: [6, 8], readers: 7.2, roundCount: 2 });
+    // They read it in the first round, and the round after changed it: the vote is of an earlier text.
+    expect(first).toEqual({ number: 1, slug: "001-chapter-1", final: 8, rounds: [6, 8], readers: 7.2, readersReading: { current: false }, roundCount: 2 });
+  });
+
+  it("shows the readers' LAST vote, not the first: the vote the readers gave after the corrections, with its round, and the reading of their own is no round of review", () => {
+    const [entry] = chapterScores([chapter(1, 9, [
+      { director: 6, readers: 5.8, readerVotes: { a: 5.6, b: 6 }, round: 1, verdict: "revise", accepted: 2, rejected: 0 },
+      { director: 9, verdict: "approve", accepted: 0, rejected: 0 },
+      { readers: 7, readerVotes: { a: 6, b: 8 }, round: 2, reading: "end" },
+    ])]);
+    expect(entry.rounds, "the reading is not one of the rounds of the director").toEqual([6, 9]);
+    expect(entry.roundCount).toBe(2);
+    expect(entry.readers).toBe(7);
+    expect(entry.readersReading).toEqual({ round: 2, current: true, reading: "end", votes: { a: 6, b: 8 } });
+  });
+
+  it("makes the average of the readers that count when their votes are known, and the one the round says when they are not", () => {
+    const rounds = [{ readers: 6.5, readerVotes: { a: 9, b: 4 }, round: 1, accepted: 0, rejected: 0, director: 8 }];
+    expect(chapterScores([chapter(1, 8, rounds)])[0].readers).toBe(6.5);
+    expect(chapterScores([chapter(1, 8, rounds)], new Set(["b"]))[0].readers, "without the reader that does not count").toBe(9);
+    expect(chapterScores([chapter(1, 8, [round(8, 7.1)])], new Set(["b"]))[0].readers, "an older round has only the average of them all").toBe(7.1);
   });
 
   it("takes the verdict of each round when the plan says it, in the order of the votes: what the round decided is data, and no longer a text of the log", () => {
@@ -21,7 +41,7 @@ describe("the scores of the chapters, read from the plan", () => {
   it("has no list of verdicts for a plan that records none (an older state): none is made up", () => {
     const [older] = chapterScores([chapter(1, 8, [round(6, 7.2, 3, 1), round(8)])]);
     expect(older).not.toHaveProperty("verdicts");
-    expect(older).toEqual({ number: 1, slug: "001-chapter-1", final: 8, rounds: [6, 8], readers: 7.2, roundCount: 2 });
+    expect(older).toEqual({ number: 1, slug: "001-chapter-1", final: 8, rounds: [6, 8], readers: 7.2, readersReading: { current: false }, roundCount: 2 });
   });
 
   it("says null for a round that has no verdict among the ones that do, and for a word that is not one of the two", () => {
@@ -37,7 +57,7 @@ describe("the scores of the chapters, read from the plan", () => {
     const imported = { ...chapter(3), imported: true };
     const scores = chapterScores([chapter(1), chapter(2, 7), imported, chapter(4, undefined, [round(undefined, 6.5)])]);
     expect(scores.map((entry) => entry.number)).toEqual([2, 4]);
-    expect(scores[1]).toMatchObject({ final: null, rounds: [null], readers: 6.5 });
+    expect(scores[1]).toMatchObject({ final: null, rounds: [null], readers: 6.5, readersReading: { current: true } });
   });
 
   it("keeps the order of the chapters and counts the rounds of the record", () => {

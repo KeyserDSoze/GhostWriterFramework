@@ -4,7 +4,8 @@ import type { AutopilotOptions, AutopilotState, EstimateResult } from "narrarium
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useLocale } from "@/components/autopilot/config/EstimateParts";
-import { estimateRun, type EstimateSources } from "@/autopilot/runEstimate";
+import { estimateDelta, estimateRun, withoutReaderTargets, type EstimateFigures, type EstimateSources } from "@/autopilot/runEstimate";
+import { hasReaderTargets } from "@/autopilot/reviewPolicy";
 import { formatMinutes, formatMoney, formatWhole, roundMinutesRange, roundMoneyRange, roundRange, type Range } from "@/autopilot/runEstimateFormat";
 import { useBookAutopilotView } from "@/autopilot/hooks";
 import { useRunEstimateSources } from "@/autopilot/useRunEstimate";
@@ -73,7 +74,7 @@ export function useProblemText(): (problem: ReviewProblem | undefined, range: { 
 }
 
 /** The figures of an estimate in one line, rounded outward as the preview rounds them: the calls, the cost (or that it is not known), the time (or that it is not estimated). */
-export function estimateFigures(estimate: EstimateResult, locale: string, currency: string, words: { to: string; notKnown: string; notEstimated: string }): { calls: string; cost: string; time: string } {
+export function estimateFigures(estimate: EstimateFigures, locale: string, currency: string, words: { to: string; notKnown: string; notEstimated: string }): { calls: string; cost: string; time: string } {
   const range = (value: Range, format: (value: number) => string) => (value.min === value.max ? format(value.min) : `${format(value.min)} ${words.to} ${format(value.max)}`);
   return {
     calls: range(roundRange(estimate.calls), (value) => formatWhole(value, locale)),
@@ -105,9 +106,21 @@ export function FormRunEstimate({ book, branch, structure, state, options, brief
   const view = useBookAutopilotView(book.id);
   const inputs = useRunEstimateSources({ book, branch, structure, state, activities: view.snapshot?.activities });
   const { estimate } = useMemo(() => estimateRun(inputs.sources, { brief, options }), [inputs.sources, brief, options]);
+  // What the targets for the readers add: the same run without them, taken from this one.
+  const aimed = options.readers && hasReaderTargets(options.review);
+  const delta = useMemo(() => (aimed ? estimateDelta(estimate, estimateRun(inputs.sources, { brief, options: withoutReaderTargets(options) }).estimate) : null), [aimed, estimate, inputs.sources, brief, options]);
   // A finished book has no run left to estimate: the values are for the chapters still to come and for a review of the book.
   if (estimate.calls.max === 0) return <p data-review-estimate="nothing" className="rounded-lg border bg-muted/30 p-2.5 text-xs text-muted-foreground">{t("autopilot.review.estimate.nothing")}</p>;
-  return <EstimateLine label={t("autopilot.review.estimate.run")} estimate={estimate} currency={sourcesCurrency(inputs.sources)} />;
+  return <EstimateLine label={t("autopilot.review.estimate.run")} estimate={estimate} currency={sourcesCurrency(inputs.sources)} extra={aimed ? <ReadersDelta delta={delta} currency={sourcesCurrency(inputs.sources)} /> : undefined} />;
+}
+
+/** What the targets for the readers add to the estimate, in one line (or that they add no call): the figures of the run less the figures of the run without them. */
+export function ReadersDelta({ delta, currency }: { delta: EstimateFigures | null; currency: string }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
+  if (!delta) return <p data-review-readers-delta="none" className="text-muted-foreground">{t("autopilot.review.readers.deltaNone")}</p>;
+  const figures = estimateFigures(delta, locale, currency, { to: t("autopilot.estimate.to"), notKnown: t("autopilot.estimate.notKnown"), notEstimated: t("autopilot.estimate.notEstimated") });
+  return <p data-review-readers-delta="" className="font-medium text-foreground">{t("autopilot.review.readers.delta", figures)}</p>;
 }
 
 function sourcesCurrency(sources: EstimateSources): string {

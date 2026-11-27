@@ -24,6 +24,7 @@ import {
   type EstimateProgress,
   type EstimateResult,
   type EstimateWarning,
+  type ReviewPolicy,
   type ServerAiStatus,
 } from "narrarium-engine";
 import type { EstimateBook } from "@/autopilot/runEstimateBook";
@@ -323,17 +324,57 @@ export function estimateRest(sources: EstimateSources, state: AutopilotState): R
  * up to `maxRounds` rounds and the readers in the first `readerRounds` (0: they do not read again), then the director's judgement of the whole book. The estimate of the setup form,
  * with the models, the files and the log of the book, for the plan as it is. A review of several rounds costs about this for each round.
  */
-export function estimateReview(sources: EstimateSources, state: AutopilotState, input: { chapters: number; maxRounds: number; readerRounds: number; scenesPerChapter?: number }): RunEstimate {
+export function estimateReview(
+  sources: EstimateSources,
+  state: AutopilotState,
+  input: {
+    chapters: number;
+    maxRounds: number;
+    readerRounds: number;
+    scenesPerChapter?: number;
+    /** The review's targets for the readers, when it has them (`ReviewBookInput`): the readers then read the chapters at their end too, whatever `readerRounds` says. */
+    readers?: Pick<ReviewPolicy, "readersTarget" | "readerTargets" | "readersExcluded">;
+    /** Of the chapters, how many only need the vote of their readers (the director is content with them): in the least they cost their reading alone. */
+    checkOnly?: number;
+  },
+): RunEstimate {
   const planned = state.plan?.chapters.length ?? 0;
   const chapters = Math.max(0, Math.min(planned, input.chapters));
   const book = { ...sources.book, outline: { entries: sources.book.outline?.entries ?? planned, lastChapter: planned, words: sources.book.outline?.words ?? 0 } };
+  const aimed = Boolean(input.readers && (input.readers.readersTarget !== undefined || Object.keys(input.readers.readerTargets ?? {}).length > 0));
   const options = {
     ...state.options,
-    readers: state.options.readers && input.readerRounds > 0,
-    review: { maxRounds: input.maxRounds, readerRounds: Math.max(1, input.readerRounds) },
+    // With targets the readers read at the end of a chapter's review even when they do not read at its start (the estimate counts the start too: a little over in that case).
+    readers: state.options.readers && (input.readerRounds > 0 || aimed),
+    review: { maxRounds: input.maxRounds, readerRounds: Math.max(1, input.readerRounds), ...(aimed ? input.readers : {}) },
   };
-  const progress: EstimateProgress = { chaptersDone: planned - chapters, planned, conceptDone: true, finalDone: false, reviewOnly: true };
+  const progress: EstimateProgress = { chaptersDone: planned - chapters, planned, conceptDone: true, finalDone: false, reviewOnly: true, ...(aimed && input.checkOnly ? { checkOnly: Math.min(chapters, input.checkOnly) } : {}) };
   return estimateRun({ ...sources, book, state, chapters: null }, { brief: state.brief, options, ...(input.scenesPerChapter ? { scenesPerChapter: input.scenesPerChapter } : {}) }, { progress });
+}
+
+/** The figures of an estimate that can be told apart from another: the calls, the cost (when every call is priced) and the time (when every model is measured). */
+export type EstimateFigures = Pick<EstimateResult, "calls" | "cost" | "minutes">;
+
+/**
+ * What the targets for the readers add to an estimate: the estimate with them less the one without, range by range (the cost and the time only when both have them).
+ * `null` when they add no call (readers that do not read, or nothing left to read).
+ */
+export function estimateDelta(withTargets: EstimateResult, without: EstimateResult): EstimateFigures | null {
+  const range = (left: { min: number; max: number }, right: { min: number; max: number }) => ({ min: Math.max(0, left.min - right.min), max: Math.max(0, left.max - right.max) });
+  const calls = range(withTargets.calls, without.calls);
+  if (calls.max === 0) return null;
+  return {
+    calls,
+    cost: withTargets.cost && without.cost ? { ...withTargets.cost, ...range(withTargets.cost, without.cost) } : null,
+    minutes: withTargets.minutes && without.minutes ? range(withTargets.minutes, without.minutes) : null,
+  };
+}
+
+/** The same form with the targets for the readers taken out of its review policy: what the run costs without them. */
+export function withoutReaderTargets(options: AutopilotOptions): AutopilotOptions {
+  if (!options.review) return options;
+  const { readersTarget: _target, readerTargets: _each, readersExcluded: _left, ...review } = options.review;
+  return { ...options, review: Object.keys(review).length ? review : undefined };
 }
 
 /**
