@@ -63,7 +63,7 @@ const TEXTS = {
     noLongLivedGoogle: "Questa connessione dura circa un'ora perché su questo sito l'accesso duraturo non è ancora attivo. Ti verrà chiesto di riconnettere Google Drive.",
     noLongLivedMicrosoft: "Questa connessione dura circa un giorno perché su questo sito l'accesso duraturo non è ancora attivo. Ti verrà chiesto di riconnettere OneDrive.",
     upgrade: "Passa a credenziali durature",
-    reconnect: "Riconnetti", connect: "Connetti", disconnect: "Disconnetti", cancel: "Annulla",
+    reconnect: "Riconnetti", signInAgain: "Accedi di nuovo a Google Drive su questo dispositivo", connect: "Connetti", disconnect: "Disconnetti", cancel: "Annulla",
     waiting: "In attesa della finestra di accesso Microsoft…",
     noRevoke: /Microsoft non permette di revocare l'accesso da qui/,
     googleRevokes: /anche le credenziali durature vengono revocate presso Google/,
@@ -83,7 +83,7 @@ const TEXTS = {
     noLongLivedGoogle: "This connection lasts about an hour because long-lived sign-in is not enabled on this site yet. You will be asked to reconnect Google Drive.",
     noLongLivedMicrosoft: "This connection lasts about a day because long-lived sign-in is not enabled on this site yet. You will be asked to reconnect OneDrive.",
     upgrade: "Switch to long-lived credentials",
-    reconnect: "Reconnect", connect: "Connect", disconnect: "Disconnect", cancel: "Cancel",
+    reconnect: "Reconnect", signInAgain: "Sign in to Google Drive again on this device", connect: "Connect", disconnect: "Disconnect", cancel: "Cancel",
     waiting: "Waiting for the Microsoft sign-in window…",
     noRevoke: /Microsoft does not allow revoking access from here/,
     googleRevokes: /also revokes the long-lived credentials at Google/,
@@ -458,7 +458,7 @@ describe.each(["it", "en"] as const)("Account & Sync credentials in %s", (langua
       await waitFor(() => expect(net.broker("/oauth/status")).toHaveLength(1));
       await act(async () => { await Promise.resolve(); });
 
-      fireEvent.click(within(card("Google Drive")).getByRole("button", { name: `${text.reconnect} Google Drive` }));
+      fireEvent.click(within(card("Google Drive")).getByRole("button", { name: text.signInAgain }));
 
       expect(google.triggers["auth-code"]).toHaveBeenCalledTimes(1);
       expect(google.triggers.implicit).not.toHaveBeenCalled();

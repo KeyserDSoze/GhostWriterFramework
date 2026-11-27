@@ -35,8 +35,8 @@ import { DEFAULT_SETTINGS } from "@/types/settings";
 
 const HOME = "home-1";
 const TEXTS = {
-  en: { reconnect: "Reconnect OneDrive", status: "Status: Reconnect OneDrive", renew: /The OneDrive sign-in needs to be renewed/, upToDate: "Status: Up to date", signInIncomplete: /OneDrive sign-in was not completed \(popup_window_error\)/ },
-  it: { reconnect: "Riconnetti OneDrive", status: "Stato: Riconnetti OneDrive", renew: /L'accesso a OneDrive va rinnovato/, upToDate: "Stato: Aggiornato", signInIncomplete: /accesso a OneDrive non è stato completato \(popup_window_error\)/ },
+  en: { reconnect: "Sign in to OneDrive again on this device", status: "Status: Reconnect OneDrive", renew: /signed in to OneDrive with session credentials/, upToDate: "Status: Up to date", signInIncomplete: /OneDrive sign-in was not completed \(popup_window_error\)/ },
+  it: { reconnect: "Accedi di nuovo a OneDrive su questo dispositivo", status: "Stato: Riconnetti OneDrive", renew: /ha fatto l'accesso a OneDrive con credenziali di sessione/, upToDate: "Stato: Aggiornato", signInIncomplete: /accesso a OneDrive non è stato completato \(popup_window_error\)/ },
 } as const;
 
 async function open(language: "en" | "it") {

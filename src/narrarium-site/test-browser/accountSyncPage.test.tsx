@@ -27,14 +27,14 @@ const LAST_SYNC = "2026-11-21T21:28:18.893Z";
 const TEXTS = {
   it: {
     notConnected: "Non connesso", dataSync: "Sincronizzazione dei dati dell'account", sync: "Sincronizza", disconnect: "Disconnetti", deleteRemote: "Elimina dati remoti",
-    lastSync: "Ultima sincronizzazione", reconnect: "Riconnetti", githubNotEnabled: "L'accesso con GitHub non è ancora attivo su questo sito.", githubPat: "Usa un token di accesso personale (avanzato)", lastError: "Ultimo errore",
+    lastSync: "Ultima sincronizzazione", reconnect: "Riconnetti", signInAgain: (service: string) => `Accedi di nuovo a ${service} su questo dispositivo`, githubNotEnabled: "L'accesso con GitHub non è ancora attivo su questo sito.", githubPat: "Usa un token di accesso personale (avanzato)", lastError: "Ultimo errore",
     failed: "Sincronizzazione non riuscita", unknownKind: "Qualcosa è andato storto durante la sincronizzazione.", needsLogin: "Riconnetti OneDrive", expiredKind: "L'accesso a OneDrive va rinnovato. Riconnetti OneDrive per continuare a sincronizzare; non si perde nulla, i dati restano su questo dispositivo.",
     status: (state: string) => `Stato: ${state}`, upToDate: "Aggiornato",
     sync1: "21 nov 2026, 22:28", workspaceDate: "21 nov 2026, 22:15", counts: "1 libro · 2 chat",
   },
   en: {
     notConnected: "Not connected", dataSync: "Account data sync", sync: "Sync", disconnect: "Disconnect", deleteRemote: "Delete remote",
-    lastSync: "Last sync", reconnect: "Reconnect", githubNotEnabled: "Sign-in with GitHub is not enabled on this site yet.", githubPat: "Use a personal access token (advanced)", lastError: "Last error",
+    lastSync: "Last sync", reconnect: "Reconnect", signInAgain: (service: string) => `Sign in to ${service} again on this device`, githubNotEnabled: "Sign-in with GitHub is not enabled on this site yet.", githubPat: "Use a personal access token (advanced)", lastError: "Last error",
     failed: "Sync failed", unknownKind: "Something unexpected went wrong while syncing.", needsLogin: "Reconnect OneDrive", expiredKind: "The OneDrive sign-in needs to be renewed. Reconnect OneDrive to keep syncing; nothing is lost, your data stays on this device.",
     status: (state: string) => `Status: ${state}`, upToDate: "Up to date",
     sync1: /^Nov 21, 2026, 10:28\sPM$/, workspaceDate: /^Nov 21, 2026, 10:15\sPM$/, counts: "1 book · 2 chats",
@@ -116,7 +116,7 @@ describe.each(["it", "en"] as const)("Account & Sync page in %s", (language) => 
     expect(driveCard.queryByRole("button", { name: `${text.reconnect} Google Drive` })).not.toBeInTheDocument();
 
     const driveNeedingLogin = within(card("OneDrive"));
-    expect(driveNeedingLogin.getByRole("button", { name: `${text.reconnect} OneDrive` })).toBeInTheDocument();
+    expect(driveNeedingLogin.getByRole("button", { name: text.signInAgain("OneDrive") })).toBeInTheDocument();
     expect(driveNeedingLogin.getByText(text.status(text.needsLogin))).toBeInTheDocument();
 
     const github = within(card("GitHub"));
@@ -146,7 +146,7 @@ describe.each(["it", "en"] as const)("Account & Sync page in %s", (language) => 
     expect(failed.getByText(RAW_MESSAGE)).toBeInTheDocument();
     expect(card("Google Drive")).not.toHaveTextContent(/error · unknown/);
 
-    expect(within(card("OneDrive")).getByText(text.expiredKind)).toBeInTheDocument();
+    expect(within(card("OneDrive")).getByRole("heading", { name: text.signInAgain("OneDrive") })).toBeInTheDocument();
   });
 
   it("shows the copies to choose from with local dates and counts in the app language", async () => {
