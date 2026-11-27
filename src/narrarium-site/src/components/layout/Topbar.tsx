@@ -12,7 +12,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuthStore } from "@/store/authStore";
 import { useLocation, useNavigate } from "react-router-dom";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useUiStore } from "@/store/uiStore";
@@ -22,12 +22,13 @@ import { speakText, type SpeechController } from "@/assistant/speech";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettings } from "@/drive/useSettings";
 import { parseAppRoute } from "@/assistant/context";
-import { effectiveRemoteStatus, getLocalRepositoryStatusSnapshot, listUnpushedLocalCommits } from "@/repository/localRepository";
+import { getLocalRepositoryStatusSnapshot, listUnpushedLocalCommits } from "@/repository/localRepository";
+import { pillOfCopy, pillText, shownPill, type RepositoryPill } from "@/components/layout/repositoryPill";
 import { RepositorySyncConflictDialog } from "@/components/repository/RepositorySyncConflictDialog";
 import { repositoryErrorDescription } from "@/repository/repositoryError";
 import { BranchNameTakenError, commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, RepositorySyncChoiceStaleError, RepositorySyncConflictError, syncFullRepository, type RepositorySyncConflictChoice, type RepositorySyncConflictResolution } from "@/repository/repositoryService";
 import { bookStorageMode, resolveBookToken } from "@/types/settings";
-import { emailToBranchName } from "@/github/githubClient";
+import { resolveAuthoritativeBranch } from "@/github/branchRules";
 import { useTheme } from "./ThemeProvider";
 import { SUPPORTED_LANGUAGES } from "@/i18n";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
@@ -93,7 +94,10 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const location = useLocation();
   const speechRef = useRef<SpeechController | null>(null);
   const speechGenerationRef = useRef(0);
-  const [repoStatus, setRepoStatus] = useState<{ label: string; tone: "clean" | "dirty" | "ahead" | "behind" | "offline" | "none" }>({ label: "", tone: "none" });
+  const [repoStatus, setRepoStatus] = useState<RepositoryPill>({ key: "", label: "", tone: "none", copy: false });
+  // Read again at once after a sync or a Git action, without waiting for the next look.
+  const [statusTick, setStatusTick] = useState(0);
+  const refreshRepositoryStatus = useCallback(() => setStatusTick((tick) => tick + 1), []);
   // The branch on the screen was made on this device and is not on GitHub yet.
   const [branchPending, setBranchPending] = useState(false);
   // What was spent today and this month: its code loads once the page is drawn and the browser is idle, never with the bar.
@@ -126,15 +130,20 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const route = parseAppRoute(location.pathname);
   const currentBookId = "bookId" in route ? route.bookId : undefined;
   const currentBook = currentBookId ? settings.books.find((entry) => entry.id === currentBookId) : undefined;
-  const currentBranch = currentBook?.activeBranch
-    ?? (currentBookId ? workingBranches[currentBookId] : undefined)
-    ?? (user?.email ? emailToBranchName(user.email) : undefined);
+  const currentStructure = currentBookId ? structures[currentBookId] : undefined;
+  // The same rule as the pages of the book (`useWorkingBranch`): without an account, the branch of the copy it opened, never none.
+  const currentBranch = currentBook ? resolveAuthoritativeBranch({
+    activeBranch: currentBook.activeBranch,
+    workingBranch: workingBranches[currentBook.id],
+    loadedBranch: currentStructure?.loadedBranch,
+    defaultBranch: currentStructure?.defaultBranch,
+    userEmail: user?.email,
+  }).branch : undefined;
   const currentToken = currentBook ? resolveBookToken(currentBook, settings) : "";
   const currentBookIsLocal = Boolean(currentBook && bookStorageMode(currentBook) === "local-only");
   const remote = useGitHubRemoteAvailability(currentBook, currentToken);
   const currentAccountIdentity = localWorkspaceScope();
   const repositoryTarget = currentBook && currentBranch && currentAccountIdentity ? { bookId: currentBook.id, owner: currentBook.owner, repo: currentBook.repo, branch: currentBranch, accountIdentity: currentAccountIdentity } : null;
-  const currentStructure = currentBookId ? structures[currentBookId] : undefined;
   const currentObjectNavigation = resolveContextualNavigation(currentStructure, location.pathname, currentBookId);
   const pendingCurrentObject = useCurrentObjectPendingCommit({
     book: currentBook,
@@ -166,60 +175,65 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     void save().catch(() => undefined);
   }, [currentBookId, loadedBranch, patchSettings, save]);
 
+  // The status reads the working copy of the book, branch and account on the screen, and only those values restart it: a change of the settings or the
+  // progress of another book does not throw away a read under way (on a big book a read takes a while, and restarting it kept the pill from ever updating).
+  const statusOwner = currentBook?.owner ?? "";
+  const statusRepo = currentBook?.repo ?? "";
+  const statusKey = currentBookId ? [currentBookId, statusOwner, statusRepo, currentBranch ?? "", currentAccountIdentity].join("\n") : "";
+  const bookProgress = currentBookId ? cloneProgress[currentBookId] : undefined;
+  const bookOpenFailed = useBooksStore((s) => Boolean(currentBookId && s.errors[currentBookId]));
+  // «No local copy» is said once the book has finished opening: until then its copy may simply not be read yet.
+  const bookSettled = currentStructureLoaded || bookOpenFailed;
   useEffect(() => {
     const bookId = currentBookId;
+    if (!bookId) return;
+    const key = statusKey;
     let cancelled = false;
+    let reading = false;
+    const show = (pill: Omit<RepositoryPill, "key">) => { if (!cancelled) setRepoStatus({ key, ...pill }); };
     async function refresh() {
-      if (!bookId) { if (!cancelled) setRepoStatus({ label: "", tone: "none" }); return; }
-      const progress = cloneProgress[bookId];
-      if (progress) {
-        const percent = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
-        const label = progress.phase === "migrating" ? t("repoStatus.migrating") : progress.phase === "finalizing" ? t("repoStatus.finalizing") : t("repoStatus.cloning", { percent });
-        if (!cancelled) setRepoStatus({ label, tone: "offline" });
+      if (bookProgress) {
+        const percent = bookProgress.total ? Math.round((bookProgress.done / bookProgress.total) * 100) : 0;
+        const label = bookProgress.phase === "migrating" ? t("repoStatus.migrating") : bookProgress.phase === "finalizing" ? t("repoStatus.finalizing") : t("repoStatus.cloning", { percent });
+        show({ label, tone: "offline", copy: false });
         return;
       }
-      const snapshot = currentBook && currentBranch && currentAccountIdentity ? await getLocalRepositoryStatusSnapshot(currentBook.owner, currentBook.repo, currentBranch, currentAccountIdentity).catch(() => null) : null;
-      if (!snapshot) { if (!cancelled) setRepoStatus({ label: t("repoStatus.notCloned"), tone: "offline" }); return; }
-      const { meta: repo, status } = snapshot;
-      if (cancelled) return;
-      setBranchPending(Boolean(repo.pendingBranch));
-      // The local commits of a book kept on this device are its saved history: there is nowhere to push them, so they are not "ahead" of anything.
-      if (currentBookIsLocal && status.dirty === 0) {
-        setRepoStatus({ label: t("localFirst.pillLocalOnly"), tone: "clean" });
-        return;
-      }
-      if (!currentBookIsLocal && status.ahead > 0) {
-        const commits = await listUnpushedLocalCommits(repo.id).catch(() => []);
-        const oldest = commits[0];
-        const oldMs = oldest ? Date.now() - new Date(oldest.createdAt).getTime() : 0;
-        const shouldNotify = status.ahead >= 3 || oldMs > 24 * 60 * 60 * 1000;
-        if (shouldNotify) {
-          const key = `narrarium-unpushed-warning-${bookId}-${status.ahead}-${oldest?.id ?? "none"}`;
-          if (!sessionStorage.getItem(key)) {
-            sessionStorage.setItem(key, "1");
-            toast({ title: t("repoStatus.unpushedNotice", { count: status.ahead }) });
+      // One read at a time: a slow working copy is never read twice at once.
+      if (reading || !currentBranch) return;
+      reading = true;
+      try {
+        const snapshot = await getLocalRepositoryStatusSnapshot(statusOwner, statusRepo, currentBranch, currentAccountIdentity);
+        if (cancelled) return;
+        if (!snapshot) {
+          if (bookSettled) show({ label: t("repoStatus.notCloned"), tone: "offline", copy: false });
+          return;
+        }
+        const { meta: repo, status } = snapshot;
+        setBranchPending(Boolean(repo.pendingBranch));
+        if (!currentBookIsLocal && status.ahead > 0) {
+          const commits = await listUnpushedLocalCommits(repo.id).catch(() => []);
+          const oldest = commits[0];
+          const oldMs = oldest ? Date.now() - new Date(oldest.createdAt).getTime() : 0;
+          const shouldNotify = status.ahead >= 3 || oldMs > 24 * 60 * 60 * 1000;
+          if (shouldNotify && !cancelled) {
+            const noticeKey = `narrarium-unpushed-warning-${bookId}-${status.ahead}-${oldest?.id ?? "none"}`;
+            if (!sessionStorage.getItem(noticeKey)) {
+              sessionStorage.setItem(noticeKey, "1");
+              toast({ title: t("repoStatus.unpushedNotice", { count: status.ahead }) });
+            }
           }
         }
+        show({ ...pillOfCopy(repo, status, currentBookIsLocal, t), copy: true });
+      } catch {
+        // A read that failed says nothing about the copy: the pill keeps what it said, and the next look reads again.
+      } finally {
+        reading = false;
       }
-      const remoteStatus = effectiveRemoteStatus(repo);
-      setRepoStatus(status.dirty > 0
-        ? { label: t("repoStatus.dirty", { count: status.dirty }), tone: "dirty" }
-        : status.ahead > 0
-          ? { label: t("repoStatus.ahead", { count: status.ahead }), tone: "ahead" }
-          : repo.cloneComplete !== true
-            ? { label: t("repoStatus.incomplete"), tone: "behind" }
-          : remoteStatus === "changed"
-            ? { label: t("repoStatus.behind"), tone: "behind" }
-            : remoteStatus === "checking"
-              ? { label: t("repoStatus.checking"), tone: "offline" }
-              : remoteStatus === "unverified" || remoteStatus === "unavailable"
-                ? { label: t(repo.lastKnownChanged ? "repoStatus.staleChanged" : "repoStatus.unverified"), tone: "offline" }
-                : { label: t("repoStatus.clean"), tone: "clean" });
     }
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [cloneProgress, currentAccountIdentity, currentBook, currentBookId, currentBookIsLocal, currentBranch, settings.ui.language, t, toast]);
+  }, [bookProgress, bookSettled, currentAccountIdentity, currentBookId, currentBookIsLocal, currentBranch, settings.ui.language, statusKey, statusOwner, statusRepo, statusTick, t, toast]);
 
   // The branches of a GitHub book sync by themselves, as its mode says (`@/branches/useBranchAutoSync`): on opening, on coming back to the window, and
   // periodically if chosen; only what cannot lose or merge anything happens without the person.
@@ -273,6 +287,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       toast({ title: t("repoStatus.actionFailed"), description: repositoryErrorDescription(err, t), variant: "destructive" });
     } finally {
       setRepoActionBusy(null);
+      refreshRepositoryStatus();
     }
   }
 
@@ -289,7 +304,10 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       }
       const result = await syncFullRepository({ ...repositoryTarget, token: currentToken, conflictResolutions });
       setSyncConflict(null);
-      toast({ title: t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, committed: result.committed, pushed: result.pushed }) });
+      toast({
+        title: t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, pushed: result.pushed }),
+        description: result.unpublished > 0 ? t("repoStatus.syncUnpublished", { count: result.unpublished }) : undefined,
+      });
       return true;
     } catch (error) {
       if (error instanceof RepositorySyncConflictError) {
@@ -311,6 +329,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       return false;
     } finally {
       setRepoActionBusy(null);
+      refreshRepositoryStatus();
     }
   }
 
@@ -345,9 +364,8 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     onSync: () => runFullSync(),
   });
 
-  const visibleRepoStatus = currentBook && repoStatus.tone === "none"
-    ? { label: t("repoStatus.notCloned"), tone: "offline" as const }
-    : repoStatus;
+  const visibleRepoStatus = currentBook ? shownPill(repoStatus, statusKey, t) : repoStatus;
+  const pillLabel = pillText(visibleRepoStatus, { bookOnDevice: currentBookIsLocal, remote, token: currentToken }, t);
 
   return (
     <header className="flex h-14 items-center justify-between gap-2 border-b bg-background px-3 sm:px-4">
@@ -410,10 +428,10 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
                   : visibleRepoStatus.tone === "clean"
                     ? "inline-flex min-w-0 items-center gap-1 rounded-full border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 text-xs text-emerald-800 dark:text-emerald-300"
                     : "inline-flex min-w-0 items-center gap-1 rounded-full border px-2 py-1 text-xs text-muted-foreground"}
-                title={visibleRepoStatus.label}
+                title={pillLabel}
               >
                 <span className="h-2 w-2 shrink-0 rounded-full bg-current" />
-                <span className="min-w-0 max-w-[34vw] truncate sm:max-w-none">{visibleRepoStatus.label}</span>
+                <span className="min-w-0 max-w-[34vw] truncate sm:max-w-none">{pillLabel}</span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64" aria-describedby={remote !== "ready" ? "repository-menu-github-hint" : undefined}>
