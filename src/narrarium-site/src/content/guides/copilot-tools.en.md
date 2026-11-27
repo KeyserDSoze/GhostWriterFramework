@@ -12,6 +12,8 @@ Capabilities include creation and editing, search, navigation, read-aloud, canon
 
 Chat renders Markdown, streams conversational responses, supports Shift+Enter submission, formatted/Markdown copy, saving to notes and PDF/Markdown download or Drive upload.
 
+A long text you paste (a synopsis, an analysis, a chapter) is material to read, not your request: what you ask is the line you write before or after it, and the words of the text never decide it, so a request that is not clearly a refusal is always answered by the model, which reads the text as data.
+
 ## The page you are on
 
 On some pages the Copilot works on the page first: the line above its composer says which («Working on: Simulated readers»). It sees what the page shows, not only where you are: on **Simulated readers**, every reader of the book (the built-in ones included) with whether it is on, its type, its severity and the genres it likes, and the filter and the reader you have open. The pages that work this way are **Simulated readers**, **Ghostwriters**, **Director**, **Evaluation style**, the autopilot's **Configuration**, **Assets**, and the page of a character, a location, a faction or an item. A request that could be about the page is about it; everything else the Copilot can do stays available on every page, the tools of the other pages included.

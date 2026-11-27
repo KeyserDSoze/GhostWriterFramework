@@ -7,6 +7,7 @@ import "@/i18n/outline";
 import type { AssistantAction } from "@/assistant/store";
 import { formatCount } from "@/autopilot/format";
 import { BrainstormMark } from "@/components/assistant/brainstorm/BrainstormMark";
+import { PageChangesTable } from "@/components/assistant/PageChangesReview";
 import { FileDiff } from "@/components/diff/DiffView";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -94,7 +95,7 @@ const CHAPTER_FILE = /^outline\/chapters\/(\d+)\.md$/;
  * the Synopsis page says it with) and the difference of every file, shown before anything is applied; applying asks once more. The notes of a brainstorm
  * are saved with one press: they are not entries, and the autopilot does not follow them.
  */
-export function BrainstormProposal({ action, book, branch, busy, enabled, onApply, onUndo }: {
+export function BrainstormProposal({ action, book, branch, busy, enabled, onApply, onUndo, onIncludeOptional }: {
   action: FileUpdates;
   book: BookEntry | undefined;
   branch: string;
@@ -102,6 +103,8 @@ export function BrainstormProposal({ action, book, branch, busy, enabled, onAppl
   enabled: boolean;
   onApply: () => void;
   onUndo: () => void;
+  /** Adds the author's own entries the proposal kept aside (`review.optional`) to what Apply writes. */
+  onIncludeOptional?: () => void;
 }) {
   const { t } = useTranslation();
   const [current, setCurrent] = useState<{ files: Map<string, string>; state: AutopilotState | null } | null>(null);
@@ -142,6 +145,8 @@ export function BrainstormProposal({ action, book, branch, busy, enabled, onAppl
   return (
     <section className="mt-2 space-y-3 rounded-xl border border-primary/60 bg-muted/30 p-3 text-xs" aria-label={notes ? t("brainstorm.proposal.notesTitle") : t("brainstorm.proposal.title")} data-brainstorm-proposal={notes ? "notes" : "synopsis"}>
       <p className="flex items-center gap-1.5 font-medium text-foreground"><FileText className="h-3.5 w-3.5" aria-hidden="true" />{notes ? t("brainstorm.proposal.notesTitle") : t("brainstorm.proposal.title")}<span className="font-normal text-muted-foreground">· {t("brainstorm.proposal.files", { count: action.updates.length })}</span></p>
+      {/* A proposal of many chapters (a pasted synopsis) has its table: every chapter, whether it is new, updated or the author's and left as it is. */}
+      {action.review && <PageChangesTable page={action.review.page} rows={action.review.rows} />}
       {notes ? <p className="text-muted-foreground">{t("brainstorm.proposal.notesHint")}</p> : (
         <div className="space-y-1" data-brainstorm-consequences="">
           <p className="font-medium text-foreground">{t("brainstorm.proposal.consequences")}</p>
@@ -163,6 +168,9 @@ export function BrainstormProposal({ action, book, branch, busy, enabled, onAppl
           <Button size="sm" onClick={() => (notes ? onApply() : setConfirming(true))} disabled={busy || !enabled} data-brainstorm-apply="">
             <Check className="h-4 w-4" aria-hidden="true" />{notes ? t("brainstorm.proposal.saveNotes") : t("brainstorm.proposal.apply")}
           </Button>
+        )}
+        {pending && !applied && onIncludeOptional && (action.review?.optional?.rows.length ?? 0) > 0 && (
+          <Button size="sm" variant="outline" onClick={onIncludeOptional} disabled={busy || !enabled}>{t("pageCopilot.review.includeOptional", { count: action.review!.optional!.rows.length })}</Button>
         )}
         {applied && <Badge variant="secondary">{t("brainstorm.proposal.applied")}</Badge>}
         {applied && <Button size="sm" variant="outline" onClick={onUndo} disabled={busy}><Undo2 className="h-4 w-4" aria-hidden="true" />{t("brainstorm.proposal.undo")}</Button>}

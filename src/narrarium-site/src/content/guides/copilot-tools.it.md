@@ -12,6 +12,8 @@ Le capability includono creazione e modifica, ricerca, navigazione, lettura voca
 
 La chat renderizza Markdown, mostra in streaming le risposte conversazionali, supporta invio con Shift+Invio, copia formattata/Markdown, salvataggio in nota e download o upload Drive in PDF/Markdown.
 
+Un testo lungo che incolli (una sinossi, un'analisi, un capitolo) è materiale da leggere, non la tua richiesta: quello che chiedi è la riga che scrivi prima o dopo, e le parole del testo non la decidono mai, quindi a una richiesta che non è chiaramente un rifiuto risponde sempre il modello, che legge il testo come dati.
+
 ## La pagina su cui sei
 
 Su alcune pagine il Copilot lavora prima sulla pagina: la riga sopra il campo di scrittura dice quale («Sto lavorando su: Lettori simulati»). Vede ciò che la pagina mostra, non solo dove sei: in **Lettori simulati**, ogni lettore del libro (anche quelli predefiniti) con il suo stato acceso o spento, il tipo, la severità e i generi che preferisce, e il filtro e il lettore che hai aperto. Le pagine che funzionano così sono **Lettori simulati**, **Ghostwriter**, **Direttore**, **Stile di valutazione**, la **Configurazione** dell'autopilot, **Asset**, e la pagina di un personaggio, un luogo, una fazione o un oggetto. Una richiesta che può riguardare la pagina riguarda la pagina; tutto il resto che il Copilot sa fare resta disponibile su ogni pagina, compresi i tool delle altre pagine.

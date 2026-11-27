@@ -9,7 +9,8 @@ import { BRAINSTORM_CANON_SECTIONS, summaryOf, type BrainstormContext } from "@/
 import { matchKey } from "@/lib/matchText";
 import { runScopedTool, scopedToolLines, toolData, toolRefused, type ScopedTool, type ScopedToolOutcome } from "@/assistant/scopedTools";
 import { filterEntries } from "@/outline/outlineModel";
-import type { AppSettings } from "@/types/settings";
+import { BRAINSTORMING_CAPABILITY, type AppSettings } from "@/types/settings";
+import type { SynopsisSections } from "@/assistant/synopsisImport";
 
 /**
  * Brainstorming's tools, and only these: it reads the Synopsis, an entry, the summary of a written chapter and an entry of the canon, it proposes a
@@ -18,7 +19,7 @@ import type { AppSettings } from "@/types/settings";
  * Copilot: this registry is its own, the Copilot's is never asked, and a call to anything else is refused here, in code, whatever the model writes.
  */
 
-export const BRAINSTORM_TOOL_IDS = ["read_synopsis", "read_synopsis_entry", "read_chapter_summary", "read_canon_entry", "propose_synopsis_edits", "check_synopsis", "save_brainstorm_notes"] as const;
+export const BRAINSTORM_TOOL_IDS = ["read_synopsis", "read_synopsis_entry", "read_chapter_summary", "read_canon_entry", "propose_synopsis_edits", "import_synopsis_text", "check_synopsis", "save_brainstorm_notes"] as const;
 export type BrainstormToolId = (typeof BRAINSTORM_TOOL_IDS)[number];
 
 /** What Brainstorming's tools work on: the context of the request (the book as Brainstorming knows it) and the settings of the author. */
@@ -28,6 +29,13 @@ export interface BrainstormToolEnv {
   /** The words the author reads (a proposal, a finding) are Italian. */
   italian: boolean;
   now?: () => Date;
+  accountScope?: string | null;
+  signal?: AbortSignal;
+  /** The author's request, apart from what they pasted. */
+  instruction?: string;
+  /** The chapters of a synopsis the author pasted with the request (see `synopsisSections`): what `import_synopsis_text` reads. */
+  sections?: SynopsisSections;
+  onProgress?: (progress: { from: number; to: number; total: number }) => void;
 }
 
 export type BrainstormToolOutcome = ScopedToolOutcome<BrainstormToolId>;
@@ -152,6 +160,34 @@ const proposeSynopsisEdits: BrainstormTool<{ summary?: string; edits: Array<z.in
   },
 };
 
+const importSynopsisText: BrainstormTool<Record<string, never>> = {
+  id: "import_synopsis_text",
+  description: "the synopsis of several chapters the author pasted with this request, read a few chapters at a time into the entries of the Synopsis (title, what happens, and the fields of their design the text gives, nothing it does not say), shown to the author in one table and applied only if the author confirms; an entry the author wrote is never replaced unless the author asks",
+  args: "{}",
+  schema: z.object({}).strict(),
+  async run(_args, env) {
+    if (!synopsisEditsEnabled(env.settings)) return disabledEdits("import_synopsis_text");
+    if (!env.sections) return refused("import_synopsis_text", "The author pasted no synopsis of several chapters with this request: there is nothing to import. Say so, or propose the edits yourself.");
+    const { importSynopsis } = await import("@/assistant/synopsisImport");
+    const message = await importSynopsis({
+      settings: env.settings,
+      accountScope: env.accountScope ?? null,
+      ...(env.signal ? { signal: env.signal } : {}),
+      capability: BRAINSTORMING_CAPABILITY,
+      instruction: env.instruction ?? "",
+      sections: env.sections,
+      source: env.context.source,
+      ghostwriters: env.context.ghostwriters,
+      italian: env.italian,
+      book: env.context.book,
+      branch: env.context.branch,
+      ...(env.onProgress ? { onProgress: env.onProgress } : {}),
+    });
+    if (message.action?.kind !== "apply-file-updates") return data("import_synopsis_text", `Not proposed: ${message.text}`, message.text);
+    return { tool: "import_synopsis_text", kind: "proposal", message, text: `Proposed to the author: ${message.action.updates.length} entries of the Synopsis from the pasted text. Nothing is applied until the author confirms.` };
+  },
+};
+
 const checkSynopsis: BrainstormTool<Record<string, never>> = {
   id: "check_synopsis",
   description: "the coherence check of the whole Synopsis: what the engine finds odd in its files, the entries without text, the ghostwriters that do not exist, the chapters written without an entry, and what the plan of the autopilot says of the entries that changed",
@@ -252,7 +288,7 @@ const saveBrainstormNotes: BrainstormTool<{ title?: string; notes: string }> = {
   },
 };
 
-const TOOLS = [readSynopsis, readSynopsisEntry, readChapterSummary, readCanonEntry, proposeSynopsisEdits, checkSynopsis, saveBrainstormNotes] as const;
+const TOOLS = [readSynopsis, readSynopsisEntry, readChapterSummary, readCanonEntry, proposeSynopsisEdits, importSynopsisText, checkSynopsis, saveBrainstormNotes] as const;
 
 /** Brainstorming's registry: these tools, in this order, and nothing else. */
 export const brainstormToolRegistry: ReadonlyMap<string, BrainstormTool<never>> = new Map(TOOLS.map((tool) => [tool.id, tool as unknown as BrainstormTool<never>]));

@@ -20,9 +20,10 @@ const pageCopilotIt = {
         director: "Modifiche proposte al direttore",
         "evaluation-style": "Modifiche proposte allo stile di valutazione",
         canon: "Modifiche proposte a questa voce",
+        outline: "Modifiche proposte alla Sinossi",
       },
-      item: { default: "Elemento", readers: "Lettore", ghostwriters: "Ghostwriter", director: "Campo", "evaluation-style": "Criterio", canon: "Campo" },
-      kinds: { default: "predefinito del libro" },
+      item: { default: "Elemento", readers: "Lettore", ghostwriters: "Ghostwriter", director: "Campo", "evaluation-style": "Criterio", canon: "Campo", outline: "Capitolo" },
+      kinds: { default: "predefinito del libro", own: "tua: non sostituita" },
       names: {
         director: {
           name: "Nome", persona: "Personalità", autonomy: "Autonomia", strictness: "Severità", approvalScore: "Voto di approvazione", maxReviewRounds: "Giri di revisione per capitolo",
@@ -62,6 +63,10 @@ const pageCopilotIt = {
       applied: "Applicata: {{summary}}.",
       undone: "Annullata: tutto è com'era prima.",
       discarded: "Scartata: non è cambiato nulla.",
+      includeOptional_one: "Sostituisci anche la mia voce",
+      includeOptional_other: "Sostituisci anche le mie {{count}} voci",
+      included_one: "La tua voce ora è nella proposta: viene sostituita quando la applichi.",
+      included_other: "Le tue {{count}} voci ora sono nella proposta: vengono sostituite quando la applichi.",
       fields: {
         name: "nome", description: "descrizione", profile: "profilo", aspects: "aspetti", preferredGenres: "generi preferiti", dislikedGenres: "generi non graditi",
         experienceLevel: "esperienza", severity: "severità", audienceAge: "età del pubblico", interests: "interessi", appreciatedElements: "elementi apprezzati",
@@ -69,6 +74,9 @@ const pageCopilotIt = {
         language: "lingua", tone: "tono", voice: "voce", povDefault: "POV predefinito", tenseDefault: "tempo predefinito", sentenceRhythm: "ritmo delle frasi",
         dialogueStyle: "stile dialoghi", vocabulary: "vocabolario", writingStyle: "stile di scrittura", punctuationStyle: "stile di punteggiatura", influences: "influenze",
         strengths: "punti di forza", avoid: "da evitare", temperature: "temperatura", body: "istruzioni di stile",
+        title: "titolo", summary: "cosa succede", goal: "funzione narrativa", pov: "punto di vista", characters: "personaggi", setting: "ambientazione", time: "tempo",
+        events: "eventi salienti", scenes: "scene", conflicts: "conflitti", emotions: "evoluzione dei personaggi", reveals: "cosa scopre il lettore", withholds: "cosa resta nascosto",
+        clues: "indizi", previous: "cosa riprende", next: "collegamenti futuri", ending: "chiusura", cliffhanger: "cliffhanger", notes: "note per il ghostwriter",
       },
     },
   },

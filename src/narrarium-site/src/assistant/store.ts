@@ -52,9 +52,14 @@ export interface PageChangeRow {
 
 /** The review of a proposal for a page: every thing of the page with its resulting state, shown before it is applied. */
 export interface PageChangesReview {
-  /** The page (`PageId`). */
+  /** The page (`PageId`), or `outline` for the Synopsis. */
   page: string;
   rows: PageChangeRow[];
+  /**
+   * What the proposal leaves aside unless the author asks, from the review: the edits of entries the author wrote (`rows`, the ids of their rows), with the files and the versions they
+   * were made on. Adding them moves them into the proposal's updates; nothing of them is written before that.
+   */
+  optional?: { rows: string[]; updates: AssistantFileUpdate[]; sourceRevisions: Record<string, string | null> };
 }
 
 export interface AssistantActionProvenance {

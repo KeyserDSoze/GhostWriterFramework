@@ -63,8 +63,8 @@ beforeEach(() => {
 });
 
 describe("Brainstorming's registry", () => {
-  it("has exactly its seven tools, none of the Copilot's, and the Copilot's registry has none of them", () => {
-    expect(brainstormToolIds()).toEqual(["read_synopsis", "read_synopsis_entry", "read_chapter_summary", "read_canon_entry", "propose_synopsis_edits", "check_synopsis", "save_brainstorm_notes"]);
+  it("has exactly its eight tools, none of the Copilot's, and the Copilot's registry has none of them", () => {
+    expect(brainstormToolIds()).toEqual(["read_synopsis", "read_synopsis_entry", "read_chapter_summary", "read_canon_entry", "propose_synopsis_edits", "import_synopsis_text", "check_synopsis", "save_brainstorm_notes"]);
     expect(brainstormToolIds()).toEqual([...BRAINSTORM_TOOL_IDS]);
     ensureBuiltinCopilotToolsRegistered();
     const copilot = copilotToolRegistry.list().map((tool) => tool.id);

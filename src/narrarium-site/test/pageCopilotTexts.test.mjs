@@ -26,7 +26,7 @@ test("the page-aware Copilot speaks both languages, with the same keys and the s
 
 test("its Italian is written in Italian, not copied from English", () => {
   // A word that is the same in both languages (a name, a label of one word) is said here.
-  const same = new Set(["pageCopilot.pages.ghostwriters", "pageCopilot.pages.assets", "pageCopilot.review.item.ghostwriters"]);
+  const same = new Set(["pageCopilot.pages.ghostwriters", "pageCopilot.pages.assets", "pageCopilot.review.item.ghostwriters", "pageCopilot.review.fields.cliffhanger"]);
   const italian = new Map(leaves(pageCopilotIt));
   const words = (text) => /\p{L}/u.test(text.replace(/\{\{[^}]*\}\}/g, ""));
   assert.deepEqual(leaves(pageCopilotEn).filter(([key, value]) => !same.has(key) && italian.get(key) === value && words(value)).map(([key]) => key), []);

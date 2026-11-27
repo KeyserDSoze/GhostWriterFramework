@@ -1,4 +1,4 @@
-import type { AssistantAction, PageChangesReview, AssistantAttachment, AssistantLosslessArchiveManifest, AssistantLosslessSegment, AssistantLosslessSegmentRef, AssistantMessage, AssistantNoteSaveOperation, AssistantQuarantinedAction, AssistantSession, AssistantSessionArchive, AssistantSessionProvenance } from "./store.ts";
+import type { AssistantAction, AssistantFileUpdate, PageChangesReview, AssistantAttachment, AssistantLosslessArchiveManifest, AssistantLosslessSegment, AssistantLosslessSegmentRef, AssistantMessage, AssistantNoteSaveOperation, AssistantQuarantinedAction, AssistantSession, AssistantSessionArchive, AssistantSessionProvenance } from "./store.ts";
 import { emptyAssistantArchiveRollup, emptyAssistantSessionArchive, normalizeAssistantSession } from "./store.ts";
 import { hasAssistantActionProvenance, OUTLINE_FILE, PERSONA_FILE } from "./actionValidation.ts";
 
@@ -96,7 +96,18 @@ function pageReview(value: unknown, label: string): PageChangesReview {
       if (typeof out.id !== "string" || typeof out.name !== "string" || !PAGE_CHANGES.has(out.change as string)) throw new AssistantSessionValidationError(`${where} is invalid.`);
       return out as unknown as PageChangesReview["rows"][number];
     }),
+    ...(raw.optional === undefined ? {} : { optional: optionalUpdates(raw.optional, `${label}.optional`) }),
   };
+}
+
+/** What a review keeps aside for the author to add (the edits of the author's own entries): their rows, files and the versions they were made on. */
+function optionalUpdates(value: unknown, label: string): NonNullable<PageChangesReview["optional"]> {
+  const raw = object(value, label);
+  if (!Array.isArray(raw.rows) || raw.rows.length > 200 || !Array.isArray(raw.updates) || raw.updates.length > 100) throw new AssistantSessionValidationError(`${label} is invalid.`);
+  const updates = raw.updates.map((item, index) => update(item, `${label}.updates[${index}]`)) as AssistantFileUpdate[];
+  const revisions = Object.fromEntries(Object.entries(object(raw.sourceRevisions, `${label}.sourceRevisions`)).map(([path, revision]) => [repositoryPath(path, `${label}.sourceRevisions path`), revision === null ? null : text(revision, `${label}.sourceRevisions revision`, 256)]));
+  if (updates.some((entry) => !(entry.path in revisions))) throw new AssistantSessionValidationError(`${label}.sourceRevisions is invalid.`);
+  return { rows: raw.rows.map((row, index) => text(row, `${label}.rows[${index}]`, 2_000)), updates, sourceRevisions: revisions };
 }
 
 function action(value: unknown, label: string): AssistantAction {

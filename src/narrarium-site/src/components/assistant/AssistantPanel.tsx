@@ -1503,7 +1503,7 @@ export function AssistantPanel() {
       }
     };
     try {
-      if (session.mode === "brainstorming") return await askBrainstorming(trimmed, session, controller.signal, ownsRequest, accountScope);
+      if (session.mode === "brainstorming") return await askBrainstorming(trimmed, session, controller.signal, ownsRequest, accountScope, { onText: updateStreamedReply, streamedId: () => streamedMessageId });
       const booksState = useBooksStore.getState();
       const routeContext = await loadWriterContext(location.pathname, settings, settings.books, booksState.structures, booksState.workingBranches, branch);
       if (!ownsRequest()) return null;
@@ -1593,11 +1593,29 @@ export function AssistantPanel() {
     }
   }
 
+  /** Adds what a proposal kept aside (the author's own entries of the Synopsis, `review.optional`) to what Apply writes: nothing is written by this, only the proposal changes. */
+  function includeOptionalUpdates(message: AssistantMessage) {
+    const action = message.action;
+    if (action?.kind !== "apply-file-updates" || !action.review?.optional) return;
+    const { optional, ...review } = action.review;
+    const sourceRevisions = { ...action.sourceRevisions, ...optional.sourceRevisions };
+    const added = new Set(optional.rows);
+    useAssistantStore.getState().updateMessage(message.id, {
+      action: {
+        ...action,
+        updates: [...action.updates, ...optional.updates],
+        sourceRevisions,
+        sourceRevision: sourceRevisionFromFiles(sourceRevisions),
+        review: { ...review, rows: review.rows.map((row) => (added.has(row.id) ? { ...row, change: "edited" as const, kind: undefined } : row)) },
+      },
+    });
+  }
+
   /**
    * A request to Brainstorming: its own runner (loaded with its first request), with only its own tools and the Synopsis of its book as its context.
    * None of the Copilot's tools, local commands or voice commands is reached from here.
    */
-  async function askBrainstorming(prompt: string, session: AssistantSession, signal: AbortSignal, ownsRequest: () => boolean, accountScope: string | null): Promise<AssistantMessage | null> {
+  async function askBrainstorming(prompt: string, session: AssistantSession, signal: AbortSignal, ownsRequest: () => boolean, accountScope: string | null, stream: { onText: (text: string) => void; streamedId: () => string | null }): Promise<AssistantMessage | null> {
     const book = session.bookId ? settings.books.find((entry) => entry.id === session.bookId) ?? null : null;
     const userMessage: AssistantMessage = { id: crypto.randomUUID(), role: "user", text: prompt };
     useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage] }));
@@ -1614,10 +1632,14 @@ export function AssistantPanel() {
       history: latest.messages.filter((message) => message.id !== userMessage.id),
       signal,
       accountScope,
+      onText: stream.onText,
     });
     if (!ownsRequest()) return null;
-    const owned: AssistantMessage = { ...reply, branch, ...(reply.action ? { action: { ...reply.action, branch: reply.action.branch ?? branch } } : {}) };
-    useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, owned] }));
+    // A turn that said what it was doing (the chapters of a pasted synopsis it read) ends in the same message.
+    const streamed = stream.streamedId();
+    const owned: AssistantMessage = { ...reply, ...(streamed ? { id: streamed } : {}), branch, ...(reply.action ? { action: { ...reply.action, branch: reply.action.branch ?? branch } } : {}) };
+    if (streamed) useAssistantStore.getState().updateSessionMessage(session.id, streamed, { text: owned.text, action: owned.action, branch });
+    else useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, owned] }));
     setRequestStatus("");
     return owned;
   }
@@ -2741,7 +2763,7 @@ export function AssistantPanel() {
             )}
             {(message.action?.kind === "apply-file-updates" || message.action?.kind === "undo-file-updates") && brainstorming && (
               <Suspense fallback={null}>
-                <BrainstormProposal action={message.action} book={bookEntryOf(message.action.bookId)} branch={branch} busy={busy} enabled={isAssistantActionEnabled(message.action)} onApply={() => void applySelectedFileUpdates(index)} onUndo={() => void undoFileUpdates(index)} />
+                <BrainstormProposal action={message.action} book={bookEntryOf(message.action.bookId)} branch={branch} busy={busy} enabled={isAssistantActionEnabled(message.action)} onApply={() => void applySelectedFileUpdates(index)} onUndo={() => void undoFileUpdates(index)} onIncludeOptional={() => includeOptionalUpdates(message)} />
               </Suspense>
             )}
             {(message.action?.kind === "apply-file-updates" || message.action?.kind === "undo-file-updates") && message.action.review && !brainstorming && (
@@ -2756,6 +2778,7 @@ export function AssistantPanel() {
                     useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("pageCopilot.review.discarded")}` });
                     composerRef.current?.focus();
                   }}
+                  onIncludeOptional={() => includeOptionalUpdates(message)}
                 />
               </Suspense>
             )}
