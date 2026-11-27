@@ -28,6 +28,7 @@ import { selectMentionedCanonFiles, type CanonContextCandidate } from "@/assista
 import { copilotToolRegistry, isCopilotHandlerEnabled, isCopilotToolEnabled } from "@/assistant/tools/registry";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import { classifyMutationIntent, type MutationIntent } from "@/assistant/mutationIntent";
+import { isRoutingLimitError } from "@/assistant/routingExecutionBudget";
 import { sourceRevisionFromFiles } from "@/assistant/actionValidation";
 import { resolveNavigateAction, resolveReadAloudAction } from "@/assistant/planner";
 import type {
@@ -359,7 +360,8 @@ async function runWithTools(input: PromptInput & { book: BookEntry | null; token
       },
     });
   } catch (error) {
-    if (ran || input.signal?.aborted) throw error;
+    // A limit of the router or of the window refuses every call alike: the author is told which one, rather than answered by the keyword rules as if nothing was asked.
+    if (ran || input.signal?.aborted || isRoutingLimitError(error)) throw error;
     return null;
   }
 }

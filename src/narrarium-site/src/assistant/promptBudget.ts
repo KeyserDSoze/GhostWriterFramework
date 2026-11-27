@@ -1,28 +1,22 @@
+import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, modelWindow, resolveModelTokenBudgets } from "narrarium-engine";
 import type { LlmContentPart, LlmMessage } from "@/assistant/llm";
+
+// A model's window, and what it leaves for a prompt, are the engine's (`modelWindow`): the Copilot, Brainstorming and the autopilot judge a prompt by the same window, the
+// model's own or the default for a model whose window is not set.
+export { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, modelWindow, resolveModelTokenBudgets };
+export type { ModelWindow, ModelWindowSource } from "narrarium-engine";
 
 const MESSAGE_OVERHEAD_TOKENS = 4;
 const IMAGE_TOKENS = 4_096;
 const TRUNCATION_NOTICE = "[Context truncated to reserve this model's output tokens and fit its context window.]";
 const SHORT_TRUNCATION_NOTICE = "[Context truncated]";
 const IMAGE_NOTICE = "[One or more image attachments were omitted to fit this model's context window.]";
-export const DEFAULT_MAX_INPUT_TOKENS = 32_000;
-export const DEFAULT_MAX_OUTPUT_TOKENS = 2_048;
 
 const encoder = new TextEncoder();
 
 export function textTokenUpperBound(value: string): number {
   // Byte-level BPE tokenizers cannot emit more tokens than the UTF-8 bytes supplied.
   return encoder.encode(value).byteLength;
-}
-
-export function resolveModelTokenBudgets(maxContextTokens = DEFAULT_MAX_INPUT_TOKENS, configuredOutputTokens?: number): { contextTokens: number; inputTokens: number; outputTokens: number; safetyTokens: number } {
-  const contextTokens = Math.max(3, Math.floor(maxContextTokens || DEFAULT_MAX_INPUT_TOKENS));
-  const safetyTokens = Math.min(Math.max(32, Math.ceil(contextTokens * 0.05)), contextTokens - 2);
-  const requestedOutput = configuredOutputTokens && configuredOutputTokens > 0
-    ? Math.floor(configuredOutputTokens)
-    : Math.min(DEFAULT_MAX_OUTPUT_TOKENS, Math.max(1, Math.floor(contextTokens * 0.25)));
-  const outputTokens = Math.min(requestedOutput, Math.max(1, contextTokens - safetyTokens - 1));
-  return { contextTokens, inputTokens: contextTokens - safetyTokens - outputTokens, outputTokens, safetyTokens };
 }
 
 export function estimateMessageTokens(messages: LlmMessage[]): number {

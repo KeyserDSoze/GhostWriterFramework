@@ -199,7 +199,7 @@ export async function generateAssetImage(input: {
   const candidates = applySameBoundaryPolicy(input.settings, resolveTaskCandidates(input.settings, "image").filter((c) => c.integration && c.model && c.integration.apiKey));
   if (!candidates.length) throw new Error("Image generation requires an OpenAI or Azure OpenAI integration.");
   return await executeMediaFallback({ candidates, signal: budget.signal, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings: input.settings, kind: "image", from: candidates[index - 1], to: candidate, accountScope: operation.accountScope }); }, runAi: async (candidate, attemptSignal, candidateIndex) => {
-    budget.reserve(estimateImageAttempt(providerPrompt, candidate));
+    budget.reserve(estimateImageAttempt(providerPrompt, candidate), { first: candidateIndex === 0 });
     const integration = candidate.integration!;
     const model = candidate.model!;
     const client = createImageClient(integration);

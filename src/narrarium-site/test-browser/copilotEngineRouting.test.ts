@@ -179,30 +179,42 @@ describe("the order in which the candidates are asked, and what stops the asking
     expect(hostsOf(fake)).toEqual(["ai1", "ai2"]);
   });
 
-  it("stops asking the author's fallbacks that the budget of attempts cannot hold, and refuses a first candidate that is already over it", async () => {
-    const x = compatible("x", [chatModel("model-x", { maxInputTokens: 10_000, maxOutputTokens: 1_000 })]);
-    const y = compatible("y", [chatModel("model-y", { maxInputTokens: 10_000, maxOutputTokens: 1_000 })]);
+  it("estimates each attempt on the request, not on the model's window, and stops asking the fallbacks that the budget of attempts cannot hold", async () => {
+    // Windows of 1,000,000 tokens: the estimate of an attempt is its prompt and the output it asks for (1,000), never the whole window, so the first is sent.
+    const x = compatible("x", [chatModel("model-x", { maxInputTokens: 1_000_000, maxOutputTokens: 1_000 })]);
+    const y = compatible("y", [chatModel("model-y", { maxInputTokens: 1_000_000, maxOutputTokens: 1_000 })]);
     const fake = provide([x, y], () => failReply(400, "refused"));
     const limits = (maxTokenAttempts: number) => ({ routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxTokenAttempts } });
 
     await failure(completeTextRouted(routeOf("copilot", [x, y], limits(15_000)), MESSAGES, "copilot", { accountScope: null }));
-    expect(hostsOf(fake), "9 500 tokens are the budget of one attempt: two do not fit in 15 000").toEqual(["x"]);
+    expect(hostsOf(fake), "the fallback's attempt of about 1,000 tokens fits 15,000").toEqual(["x", "y"]);
 
-    const over = await failure(completeTextRouted(routeOf("copilot", [x, y], limits(5_000)), MESSAGES, "copilot", { accountScope: null }));
-    expect(over).toBeInstanceOf(RoutingExecutionBudgetError);
-    expect(hostsOf(fake)).toEqual(["x"]);
+    // The token limit holds for the fallbacks: a limit under one attempt keeps the first and leaves the fallback out, and never refuses the first.
+    await failure(completeTextRouted(routeOf("copilot", [x, y], limits(500)), MESSAGES, "copilot", { accountScope: null }));
+    expect(hostsOf(fake)).toEqual(["x", "y", "x"]);
   });
 
-  it("stops asking the fallbacks that the estimated cost of the attempts cannot hold", async () => {
-    const x = compatible("x", [chatModel("model-x", { maxInputTokens: 10_000, maxOutputTokens: 1_000, pricing: { inputPerMTok: 10, outputPerMTok: 100 } })]);
-    const y = compatible("y", [chatModel("model-y", { maxInputTokens: 10_000, maxOutputTokens: 1_000, pricing: { inputPerMTok: 10, outputPerMTok: 100 } })]);
-    const fake = provide([x, y], () => failReply(400, "refused"));
-    // One attempt is estimated at 0.185: 8 500 tokens of input at 10 a million and 1 000 of output at 100.
-    const settings = routeOf("copilot", [x, y], { routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxEstimatedCost: 0.2 } });
+  it("sends the first candidate whatever its estimated cost: the cost limit is a safety for the fallbacks after it, together", async () => {
+    const dear = compatible("dear", [chatModel("model-dear", { maxInputTokens: 1_000_000, maxOutputTokens: 1_000, pricing: { inputPerMTok: 1_000, outputPerMTok: 1_000 } })]);
+    const fake = provide([dear], speak("sent"));
+    expect(await completeTextRouted(routeOf("copilot", [dear], { routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxEstimatedCost: 0.5 } }), MESSAGES, "copilot", { accountScope: null })).toBe("sent");
+    expect(hostsOf(fake)).toEqual(["dear"]);
+  });
 
-    await failure(completeTextRouted(settings, MESSAGES, "copilot", { accountScope: null }));
+  it("stops asking the fallbacks that the estimated cost of the fallbacks cannot hold, and when the call fails says which models, the limit and its numbers", async () => {
+    const priced = { maxInputTokens: 10_000, maxOutputTokens: 1_000, pricing: { inputPerMTok: 10, outputPerMTok: 100 } };
+    const x = compatible("x", [chatModel("model-x", priced)]);
+    const y = compatible("y", [chatModel("model-y", priced)]);
+    const z = compatible("z", [chatModel("model-z", priced)]);
+    const fake = provide([x, y, z], () => failReply(400, "refused"));
+    // An attempt is estimated at about 0.1 (its short prompt, and 1,000 tokens of output at 100 a million): the first is the model's own, y fits in 0.15, y and z together do not.
+    const settings = routeOf("copilot", [x, y, z], { routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxEstimatedCost: 0.15 } });
 
-    expect(hostsOf(fake)).toEqual(["x"]);
+    const error = await failure(completeTextRouted(settings, MESSAGES, "copilot", { accountScope: null }));
+
+    expect(hostsOf(fake)).toEqual(["x", "y"]);
+    expect((error as RoutingExecutionBudgetError).budget).toMatchObject({ limit: "cost", allowed: 0.15 });
+    expect((error as Error).message).toMatch(/Not tried: "model-z" in "Z": the fallbacks after the first attempt would be estimated at 0\.2\d\d [A-Z]{3} together, and the limit is 0\.150 [A-Z]{3} \(maxEstimatedCost: "Maximum estimated route cost" in Settings > AI Router > Routing options\)\.$/);
   });
 });
 

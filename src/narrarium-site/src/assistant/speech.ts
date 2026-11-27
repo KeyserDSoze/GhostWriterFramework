@@ -140,7 +140,7 @@ export async function transcribeAudio(blob: Blob, settings: AppSettings, signal:
   if (!candidates.length) throw new Error("No AI speech-to-text model is configured.");
   const sizeKb = Math.round(blob.size / 1024);
   return await executeMediaFallback<string, TaskCandidate>({ candidates, signal: budget.signal, beforeCandidate: (candidate, index) => { const previous = routeCandidates[startCandidateIndex + index - 1]; if (previous) acknowledgeCrossBoundaryFallback({ settings, kind: "audio", from: previous, to: candidate, accountScope: operation.accountScope }); }, runBrowser: async (index) => { throw new BrowserSpeechFallbackRequired(startCandidateIndex + index + 1); }, runAi: async (candidate, attemptSignal, candidateIndex) => {
-    budget.reserve(estimateSttAttempt(blob, candidate));
+    budget.reserve(estimateSttAttempt(blob, candidate), { first: candidateIndex === 0 });
     const integration = candidate.integration as AIIntegration;
     const model = candidate.model!;
     const pricing = candidates.find((entry) => entry.integration === integration && entry.model === model)?.pricing;
@@ -354,7 +354,7 @@ async function speakWithOpenAICompatible(text: string, settings: AppSettings, ca
   const synthesize = async (segment: string, allowFallback = true): Promise<string> => {
     const attempts = allowFallback ? candidates.slice(candidateIndex) : [candidates[candidateIndex]];
     return executeMediaFallback<string, TaskCandidate>({ candidates: attempts, signal: synthesisController.signal, beforeCandidate: (candidate, index) => { if (index > 0) acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: attempts[index - 1], to: candidate, accountScope: options.accountScope }); }, runBrowser: async () => BROWSER_TTS_FALLBACK, runAi: async (candidate, attemptSignal, relativeIndex) => {
-      budget.reserve(estimateTtsAttempt(segment, candidate));
+      budget.reserve(estimateTtsAttempt(segment, candidate), { first: relativeIndex === 0 });
       const integration = candidate.integration as AIIntegration;
       const model = candidate.model!;
       const absoluteIndex = allowFallback ? candidateIndex + relativeIndex : candidateIndex;

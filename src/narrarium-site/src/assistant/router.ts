@@ -3,14 +3,15 @@ import { AiProviderError, splitReasoningBlock, type FetchAiAttemptEnd } from "na
 import { effectiveThinking } from "@/router/thinking";
 import { followOrder, integrationChatModels, modelSupportsCapability, pickModelFor, resolveReviewIntegration, resolveWritingIntegration, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmFinishReport, type LlmMessage, type LlmResult, type LlmUsageReport } from "@/assistant/llm";
 import { executeCompletionFallback } from "@/assistant/completionFallback";
-import { budgetLlmMessages, likelyMessageTokens, resolveModelTokenBudgets } from "@/assistant/promptBudget";
+import { fallbackBudgetNote } from "narrarium-engine";
+import { DEFAULT_MAX_INPUT_TOKENS, budgetLlmMessages, likelyMessageTokens, modelWindow, resolveModelTokenBudgets } from "@/assistant/promptBudget";
 import { announceRetry } from "@/assistant/retryNotice";
 import { usageTaskOf } from "@/costs/usageTasks";
 import { engineOutputLimit, jsonInstructionTokens, requestedOutput, runCopilotAttempt, runMetadata, startRoutingClock, toolsOnly, toolsRequiredError, toolTokens, usageReport, type ChatCandidate, type SkippedModels } from "@/assistant/copilotAi";
 import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
 import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperation";
 import { currentRequest } from "@/assistant/promptTrust";
-import { RoutingExecutionBudgetError } from "@/assistant/routingExecutionBudget";
+import type { RoutingAttemptEstimate, RoutingBudgetDetail } from "@/assistant/routingExecutionBudget";
 
 export { RoutingExecutionBudgetError } from "@/assistant/routingExecutionBudget";
 
@@ -58,14 +59,12 @@ export class CandidateInputBudgetError extends Error {
 }
 
 /**
- * With `overflow: "fail"` a prompt is never cut in the middle (an autopilot prompt would silently
- * lose part of its data, such as findings). It is refused only when it clearly exceeds the context
- * window configured for every routed model; a model with no configured window gets it whole and the
- * provider answers if it is too long.
+ * With `overflow: "fail"` a prompt is never cut in the middle (an autopilot prompt would silently lose part of its data, such as findings). It is refused when it exceeds the
+ * context window of every routed model: the model's own, or the default for a model whose window is not set (`modelWindow`), as the engine judges it.
  */
 export class PromptBudgetExceededError extends Error {
-  constructor(readonly estimatedTokens: number, readonly largestBudget: number) {
-    super(`The prompt (about ${estimatedTokens} tokens) is larger than the context window configured for every model routed to this task (largest input budget: ${largestBudget} tokens). Nothing was sent. Raise the models' "Context window tokens" in the AI settings if they support more, or route this task to a model with a larger context window.`);
+  constructor(readonly estimatedTokens: number, readonly largestBudget: number, assumedDefault = false) {
+    super(`The prompt (about ${estimatedTokens} tokens) is larger than the context window of every model routed to this task (largest input budget: ${largestBudget} tokens). Nothing was sent.${assumedDefault ? ` A model whose window is not set is assumed to hold ${DEFAULT_MAX_INPUT_TOKENS} tokens.` : ""} Set the models' "Context window tokens" in AI Integrations if they hold more, or route this task to a model with a larger context window.`);
     this.name = "PromptBudgetExceededError";
   }
 }
@@ -321,33 +320,59 @@ export function resolveEffectiveTaskCandidates(settings: AppSettings, task: Rout
   return applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, task));
 }
 
-function estimatedCandidateTokens(candidate: TaskCandidate): number {
-  const budget = resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens);
-  return budget.inputTokens + budget.outputTokens;
+/**
+ * What one attempt of this request would use with a candidate: the likely tokens of its prompt (as the engine counts them, no more than the candidate's window takes: a longer prompt
+ * is cut to it, and said) and the output the call asks of it, at the candidate's prices. Not its whole window: a model of 1,000,000 tokens asked a short question is a short attempt.
+ */
+function attemptEstimate(candidate: TaskCandidate, promptTokens: number, outputTokens: number): RoutingAttemptEstimate & { inputTokens: number } {
+  const room = resolveModelTokenBudgets(candidate.maxInputTokens, outputTokens).inputTokens;
+  const inputTokens = Math.max(0, Math.min(promptTokens, room));
+  const output = Math.max(0, outputTokens);
+  const cost = candidate.pricing ? inputTokens / 1_000_000 * (candidate.pricing.inputPerMTok ?? 0) + output / 1_000_000 * (candidate.pricing.outputPerMTok ?? 0) : 0;
+  return { tokens: inputTokens + output, cost, inputTokens };
 }
 
-function estimatedCandidateCost(candidate: TaskCandidate): number {
-  if (!candidate.pricing) return 0;
-  const budget = resolveModelTokenBudgets(candidate.maxInputTokens, candidate.maxOutputTokens);
-  return budget.inputTokens / 1_000_000 * (candidate.pricing.inputPerMTok ?? 0) + budget.outputTokens / 1_000_000 * (candidate.pricing.outputPerMTok ?? 0);
+/** The candidates a call may try, and the fallbacks the routing limits leave out with which limit and its numbers (said on the error of a call whose candidates all failed). */
+interface BoundedCandidates {
+  candidates: TaskCandidate[];
+  leftOut?: { candidates: TaskCandidate[]; budget: RoutingBudgetDetail };
 }
 
-function boundedCandidates(settings: AppSettings, candidates: TaskCandidate[], requireTools = false): TaskCandidate[] {
+/**
+ * The candidates a call may try within the router's limits (Settings > AI Router > Routing options), with the engine's rule: the first is bounded by its model's window alone
+ * (whether the prompt fits it, or what is cut to fit it), and the limits are a safety for what the fallbacks after it add together, `maxTokenAttempts` for their tokens and
+ * `maxEstimatedCost` for their cost, each fallback estimated for this request (`estimate`, never the whole window of its model).
+ */
+function boundedCandidates(settings: AppSettings, candidates: TaskCandidate[], estimate: (candidate: TaskCandidate) => RoutingAttemptEstimate & { inputTokens: number }, requireTools = false): BoundedCandidates {
   const limits = settings.routingExecution ?? { maxCandidates: 4, maxTotalDurationMs: 180_000, maxTokenAttempts: 200_000, maxEstimatedCost: 5 };
+  const pool = candidates.slice(0, limits.maxCandidates).filter((candidate) => !(requireTools && candidate.supportsToolCalls === false));
   const out: TaskCandidate[] = [];
-  let tokens = 0;
-  let cost = 0;
-  for (const candidate of candidates.slice(0, limits.maxCandidates)) {
-    if (requireTools && candidate.supportsToolCalls === false) continue;
-    const nextTokens = estimatedCandidateTokens(candidate);
-    const nextCost = estimatedCandidateCost(candidate);
-    if (out.length && (tokens + nextTokens > limits.maxTokenAttempts || cost + nextCost > limits.maxEstimatedCost)) break;
-    if (!out.length && (nextTokens > limits.maxTokenAttempts || nextCost > limits.maxEstimatedCost)) throw new RoutingExecutionBudgetError("The first routing candidate exceeds the configured token-attempt or estimated-cost budget.");
+  let fallbackTokens = 0;
+  let fallbackCost = 0;
+  for (const [at, candidate] of pool.entries()) {
+    if (out.length) {
+      const next = estimate(candidate);
+      const tokens = fallbackTokens + next.tokens;
+      const cost = fallbackCost + next.cost;
+      const overCost = cost > limits.maxEstimatedCost;
+      if (overCost || tokens > limits.maxTokenAttempts) {
+        return { candidates: out, leftOut: { candidates: pool.slice(at), budget: overCost ? { limit: "cost", estimated: cost, allowed: limits.maxEstimatedCost } : { limit: "tokens", estimated: tokens, allowed: limits.maxTokenAttempts } } };
+      }
+      fallbackTokens = tokens;
+      fallbackCost = cost;
+    }
     out.push(candidate);
-    tokens += nextTokens;
-    cost += nextCost;
   }
-  return out;
+  return { candidates: out };
+}
+
+/** The error of a call whose candidates all failed, when the routing limits left fallbacks out: it says which models were not tried, the limit and its numbers (`budget`), as the engine does. */
+function withFallbackBudget(error: unknown, leftOut: BoundedCandidates["leftOut"], settings: AppSettings): unknown {
+  if (!leftOut || !(error instanceof Error) || error.name === "AbortError") return error;
+  const models = leftOut.candidates.flatMap((candidate) => (candidate.model ? [`"${candidate.model}" in "${candidate.integration?.name ?? ""}"`] : []));
+  (error as Error & { budget?: RoutingBudgetDetail }).budget = leftOut.budget;
+  if (models.length) error.message = `${error.message}${/[.!?]$/.test(error.message) ? "" : "."} ${fallbackBudgetNote(models, leftOut.budget, settings.costCurrency || "USD")}`;
+  return error;
 }
 
 /** A candidate of a chat task with the place it holds in the route and the name its failures are reported under. */
@@ -393,7 +418,10 @@ export async function completeTextRouted(
   const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
   try {
   const preferred = options?.preferred ? chatCandidateFromTarget(settings, options.preferred, capability) : null;
-  const candidates = boundedCandidates(settings, applySameBoundaryPolicy(settings, dedupe([...(preferred ? [preferred] : []), ...resolveTaskCandidates(settings, capability)])));
+  const promptTokens = likelyMessageTokens(messages);
+  const textOutput = (candidate: TaskCandidate) => (candidate.integration && candidate.model ? engineOutputLimit(settings, candidate as ChatCandidate, capability, requestedOutput(candidate as ChatCandidate, options.fallbackMaxOutputTokens), false) : 0);
+  const bounded = boundedCandidates(settings, applySameBoundaryPolicy(settings, dedupe([...(preferred ? [preferred] : []), ...resolveTaskCandidates(settings, capability)])), (candidate) => attemptEstimate(candidate, promptTokens, textOutput(candidate)));
+  const candidates = bounded.candidates;
   if (!candidates.length) {
     if (hasConfiguredRoute(settings, capability)) throw new StaleRoutingConfigurationError(routedTask(settings, capability));
     throw new NoCompletionCandidatesError();
@@ -404,9 +432,10 @@ export async function completeTextRouted(
   const outputLimit = (candidate: RoutableCandidate) => engineOutputLimit(settings, candidate, capability, requestedOutput(candidate, options.fallbackMaxOutputTokens), false);
   const estimated = likelyMessageTokens(messages);
   const room = (candidate: RoutableCandidate) => inputRoom(candidate, outputLimit(candidate));
-  const fits = (candidate: RoutableCandidate) => !candidate.maxInputTokens || estimated <= room(candidate);
+  // Every model by its own window, or the default for one whose window is not set (`modelWindow`, as the engine judges it).
+  const fits = (candidate: RoutableCandidate) => estimated <= room(candidate);
   const executable = options.overflow === "fail" ? routable.filter(fits) : routable;
-  if (!executable.length) throw new PromptBudgetExceededError(estimated, Math.max(...routable.map(room)));
+  if (!executable.length) throw new PromptBudgetExceededError(estimated, Math.max(...routable.map(room)), routable.some((candidate) => modelWindow(candidate).source === "default"));
   const clock = startRoutingClock(settings);
   /** The last text that arrived of the candidate that is being asked: the engine clears the listener when a candidate fails, and a reply that was cut is still the reply. */
   let partial = "";
@@ -416,6 +445,7 @@ export async function completeTextRouted(
     shown = text;
     options.onText?.(text);
   };
+  try {
   return await executeCompletionFallback({
     candidates: executable,
     signal: operation.signal,
@@ -474,6 +504,9 @@ export async function completeTextRouted(
       return text;
     },
   });
+  } catch (error) {
+    throw operation.signal.aborted ? error : withFallbackBudget(error, bounded.leftOut, settings);
+  }
   } finally {
     operation.dispose();
   }
@@ -495,7 +528,10 @@ export async function completeToolRouted<T>(
   }
   // "Tools only" is on unless the author turned it off, as for the run: a model marked as without tool calls is left out, and if none is left the call is refused before anything is sent.
   const strict = toolsOnly(settings);
-  const candidates = boundedCandidates(settings, resolved, strict);
+  const promptTokens = likelyMessageTokens(messages) + toolTokens(tool).about;
+  const toolOutput = (candidate: TaskCandidate) => (candidate.integration && candidate.model ? engineOutputLimit(settings, candidate as ChatCandidate, capability, requestedOutput(candidate as ChatCandidate, options.fallbackMaxOutputTokens), true) : 0);
+  const bounded = boundedCandidates(settings, resolved, (candidate) => attemptEstimate(candidate, promptTokens, toolOutput(candidate)), strict);
+  const candidates = bounded.candidates;
   const chatOf = (list: TaskCandidate[]) => list.filter((candidate): candidate is ChatCandidate => Boolean(candidate.integration && candidate.model));
   if (!candidates.length) {
     if (strict) throw await toolsRequiredError(settings, capability, chatOf(resolved), tool);
@@ -505,6 +541,7 @@ export async function completeToolRouted<T>(
   let lastError: unknown = null;
   let skippedForBudget = false;
   let largestBudget = 0;
+  let assumedDefault = false;
   let stopped: string | undefined;
   const estimated = likelyMessageTokens(messages);
   const schema = toolTokens(tool);
@@ -517,11 +554,13 @@ export async function completeToolRouted<T>(
     const limit = engineOutputLimit(settings, chat, capability, requested, true);
     // With "Tools only" off a model without tool calls is asked for JSON in its message: the instruction takes room of its own.
     const instruction = strict || chat.supportsToolCalls !== false ? 0 : jsonInstructionTokens(tool);
-    if (options.overflow === "fail" && chat.maxInputTokens) {
+    if (options.overflow === "fail") {
+      // Every model by its own window, or the default for one whose window is not set (`modelWindow`, as the engine judges it).
       const available = inputRoom(chat, limit, schema.about + instruction);
       if (estimated > available) {
         skippedForBudget = true;
         largestBudget = Math.max(largestBudget, available);
+        assumedDefault ||= modelWindow(chat).source === "default";
         continue;
       }
     }
@@ -569,7 +608,7 @@ export async function completeToolRouted<T>(
     }
   }
   addNotes(lastError, skipped, chatOf(resolved), stopped);
-  throw lastError ?? (skippedForBudget ? new PromptBudgetExceededError(estimated, largestBudget) : new Error("All AI candidates failed for this task."));
+  throw withFallbackBudget(lastError ?? (skippedForBudget ? new PromptBudgetExceededError(estimated, largestBudget, assumedDefault) : new Error("All AI candidates failed for this task.")), bounded.leftOut, settings);
   } finally {
     operation.dispose();
   }
@@ -607,7 +646,8 @@ export async function classifyConfirmationRouted(settings: AppSettings, utteranc
   try {
   const resolved = applySameBoundaryPolicy(settings, resolveTaskCandidates(settings, "simple-tasks"));
   const strict = toolsOnly(settings);
-  const candidates = boundedCandidates(settings, resolved, strict);
+  const utteranceTokens = likelyMessageTokens([{ role: "user", content: currentRequest(utterance) }]) + toolTokens(CONFIRMATION_TOOL_DEFINITION).about;
+  const { candidates } = boundedCandidates(settings, resolved, (candidate) => attemptEstimate(candidate, utteranceTokens, candidate.integration && candidate.model ? engineOutputLimit(settings, candidate as ChatCandidate, "simple-tasks", 32, true) : 0), strict);
   const skipped: SkippedModels = strict ? resolved.filter((candidate) => candidate.supportsToolCalls === false && candidate.model).map((candidate) => ({ model: candidate.model!, reason: "no-tool-calls" as const })) : [];
   const clock = startRoutingClock(settings);
   for (const [listIndex, candidate] of candidates.entries()) {
