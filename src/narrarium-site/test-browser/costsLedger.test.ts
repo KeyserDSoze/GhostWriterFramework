@@ -56,9 +56,9 @@ describe("the text of a row", () => {
   });
 
   it("keeps the numbers a newer version wrote after the ones it knows", () => {
-    const decoded = decodeCounters("1 1 10 0 5 0.5 0 0 0 0 0 7 8");
+    const decoded = decodeCounters("1 1 10 0 5 0.5 0 0 0 0 0 0 7 8");
     expect(decoded.extra).toEqual(["7", "8"]);
-    expect(encodeCounters(decoded.counters, decoded.extra)).toBe("1 1 10 0 5 0.5 0 0 0 0 0 7 8");
+    expect(encodeCounters(decoded.counters, decoded.extra)).toBe("1 1 10 0 5 0.5 0 0 0 0 0 0 7 8");
   });
 
   it("reads nothing as zero rather than as a number it is not", () => {

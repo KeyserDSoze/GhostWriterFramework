@@ -54,13 +54,18 @@ export interface UsageCounters {
   estimatedInputTokens: number;
   estimatedOutputTokens: number;
   estimatedCost: number;
+  /**
+   * Money the prompt cache saved: the input tokens the provider served from its cache, at what they would have cost at the full input rate, less what they cost at the cached price. Measured, in the
+   * currency of the row, and only for the calls of a model that has both prices; a row from before this counter existed has none. It is part of what `cost` is NOT: `cost` is what was paid.
+   */
+  cachedSavings: number;
 }
 
 export const COUNTER_FIELDS = [
-  "calls", "tasks", "inputTokens", "cachedTokens", "outputTokens", "cost", "unpricedCalls", "unknownUsageCalls", "estimatedInputTokens", "estimatedOutputTokens", "estimatedCost",
+  "calls", "tasks", "inputTokens", "cachedTokens", "outputTokens", "cost", "unpricedCalls", "unknownUsageCalls", "estimatedInputTokens", "estimatedOutputTokens", "estimatedCost", "cachedSavings",
 ] as const satisfies ReadonlyArray<keyof UsageCounters>;
 
-const MONEY_FIELDS: ReadonlySet<string> = new Set(["cost", "estimatedCost"]);
+const MONEY_FIELDS: ReadonlySet<string> = new Set(["cost", "estimatedCost", "cachedSavings"]);
 
 /** What a row is about. `period` is a day (`2026-11-25`, the local calendar of the device that recorded it) or a month (`2026-11`) after compaction. */
 export interface UsageKey {
@@ -101,7 +106,7 @@ export interface UsageDelta {
 }
 
 export function emptyCounters(): UsageCounters {
-  return { calls: 0, tasks: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0, unpricedCalls: 0, unknownUsageCalls: 0, estimatedInputTokens: 0, estimatedOutputTokens: 0, estimatedCost: 0 };
+  return { calls: 0, tasks: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0, cost: 0, unpricedCalls: 0, unknownUsageCalls: 0, estimatedInputTokens: 0, estimatedOutputTokens: 0, estimatedCost: 0, cachedSavings: 0 };
 }
 
 export function addCounters(target: UsageCounters, delta: Partial<UsageCounters>): UsageCounters {

@@ -128,23 +128,27 @@ export interface TokenUsage {
   inputTokens: number;
   cachedTokens: number;
   outputTokens: number;
+  /** The input tokens the provider wrote to its cache, when it said (a part of `inputTokens`, at `cacheWritePerMTok`). */
+  cacheWriteTokens?: number;
 }
 
 /**
  * The cost of chat tokens at a price, by the engine's rule (its `estimateCost`): prices are per million tokens, and tokens served from the cache cost like
- * normal input unless the model has its own cached price. The calls the engine makes are priced by the engine itself; this is for the reports of the
+ * normal input unless the model has its own cached price, and tokens written to it unless it has its own write price. The calls the engine makes are priced by the engine itself; this is for the reports of the
  * Copilot's attempts, which must agree with them (a test compares the two).
  */
 export function chatDelta(usage: TokenUsage, pricing?: AIPricing): Partial<UsageBucket> {
   const input = usage.inputTokens || 0;
   const cached = usage.cachedTokens || 0;
   const output = usage.outputTokens || 0;
-  const billedInput = Math.max(0, input - cached);
+  const written = Math.min(usage.cacheWriteTokens || 0, Math.max(0, input - cached));
+  const billedInput = Math.max(0, input - cached - written);
   let chatCost = 0;
   if (pricing) {
     chatCost =
       (billedInput / 1_000_000) * (pricing.inputPerMTok ?? 0) +
       (cached / 1_000_000) * (pricing.cachedPerMTok ?? pricing.inputPerMTok ?? 0) +
+      (written / 1_000_000) * (pricing.cacheWritePerMTok ?? pricing.inputPerMTok ?? 0) +
       (output / 1_000_000) * (pricing.outputPerMTok ?? 0);
   }
   return { inputTokens: input, cachedTokens: cached, outputTokens: output, chatCost };

@@ -259,13 +259,13 @@ export async function runCopilotAttempt(attempt: CopilotAttempt): Promise<AiResp
 // ─── What an attempt reports ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** The tokens an attempt used, as the provider counted them: none when it counted none (an estimate is not a measurement). */
-function usageOf(end: FetchAiAttemptEnd | undefined): { inputTokens: number; cachedInputTokens: number; outputTokens: number } {
+function usageOf(end: FetchAiAttemptEnd | undefined): { inputTokens: number; cachedInputTokens: number; outputTokens: number; cacheWriteInputTokens?: number } {
   const usage = end?.usageKnown && end.usage ? end.usage : undefined;
-  return { inputTokens: usage?.inputTokens ?? 0, cachedInputTokens: usage?.cachedInputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0 };
+  return { inputTokens: usage?.inputTokens ?? 0, cachedInputTokens: usage?.cachedInputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0, ...(usage?.cacheWriteInputTokens ? { cacheWriteInputTokens: usage.cacheWriteInputTokens } : {}) };
 }
 
 function costOf(candidate: ChatCandidate, usage: ReturnType<typeof usageOf>): number | undefined {
-  return candidate.pricing ? chatDelta({ inputTokens: usage.inputTokens, cachedTokens: usage.cachedInputTokens, outputTokens: usage.outputTokens }, candidate.pricing).chatCost : undefined;
+  return candidate.pricing ? chatDelta({ inputTokens: usage.inputTokens, cachedTokens: usage.cachedInputTokens, outputTokens: usage.outputTokens, ...(usage.cacheWriteInputTokens ? { cacheWriteTokens: usage.cacheWriteInputTokens } : {}) }, candidate.pricing).chatCost : undefined;
 }
 
 /** What `onUsage` hears of an attempt: the model, the tokens and their cost at the price of the model. */

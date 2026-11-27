@@ -159,6 +159,8 @@ export interface EstimateSources {
   chapters: ReadonlyArray<{ summary?: string | null; paragraphs?: ReadonlyArray<unknown> | null }> | null;
   /** The entries of the canon the book has (the characters, the places, the factions, the items and the timeline). */
   canonEntries: number;
+  /** The share of the input of each model that its provider served from its cache in the calls this browser recorded (`cacheHitRates`), by the name of the model: what the best case counts on. Absent: none was measured. */
+  cacheRates?: Readonly<Record<string, number>>;
 }
 
 export interface EstimateBasis {
@@ -171,6 +173,11 @@ export interface EstimateBasis {
   tokensPerWord?: MeasuredTokens;
   /** The estimate counts what is left of a book the autopilot planned. */
   fromState: boolean;
+  /**
+   * What the best case counts on from the models' prompt caches, for the models that are asked: the share each was measured to serve from its cache (in per cent), and whether the fixed start of the
+   * requests is counted at the cached price too. Absent when nothing is counted on a cache.
+   */
+  caching?: { measured: Array<{ model: string; percent: number }>; structural: boolean };
 }
 
 export interface RunEstimate {
@@ -199,7 +206,7 @@ function canonWordsOf(entries: number): number {
 export function estimateRun(sources: EstimateSources, form: SetupFormValues, override?: { progress?: EstimateProgress; design?: EstimateDesign }): RunEstimate {
   const speeds = measuredSpeed(sources.activities, { ignoreTasks: TWO_CALL_TASKS });
   const tokens = measuredTokensPerWord(sources.activities);
-  const models = estimateModelsFromConfig(sources.ai, speeds);
+  const models = estimateModelsFromConfig(sources.ai, speeds, sources.cacheRates);
   const context: EstimateContext = {
     ...sources.book.context,
     ...(sources.state ? estimateContextFromState(sources.state) : {}),
@@ -221,6 +228,7 @@ export function estimateRun(sources: EstimateSources, form: SetupFormValues, ove
     ...(override?.design ? { design: override.design } : {}),
   });
   const measured = [...new Set(Object.values(models).flatMap((model) => (model && speeds.has(model.model) ? [model.model] : [])))];
+  const caching = cachingOf(estimate, models);
   return {
     estimate,
     basis: {
@@ -229,8 +237,22 @@ export function estimateRun(sources: EstimateSources, form: SetupFormValues, ove
       speedSamples: measured.reduce((total, model) => total + (speeds.get(model)?.samples ?? 0), 0),
       ...(tokens ? { tokensPerWord: tokens } : {}),
       fromState: Boolean(sources.state?.plan?.chapters?.length),
+      ...(caching ? { caching } : {}),
     },
   };
+}
+
+/** What the estimate counts on from the prompt caches of the models it asks: the measured shares, and whether it counts the fixed start of the requests. `undefined` when it counts on none. */
+function cachingOf(estimate: EstimateResult, models: ReturnType<typeof estimateModelsFromConfig>): EstimateBasis["caching"] {
+  const measured = new Map<string, number>();
+  let structural = false;
+  for (const capability of Object.keys(estimate.capabilities) as EstimateCapability[]) {
+    const result = estimate.capabilities[capability];
+    if (!result.model || result.calls.max === 0) continue;
+    if (result.cacheBasis === "measured") measured.set(result.model, Math.round((models[capability]?.cacheHitRate ?? 0) * 100));
+    else if (result.cacheBasis === "structural" && result.cachedInputTokens.min > 0) structural = true;
+  }
+  return measured.size || structural ? { measured: [...measured].map(([model, percent]) => ({ model, percent })), structural } : undefined;
 }
 
 // ─── The rest of a plan that waits for the author ────────────────────────────

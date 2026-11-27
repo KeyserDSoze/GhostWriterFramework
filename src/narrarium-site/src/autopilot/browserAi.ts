@@ -1,8 +1,10 @@
 import {
   createFetchAi,
+  createModelMemory,
   integrationChatModels,
   pickAiRuntimeConfig,
   planAttempts,
+  type AiModelMemory,
   type AiPort,
   type AiPricingConfig,
   type AiRequest,
@@ -17,6 +19,7 @@ import { beginAccountScopedAiOperation } from "@/assistant/accountScopedOperatio
 import { acknowledgeCrossBoundaryFallback, type BoundaryCandidate } from "@/assistant/fallbackDisclosure";
 import { pageEnding } from "@/autopilot/localRuns";
 import { GITHUB_MODELS_BASE } from "@/config/githubModels";
+import { cachedSaving } from "@/costs/cacheSavings";
 import { recordUsage } from "@/costs/recordUsage";
 import { ownCallTask } from "@/costs/usageTasks";
 import { inputOfLearning, rememberLearnedModel } from "@/autopilot/learnedModels";
@@ -33,6 +36,30 @@ function boundaryOf(target: FetchAiFallbackTarget): BoundaryCandidate {
 function pricingOf(config: AiRuntimeConfig, integrationId: string, model: string): AiPricingConfig | undefined {
   const integration = config.aiIntegrations.find((entry) => entry.id === integrationId);
   return integration ? integrationChatModels(integration).find((entry) => entry.name === model)?.pricing ?? integration.pricing : undefined;
+}
+
+/**
+ * What this page remembers of its models between calls: what it learned of their prompt caching (that a model served tokens from its cache, so that it is sent the hint that helps the provider find it, and that a
+ * provider refused the hints, so that it is not asked again with one). Nothing of what a refusal of thinking teaches, which is the model's own flag in the settings that the author may change: the page must not
+ * remember it against the author. The caching is not written to the settings either (a call that changed them would make this tab's routing the author's own, and its save could replace a routing that another tab
+ * saved): the ledger of the costs is what keeps that a model cached, and the settings show it from there.
+ */
+let cachingMemory = createModelMemory();
+const pageMemory: AiModelMemory = {
+  noThinkingWithTools: () => undefined,
+  promptCaching: (integrationId, model) => cachingMemory.promptCaching?.(integrationId, model),
+  promptCacheHintsRefused: (integrationId, model) => cachingMemory.promptCacheHintsRefused?.(integrationId, model) === true,
+  learn: (learning) => {
+    if (learning.kind === "prompt-caching") cachingMemory.learn(learning);
+  },
+  get learned() {
+    return cachingMemory.learned;
+  },
+};
+
+/** Forgets what the page learned of the prompt caching of its models: for the tests. */
+export function resetPageAiMemory(): void {
+  cachingMemory = createModelMemory();
 }
 
 /**
@@ -101,6 +128,7 @@ function closeAttempt(config: AiRuntimeConfig, debugId: string | undefined, end:
     usage: end.usage ? { inputTokens: end.usage.inputTokens, cachedTokens: end.usage.cachedInputTokens, outputTokens: end.usage.outputTokens } : null,
     usageKnown: end.usageKnown && Boolean(end.usage),
     ...(pricing && end.cost !== undefined ? { cost: end.cost } : {}),
+    ...(pricing && end.usageKnown && end.usage && cachedSaving(end.usage.cachedInputTokens, pricing) > 0 ? { saved: cachedSaving(end.usage.cachedInputTokens, pricing) } : {}),
     costKnown: end.costKnown,
     priced: Boolean(pricing),
     currency: end.currency || config.costCurrency || "",
@@ -195,7 +223,8 @@ export function createBrowserAi(options: BrowserAiOptions = {}): AiPort {
           },
           // A provider that refuses a thinking level because the request carries tools teaches the model's flag: kept in the settings of this browser, and said (a run says it as an event first, and the
           // page keeps it once). The next call reads the settings, so it needs no memory of its own.
-          onLearned: (learning) => rememberLearnedModel(inputOfLearning(learning), { announce: true }),
+          onLearned: (learning) => { if (learning.kind !== "prompt-caching") rememberLearnedModel(inputOfLearning(learning), { announce: true }); },
+          memory: pageMemory,
           // The author refusing cancels the call (an AbortError: the run pauses); the engine only asks when the policy requires it.
           acknowledgeFallback: (from, to) => {
             acknowledgeCrossBoundaryFallback({ settings, kind: "text", from: boundaryOf(from), to: boundaryOf(to), accountScope: operation.accountScope });

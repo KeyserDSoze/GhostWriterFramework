@@ -7,17 +7,19 @@ import type { CostRelabel } from "@/types/settings";
  * Rows of different currencies are never added into one amount here: `money` keeps one total per currency (see `money.ts` for how they are shown), and
  * the amounts a relabel of the settings names under its own key (`USD>EUR`), by the day of their row.
  */
-export interface UsageSummary extends Omit<UsageCounters, "cost" | "estimatedCost"> {
+export interface UsageSummary extends Omit<UsageCounters, "cost" | "estimatedCost" | "cachedSavings"> {
   /** Measured money, by currency. */
   money: MoneyTotals;
+  /** What the prompt cache saved, by currency (`UsageCounters.cachedSavings`). */
+  saved: MoneyTotals;
   /** Estimated money (calls whose tokens were not reported, at the price of their model), by currency. */
   estimated: MoneyTotals;
   rows: number;
 }
 
 export function emptySummary(): UsageSummary {
-  const { cost: _cost, estimatedCost: _estimated, ...counts } = emptyCounters();
-  return { ...counts, money: {}, estimated: {}, rows: 0 };
+  const { cost: _cost, estimatedCost: _estimated, cachedSavings: _saved, ...counts } = emptyCounters();
+  return { ...counts, money: {}, saved: {}, estimated: {}, rows: 0 };
 }
 
 const COUNT_FIELDS = ["calls", "tasks", "inputTokens", "cachedTokens", "outputTokens", "unpricedCalls", "unknownUsageCalls", "estimatedInputTokens", "estimatedOutputTokens"] as const;
@@ -27,6 +29,7 @@ export function addRow(summary: UsageSummary, row: UsageRow, relabels?: readonly
   for (const field of COUNT_FIELDS) next[field] = summary[field] + (Number.isFinite(row[field]) ? row[field] : 0);
   if (row.cost) next.money = addRecordedMoney(summary.money, row.currency, row.cost, row.period, relabels);
   if (row.estimatedCost) next.estimated = addRecordedMoney(summary.estimated, row.currency, row.estimatedCost, row.period, relabels);
+  if (row.cachedSavings) next.saved = addRecordedMoney(summary.saved, row.currency, row.cachedSavings, row.period, relabels);
   return next;
 }
 

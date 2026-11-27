@@ -123,6 +123,12 @@ export interface ChatModel {
    */
   noThinkingWithTools?: true | "none";
   /**
+   * Whether the model caches the start of the prompts it is sent (the engine's `AiPromptCaching`): `supported` and `unsupported` are the author's word (`unsupported`: no hint is sent to the provider and
+   * no saving is counted on); `learned` is what a host that keeps its own configuration (a personal server) may set when a response of the model reported tokens served from its cache. This page never sets it:
+   * it shows a model that said nothing as learned when its ledger has cached tokens for it. Absent: not known. Any other value has no effect.
+   */
+  promptCaching?: "supported" | "unsupported" | "learned";
+  /**
    * The API version this model's requests carry (Azure OpenAI's `api-version`): each deployment may need its own. Absent or empty: the integration's `apiVersion` (the default of
    * its models that do not name one), else the engine's default. `effectiveApiVersion` of the engine says which is used.
    */
@@ -189,6 +195,8 @@ export interface AIPricing {
   inputPerMTok?: number;
   /** Per 1M cached input tokens (chat) */
   cachedPerMTok?: number;
+  /** Per 1M input tokens that the provider writes to its cache (chat), for the providers that charge more for the write than for the input (Anthropic, GPT-5.6 and later). Absent: they cost like any input. */
+  cacheWritePerMTok?: number;
   /** Per 1M output tokens (chat) */
   outputPerMTok?: number;
   /** Token-based image pricing (gpt-image style), per 1M tokens */

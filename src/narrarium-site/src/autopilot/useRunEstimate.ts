@@ -6,6 +6,9 @@ import { readEstimateBook, type EstimateBook } from "@/autopilot/runEstimateBook
 import { useServerConnection } from "@/autopilot/serverConnection";
 import { verifiedServer } from "@/autopilot/serverIdentity";
 import { browserOutlineSource } from "@/outline/outlineSource";
+import { cacheHitRates } from "@/costs/cacheModel";
+import { useCostsStore } from "@/costs/costsStore";
+import { usageRows } from "@/costs/legacyCosts";
 import { useSettingsStore } from "@/store/settingsStore";
 import type { BookStructure } from "@/types/book";
 import type { BookEntry } from "@/types/settings";
@@ -109,6 +112,8 @@ export function useRunEstimateSources({ book, branch, structure, state, activiti
   const chapters = useMemo(() => (structure ? (structure.chapters ?? []).map((chapter) => ({ paragraphs: chapter.paragraphs, summary: chapter.hasResume ? "summary" : undefined })) : null), [structure]);
   const canonEntries = [structure?.characters, structure?.locations, structure?.factions, structure?.items, structure?.timelines].reduce((total, list) => total + (list?.length ?? 0), 0);
   const serverConfig = useMemo(() => (server.status === "ready" ? configFromServerStatus(server.value, browserConfig) : null), [server, browserConfig]);
+  const costs = useCostsStore((store) => store.file);
+  const cacheRates = useMemo(() => cacheHitRates(usageRows(costs, "")), [costs]);
   const sources = useMemo<EstimateSources>(() => ({
     book: files.book,
     language: structure?.language,
@@ -119,6 +124,7 @@ export function useRunEstimateSources({ book, branch, structure, state, activiti
     state,
     chapters,
     canonEntries,
-  }), [files.book, structure?.language, settings.costCurrency, host, serverConfig, browserConfig, activities, state, chapters, canonEntries]);
+    ...(Object.keys(cacheRates).length ? { cacheRates } : {}),
+  }), [files.book, structure?.language, settings.costCurrency, host, serverConfig, browserConfig, activities, state, chapters, canonEntries, cacheRates]);
   return { sources, reading: files.reading, server, host };
 }

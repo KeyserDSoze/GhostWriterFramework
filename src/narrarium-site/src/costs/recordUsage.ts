@@ -24,6 +24,8 @@ export interface UsageRecord extends UsageOrigin {
   usageKnown: boolean;
   /** The money of the call at the price of its model: measured when `costKnown`, an estimate otherwise; absent without a price. */
   cost?: number;
+  /** What the prompt cache saved the call at the prices of its model (`cachedSaving`); absent when it saved nothing or the model has no cached price. */
+  saved?: number;
   costKnown: boolean;
   /** Whether the model had a price. */
   priced: boolean;
@@ -75,7 +77,7 @@ function firstCallOf(task: string | undefined): boolean {
 }
 
 /** The counters of one call: measured numbers and estimates apart, never mixed. */
-export function countersOf(record: Pick<UsageRecord, "usage" | "usageKnown" | "cost" | "costKnown" | "priced" | "billed">, firstOfTask: boolean): Partial<UsageCounters> {
+export function countersOf(record: Pick<UsageRecord, "usage" | "usageKnown" | "cost" | "costKnown" | "priced" | "billed"> & Partial<Pick<UsageRecord, "saved">>, firstOfTask: boolean): Partial<UsageCounters> {
   const counters: Partial<UsageCounters> = { calls: 1, tasks: firstOfTask ? 1 : 0 };
   const used = Boolean(record.usage && (record.usage.inputTokens || record.usage.outputTokens || record.usage.cachedTokens)) || record.billed === true;
   if (record.usage && record.usageKnown) {
@@ -90,8 +92,10 @@ export function countersOf(record: Pick<UsageRecord, "usage" | "usageKnown" | "c
     }
   }
   if (record.priced && typeof record.cost === "number" && Number.isFinite(record.cost)) {
-    if (record.costKnown && record.usageKnown) counters.cost = record.cost;
-    else counters.estimatedCost = record.cost;
+    if (record.costKnown && record.usageKnown) {
+      counters.cost = record.cost;
+      if (typeof record.saved === "number" && record.saved > 0) counters.cachedSavings = record.saved;
+    } else counters.estimatedCost = record.cost;
   }
   if (!record.priced && used) counters.unpricedCalls = 1;
   return counters;

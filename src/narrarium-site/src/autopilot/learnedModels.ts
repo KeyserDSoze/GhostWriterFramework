@@ -1,6 +1,6 @@
 import i18next from "i18next";
 import { create } from "zustand";
-import { suggestsResponsesApi, type AiErrorBody, type AiModelLearning } from "narrarium-engine";
+import { suggestsResponsesApi, type AiErrorBody, type AiNoThinkingLearning } from "narrarium-engine";
 import { toast } from "@/components/ui/use-toast";
 import { saveSettingsNow } from "@/drive/useSettings";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
@@ -115,7 +115,7 @@ export interface LearnedModelInput {
 }
 
 /** The input of the engine's `AiModelLearning` (the client's `onLearned`). */
-export function inputOfLearning(learning: AiModelLearning): LearnedModelInput {
+export function inputOfLearning(learning: AiNoThinkingLearning): LearnedModelInput {
   return { integrationId: learning.integrationId, integrationName: learning.integrationName, model: learning.model, body: learning.body, off: learning.off, responses: suggestsResponsesApi(learning.body) };
 }
 
