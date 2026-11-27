@@ -18,6 +18,12 @@ A ogni accesso con Google Narrarium chiede solo permessi **non sensibili**: chi 
 - **Quando un accesso scade**, la scheda di Google dice «Accedi di nuovo a Google Drive su questo dispositivo», perché è scaduto (le credenziali di sessione durano circa un'ora; quelle durature si rinnovano in background tramite il servizio di accesso) e offre il passaggio a quelle durature dove il servizio c'è. I tuoi dati restano al sicuro su questo dispositivo.
 - **Controlla la configurazione di Google** (nella scheda di Google) mostra i permessi che il sito chiede, il numero del progetto Google Cloud del suo client id (mai il resto) e la lista per il proprietario del progetto: il **Pubblico** deve essere «In produzione» (in «Test» possono accedere solo gli utenti di prova e l'accesso scade dopo 7 giorni); il client id deve appartenere a quel progetto; gli scope nella console (Accesso ai dati) devono coincidere con l'elenco; togli i vecchi consensi su myaccount.google.com/connections prima di riprovare.
 
+## Sincronizzazione automatica e «Tutto sincronizzato»
+
+In cima ad **Account e sincronizzazione** l'interruttore **Sincronizzazione automatica per tutti i servizi** accende o spegne la sincronizzazione automatica per tutti i servizi collegati insieme. Ogni servizio ha anche un suo interruttore: se lo imposti, quel servizio ignora quello generale (**Segui l'impostazione generale** glielo ridà). Le connessioni fatte prima di questa impostazione mantengono il valore che avevano.
+
+Quando tutto è sincronizzato la scheda del servizio dice **Tutto sincronizzato · ultimo controllo 09:30** e non mostra il pulsante principale **Sincronizza**: compare solo se c'è qualcosa da fare (modifiche non inviate, dati più recenti sul servizio, un errore). **Controlla ora** resta come pulsante discreto per cercare le modifiche fatte su un altro dispositivo.
+
 ## Impostazioni
 
 Configura Integrazioni AI, AI Router, Deep Search, tool Copilot, credenziali GitHub, voce e sincronizzazione repository locale. Le impostazioni libro controllano branch, PAT dedicati, metadati reader/export e destinazioni Drive.

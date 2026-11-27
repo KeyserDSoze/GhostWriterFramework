@@ -41,4 +41,34 @@ describe("device-local account connections", () => {
     expect(stored.google).toBeUndefined();
     expect(stored.github?.token).toBe("github-token");
   });
+
+  it("keeps a connection saved before the general setting as its own setting, then lets the general one move only the ones that follow it", async () => {
+    const { saveLocalSyncConfiguration } = await import("@/account/accountLocalStore");
+    await saveLocalSyncConfiguration({
+      google: { backend: "google-drive", method: "google", identity: { provider: "google", providerAccountId: "g-1", displayName: "G" }, rememberMe: true, accessToken: "t", replica: { enabled: false, status: "disabled" } },
+      microsoft: { backend: "onedrive", method: "microsoft", identity: { provider: "microsoft", providerAccountId: "m-1", displayName: "M" }, homeAccountId: "m-1", localAccountId: "m-1", rememberMe: true, accessToken: "t", replica: { enabled: true, status: "idle" } },
+    });
+    useConnectionStore.setState({ hydrated: false, configuration: {} });
+    await useConnectionStore.getState().hydrate();
+    expect(useConnectionStore.getState().configuration.google?.replica).toMatchObject({ enabled: false, autoMode: "off" });
+    expect(useConnectionStore.getState().configuration.microsoft?.replica).toMatchObject({ enabled: true, autoMode: "on" });
+    expect((await loadLocalSyncConfiguration()).microsoft?.replica.autoMode).toBe("on");
+
+    await useConnectionStore.getState().setAutoSyncAll(false);
+    expect(useConnectionStore.getState().configuration.microsoft?.replica.enabled).toBe(true);
+    expect((await loadLocalSyncConfiguration()).autoSyncAll).toBe(false);
+
+    // A service connected now follows the general setting, which is off: it starts off, and turns on with it.
+    await useConnectionStore.getState().connectGitHub({ method: "github-pat", credentialKind: "pat", token: "t", rememberMe: true, accountSyncEnabled: true, repositoryOwner: "writer" });
+    expect(useConnectionStore.getState().configuration.github).toMatchObject({ accountSyncEnabled: false, replica: { enabled: false, autoMode: "inherit" } });
+    await useConnectionStore.getState().setAutoSyncAll(true);
+    expect(useConnectionStore.getState().configuration.github).toMatchObject({ accountSyncEnabled: true, replica: { enabled: true } });
+    expect(useConnectionStore.getState().configuration.google?.replica.enabled).toBe(false);
+
+    // The switch of one service sets it by itself; «follow the general setting» gives it back.
+    await useConnectionStore.getState().setEnabled("github", false);
+    expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ enabled: false, autoMode: "off" });
+    await useConnectionStore.getState().setAutoMode("github", "inherit");
+    expect(useConnectionStore.getState().configuration.github?.replica).toMatchObject({ enabled: true, autoMode: "inherit" });
+  });
 });

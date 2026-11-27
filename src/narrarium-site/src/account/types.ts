@@ -46,7 +46,10 @@ export interface LocalDeviceConfiguration {
 }
 
 export interface LocalReplicaState {
+  /** Whether the sync of this service runs by itself: always the effective value (see `autoMode` and `@/account/autoSync`). */
   enabled: boolean;
+  /** How the setting of this service relates to the general one; absent on a connection made before it existed (its `enabled` is then its own setting). */
+  autoMode?: "inherit" | "on" | "off";
   lastAttemptAtUtc?: string;
   lastSuccessfulSyncAtUtc?: string;
   lastKnownRemoteSnapshotId?: string;
@@ -133,6 +136,8 @@ export interface LocalGitHubConnection {
 }
 
 export interface LocalSyncConfiguration {
+  /** The automatic sync for all the services; a service that is set by itself keeps its own value. Absent: on. */
+  autoSyncAll?: boolean;
   google?: LocalGoogleConnection;
   microsoft?: LocalMicrosoftConnection;
   github?: LocalGitHubConnection;

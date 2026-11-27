@@ -18,6 +18,12 @@ At every Google sign-in Narrarium asks only for **non-sensitive** permissions: w
 - **When a sign-in ends**, the Google card says “Sign in to Google Drive again on this device”, why it ended (session credentials last about an hour; long-lived credentials renew in the background through the sign-in service) and offers the switch to long-lived credentials where the service is available. Your data stays safe on this device.
 - **Check Google configuration** (in the Google card) shows the permissions the site asks for, the number of the Google Cloud project of its client id (never the rest), and the checklist for the owner of the project: **Audience** must be “In production” (in “Testing” only test users can sign in, and the sign-in expires after 7 days); the client id must belong to that project; the scopes in the console (Data access) must match the list; remove old grants at myaccount.google.com/connections before trying again.
 
+## Automatic sync and “All synced”
+
+At the top of **Account & Sync** the switch **Automatic sync for all services** turns the automatic sync on or off for every connected service at once. Each service also has its own switch: setting it makes that service ignore the general one (**Follow the general setting** gives it back). Connections made before this setting existed keep the value they had.
+
+When everything is synced a service card says **All synced · last check 09:30** and shows no main **Sync** button: it appears only when there is something to do (changes not sent, newer data on the service, an error). **Check now** stays as a quiet button to look for changes made on another device.
+
 ## Settings
 
 Configure AI Integrations, AI Router, Deep Search, Copilot tools, GitHub credentials, speech and local repository synchronization. Book-specific settings control branches, dedicated PATs, reader/export metadata and Drive export destinations.

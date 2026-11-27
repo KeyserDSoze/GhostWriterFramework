@@ -13,6 +13,7 @@ import type {
 } from "@/account/types";
 import { useAuthStore } from "@/store/authStore";
 import { setConnectedGitHubToken } from "@/github/githubCredentialRuntime";
+import { migrateAutoModes, newReplica, withAutoMode, withAutoSyncAll, type AutoSyncMode } from "@/account/autoSync";
 
 const idleReplica = (enabled = false): LocalReplicaState => ({ enabled, status: enabled ? "dirty" : "disabled" });
 
@@ -30,7 +31,7 @@ export function persistedConfiguration(configuration: LocalSyncConfiguration): L
   const github = withoutSecrets.github && !withoutSecrets.github.rememberMe
     ? { ...withoutSecrets.github, token: undefined }
     : withoutSecrets.github;
-  return { google: sanitize(withoutSecrets.google), microsoft: sanitize(withoutSecrets.microsoft), github };
+  return { ...(withoutSecrets.autoSyncAll !== undefined ? { autoSyncAll: withoutSecrets.autoSyncAll } : {}), google: sanitize(withoutSecrets.google), microsoft: sanitize(withoutSecrets.microsoft), github };
 }
 
 type DriveBackend = "google-drive" | "onedrive";
@@ -85,6 +86,10 @@ interface ConnectionState {
   connectMicrosoft: (connection: Omit<LocalMicrosoftConnection, "backend" | "method" | "replica"> & { replica?: LocalReplicaState }) => Promise<void>;
   connectGitHub: (connection: Omit<LocalGitHubConnection, "backend" | "repositoryName" | "replica"> & { replica?: LocalReplicaState }) => Promise<void>;
   setEnabled: (backend: AccountSyncBackendKind, enabled: boolean) => Promise<void>;
+  /** The automatic sync for all the services (the ones set by themselves keep their value). */
+  setAutoSyncAll: (enabled: boolean) => Promise<void>;
+  /** How one service relates to the general setting: follow it, or be on or off by itself. */
+  setAutoMode: (backend: AccountSyncBackendKind, mode: AutoSyncMode) => Promise<void>;
   updateAccessToken: (backend: "google-drive" | "onedrive", accessToken: string, accessTokenExpiry: number) => Promise<void>;
   /** Saves what a renewal returned: the new access token, its expiry and, when there is one, the new refresh token. */
   updateCredentials: (backend: DriveBackend, credentials: { accessToken: string; accessTokenExpiry: number; refreshToken?: string }) => Promise<void>;
@@ -96,7 +101,7 @@ interface ConnectionState {
   disconnect: (backend: AccountSyncBackendKind) => Promise<void>;
 }
 
-function connectionKey(backend: AccountSyncBackendKind): keyof LocalSyncConfiguration {
+function connectionKey(backend: AccountSyncBackendKind): "google" | "microsoft" | "github" {
   return backend === "google-drive" ? "google" : backend === "onedrive" ? "microsoft" : "github";
 }
 
@@ -149,25 +154,30 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       }
       await persist(configuration);
     }
-    const restored = await withRestoredRefreshTokens(configuration);
+    // A connection made before the general setting keeps its value of today as its own setting.
+    const migrated = migrateAutoModes(configuration);
+    if (migrated !== configuration) await persist(migrated);
+    const restored = await withRestoredRefreshTokens(migrated);
     setConnectedGitHubToken(restored.github?.token, restored.github?.credentialKind === "app" ? "app" : "connected-pat");
     set({ configuration: restored, hydrated: true });
     if (restored.github?.credentialKind === "app") void import("@/account/githubAppToken").then((module) => module.installGitHubAppTokenRetry());
   },
   connectGoogle: async (connection) => {
-    const configuration = { ...get().configuration, google: { ...connection, backend: "google-drive" as const, method: "google" as const, replica: connection.replica ?? idleReplica(true) } };
+    const configuration = { ...get().configuration, google: { ...connection, backend: "google-drive" as const, method: "google" as const, replica: connection.replica ?? newReplica(get().configuration) } };
     set({ configuration });
     await persist(configuration);
     await rememberRefreshToken("google-drive", configuration.google);
   },
   connectMicrosoft: async (connection) => {
-    const configuration = { ...get().configuration, microsoft: { ...connection, backend: "onedrive" as const, method: "microsoft" as const, replica: connection.replica ?? idleReplica(true) } };
+    const configuration = { ...get().configuration, microsoft: { ...connection, backend: "onedrive" as const, method: "microsoft" as const, replica: connection.replica ?? newReplica(get().configuration) } };
     set({ configuration });
     await persist(configuration);
     await rememberRefreshToken("onedrive", configuration.microsoft);
   },
   connectGitHub: async (connection) => {
-    const configuration = { ...get().configuration, github: { ...connection, backend: "github" as const, repositoryName: "narrarium.settings" as const, replica: connection.replica ?? idleReplica(connection.accountSyncEnabled) } };
+    // A GitHub connection that was made with account sync follows the general setting; one made without it stays off by itself.
+    const replica = connection.replica ?? (connection.accountSyncEnabled ? newReplica(get().configuration) : { ...idleReplica(false), autoMode: "off" as const });
+    const configuration = { ...get().configuration, github: { ...connection, accountSyncEnabled: connection.replica ? connection.accountSyncEnabled : replica.enabled, backend: "github" as const, repositoryName: "narrarium.settings" as const, replica } };
     set({ configuration });
     setConnectedGitHubToken(configuration.github.token, configuration.github.credentialKind === "app" ? "app" : "connected-pat");
     await persist(configuration);
@@ -175,13 +185,19 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     // The access token of the app lasts 8 hours: any request that GitHub refuses as expired is renewed once and repeated (see githubAppToken).
     if (configuration.github.credentialKind === "app") void import("@/account/githubAppToken").then((module) => module.installGitHubAppTokenRetry());
   },
+  // The switch of one service sets it by itself: it overrides the general setting until it is set to follow it again.
   setEnabled: async (backend, enabled) => {
-    const key = connectionKey(backend);
-    const current = get().configuration[key];
-    if (!current) throw new Error(`${backend} is not connected on this device.`);
-    const replica = { ...current.replica, enabled, status: enabled ? "dirty" as const : "disabled" as const };
-    const next = key === "github" ? { ...current, accountSyncEnabled: enabled, replica } : { ...current, replica };
-    const configuration = { ...get().configuration, [key]: next } as LocalSyncConfiguration;
+    if (!get().configuration[connectionKey(backend)]) throw new Error(`${backend} is not connected on this device.`);
+    await get().setAutoMode(backend, enabled ? "on" : "off");
+  },
+  setAutoSyncAll: async (enabled) => {
+    const configuration = withAutoSyncAll(get().configuration, enabled);
+    set({ configuration });
+    await persist(configuration);
+  },
+  setAutoMode: async (backend, mode) => {
+    if (!get().configuration[connectionKey(backend)]) throw new Error(`${backend} is not connected on this device.`);
+    const configuration = withAutoMode(get().configuration, backend, mode);
     set({ configuration });
     await persist(configuration);
   },
