@@ -448,6 +448,14 @@ const autopilotEn = {
     copilotRetry: {
       notice: "The provider answered with a passing error: trying again in {{seconds}} s ({{attempt}} of {{of}})…",
     },
+    copilotCut: {
+      title: "Not everything was read.",
+      line: "To fit the context window of “{{model}}” in “{{integration}}” ({{window}} tokens), the request was cut: {{sent}} of its {{total}} characters were sent ({{percent}}%), the beginning and the end of each part.",
+      lineDefault: "The context window of “{{model}}” in “{{integration}}” is not set, so the default of {{window}} tokens was assumed and the request was cut: {{sent}} of its {{total}} characters were sent ({{percent}}%), the beginning and the end of each part.",
+      images_one: "One image was left out.",
+      images_other: "{{count}} images were left out.",
+      where: "If the model holds more, set its “Context window tokens” in Settings › AI Integrations, or route this task to a model with a larger one.",
+    },
     route: {
       title: "What was tried, in the order of the router",
       target: "{{integration}} · {{model}}",

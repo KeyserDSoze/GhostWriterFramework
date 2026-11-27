@@ -44,6 +44,8 @@ import {
   type AssistantSessionMeta,
 } from "@/assistant/store";
 import { appendAssistantNote, applyParagraphRewrite, compactAssistantSession, runAssistantPrompt } from "@/assistant/service";
+import { attachedMaterial, attachmentTextCut } from "@/assistant/attachmentText";
+import { MATERIAL_CHARS, splitPrompt } from "@/assistant/promptMaterial";
 import { assistantMarkdownToRichPlainText, buildAssistantSessionMarkdown, buildAssistantSessionPdfBlob, hasAssistantSessionArchiveContent, renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
 import { AssistantArchiveProvenance } from "@/components/assistant/AssistantArchiveProvenance";
 import { loadWriterContext, parseAppRoute } from "@/assistant/context";
@@ -64,7 +66,7 @@ import "@/i18n/localFirst";
 import { FrozenProposalNotice } from "@/components/frozen/FrozenProposalNotice";
 import { copilotToolRegistry, isCopilotToolIdEnabled } from "@/assistant/tools/registry";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
-import { parseAttachments } from "@/assistant/attachments";
+import { ATTACHMENT_LIMITS, parseAttachments } from "@/assistant/attachments";
 import type { AttachmentImportTarget } from "@/assistant/attachmentImport";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -118,6 +120,7 @@ import { saveRoutingLimitRaise, saveRoutingLimitRestore } from "@/assistant/rout
 import { formatWhole } from "@/autopilot/format";
 import { formatMoney } from "@/costs/money";
 import { listenToRetries, retryNoticeText } from "@/assistant/retryNotice";
+import { listenToPromptCuts, promptCutNote, type PromptCut } from "@/assistant/promptCut";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
 import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation, sha256Text } from "@/repository/safeRepositoryMutation";
@@ -843,6 +846,34 @@ export function AssistantPanel() {
     }
   }
 
+  /**
+   * «Use this text as material»: what the box holds becomes material set apart (a text attachment marked `material`, read as data and never cut by the limits of the files), and the
+   * box keeps only the words that ask (the instruction `splitPrompt` finds, else nothing), so that the request is a line the author can read and change.
+   */
+  function takeDraftAsMaterial() {
+    const { instruction, material } = splitPrompt(draft);
+    const text = (material || draft).trim();
+    if (!text) return;
+    const session = ensureSession();
+    if (session.attachments.length >= ATTACHMENT_LIMITS.count) {
+      toast({ title: t("assistant.toastAttachFailed"), description: t("pageCopilot.material.full", { count: ATTACHMENT_LIMITS.count }), variant: "destructive" });
+      return;
+    }
+    const attachment: AssistantAttachment = {
+      id: crypto.randomUUID(),
+      name: t("pageCopilot.material.name", { characters: formatWhole(text.length) }),
+      mimeType: "text/plain",
+      kind: "text",
+      sizeBytes: new TextEncoder().encode(text).length,
+      textContent: text,
+      estimatedTokens: Math.ceil(text.length / 4),
+      material: true,
+    };
+    useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), attachments: [...current.attachments, attachment] }));
+    setDraft(material ? instruction : "");
+    composerRef.current?.focus();
+  }
+
   function removeAttachment(id: string) {
     updateCurrentSession((current) => ({
       ...current,
@@ -1511,6 +1542,15 @@ export function AssistantPanel() {
       setRetryNotice(text);
       setRequestStatus(text);
     });
+    // What the router cut from this request to fit a model's window: the reply says it, with how much (`promptCut.ts`).
+    const cuts: PromptCut[] = [];
+    const stopListeningToCuts = listenToPromptCuts(controller.signal, (cut) => cuts.push(cut));
+    // The text of the attached files that the limits of the attachments left out, said the same way (the Copilot's turn only: Brainstorming reads no files).
+    let filesCut: { sent: number; total: number } | null = null;
+    const withCuts = (text: string) => {
+      const notes = [promptCutNote(cuts, t, formatWhole), filesCut ? t("pageCopilot.material.filesCut", { sent: formatWhole(filesCut.sent), total: formatWhole(filesCut.total) }) : ""].filter(Boolean);
+      return notes.length ? `${text}\n\n${notes.join("\n\n")}` : text;
+    };
     localAudioHandledRef.current = false;
     let streamedMessageId: string | null = null;
     // Whether this request loaded its book again (`ownRefreshRef`): until it ends, that is not a change of its context.
@@ -1528,7 +1568,7 @@ export function AssistantPanel() {
       }
     };
     try {
-      if (session.mode === "brainstorming") return await askBrainstorming(trimmed, session, controller.signal, ownsRequest, accountScope, { onText: updateStreamedReply, streamedId: () => streamedMessageId }, options?.again);
+      if (session.mode === "brainstorming") return await askBrainstorming(trimmed, session, controller.signal, ownsRequest, accountScope, { onText: updateStreamedReply, streamedId: () => streamedMessageId, finish: withCuts }, options?.again);
       const booksState = useBooksStore.getState();
       const routeContext = await loadWriterContext(location.pathname, settings, settings.books, booksState.structures, booksState.workingBranches, branch);
       if (!ownsRequest()) return null;
@@ -1558,6 +1598,7 @@ export function AssistantPanel() {
       }
       const latestSession = useAssistantStore.getState().currentSession;
       if (!latestSession || latestSession.id !== session.id) return null;
+      filesCut = attachmentTextCut(settings, latestSession.attachments);
       const reply = await runPromptWithMutationRefresh(() => runAssistantPrompt({
         prompt: trimmed,
         context: routeContext,
@@ -1583,7 +1624,7 @@ export function AssistantPanel() {
       });
       if (!ownsRequest()) return null;
       const actionBranch = reply.action?.kind === "read-aloud" ? routeContext.structure?.loadedBranch ?? branch : routeContext.branch;
-      const ownedReply = { ...reply, branch: routeContext.branch, action: reply.action ? { ...reply.action, branch: reply.action.branch ?? actionBranch } : undefined };
+      const ownedReply = { ...reply, text: withCuts(reply.text), branch: routeContext.branch, action: reply.action ? { ...reply.action, branch: reply.action.branch ?? actionBranch } : undefined };
       const finalReply = streamedMessageId ? { ...ownedReply, id: streamedMessageId } : ownedReply;
       if (streamedMessageId) {
         useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: ownedReply.text, action: ownedReply.action, branch: ownedReply.branch, mutation: ownedReply.mutation });
@@ -1611,6 +1652,7 @@ export function AssistantPanel() {
     } finally {
       options?.signal?.removeEventListener("abort", abortFromCaller);
       stopListeningToRetries();
+      stopListeningToCuts();
       if (refreshedOwnBook) ownRefreshRef.current -= 1;
       endUsageTask();
       setRetryNotice(null);
@@ -1679,7 +1721,7 @@ export function AssistantPanel() {
    * A request to Brainstorming: its own runner (loaded with its first request), with only its own tools and the Synopsis of its book as its context.
    * None of the Copilot's tools, local commands or voice commands is reached from here.
    */
-  async function askBrainstorming(prompt: string, session: AssistantSession, signal: AbortSignal, ownsRequest: () => boolean, accountScope: string | null, stream: { onText: (text: string) => void; streamedId: () => string | null }, again?: string): Promise<AssistantMessage | null> {
+  async function askBrainstorming(prompt: string, session: AssistantSession, signal: AbortSignal, ownsRequest: () => boolean, accountScope: string | null, stream: { onText: (text: string) => void; streamedId: () => string | null; finish: (text: string) => string }, again?: string): Promise<AssistantMessage | null> {
     const book = session.bookId ? settings.books.find((entry) => entry.id === session.bookId) ?? null : null;
     const userMessage: AssistantMessage = { id: again ?? crypto.randomUUID(), role: "user", text: prompt };
     if (!again) useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage] }));
@@ -1697,11 +1739,12 @@ export function AssistantPanel() {
       signal,
       accountScope,
       onText: stream.onText,
+      ...(attachedMaterial(latest.attachments) ? { material: attachedMaterial(latest.attachments) } : {}),
     });
     if (!ownsRequest()) return null;
     // A turn that said what it was doing (the chapters of a pasted synopsis it read) ends in the same message.
     const streamed = stream.streamedId();
-    const owned: AssistantMessage = { ...reply, ...(streamed ? { id: streamed } : {}), branch, ...(reply.action ? { action: { ...reply.action, branch: reply.action.branch ?? branch } } : {}) };
+    const owned: AssistantMessage = { ...reply, text: stream.finish(reply.text), ...(streamed ? { id: streamed } : {}), branch, ...(reply.action ? { action: { ...reply.action, branch: reply.action.branch ?? branch } } : {}) };
     if (streamed) useAssistantStore.getState().updateSessionMessage(session.id, streamed, { text: owned.text, action: owned.action, branch });
     else useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, owned] }));
     setRequestStatus("");
@@ -3067,7 +3110,8 @@ export function AssistantPanel() {
             {currentSession?.attachments.length ? (
               <div className="flex flex-wrap gap-2 border-b px-3 py-2">
                 {currentSession.attachments.map((attachment) => (
-                  <Badge key={attachment.id} variant="secondary" className="gap-1 pr-1">
+                  <Badge key={attachment.id} variant="secondary" className="gap-1 pr-1" data-attachment-material={attachment.material ? "" : undefined}>
+                    {attachment.material && <FileText className="h-3 w-3 shrink-0" aria-label={t("pageCopilot.material.chip")} />}
                     {attachment.name}{attachment.truncated ? " (truncated)" : ""}
                     <button type="button" onClick={() => removeAttachment(attachment.id)} aria-label={t("assistant.removeAttachment", { name: attachment.name })} className="rounded p-0.5 hover:bg-black/10"><X className="h-3 w-3" /></button>
                   </Badge>
@@ -3106,6 +3150,14 @@ export function AssistantPanel() {
                   placeholder={brainstorming ? t("brainstorm.placeholder") : t("assistant.placeholder")}
                   className="min-h-[76px] resize-none"
                 />
+                {draft.trim().length > MATERIAL_CHARS && (
+                  <div data-material-offer className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                    <Button type="button" size="sm" variant="outline" className="h-8" onClick={takeDraftAsMaterial} disabled={busy}>
+                      <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />{t("pageCopilot.material.use")}
+                    </Button>
+                    <span className="min-w-0">{t("pageCopilot.material.hint", { characters: formatWhole(draft.trim().length) })}</span>
+                  </div>
+                )}
                 <div className="flex items-center gap-1.5">
                   {!brainstorming && <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0" title={t("assistant.attachFiles")} onClick={() => fileInputRef.current?.click()}><Paperclip className="h-4 w-4" /></Button>}
                   <Button type="button" variant={listening ? "default" : "ghost"} size="icon" className="h-9 w-9 shrink-0" title={listening ? t("assistant.stopMic") : t("assistant.microphone")} onClick={() => void startSpeechToText()} disabled={busy || voiceMode}>

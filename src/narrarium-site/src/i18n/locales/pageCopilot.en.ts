@@ -3,6 +3,14 @@ const pageCopilotEn = {
   pageCopilot: {
     workingOn: "Working on: {{page}}",
     workingOnHint: "Requests are about this page first; everything else the Copilot can do stays available.",
+    material: {
+      use: "Use this text as material",
+      hint: "{{characters}} characters: the text goes as material to read, and what you write in the box is the request.",
+      name: "Pasted text ({{characters}} characters)",
+      chip: "Material",
+      full: "You can attach at most {{count}} items.",
+      filesCut: "Of the attached files, {{sent}} of their {{total}} characters were read (the limit of the attachments). To give a long text whole, paste it in the box and choose “Use this text as material”.",
+    },
     pages: {
       readers: "Simulated readers",
       ghostwriters: "Ghostwriters",

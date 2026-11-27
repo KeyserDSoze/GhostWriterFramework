@@ -15,6 +15,11 @@ export interface AssistantAttachment {
   estimatedTokens?: number;
   truncated?: boolean;
   truncationReason?: string;
+  /**
+   * A text the author pasted and set apart as material («Use this text as material»): the request reads it as data, as a text pasted in the message, not as a file (the limits of the
+   * attachments do not cut it, and the import of a synopsis reads it).
+   */
+  material?: boolean;
 }
 
 export interface AssistantFileUpdate {

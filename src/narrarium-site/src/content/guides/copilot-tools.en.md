@@ -12,7 +12,7 @@ Capabilities include creation and editing, search, navigation, read-aloud, canon
 
 Chat renders Markdown, streams conversational responses, supports Shift+Enter submission, formatted/Markdown copy, saving to notes and PDF/Markdown download or Drive upload.
 
-A long text you paste (a synopsis, an analysis, a chapter) is material to read, not your request: what you ask is the line you write before or after it, and the words of the text never decide it, so a request that is not clearly a refusal is always answered by the model, which reads the text as data.
+A long text you paste (a synopsis, an analysis, a chapter) is material to read, not your request: what you ask is the line you write before or after it, and the words of the text never decide it, so a request that is not clearly a refusal is always answered by the model, which reads the text as data. **Use this text as material**, under the box when a text is long, sets it apart as an attachment in one click and leaves in the box only the line that asks. When a request had to be cut to fit the context window of a model, the reply says so, how much was sent and where to set the window; a text you set apart as material is never cut by the limits of the attachments, and when those cut the text of the files you attached, the reply says how much was read.
 
 ## The page you are on
 

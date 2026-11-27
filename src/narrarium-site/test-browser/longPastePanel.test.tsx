@@ -1,9 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
+import { longSynopsis } from "./fixtures/longSynopsis";
 
-// #121 in the panel: the request whose fallbacks a routing limit left out, sent again in one click after the limit is raised in the settings, the old value remembered and put
-// back on request.
+// #121 in the panel: the long text that becomes material in one click (the box keeps the line that asks), and the request whose fallbacks a routing limit left out, sent again in
+// one click after the limit is raised in the settings, the old value remembered and put back on request.
 
 const mocks = vi.hoisted(() => ({ runAssistantPrompt: vi.fn(), saveSettingsNow: vi.fn(async () => true), book: null as null | Record<string, unknown>, refresh: vi.fn(async () => undefined) }));
 vi.mock("@/drive/useSettings", async (original) => ({ ...await original<typeof import("@/drive/useSettings")>(), saveSettingsNow: mocks.saveSettingsNow }));
@@ -17,13 +18,16 @@ vi.mock("@/github/useWorkingBranch", () => ({ useWorkingBranch: () => ({ branch:
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { AssistantPanel } from "@/components/assistant/AssistantPanel";
-import { createEmptyAssistantSession, useAssistantStore } from "@/assistant/store";
+import { createEmptyAssistantSession, useAssistantStore, type AssistantAttachment } from "@/assistant/store";
 import { resetAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { AiProviderError } from "narrarium-engine";
 import { useAuthStore } from "@/store/authStore";
 import { useBooksStore } from "@/store/booksStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
+
+const DOC = longSynopsis();
+const ASK = "crea i capitoli basandoti esattamente su questo testo";
 
 beforeAll(async () => {
   await loadAutopilotTranslations();
@@ -51,6 +55,39 @@ const leftOut = (budget: { limit: "tokens" | "cost"; estimated: number; allowed:
 const panel = () => render(<MemoryRouter initialEntries={["/app/books/book-1/outline"]}><AssistantPanel /></MemoryRouter>);
 const composer = () => document.querySelector<HTMLTextAreaElement>("textarea")!;
 const send = () => fireEvent.keyDown(composer(), { key: "Enter", shiftKey: true });
+
+describe("a long text in the composer", () => {
+  it("is offered as material, and in one click becomes an attachment of material while the box keeps the line that asks", async () => {
+    panel();
+    fireEvent.change(composer(), { target: { value: "Ciao" } });
+    expect(document.querySelector("[data-material-offer]"), "a short message is a request").toBeNull();
+    fireEvent.change(composer(), { target: { value: `${ASK}\n\n${DOC}` } });
+    const offer = document.querySelector<HTMLElement>("[data-material-offer]")!;
+    expect(offer).toHaveTextContent(`${`${ASK}\n\n${DOC}`.trim().length.toLocaleString("en-US")} characters: the text goes as material to read, and what you write in the box is the request.`);
+    fireEvent.click(within(offer).getByRole("button", { name: "Use this text as material" }));
+    expect(composer().value).toBe(ASK);
+    expect(document.querySelector("[data-material-offer]")).toBeNull();
+    const chip = document.querySelector<HTMLElement>("[data-attachment-material]")!;
+    expect(chip).toHaveTextContent(`Pasted text (${DOC.trim().length.toLocaleString("en-US")} characters)`);
+    const [attachment] = useAssistantStore.getState().currentSession!.attachments as AssistantAttachment[];
+    expect(attachment).toMatchObject({ kind: "text", material: true, textContent: DOC.trim() });
+
+    send();
+    await waitFor(() => expect(mocks.runAssistantPrompt).toHaveBeenCalledTimes(1));
+    const input = mocks.runAssistantPrompt.mock.calls[0][0] as { prompt: string; attachments: AssistantAttachment[] };
+    expect(input.prompt).toBe(ASK);
+    expect(input.attachments).toEqual([attachment]);
+    expect((await screen.findAllByText("Fatto.")).length).toBeGreaterThan(0);
+  });
+
+  it("becomes material whole when no line of it asks anything, and the box is left empty for the request", async () => {
+    panel();
+    fireEvent.change(composer(), { target: { value: DOC } });
+    fireEvent.click(within(document.querySelector<HTMLElement>("[data-material-offer]")!).getByRole("button", { name: "Use this text as material" }));
+    expect(composer().value).toBe("");
+    expect(useAssistantStore.getState().currentSession!.attachments[0]).toMatchObject({ material: true, textContent: DOC.trim() });
+  });
+});
 
 describe("a request whose fallbacks a routing limit left out", () => {
   it("says the failure, the limit that kept the fallbacks out and its numbers, raises it in one click and sends the request again once, then puts the old value back on request", async () => {

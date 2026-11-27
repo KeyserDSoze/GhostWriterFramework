@@ -20,7 +20,7 @@ import {
   type LlmContentPart,
   type LlmMessage,
 } from "@/assistant/llm";
-import { completeTextRouted, completeToolRouted, NoCompletionCandidatesError, resolveTaskCandidates, type RoutedLlmRunMetadata } from "@/assistant/router";
+import { completeTextRouted, completeToolRouted, NoCompletionCandidatesError, type RoutedLlmRunMetadata } from "@/assistant/router";
 import { buildCapabilitiesMessage, chooseToolMatch, isCapabilityQuestion } from "@/assistant/orchestrator";
 import { isEditorialReviewPrompt } from "@/assistant/intentRules";
 import { resolveChapterTarget, resolveParagraphTarget } from "@/assistant/targetRules";
@@ -29,6 +29,7 @@ import { copilotToolRegistry, isCopilotHandlerEnabled, isCopilotToolEnabled } fr
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import { classifyMutationIntent, type MutationIntent } from "@/assistant/mutationIntent";
 import { splitPrompt } from "@/assistant/promptMaterial";
+import { ATTACHMENT_TEXT_CHARS, attachedMaterial, attachmentsText, selectedAttachmentTokenBudget } from "@/assistant/attachmentText";
 import { isRoutingLimitError } from "@/assistant/routingExecutionBudget";
 import { sourceRevisionFromFiles } from "@/assistant/actionValidation";
 import { resolveNavigateAction, resolveReadAloudAction } from "@/assistant/planner";
@@ -75,7 +76,7 @@ import { captureImmediateMutation, commitImmediateMutation, commitImmediateMutat
 import { chapterOutputSchema, entityOutputSchema, importedDraftOutputSchema, importedScriptOutputSchema, multiFileOutputSchema, paragraphOutputSchema, parseStructuredOutput, readerOutputSchema, scriptOutputSchema, StructuredOutputError } from "@/assistant/structuredOutput";
 import type { z } from "zod";
 import { attachmentImportRoute, validateImportAttachments, type AttachmentImportTarget } from "@/assistant/attachmentImport";
-import { ATTACHMENT_LIMITS, constrainAttachmentsToTokenBudget } from "@/assistant/attachments";
+import { constrainAttachmentsToTokenBudget } from "@/assistant/attachments";
 import { assertExecutableHandlerMap } from "@/assistant/handlerCatalog";
 import { optionalRepositoryRead } from "@/repository/repositoryError";
 import { retryChatNoteConflict } from "@/assistant/chatNoteSave";
@@ -170,11 +171,14 @@ export async function runAssistantPrompt(input: {
     requestOwner,
     accountScope,
   } = input;
-  const attachments = constrainAttachmentsToTokenBudget(rawAttachments, selectedAttachmentTokenBudget(settings));
+  // A text the author pasted and set apart as material («Use this text as material») is not an attachment of the limits of the files: it is material, as one pasted in the message.
+  const attachments = constrainAttachmentsToTokenBudget(rawAttachments.filter((attachment) => !attachment.material), selectedAttachmentTokenBudget(settings));
   const priorHistory = priorConversation(history, message);
   // What the author asks, apart from what they pasted to be read: every rule below (the intent of a change, the keywords of the tools, the rules of the pages,
   // the chapters a request names) reads the instruction only, and the model reads the material as data. A short message is all instruction, as it always was.
-  const { instruction: prompt, material } = splitPrompt(message);
+  const split = splitPrompt(message);
+  const prompt = split.instruction;
+  const material = [split.material, attachedMaterial(rawAttachments)].filter(Boolean).join("\n\n");
   const lowered = prompt.toLowerCase();
   // The page the author is on, when it has a contract with the Copilot: what the Copilot sees of it goes with every request made there. The contracts are
   // loaded with the first request: this module is part of the app's shell, they are not.
@@ -2337,10 +2341,7 @@ export function pageStateBlock(input: Pick<PromptInput, "page">): string {
 export function userContextParts(input: PromptInput): { stable: string; changing: string } {
   const files = truncateText(input.context.relevantFiles.map((entry) => `LOADED FILE: ${entry.path}\n${entry.content}`).join("\n\n---\n\n"), 48_000);
   const recentMessages = truncateText(input.history.slice(-8).map((message) => `${message.role.toUpperCase()}: ${message.text}`).join("\n\n"), 32_000);
-  const textAttachments = truncateText(input.attachments.filter((attachment) => attachment.kind === "text").map((attachment) => {
-    const status = attachment.truncated ? `\n[TRUNCATED: ${attachment.truncationReason ?? "safe extraction limit reached"}]` : "";
-    return `ATTACHMENT: ${attachment.name}${status}\n${attachment.textContent || "[No text excerpt included]"}`;
-  }).join("\n\n---\n\n"), 24_000);
+  const textAttachments = truncateText(attachmentsText(input.attachments), ATTACHMENT_TEXT_CHARS);
   const imageAttachments = input.attachments.filter((attachment) => attachment.kind === "image").map((attachment) => {
     const status = attachment.truncated ? ` [TRUNCATED: ${attachment.truncationReason ?? "safe attachment limit reached"}]` : "";
     return `IMAGE ATTACHMENT: ${attachment.name} (${attachment.mimeType})${status}`;
@@ -2416,13 +2417,6 @@ export function materialBlock(input: Pick<PromptInput, "material" | "prompt">): 
 
 export function boundedUserPrompt(input: PromptInput, requestText: string): string {
   return boundedUserParts(input, requestText).text;
-}
-
-function selectedAttachmentTokenBudget(settings: AppSettings): number {
-  const candidate = resolveTaskCandidates(settings, "copilot").find((entry) => entry.integration && entry.model);
-  const model = candidate?.integration?.chatModels?.find((entry) => entry.name === candidate.model);
-  if (!model?.maxInputTokens) return ATTACHMENT_LIMITS.estimatedTokens;
-  return Math.max(0, Math.min(ATTACHMENT_LIMITS.estimatedTokens, Math.floor(model.maxInputTokens * 0.25)));
 }
 
 function chapterDraftNoteFrontmatter(path: string, title: string) {

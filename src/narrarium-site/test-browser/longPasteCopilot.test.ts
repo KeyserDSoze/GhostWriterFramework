@@ -25,9 +25,11 @@ vi.mock("@/github/githubClient", async (importOriginal) => {
 });
 
 import { runAssistantPrompt } from "@/assistant/service";
+import { listenToPromptCuts, promptCutNote, type PromptCut } from "@/assistant/promptCut";
+import { attachmentTextCut } from "@/assistant/attachmentText";
 import { RoutingExecutionBudgetError } from "@/assistant/routingExecutionBudget";
 import type { LoadedWriterContext } from "@/assistant/context";
-import type { AssistantMessage, PageChangesReview } from "@/assistant/store";
+import type { AssistantAttachment, AssistantMessage, PageChangesReview } from "@/assistant/store";
 import { DEFAULT_SETTINGS, type AppSettings, type BookEntry, type ChatModel } from "@/types/settings";
 
 const DOC = longSynopsis();
@@ -56,9 +58,12 @@ function settingsWith(model: Partial<ChatModel> = OWNER_LIKE): AppSettings {
   } as AppSettings;
 }
 
-function ask(prompt: string, settings = settingsWith(), onText?: (text: string) => void): Promise<AssistantMessage> {
-  return runAssistantPrompt({ prompt, context, settings, book, branch: "main", token: "local", history: [], compactSummary: "", compactedMessageCount: 0, attachments: [], accountScope: null, onText });
+function ask(prompt: string, settings = settingsWith(), onText?: (text: string) => void, more: { attachments?: AssistantAttachment[]; signal?: AbortSignal } = {}): Promise<AssistantMessage> {
+  return runAssistantPrompt({ prompt, context, settings, book, branch: "main", token: "local", history: [], compactSummary: "", compactedMessageCount: 0, attachments: more.attachments ?? [], accountScope: null, onText, ...(more.signal ? { signal: more.signal } : {}) });
 }
+
+/** The text the author pasted and set apart with «Use this text as material». */
+const asMaterial = (text: string): AssistantAttachment => ({ id: "material-1", name: "Testo incollato", mimeType: "text/plain", kind: "text", sizeBytes: text.length, textContent: text, material: true });
 
 type Proposal = { kind: string; toolId: string; updates: Array<{ path: string; content: string | null }>; sourceRevisions: Record<string, string | null>; review: PageChangesReview };
 
@@ -156,9 +161,58 @@ describe("the Copilot on the Synopsis page, with a 63,000-character synopsis of 
     expect(provider.calls.some((call) => call.tool === "synopsis_chapters")).toBe(false);
     expect(provider.calls[provider.calls.length - 1].user).toContain("<pasted_material trust=\"untrusted-data\">");
   });
+
+  it("reads a text set apart as material («Use this text as material») the same way, with the one line the author typed as the request", async () => {
+    const message = await ask("crea i capitoli basandoti esattamente su questo testo", settingsWith(), undefined, { attachments: [asMaterial(DOC)] });
+    expect(provider.calls.map((call) => call.tool)).toEqual(Array(7).fill("synopsis_chapters"));
+    expect(provider.calls[0].user).toContain("<current_request trust=\"user-instruction\">\ncrea i capitoli basandoti esattamente su questo testo");
+    expect((message.action as unknown as Proposal).updates).toHaveLength(37);
+    // Material is not a file: the limits of the attachments never cut it, and the chat has nothing to say about them.
+    expect(attachmentTextCut(settingsWith(), [asMaterial(DOC)])).toBeNull();
+    const file = { ...asMaterial(DOC), id: "file", name: "sinossi.md", material: undefined };
+    expect(attachmentTextCut(settingsWith(), [file])).toEqual({ sent: expect.any(Number), total: DOC.length });
+    expect(attachmentTextCut(settingsWith(), [file])!.sent).toBeLessThan(24_000);
+  });
 });
 
-describe("what is said when a request is refused", () => {
+describe("what is said when a request is cut or refused", () => {
+  const listen = () => {
+    const controller = new AbortController();
+    const cuts: PromptCut[] = [];
+    listenToPromptCuts(controller.signal, (cut) => cuts.push(cut));
+    return { signal: controller.signal, cuts };
+  };
+
+  it("judges a request by the window of its model: nothing is cut of a 63,000-character text for a model of 1,000,000 tokens or for one whose window is not set (128,000 assumed), and a cut is said with how much and for which window", async () => {
+    const wide = listen();
+    await ask(`Cosa ne pensi di questo testo?\n\n${DOC}`, settingsWith({ ...OWNER_LIKE, supportsToolCalls: false }), undefined, { signal: wide.signal });
+    expect(provider.calls.length).toBeGreaterThan(0);
+    expect(wide.cuts).toEqual([]);
+    expect(provider.calls[provider.calls.length - 1].user).toContain(DOC.slice(-2_000));
+
+    const unset = listen();
+    await ask(`Cosa ne pensi di questo testo?\n\n${DOC}`, settingsWith({ supportsToolCalls: false }), undefined, { signal: unset.signal });
+    expect(unset.cuts, "the default window holds it").toEqual([]);
+
+    const narrow = listen();
+    await ask(`Cosa ne pensi di questo testo?\n\n${DOC}`, settingsWith({ supportsToolCalls: false, maxInputTokens: 32_000 }), undefined, { signal: narrow.signal });
+    expect(narrow.cuts.length).toBeGreaterThan(0);
+    const [cut] = narrow.cuts;
+    expect(cut).toMatchObject({ model: "big", integration: "Fake", windowTokens: 32_000, configured: true, images: 0 });
+    expect(cut.characters).toBeGreaterThan(DOC.length);
+    expect(cut.sentCharacters).toBeLessThan(cut.characters / 2);
+    const t = (key: string, values?: Record<string, unknown>) => `${key}${values ? JSON.stringify(values) : ""}`;
+    const note = promptCutNote(narrow.cuts, t as never, (value) => String(value));
+    expect(note).toContain("autopilot.copilotCut.line{");
+    expect(note).toContain(`"sent":"${cut.sentCharacters}"`);
+    expect(note).toContain("autopilot.copilotCut.where");
+
+    const huge = listen();
+    await ask(`Cosa ne pensi di questo testo?\n\n${DOC}\n\n${DOC}\n\n${DOC}`, settingsWith({ supportsToolCalls: false }), undefined, { signal: huge.signal });
+    expect(huge.cuts[0]).toMatchObject({ windowTokens: 128_000, configured: false });
+    expect(promptCutNote(huge.cuts, t as never, (value) => String(value))).toContain("autopilot.copilotCut.lineDefault");
+  });
+
   it("sends a first model whatever its estimated cost, and when it fails tells the author the fallbacks a routing limit left out, with its numbers, instead of answering by the rules as if nothing was asked", async () => {
     const both = (model: Partial<ChatModel>, routingExecution = DEFAULT_SETTINGS.routingExecution): AppSettings => {
       const base = settingsWith(model);

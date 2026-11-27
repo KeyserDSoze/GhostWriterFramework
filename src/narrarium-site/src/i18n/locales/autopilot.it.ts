@@ -448,6 +448,14 @@ const autopilotIt = {
     copilotRetry: {
       notice: "Il provider ha risposto con un errore passeggero: riprovo tra {{seconds}} s ({{attempt}} di {{of}})…",
     },
+    copilotCut: {
+      title: "Non è stato letto tutto.",
+      line: "Per stare nella finestra di contesto di «{{model}}» in «{{integration}}» ({{window}} token), la richiesta è stata tagliata: sono stati inviati {{sent}} dei suoi {{total}} caratteri ({{percent}}%), l'inizio e la fine di ogni parte.",
+      lineDefault: "La finestra di contesto di «{{model}}» in «{{integration}}» non è impostata, quindi è stato assunto il valore predefinito di {{window}} token e la richiesta è stata tagliata: sono stati inviati {{sent}} dei suoi {{total}} caratteri ({{percent}}%), l'inizio e la fine di ogni parte.",
+      images_one: "È stata lasciata fuori un'immagine.",
+      images_other: "Sono state lasciate fuori {{count}} immagini.",
+      where: "Se il modello ne contiene di più, imposta i suoi «Token finestra contesto» in Impostazioni › Integrazioni AI, o instrada questo task verso un modello con una finestra più grande.",
+    },
     route: {
       title: "Cosa è stato provato, nell'ordine del router",
       target: "{{integration}} · {{model}}",

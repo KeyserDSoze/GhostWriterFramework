@@ -12,7 +12,7 @@ Le capability includono creazione e modifica, ricerca, navigazione, lettura voca
 
 La chat renderizza Markdown, mostra in streaming le risposte conversazionali, supporta invio con Shift+Invio, copia formattata/Markdown, salvataggio in nota e download o upload Drive in PDF/Markdown.
 
-Un testo lungo che incolli (una sinossi, un'analisi, un capitolo) è materiale da leggere, non la tua richiesta: quello che chiedi è la riga che scrivi prima o dopo, e le parole del testo non la decidono mai, quindi a una richiesta che non è chiaramente un rifiuto risponde sempre il modello, che legge il testo come dati.
+Un testo lungo che incolli (una sinossi, un'analisi, un capitolo) è materiale da leggere, non la tua richiesta: quello che chiedi è la riga che scrivi prima o dopo, e le parole del testo non la decidono mai, quindi a una richiesta che non è chiaramente un rifiuto risponde sempre il modello, che legge il testo come dati. **Usa questo testo come materiale**, sotto la casella quando un testo è lungo, lo mette da parte come allegato con un clic e lascia nella casella solo la riga che chiede. Quando una richiesta ha dovuto essere tagliata per stare nella finestra di contesto di un modello, la risposta lo dice, quanto è stato inviato e dove impostare la finestra; un testo messo da parte come materiale non viene mai tagliato dai limiti degli allegati, e quando questi tagliano il testo dei file allegati, la risposta dice quanto è stato letto.
 
 ## La pagina su cui sei
 

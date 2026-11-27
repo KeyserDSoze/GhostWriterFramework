@@ -32,6 +32,8 @@ export interface BrainstormPromptInput {
   accountScope: string | null;
   /** What the chat shows while a long turn works (the import of a pasted synopsis says which chapters it reads). */
   onText?: (text: string) => void;
+  /** The texts the author set apart as material in the composer («Use this text as material»): read as the text pasted in the message is. */
+  material?: string;
 }
 
 /** A request that asks to make the chapters (or the entries of the Synopsis) from what was pasted: «crea i capitoli basandoti su questo testo», «turn this into the synopsis». */
@@ -64,7 +66,9 @@ export async function runBrainstormPrompt(input: BrainstormPromptInput): Promise
   const transcript = brainstormTranscript(input.history);
   const book = brainstormContextText(context);
   // What the author asks, apart from what they pasted (see `splitPrompt`): the request is the instruction, the material goes as data, and a synopsis of several chapters is imported.
-  const { instruction, material } = splitPrompt(input.prompt);
+  const split = splitPrompt(input.prompt);
+  const instruction = split.instruction;
+  const material = [split.material, input.material ?? ""].filter(Boolean).join("\n\n");
   const importer = material ? await import("@/assistant/synopsisImport") : null;
   const sections = importer?.synopsisSections(material) ?? null;
   const onText = input.onText;

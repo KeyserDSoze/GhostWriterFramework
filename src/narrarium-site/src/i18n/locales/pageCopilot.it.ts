@@ -3,6 +3,14 @@ const pageCopilotIt = {
   pageCopilot: {
     workingOn: "Sto lavorando su: {{page}}",
     workingOnHint: "Le richieste riguardano prima questa pagina; tutto il resto che il Copilot sa fare resta disponibile.",
+    material: {
+      use: "Usa questo testo come materiale",
+      hint: "{{characters}} caratteri: il testo va come materiale da leggere, e quello che scrivi nella casella è la richiesta.",
+      name: "Testo incollato ({{characters}} caratteri)",
+      chip: "Materiale",
+      full: "Puoi allegare al massimo {{count}} elementi.",
+      filesCut: "Dei file allegati sono stati letti {{sent}} dei loro {{total}} caratteri (il limite degli allegati). Per dare un testo lungo per intero, incollalo nella casella e scegli «Usa questo testo come materiale».",
+    },
     pages: {
       readers: "Lettori simulati",
       ghostwriters: "Ghostwriter",

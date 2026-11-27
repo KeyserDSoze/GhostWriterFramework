@@ -35,8 +35,8 @@ const settings = {
   taskRouting: { copilot: { primary: { integrationId: "fake", model: "big" }, fallbacks: [] } },
 } as AppSettings;
 
-function brainstorm(prompt: string, onText?: (text: string) => void, more: { settings?: AppSettings } = {}) {
-  return runBrainstormPrompt({ prompt, settings: more.settings ?? settings, book, branch: "main", structure, history: [], accountScope: null, ...(onText ? { onText } : {}) });
+function brainstorm(prompt: string, onText?: (text: string) => void, more: { material?: string; settings?: AppSettings } = {}) {
+  return runBrainstormPrompt({ prompt, settings: more.settings ?? settings, book, branch: "main", structure, history: [], accountScope: null, ...(onText ? { onText } : {}), ...(more.material ? { material: more.material } : {}) });
 }
 
 type Proposal = { kind: string; toolId: string; updates: Array<{ path: string }>; review: PageChangesReview };
@@ -62,6 +62,12 @@ describe("Brainstorming with a 63,000-character synopsis of 37 chapters pasted",
     expect(turn.user).toContain("<current_request trust=\"user-instruction\">\nEcco la mia analisi del romanzo, usala per il libro.\n</current_request>");
     expect(turn.user).toContain("a synopsis of 37 chapters: import_synopsis_text turns it into the Synopsis");
     expect(provider.calls.slice(1).map((call) => call.tool)).toEqual(Array(7).fill("synopsis_chapters"));
+    expect((message.action as unknown as Proposal).updates).toHaveLength(37);
+  });
+
+  it("reads a text set apart as material in the composer the same way, with the line the author typed as the request", async () => {
+    const message = await brainstorm("crea i capitoli basandoti esattamente su questo testo", undefined, { material: DOC });
+    expect(provider.calls.map((call) => call.tool)).toEqual(Array(7).fill("synopsis_chapters"));
     expect((message.action as unknown as Proposal).updates).toHaveLength(37);
   });
 

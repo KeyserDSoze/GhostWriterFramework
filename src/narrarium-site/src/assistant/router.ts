@@ -6,6 +6,7 @@ import { executeCompletionFallback } from "@/assistant/completionFallback";
 import { fallbackBudgetNote } from "narrarium-engine";
 import { DEFAULT_MAX_INPUT_TOKENS, budgetLlmMessages, likelyMessageTokens, modelWindow, resolveModelTokenBudgets } from "@/assistant/promptBudget";
 import { announceRetry } from "@/assistant/retryNotice";
+import { announcePromptCut, promptCutOf } from "@/assistant/promptCut";
 import { usageTaskOf } from "@/costs/usageTasks";
 import { engineOutputLimit, jsonInstructionTokens, requestedOutput, runCopilotAttempt, runMetadata, startRoutingClock, toolsOnly, toolsRequiredError, toolTokens, usageReport, type ChatCandidate, type SkippedModels } from "@/assistant/copilotAi";
 import { acknowledgeCrossBoundaryFallback, applySameBoundaryPolicy } from "@/assistant/fallbackDisclosure";
@@ -85,6 +86,13 @@ function budgetForcedToolMessages(messages: LlmMessage[], candidate: TaskCandida
   const budgeted = budgetLlmMessages(messages, candidate.maxInputTokens, outputTokens, reserve);
   if (messages.length > 0 && budgeted.length === 0) throw new CandidateInputBudgetError();
   return budgeted;
+}
+
+/** A request cut to fit the window of the candidate is said to the chat that sent it (`promptCut.ts`): how much was sent, for which window (the model's own, or the default). */
+function tellCut(signal: AbortSignal | undefined, candidate: TaskCandidate, messages: LlmMessage[], sent: LlmMessage[]): void {
+  if (sent === messages || !signal || !candidate.model) return;
+  const cut = promptCutOf({ model: candidate.model, integrationName: candidate.integration?.name ?? "" }, modelWindow(candidate), messages, sent);
+  if (cut) announcePromptCut(signal, cut);
 }
 
 const CHAT_CAPABILITIES_SET = new Set<RoutingTaskKind>(CHAT_CAPABILITIES);
@@ -465,6 +473,7 @@ export async function completeTextRouted(
     describe: (_candidate, error) => clientSentence(error),
     run: async (candidate, signal) => {
       const prompt = options.overflow === "fail" ? messages : budgetLlmMessages(messages, candidate.maxInputTokens, outputLimit(candidate));
+      tellCut(options.signal, candidate, messages, prompt);
       let text: string;
       try {
         const response = await runCopilotAttempt({
@@ -575,6 +584,7 @@ export async function completeToolRouted<T>(
     options.onAttempt?.(position);
     try {
       const prompt = options.overflow === "fail" ? messages : budgetForcedToolMessages(messages, chat, limit, tool, instruction);
+      tellCut(options.signal, chat, messages, prompt);
       let ended: { end: FetchAiAttemptEnd; debugId: string | undefined } | undefined;
       const response = await runCopilotAttempt({
         settings,
