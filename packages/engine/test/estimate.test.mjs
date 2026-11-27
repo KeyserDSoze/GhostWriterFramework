@@ -449,11 +449,14 @@ test("the cost is each capability's tokens at its model's prices, in the best ca
   assert.equal(pricey.capabilities.director.cost.max, result.capabilities.director.cost.max);
 });
 
+// The director's profile is part of the fixed start of the requests of the director (its system message): a book whose director wrote a long one has a start that a provider caches.
+const LONG_DIRECTOR = { context: { directorWords: 1500 } };
+
 test("a model that declares a price for what it has cached makes the best case cheaper; the worst case counts on no cache", () => {
   const cached = { ...MODEL, pricing: { inputPerMTok: 2, cachedPerMTok: 0.5, outputPerMTok: 10 } };
-  const plain = estimate(NOVELLA);
-  const result = estimate(NOVELLA, { models: uniform(cached) });
-  assert.ok(result.cachedInputTokens.min > 0, "the fixed start of every request: the system message and the functions");
+  const plain = estimate(NOVELLA, LONG_DIRECTOR);
+  const result = estimate(NOVELLA, { ...LONG_DIRECTOR, models: uniform(cached) });
+  assert.ok(result.cachedInputTokens.min > 0, "the fixed start of the requests that hold what a provider caches: the system message and the functions");
   assert.ok(result.cachedInputTokens.min < result.inputTokens.min);
   assert.ok(result.cachedInputTokens.max >= result.cachedInputTokens.min);
   assert.equal(plain.cachedInputTokens.max, 0, "a model that declares no cached price is not counted on to cache");
@@ -469,9 +472,96 @@ test("a model that declares a price for what it has cached makes the best case c
   near(result.cost.max, max, 1e-9, "worst case: no cache");
   assert.ok(result.cost.min < plain.cost.min);
   assert.equal(result.cost.max, plain.cost.max);
-  const absurd = estimate(NOVELLA, { models: uniform({ ...MODEL, pricing: { inputPerMTok: 2, cachedPerMTok: 50, outputPerMTok: 10 } }) });
+  const absurd = estimate(NOVELLA, { ...LONG_DIRECTOR, models: uniform({ ...MODEL, pricing: { inputPerMTok: 2, cachedPerMTok: 50, outputPerMTok: 10 } }) });
   near(absurd.cost.min, plain.cost.min, 1e-9, "a cache that costs more than the input it saves saves nothing, and the best case is never above the worst");
   assert.ok(absurd.cost.min <= absurd.cost.max);
+});
+
+test("a start that is under what a provider caches is no saving: the instructions and the functions of the default pipeline are short, and counted on for nothing", () => {
+  const cached = { ...MODEL, pricing: { inputPerMTok: 2, cachedPerMTok: 0.5, outputPerMTok: 10 } };
+  const result = estimate(NOVELLA, { models: uniform(cached) });
+  assert.deepEqual(rangeOf(result.cachedInputTokens), [0, 0]);
+  for (const capability of CAPABILITIES) assert.equal(result.capabilities[capability].cacheBasis, "structural");
+  assert.equal(estimate(NOVELLA).capabilities.autopilot.cacheBasis, "none", "no cached price, nothing counted on");
+});
+
+test("what the host measured of a model's cache is what the best case counts on: its share of the input, at the cached price, whatever the fixed start is; the worst case still counts on none", () => {
+  const priced = { ...MODEL, pricing: { inputPerMTok: 2, cachedPerMTok: 0.2, outputPerMTok: 10 } };
+  const none = estimate(NOVELLA, { models: uniform(priced) });
+  const measured = estimate(NOVELLA, { models: uniform({ ...priced, cacheHitRate: 0.6 }) });
+  for (const capability of CAPABILITIES) {
+    assert.equal(measured.capabilities[capability].cacheBasis, "measured");
+    near(measured.capabilities[capability].cachedInputTokens.min, measured.capabilities[capability].inputTokens.min * 0.6, 1.5, capability);
+  }
+  near(measured.cachedInputTokens.min, measured.inputTokens.min * 0.6, 8);
+  let min = 0;
+  for (const capability of CAPABILITIES) {
+    const part = measured.capabilities[capability];
+    min += ((part.inputTokens.min - part.cachedInputTokens.min) * 2 + part.cachedInputTokens.min * 0.2 + part.outputTokens.min * 10) / 1e6;
+  }
+  near(measured.cost.min, min, 1e-9);
+  assert.ok(measured.cost.min < none.cost.min);
+  assert.equal(measured.cost.max, none.cost.max, "the worst case is a cold cache");
+  assert.equal(estimate(NOVELLA, { models: uniform({ ...priced, cacheHitRate: 7 }) }).capabilities.autopilot.cachedInputTokens.min, estimate(NOVELLA, { models: uniform({ ...priced, cacheHitRate: 1 }) }).capabilities.autopilot.cachedInputTokens.min, "a share is never more than all");
+  assert.equal(estimate(NOVELLA, { models: uniform({ ...priced, cacheHitRate: -1 }) }).capabilities.autopilot.cachedInputTokens.min, 0);
+  assert.equal(estimate(NOVELLA, { models: uniform({ ...priced, cacheHitRate: "much" }) }).capabilities.autopilot.cacheBasis, "structural", "a share that is no number is not one");
+  // A model with no cached price costs the same cached or not: nothing is counted for it.
+  const unpriced = estimate(NOVELLA, { models: uniform({ ...MODEL, cacheHitRate: 0.6 }) });
+  assert.equal(unpriced.cachedInputTokens.max, 0);
+  assert.equal(unpriced.capabilities.autopilot.cacheBasis, "none");
+});
+
+test("a model declared as not caching is counted on for no saving, whatever it was measured to do or priced at", () => {
+  const priced = { ...MODEL, pricing: { inputPerMTok: 2, cachedPerMTok: 0.2, outputPerMTok: 10 } };
+  for (const declared of [{ promptCaching: "unsupported" }, { promptCaching: "unsupported", cacheHitRate: 0.9 }]) {
+    const result = estimate(NOVELLA, { ...LONG_DIRECTOR, models: uniform({ ...priced, ...declared }) });
+    assert.deepEqual(rangeOf(result.cachedInputTokens), [0, 0]);
+    assert.equal(result.capabilities.director.cacheBasis, "none");
+    assert.deepEqual(rangeOf(result.cost), rangeOf(estimate(NOVELLA, { ...LONG_DIRECTOR, models: uniform(MODEL) }).cost), "the cost of a model that has no cached price at all");
+  }
+  for (const word of ["supported", "learned", "unknown", undefined, "nonsense"]) {
+    const result = estimate(NOVELLA, { ...LONG_DIRECTOR, models: uniform({ ...priced, promptCaching: word }) });
+    assert.ok(result.cachedInputTokens.min > 0, `${word}: left to what is measured or to the start of the requests`);
+  }
+});
+
+test("a provider that charges more for what it writes to its cache than for the input makes the worst case dearer, and the best case is not charged for it", () => {
+  const priced = { ...MODEL, pricing: { inputPerMTok: 2, cachedPerMTok: 0.2, outputPerMTok: 10 } };
+  const withWrite = { ...MODEL, pricing: { ...priced.pricing, cacheWritePerMTok: 2.5 } };
+  const base = estimate(NOVELLA, { ...LONG_DIRECTOR, models: uniform(priced) });
+  const result = estimate(NOVELLA, { ...LONG_DIRECTOR, models: uniform(withWrite) });
+  assert.ok(result.cost.max > base.cost.max, "the start of the requests is billed at the write price when the cache is cold");
+  assert.equal(result.cost.min, base.cost.min);
+  const cheap = estimate(NOVELLA, { ...LONG_DIRECTOR, models: uniform({ ...MODEL, pricing: { ...priced.pricing, cacheWritePerMTok: 1 } }) });
+  assert.equal(cheap.cost.max, base.cost.max, "a write that costs no more than the input is no premium");
+  const unsupported = estimate(NOVELLA, { ...LONG_DIRECTOR, models: uniform({ ...withWrite, promptCaching: "unsupported" }) });
+  assert.equal(unsupported.cost.max, base.cost.max, "a model that does not cache writes nothing");
+});
+
+test("the assumptions say what the best case counts on for the cache: the start of the requests, or the share that was measured", () => {
+  const priced = { ...MODEL, pricing: { inputPerMTok: 2, cachedPerMTok: 0.2, outputPerMTok: 10 } };
+  const lines = (extra, language) => estimate(NOVELLA, { language, models: uniform({ ...priced, ...extra }) }).assumptions.join("\n");
+  assert.ok(!/cached price/.test(lines({ pricing: { inputPerMTok: 2, outputPerMTok: 10 } }, "en")), "no cached price, no word of it");
+  assert.match(lines({}, "en"), /fixed start of every request[^.]*1,024 tokens[^.]*cached price/);
+  assert.match(lines({ cacheHitRate: 0.62 }, "en"), /served from its cache in the calls you already made \(62%, measured\) at the cached price; the worst case counts no cache/);
+  assert.match(lines({ cacheHitRate: 0.62 }, "it"), /nelle chiamate che hai già fatto \(62%, misurata\)/);
+  assert.match(lines({}, "it"), /1\.024 token/);
+  assert.ok(!/served from its cache/.test(lines({ promptCaching: "unsupported" }, "en")));
+});
+
+test("the models of a configuration carry what they say of their cache and what the host measured of it", () => {
+  const config = pickAiRuntimeConfig({
+    aiIntegrations: [{ id: "i", provider: "openai", apiKey: "k", endpoint: "https://api.openai.com/v1", chatModels: [
+      { name: "a", capabilities: ["autopilot", "default"], promptCaching: "learned", pricing: { inputPerMTok: 2, cachedPerMTok: 0.2, cacheWritePerMTok: 2.5, outputPerMTok: 8 } },
+      { name: "b", capabilities: ["director"], promptCaching: "unsupported", pricing: { inputPerMTok: 2, outputPerMTok: 8 } },
+    ] }],
+    taskRouting: { autopilot: { primary: { integrationId: "i", model: "a" }, fallbacks: [] }, director: { primary: { integrationId: "i", model: "b" }, fallbacks: [] } },
+  });
+  const models = estimateModelsFromConfig(config, undefined, { a: 0.55, b: 1.7, c: 0.1 });
+  assert.deepEqual(models.autopilot, { model: "a", pricing: { inputPerMTok: 2, cachedPerMTok: 0.2, cacheWritePerMTok: 2.5, outputPerMTok: 8 }, promptCaching: "learned", cacheHitRate: 0.55 });
+  assert.deepEqual(models.director, { model: "b", pricing: { inputPerMTok: 2, outputPerMTok: 8 }, promptCaching: "unsupported", cacheHitRate: 1 });
+  assert.equal(estimateModelsFromConfig(config, undefined, new Map([["a", 0.3]])).autopilot.cacheHitRate, 0.3, "a map says it too");
+  assert.equal("cacheHitRate" in estimateModelsFromConfig(config).autopilot, false, "nothing measured, nothing said");
 });
 
 test("a model with no price makes the cost unknown, never zero, and the capabilities that lack a price are named", () => {

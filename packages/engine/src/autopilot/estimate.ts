@@ -1,5 +1,7 @@
 import type { AiRuntimeConfig } from "../ai/config.js";
 import { likelyTextTokens, resolveModelTokenBudgets } from "../ai/budget.js";
+import { normalizePromptCaching } from "../ai/config.js";
+import { servedFromCache } from "../ai/prompt-cache.js";
 import { resolveAiCandidates } from "../ai/router.js";
 import { REASONING_OUTPUT_MARGIN, STRUCTURED_OUTPUT_FLOOR, isReasoningModel } from "../ai/token-limit.js";
 import { AI_CAPABILITIES } from "../ai/types.js";
@@ -194,10 +196,23 @@ export interface EstimateModel {
   maxInputTokens?: number;
   /** The largest answer the model can give. */
   maxOutputTokens?: number;
-  pricing?: { inputPerMTok?: number; cachedPerMTok?: number; outputPerMTok?: number };
+  pricing?: { inputPerMTok?: number; cachedPerMTok?: number; cacheWritePerMTok?: number; outputPerMTok?: number };
+  /**
+   * Whether the model caches the start of its prompts (`AiChatModelConfig.promptCaching`): `unsupported` counts on no saving, whatever the model's cached price. Any other word (or none) leaves it to
+   * what is measured, else to the start of the requests that never changes.
+   */
+  promptCaching?: "unknown" | "supported" | "unsupported" | "learned";
+  /**
+   * The share of the input of this model that its provider served from its cache, as the host measured it in the calls it made (0 to 1: the tokens served, over the tokens sent, in its ledger). When there
+   * is one, it is what the best case counts on, in place of the fixed start of the requests; nothing is counted for a model that declares no cached price, because it would cost the same.
+   */
+  cacheHitRate?: number;
   supportsReasoning?: boolean;
   tokensPerSecond?: number;
 }
+
+/** What the estimate counts on for a model's cache: nothing (no cached price, or a model declared as not caching), the fixed start of its requests when it meets the provider's minimum, or the share measured in the calls the host made. */
+export type EstimateCacheBasis = "none" | "structural" | "measured";
 
 export type EstimateCount = number | { min?: number; max?: number };
 
@@ -307,8 +322,10 @@ export interface EstimateCapabilityResult {
   model: string | null;
   calls: EstimateRange;
   inputTokens: EstimateRange;
-  /** The part of the input that a provider that caches the start of a request would bill at the cached price: counted only for a model that declares that price. */
+  /** The part of the input that a provider that caches the start of a request would bill at the cached price: counted only for a model that declares that price (and does not say it does not cache). */
   cachedInputTokens: EstimateRange;
+  /** What `cachedInputTokens` counts on: the share the host measured for the model, the fixed start of its requests (when it holds the least a provider caches), or nothing. */
+  cacheBasis: EstimateCacheBasis;
   outputTokens: EstimateRange;
   /** `null` when the model has no price (or there is no model); `{ min: 0, max: 0 }` when the capability makes no call. */
   cost: EstimateRange | null;
@@ -618,17 +635,22 @@ interface ResolvedModel {
   name: string;
   window?: number;
   maxOutput?: number;
-  price?: { input: number; output: number; cached?: number };
+  price?: { input: number; output: number; cached?: number; write?: number };
+  /** The model is declared as not caching. */
+  noCache: boolean;
+  /** The share of its input that the provider served from its cache, as the host measured it: 0 to 1. */
+  hitRate?: number;
   speed?: number;
   reasoning: boolean;
 }
 
-function priceOf(value: unknown): { input: number; output: number; cached?: number } | undefined {
+function priceOf(value: unknown): { input: number; output: number; cached?: number; write?: number } | undefined {
   const pricing = asRecord(value);
   const known = (price: unknown): price is number => typeof price === "number" && Number.isFinite(price) && price >= 0;
   if (!known(pricing.inputPerMTok) || !known(pricing.outputPerMTok)) return undefined;
   // A cache that costs more than the input it saves is no saving: the cached price is never above the input's.
-  return { input: pricing.inputPerMTok, output: pricing.outputPerMTok, ...(known(pricing.cachedPerMTok) ? { cached: Math.min(pricing.cachedPerMTok, pricing.inputPerMTok) } : {}) };
+  // A write that costs less than the input is no premium: a write price below the input's is not counted.
+  return { input: pricing.inputPerMTok, output: pricing.outputPerMTok, ...(known(pricing.cachedPerMTok) ? { cached: Math.min(pricing.cachedPerMTok, pricing.inputPerMTok) } : {}), ...(known(pricing.cacheWritePerMTok) && pricing.cacheWritePerMTok > pricing.inputPerMTok ? { write: pricing.cacheWritePerMTok } : {}) };
 }
 
 function resolveModel(value: unknown): ResolvedModel | null {
@@ -642,8 +664,11 @@ function resolveModel(value: unknown): ResolvedModel | null {
   const window = positive(source.maxInputTokens);
   const maxOutput = positive(source.maxOutputTokens);
   const speed = positive(source.tokensPerSecond);
+  const rate = typeof source.cacheHitRate === "number" && Number.isFinite(source.cacheHitRate) ? Math.min(1, Math.max(0, source.cacheHitRate)) : undefined;
   return {
     name,
+    noCache: normalizePromptCaching(source.promptCaching) === "unsupported",
+    ...(rate !== undefined ? { hitRate: rate } : {}),
     ...(window ? { window } : {}),
     ...(maxOutput ? { maxOutput } : {}),
     ...(price ? { price } : {}),
@@ -665,8 +690,9 @@ interface KindPoint {
   calls: number;
   input: number;
   output: number;
-  /** Tokens of the fixed start of the requests (the system message and the function), for the models that declare a cached price. */
+  /** Tokens of the fixed start of the requests (the system message and the function) that a provider serves from its cache (the whole of it above the minimum it caches, none below), for the models that declare a cached price. */
   prefix: number;
+
 }
 
 type PointResult = Record<EstimateCallKind, KindPoint>;
@@ -920,7 +946,7 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
       point.calls += calls;
       point.input += input;
       point.output += output;
-      point.prefix += prefix(kind) * calls;
+      point.prefix += servedFromCache(prefix(kind)) * calls;
     };
     if (!conceptDone) add("concept", 1, promptOf("concept").base, reply("concept", designing ? T.designConceptWords : T.conceptWords));
     if (withoutSummary > 0) add("summarize-imported", withoutSummary, withoutSummary * promptOf("summarize-imported").base, withoutSummary * reply("summarize-imported", T.importedSummaryWords));
@@ -1006,7 +1032,14 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   const capabilityTotals = Object.fromEntries(ESTIMATE_CAPABILITIES.map((capability) => [capability, {
     calls: rangeOf(0, 0), inputTokens: rangeOf(0, 0), cachedInputTokens: rangeOf(0, 0), outputTokens: rangeOf(0, 0),
   }])) as Record<EstimateCapability, { calls: EstimateRange; inputTokens: EstimateRange; cachedInputTokens: EstimateRange; outputTokens: EstimateRange }>;
-  const cachedRate = (capability: EstimateCapability): number | undefined => models[capability]?.price?.cached;
+  /** What the estimate counts on for the cache of the model of a capability (see `EstimateCacheBasis`): nothing without a cached price or for a model declared as not caching. */
+  const basisOf = (capability: EstimateCapability): EstimateCacheBasis => {
+    const model = models[capability];
+    if (model?.price?.cached === undefined || model.noCache) return "none";
+    return model.hitRate !== undefined ? "measured" : "structural";
+  };
+  /** The tokens a cache is written with when it is cold, by capability: the part of the fixed start of the requests that a provider caches, which the worst case bills at the write price of a provider that charges more for it. */
+  const coldWritten: Record<EstimateCapability, number> = Object.fromEntries(ESTIMATE_CAPABILITIES.map((capability) => [capability, 0])) as Record<EstimateCapability, number>;
   for (const kind of ESTIMATE_CALL_KINDS) {
     const capability = CAPABILITY_OF[kind];
     const low = lowest[kind];
@@ -1022,7 +1055,10 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
       outputTokens: roundRange(outputLow, outputHigh),
     };
     const totals = capabilityTotals[capability];
-    const cached = cachedRate(capability) === undefined ? [0, 0] : [Math.min(low.prefix, low.input), Math.min(high.prefix, high.input)];
+    const basis = basisOf(capability);
+    const rate = models[capability]?.hitRate ?? 0;
+    const cached = basis === "none" ? [0, 0] : basis === "measured" ? [low.input * rate, high.input * rate] : [Math.min(low.prefix, low.input), Math.min(high.prefix, high.input)];
+    if (!models[capability]?.noCache) coldWritten[capability] += Math.min(high.prefix, high.input);
     const sumInto = (target: EstimateRange, range: EstimateRange) => {
       target.min += range.min;
       target.max += range.max;
@@ -1052,9 +1088,11 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
         cost = null;
         unpriced.push(capability);
       } else {
-        const { input, output, cached } = model.price;
+        const { input, output, cached, write } = model.price;
         const cachedLow = cached === undefined ? 0 : totals.cachedInputTokens.min;
-        cost = rangeOf(((totals.inputTokens.min - cachedLow) * input + cachedLow * (cached ?? input) + totals.outputTokens.min * output) / 1e6, (totals.inputTokens.max * input + totals.outputTokens.max * output) / 1e6);
+        // The worst case counts no cache, and a cold one: a provider that charges more for what it writes to its cache than for the input bills the start of every request at that price.
+        const premium = write !== undefined && !model.noCache ? coldWritten[capability] * (write - input) : 0;
+        cost = rangeOf(((totals.inputTokens.min - cachedLow) * input + cachedLow * (cached ?? input) + totals.outputTokens.min * output) / 1e6, (totals.inputTokens.max * input + premium + totals.outputTokens.max * output) / 1e6);
       }
       if (!model?.speed) {
         minutes = null;
@@ -1071,7 +1109,7 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
       minutesMin += minutes.min;
       minutesMax += minutes.max;
     }
-    capabilities[capability] = { model: model?.name ?? null, ...totals, cost, minutes };
+    capabilities[capability] = { model: model?.name ?? null, ...totals, cacheBasis: basisOf(capability), cost, minutes };
   }
 
   // ─── What the author should know before it starts ────────────────────────
@@ -1139,7 +1177,12 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
     specialists: Boolean(specialists),
     tokensPerWord: tpw,
     inputPerWord: INPUT_TOKENS_PER_WORD * ratio,
-    cached: ESTIMATE_CAPABILITIES.some((capability) => cachedRate(capability) !== undefined && capabilityTotals[capability].calls.max > 0),
+    cached: ESTIMATE_CAPABILITIES.some((capability) => basisOf(capability) !== "none" && capabilityTotals[capability].calls.max > 0),
+    ...(() => {
+      const measured = ESTIMATE_CAPABILITIES.filter((capability) => basisOf(capability) === "measured" && capabilityTotals[capability].calls.max > 0);
+      const rates = measured.map((capability) => Math.round((models[capability]?.hitRate ?? 0) * 100));
+      return measured.length ? { cacheMeasured: { min: Math.min(...rates), max: Math.max(...rates) } } : {};
+    })(),
     outlineWords: Math.round(outlineWords),
   });
 
@@ -1168,6 +1211,15 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
 /** What a host knows of how fast its models write: `measuredSpeed` gives a map like this one. */
 export type EstimateSpeeds = ReadonlyMap<string, { tokensPerSecond: number }> | Readonly<Record<string, { tokensPerSecond: number } | undefined>>;
 
+/** The share of the input of each model that its provider served from its cache, as the host measured it in its ledger (0 to 1), by the name of the model. */
+export type EstimateCacheHitRates = ReadonlyMap<string, number> | Readonly<Record<string, number | undefined>>;
+
+function cacheHitRateOf(rates: EstimateCacheHitRates | undefined, model: string): number | undefined {
+  if (!rates) return undefined;
+  const value = rates instanceof Map ? rates.get(model) : Object.prototype.hasOwnProperty.call(rates, model) ? (rates as Readonly<Record<string, number | undefined>>)[model] : undefined;
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : undefined;
+}
+
 function speedOfModel(speeds: EstimateSpeeds | undefined, model: string): number | undefined {
   if (!speeds) return undefined;
   const entry = speeds instanceof Map ? speeds.get(model) : Object.prototype.hasOwnProperty.call(speeds, model) ? (speeds as Record<string, { tokensPerSecond: number } | undefined>)[model] : undefined;
@@ -1179,7 +1231,7 @@ function speedOfModel(speeds: EstimateSpeeds | undefined, model: string): number
  * The model of each capability as the router would choose it (the first of `resolveAiCandidates`): its name, its window, its largest answer, its prices, whether it
  * reasons, and the speed `speeds` has for it. No key, no address: only what the estimate reads. A capability the configuration has no model for is not in the answer.
  */
-export function estimateModelsFromConfig(config: AiRuntimeConfig | null | undefined, speeds?: EstimateSpeeds): Partial<Record<EstimateCapability, EstimateModel>> {
+export function estimateModelsFromConfig(config: AiRuntimeConfig | null | undefined, speeds?: EstimateSpeeds, caching?: EstimateCacheHitRates): Partial<Record<EstimateCapability, EstimateModel>> {
   const models: Partial<Record<EstimateCapability, EstimateModel>> = {};
   const configuration = asRecord(config);
   if (!Array.isArray(configuration.aiIntegrations)) return models;
@@ -1198,12 +1250,15 @@ export function estimateModelsFromConfig(config: AiRuntimeConfig | null | undefi
     if (candidate.maxInputTokens) model.maxInputTokens = candidate.maxInputTokens;
     if (candidate.maxOutputTokens) model.maxOutputTokens = candidate.maxOutputTokens;
     const pricing: NonNullable<EstimateModel["pricing"]> = {};
-    for (const key of ["inputPerMTok", "cachedPerMTok", "outputPerMTok"] as const) {
+    for (const key of ["inputPerMTok", "cachedPerMTok", "cacheWritePerMTok", "outputPerMTok"] as const) {
       const price = candidate.pricing?.[key];
       if (typeof price === "number" && Number.isFinite(price)) pricing[key] = price;
     }
     if (Object.keys(pricing).length) model.pricing = pricing;
     if (candidate.supportsReasoning !== undefined) model.supportsReasoning = candidate.supportsReasoning;
+    if (candidate.promptCaching) model.promptCaching = candidate.promptCaching;
+    const rate = cacheHitRateOf(caching, candidate.model);
+    if (rate !== undefined) model.cacheHitRate = rate;
     const speed = speedOfModel(speeds, candidate.model);
     if (speed) model.tokensPerSecond = speed;
     models[capability] = model;

@@ -123,9 +123,15 @@ export function estimateTexts(italian: boolean) {
         ? "Un modello che ragiona spende token di ragionamento che qui non sono contati, né in token né in denaro."
         : "A model that reasons spends reasoning tokens that are not counted here, neither in tokens nor in money.");
       if (facts.cached) {
-        lines.push(italian
-          ? "Il caso migliore conta l'inizio fisso di ogni richiesta (le istruzioni e le funzioni) al prezzo della cache; il peggiore non conta nessuna cache."
-          : "The best case counts the fixed start of every request (the instructions and the functions) at the cached price; the worst case counts no cache.");
+        const measured = facts.cacheMeasured;
+        const share = measured ? (measured.min === measured.max ? `${measured.min}%` : `${measured.min}-${measured.max}%`) : "";
+        lines.push(measured
+          ? (italian
+            ? `Il caso migliore conta come in cache la parte dell'input che il provider ha servito dalla cache nelle chiamate che hai già fatto (${share}, misurata) al prezzo della cache; il peggiore non conta nessuna cache.`
+            : `The best case counts the part of the input that the provider served from its cache in the calls you already made (${share}, measured) at the cached price; the worst case counts no cache.`)
+          : (italian
+            ? "Il caso migliore conta l'inizio fisso di ogni richiesta (le istruzioni e le funzioni, se arriva ai 1.024 token che i provider mettono in cache) al prezzo della cache; il peggiore non conta nessuna cache."
+            : "The best case counts the fixed start of every request (the instructions and the functions, when it reaches the 1,024 tokens that providers cache) at the cached price; the worst case counts no cache."));
       }
       if (facts.outlineWords > 0) {
         lines.push(italian
@@ -163,5 +169,7 @@ export interface AssumptionFacts {
   tokensPerWord: number;
   inputPerWord: number;
   cached: boolean;
+  /** The share of the input that the providers served from their caches in the calls the host made, when the best case counts on it (see `EstimateModel.cacheHitRate`): in per cent, the least and the most of the models asked. */
+  cacheMeasured?: { min: number; max: number };
   outlineWords: number;
 }
