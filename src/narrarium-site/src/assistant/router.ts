@@ -484,7 +484,7 @@ export async function completeToolRouted<T>(
   messages: LlmMessage[],
   capability: ChatCapability,
   tool: ForcedToolDefinition,
-  options: { accountScope: string | null; signal?: AbortSignal; label?: string; validate?: (output: unknown) => T; fallbackMaxOutputTokens?: number; onFinish?: (report: LlmFinishReport) => void; onAttempt?: (routeCandidateIndex: number) => void; overflow?: PromptOverflow },
+  options: { accountScope: string | null; signal?: AbortSignal; label?: string; validate?: (output: unknown) => T; fallbackMaxOutputTokens?: number; onFinish?: (report: LlmFinishReport) => void; onAttempt?: (routeCandidateIndex: number) => void; overflow?: PromptOverflow; onStructuredText?: (json: string) => void },
 ): Promise<LlmResult<T> & { metadata: RoutedLlmRunMetadata }> {
   const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
   try {
@@ -548,6 +548,7 @@ export async function completeToolRouted<T>(
         messages: prompt,
         json: tool,
         maxOutputTokens: requested,
+        ...(options.onStructuredText ? { onStructuredText: options.onStructuredText } : {}),
         onEnd: (end, debugId) => {
           ended = { end, debugId };
           if (end.finishReason === undefined) return;

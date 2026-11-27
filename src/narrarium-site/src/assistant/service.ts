@@ -25,7 +25,7 @@ import { buildCapabilitiesMessage, chooseToolMatch, isCapabilityQuestion } from 
 import { isEditorialReviewPrompt } from "@/assistant/intentRules";
 import { resolveChapterTarget, resolveParagraphTarget } from "@/assistant/targetRules";
 import { selectMentionedCanonFiles, type CanonContextCandidate } from "@/assistant/canonContext";
-import { copilotToolRegistry, isCopilotHandlerEnabled } from "@/assistant/tools/registry";
+import { copilotToolRegistry, isCopilotHandlerEnabled, isCopilotToolEnabled } from "@/assistant/tools/registry";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import { classifyMutationIntent, type MutationIntent } from "@/assistant/mutationIntent";
 import { sourceRevisionFromFiles } from "@/assistant/actionValidation";
@@ -288,6 +288,12 @@ export async function runAssistantPrompt(input: {
   const chapterReference = selectedBook && context.route ? resolveChapterReference(prompt, context.route) : null;
   if (chapterReference?.target === "ask") return whichChapterMessage(prompt, settings);
   if (chapterReference?.target === "outline" && classifyMutationIntent(prompt, "edit-outline") === "positive") return executeTool("edit-outline", "positive");
+  // A model that calls tools chooses them itself (the page's first); the keyword rules below choose for one that cannot.
+  const looped = await runWithTools({ ...promptInput, book: selectedBook, token }, executeTool, (tool) => isCopilotToolEnabled(settings, tool) && evaluateToolContract(tool, runtime).available);
+  if (looped) return looped;
+  // The page's own rule comes before the general ones.
+  const pageToolId = page?.capability.fallbackToolId?.(prompt);
+  if (pageToolId) return executeTool(pageToolId);
   const match = chooseToolMatch({ prompt, lowered, settings, spokenMode, evaluateContract: (tool) => evaluateToolContract(tool, runtime) }, availableHandlerIds);
   if (match && !match.enabled) return disabledCopilotToolMessage(settings, match.toolId);
   if (match?.toolId === "update-plot" && match.mutationIntent === "read-only") return executeTool("answer-from-context");
@@ -316,6 +322,40 @@ export async function runAssistantPrompt(input: {
     return executeTool(tool.id, handlerMutationIntent(lowered, legacyHandlerId) ?? undefined);
   }
   return executeTool("answer-from-context");
+}
+
+/**
+ * The turn with the Copilot's tool loop (`@/assistant/copilotLoop`, loaded with it), when its route has a model that calls tools: `null` otherwise, and when the
+ * loop failed before any tool of the catalogue ran (the keyword rules answer instead). What a tool of the catalogue throws is the turn's error, as it always was.
+ */
+async function runWithTools(input: PromptInput & { book: BookEntry | null; token: string }, executeTool: (toolId: string) => Promise<AssistantMessage>, available: (tool: ReturnType<typeof copilotToolRegistry.list>[number]) => boolean): Promise<AssistantMessage | null> {
+  const [{ routeCallsTools, runCopilotLoop }, { bookEnv }] = await Promise.all([import("@/assistant/copilotLoop"), import("@/assistant/pages/registry")]);
+  // A request that names a chapter or a paragraph the book does not have is answered by the keyword rules, as it always was.
+  if (!routeCallsTools(input.settings) || unresolvedTargetMessage(input)) return null;
+  ensureBuiltinCopilotToolsRegistered();
+  let ran = false;
+  try {
+    return await runCopilotLoop({
+      settings: input.settings,
+      accountScope: input.accountScope,
+      signal: input.signal,
+      onText: input.onText,
+      italian: promptIsItalian(input.prompt, input.settings),
+      page: input.page ?? null,
+      env: input.page?.env ?? bookEnv({ ...input, book: input.book }),
+      catalogue: copilotToolRegistry.list().filter((tool) => tool.handlerId && tool.id !== "answer-from-context" && available(tool)).map((tool) => ({ id: tool.id, name: tool.name, description: tool.description })),
+      prompt: input.prompt,
+      target: input.token ? await resolveTargetBody(input, input.token) : null,
+      messages: (instruction, request) => [buildSystemMessage(input, instruction), buildUserMessage(input, request)],
+      runCatalogueTool: (toolId) => {
+        ran = true;
+        return executeTool(toolId);
+      },
+    });
+  } catch (error) {
+    if (ran || input.signal?.aborted) throw error;
+    return null;
+  }
 }
 
 export function priorConversation(history: AssistantMessage[], currentPrompt: string): AssistantMessage[] {

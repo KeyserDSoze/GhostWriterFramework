@@ -40,6 +40,13 @@ export function promptReadsItalian(prompt: string, settings: Pick<AppSettings, "
   return settings.ui.language === "it";
 }
 
+/** What the tools of a page work on when the request was made elsewhere in the book: the book, and no view of the page. `null` without a book. */
+export function bookEnv(input: { context: LoadedWriterContext; settings: AppSettings; book: BookEntry | null; branch: string; token: string; prompt: string; accountScope: string | null; signal?: AbortSignal }): PageEnv | null {
+  const structure = input.context.structure;
+  if (!input.book || !structure) return null;
+  return { settings: input.settings, book: input.book, branch: input.branch, token: input.token, structure, context: input.context, prompt: input.prompt, italian: promptReadsItalian(input.prompt, input.settings), view: null, accountScope: input.accountScope, signal: input.signal };
+}
+
 /**
  * The page of a request, with what the Copilot sees of it: `null` when the route has no contract or no book is open. A state that cannot be read is left out (the
  * request goes on with the rest of the context, as it did before pages had one).
@@ -50,19 +57,7 @@ export async function loadPage(input: { context: LoadedWriterContext; settings: 
   const id = pageIdForRoute(input.context.route);
   if (!id) return null;
   const capability = await loadPageCapability(id);
-  const env: PageEnv = {
-    settings: input.settings,
-    book: input.book,
-    branch: input.branch,
-    token: input.token,
-    structure,
-    context: input.context,
-    prompt: input.prompt,
-    italian: promptReadsItalian(input.prompt, input.settings),
-    view: readPageView(id),
-    accountScope: input.accountScope,
-    signal: input.signal,
-  };
+  const env: PageEnv = { ...bookEnv(input)!, view: readPageView(id) };
   let state = "";
   try {
     state = await capability.state(env);

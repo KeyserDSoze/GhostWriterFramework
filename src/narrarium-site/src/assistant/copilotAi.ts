@@ -185,6 +185,8 @@ export interface CopilotAttempt {
   json?: ForcedToolDefinition;
   maxOutputTokens: number;
   onText?: (text: string) => void;
+  /** The cumulative JSON of a structured reply while it streams (the engine's `onStructuredText`). */
+  onStructuredText?: (json: string) => void;
   onEnd?: (end: FetchAiAttemptEnd, debugId: string | undefined) => void;
   /** The routing time of the call: it counts every attempt, those that ask the same candidate again included, and every wait between them. */
   clock: RoutingClock;
@@ -220,6 +222,7 @@ async function once(createBrowserAi: BrowserAiFactory, attempt: CopilotAttempt):
       maxOutputTokens: attempt.maxOutputTokens,
       signal: limited.signal,
       ...(attempt.onText ? { onText: attempt.onText } : {}),
+      ...(attempt.onStructuredText ? { onStructuredText: attempt.onStructuredText } : {}),
     });
   } finally {
     limited.dispose();

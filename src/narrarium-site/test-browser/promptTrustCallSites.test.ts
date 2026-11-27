@@ -6,6 +6,7 @@ import fg from "fast-glob";
 const ROUTED_CALL_SITES = [
   "src/assets/assetImages.ts",
   "src/assistant/brainstorm/runner.ts",
+  "src/assistant/copilotLoop.ts",
   "src/components/assistant/AssistantPanel.tsx",
   "src/components/editor/useProseAssist.tsx",
   "src/custom-actions/customActions.ts",
