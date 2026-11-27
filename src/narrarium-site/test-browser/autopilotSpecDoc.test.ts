@@ -84,6 +84,11 @@ describe("the doc of the autopilot says what the page does with what the engine 
     for (const word of ["Do not use thinking when tools are used", "ChatModel.noThinkingWithTools", "refusesThinkingWithTools", "AiModelMemory", "model-learned", "LearnedModelNotices", "Responses API first", "chooseResponsesApi", "Thinking: not sent (tools)", "Thinking: off (tools)", "thinkingWhy", "Responses API only", "gpt-6.2-sol", "with `none`", "a server that predates engine 0.1.19"]) expect(router, word).toContain(word);
   });
 
+  it("says what prompt caching is, what the model's row, the engine and the pages do about it, and where the saving shows", () => {
+    const router = section("AI router tasks");
+    for (const word of ["Supports prompt caching", "ChatModel.promptCaching", "cacheWritePerMTok", "prompt_cache_key", "cache_control", "AiRequest.cacheKey", "cacheBreak", "AiModelMemory.promptCacheHintsRefused", "prompt-caching-learned", "promptCacheHints", "cachedSavings", "Prompt cache", "EstimateModel.cacheHitRate", "basis.caching", "prompt-prefix.test.mjs", "learned automatically", "1,024 tokens"]) expect(router, word).toContain(word);
+  });
+
   it("says that the verdict of a round and the beginning of the working time come from the engine, with a fallback", () => {
     for (const word of ["rounds[].verdict", "stats.workedMsSince"]) expect(doc, word).toContain(word);
   });
