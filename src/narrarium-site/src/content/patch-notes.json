@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.134.0",
+    "date": "2026-11-27",
+    "en": {
+      "title": "The reader updates on the branch it is published from, you can follow the publication live, and passwords can always be prepared",
+      "summary": "«Update the reader» now reaches the branch GitHub publishes from even when you work on another one, the Reader access card shows the publication run live, and you can add passwords before the reader can use them.",
+      "changes": [
+        "«Update the reader» updates the branch the workflow publishes from (the repository's default branch, read from GitHub) and the branch you work on, with the same files, one commit each and never forced, so the published reader is no longer left old when you work on a branch other than main. The card names both («main: old reader; this branch: reader up to date»).",
+        "If the publishing branch is protected, the card shows GitHub's own message, still updates your branch, and offers «Open a pull request», with the link. Offline or without a credential the update stays on this device and the card says it is not yet on main. «Publish again» always starts the workflow of the default branch.",
+        "After «Publish again», a change of the passwords or «Update the reader», the Reader access card shows the run of the publishing workflow that your action made: queued, running with its current step, succeeded, failed (with the cause in words) or cancelled, when it started and how long it took, a link that opens the run on GitHub in a new tab and «View all runs». It looks again about every 20 seconds while the page is open, pauses while the tab is hidden, slows down if GitHub limits the requests, stops when the run ends, goes on after a reload, and asks nothing when nothing is publishing. A screen reader hears each state once.",
+        "When a publication of a book with passwords succeeds, the published reader is checked from outside once, and the card says the prepared passwords are now active when the check passes.",
+        "Passwords can be added, changed and removed at any time, even when the workflow does not read them yet (the old refusal is gone). They are saved and written on GitHub right away, where an old workflow ignores them, and shown as «Prepared, not protecting yet» (never as protected) with the exposure warning and the one action that fixes it, «Update the reader». They become active, without typing them again, once the updated reader is published."
+      ]
+    },
+    "it": {
+      "title": "Il lettore si aggiorna sul ramo da cui è pubblicato, la pubblicazione si segue dal vivo e le password si possono sempre preparare",
+      "summary": "«Aggiorna il lettore» ora arriva al ramo da cui GitHub pubblica anche quando lavori su un altro, la scheda Accesso al lettore mostra dal vivo l'esecuzione della pubblicazione, e puoi aggiungere le password prima che il lettore possa usarle.",
+      "changes": [
+        "«Aggiorna il lettore» aggiorna il ramo da cui il workflow pubblica (il ramo predefinito del repository, letto da GitHub) e il ramo su cui lavori, con gli stessi file, un commit ciascuno e mai forzato, così il lettore pubblicato non resta più vecchio quando lavori su un ramo diverso da main. La scheda nomina entrambi («main: lettore vecchio; questo ramo: lettore aggiornato»).",
+        "Se il ramo di pubblicazione è protetto, la scheda mostra il messaggio di GitHub, aggiorna comunque il tuo ramo e propone «Apri una pull request», con il link. Offline o senza credenziale l'aggiornamento resta su questo dispositivo e la scheda dice che non è ancora su main. «Pubblica di nuovo» avvia sempre il workflow del ramo predefinito.",
+        "Dopo «Pubblica di nuovo», una modifica delle password o «Aggiorna il lettore», la scheda Accesso al lettore mostra l'esecuzione del workflow di pubblicazione partita con la tua azione: in coda, in esecuzione con il passo corrente, riuscita, fallita (con la causa a parole) o annullata, quando è partita e quanto ha impiegato, un link che apre l'esecuzione su GitHub in una nuova scheda e «Vedi tutte le esecuzioni». Controlla di nuovo circa ogni 20 secondi finché la pagina è aperta, si ferma mentre la scheda è nascosta, rallenta se GitHub limita le richieste, si ferma quando l'esecuzione finisce, prosegue dopo un ricaricamento e non chiede nulla quando nulla si sta pubblicando. Uno screen reader sente ogni stato una volta.",
+        "Quando la pubblicazione di un libro con password riesce, il lettore pubblicato viene controllato da fuori una volta, e la scheda dice che le password preparate sono ora attive quando il controllo riesce.",
+        "Le password si possono aggiungere, cambiare e togliere in qualsiasi momento, anche se il workflow non le legge ancora (il vecchio rifiuto non c'è più). Vengono salvate e scritte subito su GitHub, dove un vecchio workflow le ignora, e mostrate come «Preparata, non ancora protettiva» (mai come protette) con l'avviso di esposizione e l'unica azione che risolve, «Aggiorna il lettore». Diventano attive, senza doverle scrivere di nuovo, quando il lettore aggiornato è pubblicato."
+      ]
+    }
+  },
+  {
     "version": "0.133.0",
     "date": "2026-11-27",
     "en": {
