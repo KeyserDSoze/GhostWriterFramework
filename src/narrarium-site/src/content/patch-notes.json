@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.131.0",
+    "date": "2026-11-27",
+    "en": {
+      "title": "Google sign-in no longer asks for full access to your Drive, and the sync cards say when everything is synced",
+      "summary": "Signing in to Google now asks only for non-sensitive permissions (no more «this app is not verified» warning), a sign-in that ended says what to do in one sentence, and Account & Sync tells you when everything is synced.",
+      "changes": [
+        "Google Drive sign-in asks only for your identity plus the two non-sensitive Drive permissions (the hidden app folder and the files Narrarium itself creates), never for full access to Drive. Connections you already made keep working.",
+        "Exporting into a folder that already existed in your Drive, and recovering chats of an older version, now say that they need full access to Drive and ask you for it explicitly, only for that action; the permission lasts while the page is open.",
+        "When a sign-in has ended, the card says «Sign in to Google Drive again on this device» (the same for OneDrive and GitHub) instead of «credential is missing», explains whether the credentials were session ones (about an hour) or long-lived, and offers the switch to long-lived credentials, which renew in the background, when the sign-in service is available. The raw error stays under «Technical details».",
+        "Google Drive card: «Check Google configuration» shows the permissions the site asks for, the number of the Google Cloud project of its client id (never the rest) and the checklist for the owner of the project (Audience «In production», matching client id and scopes, old grants at myaccount.google.com/connections).",
+        "When everything is synced the card of Google Drive, OneDrive or GitHub says «All synced · last check 09:30» and shows no main Sync button; Sync appears only when there is something to do. A quiet «Check now» looks for changes made on another device.",
+        "New switch «Automatic sync for all services» at the top of Account & Sync, beside each service's own switch: the service's own setting overrides it, and «Follow the general setting» gives it back. Connections made before keep the value they had."
+      ]
+    },
+    "it": {
+      "title": "L'accesso con Google non chiede più l'accesso completo al tuo Drive, e le schede di sincronizzazione dicono quando è tutto sincronizzato",
+      "summary": "L'accesso a Google chiede ora solo permessi non sensibili (niente più avviso «app non verificata»), un accesso scaduto dice cosa fare in una frase, e Account e sincronizzazione dice quando è tutto sincronizzato.",
+      "changes": [
+        "L'accesso a Google Drive chiede solo la tua identità più i due permessi Drive non sensibili (la cartella nascosta dell'app e i file che Narrarium stesso crea), mai l'accesso completo a Drive. Le connessioni già fatte continuano a funzionare.",
+        "Esportare in una cartella che esisteva già nel tuo Drive e recuperare le chat di una versione precedente ora dicono che serve l'accesso completo a Drive e te lo chiedono esplicitamente, solo per quell'azione; il permesso dura finché la pagina è aperta.",
+        "Quando un accesso è scaduto, la scheda dice «Accedi di nuovo a Google Drive su questo dispositivo» (lo stesso per OneDrive e GitHub) invece di «credential is missing», spiega se le credenziali erano di sessione (circa un'ora) o durature e offre il passaggio a quelle durature, che si rinnovano in background, quando il servizio di accesso c'è. L'errore originale resta sotto «Dettagli tecnici».",
+        "Scheda di Google Drive: «Controlla la configurazione di Google» mostra i permessi che il sito chiede, il numero del progetto Google Cloud del suo client id (mai il resto) e la lista per il proprietario del progetto (Pubblico «In produzione», client id e scope coerenti, vecchi consensi su myaccount.google.com/connections).",
+        "Quando tutto è sincronizzato la scheda di Google Drive, OneDrive o GitHub dice «Tutto sincronizzato · ultimo controllo 09:30» e non mostra il pulsante principale Sincronizza; Sincronizza compare solo se c'è qualcosa da fare. Un discreto «Controlla ora» cerca le modifiche fatte su un altro dispositivo.",
+        "Nuovo interruttore «Sincronizzazione automatica per tutti i servizi» in cima ad Account e sincronizzazione, accanto a quello di ogni servizio: l'impostazione del servizio prevale, e «Segui l'impostazione generale» gliela ridà. Le connessioni già fatte mantengono il valore che avevano."
+      ]
+    }
+  },
+  {
     "version": "0.130.0",
     "date": "2026-11-27",
     "en": {
