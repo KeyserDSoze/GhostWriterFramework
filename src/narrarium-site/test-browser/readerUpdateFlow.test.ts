@@ -97,8 +97,13 @@ describe("a book published with a password and an old reader", () => {
     expect(await text(local, "book.md")).toBe(BOOK_FILES[0].content);
     expect(JSON.parse((await text(local, "reader/package.json"))!)).toMatchObject({ name: "jesus-reader", dependencies: { narrarium: expect.not.stringContaining("0.1.50") } });
 
+    // The update is in a local commit that GitHub does not have: it is never «up to date» (the owner's book, 2026-11-26).
     const again = await inspect(local);
-    expect(again.decision).toMatchObject({ kind: "current" });
+    expect(again.decision).toMatchObject({ kind: "on-device", reason: "local-commits", delivery: "no-credential" });
+    expect(again.decision.kind === "on-device" && again.decision.unpublished).toEqual(expect.arrayContaining([PAGES_WORKFLOW_PATH, "reader/src/lib/reader-passwords.ts"]));
+    expect(again.decision.kind === "on-device" && again.decision.unpublished.every((path) => path === PAGES_WORKFLOW_PATH || path.startsWith("reader/"))).toBe(true);
+    // GitHub has the old workflow: the same working copy says so.
+    expect((await inspect(local, { pagesOn: true, passwordsSet: true, workflowText: LEGACY_WORKFLOW })).decision).toMatchObject({ kind: "on-device", remoteWorkflow: "old", exposure: "password-old-reader" });
     expect(network.requests).toEqual([]);
     expect(push.fn).not.toHaveBeenCalled();
   }, 60_000);
@@ -117,6 +122,7 @@ describe("a book published with a password and an old reader", () => {
     expect(push.fn).toHaveBeenCalledTimes(1);
     expect(push.fn.mock.calls[0][0]).toMatchObject({ token: "ghp_book", owner: "keyser", repo: "jesus", branch: "main" });
     expect(await listUnpushedLocalCommits(local.meta.id)).toEqual([]);
+    expect((await inspect(local, { pagesOn: true, passwordsSet: true, workflowText: planPagesWorkflowUpgrade(LEGACY_WORKFLOW).text })).decision).toMatchObject({ kind: "current", remote: "checked" });
   }, 60_000);
 
   it("stays a local commit when the device is offline, and says it publishes at the next sync", async () => {

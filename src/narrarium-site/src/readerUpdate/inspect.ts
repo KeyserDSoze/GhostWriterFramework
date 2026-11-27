@@ -55,6 +55,8 @@ export async function inspectReaderUpdate(input: InspectReaderUpdateInput): Prom
     hash: sha256Text,
   });
   const [dirty, ahead] = await Promise.all([listDirtyLocalFiles(meta.id), listUnpushedLocalCommits(meta.id)]);
+  const readerPath = (path: string) => path === PAGES_WORKFLOW_PATH || path.startsWith(`${READER_DIR}/`);
+  const unpublished = [...new Set([...dirty.map((file) => file.path), ...ahead.flatMap((commit) => commit.files.map((file) => file.path))].filter(readerPath))].sort();
   const decision = decideReaderUpdate({
     ...base,
     workingCopy: true,
@@ -63,6 +65,7 @@ export async function inspectReaderUpdate(input: InspectReaderUpdateInput): Prom
     // The credential is the one decision of remoteAvailability: none, the local token, or one GitHub refused all leave the commit on this device.
     credential: isUsableGitHubToken(input.token) && meta.remoteKind !== "none",
     localChanges: dirty.length > 0 || ahead.length > 0,
+    unpublished,
   });
   return { decision, workflowHash: workflow && workflow.status !== "deleted" ? workflow.currentHash : null, checkedAt };
 }

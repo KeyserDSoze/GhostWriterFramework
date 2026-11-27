@@ -23,8 +23,13 @@ export interface ReaderUpdateInputs {
   credential: boolean;
   /** The working copy has changes of its own that are not on GitHub yet. */
   localChanges: boolean;
-  /** What GitHub says, when it was read: whether Pages is on and whether a password is set. */
-  remote?: { pagesOn: boolean | null; passwordsSet: boolean | null };
+  /** The paths of the workflow and of reader/ that this device has changed and GitHub does not have yet (in local commits not pushed, or not committed). */
+  unpublished?: readonly string[];
+  /**
+   * What GitHub says, when it was read: whether Pages is on, whether a password is set, and the text of the workflow on the working branch (`null`: it has none;
+   * absent: it could not be read, or the working branch is not the one that was read). The reader is current only when GitHub has it too.
+   */
+  remote?: { pagesOn: boolean | null; passwordsSet: boolean | null; workflowText?: string | null };
 }
 
 export type ReaderExposure =
@@ -47,7 +52,23 @@ export type ReaderUpdateDecision =
   | { kind: "unreadable" }
   | { kind: "not-published" }
   | { kind: "elsewhere"; readerDir: string }
-  | { kind: "current"; version: string | null }
+  | {
+      kind: "current";
+      version: string | null;
+      /** `checked`: GitHub's workflow was read and is the current one. `unchecked`: it could not be read, so this says what this device has. */
+      remote: "checked" | "unchecked";
+    }
+  /** The reader is current on this device and GitHub does not have it (yet): never «up to date» while the published side is old. */
+  | {
+      kind: "on-device";
+      version: string | null;
+      reason: "local-commits" | "remote-differs";
+      remoteWorkflow: "current" | "old" | "missing" | "unknown";
+      exposure: ReaderExposure | null;
+      delivery: ReaderDelivery;
+      unpublished: string[];
+      publishesFromBranch: boolean;
+    }
   | {
       kind: "update";
       workflow: PagesWorkflowUpgrade;
@@ -79,8 +100,27 @@ export function decideReaderUpdate(input: ReaderUpdateInputs): ReaderUpdateDecis
   if (workflow.settings.readerDir !== READER_DIR && workflow.status !== "missing") return { kind: "elsewhere", readerDir: workflow.settings.readerDir };
   if (workflow.status === "missing" && !input.folder.present) return { kind: "not-published" };
   const workflowChanges = workflow.status !== "current";
-  if (!workflowChanges && input.folder.writes.length === 0 && input.folder.deletes.length === 0) return { kind: "current", version: input.folder.version };
   const passwordSet = workflow.settings.legacyPasswordSecret !== undefined || input.remote?.passwordsSet === true;
+  if (!workflowChanges && input.folder.writes.length === 0 && input.folder.deletes.length === 0) {
+    const remoteText = input.remote?.workflowText;
+    const remotePlan = remoteText === undefined ? null : planReaderWorkflow(remoteText);
+    const remoteWorkflow: "current" | "old" | "missing" | "unknown" = remotePlan === null ? "unknown" : remotePlan.status === "current" ? "current" : remotePlan.status === "missing" ? "missing" : "old";
+    const unpublished = [...(input.unpublished ?? [])];
+    if (remoteWorkflow === "old" || remoteWorkflow === "missing" || unpublished.length > 0) {
+      const behind = remoteWorkflow === "old" || remoteWorkflow === "missing";
+      return {
+        kind: "on-device",
+        version: input.folder.version,
+        reason: behind ? "remote-differs" : "local-commits",
+        remoteWorkflow,
+        exposure: !behind ? null : input.remote?.pagesOn === false ? "not-published" : passwordSet ? "password-old-reader" : "old-reader",
+        delivery: deliveryOf(input),
+        unpublished,
+        publishesFromBranch: PUBLISHING_BRANCHES.includes(input.branch),
+      };
+    }
+    return { kind: "current", version: input.folder.version, remote: remotePlan === null ? "unchecked" : "checked" };
+  }
   const exposure: ReaderExposure = input.remote?.pagesOn === false ? "not-published" : passwordSet ? "password-old-reader" : "old-reader";
   return {
     kind: "update",

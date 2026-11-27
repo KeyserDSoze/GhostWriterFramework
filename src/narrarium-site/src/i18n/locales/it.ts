@@ -185,6 +185,7 @@ const it = {
     "credential-invalid": "Il token GitHub non è valido o è stato revocato. Aggiorna il PAT e riprova.",
     permission: "Questo token non ha i permessi necessari su questo repository.",
     "permission-unverified": "GitHub non riesce a verificare i permessi del repository in questo momento.",
+    "workflow-permission": "GitHub non ha accettato la modifica di un file di workflow (.github/workflows): la credenziale di questo libro non ha il permesso «Workflows» (un token classico ha bisogno dello scope «workflow»). Su GitHub non è cambiato nulla.",
     "branch-protected": "Il branch è protetto e ha rifiutato questa operazione.",
     "sso-required": "È necessaria l'approvazione GitHub o l'autorizzazione SSO dell'organizzazione.",
     "rate-limit": "Limite richieste GitHub raggiunto. Riprova dopo le {{reset}}.",

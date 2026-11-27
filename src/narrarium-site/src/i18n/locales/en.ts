@@ -185,6 +185,7 @@ const en = {
     "credential-invalid": "The GitHub token is invalid or revoked. Update the PAT and try again.",
     permission: "This token does not have the required access to this repository.",
     "permission-unverified": "GitHub could not verify repository permissions right now.",
+    "workflow-permission": "GitHub did not accept a change to a workflow file (.github/workflows): the credential of this book lacks the «Workflows» permission (a classic token needs the «workflow» scope). Nothing was changed on GitHub.",
     "branch-protected": "The branch is protected and rejected this operation.",
     "sso-required": "GitHub organization approval or SSO authorization is required.",
     "rate-limit": "GitHub rate limit reached. Try again after {{reset}}.",

@@ -12,9 +12,13 @@ import { readerProtection } from "@/readerAccess/model";
 import type { ReaderAccess } from "@/components/book/readerAccess/useReaderAccess";
 import type { ReaderUpdateDecision } from "@/readerUpdate/decision";
 import { outsideCheckCommand, outsideCheckUrls, runOutsideCheck, type OutsideCheckResult } from "@/readerUpdate/outsideCheck";
-import { useReaderUpdate } from "@/readerUpdate/useReaderUpdate";
+import { useBranchSyncStore } from "@/branches/syncStore";
+import { RepositoryError, repositoryErrorDescription, type RepositoryErrorKind } from "@/repository/repositoryError";
+import { useReaderUpdate, useWorkingBranch, type ReaderUpdateFailure } from "@/readerUpdate/useReaderUpdate";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type Update = Extract<ReaderUpdateDecision, { kind: "update" }>;
+type OnDevice = Extract<ReaderUpdateDecision, { kind: "on-device" }>;
 
 const RUN_KEY = { queued: "queued", running: "running", succeeded: "succeeded", failed: "failed", cancelled: "cancelled" } as const;
 
@@ -48,6 +52,62 @@ function UpdateDetails({ update }: { update: Update }) {
           </div>
         </details>
       )}
+    </div>
+  );
+}
+
+function TurnPagesOff({ onAsk }: { onAsk: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <section className="space-y-2 rounded-md border border-destructive/40 p-3 text-sm" data-testid="reader-turn-pages-off">
+      <h4 className="font-medium">{t("readerUpdate.pagesOff.offerTitle")}</h4>
+      <p>{t("readerUpdate.pagesOff.offerBody")}</p>
+      <Button type="button" size="sm" variant="destructive" onClick={onAsk}>{t("readerUpdate.pagesOff.button")}</Button>
+    </section>
+  );
+}
+
+function OnDeviceBody({ decision, lastAuto, branch, syncing, onSync, pagesOn, onTurnOff, workflowPaused }: { decision: OnDevice; lastAuto: { outcome: string; errorKind?: string } | null; branch: string; syncing: boolean; onSync: () => void; pagesOn: boolean; onTurnOff: () => void; workflowPaused: boolean }) {
+  const { t } = useTranslation();
+  const blocked = decision.delivery === "no-credential" || decision.delivery === "offline";
+  const exposure = decision.exposure;
+  return (
+    <div className="space-y-4">
+      <section className="space-y-1 rounded-md border border-amber-600/50 bg-amber-50 p-3 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" data-testid="reader-on-device">
+        <h3 className="flex items-start gap-2 text-sm font-semibold"><ShieldAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{t("readerUpdate.onDevice.title")}</h3>
+        <p className="text-sm">{t(`readerUpdate.onDevice.reason.${decision.reason}`, { count: decision.unpublished.length })}</p>
+        {decision.remoteWorkflow === "old" && <p className="text-sm">{t("readerUpdate.onDevice.remoteOld")}</p>}
+        {decision.remoteWorkflow === "missing" && <p className="text-sm">{t("readerUpdate.onDevice.remoteMissing")}</p>}
+      </section>
+      {exposure && exposure !== "not-published" && (
+        <section className={`space-y-1 rounded-md border p-3 ${exposure === "password-old-reader" ? "border-destructive/60 bg-destructive/5" : "border-amber-600/50"}`} data-testid="reader-update-exposure">
+          <h3 className="flex items-start gap-2 text-sm font-semibold"><ShieldAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{t(`readerUpdate.exposure.${exposure}.title`)}</h3>
+          <p className="text-sm">{t(`readerUpdate.exposure.${exposure}.body`)}</p>
+        </section>
+      )}
+      {workflowPaused && <p role="note" className="text-sm">{t("readerUpdate.paused")}</p>}
+      {decision.unpublished.length > 0 && (
+        <details className="text-xs">
+          <summary className="inline-flex min-h-6 cursor-pointer items-center font-medium underline underline-offset-2">{t("readerUpdate.onDevice.files", { count: decision.unpublished.length })}</summary>
+          <ul className="mt-2 max-h-40 overflow-auto break-all font-mono text-muted-foreground">{decision.unpublished.map((path) => <li key={path}>{path}</li>)}</ul>
+        </details>
+      )}
+      {lastAuto && (
+        <p className="text-sm" data-testid="reader-last-auto-sync">
+          {lastAuto.outcome === "failed"
+            ? t("readerUpdate.onDevice.auto.failed", { reason: repositoryErrorDescription(new RepositoryError("", (lastAuto.errorKind ?? "unknown") as RepositoryErrorKind, "compare"), t) })
+            : t(`readerUpdate.onDevice.auto.${lastAuto.outcome === "name-taken" || lastAuto.outcome === "gone" ? "other" : lastAuto.outcome}`)}
+        </p>
+      )}
+      <p className="text-sm">{t(`readerUpdate.onDevice.delivery.${decision.delivery}`, { branch })}</p>
+      {!decision.publishesFromBranch && <p className="text-sm font-medium">{t("readerUpdate.delivery.otherBranch", { branch })}</p>}
+      {pagesOn && exposure === "password-old-reader" && <TurnPagesOff onAsk={onTurnOff} />}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" disabled={syncing || blocked} aria-describedby={blocked ? "reader-sync-blocked" : undefined} onClick={onSync}>
+          {syncing ? <Loader2 aria-hidden="true" className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" /> : <RefreshCw aria-hidden="true" className="mr-1 h-4 w-4" />}{syncing ? t("readerUpdate.onDevice.syncing") : t("readerUpdate.onDevice.sync")}
+        </Button>
+        {blocked && <span id="reader-sync-blocked" className="text-xs text-muted-foreground">{t(`readerUpdate.onDevice.blocked.${decision.delivery}`)}</span>}
+      </div>
     </div>
   );
 }
@@ -103,11 +163,18 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
   const { t } = useTranslation();
   const titleId = useId();
   const { snapshot } = access;
+  const workingBranch = useWorkingBranch(book);
+  // GitHub's workflow is read on the default branch: it says what GitHub has only for a book that works on that branch.
+  const workflowRead = snapshot.workflow && !snapshot.failures.workflow && snapshot.repository?.defaultBranch === workingBranch;
   const remote = {
     pagesOn: snapshot.pages ? snapshot.pages.status === "enabled" : null,
     passwordsSet: snapshot.loadedAt === null ? null : readerProtection(snapshot.remote) === "protected" ? true : readerProtection(snapshot.remote) === "public" ? false : null,
+    ...(workflowRead ? { workflowText: snapshot.workflow!.present ? snapshot.workflow!.content ?? null : null } : {}),
   };
   const update = useReaderUpdate(book, remote);
+  const [pagesOffAsked, setPagesOffAsked] = useState(false);
+  const lastAutoOutcome = useBranchSyncStore((state) => state.books[book.id]?.branches[workingBranch]);
+  const lastAuto = lastAutoOutcome && ["failed", "diverged", "held", "gone", "name-taken"].includes(lastAutoOutcome.outcome) ? lastAutoOutcome : null;
   const [replaceEdits, setReplaceEdits] = useState(false);
   const decision = update.inspection?.decision;
   const run = snapshot.runs?.[0];
@@ -115,6 +182,11 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
   const outcomeRun = update.outcome?.published && run && run.headSha === update.outcome.commitSha ? run : null;
   const publishedRunDone = outcomeRun?.state === "succeeded";
   const busy = update.applying;
+
+  const doSync = async () => {
+    const result = await update.syncNow();
+    if (result?.headSha) access.watchCommit(result.headSha);
+  };
 
   const doUpdate = async () => {
     const outcome = await update.apply({ replaceEdits });
@@ -148,6 +220,7 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
           <p>{t(`readerUpdate.delivery.${decision.delivery}`, { branch: update.branch })}</p>
           {!decision.publishesFromBranch && <p className="font-medium">{t("readerUpdate.delivery.otherBranch", { branch: update.branch })}</p>}
         </div>
+        {remote.pagesOn === true && exposure === "password-old-reader" && <TurnPagesOff onAsk={() => setPagesOffAsked(true)} />}
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" disabled={busy || (decision.customized && !replaceEdits)} aria-describedby={decision.customized && !replaceEdits ? `${titleId}-needed` : undefined} onClick={() => void doUpdate()}>
             {busy ? <Loader2 aria-hidden="true" className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" /> : <RefreshCw aria-hidden="true" className="mr-1 h-4 w-4" />}{busy ? t("readerUpdate.updating") : t("readerUpdate.update")}
@@ -156,9 +229,11 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
         </div>
       </div>
     );
+  } else if (decision.kind === "on-device") {
+    body = <OnDeviceBody decision={decision} lastAuto={lastAuto} branch={update.branch} syncing={update.syncing} onSync={() => void doSync()} pagesOn={remote.pagesOn === true} onTurnOff={() => setPagesOffAsked(true)} workflowPaused={snapshot.workflowState === "paused"} />;
   } else {
     const message = decision.kind === "current"
-      ? t(decision.version ? "readerUpdate.current" : "readerUpdate.currentNoVersion", { version: decision.version ?? "" })
+      ? t(decision.remote === "unchecked" ? "readerUpdate.currentUnchecked" : decision.version ? "readerUpdate.current" : "readerUpdate.currentNoVersion", { version: decision.version ?? "" })
       : decision.kind === "elsewhere" ? t("readerUpdate.elsewhere", { dir: decision.readerDir })
       : decision.kind === "not-published" ? t("readerUpdate.notPublished")
       : decision.kind === "no-working-copy" ? t("readerUpdate.noWorkingCopy")
@@ -167,11 +242,13 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
     body = <p role="status" className="flex items-start gap-2">{decision.kind === "current" && <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />}<span>{message}</span></p>;
   }
 
-  const failure = update.failure;
-  const failureText = failure ? (failure.kind === "refused-customized" ? t("readerUpdate.failure.customized")
+  const failureText = (failure: ReaderUpdateFailure | null) => failure ? (failure.kind === "refused-customized" ? t("readerUpdate.failure.customized")
     : failure.kind === "changed" ? t("readerUpdate.failure.changed")
+    : failure.kind === "conflict" ? t("readerUpdate.failure.conflict")
     : failure.kind === "github" ? (failure.failure.kind === "permission" && failure.failure.permissions.includes("workflows") ? t("readerUpdate.failure.permission") : (() => { const line = describeReaderFailure(failure.failure, access.tokenKind); return `${t("readerUpdate.failure.other")} ${t(line.key, line.params)}`; })())
     : t("readerUpdate.failure.other")) : null;
+  const updateFailure = failureText(update.failure);
+  const syncFailure = failureText(update.syncFailure);
 
   return (
     <Card aria-labelledby={titleId} data-testid="reader-update-card">
@@ -180,7 +257,9 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         {body}
-        {failureText && <p role="alert" className="flex items-start gap-2 rounded-md border border-destructive/50 p-3 text-destructive"><AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{failureText}</p>}
+        {updateFailure && <p role="alert" className="flex items-start gap-2 rounded-md border border-destructive/50 p-3 text-destructive"><AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{updateFailure}</p>}
+        {syncFailure && <p role="alert" data-testid="reader-sync-failure" className="flex items-start gap-2 rounded-md border border-destructive/50 p-3 text-destructive"><AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" /><span><strong>{t("readerUpdate.onDevice.notSent")}</strong> {syncFailure}</span></p>}
+        {access.outcome?.kind === "disable-pages" && <p role="status" data-testid="reader-pages-off-result" className="rounded-md border border-primary/40 bg-primary/5 p-3 font-medium">{access.outcome.result.ok ? t("readerUpdate.pagesOff.done") : t("readerUpdate.pagesOff.failed")}</p>}
         {update.outcome && (
           <div role="status" className="space-y-1 rounded-md border border-primary/40 bg-primary/5 p-3" data-testid="reader-update-outcome">
             <p className="flex items-start gap-2 font-medium"><CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{update.outcome.published ? t("readerUpdate.result.published", { branch: update.branch, sha: update.outcome.commitSha.slice(0, 7) }) : t("readerUpdate.result.local")}</p>
@@ -193,7 +272,19 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
             )}
           </div>
         )}
-        {siteUrl && (publishedRunDone || (decision?.kind === "current" && !update.outcome)) && <OutsideCheck siteUrl={siteUrl} />}
+        {siteUrl && (publishedRunDone || (decision?.kind === "current" && !update.outcome) || (remote.pagesOn === true && ((decision?.kind === "update" || decision?.kind === "on-device") && decision.exposure === "password-old-reader"))) && <OutsideCheck siteUrl={siteUrl} />}
+        <Dialog open={pagesOffAsked} onOpenChange={setPagesOffAsked}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t("readerUpdate.pagesOff.title")}</DialogTitle>
+              <DialogDescription>{t("readerUpdate.pagesOff.body")}</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setPagesOffAsked(false)}>{t("readerAccess.cancel")}</Button>
+              <Button type="button" variant="destructive" onClick={() => { setPagesOffAsked(false); void access.disablePages({ deleteSecrets: false, forgetStored: false }); }}>{t("readerUpdate.pagesOff.confirm")}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <Button type="button" size="sm" variant="ghost" disabled={update.checking || busy} onClick={() => void update.check()}>{update.checking ? <Loader2 aria-hidden="true" className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" /> : <RefreshCw aria-hidden="true" className="mr-1 h-4 w-4" />}{t("readerUpdate.recheck")}</Button>
       </CardContent>
     </Card>

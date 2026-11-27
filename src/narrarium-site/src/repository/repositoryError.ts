@@ -4,6 +4,7 @@ export const repositoryErrorKinds = [
   "credential-invalid",
   "permission",
   "permission-unverified",
+  "workflow-permission",
   "branch-protected",
   "sso-required",
   "rate-limit",
@@ -66,6 +67,8 @@ export function classifyRepositoryError(error: unknown, operation: RepositoryOpe
   const rateLimited = status === 429 || (status === 403 && headers["x-ratelimit-remaining"] === "0");
   const abuseLimited = status === 403 && /secondary rate limit|abuse detection|temporarily blocked/.test(message);
   const ssoRequired = status === 403 && /saml|single sign-on|sso|organization approval|pending approval/.test(message);
+  // GitHub refuses a change to a file of .github/workflows without the Workflows permission (an app, a fine-grained token) or the workflow scope (a classic token), with a 403, 404 or 422 that names the workflow.
+  const workflowRefused = (status === 403 || status === 404 || status === 422) && /workflows?\b/.test(message) && /permission|scope|refus|not allowed/.test(message);
   const branchProtected = (status === 403 || status === 422) && /protected branch|protected_branch|branch protection|gh006|required status check|review is required/.test(message);
   const permissionDenied = status === 403 && /resource not accessible|installation|repository access|repo scope|insufficient permission|must have.*permission/.test(message);
   const offline = typeof navigator !== "undefined" && navigator.onLine === false;
@@ -76,6 +79,7 @@ export function classifyRepositoryError(error: unknown, operation: RepositoryOpe
     : abuseLimited ? "abuse-limit"
       : rateLimited ? "rate-limit"
       : status === 401 ? "credential-invalid"
+        : workflowRefused ? "workflow-permission"
         : branchProtected ? "branch-protected"
           : ssoRequired ? "sso-required"
           : permissionDenied ? "permission"

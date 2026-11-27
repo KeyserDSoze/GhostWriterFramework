@@ -93,7 +93,25 @@ describe("whether the reader of a book needs updating", () => {
 
   it("finds nothing to update when there is no reader at all, or when the workflow and the folder are the current ones", () => {
     expect(decideReaderUpdate({ ...base, workflowText: null, folder: folder({ present: false, writes: [] }) })).toEqual({ kind: "not-published" });
-    expect(decideReaderUpdate({ ...base, workflowText: current, folder: folder({ writes: [] }) })).toEqual({ kind: "current", version: "0.1.61" });
+    expect(decideReaderUpdate({ ...base, workflowText: current, folder: folder({ writes: [] }), remote: { pagesOn: true, passwordsSet: false, workflowText: current } })).toEqual({ kind: "current", version: "0.1.61", remote: "checked" });
+  });
+
+  it("is current only when GitHub has the current workflow too: with the old one there it is «on this device», never «up to date»", () => {
+    const local = { ...base, workflowText: current, folder: folder({ writes: [] }) };
+    expect(decideReaderUpdate({ ...local, remote: { pagesOn: true, passwordsSet: true, workflowText: current } })).toEqual({ kind: "current", version: "0.1.61", remote: "checked" });
+    expect(decideReaderUpdate(local)).toEqual({ kind: "current", version: "0.1.61", remote: "unchecked" });
+    expect(decideReaderUpdate({ ...local, remote: { pagesOn: true, passwordsSet: true, workflowText: v1 } })).toMatchObject({ kind: "on-device", reason: "remote-differs", remoteWorkflow: "old", exposure: "password-old-reader" });
+    expect(decideReaderUpdate({ ...local, remote: { pagesOn: true, passwordsSet: false, workflowText: v1 } })).toMatchObject({ kind: "on-device", exposure: "old-reader" });
+    expect(decideReaderUpdate({ ...local, remote: { pagesOn: false, passwordsSet: true, workflowText: v1 } })).toMatchObject({ kind: "on-device", exposure: "not-published" });
+    expect(decideReaderUpdate({ ...local, remote: { pagesOn: true, passwordsSet: true, workflowText: null } })).toMatchObject({ kind: "on-device", remoteWorkflow: "missing" });
+  });
+
+  it("is on this device when local commits touching the reader are not on GitHub, even when GitHub could not be read", () => {
+    const local = { ...base, workflowText: current, folder: folder({ writes: [] }), unpublished: ["reader/src/lib/book.ts"] };
+    expect(decideReaderUpdate(local)).toMatchObject({ kind: "on-device", reason: "local-commits", remoteWorkflow: "unknown", exposure: null, unpublished: ["reader/src/lib/book.ts"], delivery: "now" });
+    expect(decideReaderUpdate({ ...local, remote: { pagesOn: true, passwordsSet: true, workflowText: current } })).toMatchObject({ kind: "on-device", reason: "local-commits", remoteWorkflow: "current" });
+    expect(decideReaderUpdate({ ...local, credential: false })).toMatchObject({ kind: "on-device", delivery: "no-credential" });
+    expect(decideReaderUpdate({ ...local, online: false })).toMatchObject({ kind: "on-device", delivery: "offline" });
   });
 
   it("offers an update when the workflow is old, when only the folder is old, and when the workflow is missing next to a reader", () => {

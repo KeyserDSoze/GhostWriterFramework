@@ -8,12 +8,14 @@ const env = vi.hoisted(() => ({
   save: vi.fn(async () => true),
   inspect: vi.fn(),
   apply: vi.fn(),
+  sync: vi.fn(),
 }));
 vi.mock("@/repository/githubRequest", () => ({ createTrackedGitHubClient: () => env.octokit }));
 vi.mock("@/drive/useSettings", () => ({ useSettings: () => ({ save: env.save }) }));
 vi.mock("@/readerAccess/sealedBox", () => ({ sealSecret: (value: string) => `sealed:${value.length}` }));
 vi.mock("@/readerUpdate/inspect", () => ({ inspectReaderUpdate: env.inspect }));
 vi.mock("@/readerUpdate/apply", () => ({ applyReaderUpdate: env.apply }));
+vi.mock("@/repository/repositoryService", async (importOriginal) => ({ ...await importOriginal<typeof import("@/repository/repositoryService")>(), syncFullRepository: env.sync }));
 vi.mock("@/narrarium/bookTemplate", async (importOriginal) => ({ ...await importOriginal<typeof import("@/narrarium/bookTemplate")>(), loadBookTemplate: async () => ({ format: 1, placeholders: { package: "p", readerPackage: "r" }, files: {} }) }));
 
 import i18n from "@/i18n";
@@ -23,6 +25,7 @@ import { CustomizedWorkflowRefused } from "@/readerUpdate/commit";
 import { decideReaderUpdate, type ReaderUpdateInputs } from "@/readerUpdate/decision";
 import type { ReaderFolderPlan } from "@/readerUpdate/folderPlan";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useBranchSyncStore, emptyBookSyncState } from "@/branches/syncStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
 import { createFakeReaderGitHub, type FakeReaderGitHub } from "./helpers/fakeReaderGitHub";
 import v1 from "./fixtures/pagesWorkflowV1.yml?raw";
@@ -37,6 +40,7 @@ const folder = (overrides: Partial<ReaderFolderPlan> = {}): ReaderFolderPlan => 
 });
 const legacy = v1.replace("          SITE_BASE:", "          NARRARIUM_READER_PASSWORD: ${{ secrets.BOOK_PASSWORD }}\n          SITE_BASE:");
 const current = planPagesWorkflowUpgrade(v1).text;
+const remoteOk = { pagesOn: true, passwordsSet: true, workflowText: planPagesWorkflowUpgrade(v1).text };
 const inputs = (overrides: Partial<ReaderUpdateInputs> = {}): ReaderUpdateInputs => ({ storage: "github", workingCopy: true, workflowText: legacy, folder: folder(), branch: "main", online: true, credential: true, localChanges: false, ...overrides });
 const found = (overrides: Partial<ReaderUpdateInputs> = {}) => ({ decision: decideReaderUpdate(inputs(overrides)), workflowHash: "wf", checkedAt: 1 });
 
@@ -51,7 +55,9 @@ const TEXTS = {
     now: /Narrarium makes one commit on the branch “main”/, noCredential: /This book has no GitHub credential on this device/, offline: /You are offline/, otherBranch: /“draft” is not a branch the workflow publishes from/, update: "Update the reader",
     customized: "This workflow has edits of yours", replace: "Replace my edits with the standard workflow", needed: /Tick “Replace my edits” to update/, published: /The update is committed on “main” and published \(commit abc1234\)/, local: /committed on this device\. It is published at the next sync/,
     waiting: /Waiting for GitHub to start the publication/, current: /The reader of this book is up to date: its workflow and its reader\/ folder are the ones of version 0\.1\.61/, check: "Check now", protectedResult: /Protected: the EPUB answers 404/, exposed: /The EPUB is still published in clear \(it answered 200\)/, unreachable: /The browser cannot read the answer/, copy: "Copy the line",
-    refused: /“Replace my edits” was not ticked: nothing was committed/, changed: /A file changed after it was checked/, permission: /lacks the permission “Workflows”/, noticeTitle: "The reader of this book is out of date", noticePassword: /published with a password but an old reader/, noticeGo: "Open the Online reader tab", files: "Show the files", paused: /The publishing workflow is paused on GitHub/,
+    refused: /“Replace my edits” was not ticked: nothing was committed/, changed: /A file changed after it was checked/, permission: /lacks the permission “Workflows”/, onDeviceTitle: "Updated on this device, not yet on GitHub", remoteOld: /On GitHub the workflow is the old one/, localCommits: /3 files\) that GitHub does not have yet/, filesSummary: "Show the 3 files not on GitHub yet", syncNow: "Sync now", notSent: /Not sent to GitHub\./, conflict: /choose between two copies of a file/, sentRun: /Waiting for GitHub to start the publication/, pagesOffButton: "Turn GitHub Pages off", pagesOffConfirm: "Turn Pages off", pagesOffDone: /GitHub Pages is off: the old reader is no longer published/, currentUnchecked: /GitHub could not be checked just now/, noCredentialSync: /has no GitHub credential on this device, so nothing can be sent/, offlineSync: /You are offline, so nothing can be sent now/,
+    autoFailed: /The last automatic sync could not send it: GitHub did not accept a change to a workflow file/, autoDiverged: /GitHub has newer changes than this device/,
+    noticeTitle: "The reader of this book is out of date", noticePassword: /published with a password but an old reader/, noticeGo: "Open the Online reader tab", files: "Show the files", paused: /The publishing workflow is paused on GitHub/,
   },
   it: {
     title: "Aggiorna il lettore", exposure: "Il tuo libro pubblicato è meno riservato di quanto sembra", exposureBody: /pubblica ancora l'EPUB \(downloads\/book\.epub\) e i titoli dei capitoli in chiaro/, what: "Cosa cambia l'aggiornamento",
@@ -59,7 +65,9 @@ const TEXTS = {
     now: /Narrarium fa un solo commit sul ramo “main”/, noCredential: /Questo libro non ha una credenziale GitHub su questo dispositivo/, offline: /Sei offline/, otherBranch: /“draft” non è un ramo da cui il workflow pubblica/, update: "Aggiorna il lettore",
     customized: "Questo workflow ha modifiche tue", replace: "Sostituisci le mie modifiche con il workflow standard", needed: /Spunta “Sostituisci le mie modifiche” per aggiornare/, published: /L'aggiornamento è salvato su “main” e pubblicato \(commit abc1234\)/, local: /salvato su questo dispositivo\. Viene pubblicato alla prossima sincronizzazione/,
     waiting: /In attesa che GitHub avvii la pubblicazione/, current: /Il lettore di questo libro è aggiornato: il suo workflow e la sua cartella reader\/ sono quelli della versione 0\.1\.61/, check: "Controlla ora", protectedResult: /Protetto: l'EPUB risponde 404/, exposed: /L'EPUB è ancora pubblicato in chiaro \(ha risposto 200\)/, unreachable: /Il browser non riesce a leggere la risposta/, copy: "Copia la riga",
-    refused: /“Sostituisci le mie modifiche” non era spuntato: non è stato salvato nulla/, changed: /Un file è cambiato dopo il controllo/, permission: /non ha il permesso “Workflows”/, noticeTitle: "Il lettore di questo libro è vecchio", noticePassword: /pubblicato con una password ma con un lettore vecchio/, noticeGo: "Apri la scheda Lettore online", files: "Mostra i file", paused: /Il workflow di pubblicazione è in pausa su GitHub/,
+    refused: /“Sostituisci le mie modifiche” non era spuntato: non è stato salvato nulla/, changed: /Un file è cambiato dopo il controllo/, permission: /non ha il permesso “Workflows”/, onDeviceTitle: "Aggiornato su questo dispositivo, non ancora su GitHub", remoteOld: /Su GitHub il workflow è quello vecchio/, localCommits: /3 file\) che GitHub non ha ancora/, filesSummary: "Mostra i 3 file non ancora su GitHub", syncNow: "Sincronizza ora", notSent: /Non inviato a GitHub\./, conflict: /scelga tra due copie di un file/, sentRun: /In attesa che GitHub avvii la pubblicazione/, pagesOffButton: "Spegni GitHub Pages", pagesOffConfirm: "Spegni Pages", pagesOffDone: /GitHub Pages è spento: il vecchio lettore non è più pubblicato/, currentUnchecked: /controllare GitHub in questo momento/, noCredentialSync: /non ha una credenziale GitHub su questo dispositivo, quindi non si può inviare nulla/, offlineSync: /Sei offline, quindi ora non si può inviare nulla/,
+    autoFailed: /L'ultima sincronizzazione automatica non è riuscita a inviarle: GitHub non ha accettato la modifica di un file di workflow/, autoDiverged: /GitHub modifiche più recenti|su GitHub modifiche più recenti/,
+    noticeTitle: "Il lettore di questo libro è vecchio", noticePassword: /pubblicato con una password ma con un lettore vecchio/, noticeGo: "Apri la scheda Lettore online", files: "Mostra i file", paused: /Il workflow di pubblicazione è in pausa su GitHub/,
   },
 } as const;
 
@@ -72,6 +80,7 @@ beforeEach(() => {
   env.save.mockClear();
   env.inspect.mockReset().mockImplementation(async () => found());
   env.apply.mockReset();
+  env.sync.mockReset();
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, defaultGitHubToken: "github_pat_default", books: [book] } });
 });
 afterEach(async () => { cleanup(); vi.unstubAllGlobals(); useSettingsStore.setState({ settings: DEFAULT_SETTINGS }); await i18n.changeLanguage("en"); });
@@ -197,7 +206,7 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
   });
 
   describe("when the reader is current", () => {
-    beforeEach(() => { env.inspect.mockImplementation(async () => found({ workflowText: current, folder: folder({ writes: [] }) })); });
+    beforeEach(() => { env.inspect.mockImplementation(async () => found({ workflowText: current, folder: folder({ writes: [] }), remote: remoteOk })); });
 
     it("says so, and offers the check from outside: the EPUB must answer 404 and version.json must say protected", async () => {
       const calls: string[] = [];
@@ -231,6 +240,133 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
     });
   });
 
+  describe("a reader updated on this device and not on GitHub", () => {
+    const unpublished = ["reader/src/lib/book.ts", "reader/package.json", ".github/workflows/deploy-reader-pages.yml"];
+    const onDevice = (overrides: Partial<ReaderUpdateInputs> = {}) => found({ workflowText: current, folder: folder({ writes: [] }), unpublished, remote: { pagesOn: true, passwordsSet: true, workflowText: v1 }, ...overrides });
+    beforeEach(() => { env.inspect.mockImplementation(async () => onDevice()); });
+
+    it("never says «up to date» while GitHub has the old workflow: it says so, with the files that are not on GitHub and the exposure", async () => {
+      await open(language);
+      const box = await screen.findByTestId("reader-on-device");
+      expect(within(box).getByText(text.onDeviceTitle)).toBeInTheDocument();
+      expect(within(box).getByText(text.remoteOld)).toBeInTheDocument();
+      expect(within(card()).getByText(text.filesSummary)).toBeInTheDocument();
+      expect(within(card()).queryByText(text.current)).toBeNull();
+      expect(within(card()).getByTestId("reader-update-exposure")).toBeInTheDocument();
+      expect(within(card()).getByRole("button", { name: text.syncNow })).toBeEnabled();
+      expect(within(card()).queryByRole("button", { name: text.update })).toBeNull();
+    });
+
+    it("keeps the newest check: a slow one made before GitHub was read never replaces what the one made after it found", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      env.inspect.mockImplementationOnce(async () => { await gate; return found({ workflowText: current, folder: folder({ writes: [] }) }); });
+      await open(language);
+      // The second check (made once GitHub has been read) answers first; the first one answers last and is dropped.
+      expect(await screen.findByTestId("reader-on-device")).toBeInTheDocument();
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(screen.getByTestId("reader-on-device")).toBeInTheDocument();
+      expect(within(card()).queryByText(text.currentUnchecked)).toBeNull();
+    });
+
+    it("says only what this device has when GitHub could not be read, and never claims the published side", async () => {
+      env.inspect.mockImplementation(async () => found({ workflowText: current, folder: folder({ writes: [] }) }));
+      await open(language);
+      expect(await within(card()).findByText(text.currentUnchecked)).toBeInTheDocument();
+    });
+
+    it("says the changes are in local commits when GitHub could not be read but this device still has them to send", async () => {
+      env.inspect.mockImplementation(async () => found({ workflowText: current, folder: folder({ writes: [] }), unpublished }));
+      await open(language);
+      expect(await within(card()).findByText(text.localCommits)).toBeInTheDocument();
+    });
+
+    it("says what the last automatic sync did with it: a refused workflow, or GitHub having moved", async () => {
+      useBranchSyncStore.getState().replaceBook(book.id, { ...emptyBookSyncState(), branches: { main: { outcome: "failed", at: 1, errorKind: "workflow-permission" } } });
+      await open(language);
+      expect(await screen.findByTestId("reader-last-auto-sync")).toHaveTextContent(text.autoFailed);
+      cleanup();
+      useBranchSyncStore.getState().replaceBook(book.id, { ...emptyBookSyncState(), branches: { main: { outcome: "diverged", at: 1 } } });
+      await open(language);
+      expect(await screen.findByTestId("reader-last-auto-sync")).toHaveTextContent(text.autoDiverged);
+    });
+
+    it("sends the changes on «Sync now», and follows the publication of what GitHub now has", async () => {
+      env.sync.mockResolvedValue({ pulled: 0, keptLocal: 0, committed: 0, pushed: 3 });
+      await open(language);
+      fireEvent.click(await screen.findByRole("button", { name: text.syncNow }));
+      await waitFor(() => expect(env.sync).toHaveBeenCalledTimes(1));
+      expect(env.sync.mock.calls[0][0]).toMatchObject({ owner: "me", repo: "book", branch: "main", bookId: book.id });
+    });
+
+    it("keeps the reason when the sync is refused, as an alert, and says the book was not sent", async () => {
+      env.sync.mockRejectedValue(Object.assign(new Error("refusing to allow a GitHub App to create or update workflow `.github/workflows/deploy-reader-pages.yml` without `workflows` permission"), { status: 404 }));
+      await open(language);
+      fireEvent.click(await screen.findByRole("button", { name: text.syncNow }));
+      const alert = await screen.findByTestId("reader-sync-failure");
+      expect(alert).toHaveAttribute("role", "alert");
+      expect(alert).toHaveTextContent(text.notSent);
+      expect(alert).toHaveTextContent(text.permission);
+    });
+
+    it("sends the person to the sync dialog when two copies of a file have to be chosen between", async () => {
+      const { RepositorySyncConflictError } = await import("@/repository/repositoryService");
+      env.sync.mockRejectedValue(new RepositorySyncConflictError([]));
+      await open(language);
+      fireEvent.click(await screen.findByRole("button", { name: text.syncNow }));
+      expect(await screen.findByTestId("reader-sync-failure")).toHaveTextContent(text.conflict);
+    });
+
+    it("cannot be sent without a credential or offline: the button is disabled and says why", async () => {
+      env.inspect.mockImplementation(async () => onDevice({ credential: false }));
+      await open(language);
+      const button = await screen.findByRole("button", { name: text.syncNow });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAccessibleDescription();
+      expect(within(card()).getByText(text.noCredentialSync)).toBeInTheDocument();
+      cleanup();
+      counter += 1;
+      book = { ...book, id: `reader-update-off-${counter}` };
+      env.inspect.mockImplementation(async () => onDevice({ online: false }));
+      await open(language);
+      expect(await screen.findByRole("button", { name: text.syncNow })).toBeDisabled();
+      expect(within(card()).getByText(text.offlineSync)).toBeInTheDocument();
+    });
+
+    it("offers to turn Pages off at once when the published reader is the old one, asks first, and does it with the passwords kept", async () => {
+      await open(language);
+      fireEvent.click(await screen.findByRole("button", { name: text.pagesOffButton }));
+      const dialog = await screen.findByRole("dialog");
+      expect(github.pages.enabled).toBe(true);
+      fireEvent.click(within(dialog).getByRole("button", { name: text.pagesOffConfirm }));
+      await waitFor(() => expect(github.pages.enabled).toBe(false));
+      expect(await screen.findByTestId("reader-pages-off-result")).toHaveTextContent(text.pagesOffDone);
+      expect(github.variable.value).toBeNull();
+      expect(github.order()).toEqual(["disableWorkflow", "deletePagesSite"]);
+    });
+
+    it("offers the outside check in this state too, so the exposure can be seen", async () => {
+      await open(language);
+      expect(await screen.findByTestId("reader-outside-check")).toBeInTheDocument();
+    });
+
+    it("does not offer to turn Pages off when it is already off or the book is public anyway", async () => {
+      env.inspect.mockImplementation(async () => onDevice({ remote: { pagesOn: false, passwordsSet: true, workflowText: v1 } }));
+      github.pages.enabled = false;
+      await open(language);
+      await screen.findByTestId("reader-on-device");
+      expect(screen.queryByRole("button", { name: text.pagesOffButton })).toBeNull();
+    });
+
+    it("is also said in the GitHub tab", async () => {
+      await i18n.changeLanguage(language);
+      render(<ReaderUpdateNotice book={book} onOpen={() => undefined} />);
+      const notice = await screen.findByTestId("reader-update-notice");
+      expect(within(notice).getByText(text.onDeviceTitle)).toBeInTheDocument();
+    });
+  });
+
   describe("the notice in the GitHub tab", () => {
     it("says once that the reader is old, says what it exposes when a password is set, and opens the Online reader tab", async () => {
       await i18n.changeLanguage(language);
@@ -245,7 +381,7 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
 
     it("shows nothing when the reader is current or there is no reader", async () => {
       await i18n.changeLanguage(language);
-      env.inspect.mockImplementation(async () => found({ workflowText: current, folder: folder({ writes: [] }) }));
+      env.inspect.mockImplementation(async () => found({ workflowText: current, folder: folder({ writes: [] }), remote: remoteOk }));
       render(<ReaderUpdateNotice book={book} onOpen={() => undefined} />);
       await waitFor(() => expect(env.inspect).toHaveBeenCalled());
       expect(screen.queryByTestId("reader-update-notice")).toBeNull();

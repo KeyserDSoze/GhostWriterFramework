@@ -7,6 +7,10 @@ import { resolveGitHubRemoteToken, type BookEntry } from "@/types/settings";
 import { useGitHubRemoteAvailability } from "@/github/remoteAvailability";
 import type { ReaderFailure } from "@/readerAccess/errors";
 import { classifyWorkflowFailure } from "@/readerAccess/creation";
+import { currentRepositoryScopeIdentity, captureRepositoryOperationScope } from "@/repository/repositoryOperationScope";
+import { getLocalRepository } from "@/repository/localRepository";
+import { RepositorySyncConflictError, syncFullRepository } from "@/repository/repositoryService";
+import { useRepositorySyncStore } from "@/store/repositorySyncStore";
 import { applyReaderUpdate, type ReaderUpdateOutcome } from "@/readerUpdate/apply";
 import { CustomizedWorkflowRefused } from "@/readerUpdate/commit";
 import type { ReaderUpdateInputs } from "@/readerUpdate/decision";
@@ -17,6 +21,8 @@ export type ReaderUpdateFailure =
   /** The working copy changed between the check and the commit. */
   | { kind: "changed" }
   | { kind: "github"; failure: ReaderFailure }
+  /** The sync needs the person to choose between two copies of a file: the sync dialog has it. */
+  | { kind: "conflict" }
   | { kind: "other" };
 
 interface Entry {
@@ -25,9 +31,15 @@ interface Entry {
   applying: boolean;
   outcome: ReaderUpdateOutcome | null;
   failure: ReaderUpdateFailure | null;
+  syncing: boolean;
+  /** Why the last «Sync now» did not publish, in the same terms as a failed update. */
+  syncFailure: ReaderUpdateFailure | null;
 }
 
-const EMPTY: Entry = { inspection: null, checking: false, applying: false, outcome: null, failure: null };
+/** The newest check of each book and branch: a slower, older one (made before GitHub was read) never replaces what a newer one found. */
+const newestCheck: Record<string, number> = {};
+
+const EMPTY: Entry = { inspection: null, checking: false, applying: false, outcome: null, failure: null, syncing: false, syncFailure: null };
 
 /** What was found for each book and branch, so that the tab of the reader and the notice of the GitHub tab show the same thing and one refreshes the other. */
 const useReaderUpdateStore = create<{ entries: Record<string, Entry>; patch: (key: string, change: Partial<Entry>) => void }>((set) => ({
@@ -36,6 +48,7 @@ const useReaderUpdateStore = create<{ entries: Record<string, Entry>; patch: (ke
 }));
 
 export function describeUpdateFailure(error: unknown): ReaderUpdateFailure {
+  if (error instanceof RepositorySyncConflictError) return { kind: "conflict" };
   if (error instanceof CustomizedWorkflowRefused) return { kind: "refused-customized" };
   if (error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "REPOSITORY_CONFLICT") return { kind: "changed" };
   const failure = classifyWorkflowFailure(error);
@@ -60,15 +73,17 @@ export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["re
   const patch = useReaderUpdateStore((state) => state.patch);
   const pagesOn = remote?.pagesOn ?? null;
   const passwordsSet = remote?.passwordsSet ?? null;
-  const remoteKey = useMemo(() => ({ pagesOn, passwordsSet }), [pagesOn, passwordsSet]);
+  const workflowText = remote && "workflowText" in remote ? remote.workflowText : undefined;
+  const remoteKey = useMemo(() => ({ pagesOn, passwordsSet, ...(workflowText !== undefined ? { workflowText } : {}) }), [pagesOn, passwordsSet, workflowText]);
 
   const check = useCallback(async () => {
+    const mine = (newestCheck[key] = (newestCheck[key] ?? 0) + 1);
     patch(key, { checking: true });
     try {
       const inspection = await inspectReaderUpdate({ book, branch, token, remote: remoteKey, loadTemplate: loadBookTemplate });
-      patch(key, { inspection, checking: false });
+      if (newestCheck[key] === mine) patch(key, { inspection, checking: false });
     } catch {
-      patch(key, { checking: false, inspection: null });
+      if (newestCheck[key] === mine) patch(key, { checking: false, inspection: null });
     }
   }, [book, branch, token, remoteKey, key, patch, remoteAvailability]);
 
@@ -89,5 +104,26 @@ export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["re
     }
   }, [book, branch, token, key, patch, check]);
 
-  return { ...entry, branch, check, apply, dismissFailure: () => patch(key, { failure: null }) };
+  /**
+   * Publishes what this device has not sent to GitHub, as the Sync button does (the changes are committed, GitHub is pulled and pushed). A refusal is kept with
+   * its reason, never silent; a conflict opens the sync dialog, which is where the two copies are chosen between.
+   */
+  const syncNow = useCallback(async (): Promise<{ headSha: string | null } | null> => {
+    if (useReaderUpdateStore.getState().entries[key]?.syncing) return null;
+    patch(key, { syncing: true, syncFailure: null });
+    const target = { bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentRepositoryScopeIdentity() };
+    try {
+      await syncFullRepository({ ...target, token });
+      const local = await getLocalRepository(book.owner, book.repo, branch, captureRepositoryOperationScope()).catch(() => null);
+      patch(key, { syncing: false });
+      await check();
+      return { headSha: local?.remoteHeadSha ?? null };
+    } catch (error) {
+      if (error instanceof RepositorySyncConflictError) useRepositorySyncStore.getState().setConflict({ error, target });
+      patch(key, { syncing: false, syncFailure: describeUpdateFailure(error) });
+      return null;
+    }
+  }, [book, branch, token, key, patch, check]);
+
+  return { ...entry, branch, check, apply, syncNow, dismissSyncFailure: () => patch(key, { syncFailure: null }), dismissFailure: () => patch(key, { failure: null }) };
 }
