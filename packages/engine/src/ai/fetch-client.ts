@@ -11,7 +11,7 @@ import { describeErrorBody, errorBodyOfObject, parseErrorBody, refusesThinkingWi
 import { ResponsesStreamReader, responseAsChat } from "./responses.js";
 import { attemptThinking, buildChatRequest, candidateDestination, candidateEndpoint, canSendNone, effectiveAiBase, endpointOrigin, type AiAttemptThinking, type AiReasoningEffort, type AiThinkingWhy, type ChatRequest } from "./request.js";
 import type { AiCandidate } from "./router.js";
-import { candidateBoundary, leftOutStep, planAttempts, sortedRoute, type PlannedAttempt } from "./routing.js";
+import { candidateBoundary, fallbackBudgetNote, leftOutStep, planAttempts, sortedRoute, type PlannedAttempt } from "./routing.js";
 import { isEmptyToolArguments, splitReasoningBlock, structuredFromReply } from "./structured.js";
 import { AiFallbackBlockedError, AiProviderError, AiReplyRejectedError, AiStreamInterruptedError, MAX_PARTIAL_CHARACTERS, TRANSPORT_TAIL_CHARACTERS, type AiMessage, type AiPort, type AiProviderErrorDetails, type AiRequest, type AiResponse, type AiRouteStep, type AiStreamEnd, type AiTimeoutPhase, type AiTransportDiagnostics, type AiUsage } from "./types.js";
 
@@ -446,10 +446,12 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
       if (plan.excludedByBoundary > 0) notes.push(`Fallbacks in other accounts were not tried because "Never send fallback content outside the primary account" (fallbackDisclosure.sameBoundaryOnly) is on.`);
       for (const entry of plan.skipped) notes.push(redactSecrets(`Skipped "${entry.candidate.model}" in "${entry.candidate.integration.name}": it is marked as without tool calls and "Tools only" is on.`, secrets));
       for (const step of plan.leftOut) {
-        if (step.leftOut === "context-window") notes.push(`Skipped "${step.model}" in "${step.integrationName}": the prompt (about ${step.promptTokens} tokens) does not fit its context window (${step.windowTokens} tokens are left for the prompt).`);
-        else if (step.leftOut === "budget") notes.push(`Not tried: "${step.model}" in "${step.integrationName}": the routing limits of tokens or cost (maxTokenAttempts, maxEstimatedCost) were reached.`);
+        if (step.leftOut === "context-window") notes.push(`Skipped "${step.model}" in "${step.integrationName}": the prompt (about ${step.promptTokens} tokens) does not fit its context window (${step.windowTokens} tokens are left for the prompt${step.windowDefault ? ", of the default window of a model whose window is not set" : ""}).`);
         else if (step.leftOut === "unusable") notes.push(`Not tried: "${step.model}" in "${step.integrationName}" cannot be called (${UNUSABLE_WORDS[step.why ?? "model-missing"]}).`);
       }
+      // The fallbacks the routing limits left out, in one note with the numbers: what a host offers to raise (`budget` on the error).
+      const overBudget = plan.leftOut.filter((step) => step.leftOut === "budget").map((step) => `"${step.model}" in "${step.integrationName}"`);
+      if (overBudget.length && plan.fallbackBudget) notes.push(redactSecrets(fallbackBudgetNote(overBudget, plan.fallbackBudget, config.costCurrency), secrets));
       if (blocked.length) {
         const names = [...new Set(blocked.map((entry) => `"${entry.candidate.integration.name}"`))].join(", ");
         const from = `"${blocked[0].from.integration.name}"`;
@@ -467,9 +469,10 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
         if (spent.retryAfterMs !== undefined) lastError.retryAfterMs = Math.max(lastError.retryAfterMs ?? 0, spent.retryAfterMs);
         if (notes.length) lastError.message = `${lastError.message}${/[.!?]$/.test(lastError.message) ? "" : "."} ${notes.join(" ")}`;
         lastError.route = route;
+        if (plan.fallbackBudget) lastError.budget = plan.fallbackBudget;
         throw lastError;
       }
-      if (lastError instanceof Error) throw Object.assign(lastError, { route });
+      if (lastError instanceof Error) throw Object.assign(lastError, { route }, plan.fallbackBudget ? { budget: plan.fallbackBudget } : {});
       const none = notes.length ? new AiFallbackBlockedError(notes.join(" ")) : new AiProviderError("All AI candidates failed.");
       none.route = route;
       throw none;

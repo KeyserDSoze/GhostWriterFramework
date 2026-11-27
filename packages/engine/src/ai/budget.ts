@@ -1,6 +1,32 @@
 const MESSAGE_OVERHEAD_TOKENS = 4;
-export const DEFAULT_MAX_INPUT_TOKENS = 32_000;
+/**
+ * The context window assumed for a model whose window is not set in AI Integrations (`maxInputTokens`): 128,000 tokens, the window of most of the chat models the providers serve
+ * today (GPT-4o and GPT-4o mini, Mistral Large, Llama 3.1 and the open models of the OpenAI-compatible endpoints; Claude has 200,000, GPT-4.1 and Gemini 1,000,000 or more). A
+ * prompt that fits it fits nearly every current model, and a model that holds less (a local one, an older one) is the exception to set. It used to be 32,000, which cut a text of
+ * 60,000 characters in half for every model whose window was not set.
+ */
+export const DEFAULT_MAX_INPUT_TOKENS = 128_000;
 export const DEFAULT_MAX_OUTPUT_TOKENS = 2_048;
+
+/** Where the context window of a model comes from: its own (`maxInputTokens`, set in AI Integrations) or the default (`DEFAULT_MAX_INPUT_TOKENS`). */
+export type ModelWindowSource = "configured" | "default";
+
+/** The context window of a model, in tokens (its prompt and its answer together), and where it comes from. */
+export interface ModelWindow {
+  tokens: number;
+  source: ModelWindowSource;
+}
+
+/**
+ * The context window of a model: its own when it is set (`maxInputTokens`), else the default. What every limit of a request follows: whether a prompt fits (the autopilot refuses
+ * one that does not, the Copilot cuts it and says so), what the router estimates an attempt at, and how full a chat is.
+ */
+export function modelWindow(model?: { maxInputTokens?: number | null } | null): ModelWindow {
+  const configured = model?.maxInputTokens;
+  return typeof configured === "number" && Number.isFinite(configured) && configured > 0
+    ? { tokens: Math.floor(configured), source: "configured" }
+    : { tokens: DEFAULT_MAX_INPUT_TOKENS, source: "default" };
+}
 /** What an image in a message weighs, whatever its size: the web app has always counted this much for one. */
 export const IMAGE_TOKEN_ESTIMATE = 4_096;
 

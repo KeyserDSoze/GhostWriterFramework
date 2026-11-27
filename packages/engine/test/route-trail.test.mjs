@@ -193,20 +193,20 @@ test("the targets that cannot be called are in the plan with their reason, the c
   assert.equal(new AiUnavailableError("review").message, "No AI model is configured for the \"review\" task. Configure an integration in the AI router.", "a task with no route says what it always said");
 });
 
-test("the routing limits that cut a fallback say so, and a first candidate that alone exceeds them is refused with its place", () => {
+test("the routing limits that cut a fallback say so, with the totals, and never refuse the first candidate", () => {
   const each = planAttempts(twoModels(), ASK).attempts[0].estimate.tokens;
-  const cfg = twoModels({ routingExecution: { maxTokenAttempts: each + 1 } });
+  const cfg = twoModels({ routingExecution: { maxTokenAttempts: each - 1 } });
   const plan = planAttempts(cfg, ASK);
-  assert.equal(plan.attempts.length, 1, "the second attempt does not fit the token limit");
+  assert.equal(plan.attempts.length, 1, "the fallback does not fit the token limit; the first attempt does not count against it");
   assert.deepEqual(plan.leftOut.map((step) => [step.position, step.model, step.leftOut]), [[1, "beta-model", "budget"]]);
-  let error;
-  try {
-    planAttempts(twoModels({ routingExecution: { maxTokenAttempts: 1 } }), ASK);
-  } catch (failure) {
-    error = failure;
-  }
-  assert.equal(error.name, "AiRoutingBudgetError");
-  assert.deepEqual(error.route.map((step) => [step.position, step.leftOut]), [[0, "budget"], [1, "budget"]]);
+  assert.deepEqual(plan.fallbackBudget, { limit: "tokens", estimated: each, allowed: each - 1 });
+  // A first candidate estimated far above the cost limit is the one asked; the fallback, priced too, is what the limit keeps out.
+  const pricey = { pricing: { inputPerMTok: 1_000, outputPerMTok: 1_000 } };
+  const dear = planAttempts(twoModels({ primary: pricey, fallback: pricey, routingExecution: { maxEstimatedCost: 0.001 } }), ASK);
+  assert.deepEqual(dear.attempts.map((attempt) => attempt.candidate.model), ["alpha-model"]);
+  assert.deepEqual(dear.leftOut.map((step) => [step.position, step.leftOut]), [[1, "budget"]]);
+  assert.equal(dear.fallbackBudget.limit, "cost");
+  assert.equal(dear.fallbackBudget.allowed, 0.001);
 });
 
 test("the privacy policy and the author who did not acknowledge a fallback leave it out with their reasons", async () => {

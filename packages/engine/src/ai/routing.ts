@@ -1,9 +1,9 @@
-import { likelyMessageTokens, likelyTextTokens, resolveModelTokenBudgets } from "./budget.js";
+import { DEFAULT_MAX_INPUT_TOKENS, likelyMessageTokens, likelyTextTokens, modelWindow, resolveModelTokenBudgets } from "./budget.js";
 import type { AiNoThinkingWithTools, AiRuntimeConfig } from "./config.js";
 import { redactSecrets } from "./redact.js";
 import { buildChatRequest, candidateDestination, effectiveAiBase, endpointOrigin, type ChatRequest } from "./request.js";
 import { describeAiRoute, type AiCandidate, type AiRouteEntry } from "./router.js";
-import { AiPromptTooLargeError, AiProviderError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, type AiLeftOutReason, type AiRequest, type AiRouteStep } from "./types.js";
+import { AiPromptTooLargeError, AiProviderError, AiToolsRequiredError, AiUnavailableError, type AiLeftOutReason, type AiRequest, type AiRouteStep, type AiRoutingBudgetDetail } from "./types.js";
 
 /** What a fallback's privacy boundary is: the integration (one provider account). Same as the web app's `candidateBoundary`. */
 export function candidateBoundary(candidate: Pick<AiCandidate, "integration">): string {
@@ -64,6 +64,8 @@ export interface AttemptPlan {
    * keeps back, the models "Tools only" skips, the ones whose context window cannot hold the prompt and the ones the routing limits cut. In the order of the route.
    */
   leftOut: AiRouteStep[];
+  /** The fallbacks the routing limits leave out: which limit, what they would have needed together up to the first one left out, and the limit. Absent when none is left out. */
+  fallbackBudget?: AiRoutingBudgetDetail;
 }
 
 /** The step that says a candidate was left out: who it is, and why (`extra` has the numbers). Names are cleaned of the credentials of the configuration. */
@@ -141,8 +143,8 @@ function unusableMessage(capability: string, steps: readonly AiRouteStep[]): str
  * The candidates a call will try, in order, with the request each would get: the route's order, minus the targets that cannot be called, minus the fallbacks the
  * privacy policy excludes, minus (for a structured request, with "Tools only" on, which is the default) the models marked as without
  * tool calls, minus the candidates whose context window cannot hold the prompt (a prompt is never cut),
- * kept while the estimated attempts stay within the token and cost limits. A prompt no window holds, a first attempt
- * that alone exceeds the limits, or a route where no model can call a function, is refused before anything is sent.
+ * kept while the estimated attempts stay within the limits: the cost limit holds for all of them, the token-attempt limit for the fallbacks after the first (the first is
+ * bounded by its window). A prompt no window holds, a first attempt estimated above the cost limit, or a route where no model can call a function, is refused before anything is sent.
  * The privacy policy is applied to the whole route first, so a primary that is skipped is still the account content is meant to stay in.
  * Whatever is left out has its place in the route and its reason in `leftOut`, and in the `route` of the error when nothing is left to ask: a candidate is never dropped without a word.
  */
@@ -196,41 +198,62 @@ export function planAttempts(config: AiRuntimeConfig, request: AiRequest, github
     }
   });
 
+  // Every model is judged by its own window: the one set for it in AI Integrations, else the default (`modelWindow`). A prompt it cannot hold is refused, never cut.
   let largestBudget = 0;
   let estimated = 0;
+  const assumed: string[] = [];
   const fitting = planned.filter((attempt) => {
-    if (!attempt.built || !attempt.candidate.maxInputTokens) return true;
-    const available = resolveModelTokenBudgets(attempt.candidate.maxInputTokens, attempt.built.outputLimit).inputTokens;
+    if (!attempt.built) return true;
+    const window = modelWindow(attempt.candidate);
+    const available = resolveModelTokenBudgets(window.tokens, attempt.built.outputLimit).inputTokens;
     if (attempt.inputTokens <= available) return true;
     largestBudget = Math.max(largestBudget, available);
     estimated = Math.max(estimated, attempt.inputTokens);
-    leftOut.push(leftOutStep(attempt.candidate, attempt.index, "context-window", secrets, githubModelsBaseUrl, { promptTokens: attempt.inputTokens, windowTokens: available }));
+    if (window.source === "default") assumed.push(`"${attempt.candidate.model}" in "${attempt.candidate.integration.name}"`);
+    leftOut.push(leftOutStep(attempt.candidate, attempt.index, "context-window", secrets, githubModelsBaseUrl, { promptTokens: attempt.inputTokens, windowTokens: available, ...(window.source === "default" ? { windowDefault: true } : {}) }));
     return false;
   });
   if (!fitting.length) {
+    const unset = assumed.length ? ` The window of ${assumed.join(", ")} is not set, so the default of ${DEFAULT_MAX_INPUT_TOKENS} tokens was assumed.` : "";
     throw withRoute(new AiPromptTooLargeError(
-      `The prompt (about ${estimated} tokens) is larger than the context window configured for every model routed to this task (largest input budget: ${largestBudget} tokens, after the output reserve and a 5% safety margin). Nothing was sent. Raise the models' context window ("maxInputTokens") if they support more, or route this task to a model with a larger context window.`,
+      redactSecrets(`The prompt (about ${estimated} tokens) is larger than the context window of every model routed to this task (largest input budget: ${largestBudget} tokens, after the output reserve and a 5% safety margin). Nothing was sent.${unset} Set the models' context window ("Context window tokens" in AI Integrations) if they hold more, or route this task to a model with a larger context window.`, secrets),
       estimated,
       largestBudget,
     ), leftOut);
   }
 
+  // The first attempt is bounded by its model's window alone (above). The routing limits are a safety for what the fallbacks after it may add together, `maxTokenAttempts` for their
+  // tokens and `maxEstimatedCost` for their cost, so that a chain of fallbacks cannot multiply a request; the first fallback they leave out, and the totals, are said.
   const attempts: PlannedAttempt[] = [];
-  let tokens = 0;
-  let cost = 0;
+  let fallbackTokens = 0;
+  let fallbackCost = 0;
+  let fallbackBudget: AiRoutingBudgetDetail | undefined;
   for (const [at, attempt] of fitting.entries()) {
-    const overTokens = limits.maxTokenAttempts !== undefined && tokens + attempt.estimate.tokens > limits.maxTokenAttempts;
-    const overCost = limits.maxEstimatedCost !== undefined && cost + attempt.estimate.cost > limits.maxEstimatedCost;
-    if (overTokens || overCost) {
-      for (const rest of fitting.slice(at)) leftOut.push(leftOutStep(rest.candidate, rest.index, "budget", secrets, githubModelsBaseUrl));
-      if (!attempts.length) throw withRoute(new AiRoutingBudgetError("The first routing candidate exceeds the configured token-attempt or estimated-cost budget (maxTokenAttempts, maxEstimatedCost). Nothing was sent."), leftOut);
-      break;
+    if (attempts.length) {
+      const tokens = fallbackTokens + attempt.estimate.tokens;
+      const cost = fallbackCost + attempt.estimate.cost;
+      const overCost = limits.maxEstimatedCost !== undefined && cost > limits.maxEstimatedCost;
+      const overTokens = limits.maxTokenAttempts !== undefined && tokens > limits.maxTokenAttempts;
+      if (overCost || overTokens) {
+        fallbackBudget = overCost ? { limit: "cost", estimated: cost, allowed: limits.maxEstimatedCost! } : { limit: "tokens", estimated: tokens, allowed: limits.maxTokenAttempts! };
+        for (const rest of fitting.slice(at)) leftOut.push(leftOutStep(rest.candidate, rest.index, "budget", secrets, githubModelsBaseUrl));
+        break;
+      }
+      fallbackTokens = tokens;
+      fallbackCost = cost;
     }
     attempts.push(attempt);
-    tokens += attempt.estimate.tokens;
-    cost += attempt.estimate.cost;
   }
-  return { attempts, primary: resolved[0], limits, excludedByBoundary: resolved.length - inBoundary.length, skipped, leftOut: sortedRoute(leftOut) };
+  return { attempts, primary: resolved[0], limits, excludedByBoundary: resolved.length - inBoundary.length, skipped, leftOut: sortedRoute(leftOut), ...(fallbackBudget ? { fallbackBudget } : {}) };
+}
+
+/** What the routing limits left out, in the words of the error a failed call ends with: the models not tried, the total they would have needed, the limit, and where it is. */
+export function fallbackBudgetNote(models: readonly string[], budget: AiRoutingBudgetDetail, currency = "USD"): string {
+  const money = (value: number) => `${value.toFixed(value < 1 ? 3 : 2)} ${currency}`;
+  const need = budget.limit === "cost"
+    ? `would be estimated at ${money(budget.estimated)} together, and the limit is ${money(budget.allowed)} (maxEstimatedCost: "Maximum estimated route cost"`
+    : `would use about ${Math.round(budget.estimated)} tokens together, and the limit is ${Math.round(budget.allowed)} (maxTokenAttempts: "Maximum token attempts"`;
+  return `Not tried: ${models.join(", ")}: the fallbacks after the first attempt ${need} in Settings > AI Router > Routing options).`;
 }
 
 function toolsRequiredMessage(skipped: readonly SkippedAttempt[]): string {

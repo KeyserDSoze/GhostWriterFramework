@@ -1,7 +1,7 @@
 import { normalizeErrorBody } from "../ai/provider-error.js";
 import { redactSecrets } from "../ai/redact.js";
 import { endpointOrigin } from "../ai/request.js";
-import { AiFallbackBlockedError, AiProviderError, AiPromptTooLargeError, AiReplyRejectedError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, TRANSPORT_TAIL_CHARACTERS, type AiLeftOutReason, type AiStreamEnd, type AiTimeoutPhase, type AiUnusableWhy } from "../ai/types.js";
+import { AiFallbackBlockedError, AiProviderError, AiPromptTooLargeError, AiReplyRejectedError, AiRoutingBudgetError, AiToolsRequiredError, AiUnavailableError, TRANSPORT_TAIL_CHARACTERS, routingBudgetOf, type AiLeftOutReason, type AiStreamEnd, type AiTimeoutPhase, type AiUnusableWhy } from "../ai/types.js";
 import { isBookConflictError } from "../book/store.js";
 import { FrontmatterError } from "../markdown/frontmatter.js";
 import { GITHUB_CONFLICT_CODE } from "../server/protocol.js";
@@ -246,6 +246,7 @@ function routeStepOf(value: unknown): AutopilotRouteStep | undefined {
     ...(why ? { why } : {}),
     ...(promptTokens !== undefined ? { promptTokens } : {}),
     ...(windowTokens !== undefined ? { windowTokens } : {}),
+    ...(source.windowDefault === true ? { windowDefault: true } : {}),
   };
 }
 
@@ -281,6 +282,8 @@ function detailOf(error: unknown): AutopilotErrorDetail {
   const transport = transportDetailOf(source.transport, source.partialText);
   // Every candidate of the route of the call, the ones asked and the ones left out: the fields above are the last one's.
   const route = routeDetailOf(source.route);
+  // A routing limit's refusal: which limit, what the call needed and what the limit allows (what the panel offers to raise).
+  const budget = routingBudgetOf(error);
   return {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
@@ -297,6 +300,7 @@ function detailOf(error: unknown): AutopilotErrorDetail {
     ...(githubConflicts !== undefined ? { githubConflicts } : {}),
     ...(transport ? { transport } : {}),
     ...(route ? { route } : {}),
+    ...(budget ? { budget } : {}),
   };
 }
 
@@ -369,6 +373,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
   const githubConflicts = conflictFiles(source.githubConflicts);
   const transport = transportDetailOf(source.transport, undefined, record(source.transport).partialCharacters);
   const route = routeDetailOf(source.route);
+  const budget = routingBudgetOf(source);
   const detail: AutopilotErrorDetail = {
     ...(status !== undefined ? { status } : {}),
     ...(endpoint ? { endpoint } : {}),
@@ -387,6 +392,7 @@ export function normalizeErrorDetail(value: unknown): AutopilotErrorDetail | und
     ...(githubConflicts !== undefined ? { githubConflicts } : {}),
     ...(transport ? { transport } : {}),
     ...(route ? { route } : {}),
+    ...(budget ? { budget } : {}),
   };
   return Object.keys(detail).length ? detail : undefined;
 }

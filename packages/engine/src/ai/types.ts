@@ -220,6 +220,8 @@ export interface AiRouteStep {
   /** `context-window`: the tokens the prompt needs (as estimated before sending) and what the model's window leaves for it. */
   promptTokens?: number;
   windowTokens?: number;
+  /** `context-window`: the model's window is not set, and the default (`DEFAULT_MAX_INPUT_TOKENS`) was assumed. */
+  windowDefault?: boolean;
 }
 
 /**
@@ -330,6 +332,11 @@ export class AiProviderError extends Error {
   timedOut?: boolean;
   timeout?: AiTimeoutDetails;
   route?: AiRouteStep[];
+  /**
+   * A routing limit left fallbacks of this call out (`AiRoutingBudgetDetail`): which limit, what the fallbacks up to the first one left out would have needed together, and the limit.
+   * What lets a host offer to raise it. Absent when no limit left anything out.
+   */
+  budget?: AiRoutingBudgetDetail;
 
   constructor(message: string, readonly status?: number, readonly retryable = false, details: AiProviderErrorDetails = {}) {
     super(message);
@@ -372,12 +379,36 @@ export class AiPromptTooLargeError extends AiProviderError {
   }
 }
 
-/** The routing limits (token attempts, estimated cost) leave no candidate to call, not even the first. */
+/**
+ * Which limit of the AI router left models of a call out, and by how much: what the author needs to raise it (Settings > AI Router > Routing options). The limits are a safety for
+ * the fallbacks after the first attempt, together: `tokens` is `maxTokenAttempts` (the tokens they may use), `cost` is `maxEstimatedCost` (the cost they may be estimated at);
+ * `estimated` is what they would have needed, up to the first one left out, `allowed` the limit.
+ */
+export interface AiRoutingBudgetDetail {
+  limit: "tokens" | "cost";
+  estimated: number;
+  allowed: number;
+}
+
+/**
+ * The routing limits (token attempts, estimated cost) left no candidate to call. An engine of today never refuses the first attempt for them (a model is bounded by its own window),
+ * so this is what an older engine, or a host of its own, reports; `budget` says which limit and by how much (absent from an engine that did not say: the message is all there is).
+ */
 export class AiRoutingBudgetError extends AiProviderError {
-  constructor(message: string) {
+  constructor(message: string, budget?: AiRoutingBudgetDetail) {
     super(message, undefined, false);
     this.name = "AiRoutingBudgetError";
+    if (budget) this.budget = budget;
   }
+}
+
+/** The fields of a routing limit's refusal as an error that crossed a boundary may still carry them (`budget`, read softly): `null` when they are not there. */
+export function routingBudgetOf(error: unknown): AiRoutingBudgetDetail | null {
+  const budget = error && typeof error === "object" ? (error as { budget?: unknown }).budget : undefined;
+  if (!budget || typeof budget !== "object") return null;
+  const { limit, estimated, allowed } = budget as Record<string, unknown>;
+  if ((limit !== "tokens" && limit !== "cost") || typeof estimated !== "number" || !Number.isFinite(estimated) || typeof allowed !== "number" || !Number.isFinite(allowed)) return null;
+  return { limit, estimated, allowed };
 }
 
 /** The privacy policy for fallbacks left no candidate to call. */

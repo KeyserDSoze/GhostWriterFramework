@@ -162,6 +162,26 @@ test("the detail says what the error knows: the status, the origin of the endpoi
   assert.equal(credentials.detail.endpoint, "https://api.example.com", "credentials in the address are not an origin");
 });
 
+test("a routing limit's refusal says in its detail which limit stopped the call, what it needed and what the limit allows, and keeps it through a save", () => {
+  const refused = new AiRoutingBudgetError("The first model of the route is estimated at 6.10 USD for this request, and the limit is 5.00 USD. Nothing was sent.", { limit: "cost", estimated: 6.1, allowed: 5 });
+  const { kind, detail } = engine.classifyAutopilotError(refused);
+  assert.equal(kind, "budget");
+  assert.deepEqual(detail.budget, { limit: "cost", estimated: 6.1, allowed: 5 });
+  assert.deepEqual(engine.normalizeErrorDetail(JSON.parse(JSON.stringify(detail))).budget, { limit: "cost", estimated: 6.1, allowed: 5 }, "read back from the state");
+  assert.equal(engine.normalizeErrorDetail({ budget: { limit: "speed", estimated: 1, allowed: 2 } }), undefined, "what is not a limit is dropped");
+  assert.equal(engine.classifyAutopilotError(new AiRoutingBudgetError("an older engine's refusal")).detail.budget, undefined, "an older refusal has none, and is still budget");
+});
+
+test("a failure whose fallbacks a routing limit left out keeps its own kind, and says the limit in its detail; a window that is the default says so in the route", () => {
+  const failed = new AiProviderError("HTTP 503: down", 503, true, { route: [{ position: 0, integrationId: "a", integrationName: "A", provider: "openai", model: "m", outcome: "failed", status: 503 }, { position: 1, integrationId: "b", integrationName: "B", provider: "openai", model: "n", outcome: "left-out", leftOut: "budget" }] });
+  failed.budget = { limit: "cost", estimated: 1.2, allowed: 0.5 };
+  const { kind, detail } = engine.classifyAutopilotError(failed);
+  assert.equal(kind, "provider");
+  assert.deepEqual(detail.budget, { limit: "cost", estimated: 1.2, allowed: 0.5 });
+  const step = { position: 0, integrationId: "a", integrationName: "A", provider: "openai", model: "m", outcome: "left-out", leftOut: "context-window", promptTokens: 200_000, windowTokens: 119_552, windowDefault: true };
+  assert.equal(engine.normalizeErrorDetail(JSON.parse(JSON.stringify({ route: [step] }))).route[0].windowDefault, true);
+});
+
 test("no secret is kept in any field of the detail, and the fields are short", () => {
   const key = "sk-abcdefghijklmnop1234";
   const error = new AiProviderError("HTTP 401", 401, false, { provider: "openai", model: key, integrationId: `Bearer ${key}`, target: { provider: "openai", model: key, integrationId: "api-key: abcdefghijkl", endpoint: "https://api.example.com" } });

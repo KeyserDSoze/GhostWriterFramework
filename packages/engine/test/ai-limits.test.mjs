@@ -79,12 +79,25 @@ test("a reasoning model's request carries the margin, a normal model's does not"
   assert.equal(bodies[1].max_tokens, 1_520);
 });
 
-test("the reasoning margin is counted when the attempts are estimated against maxTokenAttempts", async () => {
-  const cfg = (name) => ({ ...model(name), routingExecution: { maxTokenAttempts: 10_000 } });
-  const ask = (name) => createFetchAi(cfg(name), { fetch: async () => Response.json({ choices: [{ message: { content: "fine" }, finish_reason: "stop" }] }) }).complete({ ...ASK, maxOutputTokens: 1_520 }).then((value) => value, (error) => error);
-  assert.equal((await ask("gpt-4o")).text, "fine", "about 1500 tokens fit 10000");
-  const refused = await ask("gpt-5");
-  assert.ok(refused instanceof engine.AiRoutingBudgetError, "13520 tokens with the margin do not");
+test("the reasoning margin is counted when the attempts are estimated against maxTokenAttempts, which bounds the fallbacks", () => {
+  // A primary that fails, then a fallback: gpt-4o's attempt is about 1,520 tokens, gpt-5's 13,520 with the margin of its reasoning.
+  const chained = (fallback) => ({
+    aiIntegrations: [
+      { id: "a", name: "A", provider: "openai", endpoint: "http://a.test/v1", apiKey: "k", chatModels: [{ id: "1", name: "gpt-4o", capabilities: ["default"] }] },
+      { id: "b", name: "B", provider: "openai", endpoint: "http://b.test/v1", apiKey: "k", chatModels: [{ id: "2", name: fallback, capabilities: ["default"] }] },
+    ],
+    taskRouting: { autopilot: { primary: { integrationId: "a", model: "gpt-4o" }, fallbacks: [{ integrationId: "b", model: fallback }] } },
+    routingExecution: { maxTokenAttempts: 10_000 },
+  });
+  const plan = (fallback) => engine.planAttempts(pickAiRuntimeConfig(chained(fallback)), { ...ASK, maxOutputTokens: 1_520 });
+  assert.equal(plan("gpt-4o").attempts.length, 2, "about 1,500 tokens of fallback fit 10,000");
+  const reasoned = plan("gpt-5");
+  assert.equal(reasoned.attempts.length, 1, "13,520 tokens with the margin do not: the fallback is left out");
+  assert.deepEqual(reasoned.leftOut.map((step) => [step.model, step.leftOut]), [["gpt-5", "budget"]]);
+  // The first attempt is bounded by its model's window, not by the token limit made for chains of fallbacks.
+  const alone = engine.planAttempts({ ...model("gpt-5"), routingExecution: { maxTokenAttempts: 10_000 } }, { ...ASK, maxOutputTokens: 1_520 });
+  assert.equal(alone.attempts[0].estimate.tokens > 10_000, true);
+  assert.equal(alone.attempts.length, 1, "a first attempt over the token limit is still sent");
 });
 
 test("a reply cut while the model had only reasoned is marked, and still not retryable by the client", async () => {

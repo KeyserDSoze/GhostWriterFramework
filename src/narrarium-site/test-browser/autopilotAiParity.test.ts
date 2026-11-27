@@ -543,32 +543,31 @@ describe("autopilot calls end as they do on the personal server", () => {
   });
 
   describe("limits of one routed call", () => {
-    it("keeps estimated attempts while they fit maxTokenAttempts", async () => {
-      const chain = ["n0", "n1", "n2"].map((id) => compatible(id));
+    it("keeps the fallbacks while their estimated attempts fit maxTokenAttempts: the first attempt does not count against it", async () => {
+      const chain = ["n0", "n1", "n2", "n3"].map((id) => compatible(id));
       const settings = routed(chain, { routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxTokenAttempts: 1_500 } });
       const { browser, server } = await runBoth(chain, settings, { ...ASK, maxOutputTokens: 500 }, () => failReply(503, "down"));
       expectSameRun(browser, server);
-      expect(hostsOf(browser), "two attempts of about 510 tokens fit in 1500, a third does not").toEqual(["n0", "n1"]);
+      expect(hostsOf(browser), "the first, then two fallbacks of about 510 tokens in 1500; a third fallback does not fit").toEqual(["n0", "n1", "n2"]);
     });
 
-    it("refuses a first attempt that alone exceeds maxTokenAttempts, before anything is sent", async () => {
+    it("sends a first attempt that alone exceeds maxTokenAttempts: its model's window bounds it, not a limit made for chains of fallbacks", async () => {
       const chain = ["n0", "n1"].map((id) => compatible(id));
       const settings = routed(chain, { routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxTokenAttempts: 1_000 } });
       const { browser, server } = await runBoth(chain, settings, { ...ASK, maxOutputTokens: 4_000 });
       expectSameRun(browser, server);
-      expect(browser.calls).toHaveLength(0);
-      expect(errorOf(browser.outcome)).toBeInstanceOf(AiRoutingBudgetError);
-      expect(errorOf(browser.outcome)).toMatchObject({ retryable: false });
-      expect(errorOf(browser.outcome).message).toMatch(/first routing candidate exceeds/);
+      expect(hostsOf(browser)).toEqual(["n0"]);
     });
 
-    it("refuses a first attempt that alone would cost more than maxEstimatedCost", async () => {
-      const dear = compatible("dear", [chatModel("model-dear", { pricing: { inputPerMTok: 1_000, outputPerMTok: 1_000 } })]);
-      const settings = settingsOf([dear], { routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxEstimatedCost: 0.01 } });
-      const { browser, server } = await runBoth([dear], settings, { ...ASK, maxOutputTokens: 400 });
+    it("sends a first attempt that alone would cost more than maxEstimatedCost, and leaves out the fallbacks the limit cannot hold, saying which limit and its numbers", async () => {
+      const priced = { pricing: { inputPerMTok: 1_000, outputPerMTok: 1_000 } };
+      const chain = [compatible("dear", [chatModel("model-dear", priced)]), compatible("next", [chatModel("model-next", priced)])];
+      const settings = routed(chain, { routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxEstimatedCost: 0.01 } });
+      const { browser, server } = await runBoth(chain, settings, { ...ASK, maxOutputTokens: 400 }, () => failReply(503, "down"));
       expectSameRun(browser, server);
-      expect(browser.calls).toHaveLength(0);
-      expect(errorOf(browser.outcome)).toBeInstanceOf(AiRoutingBudgetError);
+      expect(hostsOf(browser), "the first model is the author's choice; the fallback is what the limit keeps out").toEqual(["dear"]);
+      // Which limit, and by how much: what the chat and the panel offer to raise.
+      expect((errorOf(browser.outcome) as AiRoutingBudgetError).budget).toMatchObject({ limit: "cost", allowed: 0.01 });
     });
 
     it("skips a candidate whose context window cannot hold the prompt and sends the whole prompt to the next", async () => {

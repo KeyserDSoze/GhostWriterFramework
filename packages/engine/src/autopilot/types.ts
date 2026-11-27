@@ -1,4 +1,4 @@
-import type { AiRouteStep, AiStreamEnd, AiTimeoutPhase, AiUsage } from "../ai/types.js";
+import type { AiRouteStep, AiRoutingBudgetDetail, AiStreamEnd, AiTimeoutPhase, AiUsage } from "../ai/types.js";
 import type { AiStreamMode } from "../ai/config.js";
 import type { AiModelLearning, AiNoThinkingLearning, AiPromptCachingLearning } from "../ai/memory.js";
 import type { AiErrorBody } from "../ai/provider-error.js";
@@ -851,6 +851,8 @@ export interface AutopilotErrorDetail {
    * last candidate that was asked, which is not the only one: the primary may have failed at once and the fallback after it. Absent from an engine that did not say.
    */
   route?: AutopilotRouteStep[];
+  /** For a routing limit's refusal (kind `budget`): which limit stopped the call, what it needed and what the limit allows (see `AiRoutingBudgetDetail`). Absent from an engine that did not say. */
+  budget?: AiRoutingBudgetDetail;
 }
 
 /**

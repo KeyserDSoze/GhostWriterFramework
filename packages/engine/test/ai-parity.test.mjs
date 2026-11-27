@@ -593,30 +593,35 @@ test("without routing limits (an older configuration) there is no total time lim
   assert.deepEqual(calls, [0, 1]);
 });
 
-test("maxTokenAttempts: candidates are kept while the estimated attempts fit, and a first one that cannot fit refuses the call", async () => {
-  const fits = chain(3, { maxTokenAttempts: 1_000 }, () => fail(503, "down"));
+test("maxTokenAttempts bounds the fallbacks: the first attempt is sent, and the fallbacks are kept while their estimated tokens fit together", async () => {
+  const fits = chain(4, { maxTokenAttempts: 1_000 }, () => fail(503, "down"));
   await createFetchAi(fits.cfg, { fetch: fits.fetch }).complete({ ...ASK, maxOutputTokens: 400 }).then(() => null, () => null);
-  assert.deepEqual(fits.calls, [0, 1], "2 attempts of about 420 tokens fit in 1000, a third does not");
+  assert.deepEqual(fits.calls, [0, 1, 2], "the first, then 2 fallbacks of about 420 tokens in 1000; a third fallback does not fit");
 
-  const refused = chain(2, { maxTokenAttempts: 100 }, () => ok());
-  const error = await createFetchAi(refused.cfg, { fetch: refused.fetch }).complete({ ...ASK, maxOutputTokens: 400 }).then(() => null, (failure) => failure);
-  assert.ok(error instanceof engine.AiRoutingBudgetError);
-  assert.ok(error instanceof AiProviderError);
-  assert.equal(error.retryable, false);
-  assert.match(error.message, /first routing candidate exceeds/);
-  assert.deepEqual(refused.calls, [], "nothing was sent");
+  const alone = chain(2, { maxTokenAttempts: 100 }, () => ok());
+  assert.equal((await createFetchAi(alone.cfg, { fetch: alone.fetch }).complete({ ...ASK, maxOutputTokens: 400 })).text, "ok", "a first attempt over the token limit is still sent: its window bounds it");
+  assert.deepEqual(alone.calls, [0]);
 });
 
-test("maxEstimatedCost keeps candidates while the estimated cost fits", async () => {
+test("maxEstimatedCost bounds what the fallbacks add after the first attempt, never the first, and the error says the limit with its numbers", async () => {
   const priced = { pricing: { inputPerMTok: 1_000, outputPerMTok: 1_000 } };
-  const fits = chain(3, { maxEstimatedCost: 1 }, () => fail(503, "down"), priced);
-  await createFetchAi(fits.cfg, { fetch: fits.fetch }).complete({ ...ASK, maxOutputTokens: 400 }).then(() => null, () => null);
-  assert.deepEqual(fits.calls, [0, 1], "about 0.42 per attempt: two fit in 1, a third does not");
+  // About 0.41 an attempt: the first is the model's own, then one fallback fits in 0.5 and a second (0.82 together) does not.
+  const fits = chain(3, { maxEstimatedCost: 0.5 }, () => fail(503, "down"), priced);
+  const error = await createFetchAi(fits.cfg, { fetch: fits.fetch }).complete({ ...ASK, maxOutputTokens: 400 }).then(() => null, (failure) => failure);
+  assert.deepEqual(fits.calls, [0, 1]);
+  assert.ok(error instanceof AiProviderError);
+  // Which limit, what the fallbacks needed and what the limit allows: what the author needs to raise it, and where.
+  assert.equal(error.budget.limit, "cost");
+  assert.equal(error.budget.allowed, 0.5);
+  assert.ok(error.budget.estimated > 0.8 && error.budget.estimated < 0.85, String(error.budget.estimated));
+  assert.match(error.message, /Not tried: "m2" in "N2": the fallbacks after the first attempt would be estimated at 0\.82\d USD together, and the limit is 0\.500 USD \(maxEstimatedCost: "Maximum estimated route cost" in Settings > AI Router > Routing options\)\.$/);
+  assert.deepEqual(engine.routingBudgetOf(JSON.parse(JSON.stringify({ ...error, budget: error.budget }))), error.budget, "the fields cross a boundary as plain data");
+  assert.equal(engine.routingBudgetOf(new engine.AiRoutingBudgetError("an older engine's refusal")), null, "an error without them is still one");
 
-  const refused = chain(1, { maxEstimatedCost: 0.1 }, () => ok(), priced);
-  const error = await createFetchAi(refused.cfg, { fetch: refused.fetch }).complete({ ...ASK, maxOutputTokens: 400 }).then(() => null, (failure) => failure);
-  assert.ok(error instanceof engine.AiRoutingBudgetError);
-  assert.equal(error.retryable, false);
+  // A single candidate that fits its window is sent whatever its cost: the limit is a safety for chains of fallbacks, not for the model the author chose.
+  const alone = chain(1, { maxEstimatedCost: 0.1 }, () => ok("sent"), priced);
+  assert.equal((await createFetchAi(alone.cfg, { fetch: alone.fetch }).complete({ ...ASK, maxOutputTokens: 400 })).text, "sent");
+  assert.deepEqual(alone.calls, [0]);
 
   const unlimited = chain(3, undefined, () => fail(503, "down"), priced);
   await createFetchAi(unlimited.cfg, { fetch: unlimited.fetch }).complete({ ...ASK, maxOutputTokens: 400 }).then(() => null, () => null);
@@ -658,14 +663,22 @@ test("maxInputTokens: when no candidate can hold the prompt the error is final a
   assert.equal(called, false);
 });
 
-test("maxInputTokens: the output reserve counts, a model without a configured window gets the prompt whole", async () => {
+test("maxInputTokens: the output reserve counts, and a model without a configured window is judged by the default window", async () => {
   const cfg = { aiIntegrations: [integration("a", { chatModels: [{ id: "1", name: "m", capabilities: ["default"], maxInputTokens: 8_000 }] })] };
   const ask = (maxOutputTokens) => createFetchAi(cfg, { fetch: async () => ok("fine") }).complete({ ...ASK, user: "x".repeat(28_000), maxOutputTokens }).then((value) => value, (error) => error);
   assert.ok((await ask(2_000)) instanceof engine.AiPromptTooLargeError, "8000 - 400 safety - 2000 output leaves 5600 for a prompt of about 7000");
   assert.equal((await ask(100)).text, "fine", "8000 - 400 - 100 leaves 7500");
 
+  // No window set: the default of 128,000 tokens (6,400 of safety, 2,048 of output), so a prompt of about 100,000 tokens is sent whole and one of 500,000 is refused, saying so.
+  assert.equal(engine.DEFAULT_MAX_INPUT_TOKENS, 128_000);
+  assert.deepEqual(engine.modelWindow({}), { tokens: 128_000, source: "default" });
+  assert.deepEqual(engine.modelWindow({ maxInputTokens: 1_000_000 }), { tokens: 1_000_000, source: "configured" });
   const open = { aiIntegrations: [integration("a")] };
-  assert.equal((await createFetchAi(open, { fetch: async () => ok("whole") }).complete({ ...ASK, user: "x".repeat(2_000_000) })).text, "whole");
+  assert.equal((await createFetchAi(open, { fetch: async () => ok("whole") }).complete({ ...ASK, user: "x".repeat(400_000) })).text, "whole");
+  const huge = await createFetchAi(open, { fetch: async () => ok("never") }).complete({ ...ASK, user: "x".repeat(2_000_000) }).then(() => null, (error) => error);
+  assert.ok(huge instanceof engine.AiPromptTooLargeError);
+  assert.match(huge.message, /Nothing was sent\. The window of "model-a" in "A" is not set, so the default of 128000 tokens was assumed\. Set the models' context window \("Context window tokens" in AI Integrations\) if they hold more, or route this task to a model with a larger context window\.$/);
+  assert.equal(huge.route[0].windowDefault, true);
 });
 
 test("maxInputTokens: the forced tool's schema counts against the window", async () => {
