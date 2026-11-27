@@ -10,6 +10,14 @@ Account e sincronizzazione si collega con **credenziali durature** quando il ser
 - **Disconnetti** le dimentica su questo dispositivo e revoca quelle di Google; quelle di Microsoft si possono revocare solo dal tuo account Microsoft.
 - Senza il servizio non cambia nulla: vale l'accesso di sempre, di un'ora (Google) o di 24 ore (Microsoft), e non compare nessuna offerta.
 
+## Cosa chiede Narrarium a Google
+
+A ogni accesso con Google Narrarium chiede solo permessi **non sensibili**: chi sei (`openid`, `profile`, `email`), `drive.appdata` (una cartella nascosta dell'app) e `drive.file` (solo i file e le cartelle che Narrarium crea nel tuo Drive: la cartella **Narrarium** con i dati dell'account e la cartella in cui vanno le esportazioni). Google non richiede verifica e non mostra l'avviso «app non verificata».
+
+- **L'accesso completo a Drive** (lo scope limitato `drive`) non viene mai chiesto all'accesso. Si chiede solo se scegli qualcosa che lo richiede: esportare in una cartella che c'era già, o recuperare le chat di una versione precedente che Google nasconde a Narrarium. La schermata dice perché, Google avvisa che l'app non è verificata per esso, e il permesso resta solo finché la pagina è aperta; ritiralo su myaccount.google.com/connections.
+- **Quando un accesso scade**, la scheda di Google dice «Accedi di nuovo a Google Drive su questo dispositivo», perché è scaduto (le credenziali di sessione durano circa un'ora; quelle durature si rinnovano in background tramite il servizio di accesso) e offre il passaggio a quelle durature dove il servizio c'è. I tuoi dati restano al sicuro su questo dispositivo.
+- **Controlla la configurazione di Google** (nella scheda di Google) mostra i permessi che il sito chiede, il numero del progetto Google Cloud del suo client id (mai il resto) e la lista per il proprietario del progetto: il **Pubblico** deve essere «In produzione» (in «Test» possono accedere solo gli utenti di prova e l'accesso scade dopo 7 giorni); il client id deve appartenere a quel progetto; gli scope nella console (Accesso ai dati) devono coincidere con l'elenco; togli i vecchi consensi su myaccount.google.com/connections prima di riprovare.
+
 ## Impostazioni
 
 Configura Integrazioni AI, AI Router, Deep Search, tool Copilot, credenziali GitHub, voce e sincronizzazione repository locale. Le impostazioni libro controllano branch, PAT dedicati, metadati reader/export e destinazioni Drive.

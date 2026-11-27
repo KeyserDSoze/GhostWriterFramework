@@ -10,6 +10,14 @@ Account & Sync connects with **long-lived credentials** when the Narrarium token
 - **Disconnect** forgets the credentials on this device and revokes Google's; Microsoft's can only be revoked from your Microsoft account.
 - Without the service nothing changes: the usual one-hour (Google) or 24-hour (Microsoft) sign-in applies and no offer appears.
 
+## What Narrarium asks Google for
+
+At every Google sign-in Narrarium asks only for **non-sensitive** permissions: who you are (`openid`, `profile`, `email`), `drive.appdata` (a hidden app folder) and `drive.file` (only the files and folders Narrarium creates in your Drive: the **Narrarium** folder with your account data and the folder your exports go to). Google needs no verification for them and shows no “unverified app” warning.
+
+- **Full access to Drive** (the restricted `drive` scope) is never asked at sign-in. It is asked only if you choose something that needs it: exporting into a folder that already existed, or recovering the chats of an older version that Google hides from Narrarium. The screen says why, Google will warn that the app is not verified for it, and the permission is kept only while the page is open; take it back at myaccount.google.com/connections.
+- **When a sign-in ends**, the Google card says “Sign in to Google Drive again on this device”, why it ended (session credentials last about an hour; long-lived credentials renew in the background through the sign-in service) and offers the switch to long-lived credentials where the service is available. Your data stays safe on this device.
+- **Check Google configuration** (in the Google card) shows the permissions the site asks for, the number of the Google Cloud project of its client id (never the rest), and the checklist for the owner of the project: **Audience** must be “In production” (in “Testing” only test users can sign in, and the sign-in expires after 7 days); the client id must belong to that project; the scopes in the console (Data access) must match the list; remove old grants at myaccount.google.com/connections before trying again.
+
 ## Settings
 
 Configure AI Integrations, AI Router, Deep Search, Copilot tools, GitHub credentials, speech and local repository synchronization. Book-specific settings control branches, dedicated PATs, reader/export metadata and Drive export destinations.

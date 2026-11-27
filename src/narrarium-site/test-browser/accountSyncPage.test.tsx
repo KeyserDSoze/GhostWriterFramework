@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -161,6 +161,18 @@ describe.each(["it", "en"] as const)("Account & Sync page in %s", (language) => 
     expect(within(dialog).getByText(text.counts, { exact: false })).toBeInTheDocument();
     expect(dialog.textContent).not.toContain(" UTC");
     expect(within(dialog).getByRole("button", { name: language === "it" ? "Annulla" : "Cancel" })).toBeInTheDocument();
+  });
+
+  it("opens the check of the Google configuration from the Google card, only when asked", async () => {
+    connect({ google: google() });
+    await open(language);
+    const label = language === "it" ? "Controlla la configurazione di Google" : "Check Google configuration";
+    expect(screen.queryByTestId("google-config-check")).toBeNull();
+    const button = within(card("Google Drive")).getByRole("button", { name: label });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(button);
+    expect(await screen.findByTestId("google-config-check")).toBeInTheDocument();
+    expect(button).toHaveAttribute("aria-expanded", "true");
   });
 
   it("shows no error block for a replica that is in sync", async () => {
