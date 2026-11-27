@@ -1,5 +1,37 @@
 [
   {
+    "version": "0.130.0",
+    "date": "2026-11-27",
+    "en": {
+      "title": "The Copilot works on the page you are on, and changes it in one batch you review first",
+      "summary": "On Simulated readers, Ghostwriters, Director, Evaluation style, the autopilot's Configuration, Assets and the page of a character, location, faction or item, the Copilot says which page it works on and sees what the page shows. Ask in your own words, such as “create only historical readers of different kinds and turn off all the default ones”, and it proposes one batch: a table of everything on the page with its resulting state, which you apply in one change, discard, or undo afterwards. Everything else the Copilot can do stays available on every page.",
+      "changes": [
+        "Above the Copilot's composer, “Working on: Simulated readers” (or the page you are on) says that your requests are about this page first, and screen readers hear it with the composer. The Copilot sees what the page shows, not only where you are: every reader with whether it is on, its type and its severity; every ghostwriter with its voice; the director's settings; the evaluation criteria; the facts and description of the entry you have open; the autopilot's settings; which images are made and which are missing; and the filter or the item you have selected.",
+        "When the model of the Copilot's route can call tools, the Copilot chooses its tools itself in a short loop, the page's own first: it reads what it needs, answers, or proposes a change, and the tools of the other pages and of the catalogue stay available. A model marked as without tool calls in AI Integrations keeps working with the keyword rules, with the page's own rule first.",
+        "Simulated readers: ask for several readers at once and one call of the model writes them all, each a different kind of reader; in the same batch readers can be edited, turned on or off, and removed. Built-in readers are never deleted: removing one turns it off.",
+        "Before anything is written you see a table of every item with what it is now, what it will be and what changes, the changes first. Apply writes the whole batch in one change of the book (on a book on GitHub it is published at once, as every change the Copilot applies), Discard drops it, and Undo puts back what was there. The page shows the change as soon as it is applied, without replacing what you are editing.",
+        "Ghostwriters: create, edit and remove ghostwriters in one batch; the book's default ghostwriter, the last one and one that a chapter, a scene, a draft or a script still uses are never removed. Director: change its fields, each shown before and after. Evaluation style: add, reword and remove criteria, and change the method and severity.",
+        "A character, location, faction or item: change its facts and its description, field by field. The Copilot never sees nor writes what points to a secret or your private notes, never renames the entry, and leaves the rest of the file as you wrote it; secrets and the timeline are not part of it.",
+        "On the autopilot's Configuration and on Assets the Copilot reads the page and tells you what to change and where; it does not change them itself.",
+        "Settings → Tools: “Change This Page” turns these proposals on or off."
+      ]
+    },
+    "it": {
+      "title": "Il Copilot lavora sulla pagina su cui sei, e la modifica con un'unica proposta che rivedi prima",
+      "summary": "In Lettori simulati, Ghostwriter, Direttore, Stile di valutazione, la Configurazione dell'autopilot, Asset e la pagina di un personaggio, un luogo, una fazione o un oggetto, il Copilot dice su quale pagina lavora e vede ciò che la pagina mostra. Chiedi con parole tue, per esempio «creami solo lettori storici, di diverso tipo, e leva tutti i lettori di default», e ti propone un unico insieme di modifiche: una tabella di tutto ciò che c'è sulla pagina con il suo stato finale, che applichi in una sola modifica, scarti, o annulli dopo. Tutto il resto che il Copilot sa fare resta disponibile su ogni pagina.",
+      "changes": [
+        "Sopra il campo di scrittura del Copilot, «Sto lavorando su: Lettori simulati» (o la pagina su cui sei) dice che le tue richieste riguardano prima questa pagina, e i lettori di schermo lo sentono insieme al campo. Il Copilot vede ciò che la pagina mostra, non solo dove sei: ogni lettore con il suo stato acceso o spento, il tipo e la severità; ogni ghostwriter con la sua voce; le impostazioni del direttore; i criteri di valutazione; i dati e la descrizione della voce che hai aperto; le impostazioni dell'autopilot; quali immagini sono fatte e quali mancano; e il filtro o l'elemento che hai selezionato.",
+        "Quando il modello della rotta del Copilot sa chiamare i tool, il Copilot sceglie da sé i suoi tool in un breve ciclo, prima quelli della pagina: legge ciò che gli serve, risponde o propone una modifica, e i tool delle altre pagine e del catalogo restano disponibili. Un modello segnato come senza chiamate di tool in Integrazioni AI continua a funzionare con le regole a parole chiave, con prima la regola della pagina.",
+        "Lettori simulati: chiedi più lettori insieme e una sola chiamata del modello li scrive tutti, ciascuno di un tipo diverso; nella stessa proposta i lettori si possono modificare, accendere o spegnere e rimuovere. I lettori predefiniti non si cancellano mai: rimuoverne uno lo spegne.",
+        "Prima che venga scritto qualcosa vedi una tabella di ogni elemento con com'è ora, come sarà e cosa cambia, prima le modifiche. Applica scrive tutto in una sola modifica del libro (su un libro su GitHub viene pubblicata subito, come ogni modifica che applichi dal Copilot), Scarta la lascia cadere e Annulla rimette ciò che c'era. La pagina mostra la modifica appena è applicata, senza sostituire ciò che stai modificando.",
+        "Ghostwriter: crea, modifica e rimuovi ghostwriter in un'unica proposta; il ghostwriter predefinito del libro, l'ultimo e uno che un capitolo, una scena, una bozza o uno script usa ancora non si rimuovono mai. Direttore: cambia i suoi campi, ciascuno com'è ora e come sarà. Stile di valutazione: aggiungi, riformula e rimuovi criteri, e cambia il metodo e la severità.",
+        "Un personaggio, un luogo, una fazione o un oggetto: cambia i suoi dati e la sua descrizione, campo per campo. Il Copilot non vede né scrive mai ciò che rimanda a un segreto o le tue note private, non rinomina mai la voce e lascia il resto del file come l'hai scritto; i segreti e la timeline non ne fanno parte.",
+        "Nella Configurazione dell'autopilot e in Asset il Copilot legge la pagina e ti dice cosa cambiare e dove; non le modifica da sé.",
+        "Impostazioni → Tools: «Modifica questa pagina» attiva o disattiva queste proposte."
+      ]
+    }
+  },
+  {
     "version": "0.129.0",
     "date": "2026-11-27",
     "en": {
