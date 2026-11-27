@@ -12,6 +12,10 @@ export interface FakeReaderGitHub {
   /** `active` or `disabled_manually`, as GitHub says it. */
   workflowState: { value: string };
   runs: Array<{ id: number; status: string; conclusion: string | null; html_url: string; created_at: string; head_branch: string; head_sha?: string }>;
+  /** The jobs of any run, and the annotations GitHub put on each job. */
+  jobs: Array<{ id: number; name: string; conclusion: string | null; steps: unknown[] }>;
+  annotations: Record<number, Array<{ message: string }>>;
+  owner: { login: string; type: "User" | "Organization" };
   calls: Array<{ method: string; args: Record<string, unknown> }>;
   /** Makes the next calls of a method fail (the number of times given, or for ever). */
   fail(method: string, failure: FakeFailure, times?: number): void;
@@ -39,11 +43,14 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     /** The text of the workflow file: by default one that reads the passwords. */
     workflowText: { value: "name: Deploy reader\nenv:\n  PASSWORDS: ${{ vars.READER_PASSWORD_SECRETS }}\n" },
     runs: [] as FakeReaderGitHub["runs"],
+    jobs: [] as FakeReaderGitHub["jobs"],
+    annotations: {} as FakeReaderGitHub["annotations"],
+    owner: { login: "me", type: "User" } as FakeReaderGitHub["owner"],
     calls: [] as FakeReaderGitHub["calls"],
   };
   const failures = new Map<string, FakeFailure & { remaining: number }>();
   const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
-    get: () => ({ data: { private: true, default_branch: "main", html_url: "https://github.com/me/book", permissions: { admin: true, push: true, pull: true } } }),
+    get: () => ({ data: { owner: state.owner, private: true, default_branch: "main", html_url: "https://github.com/me/book", permissions: { admin: true, push: true, pull: true } } }),
     getRepoPublicKey: () => ({ data: { key_id: "key-1", key: FAKE_PUBLIC_KEY } }),
     createOrUpdateRepoSecret: (args) => { state.secrets.set(String(args.secret_name), String(args.encrypted_value)); return { data: {} }; },
     deleteRepoSecret: (args) => { if (!state.secrets.has(String(args.secret_name))) throw requestError({ status: 404 }); state.secrets.delete(String(args.secret_name)); return { data: {} }; },
@@ -53,6 +60,8 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     updateRepoVariable: (args) => { if (state.variable.value === null) throw requestError({ status: 404 }); state.variable.value = String(args.value); return { data: {} }; },
     deleteRepoVariable: () => { if (state.variable.value === null) throw requestError({ status: 404 }); state.variable.value = null; return { data: {} }; },
     createWorkflowDispatch: () => { state.runs.unshift({ id: state.runs.length + 1, status: "queued", conclusion: null, html_url: `https://github.com/me/book/actions/runs/${state.runs.length + 1}`, created_at: "2026-11-25T10:00:00Z", head_branch: "main" }); return { data: {} }; },
+    listJobsForWorkflowRun: () => ({ data: { total_count: state.jobs.length, jobs: state.jobs } }),
+    listAnnotations: (args) => ({ data: state.annotations[Number(args.check_run_id)] ?? [] }),
     listWorkflowRuns: () => ({ data: { workflow_runs: state.runs } }),
     getContent: () => {
       if (!state.workflowPresent.value) throw requestError({ status: 404 });
@@ -114,7 +123,8 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     },
     rest: {
       repos: group(["get", "getContent", "getPages", "createPagesSite", "deletePagesSite"]),
-      actions: group(["getRepoPublicKey", "createOrUpdateRepoSecret", "deleteRepoSecret", "listRepoSecrets", "getRepoVariable", "createRepoVariable", "updateRepoVariable", "deleteRepoVariable", "createWorkflowDispatch", "listWorkflowRuns"]),
+      actions: group(["getRepoPublicKey", "createOrUpdateRepoSecret", "deleteRepoSecret", "listRepoSecrets", "getRepoVariable", "createRepoVariable", "updateRepoVariable", "deleteRepoVariable", "createWorkflowDispatch", "listWorkflowRuns", "listJobsForWorkflowRun"]),
+      checks: group(["listAnnotations"]),
     },
   } as unknown as Octokit;
   return {

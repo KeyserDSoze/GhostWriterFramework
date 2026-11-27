@@ -57,6 +57,7 @@ const TEXTS = {
     waiting: /Waiting for GitHub to start the publication/, current: /The reader of this book is up to date: its workflow and its reader\/ folder are the ones of version 0\.1\.61/, check: "Check now", protectedResult: /Protected: the EPUB answers 404/, exposed: /The EPUB is still published in clear \(it answered 200\)/, unreachable: /The browser cannot read the answer/, copy: "Copy the line",
     refused: /“Replace my edits” was not ticked: nothing was committed/, changed: /A file changed after it was checked/, permission: /lacks the permission “Workflows”/, onDeviceTitle: "Updated on this device, not yet on GitHub", remoteOld: /On GitHub the workflow is the old one/, localCommits: /3 files\) that GitHub does not have yet/, filesSummary: "Show the 3 files not on GitHub yet", syncNow: "Sync now", notSent: /Not sent to GitHub\./, conflict: /choose between two copies of a file/, sentRun: /Waiting for GitHub to start the publication/, pagesOffButton: "Turn GitHub Pages off", pagesOffConfirm: "Turn Pages off", pagesOffDone: /GitHub Pages is off: the old reader is no longer published/, currentUnchecked: /GitHub could not be checked just now/, noCredentialSync: /has no GitHub credential on this device, so nothing can be sent/, offlineSync: /You are offline, so nothing can be sent now/,
     autoFailed: /The last automatic sync could not send it: GitHub did not accept a change to a workflow file/, autoDiverged: /GitHub has newer changes than this device/,
+    budgetTitle: "GitHub Actions cannot run: the budget or billing blocks it", budgetBody: /GitHub did not start the publication: “The job was not started because an Actions budget is preventing further use\.”/, billingLink: "Open GitHub billing", publicWarning: /do not do it only for this/, unreadableTitle: "The last publication failed, and the reason could not be read", disabledTitle: "GitHub Actions is disabled",
     noticeTitle: "The reader of this book is out of date", noticePassword: /published with a password but an old reader/, noticeGo: "Open the Online reader tab", files: "Show the files", paused: /The publishing workflow is paused on GitHub/,
   },
   it: {
@@ -67,6 +68,7 @@ const TEXTS = {
     waiting: /In attesa che GitHub avvii la pubblicazione/, current: /Il lettore di questo libro è aggiornato: il suo workflow e la sua cartella reader\/ sono quelli della versione 0\.1\.61/, check: "Controlla ora", protectedResult: /Protetto: l'EPUB risponde 404/, exposed: /L'EPUB è ancora pubblicato in chiaro \(ha risposto 200\)/, unreachable: /Il browser non riesce a leggere la risposta/, copy: "Copia la riga",
     refused: /“Sostituisci le mie modifiche” non era spuntato: non è stato salvato nulla/, changed: /Un file è cambiato dopo il controllo/, permission: /non ha il permesso “Workflows”/, onDeviceTitle: "Aggiornato su questo dispositivo, non ancora su GitHub", remoteOld: /Su GitHub il workflow è quello vecchio/, localCommits: /3 file\) che GitHub non ha ancora/, filesSummary: "Mostra i 3 file non ancora su GitHub", syncNow: "Sincronizza ora", notSent: /Non inviato a GitHub\./, conflict: /scelga tra due copie di un file/, sentRun: /In attesa che GitHub avvii la pubblicazione/, pagesOffButton: "Spegni GitHub Pages", pagesOffConfirm: "Spegni Pages", pagesOffDone: /GitHub Pages è spento: il vecchio lettore non è più pubblicato/, currentUnchecked: /controllare GitHub in questo momento/, noCredentialSync: /non ha una credenziale GitHub su questo dispositivo, quindi non si può inviare nulla/, offlineSync: /Sei offline, quindi ora non si può inviare nulla/,
     autoFailed: /L'ultima sincronizzazione automatica non è riuscita a inviarle: GitHub non ha accettato la modifica di un file di workflow/, autoDiverged: /GitHub modifiche più recenti|su GitHub modifiche più recenti/,
+    budgetTitle: "GitHub Actions non può girare: lo blocca il budget o la fatturazione", budgetBody: /GitHub non ha avviato la pubblicazione: “The job was not started because an Actions budget is preventing further use\.”/, billingLink: "Apri la fatturazione di GitHub", publicWarning: /non farlo solo per questo/, unreadableTitle: "L'ultima pubblicazione è fallita, e il motivo non si è potuto leggere", disabledTitle: "GitHub Actions è disattivato",
     noticeTitle: "Il lettore di questo libro è vecchio", noticePassword: /pubblicato con una password ma con un lettore vecchio/, noticeGo: "Apri la scheda Lettore online", files: "Mostra i file", paused: /Il workflow di pubblicazione è in pausa su GitHub/,
   },
 } as const;
@@ -237,6 +239,64 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
       expect(await within(outside).findByText(text.unreachable)).toBeInTheDocument();
       expect(outside.querySelector("pre")?.textContent).toMatch(/^curl -s -o \/dev\/null -w "%\{http_code\}\\n" "https:\/\/me\.github\.io\/book\/downloads\/book\.epub\?check=\d+" && curl -s /);
       expect(within(outside).getByRole("button", { name: text.copy })).toBeInTheDocument();
+    });
+  });
+
+  describe("a failed publication", () => {
+    const failedRun = (sha = "abc") => ({ id: 31, status: "completed", conclusion: "failure", html_url: "https://github.com/me/book/actions/runs/31", created_at: "2026-11-26T21:53:00Z", head_branch: "main", head_sha: sha });
+
+    it("names the Actions budget from the annotation of the job that never started, in the update card and in Reader access, with the way to GitHub billing", async () => {
+      github.runs.unshift(failedRun());
+      github.jobs.push({ id: 41, name: "build", conclusion: "failure", steps: [] });
+      github.annotations[41] = [{ message: "The job was not started because an Actions budget is preventing further use." }];
+      await open(language);
+      const full = await screen.findByTestId("reader-run-failure");
+      expect(full).toHaveAttribute("data-cause", "budget");
+      expect(within(full).getByText(text.budgetTitle)).toBeInTheDocument();
+      expect(within(full).getByText(text.budgetBody)).toBeInTheDocument();
+      expect(within(full).getByText(text.publicWarning)).toBeInTheDocument();
+      const link = within(full).getByRole("link", { name: new RegExp(text.billingLink) });
+      expect(link).toHaveAttribute("href", "https://github.com/settings/billing");
+      expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+      expect(card()).toContainElement(full);
+      const compact = screen.getByTestId("reader-run-failure-compact");
+      expect(within(compact).getByText(text.budgetTitle)).toBeInTheDocument();
+      expect(within(compact).getByRole("link", { name: new RegExp(text.billingLink) })).toHaveAttribute("href", "https://github.com/settings/billing");
+      expect(card()).not.toContainElement(compact);
+    });
+
+    it("points an organization's repository at the billing of the organization", async () => {
+      Object.assign(github.owner, { login: "acme", type: "Organization" });
+      github.runs.unshift(failedRun());
+      github.jobs.push({ id: 41, name: "build", conclusion: "failure", steps: [] });
+      github.annotations[41] = [{ message: "The job was not started because recent account payments have failed or your spending limit needs to be increased." }];
+      await open(language);
+      const full = await screen.findByTestId("reader-run-failure");
+      expect(within(full).getByRole("link", { name: new RegExp(text.billingLink) })).toHaveAttribute("href", "https://github.com/organizations/acme/settings/billing");
+    });
+
+    it("says when Actions is disabled, with the link to its settings, and when the reason could not be read", async () => {
+      github.runs.unshift(failedRun());
+      github.jobs.push({ id: 41, name: "build", conclusion: "failure", steps: [] });
+      github.annotations[41] = [{ message: "GitHub Actions is disabled for this repository." }];
+      await open(language);
+      const full = await screen.findByTestId("reader-run-failure");
+      expect(within(full).getByText(text.disabledTitle)).toBeInTheDocument();
+      expect(within(full).getByRole("link")).toHaveAttribute("href", "https://github.com/me/book/settings/actions");
+      cleanup();
+      counter += 1;
+      book = { ...book, id: `reader-update-unread-${counter}` };
+      github.annotations = {};
+      github.fail("listAnnotations", { status: 403 });
+      await open(language);
+      expect(await within(await screen.findByTestId("reader-run-failure")).findByText(text.unreadableTitle)).toBeInTheDocument();
+    });
+
+    it("shows nothing when the latest run succeeded", async () => {
+      github.runs.unshift({ ...failedRun(), conclusion: "success" });
+      await open(language);
+      await screen.findByTestId("reader-update-exposure");
+      expect(screen.queryByTestId("reader-run-failure")).toBeNull();
     });
   });
 

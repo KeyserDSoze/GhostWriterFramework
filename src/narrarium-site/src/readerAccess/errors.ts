@@ -5,7 +5,7 @@
 export type ReaderStep =
   | "repository" | "public-key" | "secret-write" | "secret-delete" | "secrets-list"
   | "variable-read" | "variable-write" | "variable-delete"
-  | "dispatch" | "runs" | "workflow-read" | "pages-read" | "pages-enable" | "pages-disable";
+  | "dispatch" | "runs" | "run-failure" | "workflow-read" | "pages-read" | "pages-enable" | "pages-disable";
 
 export type ReaderFailure =
   | { kind: "permission"; status: number; permissions: string[]; fromHeader: boolean }
@@ -24,7 +24,7 @@ const STEP_PERMISSION: Record<ReaderStep, string[]> = {
   repository: ["metadata"],
   "public-key": ["secrets"], "secret-write": ["secrets"], "secret-delete": ["secrets"], "secrets-list": ["secrets"],
   "variable-read": ["actions_variables"], "variable-write": ["actions_variables"], "variable-delete": ["actions_variables"],
-  dispatch: ["actions"], runs: ["actions"],
+  dispatch: ["actions"], runs: ["actions"], "run-failure": ["actions", "checks"],
   "workflow-read": ["contents"],
   "pages-read": ["pages"], "pages-enable": ["pages"], "pages-disable": ["pages"],
 };
@@ -32,7 +32,7 @@ const STEP_PERMISSION: Record<ReaderStep, string[]> = {
 /** How GitHub's permission keys are called in the screens where an owner gives them (the app's permissions, a fine-grained token). */
 const PERMISSION_LABEL: Record<string, string> = {
   secrets: "Secrets", actions_variables: "Variables", variables: "Variables", actions: "Actions", pages: "Pages", contents: "Contents", workflows: "Workflows",
-  administration: "Administration", metadata: "Metadata",
+  administration: "Administration", metadata: "Metadata", checks: "Checks",
 };
 
 export function permissionLabel(key: string): string {

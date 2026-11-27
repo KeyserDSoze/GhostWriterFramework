@@ -43,6 +43,32 @@ const readerUpdateEn = {
       done: "GitHub Pages is off: the old reader is no longer published.",
       failed: "GitHub Pages could not be turned off: see the Reader access card below for the reason.",
     },
+    runFailure: {
+      neverStarted: "The job never started, so nothing was built: the published site is what it was before.",
+      budget: {
+        title: "GitHub Actions cannot run: the budget or billing blocks it",
+        body: "GitHub did not start the publication: “{{message}}” Pay or fix the billing, or raise the Actions budget, on GitHub; then publish again. Until it runs, nothing you change here reaches the published site.",
+      },
+      "actions-disabled": {
+        title: "GitHub Actions is disabled",
+        body: "GitHub did not run the publication: “{{message}}” Turn Actions on for this repository (or for the account) on GitHub, then publish again.",
+      },
+      permission: {
+        title: "The publication was refused for a missing permission",
+        body: "GitHub said: “{{message}}” Give the credential of this book the missing permission (for the GitHub app: Actions and Workflows; for a token: the workflow scope), then publish again.",
+      },
+      other: {
+        title: "The last publication failed",
+        body: "GitHub said: “{{message}}” Open the run on GitHub for the full log.",
+      },
+      unreadable: {
+        title: "The last publication failed, and the reason could not be read",
+        body: "GitHub does not give the reason to this credential: reading it needs the «Checks» permission (read). Open the run on GitHub to see why.",
+      },
+      publicWarning: "Making the repository public gives free Actions minutes, but publishes everything in it (the whole history, drafts, secrets/ files, notes): do not do it only for this. The warnings of “Make public” in the GitHub tab come first.",
+      billingLink: "Open GitHub billing",
+      actionsLink: "Open the Actions settings of the repository",
+    },
     notPublished: "This book has no reader on GitHub (no publishing workflow and no reader/ folder), so there is nothing to update.",
     elsewhere: "The workflow of this repository builds a reader kept in the folder “{{dir}}”. Narrarium only updates a reader in reader/, so this one has to be updated by hand.",
     noWorkingCopy: "The working branch of this book is not on this device, so its reader cannot be checked from here. Open the book once online to bring it here.",

@@ -12,6 +12,7 @@ import { readerProtection } from "@/readerAccess/model";
 import type { ReaderAccess } from "@/components/book/readerAccess/useReaderAccess";
 import type { ReaderUpdateDecision } from "@/readerUpdate/decision";
 import { outsideCheckCommand, outsideCheckUrls, runOutsideCheck, type OutsideCheckResult } from "@/readerUpdate/outsideCheck";
+import { RunFailureNotice } from "@/components/book/readerAccess/RunFailureNotice";
 import { useBranchSyncStore } from "@/branches/syncStore";
 import { RepositoryError, repositoryErrorDescription, type RepositoryErrorKind } from "@/repository/repositoryError";
 import { useReaderUpdate, useWorkingBranch, type ReaderUpdateFailure } from "@/readerUpdate/useReaderUpdate";
@@ -257,6 +258,7 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         {body}
+        {snapshot.runFailure && <RunFailureNotice failure={snapshot.runFailure} book={book} repository={snapshot.repository} />}
         {updateFailure && <p role="alert" className="flex items-start gap-2 rounded-md border border-destructive/50 p-3 text-destructive"><AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{updateFailure}</p>}
         {syncFailure && <p role="alert" data-testid="reader-sync-failure" className="flex items-start gap-2 rounded-md border border-destructive/50 p-3 text-destructive"><AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" /><span><strong>{t("readerUpdate.onDevice.notSent")}</strong> {syncFailure}</span></p>}
         {access.outcome?.kind === "disable-pages" && <p role="status" data-testid="reader-pages-off-result" className="rounded-md border border-primary/40 bg-primary/5 p-3 font-medium">{access.outcome.result.ok ? t("readerUpdate.pagesOff.done") : t("readerUpdate.pagesOff.failed")}</p>}

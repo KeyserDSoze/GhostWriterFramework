@@ -9,7 +9,7 @@ export function ReaderTabContent({ book }: { book: BookEntry }) {
   return (
     <>
       <ReaderUpdateCard book={book} access={access} />
-      <ReaderAccessCardView access={access} />
+      <ReaderAccessCardView book={book} access={access} />
     </>
   );
 }

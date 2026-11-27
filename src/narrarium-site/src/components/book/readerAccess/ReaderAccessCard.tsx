@@ -12,6 +12,7 @@ import { LEGACY_READER_SECRET } from "@/readerAccess/contract";
 import { readerProtection, reconcileReaderPasswords, type ReaderPasswordRow } from "@/readerAccess/model";
 import { inspectReaderWorkflow } from "@/readerAccess/workflowPlan";
 import { AddPasswordForm } from "@/components/book/readerAccess/AddPasswordForm";
+import { RunFailureNotice } from "@/components/book/readerAccess/RunFailureNotice";
 import { PasswordRow } from "@/components/book/readerAccess/PasswordRow";
 import { ReaderResultNotice } from "@/components/book/readerAccess/ReaderResultNotice";
 import { useReaderAccess, type ReaderAccess } from "@/components/book/readerAccess/useReaderAccess";
@@ -24,11 +25,11 @@ const RUN_STATE_KEY = { queued: "queued", running: "running", succeeded: "succee
  * the variable, then starts the workflow (see `readerAccess/operations`) and says what happened if a step fails.
  */
 export function ReaderAccessCard({ book }: { book: BookEntry }) {
-  return <ReaderAccessCardView access={useReaderAccess(book)} />;
+  return <ReaderAccessCardView book={book} access={useReaderAccess(book)} />;
 }
 
 /** The same card over an access that the caller holds, so that the card beside it (the update of the reader) reads and follows the same GitHub state. */
-export function ReaderAccessCardView({ access }: { access: ReaderAccess }) {
+export function ReaderAccessCardView({ access, book }: { access: ReaderAccess; book: BookEntry }) {
   const { t } = useTranslation();
   const { snapshot, records } = access;
   const titleId = useId();
@@ -106,6 +107,8 @@ export function ReaderAccessCardView({ access }: { access: ReaderAccess }) {
           )}
           <AddPasswordForm busy={access.busy === "add"} blockedReason={addBlockedReason} onAdd={(input) => { lastAction.current = () => void access.add(input); return access.add(input); }} />
         </section>
+
+        {snapshot.runFailure && <RunFailureNotice compact failure={snapshot.runFailure} book={book} repository={snapshot.repository} />}
 
         {run && (
           <p role="status" className="text-xs text-muted-foreground" data-testid="reader-run">

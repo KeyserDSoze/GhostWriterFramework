@@ -6,8 +6,9 @@ import { createTrackedGitHubClient } from "@/repository/githubRequest";
 import { classifyTokenKind, type GitHubTokenKind } from "@/github/bookRepository";
 import { resolveGitHubRemoteToken, type BookEntry, type ReaderPasswordRecord } from "@/types/settings";
 import { useGitHubRemoteAvailability } from "@/github/remoteAvailability";
-import { getPagesState, getRepositoryInfo, getWorkflowState, latestRuns, listSecretNames, readPasswordVariable, readWorkflowFile, type PagesState, type RepositoryInfo, type WorkflowRun } from "@/readerAccess/api";
+import { readRunFailure, getPagesState, getRepositoryInfo, getWorkflowState, latestRuns, listSecretNames, readPasswordVariable, readWorkflowFile, type PagesState, type RepositoryInfo, type WorkflowRun } from "@/readerAccess/api";
 import { ReaderFlowError, classifyReaderFailure, type ReaderFailure } from "@/readerAccess/errors";
+import { classifyRunFailure, type RunFailureInfo } from "@/readerAccess/runFailure";
 import { readerRecordsOf, withReaderRecords, type RemoteReaderState } from "@/readerAccess/model";
 import { addReaderPassword, disableReaderPages, enableReaderPages, removeReaderPassword, republishReader, resumeReaderPassword, type DisablePagesOptions, type ReaderOperationDeps, type ReaderOperationResult } from "@/readerAccess/operations";
 import { describeReaderResult, type ReaderOperationKind, type ReaderResultText } from "@/readerAccess/messages";
@@ -22,11 +23,13 @@ export interface ReaderSnapshot {
   workflow: { present: boolean; content?: string } | null;
   /** `active`, `paused` (Pages was turned off), `missing`, or what GitHub says; `null` when it could not be read. */
   workflowState: string | null;
+  /** Why the latest run failed (read from the annotations of its jobs); `null` when it did not fail, or until it has been read. */
+  runFailure: RunFailureInfo | null;
   failures: Partial<Record<ReaderPart, ReaderFailure>>;
   loadedAt: number | null;
 }
 
-const EMPTY: ReaderSnapshot = { repository: null, pages: null, remote: { secrets: null, listed: null }, runs: null, workflow: null, workflowState: null, failures: {}, loadedAt: null };
+const EMPTY: ReaderSnapshot = { repository: null, pages: null, remote: { secrets: null, listed: null }, runs: null, workflow: null, workflowState: null, runFailure: null, failures: {}, loadedAt: null };
 const POLL_MS = 6_000;
 const POLL_LIMIT_MS = 15 * 60_000;
 
@@ -78,7 +81,7 @@ export function useReaderAccess(book: BookEntry) {
       getWorkflowState(octokit, repo).catch(() => null),
     ]);
     if (!alive.current) return;
-    setSnapshot({ repository, pages, remote: { secrets, listed: variable ? variable.names : null }, runs, workflow, workflowState, failures, loadedAt: Date.now() });
+    setSnapshot((before) => ({ repository, pages, remote: { secrets, listed: variable ? variable.names : null }, runs, workflow, workflowState, runFailure: before.runFailure, failures, loadedAt: Date.now() }));
     setLoading(false);
   }, [token, usable, repo]);
 
@@ -119,6 +122,20 @@ export function useReaderAccess(book: BookEntry) {
     if (result.dispatched) setPolling(true);
     return result;
   }, [deps, busy, refresh, tokenKind]);
+
+  // The latest run failed: its annotations say why (a job that never started is explained only there).
+  const failedRunId = snapshot.runs?.[0]?.state === "failed" ? snapshot.runs[0].id : null;
+  useEffect(() => {
+    const octokit = octokitRef.current;
+    if (failedRunId === null) { setSnapshot((before) => (before.runFailure ? { ...before, runFailure: null } : before)); return undefined; }
+    if (!octokit || snapshot.runFailure?.runId === failedRunId) return undefined;
+    let current = true;
+    void readRunFailure(octokit, repo, failedRunId).then(
+      (read) => { if (current && alive.current) setSnapshot((before) => ({ ...before, runFailure: classifyRunFailure(read) })); },
+      () => { if (current && alive.current) setSnapshot((before) => ({ ...before, runFailure: { runId: failedRunId, cause: "unreadable", neverStarted: false } })); },
+    );
+    return () => { current = false; };
+  }, [failedRunId, repo, snapshot.runFailure?.runId]);
 
   // After a run is started (or while the latest one is still going), look at it every few seconds for a while, so that the status is the real one.
   const latest = snapshot.runs?.[0];

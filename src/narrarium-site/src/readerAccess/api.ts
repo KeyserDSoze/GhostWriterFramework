@@ -46,11 +46,11 @@ function statusOf(error: unknown): number | undefined {
   return error instanceof ReaderFlowError && "status" in error.failure ? error.failure.status : undefined;
 }
 
-export interface RepositoryInfo { private: boolean; defaultBranch: string; htmlUrl: string; canAdminister: boolean; canPush: boolean }
+export interface RepositoryInfo { private: boolean; defaultBranch: string; htmlUrl: string; canAdminister: boolean; canPush: boolean; ownerLogin: string; ownerType: "User" | "Organization" }
 
 export async function getRepositoryInfo(octokit: Octokit, repo: RepositoryRef): Promise<RepositoryInfo> {
   const { data } = await call("repository", () => octokit.rest.repos.get({ ...repo }));
-  return { private: data.private, defaultBranch: data.default_branch || "main", htmlUrl: data.html_url, canAdminister: data.permissions?.admin === true, canPush: data.permissions?.push === true };
+  return { private: data.private, defaultBranch: data.default_branch || "main", htmlUrl: data.html_url, canAdminister: data.permissions?.admin === true, canPush: data.permissions?.push === true, ownerLogin: data.owner?.login ?? repo.owner, ownerType: data.owner?.type === "Organization" ? "Organization" : "User" };
 }
 
 export async function getPublicKey(octokit: Octokit, repo: RepositoryRef): Promise<{ keyId: string; key: string }> {
@@ -145,4 +145,31 @@ export async function enablePages(octokit: Octokit, repo: RepositoryRef): Promis
 /** Turns Pages off (the workflow is paused); with `removePasswords` the variable and the reader's secrets go too. What GitHub refused along the way is in `failures`. */
 export async function disablePages(octokit: Octokit, repo: RepositoryRef, options: { removePasswords?: boolean } = {}): Promise<DisablePagesResult> {
   return call("pages-disable", () => disablePagesSite(requestOf(octokit), repo, options));
+}
+
+/** A job of a run, with the annotations GitHub put on it (the reason a job that never started did not start is only there). */
+export interface RunJobRead { id: number; name: string; conclusion: string | null; steps: number; annotations: string[] }
+export interface RunFailureRead { runId: number; jobs: RunJobRead[]; /** The jobs could be listed but the annotations of at least one could not be read. */ annotationsUnreadable: boolean }
+
+const MAX_JOBS = 5;
+
+/**
+ * Why a run failed, as far as GitHub says: its jobs, and the annotations of the ones that did not succeed (`GET /repos/{o}/{r}/check-runs/{job_id}/annotations`).
+ * A job that did not start has no steps, and its only explanation is an annotation such as «The job was not started because an Actions budget is preventing
+ * further use». Annotations need the «Checks» read permission; when they cannot be read the run is still reported, with `annotationsUnreadable`.
+ */
+export async function readRunFailure(octokit: Octokit, repo: RepositoryRef, runId: number): Promise<RunFailureRead> {
+  const { data } = await call("run-failure", () => octokit.rest.actions.listJobsForWorkflowRun({ ...repo, run_id: runId, per_page: 30 }));
+  const failed = data.jobs.filter((job) => job.conclusion !== "success" && job.conclusion !== "skipped").slice(0, MAX_JOBS);
+  let annotationsUnreadable = false;
+  const jobs: RunJobRead[] = [];
+  for (const job of failed) {
+    let annotations: string[] = [];
+    try {
+      const { data: found } = await call("run-failure", () => octokit.rest.checks.listAnnotations({ ...repo, check_run_id: job.id, per_page: 50 }));
+      annotations = found.map((annotation) => String(annotation.message ?? "")).filter(Boolean);
+    } catch { annotationsUnreadable = true; }
+    jobs.push({ id: job.id, name: job.name, conclusion: job.conclusion, steps: job.steps?.length ?? 0, annotations });
+  }
+  return { runId, jobs, annotationsUnreadable };
 }

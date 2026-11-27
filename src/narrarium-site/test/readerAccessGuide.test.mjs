@@ -22,3 +22,10 @@ test("the guide describes the update of an old reader: the exposure, the one com
     ["github-sync.it.md", ["Aggiorna il lettore", "downloads/book.epub", "Sostituisci le mie modifiche", "si pubblica alla prossima sincronizzazione", "Controllo da fuori", "version.json"]],
   ]) for (const needle of needles) assert.ok(read(file).includes(needle), `${file}: ${needle}`);
 });
+
+test("the guide says when an update is only on this device and names the causes of a failed publication, in both languages", () => {
+  for (const [file, needles] of [
+    ["github-sync.en.md", ["Updated on this device, not yet on GitHub", "Sync now", "Turn GitHub Pages off", "Actions budget or billing", "Checks (read only)"]],
+    ["github-sync.it.md", ["Aggiornato su questo dispositivo, non ancora su GitHub", "Sincronizza ora", "Spegni GitHub Pages", "budget di Actions o la fatturazione", "Checks (sola lettura)"]],
+  ]) for (const needle of needles) assert.ok(read(file).includes(needle), `${file}: ${needle}`);
+});

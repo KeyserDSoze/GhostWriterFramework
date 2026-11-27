@@ -43,6 +43,32 @@ const readerUpdateIt = {
       done: "GitHub Pages è spento: il vecchio lettore non è più pubblicato.",
       failed: "Non è stato possibile spegnere GitHub Pages: il motivo è nella scheda Accesso al lettore qui sotto.",
     },
+    runFailure: {
+      neverStarted: "Il job non è mai partito, quindi non è stato costruito nulla: il sito pubblicato è com'era prima.",
+      budget: {
+        title: "GitHub Actions non può girare: lo blocca il budget o la fatturazione",
+        body: "GitHub non ha avviato la pubblicazione: “{{message}}” Sistema il pagamento, o alza il budget di Actions, su GitHub; poi pubblica di nuovo. Finché non gira, nulla di ciò che cambi qui arriva al sito pubblicato.",
+      },
+      "actions-disabled": {
+        title: "GitHub Actions è disattivato",
+        body: "GitHub non ha eseguito la pubblicazione: “{{message}}” Attiva Actions per questo repository (o per l'account) su GitHub, poi pubblica di nuovo.",
+      },
+      permission: {
+        title: "La pubblicazione è stata rifiutata per un permesso mancante",
+        body: "GitHub ha detto: “{{message}}” Dai alla credenziale di questo libro il permesso che manca (per la GitHub App: Actions e Workflows; per un token: lo scope workflow), poi pubblica di nuovo.",
+      },
+      other: {
+        title: "L'ultima pubblicazione è fallita",
+        body: "GitHub ha detto: “{{message}}” Apri l'esecuzione su GitHub per il log completo.",
+      },
+      unreadable: {
+        title: "L'ultima pubblicazione è fallita, e il motivo non si è potuto leggere",
+        body: "GitHub non dà il motivo a questa credenziale: leggerlo richiede il permesso «Checks» (lettura). Apri l'esecuzione su GitHub per vedere perché.",
+      },
+      publicWarning: "Rendere pubblico il repository dà minuti di Actions gratuiti, ma pubblica tutto ciò che contiene (tutta la cronologia, le bozze, i file di secrets/, gli appunti): non farlo solo per questo. Prima vengono gli avvisi di «Rendi pubblico» nella scheda GitHub.",
+      billingLink: "Apri la fatturazione di GitHub",
+      actionsLink: "Apri le impostazioni di Actions del repository",
+    },
     notPublished: "Questo libro non ha un lettore su GitHub (né il workflow di pubblicazione né la cartella reader/): non c'è nulla da aggiornare.",
     elsewhere: "Il workflow di questo repository costruisce un lettore tenuto nella cartella “{{dir}}”. Narrarium aggiorna solo un lettore in reader/, quindi questo va aggiornato a mano.",
     noWorkingCopy: "Il ramo di lavoro di questo libro non è su questo dispositivo, quindi da qui non si può controllare il suo lettore. Apri il libro una volta online per portarlo qui.",
