@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.135.0",
+    "date": "2026-11-27",
+    "en": {
+      "title": "The reader's workflow no longer passes all your secrets, and GitHub should stop flagging it",
+      "summary": "The workflow that publishes your reader gave its build step every secret of the repository, which GitHub can take for a malicious workflow and hold at «Action required». Version 3 passes only the password slots; «Update the reader» brings your book to it.",
+      "changes": [
+        "A new reader workflow (version 3) gives the build step only the 24 password slots, READER_PASSWORD_001 to READER_PASSWORD_024, one by one, and never every secret of the repository as JSON. GitHub does not document why it flags a workflow, so this is the probable cure, not a proven one.",
+        "«Update the reader» replaces a workflow of version 2 with version 3 and says why in the list of changes. Your passwords, their secrets and the list on GitHub stay exactly as they are: nothing is renamed, and a book on version 2 keeps working until you update. New books get version 3 from the start (reader 0.1.62).",
+        "A new password takes the first free slot (up to 24 passwords per book; with all 24 used, the card says so before anything is written). A password whose secret is not one of the slots is flagged, because version 3 would not read it.",
+        "When GitHub holds a publication for approval («Action required»), the live state of the publication says it in words: GitHub is waiting for your approval, open the run on GitHub and press «Approve and run», with the link to the run. It goes on by itself once you approve it."
+      ]
+    },
+    "it": {
+      "title": "Il workflow del lettore non passa più tutti i tuoi secret, e GitHub dovrebbe smettere di segnalarlo",
+      "summary": "Il workflow che pubblica il tuo lettore dava al suo passo di build ogni secret del repository, cosa che GitHub può scambiare per un workflow malevolo e fermare su «Azione richiesta». La versione 3 passa solo gli slot delle password; «Aggiorna il lettore» porta il tuo libro a quella.",
+      "changes": [
+        "Un nuovo workflow del lettore (versione 3) dà al passo di build solo i 24 slot delle password, da READER_PASSWORD_001 a READER_PASSWORD_024, uno per uno, e mai ogni secret del repository come JSON. GitHub non documenta perché segnala un workflow, quindi è la cura probabile, non provata.",
+        "«Aggiorna il lettore» sostituisce un workflow di versione 2 con la versione 3 e dice perché nell'elenco delle modifiche. Le tue password, i loro secret e l'elenco su GitHub restano esattamente come sono: nulla viene rinominato, e un libro sulla versione 2 continua a funzionare finché non aggiorni. I nuovi libri hanno la versione 3 fin dall'inizio (lettore 0.1.62).",
+        "Una nuova password prende il primo slot libero (fino a 24 password per libro; con tutti i 24 usati la scheda lo dice prima di scrivere qualsiasi cosa). Una password il cui secret non è uno degli slot viene segnalata, perché la versione 3 non la leggerebbe.",
+        "Quando GitHub tiene ferma una pubblicazione in attesa di approvazione («Azione richiesta»), lo stato dal vivo della pubblicazione lo dice a parole: GitHub aspetta la tua approvazione, apri l'esecuzione su GitHub e premi «Approva ed esegui», con il link all'esecuzione. Prosegue da sola quando la approvi."
+      ]
+    }
+  },
+  {
     "version": "0.134.1",
     "date": "2026-11-27",
     "en": {
