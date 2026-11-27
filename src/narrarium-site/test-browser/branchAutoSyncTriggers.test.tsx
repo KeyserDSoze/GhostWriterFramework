@@ -2,6 +2,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const runtime = vi.hoisted(() => ({ requests: [] as Array<[string, string]>, branches: [] as Array<string | undefined> }));
+const notices = vi.hoisted(() => ({ dismissed: [] as number[] }));
 const toasts = vi.hoisted(() => vi.fn());
 vi.mock("@/branches/syncRuntime", () => ({ branchSyncRuntime: () => ({ request: (bookId: string, trigger: string, branch?: string) => { runtime.requests.push([bookId, trigger]); runtime.branches.push(branch); } }) }));
 vi.mock("@/components/ui/use-toast", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/components/ui/use-toast")>()), toast: toasts }));
@@ -14,6 +15,7 @@ import { useBranchAutoSync, type BranchAutoSyncInput } from "@/branches/useBranc
 import { sayOutcomesOfWatchedBranch } from "@/branches/outcomeToasts";
 import { useBranchSyncStore } from "@/branches/syncStore";
 import { useSaveStore } from "@/store/saveStore";
+import { useRepositorySyncStore } from "@/store/repositorySyncStore";
 import { FakeLockRegistry, installNavigatorLocks } from "./helpers/fakeWebLocks";
 
 function Probe(props: BranchAutoSyncInput) {
@@ -27,6 +29,10 @@ const base: BranchAutoSyncInput = { bookId: "book-1", loadedBranch: "main", read
 beforeEach(async () => {
   runtime.requests.length = 0;
   runtime.branches.length = 0;
+  notices.dismissed.length = 0;
+  // Each notice can be taken away, as the real toast can: it says which one was.
+  toasts.mockImplementation(() => { const id = toasts.mock.calls.length; return { id: String(id), dismiss: () => notices.dismissed.push(id), update: () => undefined }; });
+  useRepositorySyncStore.setState({ current: null, conflict: null });
   sessionStorage.clear();
   useBranchSyncStore.setState({ books: {} });
   useSaveStore.setState({ current: null });
@@ -115,6 +121,35 @@ describe("what the person is told", () => {
     expect(shown).toMatchObject({ title: "GitHub and this device both changed main", description: "Nothing was overwritten. Sync to bring the two together: if the same file changed on both sides, you choose which version to keep." });
     shown.action.props.onClick();
     expect(onSyncNow).toHaveBeenCalled();
+    act(() => { useBranchSyncStore.getState().patchBook("book-1", { branches: { main: { outcome: "diverged", at: 2, remoteHeadSha: "abc" } } }); });
+    await flush();
+    expect(toasts).toHaveBeenCalledTimes(1);
+  });
+
+  it("that GitHub and this device both changed the branch, until the sync it asks for starts: then the notice goes, and never covers the window of the sync", async () => {
+    render(<Probe {...base} />);
+    stop = sayOutcomesOfWatchedBranch();
+    act(() => { useBranchSyncStore.getState().patchBook("book-1", { branches: { main: { outcome: "diverged", at: 1, remoteHeadSha: "abc" } } }); });
+    await flush();
+    expect(toasts).toHaveBeenCalledTimes(1);
+    // A sync registered but idle leaves it; the sync started from the pill (not from the notice) takes it away, once.
+    act(() => { useRepositorySyncStore.getState().setCurrent({ busy: false, sync: () => true }); });
+    expect(notices.dismissed).toEqual([]);
+    act(() => { useRepositorySyncStore.getState().setCurrent({ busy: true, sync: () => true }); });
+    expect(notices.dismissed).toEqual([1]);
+    act(() => { useRepositorySyncStore.getState().setCurrent({ busy: false, sync: () => true }); });
+    act(() => { useRepositorySyncStore.getState().setCurrent({ busy: true, sync: () => true }); });
+    expect(notices.dismissed).toEqual([1]);
+  });
+
+  it("nothing about a divergence while the sync it would ask for runs or its resolver is open, and the notice once it is over", async () => {
+    render(<Probe {...base} />);
+    stop = sayOutcomesOfWatchedBranch();
+    act(() => { useRepositorySyncStore.getState().setCurrent({ busy: true, sync: () => true }); });
+    act(() => { useBranchSyncStore.getState().patchBook("book-1", { branches: { main: { outcome: "diverged", at: 1, remoteHeadSha: "abc" } } }); });
+    await flush();
+    expect(toasts).not.toHaveBeenCalled();
+    act(() => { useRepositorySyncStore.getState().setCurrent({ busy: false, sync: () => true }); });
     act(() => { useBranchSyncStore.getState().patchBook("book-1", { branches: { main: { outcome: "diverged", at: 2, remoteHeadSha: "abc" } } }); });
     await flush();
     expect(toasts).toHaveBeenCalledTimes(1);

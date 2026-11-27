@@ -24,8 +24,8 @@ import { useSettings } from "@/drive/useSettings";
 import { parseAppRoute } from "@/assistant/context";
 import { getLocalRepositoryStatusSnapshot, listUnpushedLocalCommits } from "@/repository/localRepository";
 import { pillOfCopy, pillText, shownPill, type RepositoryPill } from "@/components/layout/repositoryPill";
-import { RepositorySyncConflictDialog } from "@/components/repository/RepositorySyncConflictDialog";
-import { repositoryErrorDescription } from "@/repository/repositoryError";
+import type { ConflictApplyControl, ConflictApplyOutcome } from "@/components/repository/RepositorySyncConflictDialog";
+import { isRepositoryError, repositoryErrorDescription } from "@/repository/repositoryError";
 import { BranchNameTakenError, commitLocalChanges, fetchRemoteStatus, pullRemoteChanges, RepositorySyncChoiceStaleError, RepositorySyncConflictError, syncFullRepository, type RepositorySyncConflictChoice, type RepositorySyncConflictResolution } from "@/repository/repositoryService";
 import { bookStorageMode, resolveBookToken } from "@/types/settings";
 import { resolveAuthoritativeBranch } from "@/github/branchRules";
@@ -53,6 +53,8 @@ const RepositoryStatusDialog = lazy(() => import("@/components/repository/Reposi
 const BranchSwitcherDialog = lazy(() => import("@/components/branches/BranchSwitcherDialog").then((module) => ({ default: module.BranchSwitcherDialog })));
 const AutoSyncStatus = lazy(() => import("@/components/branches/AutoSyncStatus").then((module) => ({ default: module.AutoSyncStatus })));
 const CostsIndicator = lazy(() => import("@/components/costs/CostsIndicator").then((module) => ({ default: module.CostsIndicator })));
+// The resolver of the conflicts of a sync, its texts and its comparison of the two versions load when a sync finds files changed on both sides.
+const RepositorySyncConflictDialog = lazy(() => import("@/components/repository/RepositorySyncConflictDialog").then((module) => ({ default: module.RepositorySyncConflictDialog })));
 
 function initials(name: string | undefined): string {
   if (!name) return "?";
@@ -291,7 +293,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     }
   }
 
-  async function runFullSync(conflictResolutions?: Record<string, RepositorySyncConflictChoice>): Promise<boolean> {
+  async function runFullSync(): Promise<boolean> {
     if (!repositoryTarget) return false;
     setRepoActionBusy("sync");
     try {
@@ -302,7 +304,7 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
         toast({ title: t("localFirst.savedLocally"), description: remote === "offline" ? t("localFirst.savedOffline") : remote === "no-credential" ? t("localFirst.savedNoCredential") : undefined });
         return true;
       }
-      const result = await syncFullRepository({ ...repositoryTarget, token: currentToken, conflictResolutions });
+      const result = await syncFullRepository({ ...repositoryTarget, token: currentToken });
       setSyncConflict(null);
       toast({
         title: t("repoStatus.syncDone", { pulled: result.pulled, kept: result.keptLocal, pushed: result.pushed }),
@@ -312,11 +314,6 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     } catch (error) {
       if (error instanceof RepositorySyncConflictError) {
         setSyncConflict({ error, target: repositoryTarget });
-        return false;
-      }
-      if (error instanceof RepositorySyncChoiceStaleError) {
-        setSyncConflict(error.conflicts.length ? { error: new RepositorySyncConflictError(error.conflicts), target: repositoryTarget } : null);
-        toast({ title: t("repoStatus.conflictChoicesStale"), variant: "destructive" });
         return false;
       }
       if (error instanceof BranchNameTakenError) {
@@ -333,13 +330,14 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
     }
   }
 
-  async function applyConflictChoices(resolutions: Record<string, RepositorySyncConflictResolution>) {
-    if (!syncConflict) return;
+  /** Runs the sync with the author's choices for the resolver, which shows its steps and what came of it; a new list of files replaces the one in it. */
+  async function applyConflictChoices(resolutions: Record<string, RepositorySyncConflictResolution>, control: ConflictApplyControl): Promise<ConflictApplyOutcome> {
+    if (!syncConflict) return { kind: "nothing" };
     const sameTarget = repositoryTarget && sameRepositorySyncTarget(syncConflict.target, repositoryTarget);
-    if (!sameTarget) {
+    if (!repositoryTarget || !sameTarget) {
       setSyncConflict(null);
       toast({ title: t("repoStatus.conflictContextChanged"), variant: "destructive" });
-      return;
+      return { kind: "nothing" };
     }
     const boundResolutions = Object.fromEntries(syncConflict.error.conflicts.map((conflict) => [conflict.path, {
       choice: resolutions[conflict.path],
@@ -350,12 +348,30 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       expectedLocalBaseSha: conflict.localBaseSha,
       expectedLocalChanged: conflict.localChanged,
     }])) as Record<string, RepositorySyncConflictChoice>;
-    if (!await runFullSync(boundResolutions)) return;
-    if (Object.values(resolutions).includes("remote")) {
-      window.location.reload();
-      return;
+    const target = repositoryTarget;
+    setRepoActionBusy("sync");
+    try {
+      const result = await syncFullRepository({ ...target, token: currentToken, conflictResolutions: boundResolutions, onProgress: control.onProgress, signal: control.signal });
+      // A version taken from GitHub replaces what the open pages hold: the page reloads (from the resolver, once the author has read what happened).
+      const reload = Object.values(resolutions).includes("remote");
+      if (!reload) await triggerCurrentSave();
+      return { kind: "done", result, reload };
+    } catch (error) {
+      if ((error instanceof DOMException && error.name === "AbortError") || isRepositoryError(error, "abort")) return { kind: "stopped" };
+      if (error instanceof RepositorySyncConflictError) {
+        setSyncConflict({ error, target });
+        return { kind: "replaced", reason: "changed" };
+      }
+      if (error instanceof RepositorySyncChoiceStaleError) {
+        if (!error.conflicts.length) return { kind: "nothing" };
+        setSyncConflict({ error: new RepositorySyncConflictError(error.conflicts), target });
+        return { kind: "replaced", reason: "stale" };
+      }
+      return { kind: "failed", message: repositoryErrorDescription(error, t) };
+    } finally {
+      setRepoActionBusy(null);
+      refreshRepositoryStatus();
     }
-    await triggerCurrentSave();
   }
 
   useRegisterRepositorySync({
@@ -605,7 +621,11 @@ export function Topbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
       </div>
       {repoDialogLoaded && <Suspense fallback={null}><RepositoryStatusDialog open={repoDialogOpen} onOpenChange={setRepoDialogOpen} book={currentBook} branch={currentBranch} settings={settings} /></Suspense>}
       {branchDialogLoaded && currentBook && !currentBookIsLocal && currentBranch && <Suspense fallback={null}><BranchSwitcherDialog open={branchDialogOpen} onOpenChange={setBranchDialogOpen} book={currentBook} branch={currentBranch} pending={branchPending} remote={remote} token={currentToken} onSyncNow={() => { void triggerCurrentRepositorySync(); }} /></Suspense>}
-      <RepositorySyncConflictDialog conflicts={syncConflict?.error.conflicts ?? []} busy={repoActionBusy === "sync"} onCancel={() => setSyncConflict(null)} onApply={applyConflictChoices} />
+      {syncConflict && (
+        <Suspense fallback={null}>
+          <RepositorySyncConflictDialog conflicts={syncConflict.error.conflicts} onApply={applyConflictChoices} onClose={() => setSyncConflict(null)} onReload={() => window.location.reload()} />
+        </Suspense>
+      )}
       <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </header>
   );
