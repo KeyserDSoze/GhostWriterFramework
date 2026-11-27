@@ -10,9 +10,13 @@ export interface AiJsonSchema {
 }
 
 export interface AiUsage {
+  /** Every token of the prompt, those served from the provider's cache and those it wrote to it included. */
   inputTokens: number;
   outputTokens: number;
+  /** The input tokens the provider served from its cache (a part of `inputTokens`, billed at the cached price). */
   cachedInputTokens: number;
+  /** The input tokens the provider wrote to its cache (a part of `inputTokens`, billed at the cache-write price), when it says: Anthropic's `cache_creation_input_tokens`, Azure OpenAI's `cache_write_tokens`. Absent when it does not. */
+  cacheWriteInputTokens?: number;
 }
 
 /**
@@ -26,9 +30,12 @@ export interface AiProgress {
   characters: number;
 }
 
-/** A part of the content of a message: text, or an image given as a data URL. */
+/**
+ * A part of the content of a message: text, or an image given as a data URL. A part of text may say `cacheBreak`: the start of the prompt that stays the same from one call to the next ends
+ * with it, which is where an Anthropic model is told to cache (`cache_control`); nothing else reads it, and it is never sent.
+ */
 export type AiContentPart =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; cacheBreak?: boolean }
   | { type: "image"; dataUrl: string };
 
 /** One message of a conversation: its role and its content, which is text or a list of parts (text and images). */
@@ -44,6 +51,16 @@ export interface AiRequest {
   label: string;
   system: string;
   user: string;
+  /**
+   * Where the start of `user` that stays the same from one call to the next ends, as a number of its characters (see `AiContentPart.cacheBreak`, which says it for `messages`). It matters only to a model
+   * that is told where to cache (an Anthropic model: `cache_control`); the text that is sent is `user`, whole, and it is never changed for it.
+   */
+  cacheBreak?: number;
+  /**
+   * What the requests that share the start of their prompt have in common (a book and a task: `<book>/<task>`): the engine sends a short hash of it as `prompt_cache_key` to OpenAI and Azure OpenAI, so that
+   * the provider routes them to one cache. Absent: no key is sent. It is never sent as it is.
+   */
+  cacheKey?: string;
   /**
    * The conversation to send, for a host that has one (the web app's Copilot: its history, and the images the author attached). When it is there (and is not empty) it is what
    * is sent, with its roles and its parts, in place of `system` and `user`, which are then not read (give empty text). A part of text goes out as it is and an image as an

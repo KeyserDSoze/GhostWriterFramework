@@ -203,6 +203,8 @@ export interface ServerAiStatus {
   pendingApproval?: string[];
   /** Whether "Tools only" is in force (`AiRuntimeConfig.toolsOnly`: true unless the configuration turned it off). Absent from a server that does not say. */
   toolsOnly?: boolean;
+  /** Whether the hints that help a provider find its cache are sent (`AiRuntimeConfig.promptCacheHints`: true unless the configuration turned them off). Absent from a server that does not say. */
+  promptCacheHints?: boolean;
   /** The route of every routed task, with the thinking level of each target when it sets one (`redactAiRuntimeConfig(...).taskRouting`). Absent from a server that does not say. */
   taskRouting?: Record<string, RedactedAiTaskRoute>;
 }

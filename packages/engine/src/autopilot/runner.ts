@@ -16,7 +16,7 @@ import { isItalian, languageCode, tail, truncate } from "../util/text.js";
 import { RunCalls, schemaHashOf, statusOf, type CallEndInfo } from "./calls/run-calls.js";
 import type { AiCallStore } from "./calls/port.js";
 import type { AiCallStatus, AiCallTaskStatus } from "./calls/types.js";
-import type { AiModelLearning, AiModelMemory } from "../ai/memory.js";
+import type { AiModelLearning, AiModelMemory, AiNoThinkingLearning } from "../ai/memory.js";
 import { describeErrorBody, suggestsResponsesApi } from "../ai/provider-error.js";
 import { attemptInfoOf } from "./attempt.js";
 import { autopilotErrorFields } from "./errors.js";
@@ -397,7 +397,7 @@ function callsStoreFailedTitle(italian: boolean, error: unknown): string {
  * The notice of a model that was learned to refuse thinking when the request carries tools, in the language of the book: what was done (thinking is off for the requests with tools, for this model only), the
  * words of the provider as it wrote them, and the two ways out in plain words: the Responses API first when the provider's words tell to use it, then turning thinking off (which is what was done).
  */
-function modelLearnedNotice(learning: AiModelLearning, responses: boolean, italian: boolean): { title: string; detail: string } {
+function modelLearnedNotice(learning: AiNoThinkingLearning, responses: boolean, italian: boolean): { title: string; detail: string } {
   const said = describeErrorBody(learning.body);
   const none = learning.off === "none";
   const where = italian ? "Si può cambiare nelle impostazioni del modello (Integrazioni AI)." : "This can be changed in the settings of the model (AI Integrations).";
@@ -413,6 +413,12 @@ function modelLearnedNotice(learning: AiModelLearning, responses: boolean, itali
     title: `${learning.model}: thinking is turned off when tools are used; the provider said so`,
     detail: `The provider answered: ${said}. ${responses ? "It says to use the Responses API for this model (/v1/responses) or to turn thinking off when tools are used. " : ""}${done} ${where}`,
   };
+}
+
+/** The task a call belongs to, from its label (`autopilot:specialists:3:1` is `autopilot:specialists`, `reader-evaluation:mara` is `reader-evaluation`): the calls of a task begin with the same instructions. */
+export function promptTaskOf(label: string): string {
+  const parts = label.split(":");
+  return parts.slice(0, parts[0] === "autopilot" ? 2 : 1).join(":");
 }
 
 function describeError(error: unknown): string {
@@ -966,6 +972,21 @@ export class AutopilotRun {
 
   /** A call learned something about a model: said as an event for a host to persist, and as an insight for the author (the words of the provider, and the two ways out). */
   private learned(activityId: string, learning: AiModelLearning, italian: boolean): void {
+    if (learning.kind === "prompt-caching") {
+      this.emit({
+        type: "prompt-caching-learned",
+        activityId,
+        integrationId: learning.integrationId,
+        integrationName: learning.integrationName,
+        model: learning.model,
+        learned: learning.learned,
+        ...(learning.inputTokens !== undefined ? { inputTokens: learning.inputTokens } : {}),
+        ...(learning.cachedInputTokens !== undefined ? { cachedInputTokens: learning.cachedInputTokens } : {}),
+        ...(learning.hint ? { hint: learning.hint } : {}),
+        ...(learning.body ? { body: learning.body } : {}),
+      });
+      return;
+    }
     const responses = suggestsResponsesApi(learning.body);
     this.emit({ type: "model-learned", activityId, learned: learning.kind, integrationId: learning.integrationId, integrationName: learning.integrationName, model: learning.model, off: learning.off, body: learning.body, responses });
     this.emit({ type: "insight", activityId, tone: "warning", code: "modelLearned", model: learning.model, ...modelLearnedNotice(learning, responses, italian) });
@@ -1400,6 +1421,8 @@ export class AutopilotRun {
             response = await this.config.ai.complete({
               ...request,
               user,
+              // The calls of one task of this book share the start of their prompt: a provider that takes a key for its cache is told which they are (the engine sends a hash of it).
+              cacheKey: request.cacheKey ?? `${this.config.bookId}/${promptTaskOf(request.label)}`,
               signal: stepController.signal,
               onText,
               ...(onStructuredText ? { onStructuredText } : {}),

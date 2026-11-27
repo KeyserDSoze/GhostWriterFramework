@@ -151,8 +151,24 @@ export function looksLikeResponsesUrl(value: unknown): boolean {
 
 export interface AiPricingConfig {
   inputPerMTok?: number;
+  /** What a million input tokens served from the provider's cache cost (a fraction of `inputPerMTok`: a tenth for GPT-5 and Claude, a quarter for GPT-4.1, a half for GPT-4o). Absent: they cost like any input. */
   cachedPerMTok?: number;
+  /** What a million input tokens that the provider writes to its cache cost, for the providers that charge for the write (Anthropic: 1.25 times the input; GPT-5.6 and later: the same). Absent: the write costs like any input. */
+  cacheWritePerMTok?: number;
   outputPerMTok?: number;
+}
+
+/**
+ * Whether a model caches the start of the prompts it is sent (`AiChatModelConfig.promptCaching`), which decides whether the engine sends the hints that help a provider find its cache, and whether an estimate counts on one:
+ * `supported` (the author says it does), `unsupported` (the author says it does not: no hint is sent, no saving is counted on), `learned` (a response of this model reported tokens served from its cache: set by
+ * the engine, never by the author) and `unknown` (nothing is said, which is what an absent value means: the requests are what they always were, and the engine learns). It changes no request but for the hints.
+ */
+export const AI_PROMPT_CACHING = ["unknown", "supported", "unsupported", "learned"] as const;
+export type AiPromptCaching = (typeof AI_PROMPT_CACHING)[number];
+
+/** A prompt-caching state as the engine keeps it: `supported`, `unsupported` or `learned`, spelled exactly; `unknown` is the absence of a value, and anything else is no value. */
+export function normalizePromptCaching(value: unknown): Exclude<AiPromptCaching, "unknown"> | undefined {
+  return value === "supported" || value === "unsupported" || value === "learned" ? value : undefined;
 }
 
 export interface AiChatModelConfig {
@@ -186,6 +202,12 @@ export interface AiChatModelConfig {
    * It is a rule of Chat Completions: a model asked through the Responses API (`apiProtocol`) is sent its level with tools, whatever this says.
    */
   noThinkingWithTools?: AiNoThinkingWithTools;
+  /**
+   * Whether the model caches the start of the prompts it is sent (`AiPromptCaching`): `supported` and `learned` let the engine send the hints that route a request to the cache of an earlier one and let an estimate count on
+   * the cached price (`pricing.cachedPerMTok`); `unsupported` sends no hint and counts on no saving. The engine learns it (`learned`) from the first response that reports tokens served from the cache, never over what
+   * the author said. Absent: `unknown`.
+   */
+  promptCaching?: AiPromptCaching;
   /**
    * The API version this model's requests carry (Azure OpenAI's `api-version`): each deployment may need its own. Absent or empty: the integration's `apiVersion`, else
    * `DEFAULT_AZURE_API_VERSION`. `effectiveApiVersion` is the one place that says which is used; it only has an effect for an Azure OpenAI integration.
@@ -331,6 +353,11 @@ export interface AiRuntimeConfig {
    * calls is not used for one. Absent or true: on. False: a model without tool calls gets the schema in the message, and a JSON in the reply's text is read.
    */
   toolsOnly?: boolean;
+  /**
+   * The hints that help a provider find the cache of an earlier request (`prompt_cache_key` for OpenAI and Azure OpenAI, `cache_control` for an Anthropic model): sent unless this is false. A model whose
+   * `promptCaching` is `unsupported` gets none whatever this says, and a provider that refuses one is not sent it again (`AiModelMemory`). The settings call it `aiPromptCacheHints`.
+   */
+  promptCacheHints?: boolean;
 }
 
 const PROVIDERS: AiProviderKind[] = ["azure_openai", "openai", "github_models", "m365_copilot"];
@@ -360,7 +387,7 @@ function idleTimeout(value: unknown): number | undefined {
 function pricing(value: unknown): AiPricingConfig | undefined {
   const source = record(value);
   const output: AiPricingConfig = {};
-  for (const key of ["inputPerMTok", "cachedPerMTok", "outputPerMTok"] as const) {
+  for (const key of ["inputPerMTok", "cachedPerMTok", "cacheWritePerMTok", "outputPerMTok"] as const) {
     const amount = source[key];
     if (typeof amount === "number" && Number.isFinite(amount) && amount >= 0) output[key] = amount;
   }
@@ -419,6 +446,7 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
         ...(typeof model.supportsVision === "boolean" ? { supportsVision: model.supportsVision } : {}),
         ...reasoningParameterOf(model.reasoningParameter),
         ...(model.noThinkingWithTools === true || model.noThinkingWithTools === "none" ? { noThinkingWithTools: model.noThinkingWithTools } : {}),
+        ...(normalizePromptCaching(model.promptCaching) ? { promptCaching: normalizePromptCaching(model.promptCaching) } : {}),
         ...(text(model.apiVersion) ? { apiVersion: text(model.apiVersion) } : {}),
         ...(normalizeApiProtocol(model.apiProtocol) ? { apiProtocol: normalizeApiProtocol(model.apiProtocol) } : {}),
         ...(normalizeEndpointUrl(model.endpointUrl) ? { endpointUrl: normalizeEndpointUrl(model.endpointUrl) } : {}),
@@ -458,6 +486,7 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
   const disclosure = isObject(source.fallbackDisclosure) ? source.fallbackDisclosure : undefined;
   // The settings say `aiToolsOnly`; a configuration that was already picked (what a personal server stores and reads back) says `toolsOnly`.
   const toolsOnly = typeof source.aiToolsOnly === "boolean" ? source.aiToolsOnly : typeof source.toolsOnly === "boolean" ? source.toolsOnly : undefined;
+  const promptCacheHints = typeof source.aiPromptCacheHints === "boolean" ? source.aiPromptCacheHints : typeof source.promptCacheHints === "boolean" ? source.promptCacheHints : undefined;
   return {
     aiIntegrations: integrations,
     taskRouting,
@@ -468,6 +497,7 @@ export function pickAiRuntimeConfig(settings: unknown): AiRuntimeConfig {
     ...(disclosure ? { fallbackDisclosure: { sameBoundaryOnly: disclosure.sameBoundaryOnly === true, requireAcknowledgement: disclosure.requireAcknowledgement === true } } : {}),
     ...(routingExecution ? { routingExecution } : {}),
     ...(toolsOnly !== undefined ? { toolsOnly } : {}),
+    ...(promptCacheHints !== undefined ? { promptCacheHints } : {}),
   };
 }
 
@@ -500,6 +530,8 @@ export interface RedactedAiModel {
   reasoningParameter?: AiReasoningParameter;
   /** Whether the model refuses thinking when the request carries tools, and how it is asked then (see `AiChatModelConfig.noThinkingWithTools`); absent: it does not, as far as is known. */
   noThinkingWithTools?: AiNoThinkingWithTools;
+  /** Whether the model is declared (or was learned) to cache the start of its prompts, when it says (see `AiChatModelConfig.promptCaching`); absent: unknown. */
+  promptCaching?: Exclude<AiPromptCaching, "unknown">;
   /** The API version of the model, when it names its own (Azure OpenAI): absent, it takes the integration's. */
   apiVersion?: string;
   /** The Responses API, when the model is asked through it (absent: Chat Completions). */
@@ -530,6 +562,8 @@ export interface RedactedAiRuntimeConfig {
   taskRouting: Record<string, RedactedAiTaskRoute>;
   /** Whether "Tools only" is in force: true unless the configuration turned it off. */
   toolsOnly: boolean;
+  /** Whether the cache hints are sent: true unless the configuration turned them off (`AiRuntimeConfig.promptCacheHints`). */
+  promptCacheHints: boolean;
   fallbackDisclosure?: AiFallbackDisclosure;
   routingExecution?: Partial<AiRoutingExecution>;
 }
@@ -557,6 +591,7 @@ function redactedModel(model: AiChatModelConfig): RedactedAiModel {
     ...(supportsVision !== undefined ? { supportsVision } : {}),
     ...reasoningParameterOf(model.reasoningParameter),
     ...(model.noThinkingWithTools === true || model.noThinkingWithTools === "none" ? { noThinkingWithTools: model.noThinkingWithTools } : {}),
+    ...(normalizePromptCaching(model.promptCaching) ? { promptCaching: normalizePromptCaching(model.promptCaching) } : {}),
     ...(text(model.apiVersion) ? { apiVersion: text(model.apiVersion) } : {}),
     ...(normalizeApiProtocol(model.apiProtocol) ? { apiProtocol: "responses" as const } : {}),
     ...(describeUrl(model.endpointUrl) ? { endpointUrl: describeUrl(model.endpointUrl) } : {}),
@@ -596,6 +631,7 @@ export function redactAiRuntimeConfig(config: AiRuntimeConfig): RedactedAiRuntim
     routedTasks: Object.keys(config.taskRouting ?? {}).sort(),
     taskRouting,
     toolsOnly: config.toolsOnly !== false,
+    promptCacheHints: config.promptCacheHints !== false,
     ...(config.fallbackDisclosure ? { fallbackDisclosure: config.fallbackDisclosure } : {}),
     ...(config.routingExecution ? { routingExecution: config.routingExecution } : {}),
   };

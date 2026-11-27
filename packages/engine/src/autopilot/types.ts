@@ -1,6 +1,6 @@
 import type { AiRouteStep, AiStreamEnd, AiTimeoutPhase, AiUsage } from "../ai/types.js";
 import type { AiStreamMode } from "../ai/config.js";
-import type { AiModelLearning } from "../ai/memory.js";
+import type { AiModelLearning, AiNoThinkingLearning, AiPromptCachingLearning } from "../ai/memory.js";
 import type { AiErrorBody } from "../ai/provider-error.js";
 import type { AiAttemptThinking, AiThinkingWhy } from "../ai/request.js";
 import type { AiCallDropReason, AiCallStatus } from "./calls/types.js";
@@ -1212,6 +1212,9 @@ export interface AutopilotAttemptInfo {
  * that answered), the integration and the model, `off` (`omit`: the level is left out; `none`: `reasoning_effort: "none"` is sent), `body` (what the provider said the first time, in its own words) and `responses` (its
  * words tell to use the Responses API, `/v1/responses`, instead). A host that keeps settings persists it as the model's `noThinkingWithTools` (`true` for `omit`, `"none"` for `none`); a
  * `modelLearned` insight says it in words, with the two ways out, and `snapshot().learned` lists what the session has learned, for a client that connects later. It is kept in the replay of the session.
+ * `prompt-caching-learned` says what a call learned about a model's prompt caching (see `AiPromptCachingLearning`), with no insight, because it is no trouble: `learned` is `cached` (a response reported tokens served from
+ * the provider's cache, `cachedInputTokens` of its `inputTokens`: a host that keeps settings sets the model's `promptCaching` to `learned` unless the author said it already) or `hints-rejected` (the provider refused the
+ * `hint` that helps it find its cache, with its `body`, and the call was asked again without it: the engine does not send it to that model again, for as long as the session lives). It is kept in the replay of the session.
  * A `callsStoreFailed` insight says that the records of the AI calls could not be kept (the store is full or failed): the run goes on without them.
  * The insights about the outline carry the chapter they are about (`chapterNumber`) and, for a ghostwriter the outline names that does
  * not exist, its slug (`ghostwriter`), so that a client can say them in its language.
@@ -1221,7 +1224,8 @@ export type AutopilotEventBody =
   | { type: "run-ended"; runId: string; status: AutopilotStatus; message?: string | null; code?: AutopilotMessageCode }
   | { type: "task-started"; activity: AutopilotActivity }
   | { type: "task-progress"; activityId: string; characters: number; preview: string; bytes?: number; callId?: string; callSeq?: number; kind?: "json" }
-  | { type: "model-learned"; activityId?: string; learned: AiModelLearning["kind"]; integrationId: string; integrationName: string; model: string; off: AiModelLearning["off"]; body: AiErrorBody; responses: boolean }
+  | { type: "model-learned"; activityId?: string; learned: AiNoThinkingLearning["kind"]; integrationId: string; integrationName: string; model: string; off: AiNoThinkingLearning["off"]; body: AiErrorBody; responses: boolean }
+  | { type: "prompt-caching-learned"; activityId?: string; integrationId: string; integrationName: string; model: string; learned: AiPromptCachingLearning["learned"]; inputTokens?: number; cachedInputTokens?: number; hint?: AiPromptCachingLearning["hint"]; body?: AiErrorBody }
   | { type: "call-started"; activityId: string; callId: string; seq: number; label: string; capability: string; structured: boolean; systemBytes: number; userBytes: number }
   | ({ type: "call-attempt"; activityId: string; callId?: string; callSeq?: number } & AutopilotAttemptInfo)
   | { type: "call-ended"; activityId: string; callId: string; status: AiCallStatus; attempts: number; characters: number; storedBytes: number; partial: boolean; durationMs: number; dropped: AiCallDropReason | null }

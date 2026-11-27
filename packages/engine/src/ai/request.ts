@@ -1,5 +1,6 @@
 import { addressPath, effectiveApiVersion, effectiveResponsesApiVersion, isAzureV1Endpoint, normalizeApiProtocol, normalizeEndpointUrl, normalizeThinking, type AiApiProtocol, type AiIntegrationConfig, type AiNoThinkingWithTools, type AiReasoningParameter, type AiThinking } from "./config.js";
 import type { AiCandidate } from "./router.js";
+import { promptCacheHintFor, promptCacheKey, type PromptCacheHint } from "./prompt-cache.js";
 import { forcedToolChoice } from "./structured.js";
 import { completionTokenLimit, isReasoningModel, requestOutputLimit } from "./token-limit.js";
 import { AiProviderError, type AiContentPart, type AiJsonSchema, type AiMessage, type AiRequest } from "./types.js";
@@ -191,6 +192,51 @@ function wireContent(content: AiMessage["content"]): ChatWireMessage["content"] 
   return content.map((part) => (part.type === "text" ? { type: "text" as const, text: part.text } : { type: "image_url" as const, image_url: { url: part.dataUrl } }));
 }
 
+/** A part of text that an Anthropic model is told to cache up to (`cache_control`), or an image. */
+type CachedWirePart = { type: "text"; text: string; cache_control?: { type: "ephemeral" } } | { type: "image_url"; image_url: { url: string } };
+
+/** Anthropic takes four cache breakpoints in a request. */
+const MAX_CACHE_BREAKPOINTS = 4;
+
+/**
+ * The messages as an Anthropic model takes them (`cache_control` on the blocks that end the start of the prompt that stays the same): the system message, then every part a host marked
+ * (`cacheBreak`), and the character of `user` where its stable start ends. The words are the ones that were going to be sent; only their blocks are cut, and a prompt that marks nothing is
+ * sent exactly as it was but for its system message. No block is empty, because a provider refuses an empty block with a `cache_control`.
+ */
+function cacheControlled(source: readonly AiMessage[], userBreak: number | undefined): Array<{ role: AiMessage["role"]; content: string | CachedWirePart[] }> {
+  let left = MAX_CACHE_BREAKPOINTS;
+  const mark = (part: CachedWirePart): CachedWirePart => {
+    if (left <= 0 || part.type !== "text" || !part.text) return part;
+    left -= 1;
+    return { ...part, cache_control: { type: "ephemeral" } };
+  };
+  const lastUser = source.reduce((found, message, index) => (message.role === "user" ? index : found), -1);
+  let systemDone = false;
+  return source.map((message, index) => {
+    if (typeof message.content === "string") {
+      if (message.role === "system" && !systemDone) {
+        systemDone = true;
+        return { role: message.role, content: message.content ? [mark({ type: "text", text: message.content })] : message.content };
+      }
+      if (index === lastUser && userBreak !== undefined && userBreak > 0 && userBreak < message.content.length) {
+        return { role: message.role, content: [mark({ type: "text", text: message.content.slice(0, userBreak) }), { type: "text", text: message.content.slice(userBreak) }] };
+      }
+      return { role: message.role, content: message.content };
+    }
+    const first = message.role === "system" && !systemDone;
+    if (first) systemDone = true;
+    const lastText = first ? message.content.reduce((found, part, at) => (part.type === "text" && part.text ? at : found), -1) : -1;
+    return {
+      role: message.role,
+      content: message.content.map((part, at): CachedWirePart => {
+        if (part.type !== "text") return { type: "image_url", image_url: { url: part.dataUrl } };
+        const wire: CachedWirePart = { type: "text", text: part.text };
+        return part.cacheBreak === true || at === lastText ? mark(wire) : wire;
+      }),
+    };
+  });
+}
+
 /**
  * The messages as the Responses API takes them in `input`: the system prompt as a developer message (the way the Azure portal sends it), what the author wrote as `input_text` parts and its images as
  * `input_image` (the address of the image, a data URL here, is a string and not an object), and what the assistant said before as `output_text`, the only kind of part an assistant message may have.
@@ -327,6 +373,8 @@ export interface ChatRequest {
   outputLimit?: number;
   /** The API version the request carries (Azure OpenAI: the `api-version` of its address, or `v1`); absent for a provider that has none. */
   apiVersion?: string;
+  /** The hint that helps the provider find its cache that the body carries (see `promptCacheHintFor`); absent when it carries none. */
+  cacheHint?: PromptCacheHint;
   /** The thinking level the body carries, as `reasoning_effort` or, when `reasoningParameter` says so, as the chat-template argument (`none`: sent for a model that takes no other with function tools); absent when none is sent. */
   thinking?: AiReasoningEffort | "none";
   /** Why the level is not the one that was chosen, when the request is what decided it (`tools`: it carries function tools and the model refuses the level, or any, with them). Absent otherwise. */
@@ -343,6 +391,8 @@ export interface ChatRequest {
 export interface ChatRequestOptions {
   /** Origin of GitHub Models (or of a proxy forwarding `/inference`). */
   githubModelsBaseUrl?: string;
+  /** The hints that help a provider find its cache are sent unless this is false (`AiRuntimeConfig.promptCacheHints`). */
+  promptCacheHints?: boolean;
 }
 
 /**
@@ -354,8 +404,8 @@ export interface ChatRequestOptions {
  * Pure: it calls nothing and changes nothing. Throws only when the integration cannot be called at all.
  */
 export function buildChatRequest(
-  candidate: Pick<AiCandidate, "integration" | "model"> & Partial<Pick<AiCandidate, "underlyingModel" | "supportsToolCalls" | "supportsStreaming" | "supportsReasoning" | "reasoningParameter" | "noThinkingWithTools" | "apiVersion" | "apiProtocol" | "endpointUrl" | "maxOutputTokens" | "thinking">>,
-  request: Pick<AiRequest, "system" | "user" | "messages" | "json" | "maxOutputTokens" | "outputBoost" | "temperature" | "onText">,
+  candidate: Pick<AiCandidate, "integration" | "model"> & Partial<Pick<AiCandidate, "underlyingModel" | "supportsToolCalls" | "supportsStreaming" | "supportsReasoning" | "reasoningParameter" | "noThinkingWithTools" | "promptCaching" | "promptCacheHintsRefused" | "apiVersion" | "apiProtocol" | "endpointUrl" | "maxOutputTokens" | "thinking">>,
+  request: Pick<AiRequest, "system" | "user" | "messages" | "json" | "maxOutputTokens" | "outputBoost" | "temperature" | "onText"> & Partial<Pick<AiRequest, "cacheKey" | "cacheBreak">>,
   options: ChatRequestOptions = {},
 ): ChatRequest {
   const { integration, model } = candidate;
@@ -369,13 +419,19 @@ export function buildChatRequest(
   const stream = integration.streamMode !== "off" && candidate.supportsStreaming !== false;
   const notes: string[] = [];
   if (integration.streamMode !== "off" && !stream) notes.push(`Streaming was not used: "${model}" is declared as not streaming (supportsStreaming is off).`);
-  const messages = conversationOf(request, request.json && !useTools ? jsonInstruction(request.json) : undefined).map((message): ChatWireMessage => ({ role: message.role, content: wireContent(message.content) }));
+  const conversation = conversationOf(request, request.json && !useTools ? jsonInstruction(request.json) : undefined);
+  const messages = conversation.map((message): ChatWireMessage => ({ role: message.role, content: wireContent(message.content) }));
   const outputLimit = requestOutputLimit(request, candidate);
   // The output limit and the thinking level are the one field each of the Responses API (`max_output_tokens`, `reasoning.effort`); Chat Completions has the parameters that its model families expect.
   const body: Record<string, unknown> = responses
     ? { model, input: responsesInput(messages), ...(outputLimit ? { max_output_tokens: outputLimit } : {}) }
     : { model, messages, ...completionTokenLimit(integration.provider, model, outputLimit, candidate.underlyingModel, apiVersion) };
   if (request.temperature !== undefined && !isReasoningModel(integration.provider, model, candidate.underlyingModel)) body.temperature = request.temperature;
+  // The hint that helps the provider find the cache of an earlier request with the same start: a key for OpenAI and Azure OpenAI (when the host named the scope), the blocks that end the stable start for an Anthropic model.
+  let cacheHint = options.promptCacheHints === false ? undefined : promptCacheHintFor(candidate, target.url, protocol);
+  if (cacheHint === "prompt_cache_key" && request.cacheKey) body.prompt_cache_key = promptCacheKey(request.cacheKey);
+  else if (cacheHint === "cache_control" && !responses) body.messages = cacheControlled(conversation, request.cacheBreak);
+  else cacheHint = undefined;
   // A model that refuses a level when the request carries function tools is sent none with them, or `none` when it takes no request without a level (it keeps the level for a request without tools).
   // The Responses API takes both together, so it has no such rule (`withToolsRule`).
   const off = useTools ? withToolsRule(candidate) : undefined;
@@ -420,6 +476,7 @@ export function buildChatRequest(
     useTools,
     ...(apiVersion ? { apiVersion } : {}),
     ...(outputLimit ? { outputLimit } : {}),
+    ...(cacheHint ? { cacheHint } : {}),
     ...(thinking ? { thinking } : {}),
     ...(noThinkingWithTools ? { thinkingWhy: "tools" as const } : {}),
     ...(thinking && candidate.reasoningParameter === CHAT_TEMPLATE_PARAMETER ? { reasoningParameter: CHAT_TEMPLATE_PARAMETER } : {}),

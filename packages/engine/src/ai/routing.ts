@@ -180,9 +180,14 @@ export function planAttempts(config: AiRuntimeConfig, request: AiRequest, github
     // What the host has learned of the model (see `AiModelMemory`) is applied as if the author had set it: a model known to refuse thinking with tools is not sent a level with them.
     const remembered = request.memory?.noThinkingWithTools(entry.integration.id, entry.model);
     const how: AiNoThinkingWithTools | undefined = remembered === "none" || entry.noThinkingWithTools === "none" ? "none" : entry.noThinkingWithTools ?? remembered;
-    const candidate = how !== entry.noThinkingWithTools ? { ...entry, noThinkingWithTools: how } : entry;
+    // The same for the prompt caching: a model that answered with tokens served from its cache is known to cache (unless the author said otherwise), and a provider that refused the hints is not sent them again.
+    const learnedCaching = entry.promptCaching === undefined ? request.memory?.promptCaching?.(entry.integration.id, entry.model) : undefined;
+    const hintsRefused = request.memory?.promptCacheHintsRefused?.(entry.integration.id, entry.model) === true;
+    const candidate = how !== entry.noThinkingWithTools || learnedCaching || hintsRefused
+      ? { ...entry, ...(how !== entry.noThinkingWithTools ? { noThinkingWithTools: how } : {}), ...(learnedCaching ? { promptCaching: learnedCaching } : {}), ...(hintsRefused ? { promptCacheHintsRefused: true } : {}) }
+      : entry;
     try {
-      const built = buildChatRequest(candidate, request, { githubModelsBaseUrl });
+      const built = buildChatRequest(candidate, request, { githubModelsBaseUrl, promptCacheHints: config.promptCacheHints });
       const tools = built.useTools ? likelyTextTokens(JSON.stringify(built.body.tools)) + 8 : 0;
       const inputTokens = likelyMessageTokens(built.messages) + tools;
       return { candidate, index, built, inputTokens, estimate: estimateAttempt(candidate, inputTokens, built.outputLimit) };

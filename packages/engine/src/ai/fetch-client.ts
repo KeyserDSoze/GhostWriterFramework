@@ -6,6 +6,7 @@ import type { AiPricingConfig, AiRuntimeConfig, AiStreamMode } from "./config.js
 import { resolveDeadlines, startClock, timeoutMessage, type DeadlineClock, type ExpiredDeadline, type ResolvedDeadlines } from "./deadlines.js";
 import { redactSecrets } from "./redact.js";
 import type { AiModelLearning, AiModelMemory } from "./memory.js";
+import { refusesCacheHint, type PromptCacheHint } from "./prompt-cache.js";
 import { describeErrorBody, errorBodyOfObject, parseErrorBody, refusesThinkingWithTools, suggestsResponsesApi, type AiErrorBody } from "./provider-error.js";
 import { ResponsesStreamReader, responseAsChat } from "./responses.js";
 import { attemptThinking, buildChatRequest, candidateDestination, candidateEndpoint, canSendNone, effectiveAiBase, endpointOrigin, type AiAttemptThinking, type AiReasoningEffort, type AiThinkingWhy, type ChatRequest } from "./request.js";
@@ -319,6 +320,8 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
         const sent = new Set<string>();
         /** What the provider said the first time it refused: what a model that then answers is learned from. */
         let refusedWith: AiErrorBody | undefined;
+        /** The cache hint that the provider refused, and its words: the request is asked again without it, and the model is learned not to take it. */
+        let hintRefused: { hint: PromptCacheHint; body: AiErrorBody } | undefined;
         for (;;) {
           const { candidate } = attempt;
           const deadlines = resolveDeadlines(integration, options, routingLeft?.());
@@ -388,6 +391,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
               notify(request.onLearned, learning);
               notify(options.onLearned, learning);
             }
+            learnPromptCaching(request, options, integration, candidate, attempt.built, response.usage, hintRefused, secrets);
             return withSpent(response, spent);
           } catch (error) {
             // A host that is ending (a page that is reloaded) cancelled the request as much as the author did: its failure is not the provider's, and the prompt goes to no other candidate.
@@ -408,11 +412,23 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
             // A provider that refuses a thinking level because the request carries function tools is asked again without it, and if that is refused too, with `none` (the GPT-6 models take no request with
             // tools that leaves the level out): each way once. The model is remembered by the way that answers, so that every later request with tools is asked that way (a request without tools keeps its
             // level). Every request stays in the trail as the failed attempt it was, with the provider's words.
+            // A provider that does not take the hint that helps it find its cache (`prompt_cache_key`, `cache_control`) is asked again without it, once: a refusal that is only a hint is never a failed call.
+            const sentHint = attempt.built?.cacheHint;
+            if (!hintRefused && sentHint && error instanceof AiProviderError && error.body && refusesCacheHint(error.body)) {
+              try {
+                const asked = { ...candidate, promptCacheHintsRefused: true };
+                attempt = { ...attempt, candidate: asked, built: buildChatRequest(asked, request, { githubModelsBaseUrl: options.githubModelsBaseUrl, promptCacheHints: config.promptCacheHints }) };
+                hintRefused = { hint: sentHint, body: error.body };
+                continue;
+              } catch {
+                break;
+              }
+            }
             const next = nextWithoutThinking(candidate, attempt.built, error, sent);
             if (next) {
               const asked = { ...candidate, noThinkingWithTools: next === "none" ? ("none" as const) : (true as const) };
               try {
-                attempt = { ...attempt, candidate: asked, built: buildChatRequest(asked, request, { githubModelsBaseUrl: options.githubModelsBaseUrl }) };
+                attempt = { ...attempt, candidate: asked, built: buildChatRequest(asked, request, { githubModelsBaseUrl: options.githubModelsBaseUrl, promptCacheHints: config.promptCacheHints }) };
               } catch {
                 break;
               }
@@ -459,6 +475,37 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
       throw none;
     },
   };
+}
+
+/**
+ * What an answered call teaches about the model's prompt caching, once: the tokens it was served from the provider's cache (the model caches, unless the author said it does not), and a cache hint
+ * the provider refused before it answered without it (the hint is not sent again). Said to the host's memory and listeners; never breaks the call.
+ */
+function learnPromptCaching(
+  request: AiRequest,
+  options: FetchAiOptions,
+  integration: { id: string; name: string },
+  candidate: AiCandidate,
+  built: ChatRequest | null,
+  usage: AiUsage | undefined,
+  refused: { hint: PromptCacheHint; body: AiErrorBody } | undefined,
+  secrets: readonly string[],
+): void {
+  const learnings: AiModelLearning[] = [];
+  const base = { kind: "prompt-caching" as const, integrationId: integration.id, integrationName: redactSecrets(integration.name, secrets), model: candidate.model };
+  if (refused) learnings.push({ ...base, learned: "hints-rejected", hint: refused.hint, body: refused.body });
+  if (usage && usage.cachedInputTokens > 0 && built && candidate.promptCaching === undefined && request.memory?.promptCaching?.(integration.id, candidate.model) === undefined) {
+    learnings.push({ ...base, learned: "cached", inputTokens: usage.inputTokens, cachedInputTokens: usage.cachedInputTokens });
+  }
+  for (const learning of learnings) {
+    try {
+      request.memory?.learn(learning);
+    } catch {
+      // A host's memory must never break a call.
+    }
+    notify(request.onLearned, learning);
+    notify(options.onLearned, learning);
+  }
 }
 
 /** What a target of the route that cannot be called says of itself, in the words of the notes of a failed call. */
@@ -531,10 +578,12 @@ interface Spent {
 function sumUsage(left: AiUsage | undefined, right: AiUsage | undefined): AiUsage | undefined {
   if (!left) return right;
   if (!right) return left;
+  const written = (left.cacheWriteInputTokens ?? 0) + (right.cacheWriteInputTokens ?? 0);
   return {
     inputTokens: left.inputTokens + right.inputTokens,
     outputTokens: left.outputTokens + right.outputTokens,
     cachedInputTokens: left.cachedInputTokens + right.cachedInputTokens,
+    ...(left.cacheWriteInputTokens !== undefined || right.cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens: written } : {}),
   };
 }
 
@@ -618,29 +667,36 @@ function tokenCount(value: unknown): number | undefined {
 
 /**
  * The tokens a provider reports (`usage`): OpenAI's `prompt_tokens` and `completion_tokens`, or the `input_tokens` and `output_tokens` that other providers and the Responses API use; the tokens
- * served from the cache by whichever field says it (`prompt_tokens_details.cached_tokens`, `input_tokens_details.cached_tokens`, `prompt_cache_hit_tokens`, `cache_read_input_tokens`).
+ * served from the cache by whichever field says it (`prompt_tokens_details.cached_tokens`, `input_tokens_details.cached_tokens`, `prompt_cache_hit_tokens`, `cache_read_input_tokens`), and, when it says
+ * there were some, the tokens written to the cache (`prompt_tokens_details.cache_write_tokens`, `input_tokens_details.cache_write_tokens`, `cache_creation_input_tokens`). Both are a part of the input.
  */
 function normalizeUsage(value: unknown): AiUsage | undefined {
   if (!value || typeof value !== "object") return undefined;
   const usage = value as Record<string, unknown>;
-  const details = (usage.prompt_tokens_details ?? usage.input_tokens_details) as { cached_tokens?: unknown } | null | undefined;
+  const details = (usage.prompt_tokens_details ?? usage.input_tokens_details) as { cached_tokens?: unknown; cache_write_tokens?: unknown } | null | undefined;
+  const written = tokenCount(details?.cache_write_tokens) ?? tokenCount(usage.cache_creation_input_tokens) ?? 0;
   return {
     inputTokens: tokenCount(usage.prompt_tokens) ?? tokenCount(usage.input_tokens) ?? 0,
     outputTokens: tokenCount(usage.completion_tokens) ?? tokenCount(usage.output_tokens) ?? 0,
     cachedInputTokens: tokenCount(details?.cached_tokens) ?? tokenCount(usage.prompt_cache_hit_tokens) ?? tokenCount(usage.cache_read_input_tokens) ?? 0,
+    // A provider that writes nothing says nothing: the usage of a call that wrote to no cache is what it always was.
+    ...(written > 0 ? { cacheWriteInputTokens: written } : {}),
   };
 }
 
 /**
- * Same formula as the web app's cost tracker: prices are per million tokens. Tokens served from the cache cost like
- * normal input unless the model has its own cached price.
+ * Same formula as the web app's cost tracker: prices are per million tokens. Tokens served from the cache cost like normal input unless the model has its own cached price, and tokens the provider
+ * wrote to its cache like normal input unless it has its own cache-write price (`cacheWritePerMTok`: Anthropic and the GPT-5.6 family charge more for the write than for the input).
  */
 export function estimateCost(usage: AiUsage | undefined, pricing: AiPricingConfig | undefined): number | undefined {
   if (!usage || !pricing) return undefined;
-  const billedInput = Math.max(0, usage.inputTokens - usage.cachedInputTokens);
+  const written = Math.min(usage.cacheWriteInputTokens ?? 0, Math.max(0, usage.inputTokens - usage.cachedInputTokens));
+  const billedInput = Math.max(0, usage.inputTokens - usage.cachedInputTokens - written);
   const cachedRate = pricing.cachedPerMTok ?? pricing.inputPerMTok ?? 0;
+  const writeRate = pricing.cacheWritePerMTok ?? pricing.inputPerMTok ?? 0;
   return (billedInput / 1_000_000) * (pricing.inputPerMTok ?? 0)
     + (usage.cachedInputTokens / 1_000_000) * cachedRate
+    + (written / 1_000_000) * writeRate
     + (usage.outputTokens / 1_000_000) * (pricing.outputPerMTok ?? 0);
 }
 

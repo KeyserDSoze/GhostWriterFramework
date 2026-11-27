@@ -1,4 +1,4 @@
-import { normalizeApiProtocol, normalizeEndpointUrl, normalizeReasoningParameter, normalizeThinking, type AiChatModelConfig, type AiNoThinkingWithTools, type AiIntegrationConfig, type AiPricingConfig, type AiReasoningParameter, type AiRouteTarget, type AiRuntimeConfig, type AiTaskRoute, type AiThinking } from "./config.js";
+import { normalizeApiProtocol, normalizeEndpointUrl, normalizePromptCaching, normalizeReasoningParameter, normalizeThinking, type AiChatModelConfig, type AiNoThinkingWithTools, type AiPromptCaching, type AiIntegrationConfig, type AiPricingConfig, type AiReasoningParameter, type AiRouteTarget, type AiRuntimeConfig, type AiTaskRoute, type AiThinking } from "./config.js";
 import { AI_CAPABILITY_FOLLOWS, type AiUnusableWhy } from "./types.js";
 
 export interface AiCandidate {
@@ -17,6 +17,10 @@ export interface AiCandidate {
   reasoningParameter?: AiReasoningParameter;
   /** The model refuses thinking when the request carries tools, and how it is asked then (see `AiChatModelConfig.noThinkingWithTools`): configured, or learned by a call of this host. */
   noThinkingWithTools?: AiNoThinkingWithTools;
+  /** Whether the model caches the start of its prompts (see `AiChatModelConfig.promptCaching`): declared, or learned by a call of this host; absent: unknown. */
+  promptCaching?: Exclude<AiPromptCaching, "unknown">;
+  /** The provider refused the cache hints for this model, as far as this host has learned (`AiModelMemory`): none is sent again. */
+  promptCacheHintsRefused?: boolean;
   /** The model's own API version (see `AiChatModelConfig.apiVersion`); absent: its integration's. `effectiveApiVersion(candidate.integration, candidate)` says which is used. */
   apiVersion?: string;
   /** The model is asked through the Responses API (see `AiChatModelConfig.apiProtocol`); absent: Chat Completions. */
@@ -75,6 +79,7 @@ function candidate(integration: AiIntegrationConfig, model: AiChatModelConfig, t
     ...(typeof model.supportsVision === "boolean" ? { supportsVision: model.supportsVision } : {}),
     ...(reasoningParameter ? { reasoningParameter } : {}),
     ...(model.noThinkingWithTools === true || model.noThinkingWithTools === "none" ? { noThinkingWithTools: model.noThinkingWithTools } : {}),
+    ...(normalizePromptCaching(model.promptCaching) ? { promptCaching: normalizePromptCaching(model.promptCaching) } : {}),
     ...(apiVersion ? { apiVersion } : {}),
     ...(normalizeApiProtocol(model.apiProtocol) ? { apiProtocol: "responses" as const } : {}),
     ...(normalizeEndpointUrl(model.endpointUrl) ? { endpointUrl: normalizeEndpointUrl(model.endpointUrl) } : {}),

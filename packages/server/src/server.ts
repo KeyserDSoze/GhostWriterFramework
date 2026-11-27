@@ -917,7 +917,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       const { config: aiConfig, updatedAt } = await data.aiConfig();
       const redacted = redactAiRuntimeConfig(aiConfig);
       const pending = unapprovedAiBases(aiConfig, data.config.allowedAiBases);
-      return { configured: options.ai ? true : aiConfig.aiIntegrations.length > 0, integrations: redacted.integrations, routedTasks: redacted.routedTasks, toolsOnly: redacted.toolsOnly, taskRouting: redacted.taskRouting, updatedAt, ...(pending.length && !options.ai ? { pendingApproval: pending } : {}), spend: spendStatus() };
+      return { configured: options.ai ? true : aiConfig.aiIntegrations.length > 0, integrations: redacted.integrations, routedTasks: redacted.routedTasks, toolsOnly: redacted.toolsOnly, promptCacheHints: redacted.promptCacheHints, taskRouting: redacted.taskRouting, updatedAt, ...(pending.length && !options.ai ? { pendingApproval: pending } : {}), spend: spendStatus() };
     };
 
     /**
