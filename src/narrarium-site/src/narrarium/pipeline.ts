@@ -3,7 +3,7 @@ import type { BookStructure, Chapter, Paragraph } from "@/types/book";
 import type { LlmMessage } from "@/assistant/llm";
 import { completeTextRouted, completeToolRouted, type RoutedLlmRunMetadata } from "@/assistant/router";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
-import { resolveEvaluationCriteria, scoreEvaluationRouted, type EvaluationCriterionScore } from "@/assistant/service";
+import type { EvaluationCriterionScore } from "@/assistant/service";
 import { loadFileContent } from "@/github/githubClient";
 import { ghostwriterPrompt, parseGhostwriter, type GhostwriterProfile } from "@/narrarium/ghostwriter";
 import { defaultEvaluationGuidelinesMarkdown, EVALUATION_GUIDELINES_PATH } from "@/narrarium/defaultGuidelines";
@@ -367,12 +367,16 @@ export interface EvaluationWithScoresResult {
   scoreGeneration: RoutedLlmRunMetadata | null;
 }
 
+/** The assistant's service is opened when a score is asked for: imported statically here, all of it would be in the app shell, which the pages that use it (and an evaluation) do not need to open. */
+const evaluationScoring = () => import("@/assistant/service");
+
 export async function generateChapterEvaluationWithScores(src: PipelineSource, paragraphs: Array<{ title: string; text: string }>, options?: { signal?: AbortSignal }): Promise<EvaluationWithScoresResult> {
   const signal = options?.signal ?? src.signal;
   const body = await generateChapterEvaluation(src, paragraphs, { signal });
   signal?.throwIfAborted();
   const guidelines = await evaluationGuidelines(src);
   signal?.throwIfAborted();
+  const { resolveEvaluationCriteria, scoreEvaluationRouted } = await evaluationScoring();
   const criteria = resolveEvaluationCriteria(guidelines, src.structure.language ?? src.settings.ui.language);
   let scoreGeneration: RoutedLlmRunMetadata | null = null;
   const scores = await scoreEvaluationRouted(src.settings, [
@@ -391,6 +395,7 @@ export async function generateParagraphEvaluationWithScores(src: PipelineSource,
   signal?.throwIfAborted();
   const guidelines = await evaluationGuidelines(src);
   signal?.throwIfAborted();
+  const { resolveEvaluationCriteria, scoreEvaluationRouted } = await evaluationScoring();
   const criteria = resolveEvaluationCriteria(guidelines, src.structure.language ?? src.settings.ui.language);
   let scoreGeneration: RoutedLlmRunMetadata | null = null;
   const scores = await scoreEvaluationRouted(src.settings, [
