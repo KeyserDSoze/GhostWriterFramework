@@ -13,6 +13,7 @@ import { REVEAL_MS } from "@/components/book/readerAccess/PasswordRow";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry, type ReaderPasswordRecord } from "@/types/settings";
 import { LEGACY_READER_SECRET } from "@/readerAccess/contract";
+import { usePublicationStore } from "@/readerRun/store";
 import { createFakeReaderGitHub, type FakeReaderGitHub } from "./helpers/fakeReaderGitHub";
 
 const PASSWORD = "Alpha-PASSWORD-canary-7731";
@@ -28,7 +29,7 @@ const TEXTS = {
     generate: "Generate a strong password", passwordField: "Password", labelField: "Label (who it is for)", add: "Add password", strong: "strong", removeConfirm: "Remove password", last: /This is the last password/,
     offTitle: "Turn off GitHub Pages?", offKeep: /Keep the workflow and the passwords/, offDelete: /Also delete the password secrets and the variable/, offForget: /Also forget the passwords kept in Narrarium/, offConfirm: "Turn off Pages", cancel: "Cancel",
     publishing: /The reader is being published/, permission: /does not have the permission «Secrets» \(read and write\)/, pending: "Not on GitHub yet", retry: "Try again", used: "In use", legacy: "Older single password", unknownValue: "Value not kept here",
-    effectUnchanged: /nothing on GitHub lists this password yet/, runQueued: "waiting to start", missing: /has no reader workflow/, offlineWarning: /anyone can download it and try passwords on their own computer/, copied: "Password «Reader 1» copied.",
+    effectUnchanged: /nothing on GitHub lists this password yet/, runQueued: "Queued: waiting for GitHub to give it a machine.", missing: /has no reader workflow/, offlineWarning: /anyone can download it and try passwords on their own computer/, copied: "Password «Reader 1» copied.",
   },
   it: {
     title: "Accesso al lettore", pagesOn: /Pages è attivo\. Il lettore è a/, pagesOff: "Pages è disattivato: il lettore non è pubblicato.", turnOn: "Attiva Pages", turnOff: "Disattiva Pages…", publishNow: "Pubblica di nuovo",
@@ -37,13 +38,15 @@ const TEXTS = {
     generate: "Genera una password robusta", passwordField: "Password", labelField: "Etichetta (per chi è)", add: "Aggiungi password", strong: "robusta", removeConfirm: "Rimuovi la password", last: /È l'ultima password/,
     offTitle: "Disattivare GitHub Pages?", offKeep: /Mantieni il workflow e le password/, offDelete: /Elimina anche i secret delle password e la variabile/, offForget: /Dimentica anche le password conservate in Narrarium/, offConfirm: "Disattiva Pages", cancel: "Annulla",
     publishing: /Il lettore si sta pubblicando/, permission: /non ha il permesso «Secrets» \(lettura e scrittura\)/, pending: "Non ancora su GitHub", retry: "Riprova", used: "In uso", legacy: "Vecchia password singola", unknownValue: "Valore non conservato qui",
-    effectUnchanged: /su GitHub ancora nulla elenca questa password/, runQueued: "in attesa di partire", missing: /non ha il workflow del lettore/, offlineWarning: /chiunque può scaricarlo e provare password sul proprio computer/, copied: "Password «Reader 1» copiata.",
+    effectUnchanged: /su GitHub ancora nulla elenca questa password/, runQueued: "In coda: aspetta che GitHub le dia una macchina.", missing: /non ha il workflow del lettore/, offlineWarning: /chiunque può scaricarlo e provare password sul proprio computer/, copied: "Password «Reader 1» copiata.",
   },
 } as const;
 
 let github: FakeReaderGitHub;
 
 function reset(records: ReaderPasswordRecord[] = []) {
+  localStorage.clear();
+  usePublicationStore.setState({ entries: {}, live: {} });
   github = createFakeReaderGitHub();
   github.pages.enabled = true;
   env.octokit = github.octokit;
@@ -350,29 +353,6 @@ describe.each(["en", "it"] as const)("passwords are only added to a workflow tha
 });
 
 describe("the status of a publication", () => {
-  it("follows the run after it starts, until it ends, and stops asking GitHub then", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    await open("en");
-    await screen.findByText(/No password yet/);
-    fireEvent.change(screen.getByLabelText("Password"), { target: { value: PASSWORD } });
-    fireEvent.click(screen.getByRole("button", { name: "Add password" }));
-    expect(await screen.findByText(/The reader is being published/)).toBeInTheDocument();
-    expect(await screen.findByText("waiting to start")).toBeInTheDocument();
-
-    github.runs[0].status = "in_progress";
-    await vi.advanceTimersByTimeAsync(6_100);
-    expect(await screen.findByText("running")).toBeInTheDocument();
-
-    github.runs[0].status = "completed";
-    github.runs[0].conclusion = "success";
-    await vi.advanceTimersByTimeAsync(6_100);
-    expect(await screen.findByText("succeeded")).toBeInTheDocument();
-
-    const polls = github.calls.filter((call) => call.method === "listWorkflowRuns").length;
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(github.calls.filter((call) => call.method === "listWorkflowRuns").length).toBe(polls);
-  });
-
   it("says when the last run failed, with the link to see why", async () => {
     github.runs.unshift({ id: 4, status: "completed", conclusion: "failure", html_url: "https://github.com/me/book/actions/runs/4", created_at: "2026-11-25T09:00:00Z", head_branch: "main" });
     await open("en");

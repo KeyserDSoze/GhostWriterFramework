@@ -4,14 +4,15 @@ import { AlertTriangle, CheckCircle2, Copy, ExternalLink, Loader2, RefreshCw, Sh
 import "@/i18n/readerUpdate";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { LocalTime } from "@/components/ui/local-time";
 import type { BookEntry } from "@/types/settings";
 import { describeReaderFailure } from "@/readerAccess/messages";
 import { LEGACY_READER_SECRET } from "@/readerAccess/contract";
 import { readerProtection } from "@/readerAccess/model";
 import type { ReaderAccess } from "@/components/book/readerAccess/useReaderAccess";
 import type { ReaderUpdateDecision, UpdateTarget } from "@/readerUpdate/decision";
-import { outsideCheckCommand, outsideCheckUrls, runOutsideCheck, type OutsideCheckResult } from "@/readerUpdate/outsideCheck";
+import { outsideCheckCommand, outsideCheckUrls } from "@/readerUpdate/outsideCheck";
+import { useOutsideCheck } from "@/readerRun/outsideStore";
+import { PublicationRun } from "@/components/book/readerAccess/PublicationRun";
 import { RunFailureNotice } from "@/components/book/readerAccess/RunFailureNotice";
 import { useBranchSyncStore } from "@/branches/syncStore";
 import { RepositoryError, repositoryErrorDescription, type RepositoryErrorKind } from "@/repository/repositoryError";
@@ -20,8 +21,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 
 type Update = Extract<ReaderUpdateDecision, { kind: "update" }>;
 type OnDevice = Extract<ReaderUpdateDecision, { kind: "on-device" }>;
-
-const RUN_KEY = { queued: "queued", running: "running", succeeded: "succeeded", failed: "failed", cancelled: "cancelled" } as const;
 
 interface PlanView { branch: string; plan: Pick<UpdateTarget, "workflow" | "workflowChanges" | "folder">; legacyPassword: boolean }
 
@@ -165,17 +164,14 @@ function OnDeviceBody({ decision, lastAuto, branch, syncing, onSync, pagesOn, on
 function OutsideCheck({ siteUrl }: { siteUrl: string }) {
   const { t } = useTranslation();
   const titleId = useId();
-  const [result, setResult] = useState<OutsideCheckResult | null>(null);
-  const [running, setRunning] = useState(false);
+  // The answer is shared with the other card and with the publication that asked for it: one check, read wherever it matters.
+  const outside = useOutsideCheck(siteUrl);
+  const result = outside.result;
+  const running = outside.running;
   const [copied, setCopied] = useState(false);
   const urls = outsideCheckUrls(siteUrl, Date.now());
   const command = outsideCheckCommand(urls);
-  const check = async () => {
-    setRunning(true);
-    setResult(null);
-    setResult(await runOutsideCheck(outsideCheckUrls(siteUrl, Date.now())));
-    setRunning(false);
-  };
+  const check = async () => { await outside.check(); };
   const copy = async () => {
     try { await navigator.clipboard.writeText(command); setCopied(true); } catch { setCopied(false); }
   };
@@ -227,10 +223,11 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
   const lastAuto = lastAutoOutcome && ["failed", "diverged", "held", "gone", "name-taken"].includes(lastAutoOutcome.outcome) ? lastAutoOutcome : null;
   const [replaceEdits, setReplaceEdits] = useState(false);
   const decision = update.inspection?.decision;
-  const run = snapshot.runs?.[0];
   const siteUrl = snapshot.pages?.status === "enabled" ? snapshot.pages.url : null;
-  const outcomeRun = update.outcome?.published && run && run.headSha === update.outcome.commitSha ? run : null;
-  const publishedRunDone = outcomeRun?.state === "succeeded";
+  // The publication that the update made is followed live under it: its run is found by the commit that was pushed to the publishing branch.
+  const tracked = access.publication.tracked;
+  const trackedHere = tracked !== null && tracked.trigger === "push" && update.outcome?.published === true && tracked.headSha === update.outcome.commitSha;
+  const publishedRunDone = trackedHere && tracked.state === "succeeded";
   const busy = update.applying;
 
   const doSync = async () => {
@@ -240,7 +237,7 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
 
   const doUpdate = async () => {
     const outcome = await update.apply({ replaceEdits });
-    if (outcome?.published) access.watchCommit(outcome.commitSha);
+    if (outcome?.published) access.watchCommit(outcome.commitSha, outcome.publishedBranch ?? undefined);
   };
 
   let body: React.ReactNode = null;
@@ -343,14 +340,16 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
               </p>
             )}
             {update.pullRequestFailed && <p role="alert" className="text-sm text-destructive">{t("readerUpdate.pullRequest.failed")}</p>}
-            {update.outcome.published && (
-              <p className="text-xs text-muted-foreground">
-                {t("readerUpdate.run.label")}: {outcomeRun
-                  ? <><strong>{t(`readerAccess.run.${RUN_KEY[outcomeRun.state]}`)}</strong> · <LocalTime value={outcomeRun.createdAt} /> · <a className="font-medium text-foreground underline underline-offset-2" href={outcomeRun.url} target="_blank" rel="noopener noreferrer">{t("readerAccess.run.open")}<ExternalLink aria-hidden="true" className="ml-1 inline h-3 w-3" /><span className="sr-only"> {t("readerAccess.opensNewTab")}</span></a></>
-                  : t("readerUpdate.run.waiting")}
-              </p>
+            {update.outcome.published && !trackedHere && (
+              <p className="text-xs text-muted-foreground">{t("readerUpdate.run.label")}: {t("readerUpdate.run.waiting")}</p>
             )}
           </div>
+        )}
+        {trackedHere && tracked && (
+          <PublicationRun owner={book.owner} repo={book.repo} tracked={tracked} live={access.publication.live} going={access.publication.going} onRefresh={() => void access.publication.refreshNow()}
+            failure={snapshot.runFailure && snapshot.runFailure.runId === tracked.runId ? snapshot.runFailure : null}
+            outside={siteUrl ? { result: access.outside.result, running: access.outside.running } : null}
+            onCheckOutside={siteUrl ? () => void access.outside.check() : undefined} />
         )}
         {siteUrl && (publishedRunDone || (decision?.kind === "current" && !update.outcome) || (remote.pagesOn === true && ((decision?.kind === "update" || decision?.kind === "on-device") && decision.exposure === "password-old-reader"))) && <OutsideCheck siteUrl={siteUrl} />}
         <Dialog open={pagesOffAsked} onOpenChange={setPagesOffAsked}>

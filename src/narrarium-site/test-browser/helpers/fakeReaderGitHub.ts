@@ -11,9 +11,11 @@ export interface FakeReaderGitHub {
   workflowText: { value: string };
   /** `active` or `disabled_manually`, as GitHub says it. */
   workflowState: { value: string };
-  runs: Array<{ id: number; status: string; conclusion: string | null; html_url: string; created_at: string; head_branch: string; head_sha?: string }>;
+  runs: Array<{ id: number; status: string; conclusion: string | null; html_url: string; created_at: string; head_branch: string; head_sha?: string; event?: string; run_started_at?: string; updated_at?: string }>;
   /** The jobs of any run, and the annotations GitHub put on each job. */
-  jobs: Array<{ id: number; name: string; conclusion: string | null; steps: unknown[] }>;
+  jobs: Array<{ id: number; name: string; conclusion: string | null; status?: string; steps: unknown[] }>;
+  /** The text of the workflow file at a commit (the file is read at the commit that built a publication); any other ref reads `workflowText`. */
+  workflowTextAt: Record<string, string>;
   annotations: Record<number, Array<{ message: string }>>;
   owner: { login: string; type: "User" | "Organization" };
   /** The repository's visibility; `unpublishOnPrivate`: GitHub stops serving Pages when it becomes private (a plan without Pages for private repositories). */
@@ -45,6 +47,7 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     /** The text of the workflow file: by default one that reads the passwords. */
     workflowText: { value: "name: Deploy reader\nenv:\n  PASSWORDS: ${{ vars.READER_PASSWORD_SECRETS }}\n" },
     runs: [] as FakeReaderGitHub["runs"],
+    workflowTextAt: {} as Record<string, string>,
     jobs: [] as FakeReaderGitHub["jobs"],
     annotations: {} as FakeReaderGitHub["annotations"],
     owner: { login: "me", type: "User" } as FakeReaderGitHub["owner"],
@@ -62,7 +65,11 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     createRepoVariable: (args) => { if (state.variable.value !== null) throw requestError({ status: 409 }); state.variable.value = String(args.value); return { data: {} }; },
     updateRepoVariable: (args) => { if (state.variable.value === null) throw requestError({ status: 404 }); state.variable.value = String(args.value); return { data: {} }; },
     deleteRepoVariable: () => { if (state.variable.value === null) throw requestError({ status: 404 }); state.variable.value = null; return { data: {} }; },
-    createWorkflowDispatch: () => { state.runs.unshift({ id: state.runs.length + 1, status: "queued", conclusion: null, html_url: `https://github.com/me/book/actions/runs/${state.runs.length + 1}`, created_at: "2026-11-25T10:00:00Z", head_branch: "main" }); return { data: {} }; },
+    createWorkflowDispatch: (args) => {
+      const id = Math.max(0, ...state.runs.map((run) => run.id)) + 1;
+      state.runs.unshift({ id, status: "queued", conclusion: null, html_url: `https://github.com/me/book/actions/runs/${id}`, created_at: "2026-11-25T10:00:00Z", head_branch: typeof args.ref === "string" ? args.ref : "main", event: "workflow_dispatch" });
+      return { data: {} };
+    },
     update: (args) => {
       state.repository.private = args.private === true;
       if (state.repository.private && state.repository.unpublishOnPrivate) state.pages.enabled = false;
@@ -70,10 +77,21 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     },
     listJobsForWorkflowRun: () => ({ data: { total_count: state.jobs.length, jobs: state.jobs } }),
     listAnnotations: (args) => ({ data: state.annotations[Number(args.check_run_id)] ?? [] }),
-    listWorkflowRuns: () => ({ data: { workflow_runs: state.runs } }),
-    getContent: () => {
+    listWorkflowRuns: (args) => {
+      let runs = state.runs.slice();
+      if (typeof args.event === "string") runs = runs.filter((run) => (run.event ?? "push") === args.event);
+      if (args.status === "success") runs = runs.filter((run) => run.status === "completed" && run.conclusion === "success");
+      return { data: { workflow_runs: runs.slice(0, typeof args.per_page === "number" ? args.per_page : 30) } };
+    },
+    getWorkflowRun: (args) => {
+      const run = state.runs.find((candidate) => candidate.id === Number(args.run_id));
+      if (!run) throw requestError({ status: 404 });
+      return { data: run };
+    },
+    getContent: (args) => {
       if (!state.workflowPresent.value) throw requestError({ status: 404 });
-      return { data: { type: "file", content: btoa(state.workflowText.value) } };
+      const at = typeof args.ref === "string" ? state.workflowTextAt[args.ref] : undefined;
+      return { data: { type: "file", content: btoa(at ?? state.workflowText.value) } };
     },
     getPages: () => { if (!state.pages.enabled) throw requestError({ status: 404 }); return { data: { html_url: state.pages.htmlUrl, build_type: "workflow" } }; },
     createPagesSite: () => {
@@ -131,7 +149,7 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     },
     rest: {
       repos: group(["get", "update", "getContent", "getPages", "createPagesSite", "deletePagesSite"]),
-      actions: group(["getRepoPublicKey", "createOrUpdateRepoSecret", "deleteRepoSecret", "listRepoSecrets", "getRepoVariable", "createRepoVariable", "updateRepoVariable", "deleteRepoVariable", "createWorkflowDispatch", "listWorkflowRuns", "listJobsForWorkflowRun"]),
+      actions: group(["getRepoPublicKey", "createOrUpdateRepoSecret", "deleteRepoSecret", "listRepoSecrets", "getRepoVariable", "createRepoVariable", "updateRepoVariable", "deleteRepoVariable", "createWorkflowDispatch", "listWorkflowRuns", "getWorkflowRun", "listJobsForWorkflowRun"]),
       checks: group(["listAnnotations"]),
     },
   } as unknown as Octokit;

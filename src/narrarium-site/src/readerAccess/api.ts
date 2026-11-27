@@ -14,7 +14,7 @@ import {
   type GitHubRequest,
   type WorkflowState,
 } from "narrarium-astro-reader/github-pages";
-import { READER_WORKFLOW_PATH } from "@/readerAccess/contract";
+import { READER_WORKFLOW_FILE, READER_WORKFLOW_PATH } from "@/readerAccess/contract";
 import { ReaderFlowError, classifyReaderFailure, type ReaderStep } from "@/readerAccess/errors";
 
 /**
@@ -108,6 +108,68 @@ function runState(status: string | null, conclusion: string | null): RunState {
 export async function latestRuns(octokit: Octokit, repo: RepositoryRef): Promise<WorkflowRun[]> {
   const run = await call("runs", () => readLatestPagesRun(requestOf(octokit), repo));
   return run ? [{ id: run.id, state: runState(run.status, run.conclusion), url: run.htmlUrl ?? "", createdAt: run.createdAt ?? "", ...(run.headSha ? { headSha: run.headSha } : {}) }] : [];
+}
+
+/** A run of the publishing workflow with what is needed to tell which action made it: its trigger (`event`), branch and commit. */
+export interface PublishingRun {
+  id: number;
+  state: RunState;
+  event: string;
+  branch: string;
+  headSha: string;
+  createdAt: string;
+  /** When the run began to execute (it is `createdAt` until then). */
+  startedAt: string;
+  updatedAt: string;
+  url: string;
+}
+
+interface RawRun {
+  id: number; status: string | null; conclusion: string | null; event?: string; head_branch?: string | null; head_sha?: string; created_at?: string; run_started_at?: string; updated_at?: string; html_url?: string;
+}
+
+function publishingRun(run: RawRun): PublishingRun {
+  return {
+    id: run.id,
+    state: runState(run.status, run.conclusion),
+    event: run.event ?? "",
+    branch: run.head_branch ?? "",
+    headSha: run.head_sha ?? "",
+    createdAt: run.created_at ?? "",
+    startedAt: run.run_started_at ?? run.created_at ?? "",
+    updatedAt: run.updated_at ?? run.created_at ?? "",
+    url: run.html_url ?? "",
+  };
+}
+
+/** The newest runs of the publishing workflow (newest first), optionally only the ones made by an event or that ended in a state. A workflow that never ran has none. */
+export async function listPublishingRuns(octokit: Octokit, repo: RepositoryRef, options: { event?: string; success?: boolean; perPage?: number } = {}): Promise<PublishingRun[]> {
+  try {
+    const { data } = await call("runs", () => octokit.rest.actions.listWorkflowRuns({ ...repo, workflow_id: READER_WORKFLOW_FILE, per_page: options.perPage ?? 20, ...(options.event ? { event: options.event } : {}), ...(options.success ? { status: "success" as const } : {}) }));
+    return (data.workflow_runs as RawRun[]).map(publishingRun);
+  } catch (error) {
+    if (statusOf(error) === 404) return [];
+    throw error;
+  }
+}
+
+/** One run by its id (the poll of a run that is already known). */
+export async function getPublishingRun(octokit: Octokit, repo: RepositoryRef, runId: number): Promise<PublishingRun> {
+  const { data } = await call("runs", () => octokit.rest.actions.getWorkflowRun({ ...repo, run_id: runId }));
+  return publishingRun(data as unknown as RawRun);
+}
+
+/** What a run is doing now: the job and the step in progress (the first one that is not finished), and how many steps its job has. `null` when nothing is in progress yet. */
+export interface RunProgress { job: string; step: string; index: number; total: number }
+
+export async function readRunProgress(octokit: Octokit, repo: RepositoryRef, runId: number): Promise<RunProgress | null> {
+  const { data } = await call("runs", () => octokit.rest.actions.listJobsForWorkflowRun({ ...repo, run_id: runId, per_page: 30 }));
+  const job = data.jobs.find((entry) => entry.status === "in_progress") ?? data.jobs.find((entry) => entry.status === "queued");
+  if (!job) return null;
+  const steps = job.steps ?? [];
+  const index = steps.findIndex((step) => step.status === "in_progress");
+  if (index < 0) return { job: job.name, step: "", index: 0, total: steps.length };
+  return { job: job.name, step: steps[index].name, index: index + 1, total: steps.length };
 }
 
 /** Whether the repository has the reader's workflow file, and its text (for the check that it is the current one). */

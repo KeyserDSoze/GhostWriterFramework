@@ -11,6 +11,7 @@ import { describeReaderFailure } from "@/readerAccess/messages";
 import { LEGACY_READER_SECRET } from "@/readerAccess/contract";
 import { readerProtection, reconcileReaderPasswords, type ReaderPasswordRow } from "@/readerAccess/model";
 import { inspectReaderWorkflow } from "@/readerAccess/workflowPlan";
+import { PublicationRun } from "@/components/book/readerAccess/PublicationRun";
 import { AddPasswordForm } from "@/components/book/readerAccess/AddPasswordForm";
 import { RunFailureNotice } from "@/components/book/readerAccess/RunFailureNotice";
 import { PasswordRow } from "@/components/book/readerAccess/PasswordRow";
@@ -42,6 +43,7 @@ export function ReaderAccessCardView({ access, book }: { access: ReaderAccess; b
   const rows = reconcileReaderPasswords(records, snapshot.remote);
   const protection = readerProtection(snapshot.remote);
   const run = snapshot.runs?.[0];
+  const tracked = access.publication.tracked;
   const pages = snapshot.pages;
   const busy = access.busy !== null;
   const workflow = snapshot.workflow ? inspectReaderWorkflow(snapshot.workflow.present ? snapshot.workflow.content ?? "" : null) : null;
@@ -110,7 +112,12 @@ export function ReaderAccessCardView({ access, book }: { access: ReaderAccess; b
 
         {snapshot.runFailure && <RunFailureNotice compact failure={snapshot.runFailure} book={book} repository={snapshot.repository} />}
 
-        {run && (
+        {tracked && tracked.trigger !== "push" ? (
+          <PublicationRun owner={book.owner} repo={book.repo} tracked={tracked} live={access.publication.live} going={access.publication.going} onRefresh={() => void access.publication.refreshNow()}
+            failure={snapshot.runFailure && snapshot.runFailure.runId === tracked.runId ? snapshot.runFailure : null}
+            outside={access.outside.siteUrl && rows.length > 0 ? { result: access.outside.result, running: access.outside.running } : null}
+            onCheckOutside={access.outside.siteUrl && rows.length > 0 ? () => void access.outside.check() : undefined} />
+        ) : !tracked && run && (
           <p role="status" className="text-xs text-muted-foreground" data-testid="reader-run">
             {t("readerAccess.run.label")}: <strong>{t(`readerAccess.run.${RUN_STATE_KEY[run.state]}`)}</strong> · <LocalTime value={run.createdAt} /> · <a className="font-medium text-foreground underline underline-offset-2" href={run.url} target="_blank" rel="noopener noreferrer">{t("readerAccess.run.open")}<span className="sr-only"> {t("readerAccess.opensNewTab")}</span></a>
           </p>

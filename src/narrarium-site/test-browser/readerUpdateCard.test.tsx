@@ -28,6 +28,7 @@ import type { ReaderFolderPlan } from "@/readerUpdate/folderPlan";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useBranchSyncStore, emptyBookSyncState } from "@/branches/syncStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
+import { usePublicationStore } from "@/readerRun/store";
 import { createFakeReaderGitHub, type FakeReaderGitHub } from "./helpers/fakeReaderGitHub";
 import v1 from "./fixtures/pagesWorkflowV1.yml?raw";
 
@@ -75,6 +76,8 @@ const TEXTS = {
 } as const;
 
 beforeEach(() => {
+  localStorage.clear();
+  usePublicationStore.setState({ entries: {}, live: {} });
   counter += 1;
   book = { id: `reader-update-${counter}`, owner: "me", repo: "book", name: "Book", tokenIndex: null, activeBranch: "main", addedAt: "2026-11-01T00:00:00.000Z" };
   github = createFakeReaderGitHub();
@@ -146,19 +149,22 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
     expect(await screen.findByText(text.published)).toBeInTheDocument();
     expect(env.apply).toHaveBeenCalledTimes(1);
     expect(env.apply.mock.calls[0][0]).toMatchObject({ branch: "main", replaceEdits: false, workflowHash: "wf" });
-    expect(within(screen.getByTestId("reader-update-outcome")).getByText(text.waiting)).toBeInTheDocument();
+    // Its run is looked for by the commit that was pushed, and followed live under the result until it ends.
+    const publication = await screen.findByTestId("reader-publication");
+    expect(publication).toHaveAttribute("data-phase", "waiting");
   });
 
   it("shows the run of the commit that was published, and offers the outside check once that run has succeeded", async () => {
     env.apply.mockImplementation(async () => {
-      github.runs.unshift({ id: 9, status: "completed", conclusion: "success", html_url: "https://github.com/me/book/actions/runs/9", created_at: "2026-11-25T10:00:00Z", head_branch: "main", head_sha: "abc1234def" });
+      github.runs.unshift({ id: 9, status: "completed", conclusion: "success", html_url: "https://github.com/me/book/actions/runs/9", created_at: "2026-11-25T10:00:00Z", head_branch: "main", head_sha: "abc1234def", event: "push" });
       return { commitSha: "abc1234def", published: true, paths: ["x"], publishedBranch: "main", branches: [{ branch: "main", role: "current", status: "published", commitSha: "abc1234def" }] };
     });
     await open(language);
     await screen.findByTestId("reader-update-exposure");
     fireEvent.click(within(card()).getByRole("button", { name: text.update }));
-    const outcome = await screen.findByTestId("reader-update-outcome");
-    await waitFor(() => expect(within(outcome).getByRole("link", { name: /GitHub/ })).toHaveAttribute("href", "https://github.com/me/book/actions/runs/9"));
+    const publication = await screen.findByTestId("reader-publication");
+    await waitFor(() => expect(publication).toHaveAttribute("data-phase", "succeeded"));
+    expect(within(publication).getByRole("link", { name: /GitHub/ })).toHaveAttribute("href", "https://github.com/me/book/actions/runs/9");
     expect(await screen.findByTestId("reader-outside-check")).toBeInTheDocument();
   });
 
