@@ -4,7 +4,7 @@ import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, a
 import { clipText, countWords } from "../util/text.js";
 import { normalizeErrorDetail, normalizeErrorKind } from "./errors.js";
 import { normalizeReviewPolicy } from "./review-policy.js";
-import { AUTOPILOT_PUBLISH_MODES, DESIGN_DEFAULT_ROUNDS, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, REVISION_CHAPTER_MODES, REVISION_CHAPTER_STATUSES, REVISION_REASONS } from "./types.js";
+import { AUTOPILOT_PUBLISH_MODES, DESIGN_DEFAULT_ROUNDS, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, REVISION_CHAPTER_MODES, REVISION_CHAPTER_STATUSES, REVISION_REASONS } from "./types.js";
 import type {
   AutopilotActivity,
   AutopilotDesign,
@@ -311,19 +311,36 @@ function readActivityId(value: unknown): string | undefined {
   return typeof value === "string" && /^[A-Za-z0-9_.:-]{1,120}$/.test(value) ? value : undefined;
 }
 
-/** One round as a plan keeps it: the four numbers and the verdict, valid. `null` when the entry holds no number (a verdict alone is no round). */
+/** The vote of each reader of a round, by slug: the valid votes of the readers it names, at most as many as a policy keeps; `undefined` when there is none. */
+function readReaderVotes(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const votes: Record<string, number> = {};
+  for (const [slug, entry] of Object.entries(value as Record<string, unknown>)) {
+    const vote = readVote(entry);
+    if (slug.trim() && slug.length <= 120 && vote !== undefined && Object.keys(votes).length < REVIEW_MAX_READER_ENTRIES) votes[slug] = vote;
+  }
+  return Object.keys(votes).length ? votes : undefined;
+}
+
+/** One round as a plan keeps it: the numbers and the verdict, valid. `null` when the entry holds no number (a verdict alone is no round). */
 function normalizeRound(value: unknown): ChapterRound | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
   const director = readVote(source.director);
   const readers = readVote(source.readers);
+  const readerVotes = readReaderVotes(source.readerVotes);
   const verdict = readVerdict(source.verdict);
   const accepted = readCount(source.accepted);
   const rejected = readCount(source.rejected);
-  if (director === undefined && readers === undefined && accepted === undefined && rejected === undefined) return null;
+  if (director === undefined && readers === undefined && readerVotes === undefined && accepted === undefined && rejected === undefined) return null;
+  const round = readCount(source.round);
+  const reading = source.reading === "end" || source.reading === "check" ? source.reading : undefined;
   return {
     ...(director !== undefined ? { director } : {}),
     ...(readers !== undefined ? { readers } : {}),
+    ...(readerVotes ? { readerVotes } : {}),
+    ...(round ? { round } : {}),
+    ...(reading ? { reading } : {}),
     ...(verdict ? { verdict } : {}),
     ...(accepted !== undefined ? { accepted } : {}),
     ...(rejected !== undefined ? { rejected } : {}),
@@ -341,9 +358,35 @@ function normalizeRounds(value: unknown): ChapterRound[] | undefined {
  * (they read it once, in the first round of its review), the verdict the plan acted on and what the director decided. Made with the rules a
  * file is read with, so that it is the same before and after it is saved.
  */
-export function closedRound(input: { director: number; readers?: number[]; verdict?: ChapterRound["verdict"]; accepted: number; rejected: number }): ChapterRound {
+export function closedRound(input: { director: number; readers?: number[]; verdict?: ChapterRound["verdict"]; accepted: number; rejected: number; reading?: ReadingRecord }): ChapterRound {
   const readers = input.readers?.length ? input.readers.reduce((sum, vote) => sum + vote, 0) / input.readers.length : undefined;
-  return normalizeRound({ director: input.director, readers, verdict: input.verdict, accepted: input.accepted, rejected: input.rejected }) ?? {};
+  // With a target for the readers the round says which round it is and how each reader voted, and the average is of the readers that count.
+  const counted = input.reading ? readingAverage(input.reading) : readers;
+  return normalizeRound({
+    director: input.director,
+    readers: counted,
+    ...(input.reading ? { readerVotes: input.reading.votes, round: input.reading.round } : {}),
+    verdict: input.verdict,
+    accepted: input.accepted,
+    rejected: input.rejected,
+  }) ?? {};
+}
+
+/** What the readers said in a round, for a policy with targets for them: the votes by reader, the readers that do not count, and the round. */
+export interface ReadingRecord {
+  votes: Record<string, number>;
+  excluded: ReadonlySet<string>;
+  round: number;
+}
+
+const readingAverage = (reading: ReadingRecord): number | undefined => {
+  const counting = Object.entries(reading.votes).filter(([slug]) => !reading.excluded.has(slug)).map(([, score]) => score);
+  return counting.length ? counting.reduce((sum, score) => sum + score, 0) / counting.length : undefined;
+};
+
+/** The record of the readers reading a chapter on their own (`ChapterRound.reading`): the average of those that count, the vote of each, and the round it follows. */
+export function readingRound(input: ReadingRecord & { reading: "end" | "check" }): ChapterRound {
+  return normalizeRound({ readers: readingAverage(input), readerVotes: input.votes, round: input.round, reading: input.reading }) ?? {};
 }
 
 /** Add a round to the history of a chapter, which keeps at most `MAX_CHAPTER_ROUNDS`: the oldest leave first. */
@@ -457,6 +500,12 @@ function normalizeSecrets(value: unknown): ConceptSecret[] {
   }).filter((secret) => secret.slug);
 }
 
+/** What each closing reading of a review lacked of the targets, in tenths of a vote (at most as many as the rounds a review can have); `undefined` when there is none. */
+function readTenths(value: unknown): number[] | undefined {
+  const reads = asArray(value).filter((entry) => typeof entry === "number" && Number.isFinite(entry)).map((entry) => asInteger(entry, 0, 0, 100_000)).slice(-REVIEW_MAX_ROUNDS - 1);
+  return reads.length ? reads : undefined;
+}
+
 function normalizeReview(value: unknown): ChapterReview | null {
   if (!value || typeof value !== "object") return null;
   const source = asRecord(value);
@@ -511,6 +560,12 @@ function normalizeReview(value: unknown): ChapterReview | null {
     repairQueue: asArray(source.repairQueue).map((entry) => asInteger(entry, 0, 0, 999)).filter((entry) => entry > 0),
     previousFixes: asStringList(source.previousFixes, 40),
     ...(asInteger(source.readersRound, 0, 0, 99) ? { readersRound: asInteger(source.readersRound, 0, 0, 99) } : {}),
+    ...(asInteger(source.repairs, 0, 0, 9999) ? { repairs: asInteger(source.repairs, 0, 0, 9999) } : {}),
+    ...(source.readText !== undefined && readCount(source.readText) !== undefined ? { readText: readCount(source.readText) } : {}),
+    ...(source.reading === "end" || source.reading === "check" ? { reading: source.reading } : {}),
+    ...(source.readRecorded === true ? { readRecorded: true } : {}),
+    ...(readTenths(source.reads) ? { reads: readTenths(source.reads) } : {}),
+    ...(source.gateStop === "rounds" || source.gateStop === "plateau" ? { gateStop: source.gateStop } : {}),
     history: asArray(source.history).map((entry) => {
       const item = asRecord(entry);
       return {
@@ -616,7 +671,9 @@ function normalizeCampaignChapter(value: unknown): RevisionCampaignChapter | nul
 /** The votes of a review, as a file says them: a vote is on the 0-10 scale (or `null`), the chapters under the target a whole number. */
 function normalizeReviewVotes(value: unknown): ReviewVotes {
   const source = asRecord(value);
-  return { lowest: readVote(source.lowest) ?? null, book: readVote(source.book) ?? null, below: asInteger(source.below, 0, 0, MAX_BOOK_CHAPTERS) };
+  // The readers' vote is there only for a review that has a target for the readers (`null`: none of its chapters has a current vote of theirs).
+  const readers = source.readers === null ? null : readVote(source.readers);
+  return { lowest: readVote(source.lowest) ?? null, book: readVote(source.book) ?? null, below: asInteger(source.below, 0, 0, MAX_BOOK_CHAPTERS), ...(readers !== undefined ? { readers } : {}) };
 }
 
 /** A review of the book as a campaign keeps it; anything that is not one (no target, no round) is none, and the campaign is no review. */
@@ -631,6 +688,7 @@ function normalizeReviewCampaign(value: unknown): ReviewCampaign | undefined {
   const chapterList = (list: unknown) => [...new Set(asArray(list).map((entry) => asInteger(entry, 0, 0, MAX_BOOK_CHAPTERS)).filter((entry) => entry > 0))].sort((left, right) => left - right).slice(0, MAX_CAMPAIGN_CHAPTERS);
   const include = chapterList(source.include);
   const scope = chapterList(source.scope);
+  const readerPolicy = normalizeReviewPolicy({ readersTarget: source.readersTarget, readerTargets: source.readerTargets, readersExcluded: source.readersExcluded });
   const history: ReviewRoundRecord[] = asArray(source.history).map((entry) => {
     const record = asRecord(entry);
     const at = readMoment(record.endedAt);
@@ -643,6 +701,9 @@ function normalizeReviewCampaign(value: unknown): ReviewCampaign | undefined {
     targetScore,
     ...(maxRounds ? { maxRounds } : {}),
     ...(readerRounds !== undefined ? { readerRounds } : {}),
+    ...(readerPolicy?.readersTarget !== undefined ? { readersTarget: readerPolicy.readersTarget } : {}),
+    ...(readerPolicy?.readerTargets ? { readerTargets: readerPolicy.readerTargets } : {}),
+    ...(readerPolicy?.readersExcluded ? { readersExcluded: readerPolicy.readersExcluded } : {}),
     ...(include.length ? { include } : {}),
     scope,
     round,
@@ -734,6 +795,9 @@ export function summarizeCampaign(campaign: RevisionCampaign | undefined, option
           lowest: last?.lowest ?? null,
           book: last?.book ?? null,
           budgetLimit: options?.budgetLimit ?? 0,
+          // With a target for the readers: the lowest average of the readers that count in the latest votes, and the target of that average.
+          ...(last?.readers !== undefined ? { readers: last.readers } : {}),
+          ...((review.readersTarget ?? options?.review?.readersTarget) !== undefined ? { readersTarget: review.readersTarget ?? options?.review?.readersTarget } : {}),
         },
       }
       : {}),

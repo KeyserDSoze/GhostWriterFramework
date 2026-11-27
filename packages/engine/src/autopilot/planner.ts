@@ -3,8 +3,9 @@ import { chapterNumberFromSlug, chapterSlug, paragraphFilePath, paragraphSlug } 
 import type { DirectorProfile } from "../profiles/director.js";
 import { countWords, isItalian } from "../util/text.js";
 import { advancePendingReviews, frozenQuestionMessage, inRevision, isFrozenQuestion, needsFreezeStep, noteOutlineRewrite, startedReview, type PlannerFrozen } from "./frozen.js";
-import { advanceRevisionCampaign, campaignChapter } from "./campaign.js";
-import { reviewMaxRounds, reviewReaderRounds } from "./review-policy.js";
+import { advanceRevisionCampaign, campaignChapter, chapterVote } from "./campaign.js";
+import { readerGate, reviewMaxRounds, reviewReaderRounds, type ReaderTargets } from "./review-policy.js";
+import { blockersText, readerStanding } from "./review-readers.js";
 import { planBatchChapters } from "./design.js";
 import { designActive } from "./state.js";
 import type { AutopilotInsightFigures, AutopilotMessageCode, AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, InsightTone, PlannedChapter, PlannedScene } from "./types.js";
@@ -153,7 +154,7 @@ function describeDesignTask(kind: AutopilotTaskKind, language: string, params: {
   }
 }
 
-export function describeTask(kind: AutopilotTaskKind, language: string, params: { chapter?: PlannedChapter; scene?: PlannedScene; readerName?: string; round?: number; chapters?: number; from?: number; to?: number; outline?: "changed" | "removed"; design?: boolean }): Pick<TaskDescriptor, "title" | "reason" | "next"> {
+export function describeTask(kind: AutopilotTaskKind, language: string, params: { chapter?: PlannedChapter; scene?: PlannedScene; readerName?: string; round?: number; chapters?: number; from?: number; to?: number; outline?: "changed" | "removed"; design?: boolean; reading?: "end" | "check" }): Pick<TaskDescriptor, "title" | "reason" | "next"> {
   const chapter = params.chapter;
   const scene = params.scene;
   const c = chapter?.number ?? 0;
@@ -225,12 +226,29 @@ export function describeTask(kind: AutopilotTaskKind, language: string, params: 
           : text(language, "Readers, specialists and the director review the chapter.", "Lettori, specialisti e direttore revisionano il capitolo."),
       };
     case "reader":
+      // A reading of their own (after the corrections, or to know their vote): said as it is, so that nobody takes it for a repeat.
+      if (params.reading) {
+        return {
+          title: text(language, `${params.readerName ?? "A reader"} reads chapter ${c}${quoted(chapter?.title)} again`, `${params.readerName ?? "Un lettore"} rilegge il capitolo ${c}${quoted(chapter?.title)}`),
+          reason: params.reading === "end"
+            ? text(language, "The chapter was corrected: the readers read it as it is, to see whether their targets are met.", "Il capitolo è stato corretto: i lettori lo leggono com'è ora, per vedere se i loro obiettivi sono raggiunti.")
+            : text(language, "The review of the book needs the readers' vote on the chapter as it is: the director has nothing to add to it yet.", "La revisione del libro ha bisogno del voto dei lettori sul capitolo com'è ora: il direttore non ha ancora nulla da aggiungere."),
+          next: text(language, "Compare their votes with their targets.", "Confrontare i loro voti con gli obiettivi."),
+        };
+      }
       return {
         title: text(language, `${params.readerName ?? "A reader"} reads chapter ${c}${quoted(chapter?.title)}`, `${params.readerName ?? "Un lettore"} legge il capitolo ${c}${quoted(chapter?.title)}`),
         reason: text(language, "Simulated readers read blind: no canon, no secrets, only the chapter.", "I lettori simulati leggono alla cieca: niente canone né segreti, solo il capitolo."),
         next: text(language, "Compare the readers' opinions.", "Confrontare le opinioni dei lettori."),
       };
     case "readers-summary":
+      if (params.reading) {
+        return {
+          title: text(language, `Comparing the readers of chapter ${c} again`, `Nuovo confronto dei lettori del capitolo ${c}`),
+          reason: text(language, "Their votes are checked against the targets, and what they still ask for goes to the director.", "I loro voti si confrontano con gli obiettivi, e ciò che chiedono ancora va al direttore."),
+          next: text(language, "The chapter is closed, or the director makes another round of corrections.", "Il capitolo si chiude, oppure il direttore fa un altro giro di correzioni."),
+        };
+      }
       return {
         title: text(language, `Comparing the readers of chapter ${c}`, `Confronto dei lettori del capitolo ${c}`),
         reason: text(language, "Agreements and disagreements become proposals for the director.", "Convergenze e disaccordi diventano proposte per il direttore."),
@@ -323,24 +341,111 @@ function cloneState(state: AutopilotState): AutopilotState {
   return structuredClone(state);
 }
 
-function newReview(chapter: PlannedChapter, ctx: PlannerContext, readersEnabled: boolean, authorEdit = false): ChapterReview {
-  const readers = readersEnabled && !chapter.skipReaders ? ctx.readers.map((reader) => reader.slug) : [];
+/**
+ * What a review of the chapter that has targets for the readers (`gated`) begins with: the readers read it first (unless the review skips them), and a `check` (a review of
+ * the book that wants the vote of a chapter the director is content with) is only their reading: the director has nothing to decide until it shows a target is missed.
+ */
+function newReview(chapter: PlannedChapter, ctx: PlannerContext, readersEnabled: boolean, authorEdit = false, gated?: { check: boolean }): ChapterReview {
+  const readers = readersEnabled && (!chapter.skipReaders || gated?.check === true) ? ctx.readers.map((reader) => reader.slug) : [];
+  const check = gated?.check === true && readers.length > 0;
   return {
     chapterNumber: chapter.number,
     round: 1,
     readersPending: readers,
-    ...(readers.length ? { readersRound: 1 } : {}),
+    ...(readers.length && !check ? { readersRound: 1 } : {}),
+    ...(readers.length && gated ? { readText: 0 } : {}),
+    ...(check ? { reading: "check" as const } : {}),
     readerScores: [],
     readersSummaryDone: false,
     findings: [],
-    specialistsDone: false,
-    directorDone: false,
+    specialistsDone: check,
+    directorDone: check,
+    ...(check ? { verdict: "approve" as const } : {}),
     decisions: [],
     repairQueue: [],
     previousFixes: [],
     history: [],
     ...(authorEdit ? { authorEdit: true } : {}),
   };
+}
+
+/** Where the review of a chapter that is under way stands against the readers' targets: the votes the readers gave, as the targets read them. */
+function readersStanding(review: ChapterReview, gate: ReaderTargets) {
+  return readerStanding(review.readerScores.map((score) => ({ slug: score.slug, score: score.score })), gate);
+}
+
+/**
+ * The end of the review of a chapter that has targets for the readers (`ReviewPolicy.readersTarget`, `readerTargets`): once the director approved and nothing waits to be
+ * repaired, the readers read the chapter again if what they said is of the text before the corrections (the closing reading), and the chapter is closed when every target
+ * is met. When one is not, the readers' corrections go to the director in another round, while the rounds allowed last and the corrections get closer to the targets; else
+ * the chapter is closed all the same, and it says what stood in the way (`gateStop`). Idempotent: it is read again at every step until the chapter is closed.
+ */
+function advanceReadersGate(state: AutopilotState, chapter: PlannedChapter, review: ChapterReview, ctx: PlannerContext, report: (note: PlanNote) => void): void {
+  const gate = readerGate(state, ctx.readers.map((reader) => reader.slug));
+  if (!gate || review.authorEdit) return;
+  if (!review.directorDone || review.verdict !== "approve" || review.repairQueue.length) return;
+  if (review.readersPending.length || (review.readerScores.length && !review.readersSummaryDone)) return;
+  const repairs = review.repairs ?? 0;
+  if (review.readText !== repairs) {
+    // What they said is of the text before the corrections (or they have not read it in this review): they read it as it is.
+    review.readersPending = ctx.readers.map((reader) => reader.slug);
+    review.readerScores = [];
+    review.readersSummaryDone = false;
+    review.readText = repairs;
+    review.readRecorded = false;
+    review.reading = "end";
+    return;
+  }
+  const names = (slug: string) => ctx.readers.find((reader) => reader.slug === slug)?.name ?? slug;
+  if (!review.readerScores.length) {
+    report({
+      key: `readers-unread:${chapter.number}:${review.round}:${chapter.rounds?.length ?? 0}`,
+      tone: "warning",
+      title: text(ctx.language, `No simulated reader gave a vote on chapter ${chapter.number}: their targets could not be checked`, `Nessun lettore simulato ha votato il capitolo ${chapter.number}: non ho potuto verificare i loro obiettivi`),
+    });
+    if (review.reading === "check") finishCheck(state, chapter);
+    return;
+  }
+  const standing = readersStanding(review, gate);
+  if (!standing.blockers.length) {
+    if (review.reading === "check") finishCheck(state, chapter);
+    return;
+  }
+  const previous = review.reads?.[review.reads.length - 1];
+  if (review.round >= reviewMaxRounds(state, ctx.director) && review.reading !== "check") {
+    review.gateStop = "rounds";
+    return;
+  }
+  if (previous !== undefined && standing.shortfall >= previous) {
+    review.gateStop = "plateau";
+    return;
+  }
+  report({
+    key: `readers-again:${chapter.number}:${review.round}:${review.reads?.length ?? 0}:${chapter.rounds?.length ?? 0}`,
+    tone: "info",
+    title: text(ctx.language, `Chapter ${chapter.number} is not there yet for the readers: ${blockersText(standing.blockers, ctx.language, names)}. Another round of corrections.`, `Il capitolo ${chapter.number} non è ancora arrivato per i lettori: ${blockersText(standing.blockers, ctx.language, names)}. Un altro giro di correzioni.`),
+  });
+  // Another round: the director reads the readers' corrections (the proposals of the closing reading stay among the findings) with what it fixed before; the readers do not
+  // read again before it: they have just read the text as it is.
+  const wasCheck = review.reading === "check";
+  review.reads = [...(review.reads ?? []), standing.shortfall];
+  if (!wasCheck) review.round += 1;
+  review.previousFixes = review.decisions
+    .filter((decision) => decision.action === "accept" && decision.remediation)
+    .map((decision) => `${decision.sceneNumber ? `Scene ${decision.sceneNumber}: ` : ""}${decision.remediation}`);
+  review.findings = review.findings.filter((finding) => finding.source === "reader");
+  review.decisions = [];
+  review.specialistsDone = !state.options.specialists;
+  review.directorDone = false;
+  review.verdict = undefined;
+  review.reading = undefined;
+}
+
+/** A check of the readers' vote that found every target met: the chapter is as it was, closed again with no round and no closing of the text. */
+function finishCheck(state: AutopilotState, chapter: PlannedChapter): void {
+  chapter.status = "done";
+  delete chapter.skipReaders;
+  state.review = null;
 }
 
 /** Chapters already written by the author before the autopilot took over. */
@@ -673,14 +778,21 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
   // The decisions about the changes of frozen chapters: kept, finished, or started (the chapter goes back to review, before the plan).
   advancePendingReviews(state, snapshot, report, ctx.language, ctx.frozen);
   // The chapters the author asked to revise now, for one reason, in order: the one being worked finished, the next started (before the plan).
-  advanceRevisionCampaign(state, report, ctx.language, ctx.frozen);
+  advanceRevisionCampaign(state, report, ctx.language, ctx.frozen && { ...ctx.frozen, readers: ctx.readers.map((reader) => reader.slug) });
   // A review of the book that waits for the author: the run stops (`nextStep`), and starting it again releases it.
 
   const current = editedChapter(state) ?? (state.plan?.approved ? state.plan.chapters.find((chapter) => chapter.status !== "done") : undefined);
   if (current?.status === "review") {
     const editing = startedReview(state);
     const authorEdit = editing?.number === current.number && editing.kind === "frozen" && editing.started?.phase === "review";
-    if (!state.review || state.review.chapterNumber !== current.number) state.review = newReview(current, ctx, state.options.readers, authorEdit);
+    if (!state.review || state.review.chapterNumber !== current.number) {
+      // With targets for the readers, a chapter that a review of the book takes up only for their vote (the director's is at the target already) is first read by them alone.
+      const gate = readerGate(state, ctx.readers.map((reader) => reader.slug));
+      const target = state.campaign?.reason === "review-target" ? state.campaign.review?.targetScore : undefined;
+      const vote = chapterVote(current);
+      const check = Boolean(gate && !authorEdit && target !== undefined && vote !== null && vote >= target && campaignChapter(state)?.number === current.number);
+      state.review = newReview(current, ctx, state.options.readers, authorEdit, gate ? { check } : undefined);
+    }
     const review = state.review;
     review.readersPending = review.readersPending.filter((slug) => ctx.readers.some((reader) => reader.slug === slug));
     if (!state.options.specialists) review.specialistsDone = true;
@@ -704,6 +816,9 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
           review.readerScores = [];
           review.readersSummaryDone = false;
           review.readersRound = review.round;
+          // Their votes are those of the new reading, which a round of the director records.
+          if (readerGate(state, ctx.readers.map((reader) => reader.slug))) review.readText = review.repairs ?? 0;
+          delete review.readRecorded;
         }
       } else {
         review.verdict = "approve";
@@ -712,6 +827,8 @@ export function advanceState(input: AutopilotState, ctx: PlannerContext): Autopi
           : `Closed by the director after ${review.round} review rounds: the last accepted fixes were applied.`].filter(Boolean).join(" ");
       }
     }
+    // The readers' targets, when the review has them: the closing reading, and the chapter closed only when they are met (or the rounds, or a plateau, say otherwise).
+    if (state.review === review) advanceReadersGate(state, current, review, ctx, report);
   }
 
   state.phase = phaseOf(state);
@@ -842,9 +959,9 @@ function chapterStep(chapter: PlannedChapter, state: AutopilotState, ctx: Planne
   if (review.readersPending.length) {
     const slug = review.readersPending[0];
     const reader = ctx.readers.find((entry) => entry.slug === slug);
-    return { kind: "task", task: descriptor("reader", "review", ctx, { chapter, reader: slug, readerName: reader?.name ?? slug }) };
+    return { kind: "task", task: descriptor("reader", "review", ctx, { chapter, reader: slug, readerName: reader?.name ?? slug, ...(review.reading ? { reading: review.reading } : {}) }) };
   }
-  if (review.readerScores.length && !review.readersSummaryDone) return { kind: "task", task: descriptor("readers-summary", "review", ctx, { chapter }) };
+  if (review.readerScores.length && !review.readersSummaryDone) return { kind: "task", task: descriptor("readers-summary", "review", ctx, { chapter, ...(review.reading ? { reading: review.reading } : {}) }) };
   if (!review.specialistsDone) return { kind: "task", task: descriptor("specialists", "review", ctx, { chapter, round: review.round }) };
   if (!review.directorDone) return { kind: "task", task: descriptor("director-review", "review", ctx, { chapter, round: review.round }) };
   if (review.repairQueue.length) {

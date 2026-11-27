@@ -2,6 +2,8 @@ import type { BookSnapshot } from "../book/snapshot.js";
 import { inRevision, startedReview } from "./chapter-state.js";
 import { authorHeldChapters, beginOutlineRewrite, campaignGoesOn, isFrozenQuestion, withDeferral, withoutDeferrals, type FrozenStatus, type FrozenWorkItem, type PlannerFrozen } from "./frozen.js";
 import type { PlanNote } from "./planner.js";
+import { gateFor, normalizeReviewPolicy, readerGate, type ReaderTargets } from "./review-policy.js";
+import { blockerText, chapterStanding } from "./review-readers.js";
 import { CAMPAIGN_NOTE_CHARACTERS, MAX_BOOK_CHAPTERS, MAX_CAMPAIGN_CHAPTERS, MAX_REVIEW_RECORDS, MAX_REVIEW_ROUNDS_KEPT } from "./state.js";
 import {
   REVIEW_MAX_CAMPAIGN_ROUNDS,
@@ -223,23 +225,48 @@ export function chapterVote(chapter: Pick<PlannedChapter, "score" | "rounds">): 
 
 /**
  * The votes of a review of the book now: over the chapters it may revise (`scope`), the lowest vote and the chapters under the target (a chapter nobody voted is
- * under it: it has never been judged), and the vote of the book (the director's last judgement of the whole book).
+ * under it: it has never been judged), and the vote of the book (the director's last judgement of the whole book). With targets for the readers (`gate`) a chapter is also
+ * under them when the readers' vote of its text, as it is, is under one (or has to be asked of them: they never read it, or it was corrected since), and the lowest
+ * average of the readers that count is among the votes.
  */
-export function reviewVotes(state: Pick<AutopilotState, "plan" | "finalReview">, scope: readonly number[], target: number): ReviewVotes & { chapters: number[] } {
+export function reviewVotes(state: Pick<AutopilotState, "plan" | "finalReview">, scope: readonly number[], target: number, gate?: ReaderTargets): ReviewVotes & { chapters: number[] } {
   const inScope = new Set(scope);
   let lowest: number | null = null;
+  let readers: number | null = null;
   const chapters: number[] = [];
   for (const chapter of state.plan?.chapters ?? []) {
     if (!inScope.has(chapter.number)) continue;
     const vote = chapterVote(chapter);
     if (vote !== null) lowest = lowest === null ? vote : Math.min(lowest, vote);
-    if (vote === null || vote < target) chapters.push(chapter.number);
+    let below = vote === null || vote < target;
+    if (gate) {
+      const { standing, needsReading } = chapterStanding(chapter.rounds, gate);
+      if (standing?.average != null) readers = readers === null ? standing.average : Math.min(readers, standing.average);
+      if (needsReading || standing?.blockers.length) below = true;
+    }
+    if (below) chapters.push(chapter.number);
   }
   chapters.sort((left, right) => left - right);
-  return { lowest, book: state.finalReview?.score ?? null, below: chapters.length, chapters };
+  return { lowest, book: state.finalReview?.score ?? null, below: chapters.length, ...(gate ? { readers } : {}), chapters };
 }
 
-const plainVotes = (votes: ReviewVotes): ReviewVotes => ({ lowest: votes.lowest, book: votes.book, below: votes.below });
+const plainVotes = (votes: ReviewVotes): ReviewVotes => ({ lowest: votes.lowest, book: votes.book, below: votes.below, ...(votes.readers !== undefined ? { readers: votes.readers } : {}) });
+
+/** What keeps the chapters of a review from the targets of the readers, in numbers: the chapters under the average, those with a reader under its own target, those not read yet. */
+function readersBlocking(state: Pick<AutopilotState, "plan">, scope: readonly number[], gate: ReaderTargets): { average: number; reader: number; unread: number } {
+  const inScope = new Set(scope);
+  const found = { average: 0, reader: 0, unread: 0 };
+  for (const chapter of state.plan?.chapters ?? []) {
+    if (!inScope.has(chapter.number)) continue;
+    const { standing, needsReading } = chapterStanding(chapter.rounds, gate);
+    if (needsReading) found.unread += 1;
+    else if (standing) {
+      if (standing.blockers.some((blocker) => blocker.subject === "average")) found.average += 1;
+      if (standing.blockers.some((blocker) => blocker.subject === "reader")) found.reader += 1;
+    }
+  }
+  return found;
+}
 const vote = (value: number | null | undefined): string => (value === null || value === undefined ? "—" : `${value}/10`);
 
 /** The review that is over, as the state remembers it, with how it ended. Mutates `state`. */
@@ -247,7 +274,7 @@ function rememberReview(state: AutopilotState, campaign: RevisionCampaign, outco
   const review = campaign.review;
   if (!review) return;
   const last = review.history[review.history.length - 1];
-  const to = outcome === "cancelled" || !last ? plainVotes(reviewVotes(state, review.scope, review.targetScore)) : plainVotes(last);
+  const to = outcome === "cancelled" || !last ? plainVotes(reviewVotes(state, review.scope, review.targetScore, readerGate({ options: state.options, campaign }))) : plainVotes(last);
   const record: ReviewRecord = { targetScore: review.targetScore, rounds: review.history.length, outcome, from: plainVotes(review.start), to, startedAt: campaign.createdAt, endedAt: at };
   state.reviews = [...(state.reviews ?? []), record].slice(-MAX_REVIEW_RECORDS);
 }
@@ -311,13 +338,33 @@ const reviewTarget: RevisionReasonHandler = {
       }
     } else if (!state.finalDone) return "wait";
     const target = review.targetScore;
-    const now = reviewVotes(state, review.scope, target);
+    // The targets for the readers, when this review has them and one that counts reads: the chapters are also judged by what the readers say of their text as it is.
+    const gate = readerGate(state, frozen.readers);
+    const now = reviewVotes(state, review.scope, target, gate);
     const previous = review.history[review.history.length - 1] ?? review.start;
     const raised = (current: number | null, before: number | null) => current !== null && (before === null || current > before);
-    review.stalled = raised(now.lowest, previous.lowest) || raised(now.book, previous.book) ? 0 : review.stalled + 1;
+    // Closer to the targets of the readers also counts: their lowest average rose, or fewer chapters are under a target.
+    const closer = Boolean(gate) && (raised(now.readers ?? null, previous.readers ?? null) || now.below < previous.below);
+    review.stalled = raised(now.lowest, previous.lowest) || raised(now.book, previous.book) || closer ? 0 : review.stalled + 1;
     const reviewed = campaign.chapters.filter((item) => item.mode === "follow" && item.status === "done").map((item) => item.number);
     review.history = [...review.history, { round: review.round, chapters: reviewed, ...plainVotes(now), endedAt: frozen.now }].slice(-MAX_REVIEW_ROUNDS_KEPT);
-    const figures = { round: review.round, target, ...(now.lowest !== null ? { lowest: now.lowest } : {}), ...(now.book !== null ? { book: now.book } : {}), below: now.below };
+    const figures = { round: review.round, target, ...(now.lowest !== null ? { lowest: now.lowest } : {}), ...(now.book !== null ? { book: now.book } : {}), below: now.below, ...(now.readers != null ? { readers: now.readers } : {}), ...(gate?.average !== undefined ? { readersTarget: gate.average } : {}) };
+    // What the readers' targets keep the chapters from, in words (empty without them): the first thing a plateau or a round says about them.
+    const blocking = gate ? readersBlocking(state, review.scope, gate) : undefined;
+    const blockedText = (): string => {
+      if (!gate || !blocking) return "";
+      const italian = isItalian(language);
+      const chapters = (count: number) => (italian ? (count === 1 ? "1 capitolo" : `${count} capitoli`) : count === 1 ? "1 chapter" : `${count} chapters`);
+      const parts: string[] = [];
+      if (blocking.average && gate.average !== undefined) {
+        parts.push(italian
+          ? `la media dei lettori è sotto ${vote(gate.average)} in ${chapters(blocking.average)}${now.readers != null ? ` (la più bassa: ${vote(now.readers)})` : ""}`
+          : `the readers' average is under ${vote(gate.average)} in ${chapters(blocking.average)}${now.readers != null ? ` (the lowest: ${vote(now.readers)})` : ""}`);
+      }
+      if (blocking.reader) parts.push(italian ? `un lettore è sotto il proprio obiettivo in ${chapters(blocking.reader)}` : `a reader is under its own target in ${chapters(blocking.reader)}`);
+      if (blocking.unread) parts.push(italian ? `${chapters(blocking.unread)} senza un voto attuale dei lettori` : `${chapters(blocking.unread)} without a current vote of the readers`);
+      return parts.join("; ");
+    };
     report({
       key: `review-round:${campaign.id}:${review.round}`,
       tone: "info",
@@ -332,13 +379,15 @@ const reviewTarget: RevisionReasonHandler = {
     };
     const rounds = review.history.length;
     if (now.below === 0 && now.book !== null && now.book >= target) {
-      return finish("target", "ok", "reviewDone", text(language, `The book reached the target: ${vote(now.book)}, every chapter at ${target}/10 or more (${rounds === 1 ? "1 round" : `${rounds} rounds`})`, `Il libro ha raggiunto l'obiettivo: ${vote(now.book)}, ogni capitolo a ${target}/10 o più (${rounds === 1 ? "1 giro" : `${rounds} giri`})`));
+      return finish("target", "ok", "reviewDone", text(language, `The book reached the target: ${vote(now.book)}, every chapter at ${target}/10 or more${gate ? " and with the readers at their targets" : ""} (${rounds === 1 ? "1 round" : `${rounds} rounds`})`, `Il libro ha raggiunto l'obiettivo: ${vote(now.book)}, ogni capitolo a ${target}/10 o più${gate ? " e con i lettori ai loro obiettivi" : ""} (${rounds === 1 ? "1 giro" : `${rounds} giri`})`));
     }
     if (now.below === 0) {
-      return finish("chapters", "info", "reviewStopped", text(language, `Every chapter reached ${target}/10, the book as a whole got ${vote(now.book)}: the review ends here`, `Ogni capitolo ha raggiunto ${target}/10, il libro nel suo insieme ha ${vote(now.book)}: la revisione finisce qui`), text(language, "What the director asks of the whole book is in its last judgement: the chapters have nothing left under the target to review.", "Ciò che il direttore chiede al libro intero è nel suo ultimo giudizio: nei capitoli non resta nulla sotto l'obiettivo da rivedere."));
+      return finish("chapters", "info", "reviewStopped", text(language, `Every chapter reached ${target}/10${gate ? " with its readers at their targets" : ""}, the book as a whole got ${vote(now.book)}: the review ends here`, `Ogni capitolo ha raggiunto ${target}/10${gate ? " con i suoi lettori ai loro obiettivi" : ""}, il libro nel suo insieme ha ${vote(now.book)}: la revisione finisce qui`), text(language, "What the director asks of the whole book is in its last judgement: the chapters have nothing left under the target to review.", "Ciò che il direttore chiede al libro intero è nel suo ultimo giudizio: nei capitoli non resta nulla sotto l'obiettivo da rivedere."));
     }
     if (review.stalled >= 2) {
-      return finish("plateau", "warning", "reviewStopped", text(language, `The review stopped: two rounds in a row raised neither the lowest chapter (${vote(now.lowest)}) nor the book (${vote(now.book)})`, `La revisione si è fermata: due giri di fila non hanno alzato né il capitolo più basso (${vote(now.lowest)}) né il libro (${vote(now.book)})`), text(language, "Another round would spend without getting closer to the target: change the target, the director or the chapters, then review the book again.", "Un altro giro spenderebbe senza avvicinarsi all'obiettivo: cambia l'obiettivo, il direttore o i capitoli, poi rivedi di nuovo il libro."));
+      const readersSaid = gate && now.readers != null ? text(language, ` nor the readers (${vote(now.readers)})`, ` né i lettori (${vote(now.readers)})`) : "";
+      const blockedBy = blockedText();
+      return finish("plateau", "warning", "reviewStopped", text(language, `The review stopped: two rounds in a row raised neither the lowest chapter (${vote(now.lowest)}) nor the book (${vote(now.book)})${readersSaid}`, `La revisione si è fermata: due giri di fila non hanno alzato né il capitolo più basso (${vote(now.lowest)}) né il libro (${vote(now.book)})${readersSaid}`), `${blockedBy ? `${blockedBy.charAt(0).toUpperCase()}${blockedBy.slice(1)}. ` : ""}${text(language, "Another round would spend without getting closer to the target: change the target, the director or the chapters, then review the book again.", "Un altro giro spenderebbe senza avvicinarsi all'obiettivo: cambia l'obiettivo, il direttore o i capitoli, poi rivedi di nuovo il libro.")}`);
     }
     // Another round, with the chapters still under the target.
     review.round += 1;
@@ -391,6 +440,10 @@ export interface ReviewBookInput {
   targetScore: number;
   maxRounds?: number;
   readerRounds?: number;
+  /** The vote the readers' average must reach, the vote each reader must reach (by slug), and the readers that do not count: this review's own (see `ReviewPolicy`). */
+  readersTarget?: number;
+  readerTargets?: Record<string, number>;
+  readersExcluded?: string[];
   campaignMaxRounds?: number;
   budgetLimit?: number;
   budgetTokens?: number;
@@ -423,6 +476,10 @@ export function createReviewCampaign(input: ReviewBookInput, state: AutopilotSta
   if (typeof input.targetScore !== "number" || !Number.isFinite(input.targetScore) || input.targetScore < 1 || input.targetScore > 10) refuse("The target is a vote from 1 to 10.");
   if (input.maxRounds !== undefined && !whole(input.maxRounds, 1, REVIEW_MAX_ROUNDS)) refuse(`The rounds of a chapter are a whole number from 1 to ${REVIEW_MAX_ROUNDS}.`);
   if (input.readerRounds !== undefined && !whole(input.readerRounds, 0, REVIEW_MAX_ROUNDS)) refuse(`The readers' rounds are a whole number from 0 to ${REVIEW_MAX_ROUNDS}.`);
+  const isVote = (value: unknown): boolean => typeof value === "number" && Number.isFinite(value) && value >= 1 && value <= 10;
+  if (input.readersTarget !== undefined && !isVote(input.readersTarget)) refuse("The readers' target is a vote from 1 to 10.");
+  if (input.readerTargets !== undefined && (!input.readerTargets || typeof input.readerTargets !== "object" || Array.isArray(input.readerTargets) || Object.values(input.readerTargets).some((value) => !isVote(value)))) refuse("The target of each reader is a vote from 1 to 10, given by the reader's name.");
+  if (input.readersExcluded !== undefined && (!Array.isArray(input.readersExcluded) || input.readersExcluded.some((slug) => typeof slug !== "string"))) refuse("The readers that do not count are a list of the readers' names.");
   if (input.campaignMaxRounds !== undefined && !whole(input.campaignMaxRounds, 0, REVIEW_MAX_CAMPAIGN_ROUNDS)) refuse(`The rounds of the review are a whole number from 0 to ${REVIEW_MAX_CAMPAIGN_ROUNDS}.`);
   if (input.budgetLimit !== undefined && (typeof input.budgetLimit !== "number" || !Number.isFinite(input.budgetLimit) || input.budgetLimit < 0 || input.budgetLimit > 1_000_000)) refuse("The money cap is an amount from 0 (none).");
   if (input.budgetTokens !== undefined && !whole(input.budgetTokens, 0, Number.MAX_SAFE_INTEGER)) refuse("The token cap is a whole number from 0 (none).");
@@ -436,8 +493,11 @@ export function createReviewCampaign(input: ReviewBookInput, state: AutopilotSta
   // A chapter changed since it was frozen waits for the decision about that change, included or not.
   const { changedFrozen } = authorHeldChapters(snapshot);
   const scope = state.plan!.chapters.filter((chapter) => !changedFrozen.has(chapter.slug) && (!authors.has(chapter.number) || include.includes(chapter.number))).map((chapter) => chapter.number);
-  const votes = reviewVotes(state, scope, targetScore);
-  if (!votes.below) throw new RevisionCampaignError("nothing_to_review", `Every chapter of the review has ${targetScore}/10 already: there is nothing under the target to review.`);
+  // The readers' targets of this review (soft: the names are cleaned, the votes brought to a tenth); with them the chapters are judged by the readers too.
+  const readerPolicy = normalizeReviewPolicy({ readersTarget: input.readersTarget, readerTargets: input.readerTargets, readersExcluded: input.readersExcluded });
+  const gate = gateFor(state.options, readerPolicy);
+  const votes = reviewVotes(state, scope, targetScore, gate);
+  if (!votes.below) throw new RevisionCampaignError("nothing_to_review", gate ? `Every chapter of the review has ${targetScore}/10 already, and the readers' targets are met: there is nothing under a target to review.` : `Every chapter of the review has ${targetScore}/10 already: there is nothing under the target to review.`);
   const note = input.note?.trim() ? clipText(input.note.trim(), CAMPAIGN_NOTE_CHARACTERS) : undefined;
   return {
     id,
@@ -449,6 +509,9 @@ export function createReviewCampaign(input: ReviewBookInput, state: AutopilotSta
       targetScore,
       ...(input.maxRounds !== undefined ? { maxRounds: input.maxRounds } : {}),
       ...(input.readerRounds !== undefined ? { readerRounds: input.readerRounds } : {}),
+      ...(readerPolicy?.readersTarget !== undefined ? { readersTarget: readerPolicy.readersTarget } : {}),
+      ...(readerPolicy?.readerTargets ? { readerTargets: readerPolicy.readerTargets } : {}),
+      ...(readerPolicy?.readersExcluded ? { readersExcluded: readerPolicy.readersExcluded } : {}),
       ...(include.length ? { include } : {}),
       scope,
       round: 1,

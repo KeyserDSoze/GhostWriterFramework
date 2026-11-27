@@ -484,6 +484,8 @@ export interface PlannerFrozen {
    */
   authorFrozen?: ReadonlySet<string>;
   changedFrozen?: ReadonlySet<string>;
+  /** The readers (their slugs) that read the book in this run: a review of the book with targets for the readers needs one that counts. Absent: the host does not say, and any does. */
+  readers?: readonly string[];
 }
 
 /** What a review of the book needs to know of the frozen chapters (`PlannerFrozen.authorFrozen`, `changedFrozen`): the ones the author froze, and the ones changed since. */

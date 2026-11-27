@@ -19,6 +19,8 @@ import {
   serverSupportsOutlineApply,
   serverSupportsReviewBook,
   serverSupportsReviewPolicy,
+  serverSupportsReviewTargets,
+  asksReviewTargets,
   CAMPAIGN_FEATURES,
   verifyServerIdentity,
   type AskDirectorRequest,
@@ -255,6 +257,9 @@ export class NarrariumServerClient {
     if (review !== undefined && !serverSupportsReviewPolicy(info)) {
       throw new ServerRequestError(`This personal server does not know the review policy of a run (it does not announce the feature autopilot-review-policy): update the server, or leave review out.`, 501, "feature_unavailable");
     }
+    if (asksReviewTargets(review) && !serverSupportsReviewTargets(info)) {
+      throw new ServerRequestError(`This personal server does not know the targets for the readers (it does not announce the feature autopilot-review-targets): it would review as if you had set none. Update the server, or leave readersTarget, readerTargets and readersExcluded out.`, 501, "feature_unavailable");
+    }
     if (longRetry !== undefined && !serverSupportsAutopilotRetry(info)) {
       throw new ServerRequestError(`This personal server does not have "Retry later" (it does not announce the feature autopilot-retry): update the server, or leave longRetry out.`, 501, "feature_unavailable");
     }
@@ -483,8 +488,12 @@ export class NarrariumServerClient {
    * (`invalid_request`, `not_finished`, `campaign_active`, `nothing_to_review`). Nothing is started.
    */
   async reviewBook(bookId: string, request: ReviewBookRequest): Promise<RevisionCampaignResponse> {
-    if (!serverSupportsReviewBook(await this.info())) {
+    const info = await this.info();
+    if (!serverSupportsReviewBook(info)) {
       throw new ServerRequestError("This personal server cannot review a finished book again (it does not announce the feature autopilot-review-book): update the server.", 501, "feature_unavailable");
+    }
+    if (asksReviewTargets(request) && !serverSupportsReviewTargets(info)) {
+      throw new ServerRequestError("This personal server does not know the targets for the readers (it does not announce the feature autopilot-review-targets): it would review as if you had set none. Update the server, or leave readersTarget, readerTargets and readersExcluded out.", 501, "feature_unavailable");
     }
     return this.request("POST", bookRoute(bookId, "/autopilot/review"), request);
   }

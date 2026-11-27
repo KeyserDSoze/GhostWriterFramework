@@ -492,6 +492,14 @@ export const SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK = "autopilot-review-book";
  */
 export const SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY = "autopilot-review-policy";
 
+/**
+ * The `ServerInfo.features` entry of a server whose engine knows the targets for the readers of the review policy (`ReviewPolicy.readersTarget`, `readerTargets`,
+ * `readersExcluded`, and the same fields of a review of the book): the readers read a chapter again after its corrections and the chapter is closed only when the
+ * director's target, the readers' average and each reader's target are reached. An older one drops them from `configure`, `start` and the review of the book without a
+ * word, and would review as if the author had set no target for the readers: the engine's client refuses to send them there.
+ */
+export const SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS = "autopilot-review-targets";
+
 function announces(info: { features?: unknown } | readonly unknown[] | null | undefined, feature: string): boolean {
   const features = Array.isArray(info) ? info : (info as { features?: unknown } | null | undefined)?.features;
   return Array.isArray(features) && features.includes(feature);
@@ -505,6 +513,25 @@ export function serverSupportsReviewBook(info: { features?: unknown } | readonly
 /** Whether the server announces the review policy of a run (`autopilot-review-policy`). Never throws. */
 export function serverSupportsReviewPolicy(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
   return announces(info, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY);
+}
+
+/** Whether the server announces the targets for the readers (`autopilot-review-targets`). Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsReviewTargets(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  return announces(info, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS);
+}
+
+/** The fields of a review policy (or of a review of the book) that need `autopilot-review-targets`. */
+export const REVIEW_TARGET_FIELDS = ["readersTarget", "readerTargets", "readersExcluded"] as const;
+
+/**
+ * Whether a review policy (or a review of the book) gives one of the targets for the readers a value: a vote, a reader with a target, a reader that does not count. `null`
+ * and an empty list take one back, which an older server has nothing of to take back: they are sent anywhere.
+ */
+export function asksReviewTargets(policy: unknown): boolean {
+  if (!policy || typeof policy !== "object") return false;
+  const source = policy as Record<string, unknown>;
+  const said = (value: unknown): boolean => typeof value === "number" || (Array.isArray(value) ? value.length > 0 : Boolean(value) && typeof value === "object" && Object.keys(value as object).length > 0);
+  return REVIEW_TARGET_FIELDS.some((field) => said(source[field]));
 }
 
 /**

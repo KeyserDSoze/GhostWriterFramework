@@ -2,6 +2,7 @@ import { normalizeScore, requireStructuredFields, splitReasoningBlock } from "..
 import { AI_CAPABILITIES, AiReplyRejectedError, type AiRequest, type AiResponse } from "../ai/types.js";
 import {
   canonDetails,
+  activeReaders,
   canonManifest,
   ghostwriterBlock,
   isThinDocument,
@@ -86,7 +87,8 @@ import { asArray, asInteger, asNumber, asOneOf, asRecord, asString, asStringList
 import { bulletList, clipText, countWords, isItalian, languageName, OUTPUT_TOKENS_CEILING, sceneCharacterLimit, scaleOutputTokens, tokensPerWord, truncate } from "../util/text.js";
 import { chapterLines, layoutChapters, listSection, outlineList, type ChapterFormat } from "./outline.js";
 import { legacyChapters, queuedMarkReviewed, startedReview } from "./frozen.js";
-import { reviewMaxRounds, reviewTarget } from "./review-policy.js";
+import { readerGate, reviewMaxRounds, reviewReaderTargets, reviewTarget, type ReaderTargets } from "./review-policy.js";
+import { blockersText, readerStanding } from "./review-readers.js";
 import { PLAN_BATCH_CHAPTERS, SCENES_PER_CHAPTER, batchesNamed, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, sceneFile, scenesForChapter, type TaskDescriptor } from "./planner.js";
 import { designFindingsInsight, designLastRound, designPlateau, designReaderRounds, designTarget, endDesign, loadDesignCheckInput, planBatchChapters } from "./design.js";
 import { outlineDesignGaps } from "./outline-check.js";
@@ -116,7 +118,7 @@ import {
   specialistsSystemPrompt,
   writerSystemPrompt,
 } from "./prompts.js";
-import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES, CONCEPT_LOGLINE_CHARACTERS, closedRound, designActive, designMaxRounds, normalizeFinalReview, recordChapterRound } from "./state.js";
+import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES, CONCEPT_LOGLINE_CHARACTERS, closedRound, designActive, designMaxRounds, normalizeFinalReview, readingRound, recordChapterRound } from "./state.js";
 import { STORY_SO_FAR_MAX_WORDS, STORY_SO_FAR_TARGET_WORDS, pruneStorySnapshots, readStorySoFar, renderTotalResumeBody, storySoFarExcess } from "./story-so-far.js";
 import type { AuthorIntervention, AutopilotInsightFigures, AutopilotMessageCode, AutopilotPlan, AutopilotState, DesignOutcome, FrozenChapterView, InsightTone, PlannedChapter, PlannedScene, ReviewDecision, ReviewFinding, RevisionRequest } from "./types.js";
 
@@ -1852,6 +1854,35 @@ async function chapterSource(ctx: TaskContext, chapter: PlannedChapter): Promise
   return { paragraphs, readerText, sourceHash: await sha256Hex(readerText), sourceVersion: paragraphs.map((paragraph) => paragraph.hash).join(":") };
 }
 
+/** The readers that read the book in this run, by slug: those of the panel the director listens to, as many as the run reads with (the planner's `ctx.readers`). */
+function readingSlugs(ctx: TaskContext): string[] {
+  return activeReaders(ctx.readerPanel, ctx.director, ctx.state.options.maxReaders).map((reader) => reader.slug);
+}
+
+/** The readers' targets that bind this review (they ask a vote of the readers, and one that counts reads), `undefined` for a review without any. */
+function readersGateOf(ctx: TaskContext): ReaderTargets | undefined {
+  return readerGate(ctx.state, readingSlugs(ctx));
+}
+
+/** What the readers said in the review, as a round records it: each reader's vote, the readers that do not count, the round. */
+function readingOf(ctx: TaskContext, review: NonNullable<AutopilotState["review"]>, round: number = review.round): { votes: Record<string, number>; excluded: ReadonlySet<string>; round: number } | undefined {
+  const targets = reviewReaderTargets(ctx.state);
+  if (!targets || !review.readerScores.length) return undefined;
+  return { votes: Object.fromEntries(review.readerScores.map((score) => [score.slug, score.score])), excluded: targets.excluded, round };
+}
+
+/** The readers' targets as the director reads them: what each asks and where the readers stand now (when they have read), and who does not count. */
+function readersTargetsBlock(ctx: TaskContext, review: NonNullable<AutopilotState["review"]>, targets: ReaderTargets): string {
+  const nameOf = (slug: string) => review.readerScores.find((score) => score.slug === slug)?.name ?? ctx.readerPanel.find((reader) => reader.slug === slug)?.name ?? slug;
+  const standing = review.readerScores.length ? readerStanding(review.readerScores.map((score) => ({ slug: score.slug, score: score.score })), targets) : null;
+  const lines = [
+    targets.average !== undefined ? `- the average of the readers that count: ${standing?.average != null ? `${standing.average}/10 now, ` : ""}target ${targets.average}/10` : "",
+    ...Object.entries(targets.each).filter(([slug]) => !targets.excluded.has(slug)).map(([slug, target]) => `- ${nameOf(slug)}: ${review.readerScores.find((score) => score.slug === slug) ? `${review.readerScores.find((score) => score.slug === slug)!.score}/10 now, ` : ""}target ${target}/10`),
+    ...[...targets.excluded].map((slug) => `- ${nameOf(slug)}: does not count (left out of the average and of the targets)`),
+  ].filter(Boolean);
+  return `READERS' TARGETS (the chapter is closed only when the director's target and these are all reached, or the rounds run out):\n${lines.join("\n")}`;
+}
+
 async function runReader(ctx: TaskContext): Promise<TaskResult> {
   const chapter = chapterOf(ctx);
   const review = ctx.state.review!;
@@ -1981,6 +2012,12 @@ async function runReadersSummary(ctx: TaskContext): Promise<TaskResult> {
   }));
   review.findings = [...review.findings.filter((finding) => finding.source !== "reader"), ...findings];
   review.readersSummaryDone = true;
+  // A reading of their own (the closing one, or a check of their vote) is a round of the chapter: it has no director's vote, and says its round.
+  const reading = review.reading && !review.readRecorded ? readingOf(ctx, review) : undefined;
+  if (reading && review.reading) {
+    recordChapterRound(chapter, readingRound({ ...reading, reading: review.reading }));
+    review.readRecorded = true;
+  }
   ctx.insight(overall >= 7 ? "ok" : overall >= 5 ? "info" : "warning", isItalian(ctx.language) ? `Lettori: ${overall}/10` : `Readers: ${overall}/10`, asStringList(output.consensus, 2).join(" · "));
   return { changes: compact([change]), summary: `${overall}/10 — ${findings.length} proposals for the director` };
 }
@@ -2074,6 +2111,8 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   const maxRounds = reviewMaxRounds(ctx.state, ctx.director);
   const target = reviewTarget(ctx.state, ctx.director);
   const last = review.round >= maxRounds;
+  // The targets for the readers, when the review has them: the director is told they are rules too, and where the readers stand.
+  const gate = review.authorEdit ? undefined : readersGateOf(ctx);
   const perScene = sceneLimit(ctx, Math.max(3000, Math.floor(60000 / Math.max(1, source.paragraphs.length))));
   const style = evaluationStyleOf(ctx, "chapter");
   const authorNote = review.authorEdit ? startedReview(ctx.state)?.note : undefined;
@@ -2086,6 +2125,7 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
       `Decide on chapter ${chapter.number} «${chapter.title}» (review round ${review.round} of ${maxRounds}).`,
       "For EVERY finding decide exactly once: accept it with a precise, minimal remediation for the ghostwriter and its scene number, or reject it with the reason. Reject unfounded or unanchored findings, findings against the vision or the author's rules, and single-reader taste the intended audience would not share.",
       `Score the chapter from 1 to 10. Verdict "approve" when it deserves at least ${target}/10 and nothing critical remains; otherwise "revise".`,
+      gate ? "The readers' targets in the data are rules too: the chapter is closed only when they are reached. Accept the concrete corrections of the readers under their target that serve the book's vision, each with a precise fix and its scene." : "",
       style.rule,
       review.authorEdit
         ? "The author changed this chapter after it was approved: judge the chapter as it is now. The author's text stays as it is: no fix will be applied and there is no other round, so your accepted fixes are advice for the author."
@@ -2106,6 +2146,7 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
         ? `SIMULATED READERS:\n${review.readerScores.map((score) => `- ${score.name} (weight ${ctx.director.readerWeights[score.slug] ?? 1}): ${score.score}/10. Main problem: ${score.mainProblem}. Priority: ${score.prioritySuggestion}`).join("\n")}`
         : "",
       readersSummary ? `READERS PANEL SUMMARY:\n${readersSummary}` : "",
+      gate ? readersTargetsBlock(ctx, review, gate) : "",
       review.previousFixes.length ? `FIXES APPLIED AFTER THE PREVIOUS ROUND:\n${bulletList(review.previousFixes)}` : "",
       `FINDINGS TO DECIDE:\n${review.findings.length ? review.findings.map(findingLine).join("\n\n") : "None."}`,
       `CHAPTER TEXT:\n${markedChapterText(source.paragraphs, perScene)}`,
@@ -2193,8 +2234,11 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   review.repairQueue = review.authorEdit ? [] : [...new Set(accepted.map((decision) => decision.sceneNumber!))].sort((left, right) => left - right);
   // The readers' average is in the record of the round they read the chapter in (the first, and the others the review policy says) and of no other: a state that
   // does not say which round they read in (an older engine) had them read in the first. The verdict is the one the plan acts on.
-  const readersReadNow = review.readersRound !== undefined ? review.readersRound === review.round : review.history.length === 0;
-  recordChapterRound(chapter, closedRound({ director: score, readers: readersReadNow ? review.readerScores.map((entry) => entry.score) : undefined, verdict, accepted: accepted.length, rejected: rejected.length }));
+  // (Readers who read on their own at the end of the review have a round of their own: the votes held are not recorded twice.)
+  const readersReadNow = (review.readersRound !== undefined ? review.readersRound === review.round : review.history.length === 0) && !review.readRecorded;
+  // With targets for the readers the round says which round it is and how each reader voted (and the average is of the readers that count).
+  const reading = readersReadNow ? readingOf(ctx, review) : undefined;
+  recordChapterRound(chapter, closedRound({ director: score, readers: readersReadNow ? review.readerScores.map((entry) => entry.score) : undefined, verdict, accepted: accepted.length, rejected: rejected.length, ...(reading ? { reading } : {}) }));
   review.history = [...review.history, { round: review.round, verdict, score, accepted: accepted.length, rejected: rejected.length }];
   ctx.state.directorNotes = mergeNotes(ctx.state.directorNotes, asStringList(output.guidance, 6));
   const question = asRecord(output.questionForAuthor);
@@ -2318,6 +2362,8 @@ async function runRepair(ctx: TaskContext): Promise<TaskResult> {
   scene.revisions += 1;
   scene.words = words;
   if (summary) scene.summary = summary;
+  // The readers' votes are of the text before this fix (counted only by a review that keeps their targets, so that no other state changes).
+  if (review.readText !== undefined) review.repairs = (review.repairs ?? 0) + 1;
   ctx.insight("ok", isItalian(ctx.language) ? `Scena ${chapter.number}.${scene.number} corretta (${instructions.length})` : `Scene ${chapter.number}.${scene.number} revised (${instructions.length})`, instructions.join(" · "));
   return { changes: [change], summary: `${instructions.length} fixes applied, ${words} words.` };
 }
@@ -2397,6 +2443,25 @@ async function runConsolidate(ctx: TaskContext): Promise<TaskResult> {
   changes.push(await renderPlot(ctx));
   changes.push(await planFileChange(ctx));
   ctx.insight("ok", isItalian(ctx.language) ? `Capitolo ${chapter.number} approvato${review?.score ? ` (${review.score}/10)` : ""}` : `Chapter ${chapter.number} approved${review?.score ? ` (${review.score}/10)` : ""}`, summary);
+  // Closed with a target of the readers not reached: what stood in the way, and why it was not worked on any more.
+  const gate = review?.gateStop ? reviewReaderTargets(ctx.state) : undefined;
+  if (review && gate) {
+    const standing = readerStanding(review.readerScores.map((score) => ({ slug: score.slug, score: score.score })), gate);
+    const names = (slug: string) => review.readerScores.find((score) => score.slug === slug)?.name ?? ctx.readerPanel.find((reader) => reader.slug === slug)?.name ?? slug;
+    const italian = isItalian(ctx.language);
+    const averageBlocked = standing.blockers.some((blocker) => blocker.subject === "average");
+    const readersUnder = standing.blockers.filter((blocker) => blocker.subject === "reader").length;
+    const why = review.gateStop === "plateau"
+      ? (italian ? "le ultime correzioni non avvicinavano i lettori all'obiettivo" : "the last corrections did not bring the readers closer to their target")
+      : (italian ? `i giri di revisione permessi (${review.round}) sono finiti` : `the rounds of review allowed (${review.round}) are used`);
+    ctx.insight(
+      "warning",
+      italian ? `Capitolo ${chapter.number} chiuso sotto l'obiettivo dei lettori: ${blockersText(standing.blockers, ctx.language, names)}` : `Chapter ${chapter.number} closed under the readers' target: ${blockersText(standing.blockers, ctx.language, names)}`,
+      italian ? `Non è più lavorato perché ${why}. Per migliorarlo, rivedi di nuovo il libro.` : `It is not worked on any more because ${why}. To improve it, review the book again.`,
+      // The numbers say the average and its target only when the average is what stood in the way, and how many readers were under their own target.
+      { code: "readersTargetMissed", chapterNumber: chapter.number, figures: { round: review.round, ...(averageBlocked && standing.average !== null ? { readers: standing.average } : {}), ...(averageBlocked && gate.average !== undefined ? { readersTarget: gate.average } : {}), ...(readersUnder ? { readersUnder } : {}) } },
+    );
+  }
   return { changes: compact(changes), summary };
 }
 

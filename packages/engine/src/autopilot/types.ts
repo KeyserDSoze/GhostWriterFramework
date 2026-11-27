@@ -192,6 +192,10 @@ export interface ReviewCampaign {
   maxRounds?: number;
   /** In how many of the first rounds of a chapter the simulated readers read it again (0: not at all; absent: the run's policy, else 1). */
   readerRounds?: number;
+  /** The target of the readers' average, the target of each reader and the readers that do not count, for this review (absent: the run's policy; see `ReviewPolicy`). */
+  readersTarget?: number;
+  readerTargets?: Record<string, number>;
+  readersExcluded?: string[];
   /** Chapters of the author's (written before the autopilot, or frozen by the author) that the author chose to have reviewed too. */
   include?: number[];
   /** The chapters the review may revise, in the order of the book: the autopilot's, and the author's the author included. Its votes are of these chapters. */
@@ -210,11 +214,16 @@ export interface ReviewCampaign {
   stalled: number;
 }
 
-/** The votes a round of a review is judged by: the lowest vote of a chapter of the review, the book's, and how many chapters are under the target. */
+/**
+ * The votes a round of a review is judged by: the lowest vote of a chapter of the review, the book's, and how many chapters are under a target (the director's, and the
+ * readers' when the review has them, a chapter whose readers have no current vote counting as under it). `readers` is the lowest average of the readers that count among
+ * the chapters that have a current vote of theirs; absent when the review has no target for the readers.
+ */
 export interface ReviewVotes {
   lowest: number | null;
   book: number | null;
   below: number;
+  readers?: number | null;
 }
 
 export interface ReviewRoundRecord extends ReviewVotes {
@@ -342,14 +351,38 @@ export interface ReviewPolicy {
   readerRounds?: number;
   /** The most rounds a review of the book makes since the run began, before it waits for the author (absent or 0: no limit); a start allows as many again. */
   campaignMaxRounds?: number;
+  /**
+   * The vote the average of the readers that count must reach for a chapter to be closed, from 1 to 10, to a tenth. Absent: the readers' average has no target. With it (or
+   * with `readerTargets`) the readers read the chapter again at the end of its review, so that the vote the gate compares is the one of the text as it is, and the chapter
+   * is closed only when the director's target, this average and the target of each reader are all reached, or the rounds of review (or a plateau) say otherwise. Only
+   * when the readers read (`options.readers`).
+   */
+  readersTarget?: number;
+  /** The vote each reader must reach (by the reader's slug, from 1 to 10, to a tenth); a reader that is not named has no target of its own. */
+  readerTargets?: Record<string, number>;
+  /** The readers that do not count (their slugs): they still read, and what they say is shown, but they are left out of the readers' average and of the gate. */
+  readersExcluded?: string[];
 }
 
 /** The most rounds of review of a chapter, of the readers' and of a review of the book that the policy accepts. */
 export const REVIEW_MAX_ROUNDS = 10;
 export const REVIEW_MAX_CAMPAIGN_ROUNDS = 100;
+/** The most readers a policy keeps a target of, or leaves out of the average. */
+export const REVIEW_MAX_READER_ENTRIES = 100;
 
-/** A change of the review policy (`StartOptions.options.review`): a value sets it, `null` takes it back (the director's again); `null` for the whole policy takes all of it back. */
-export type ReviewPolicyUpdate = { [Key in keyof ReviewPolicy]?: number | null };
+/**
+ * A change of the review policy (`StartOptions.options.review`): a value sets it, `null` takes it back (the director's again); `null` for the whole policy takes all of it back.
+ * `readerTargets` and `readersExcluded` are given whole: they replace what the policy had, and `null` (or nothing left) takes them back.
+ */
+export interface ReviewPolicyUpdate {
+  targetScore?: number | null;
+  maxRounds?: number | null;
+  readerRounds?: number | null;
+  campaignMaxRounds?: number | null;
+  readersTarget?: number | null;
+  readerTargets?: Record<string, number> | null;
+  readersExcluded?: string[] | null;
+}
 
 /** The longest wait of «Retry later», in minutes (a week), and the most cycles that are not "unlimited". */
 export const LONG_RETRY_MAX_MINUTES = 10_080;
@@ -457,10 +490,26 @@ export interface ChapterRound {
   /** The director's vote. */
   director?: number;
   /**
-   * The average of the simulated readers' votes. They read a chapter in the first round of its review, and again in the next rounds the review policy says
-   * (`ReviewPolicy.readerRounds`): the other rounds have none.
+   * The average of the simulated readers' votes (of the readers that count, when the review policy leaves some out). They read a chapter in the first round of its
+   * review, and again in the next rounds the review policy says (`ReviewPolicy.readerRounds`): the other rounds have none. With a target for the readers they read it
+   * again at the end of its review too, and that reading is a round of its own (`reading`).
    */
   readers?: number;
+  /**
+   * The vote of each reader of the round, by the reader's slug (0-10, one decimal): the review policy's targets are for each reader, and the ones that do not count are
+   * only known by it. Recorded only when the review policy has a target for the readers or leaves some out; an older round has the average alone.
+   */
+  readerVotes?: Record<string, number>;
+  /**
+   * The number of the round of the chapter's review the entry belongs to (from 1): for a reading it is the round whose corrections it read. Recorded with `readerVotes`
+   * (and in a reading of its own); a round of an older engine, or of a policy without targets for the readers, has none.
+   */
+  round?: number;
+  /**
+   * The readers read the chapter outside a round of the director, to have a vote of the text as it is: `end`, after the last corrections of its review; `check`, because
+   * a review of the book needed to know the vote of a chapter the director has no more to say about. Such an entry has no vote of the director, no verdict and no counters.
+   */
+  reading?: "end" | "check";
   /**
    * What the round decided: `approve` closed the chapter, `revise` sent it back for fixes. It is the verdict the plan acted on, which is
    * not always the one the model gave (an approval under the director's approval score is withheld, and is a `revise`). Absent from a round
@@ -554,6 +603,20 @@ export interface ChapterReview {
   history: Array<{ round: number; verdict: "approve" | "revise"; score: number; accepted: number; rejected: number }>;
   /** The round the simulated readers read the chapter in (their scores are of that round): the first, and again in the rounds the review policy says. */
   readersRound?: number;
+  /**
+   * The readers' targets (`ReviewPolicy.readersTarget`, `readerTargets`) and the readers' votes of the text as it is. `repairs` is how many scenes were repaired in this review;
+   * `readText` is how many there were when the readers began their last reading: they read the text as it is while the two are equal. `reading` says that the reading
+   * in progress is one of its own (`end`: the closing reading, after the last corrections; `check`: a review of the book needs the vote of a chapter the director is
+   * content with), `readRecorded` that the votes held are already a round of the chapter (`ChapterRound.reading`), and `reads` is how far each closing reading was from the
+   * targets (the sum of what each vote lacked), to tell whether another round of corrections got closer. `gateStop` says why a chapter closes with a target of the readers
+   * not reached: the rounds were used (`rounds`) or the corrections stopped getting closer (`plateau`).
+   */
+  repairs?: number;
+  readText?: number;
+  reading?: "end" | "check";
+  readRecorded?: boolean;
+  reads?: number[];
+  gateStop?: "rounds" | "plateau";
   /**
    * The review of a change the author made to a frozen chapter: one round of the director (and of the specialists), whose fixes are
    * advice for the author and are never applied (the author's text stays as it is); then the chapter is closed and frozen again.
@@ -1070,6 +1133,7 @@ export type AutopilotMessageCode =
   | "reviewDone"
   | "reviewStopped"
   | "reviewHeld"
+  | "readersTargetMissed"
   | "budgetReached"
   | "tokenBudgetReached"
   | "longRetryWait"
@@ -1257,6 +1321,11 @@ export interface AutopilotInsightFigures {
   lowest?: number;
   book?: number;
   below?: number;
+  /** The readers' vote that a closing or a round says, with the target it is compared with (`ReviewPolicy.readersTarget`). */
+  readers?: number;
+  readersTarget?: number;
+  /** How many readers were under their own target when a chapter was closed with a target of the readers missed. */
+  readersUnder?: number;
   outcome?: ReviewOutcome;
   used?: number;
   limit?: number;
@@ -1283,7 +1352,7 @@ export interface AutopilotCampaignSummary {
    * A review of the book: the round in progress and the rounds allowed since the run began (`maxRounds`: absent, no limit), the target, whether the book is
    * being judged, the latest votes (the lowest vote of a chapter of the review, the book's), and the money cap of the book (`options.budgetLimit`; 0: none).
    */
-  review?: { round: number; roundsThisRun: number; maxRounds?: number; targetScore: number; phase: "chapters" | "verdict"; lowest: number | null; book: number | null; budgetLimit: number };
+  review?: { round: number; roundsThisRun: number; maxRounds?: number; targetScore: number; phase: "chapters" | "verdict"; lowest: number | null; book: number | null; budgetLimit: number; readers?: number | null; readersTarget?: number };
 }
 
 /**
