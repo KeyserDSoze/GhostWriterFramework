@@ -46,7 +46,7 @@ const readerRunIt = {
     approval: {
       why: "GitHub ha fermato questa esecuzione perché ha segnalato il file del workflow come possibilmente malevolo. Non partirà, e nulla viene pubblicato, finché qualcuno con permesso di scrittura sul repository non la approva.",
       action: "Apri l'esecuzione su GitHub (il link qui sotto) e premi «Approva ed esegui».",
-      cure: "Aggiornare il lettore sostituisce il workflow con la versione 3, che non dà più al passo di build ogni secret del repository: è con ogni probabilità ciò che GitHub contesta (non lo dice).",
+      cure: "GitHub non dice perché segnala un workflow. Un workflow che dà al passo di build ogni secret del repository (versione 2) è la causa probabile; la versione 3 non lo fa.",
     },
     outside: {
       running: "Controllo il lettore pubblicato da fuori…",

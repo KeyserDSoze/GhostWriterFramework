@@ -13,6 +13,7 @@ test.use({ serviceWorkers: "block" });
 
 const template = JSON.parse(readFileSync(path.join(__dirname, "..", "src", "narrarium-site", "src", "narrarium", "bookTemplate.generated.json"), "utf8")) as { placeholders: { readerPackage: string }; files: Record<string, { text: string }> };
 const V1 = readFileSync(path.join(__dirname, "..", "src", "narrarium-site", "test-browser", "fixtures", "pagesWorkflowV1.yml"), "utf8");
+const V2 = readFileSync(path.join(__dirname, "..", "src", "narrarium-site", "test-browser", "fixtures", "pagesWorkflowV2.yml"), "utf8");
 const CURRENT = planPagesWorkflowUpgrade(V1).text;
 const WORKFLOW_PATH = ".github/workflows/deploy-reader-pages.yml";
 const BOOK = { id: "book-gh", owner: "keyser", repo: "jesus", name: "Jesus", tokenIndex: null, activeBranch: "main", addedAt: "2026-11-01T00:00:00.000Z" };
@@ -406,6 +407,56 @@ test("passwords are prepared while the published reader is old, never called pro
   await expect(page.getByTestId("reader-prepared")).toHaveCount(0);
 });
 
+test("a workflow of version 2 is replaced by version 3, with the reason, and a run that GitHub holds for approval says so in words with the link", async ({ page }) => {
+  test.setTimeout(240_000);
+  await seed(page, BOOK);
+  await stubGoogle(page, BOOK);
+  // The reader is current; only its workflow is version 2 (every secret as JSON), and GitHub holds the run it makes at «Action required».
+  const repo = await stubRepo(page, { workflow: V2 });
+  repo.secrets.add("READER_PASSWORD_001");
+  repo.variable.value = "READER_PASSWORD_001";
+  await page.clock.install();
+  await openBook(page, BOOK);
+  await page.goto("app/books/book-gh/settings#reader");
+  const card = page.getByTestId("reader-update-card");
+  const exposure = card.getByTestId("reader-update-exposure");
+  await expect(exposure).toContainText("GitHub may refuse to run this workflow", { timeout: 60_000 });
+  await expect(exposure).toContainText("probable cure, not a proven one");
+  const step = card.locator("[data-workflow-from]");
+  await expect(step).toHaveAttribute("data-workflow-from", "2");
+  await expect(step).toContainText("hands the build step every secret of the repository as JSON (toJSON(secrets))");
+  await expect(step).toContainText("no secret is renamed");
+  // The password panel still works with version 2 and does not call the prepared passwords protected before the published reader is known to use them.
+  await expect(page.getByTestId("reader-workflow-outdated")).toHaveCount(0);
+
+  const mainBefore = repo.refs.get("main")!;
+  await card.getByRole("button", { name: "Update the reader" }).click();
+  await expect(card.getByTestId("reader-update-outcome").locator('[data-status="published"]')).toBeVisible({ timeout: 60_000 });
+  const head = repo.refs.get("main")!;
+  expect(head).not.toBe(mainBefore);
+  // Only the workflow changed in the commit, and it is version 3: slots, no toJSON(secrets), the same text for every name of the passwords.
+  const changed = [...repo.commits.get(head)!.files].filter(([file, sha]) => repo.commits.get(mainBefore)!.files.get(file) !== sha).map(([file]) => file);
+  expect(changed).toEqual([WORKFLOW_PATH]);
+  expect(repo.commits.get(head)!.files.get(WORKFLOW_PATH)).toBe(blobShaOf(CURRENT_V2_UPGRADE));
+
+  // GitHub holds the run of that push: the card says what to do, and where.
+  const live = card.getByTestId("reader-publication");
+  await expect(live).toHaveAttribute("data-phase", "queued", { timeout: 30_000 });
+  const run = repo.runs[0];
+  run.status = "action_required";
+  await page.clock.fastForward(21_000);
+  await expect(live).toHaveAttribute("data-phase", "action-required");
+  await expect(live.getByText("GitHub is waiting for your approval: the run will not start until someone with write access approves it.")).toBeVisible();
+  await expect(live.getByTestId("reader-publication-approval")).toContainText("press “Approve and run”");
+  await expect(live.getByRole("link", { name: /Open the run on GitHub/ })).toHaveAttribute("href", `https://github.com/keyser/jesus/actions/runs/${run.id}`);
+  await expect(live.getByTestId("reader-publication-announce")).toHaveText("Publication is waiting for your approval on GitHub.");
+  // Someone approves it: it goes on.
+  run.status = "in_progress";
+  await page.clock.fastForward(21_000);
+  await expect(live).toHaveAttribute("data-phase", "running");
+  await expect(live.getByTestId("reader-publication-approval")).toHaveCount(0);
+});
+
 const FEATURE = { ...BOOK, activeBranch: "feature/x" };
 
 test("from a branch other than main, «Update the reader» lands on main on GitHub and on the working branch, one commit each, never forced", async ({ page }) => {
@@ -471,6 +522,8 @@ test("when main is protected the card says it with GitHub's words, still updates
   expect(repo.commits.get(carried)!.parents).toEqual([mainBefore]);
   expect(repo.commits.get(carried)!.files.get(WORKFLOW_PATH)).toBe(blobShaOf(planPagesWorkflowUpgrade(V1).text));
 });
+
+const CURRENT_V2_UPGRADE = planPagesWorkflowUpgrade(V2).text;
 
 function blobShaOf(text: string): string {
   return createHash("sha1").update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest("hex");

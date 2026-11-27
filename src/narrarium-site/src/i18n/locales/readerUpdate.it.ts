@@ -86,7 +86,7 @@ const readerUpdateIt = {
       },
       "workflow-v2": {
         title: "GitHub potrebbe rifiutarsi di eseguire questo workflow",
-        body: "Il lettore funziona e il libro è protetto come prima, ma il suo workflow (versione 2) dà al passo di build ogni secret del repository come JSON. GitHub può scambiarlo per un workflow malevolo e lasciare l'esecuzione su «Azione richiesta» finché qualcuno con permesso di scrittura non preme «Approva ed esegui». GitHub non documenta come decide, quindi la versione 3, che nomina solo gli slot delle password, è la cura probabile, non provata.",
+        body: "Il lettore funziona e nulla cambia su chi può leggere il libro, ma il suo workflow (versione 2) dà al passo di build ogni secret del repository come JSON. GitHub può scambiarlo per un workflow malevolo e lasciare l'esecuzione su «Azione richiesta» finché qualcuno con permesso di scrittura non preme «Approva ed esegui». GitHub non documenta come decide, quindi la versione 3, che nomina solo gli slot delle password, è la cura probabile, non provata.",
       },
       "branch-only": {
         title: "Il lettore pubblicato è aggiornato; questo ramo ha una copia vecchia",

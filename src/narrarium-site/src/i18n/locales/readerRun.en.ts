@@ -46,7 +46,7 @@ const readerRunEn = {
     approval: {
       why: "GitHub held this run because it flagged the workflow file as possibly malicious. It will not run, and nothing is published, until someone with write access to the repository approves it.",
       action: "Open the run on GitHub (the link below) and press “Approve and run”.",
-      cure: "Updating the reader replaces the workflow with version 3, which no longer gives the build step every secret of the repository: that is what GitHub most probably objects to (it does not say).",
+      cure: "GitHub does not say why it flags a workflow. A workflow that hands the build step every secret of the repository (version 2) is the probable cause; version 3 does not do it.",
     },
     outside: {
       running: "Checking the published reader from outside…",

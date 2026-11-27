@@ -86,7 +86,7 @@ const readerUpdateEn = {
       },
       "workflow-v2": {
         title: "GitHub may refuse to run this workflow",
-        body: "The reader works and the book is protected as it was, but its workflow (version 2) gives the build step every secret of the repository as JSON. GitHub can take that for a malicious workflow and leave the run at “Action required” until someone with write access presses “Approve and run”. GitHub does not document how it decides, so version 3, which names only the password slots, is the probable cure, not a proven one.",
+        body: "The reader works and nothing about who can read the book changes, but its workflow (version 2) gives the build step every secret of the repository as JSON. GitHub can take that for a malicious workflow and leave the run at “Action required” until someone with write access presses “Approve and run”. GitHub does not document how it decides, so version 3, which names only the password slots, is the probable cure, not a proven one.",
       },
       "branch-only": {
         title: "The published reader is current; this branch has an old copy",
