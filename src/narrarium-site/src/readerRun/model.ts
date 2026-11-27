@@ -100,7 +100,8 @@ export function phaseOf(tracked: TrackedPublication, now: number): PublicationPh
 export function isGoing(tracked: TrackedPublication | null | undefined, now: number): boolean {
   if (!tracked) return false;
   const phase = phaseOf(tracked, now);
-  return phase === "waiting" || phase === "queued" || phase === "running";
+  // A run held for approval is not over: it goes on as soon as someone approves it, so it is still followed.
+  return phase === "waiting" || phase === "queued" || phase === "running" || phase === "action-required";
 }
 
 /**

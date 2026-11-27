@@ -44,7 +44,7 @@ function UpdateDetails({ plans }: { plans: PlanView[] }) {
           <div key={branch} className="space-y-2" data-testid="reader-update-plan">
             {shown.length > 1 && <h5 className="text-sm font-medium">{t("readerUpdate.branches.plan", { branch })}</h5>}
             <ul className="ml-4 list-disc space-y-1 break-words text-sm">
-              {plan.workflowChanges && <li>{t(plan.workflow.status === "missing" ? "readerUpdate.workflowAdd" : "readerUpdate.workflowUpgrade")}</li>}
+              {plan.workflowChanges && <li data-workflow-from={plan.workflow.fromVersion ?? ""}>{t(plan.workflow.status === "missing" ? "readerUpdate.workflowAdd" : plan.workflow.fromVersion === 2 ? "readerUpdate.workflowV3" : "readerUpdate.workflowUpgrade", { slots: 24 })}</li>}
               {plan.workflowChanges && legacyPassword && <li>{t("readerUpdate.workflowLegacy", { name: LEGACY_READER_SECRET })}</li>}
               {plan.folder.writes.length > 0 && <li>{t(plan.folder.version ? "readerUpdate.folder" : "readerUpdate.folderNoVersion", params)}</li>}
               {plan.folder.deletes.length > 0 && <li>{t("readerUpdate.deletes", { count: plan.folder.deletes.length })}</li>}
@@ -125,6 +125,7 @@ function OnDeviceBody({ decision, lastAuto, branch, syncing, onSync, pagesOn, on
         <h3 className="flex items-start gap-2 text-sm font-semibold"><ShieldAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{t("readerUpdate.onDevice.title")}</h3>
         <p className="text-sm">{t(`readerUpdate.onDevice.reason.${decision.reason}`, { count: decision.unpublished.length })}</p>
         {decision.remoteWorkflow === "old" && <p className="text-sm">{t("readerUpdate.onDevice.remoteOld")}</p>}
+        {decision.remoteWorkflow === "previous" && <p className="text-sm">{t("readerUpdate.onDevice.remotePrevious")}</p>}
         {decision.remoteWorkflow === "missing" && <p className="text-sm">{t("readerUpdate.onDevice.remoteMissing")}</p>}
       </section>
       {exposure && exposure !== "not-published" && (

@@ -12,6 +12,7 @@ import { describeReaderFailure } from "@/readerAccess/messages";
 import { LEGACY_READER_SECRET } from "@/readerAccess/contract";
 import { reconcileReaderPasswords, type ReaderPasswordRow } from "@/readerAccess/model";
 import { inspectReaderWorkflow } from "@/readerAccess/workflowPlan";
+import { isReaderPasswordSlotName } from "narrarium-astro-reader/github-pages";
 import { rowActivation } from "@/readerRun/publication";
 import { PublicationRun } from "@/components/book/readerAccess/PublicationRun";
 import { AddPasswordForm } from "@/components/book/readerAccess/AddPasswordForm";
@@ -20,7 +21,7 @@ import { PasswordRow } from "@/components/book/readerAccess/PasswordRow";
 import { ReaderResultNotice } from "@/components/book/readerAccess/ReaderResultNotice";
 import { useReaderAccess, type ReaderAccess } from "@/components/book/readerAccess/useReaderAccess";
 
-const RUN_STATE_KEY = { queued: "queued", running: "running", succeeded: "succeeded", failed: "failed", cancelled: "cancelled" } as const;
+const RUN_STATE_KEY = { queued: "queued", running: "running", "action-required": "action-required", succeeded: "succeeded", failed: "failed", cancelled: "cancelled" } as const;
 
 /**
  * «Reader access» of a GitHub book: whether GitHub Pages publishes the reader, who can open it (the passwords, which GitHub keeps as write-only secrets and
@@ -51,7 +52,7 @@ export function ReaderAccessCardView({ access, book }: { access: ReaderAccess; b
   // Passwords can always be prepared. They protect the reader only when the published workflow reads them, so until then they are «prepared», never «protecting»,
   // and the card says so (see `readerPublication`). The branch named is the one the workflow publishes from: the repository's default branch.
   const publishingBranch = snapshot.repository?.defaultBranch ?? "main";
-  const workflowReads = workflow === "current" || workflow === "customized";
+  const workflowReads = workflow === "current" || workflow === "customized" || workflow === "previous";
   const addNote = snapshot.loadedAt === null ? undefined : workflow === "missing" ? t("readerAccess.workflow.addNoteMissing", { branch: publishingBranch }) : workflow === "outdated" ? t("readerAccess.workflow.addNoteOutdated", { branch: publishingBranch }) : undefined;
   const publication = access.readerState;
   const protectionKey = publication === "protecting" ? "protected" : publication === "public" ? "public" : publication === "unknown" ? "unknown" : publication;
@@ -60,6 +61,8 @@ export function ReaderAccessCardView({ access, book }: { access: ReaderAccess; b
     target?.scrollIntoView?.({ block: "start", behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     target?.focus({ preventScroll: true });
   };
+  // The workflow of version 3 passes the 24 slots to the build and no other name: a password kept under another name would not be read by it.
+  const outsideSlots = rows.filter((row) => row.secretName !== LEGACY_READER_SECRET && !isReaderPasswordSlotName(row.secretName) && row.state !== "dangling");
   const protectingElsewhere = (row: ReaderPasswordRow) => rows.some((other) => other.secretName !== row.secretName && (other.state === "active" || other.state === "legacy" || other.state === "unknown-value"));
   const failureLines = (Object.entries(snapshot.failures) as Array<[string, NonNullable<(typeof snapshot.failures)[keyof typeof snapshot.failures]>]>)
     .map(([part, failure]) => ({ part, text: describeReaderFailure(failure, access.tokenKind) }));
@@ -135,6 +138,11 @@ export function ReaderAccessCardView({ access, book }: { access: ReaderAccess; b
             <ul className="space-y-2" aria-label={t("readerAccess.passwords.listLabel")}>
               {rows.map((row) => <PasswordRow key={row.secretName} row={row} busy={busy} activation={access.readerStateReady ? rowActivation(row, publication) : null} onRemove={() => setRemoving(row)} onRetry={() => void access.resume(row.secretName)} />)}
             </ul>
+          )}
+          {outsideSlots.length > 0 && (
+            <p role="note" className="rounded-md border border-amber-600/50 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" data-testid="reader-outside-slots">
+              {t("readerAccess.outsideSlots", { names: outsideSlots.map((row) => row.secretName).join(", "), count: 24 })}
+            </p>
           )}
           <AddPasswordForm busy={access.busy === "add"} note={addNote} onAdd={(input) => { lastAction.current = () => void access.add(input); return access.add(input); }} />
         </section>

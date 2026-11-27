@@ -48,23 +48,24 @@ describe("the variable that lists the secrets", () => {
 describe("the name for a new password", () => {
   const names = (...numbers: number[]) => numbers.map(readerSecretName);
 
-  it("is one past the highest number anything holds", () => {
+  it("is the first free slot of the workflow: the workflow passes READER_PASSWORD_001 to READER_PASSWORD_024 to the build and no other name", () => {
     expect(allocateReaderSecretName([])).toBe("READER_PASSWORD_001");
     expect(allocateReaderSecretName(names(1, 2, 3))).toBe("READER_PASSWORD_004");
-    expect(allocateReaderSecretName(names(2, 3))).toBe("READER_PASSWORD_004");
-    expect(allocateReaderSecretName(names(1, 3))).toBe("READER_PASSWORD_004");
+    expect(allocateReaderSecretName(names(2, 3))).toBe("READER_PASSWORD_001");
+    expect(allocateReaderSecretName(names(1, 3))).toBe("READER_PASSWORD_002");
   });
 
-  it("never reuses a name, wherever it is held (listed, a secret, or kept in Narrarium)", () => {
+  it("does not take a slot that is held anywhere (listed, a secret, or kept in Narrarium), and gives a removed password's slot back", () => {
     expect(allocateReaderSecretName([...names(1), ...names(2), ...names(3)])).toBe("READER_PASSWORD_004");
-    expect(allocateReaderSecretName(names(5))).toBe("READER_PASSWORD_006");
+    expect(allocateReaderSecretName([...names(1, 2), ...names(4)])).toBe("READER_PASSWORD_003");
   });
 
-  it("is not confused by the older secret or by names that are not reader secrets", () => {
-    expect(allocateReaderSecretName([LEGACY_READER_SECRET, "SOMETHING_ELSE", "READER_PASSWORD_abc"])).toBe("READER_PASSWORD_001");
+  it("is not confused by the older secret, by names that are not reader secrets, or by a number past the slots", () => {
+    expect(allocateReaderSecretName([LEGACY_READER_SECRET, "SOMETHING_ELSE", "READER_PASSWORD_abc", "READER_PASSWORD_030"])).toBe("READER_PASSWORD_001");
   });
 
-  it("goes past 999 without breaking", () => {
-    expect(allocateReaderSecretName(Array.from({ length: 999 }, (_, index) => readerSecretName(index + 1)))).toBe("READER_PASSWORD_1000");
+  it("has no name when all 24 slots are used: the password is not added", () => {
+    expect(allocateReaderSecretName(Array.from({ length: 23 }, (_, index) => readerSecretName(index + 1)))).toBe("READER_PASSWORD_024");
+    expect(() => allocateReaderSecretName(Array.from({ length: 24 }, (_, index) => readerSecretName(index + 1)))).toThrow(/slot failed \(slots-full\)/);
   });
 });

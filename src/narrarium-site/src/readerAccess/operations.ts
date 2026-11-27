@@ -1,6 +1,6 @@
 import type { Octokit } from "@octokit/rest";
 import type { ReaderPasswordRecord } from "@/types/settings";
-import { nextReaderPasswordSecretName } from "narrarium-astro-reader/github-pages";
+import { freeReaderPasswordSlotName } from "narrarium-astro-reader/github-pages";
 import { LEGACY_READER_SECRET, isReaderSecretName } from "@/readerAccess/contract";
 import { deleteSecret, disablePages, dispatchWorkflow, enablePages, getPublicKey, listSecretNames, putSecret, readPasswordVariable, writePasswordVariable, type RepositoryRef } from "@/readerAccess/api";
 import { ReaderFlowError, classifyReaderFailure, type ReaderFailure } from "@/readerAccess/errors";
@@ -54,11 +54,15 @@ export interface ReaderOperationResult {
 }
 
 /**
- * The name for a new password, from the reader package (`nextReaderPasswordSecretName`): one past the highest number that any place holds — the variable, the
- * secrets that exist in the repository and the passwords Narrarium keeps — so a name that was in use is never given again.
+ * The name for a new password: the first FREE slot of the workflow (`READER_PASSWORD_001` … `READER_PASSWORD_024`, from the reader package). The workflow of
+ * version 3 passes exactly those names to the build and no others, so a password in any other name would never be read; a slot that the list, the secrets of
+ * the repository and the passwords Narrarium keeps do not hold is free (a removed password gave its slot back). When all are used there is no name, and the
+ * password is not added (`ReaderFlowError` «slots-full», before anything is kept or written).
  */
 export function allocateReaderSecretName(taken: Iterable<string>): string {
-  return nextReaderPasswordSecretName([...taken]);
+  const name = freeReaderPasswordSlotName([...taken]);
+  if (name === null) throw new ReaderFlowError("slot", { kind: "slots-full" });
+  return name;
 }
 
 class Run {
@@ -159,9 +163,11 @@ export async function resumeReaderPassword(deps: ReaderOperationDeps, secretName
  */
 export async function setFirstReaderPassword(deps: ReaderOperationDeps, input: { label: string; value: string }): Promise<ReaderOperationResult> {
   const run = new Run(deps);
-  const record: ReaderPasswordRecord = { id: deps.newId?.() ?? crypto.randomUUID(), label: input.label, value: input.value, createdAt: (deps.now?.() ?? new Date()).toISOString(), secretName: allocateReaderSecretName(takenReaderNames(deps.records.get(), { secrets: [], listed: [] })), status: "pending" };
-  try { await run.step("save", () => deps.records.set([...deps.records.get(), record])); }
-  catch (error) { return run.fail("save", error); }
+  let record: ReaderPasswordRecord;
+  try {
+    record = { id: deps.newId?.() ?? crypto.randomUUID(), label: input.label, value: input.value, createdAt: (deps.now?.() ?? new Date()).toISOString(), secretName: allocateReaderSecretName(takenReaderNames(deps.records.get(), { secrets: [], listed: [] })), status: "pending" };
+    await run.step("save", () => deps.records.set([...deps.records.get(), record]));
+  } catch (error) { return run.fail("save", error); }
   const stopped = await publish(deps, run, record);
   return stopped ?? run.ok(record.secretName);
 }

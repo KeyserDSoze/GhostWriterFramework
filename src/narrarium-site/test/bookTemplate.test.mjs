@@ -77,5 +77,7 @@ test("the Pages workflow does not ask for a lock file the repository cannot have
   assert.match(workflow, /actions\/setup-node@v4/);
   assert.match(workflow, /actions\/configure-pages@v5/);
   assert.match(workflow, /pages: write/);
-  assert.doesNotMatch(workflow, /secrets\./, "the workflow needs no secret");
+  // The only secrets it names are the password slots, to the build step; never every secret of the repository as JSON (GitHub can hold such a file at «Action required»).
+  assert.deepEqual([...new Set(workflow.match(/secrets\.[A-Za-z0-9_]+/g))].every((name) => /^secrets\.READER_PASSWORD_0(0[1-9]|1\d|2[0-4])$/.test(name)), true, "the workflow names no secret but the password slots");
+  assert.doesNotMatch(workflow, /toJSON/);
 });

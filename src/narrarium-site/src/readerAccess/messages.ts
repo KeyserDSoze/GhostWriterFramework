@@ -25,6 +25,7 @@ export function describeReaderFailure(failure: ReaderFailure, tokenKind: GitHubT
     case "sso": return { key: "readerAccess.failure.sso" };
     case "credential": return { key: "readerAccess.failure.credential" };
     case "conflict": return { key: "readerAccess.failure.conflict" };
+    case "slots-full": return { key: "readerAccess.failure.slotsFull", params: { count: 24 } };
     case "network": return { key: "readerAccess.failure.network" };
     default: return { key: "readerAccess.failure.other", params: { status: failure.status ?? "" } };
   }

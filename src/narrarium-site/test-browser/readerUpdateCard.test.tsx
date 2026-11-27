@@ -31,6 +31,7 @@ import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
 import { usePublicationStore } from "@/readerRun/store";
 import { createFakeReaderGitHub, type FakeReaderGitHub } from "./helpers/fakeReaderGitHub";
 import v1 from "./fixtures/pagesWorkflowV1.yml?raw";
+import v2Workflow from "./fixtures/pagesWorkflowV2.yml?raw";
 
 const folder = (overrides: Partial<ReaderFolderPlan> = {}): ReaderFolderPlan => ({
   present: true,
@@ -305,6 +306,21 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
     await waitFor(() => expect(document.activeElement).toBe(card()));
     // The exposure of the old reader is still said, beside the prepared passwords.
     expect(screen.getByTestId("reader-update-exposure")).toHaveTextContent(text.exposure);
+  });
+
+  it("says why a workflow of version 2 is replaced: it hands the build step every secret, GitHub may hold it at «Action required», and no secret is renamed", async () => {
+    env.inspect.mockImplementation(async () => found({ workflowText: v2Workflow, folder: folder({ writes: [] }), remote: { pagesOn: true, passwordsSet: true } }));
+    await open(language);
+    const exposure = await screen.findByTestId("reader-update-exposure");
+    expect(exposure).toHaveTextContent(language === "en" ? "GitHub may refuse to run this workflow" : "GitHub potrebbe rifiutarsi di eseguire questo workflow");
+    expect(exposure).toHaveTextContent(language === "en" ? /probable cure, not a proven one/ : /cura probabile, non provata/);
+    expect(screen.queryByText(text.exposure)).toBeNull();
+    const step = within(card()).getByText(language === "en" ? /Replaces the workflow of version 2, which hands the build step every secret of the repository as JSON \(toJSON\(secrets\)\)/ : /Sostituisce il workflow di versione 2, che dà al passo di build ogni secret del repository come JSON \(toJSON\(secrets\)\)/);
+    expect(step).toHaveAttribute("data-workflow-from", "2");
+    expect(step).toHaveTextContent(/READER_PASSWORD_001 .* READER_PASSWORD_024/);
+    expect(step).toHaveTextContent(language === "en" ? /no secret is renamed/ : /nessun secret viene rinominato/);
+    // The reader files are not in the list: only the workflow changes.
+    expect(within(card()).queryByText(language === "en" ? /Replaces \d+ files of the reader\/ folder/ : /Sostituisce \d+ file/)).toBeNull();
   });
 
   it("says when the publishing workflow is paused, because Pages was turned off", async () => {

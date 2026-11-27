@@ -5,7 +5,7 @@
 export type ReaderStep =
   | "repository" | "public-key" | "secret-write" | "secret-delete" | "secrets-list"
   | "variable-read" | "variable-write" | "variable-delete"
-  | "dispatch" | "runs" | "run-failure" | "workflow-read" | "pages-read" | "pages-enable" | "pages-disable";
+  | "slot" | "dispatch" | "runs" | "run-failure" | "workflow-read" | "pages-read" | "pages-enable" | "pages-disable";
 
 export type ReaderFailure =
   | { kind: "permission"; status: number; permissions: string[]; fromHeader: boolean }
@@ -16,6 +16,8 @@ export type ReaderFailure =
   | { kind: "credential"; status: number }
   | { kind: "rate-limit"; status: number; resetAt?: string }
   | { kind: "conflict"; status: number }
+  /** Every one of the workflow's password slots is used: a new password has no name to be read under. */
+  | { kind: "slots-full" }
   | { kind: "network" }
   | { kind: "other"; status?: number };
 
@@ -24,6 +26,7 @@ const STEP_PERMISSION: Record<ReaderStep, string[]> = {
   repository: ["metadata"],
   "public-key": ["secrets"], "secret-write": ["secrets"], "secret-delete": ["secrets"], "secrets-list": ["secrets"],
   "variable-read": ["actions_variables"], "variable-write": ["actions_variables"], "variable-delete": ["actions_variables"],
+  slot: [],
   dispatch: ["actions"], runs: ["actions"], "run-failure": ["actions", "checks"],
   "workflow-read": ["contents"],
   "pages-read": ["pages"], "pages-enable": ["pages"], "pages-disable": ["pages"],

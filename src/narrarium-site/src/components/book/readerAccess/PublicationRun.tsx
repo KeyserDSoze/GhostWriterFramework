@@ -10,7 +10,7 @@ import { allRunsUrl, durationMs, isEnded, phaseOf, runUrl, splitDuration, type P
 import type { PublicationLive } from "@/readerRun/store";
 import type { OutsideCheckResult } from "@/readerUpdate/outsideCheck";
 
-const ICON: Record<PublicationPhase, typeof Loader2> = { waiting: Loader2, queued: Loader2, running: Loader2, succeeded: CheckCircle2, failed: XCircle, cancelled: AlertTriangle, "not-found": AlertTriangle };
+const ICON: Record<PublicationPhase, typeof Loader2> = { waiting: Loader2, queued: Loader2, running: Loader2, "action-required": AlertTriangle, succeeded: CheckCircle2, failed: XCircle, cancelled: AlertTriangle, "not-found": AlertTriangle };
 
 /** A clock that moves once a second while something is going and the tab is seen, so that the duration of a run counts up without anything being announced. */
 function useNow(active: boolean): number {
@@ -94,6 +94,13 @@ export function PublicationRun({ owner, repo, tracked, live, going, onRefresh, f
         <dt className="text-muted-foreground">{t("readerRun.duration")}</dt>
         <dd data-testid="reader-publication-duration">{durationText === null ? "—" : phase === "running" || phase === "queued" ? t("readerRun.durationSoFar", { value: durationText }) : durationText}</dd>
       </dl>
+      {phase === "action-required" && (
+        <div className="ml-6 space-y-1 rounded-md border border-amber-600/50 bg-amber-50 p-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" data-testid="reader-publication-approval">
+          <p>{t("readerRun.approval.why")}</p>
+          <p className="font-medium">{t("readerRun.approval.action")}</p>
+          <p>{t("readerRun.approval.cure")}</p>
+        </div>
+      )}
       {phase === "failed" && failure && <p className="ml-6 text-xs" data-testid="reader-publication-cause" data-cause={failure.cause}>{t(`readerUpdate.runFailure.${failure.cause}.title`)}</p>}
       {phase === "succeeded" && outside && (
         <p className="ml-6 text-xs" data-testid="reader-publication-outside" role="status">

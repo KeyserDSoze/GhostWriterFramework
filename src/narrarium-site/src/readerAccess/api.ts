@@ -96,10 +96,12 @@ export async function dispatchWorkflow(octokit: Octokit, repo: RepositoryRef, re
   await call("dispatch", () => dispatchPagesWorkflow(requestOf(octokit), repo, { ref }));
 }
 
-export type RunState = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+/** `action-required`: GitHub holds the run until someone with write access approves it («Approve and run»), which it does for a workflow file it takes for malicious. */
+export type RunState = "queued" | "running" | "action-required" | "succeeded" | "failed" | "cancelled";
 export interface WorkflowRun { id: number; state: RunState; url: string; createdAt: string; headSha?: string }
 
 function runState(status: string | null, conclusion: string | null): RunState {
+  if (status === "action_required" || conclusion === "action_required") return "action-required";
   if (status === "completed") return conclusion === "success" ? "succeeded" : conclusion === "cancelled" ? "cancelled" : "failed";
   return status === "in_progress" ? "running" : "queued";
 }

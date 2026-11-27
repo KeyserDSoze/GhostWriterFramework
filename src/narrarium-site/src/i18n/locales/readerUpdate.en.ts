@@ -14,6 +14,7 @@ const readerUpdateEn = {
         "remote-differs": "The reader is current in the working copy on this device, but GitHub does not have it: what is published is still the old reader.",
       },
       remoteOld: "On GitHub the workflow is the old one: it does not read the list of passwords, so a password added now would not protect the published reader.",
+      remotePrevious: "On GitHub the workflow is version 2: it reads the passwords, but it hands the build step every secret of the repository, and GitHub can hold it at “Action required” until someone with write access approves it.",
       remoteMissing: "On GitHub there is no publishing workflow yet.",
       files: "Show the {{count}} files not on GitHub yet",
       delivery: {
@@ -83,6 +84,10 @@ const readerUpdateEn = {
         title: "An old reader is published",
         body: "The reader of this book is older than the current one. Updating gives it the full-page e-reader and passwords that can be several, each one removable on its own.",
       },
+      "workflow-v2": {
+        title: "GitHub may refuse to run this workflow",
+        body: "The reader works and the book is protected as it was, but its workflow (version 2) gives the build step every secret of the repository as JSON. GitHub can take that for a malicious workflow and leave the run at “Action required” until someone with write access presses “Approve and run”. GitHub does not document how it decides, so version 3, which names only the password slots, is the probable cure, not a proven one.",
+      },
       "branch-only": {
         title: "The published reader is current; this branch has an old copy",
         body: "The branch the reader is published from already has the current reader, so what is published is fine. This branch still has an older copy of the reader files, which would bring the old files back if it is merged into the publishing branch. Updating makes them the same.",
@@ -96,6 +101,7 @@ const readerUpdateEn = {
     what: "What the update changes",
     workflowAdd: "Adds the workflow that publishes the reader on GitHub Pages (.github/workflows/deploy-reader-pages.yml).",
     workflowUpgrade: "Updates the workflow so that the reader can have several passwords: their names are listed in the repository variable READER_PASSWORD_SECRETS, only the build step receives the secrets, and the publication stops if passwords are listed and the reader did not encrypt the book.",
+    workflowV3: "Replaces the workflow of version 2, which hands the build step every secret of the repository as JSON (toJSON(secrets)) and which GitHub can hold at “Action required”, with version 3: the build step receives only the {{slots}} password slots, READER_PASSWORD_001 to READER_PASSWORD_024. The passwords, their secrets and the variable stay as they are: no secret is renamed.",
     workflowLegacy: "The password you use today (the secret {{name}}) stays valid, as one of the passwords of the book.",
     folder: "Replaces {{replaced}} files of the reader/ folder and adds {{added}}, at the version {{version}} of the reader.",
     folderNoVersion: "Replaces {{replaced}} files of the reader/ folder and adds {{added}}.",

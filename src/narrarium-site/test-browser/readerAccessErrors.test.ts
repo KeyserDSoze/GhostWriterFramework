@@ -18,7 +18,7 @@ describe("the permission GitHub says is missing", () => {
     const expected: Record<ReaderStep, string[]> = {
       repository: ["metadata"], "public-key": ["secrets"], "secret-write": ["secrets"], "secret-delete": ["secrets"], "secrets-list": ["secrets"],
       "variable-read": ["actions_variables"], "variable-write": ["actions_variables"], "variable-delete": ["actions_variables"], dispatch: ["actions"], runs: ["actions"], "run-failure": ["actions", "checks"],
-      "workflow-read": ["contents"], "pages-read": ["pages"], "pages-enable": ["pages"], "pages-disable": ["pages"],
+      slot: [], "workflow-read": ["contents"], "pages-read": ["pages"], "pages-enable": ["pages"], "pages-disable": ["pages"],
     };
     for (const [step, permissions] of Object.entries(expected) as Array<[ReaderStep, string[]]>) {
       expect(classifyReaderFailure(failure(403), step)).toEqual({ kind: "permission", status: 403, permissions, fromHeader: false });

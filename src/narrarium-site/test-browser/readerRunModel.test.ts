@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PublishingRun } from "@/readerAccess/api";
-import { BACKOFF_MAX_MS, NOT_FOUND_AFTER_MS, POLL_MS, allRunsUrl, durationMs, eventOf, isGoing, matchPublicationRun, nextDelayMs, phaseOf, runUrl, splitDuration, withRun, type TrackedPublication } from "@/readerRun/model";
+import { BACKOFF_MAX_MS, NOT_FOUND_AFTER_MS, POLL_MS, allRunsUrl, durationMs, eventOf, isEnded, isGoing, matchPublicationRun, nextDelayMs, phaseOf, runUrl, splitDuration, withRun, type TrackedPublication } from "@/readerRun/model";
 import { RUN_STORAGE_KEY, readStoredPublications } from "@/readerRun/store";
 
 const run = (id: number, patch: Partial<PublishingRun> = {}): PublishingRun => ({ id, state: "queued", event: "workflow_dispatch", branch: "main", headSha: `sha-${id}`, createdAt: "2026-11-27T10:00:00Z", startedAt: "2026-11-27T10:00:00Z", updatedAt: "2026-11-27T10:00:00Z", url: "", ...patch });
@@ -63,6 +63,10 @@ describe("the state of a publication", () => {
     expect(isGoing(null, now)).toBe(false);
     for (const state of ["queued", "running"] as const) expect(isGoing(tracked({ state, runId: 1 }), late)).toBe(true);
     for (const state of ["succeeded", "failed", "cancelled"] as const) expect(isGoing(tracked({ state, runId: 1 }), now)).toBe(false);
+    // A run that GitHub holds for approval is not over: it starts when someone approves it, so it is still followed, and it is not an end.
+    expect(isGoing(tracked({ state: "action-required", runId: 1 }), late)).toBe(true);
+    expect(isEnded("action-required")).toBe(false);
+    expect(phaseOf(tracked({ state: "action-required", runId: 1 }), late)).toBe("action-required");
   });
 
   it("counts the time a run has taken: to now while it goes, to its last update when it ended", () => {

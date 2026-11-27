@@ -98,7 +98,7 @@ export function useReaderAccess(book: BookEntry) {
   }, [refresh]);
 
   const workflowState = snapshot.workflow ? inspectReaderWorkflow(snapshot.workflow.present ? snapshot.workflow.content ?? "" : null) : null;
-  const workflowReads = workflowState === "current" || workflowState === "customized";
+  const workflowReads = workflowState === "current" || workflowState === "customized" || workflowState === "previous";
   const deps = useCallback((): ReaderOperationDeps | null => {
     const octokit = octokitRef.current;
     if (!octokit) return null;
@@ -168,7 +168,7 @@ export function useReaderAccess(book: BookEntry) {
   // A run that was already going when the card opened (someone else's push, an earlier click on another device) is followed too: nothing is asked when nothing is publishing.
   const latest = snapshot.runs?.[0];
   useEffect(() => {
-    if (!latest || (latest.state !== "queued" && latest.state !== "running")) return;
+    if (!latest || (latest.state !== "queued" && latest.state !== "running" && latest.state !== "action-required")) return;
     if (Date.now() - Date.parse(latest.createdAt) > OBSERVE_WITHIN_MS) return;
     const current = usePublicationStore.getState().entries[publicationId];
     if (current && (isGoing(current, Date.now()) || current.runId === latest.id)) return;

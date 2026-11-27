@@ -49,6 +49,11 @@ export type ReaderExposure =
   | "password-old-reader"
   /** The published reader (the publishing branch) is current; only the branch the author works on has an old copy of it. */
   | "branch-only"
+  /**
+   * The reader works and is current; only its workflow is version 2, which hands the build step every secret of the repository as JSON: GitHub can hold it
+   * at «Action required» until someone with write access approves it. Not an exposure of the book, so it is told apart from the old reader's.
+   */
+  | "workflow-v2"
   /** An old reader that is public anyway. */
   | "old-reader"
   /** Pages is off: nothing is published now. */
@@ -104,7 +109,8 @@ export type ReaderUpdateDecision =
       publishing?: PublishingInfo;
       version: string | null;
       reason: "local-commits" | "remote-differs";
-      remoteWorkflow: "current" | "old" | "missing" | "unknown";
+      /** What the workflow on GitHub is: the current one, `previous` (version 2: it reads the passwords, and may be held for approval), an old one, none, or not read. */
+      remoteWorkflow: "current" | "previous" | "old" | "missing" | "unknown";
       exposure: ReaderExposure | null;
       delivery: ReaderDelivery;
       unpublished: string[];
@@ -183,23 +189,27 @@ export function decideReaderUpdate(input: ReaderUpdateInputs): ReaderUpdateDecis
   // Which side of the reader is old decides what is exposed: the published one is the publishing branch's. When the working branch is not it and it is
   // current, only this branch's copy is old; when it cannot be known, the published reader is taken to be as old as this one.
   const publishedOld = publishing.info === null ? true : publishing.info.state !== "current" && publishing.info.state !== "not-published";
+  // Only the workflow is old, and it is version 2: the reader works and the book is protected as it was; GitHub may hold the workflow for approval.
+  const noFolderChange = (folder: ReaderFolderPlan) => folder.writes.length === 0 && folder.deletes.length === 0;
+  const onlyWorkflowV2 = workflow.fromVersion === 2 && noFolderChange(input.folder) && (!publishing.target || (publishing.target.workflow.fromVersion === 2 && noFolderChange(publishing.target.folder)));
   const exposureOf = (): ReaderExposure => input.remote?.pagesOn === false || publishing.info?.state === "not-published" ? "not-published"
     : !publishedOld ? "branch-only"
-      : passwordSet ? "password-old-reader" : "old-reader";
+      : onlyWorkflowV2 ? "workflow-v2"
+        : passwordSet ? "password-old-reader" : "old-reader";
   if (!currentNeeded && !publishing.target) {
     const remoteText = input.remote?.workflowText;
     const remotePlan = remoteText === undefined ? null : planReaderWorkflow(remoteText);
-    const remoteWorkflow: "current" | "old" | "missing" | "unknown" = remotePlan === null ? "unknown" : remotePlan.status === "current" ? "current" : remotePlan.status === "missing" ? "missing" : "old";
+    const remoteWorkflow: "current" | "previous" | "old" | "missing" | "unknown" = remotePlan === null ? "unknown" : remotePlan.status === "current" ? "current" : remotePlan.status === "missing" ? "missing" : remotePlan.status === "generated" && remotePlan.fromVersion === 2 ? "previous" : "old";
     const unpublished = [...(input.unpublished ?? [])];
-    if (remoteWorkflow === "old" || remoteWorkflow === "missing" || unpublished.length > 0) {
-      const behind = remoteWorkflow === "old" || remoteWorkflow === "missing";
+    if (remoteWorkflow === "old" || remoteWorkflow === "previous" || remoteWorkflow === "missing" || unpublished.length > 0) {
+      const behind = remoteWorkflow === "old" || remoteWorkflow === "previous" || remoteWorkflow === "missing";
       return {
         kind: "on-device",
         ...(publishing.info ? { publishing: publishing.info } : {}),
         version: input.folder.version,
         reason: behind ? "remote-differs" : "local-commits",
         remoteWorkflow,
-        exposure: !behind ? null : input.remote?.pagesOn === false ? "not-published" : passwordSet ? "password-old-reader" : "old-reader",
+        exposure: !behind ? null : input.remote?.pagesOn === false ? "not-published" : remoteWorkflow === "previous" ? "workflow-v2" : passwordSet ? "password-old-reader" : "old-reader",
         delivery: deliveryOf(input),
         unpublished,
         publishesFromBranch: publishesFrom(input),

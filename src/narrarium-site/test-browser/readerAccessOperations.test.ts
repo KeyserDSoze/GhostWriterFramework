@@ -49,7 +49,7 @@ describe("adding a password", () => {
     expect(github.calls.find((call) => call.method === "createOrUpdateRepoSecret")?.args).toMatchObject({ key_id: "key-1" });
   });
 
-  it("picks a name nothing holds: past the listed, the existing secrets and the kept ones", async () => {
+  it("picks a slot nothing holds: the first one that the list, the existing secrets and the kept ones leave free", async () => {
     github.variable.value = name(1);
     github.secrets.set(name(2), "x");
     stored = [{ id: "k", label: "k", value: "kept-value", createdAt: "", secretName: name(3), status: "pending" }];
@@ -58,13 +58,23 @@ describe("adding a password", () => {
     expect(github.variable.value).toBe(`${name(1)},${name(4)}`);
   });
 
-  it("never reuses a number: the new password goes one past the highest that is listed or has a secret", async () => {
+  it("gives a free slot back: the new password takes the first one that is not listed and has no secret, and the workflow reads it by that name", async () => {
     github.variable.value = `${name(1)},${name(3)}`;
     github.secrets.set(name(1), "x");
     github.secrets.set(name(3), "x");
     const result = await addReaderPassword(deps(), { label: "x", value: PASSWORD });
-    expect(result.secretName).toBe(name(4));
-    expect(github.variable.value).toBe(`${name(1)},${name(3)},${name(4)}`);
+    expect(result.secretName).toBe(name(2));
+    expect(github.variable.value).toBe(`${name(1)},${name(3)},${name(2)}`);
+  });
+
+  it("refuses a 25th password before anything is kept or written: every slot of the workflow is used", async () => {
+    const all = Array.from({ length: 24 }, (_, index) => name(index + 1));
+    github.variable.value = all.join(",");
+    for (const slot of all) github.secrets.set(slot, "x");
+    const result = await addReaderPassword(deps(), { label: "x", value: PASSWORD });
+    expect(result).toMatchObject({ ok: false, failed: { step: "check", failure: { kind: "slots-full" } }, dispatched: false });
+    expect(stored).toEqual([]);
+    expect(github.order()).toEqual([]);
   });
 
   it("updates the variable that exists instead of creating it", async () => {

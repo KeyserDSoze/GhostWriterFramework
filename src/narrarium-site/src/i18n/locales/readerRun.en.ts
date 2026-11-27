@@ -6,6 +6,7 @@ const readerRunEn = {
     phase: {
       waiting: "Waiting for GitHub to start the run…",
       queued: "Queued: waiting for GitHub to give it a machine.",
+      "action-required": "GitHub is waiting for your approval: the run will not start until someone with write access approves it.",
       running: "Running",
       succeeded: "Succeeded: the reader is published.",
       failed: "Failed: the reader was not published.",
@@ -33,6 +34,7 @@ const readerRunEn = {
     permission: "GitHub did not let this book's credential read the runs, so it is not followed here. Open the run on GitHub.",
     stopped: "It stops by itself when the run ends.",
     announce: {
+      "action-required": "Publication is waiting for your approval on GitHub.",
       waiting: "Publication started. Waiting for GitHub to start the run.",
       queued: "Publication queued.",
       running: "Publication running.",
@@ -40,6 +42,11 @@ const readerRunEn = {
       failed: "Publication failed.",
       cancelled: "Publication cancelled.",
       "not-found": "GitHub has not started a run for this publication.",
+    },
+    approval: {
+      why: "GitHub held this run because it flagged the workflow file as possibly malicious. It will not run, and nothing is published, until someone with write access to the repository approves it.",
+      action: "Open the run on GitHub (the link below) and press “Approve and run”.",
+      cure: "Updating the reader replaces the workflow with version 3, which no longer gives the build step every secret of the repository: that is what GitHub most probably objects to (it does not say).",
     },
     outside: {
       running: "Checking the published reader from outside…",

@@ -16,6 +16,7 @@ import { LEGACY_READER_SECRET } from "@/readerAccess/contract";
 import { usePublicationStore } from "@/readerRun/store";
 import { useOutsideStore } from "@/readerRun/outsideStore";
 import { createFakeReaderGitHub, type FakeReaderGitHub } from "./helpers/fakeReaderGitHub";
+import v2Workflow from "./fixtures/pagesWorkflowV2.yml?raw";
 
 const PASSWORD = "Alpha-PASSWORD-canary-7731";
 const book: BookEntry = { id: "b1", owner: "me", repo: "book", name: "Book", tokenIndex: null, addedAt: "2026-11-01T00:00:00.000Z" };
@@ -435,6 +436,64 @@ describe.each(["en", "it"] as const)("passwords can always be prepared, in %s", 
     await open(language);
     const row = within(await waitFor(() => rowOf("Reader 1")));
     expect(row.getByRole("button", { name: language === "en" ? "Remove password «Reader 1»" : "Rimuovi la password «Reader 1»" })).toBeEnabled();
+  });
+});
+
+describe.each(["en", "it"] as const)("a workflow of version 2 and the slots of version 3, in %s", (language) => {
+  const V2 = v2Workflow;
+  const text = language === "en"
+    ? { used: "In use", publishing: "Being published", add: "Add password", password: "Password", outside: /is not one of the 24 slots that the current reader workflow \(version 3\) gives to the build: READER_PASSWORD_031/, doesNotRead: /does not read passwords yet/ }
+    : { used: "In uso", publishing: "In pubblicazione", add: "Aggiungi password", password: "Password", outside: /non è uno dei 24 slot che il workflow del lettore attuale \(versione 3\) dà alla build: READER_PASSWORD_031/, doesNotRead: /non legge ancora le password/ };
+
+  it("treats version 2 as a workflow that reads the passwords: a password is added and published at once, with no note that it would not protect", async () => {
+    github.workflowText.value = V2;
+    await open(language);
+    await screen.findByText(language === "en" ? /No password yet/ : /Ancora nessuna password/);
+    expect(screen.queryByTestId("reader-workflow-outdated")).toBeNull();
+    expect(screen.queryByTestId("reader-add-note")).toBeNull();
+    fireEvent.change(screen.getByLabelText(text.password), { target: { value: `${PASSWORD}-v2` } });
+    fireEvent.click(screen.getByRole("button", { name: text.add }));
+    await waitFor(() => expect(github.calls.some((call) => call.method === "createWorkflowDispatch")).toBe(true));
+    // It takes the first free slot, the name the workflow of version 3 passes as well.
+    expect(github.secrets.has(name(1))).toBe(true);
+    expect(github.variable.value).toBe(name(1));
+  });
+
+  it("says «in use» for a password when the workflow that built the published reader is version 2, which reads it: the prepared state stays truthful both ways", async () => {
+    reset([record(1)]);
+    github.variable.value = name(1);
+    github.secrets.set(name(1), "x");
+    github.workflowText.value = V2;
+    github.runs.push({ id: 3, status: "completed", conclusion: "success", html_url: "x", created_at: "2026-11-20T09:00:00Z", head_branch: "main", head_sha: "built", event: "push" });
+    github.workflowTextAt.built = V2;
+    await open(language);
+    const row = within(await waitFor(() => rowOf("Reader 1")));
+    await waitFor(() => expect(row.getByText(text.used)).toBeInTheDocument());
+    // And not when the workflow that built it did not name the passwords at all.
+    cleanup();
+    reset([record(1)]);
+    github.variable.value = name(1);
+    github.secrets.set(name(1), "x");
+    github.runs.push({ id: 3, status: "completed", conclusion: "success", html_url: "x", created_at: "2026-11-20T09:00:00Z", head_branch: "main", head_sha: "built", event: "push" });
+    github.workflowTextAt.built = "name: old\n";
+    await open(language);
+    const again = within(await waitFor(() => rowOf("Reader 1")));
+    await waitFor(() => expect(again.getByText(language === "en" ? "Prepared, not protecting yet" : "Preparata, non ancora protettiva")).toBeInTheDocument());
+  });
+
+  it("warns about a password whose secret is not one of the slots, because a workflow of version 3 would not read it", async () => {
+    reset([record(31)]);
+    github.variable.value = name(31);
+    github.secrets.set(name(31), "x");
+    await open(language);
+    expect(await screen.findByTestId("reader-outside-slots")).toHaveTextContent(text.outside);
+    cleanup();
+    reset([record(1)]);
+    github.variable.value = name(1);
+    github.secrets.set(name(1), "x");
+    await open(language);
+    await screen.findByTestId("reader-password");
+    expect(screen.queryByTestId("reader-outside-slots")).toBeNull();
   });
 });
 

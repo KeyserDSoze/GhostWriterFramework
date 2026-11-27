@@ -6,6 +6,7 @@ const readerRunIt = {
     phase: {
       waiting: "In attesa che GitHub avvii l'esecuzione…",
       queued: "In coda: aspetta che GitHub le dia una macchina.",
+      "action-required": "GitHub aspetta la tua approvazione: l'esecuzione non parte finché qualcuno con permesso di scrittura non la approva.",
       running: "In esecuzione",
       succeeded: "Riuscita: il lettore è pubblicato.",
       failed: "Fallita: il lettore non è stato pubblicato.",
@@ -33,6 +34,7 @@ const readerRunIt = {
     permission: "GitHub non ha lasciato leggere le esecuzioni con la credenziale di questo libro, quindi qui non vengono seguite. Apri l'esecuzione su GitHub.",
     stopped: "Si ferma da sola quando l'esecuzione finisce.",
     announce: {
+      "action-required": "La pubblicazione aspetta la tua approvazione su GitHub.",
       waiting: "Pubblicazione avviata. In attesa che GitHub avvii l'esecuzione.",
       queued: "Pubblicazione in coda.",
       running: "Pubblicazione in esecuzione.",
@@ -40,6 +42,11 @@ const readerRunIt = {
       failed: "Pubblicazione fallita.",
       cancelled: "Pubblicazione annullata.",
       "not-found": "GitHub non ha avviato nessuna esecuzione per questa pubblicazione.",
+    },
+    approval: {
+      why: "GitHub ha fermato questa esecuzione perché ha segnalato il file del workflow come possibilmente malevolo. Non partirà, e nulla viene pubblicato, finché qualcuno con permesso di scrittura sul repository non la approva.",
+      action: "Apri l'esecuzione su GitHub (il link qui sotto) e premi «Approva ed esegui».",
+      cure: "Aggiornare il lettore sostituisce il workflow con la versione 3, che non dà più al passo di build ogni secret del repository: è con ogni probabilità ciò che GitHub contesta (non lo dice).",
     },
     outside: {
       running: "Controllo il lettore pubblicato da fuori…",

@@ -24,8 +24,8 @@ let github: FakeReaderGitHub;
 let visibility: "visible" | "hidden" = "visible";
 
 const TEXTS = {
-  en: { publishAgain: "Publish again", waiting: "Waiting for GitHub to start the run…", queued: "Queued: waiting for GitHub to give it a machine.", running: "Running", succeeded: "Succeeded: the reader is published.", failed: "Failed: the reader was not published.", step: "Step 2 of 3: Build reader site", openRun: /Open the run on GitHub/, all: /View all runs/, announceRunning: "Publication running.", announceSucceeded: "Publication succeeded. The reader is published.", paused: /Paused while this tab is hidden/, rate: /GitHub's limit on requests was reached\. The next check is in about \d+ s\./, notFound: /GitHub has not started a run for this action/, budget: "GitHub Actions cannot run: the budget or billing blocks it", checked: /Checked from outside: the EPUB answers 404/ },
-  it: { publishAgain: "Pubblica di nuovo", waiting: "In attesa che GitHub avvii l'esecuzione…", queued: "In coda: aspetta che GitHub le dia una macchina.", running: "In esecuzione", succeeded: "Riuscita: il lettore è pubblicato.", failed: "Fallita: il lettore non è stato pubblicato.", step: "Passo 2 di 3: Build reader site", openRun: /Apri l'esecuzione su GitHub/, all: /Vedi tutte le esecuzioni/, announceRunning: "Pubblicazione in esecuzione.", announceSucceeded: "Pubblicazione riuscita. Il lettore è pubblicato.", paused: /In pausa finché questa scheda è nascosta/, rate: /Il limite di richieste di GitHub è stato raggiunto\. Il prossimo controllo è tra circa \d+ s\./, notFound: /GitHub non ha avviato nessuna esecuzione per questa azione/, budget: "GitHub Actions non può girare: lo blocca il budget o la fatturazione", checked: /Controllato da fuori: l'EPUB risponde 404/ },
+  en: { publishAgain: "Publish again", waiting: "Waiting for GitHub to start the run…", queued: "Queued: waiting for GitHub to give it a machine.", running: "Running", succeeded: "Succeeded: the reader is published.", failed: "Failed: the reader was not published.", approval: "GitHub is waiting for your approval: the run will not start until someone with write access approves it.", approvalAction: "Open the run on GitHub (the link below) and press “Approve and run”.", announceApproval: "Publication is waiting for your approval on GitHub.", step: "Step 2 of 3: Build reader site", openRun: /Open the run on GitHub/, all: /View all runs/, announceRunning: "Publication running.", announceSucceeded: "Publication succeeded. The reader is published.", paused: /Paused while this tab is hidden/, rate: /GitHub's limit on requests was reached\. The next check is in about \d+ s\./, notFound: /GitHub has not started a run for this action/, budget: "GitHub Actions cannot run: the budget or billing blocks it", checked: /Checked from outside: the EPUB answers 404/ },
+  it: { publishAgain: "Pubblica di nuovo", waiting: "In attesa che GitHub avvii l'esecuzione…", queued: "In coda: aspetta che GitHub le dia una macchina.", running: "In esecuzione", succeeded: "Riuscita: il lettore è pubblicato.", failed: "Fallita: il lettore non è stato pubblicato.", approval: "GitHub aspetta la tua approvazione: l'esecuzione non parte finché qualcuno con permesso di scrittura non la approva.", approvalAction: "Apri l'esecuzione su GitHub (il link qui sotto) e premi «Approva ed esegui».", announceApproval: "La pubblicazione aspetta la tua approvazione su GitHub.", step: "Passo 2 di 3: Build reader site", openRun: /Apri l'esecuzione su GitHub/, all: /Vedi tutte le esecuzioni/, announceRunning: "Pubblicazione in esecuzione.", announceSucceeded: "Pubblicazione riuscita. Il lettore è pubblicato.", paused: /In pausa finché questa scheda è nascosta/, rate: /Il limite di richieste di GitHub è stato raggiunto\. Il prossimo controllo è tra circa \d+ s\./, notFound: /GitHub non ha avviato nessuna esecuzione per questa azione/, budget: "GitHub Actions non può girare: lo blocca il budget o la fatturazione", checked: /Controllato da fuori: l'EPUB risponde 404/ },
 } as const;
 
 function setVisibility(state: "visible" | "hidden") {
@@ -136,6 +136,38 @@ describe.each(["en", "it"] as const)("the live state of a publication, in %s", (
     github.runs[0].conclusion = "success";
     await advance(20_100);
     await waitFor(() => expect(announce()).toHaveTextContent(text.announceSucceeded));
+  });
+
+  it("says in words that GitHub is waiting for approval (status or conclusion action_required), with the run's link, goes on asking, and follows it once it is approved", async () => {
+    await open(language);
+    await publish(language);
+    await waitFor(() => expect(phase()).toBe("queued"));
+    // GitHub held the run: the workflow file was flagged («GitHub detected that this workflow file may be malicious»).
+    github.runs[0].status = "action_required";
+    await advance(20_100);
+    await waitFor(() => expect(phase()).toBe("action-required"));
+    expect(within(panel()).getByText(text.approval)).toBeInTheDocument();
+    expect(within(panel()).getByTestId("reader-publication-approval")).toHaveTextContent(text.approvalAction);
+    expect(within(panel()).getByTestId("reader-publication-announce")).toHaveTextContent(text.announceApproval);
+    expect(within(panel()).getByRole("link", { name: text.openRun })).toHaveAttribute("href", `${runsUrl}/1`);
+    const held = runPolls();
+    await advance(60_100);
+    expect(runPolls()).toBeGreaterThan(held);
+    // The conclusion says it too, on a run that GitHub marks as completed.
+    github.runs[0].status = "completed";
+    github.runs[0].conclusion = "action_required";
+    await advance(20_100);
+    await waitFor(() => expect(phase()).toBe("action-required"));
+    // Someone approves: it runs, and it succeeds.
+    github.runs[0].status = "in_progress";
+    github.runs[0].conclusion = null;
+    await advance(20_100);
+    await waitFor(() => expect(phase()).toBe("running"));
+    expect(within(panel()).queryByTestId("reader-publication-approval")).toBeNull();
+    github.runs[0].status = "completed";
+    github.runs[0].conclusion = "success";
+    await advance(20_100);
+    await waitFor(() => expect(phase()).toBe("succeeded"));
   });
 
   it("takes the run of its own click, not a newer push run and not an older click's run", async () => {
