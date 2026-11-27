@@ -1,5 +1,25 @@
 [
   {
+    "version": "0.134.1",
+    "date": "2026-11-27",
+    "en": {
+      "title": "The book settings page no longer asks GitHub for anything until you open the reader or repository card",
+      "summary": "Opening the settings of a book on GitHub could read the publishing branch from GitHub in the background. It now does so only when you open the GitHub or Online reader tab.",
+      "changes": [
+        "The notice about an old reader in the GitHub tab is worked out from this device only until you open that tab; GitHub is asked about the branch the reader is published from only then.",
+        "Opening the book settings on its default tab makes no request to GitHub, however long the page stays open, and the cards that name the branches (Update the reader, Reader access) still do once their tab is shown."
+      ]
+    },
+    "it": {
+      "title": "La pagina delle impostazioni del libro non chiede più nulla a GitHub finché non apri la scheda del lettore o del repository",
+      "summary": "Aprire le impostazioni di un libro su GitHub poteva leggere in background da GitHub il ramo di pubblicazione. Ora lo fa solo quando apri la scheda GitHub o Lettore online.",
+      "changes": [
+        "L'avviso su un lettore vecchio nella scheda GitHub si ricava solo da questo dispositivo finché non apri quella scheda; GitHub viene interpellato sul ramo da cui il lettore è pubblicato solo allora.",
+        "Aprire le impostazioni del libro sulla scheda predefinita non fa nessuna richiesta a GitHub, per quanto la pagina resti aperta, e le schede che nominano i rami (Aggiorna il lettore, Accesso al lettore) lo fanno ancora quando la loro scheda è mostrata."
+      ]
+    }
+  },
+  {
     "version": "0.134.0",
     "date": "2026-11-27",
     "en": {
