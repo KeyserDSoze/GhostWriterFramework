@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { chooseBranch } from "@/branches/memoryEdits";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -14,6 +14,7 @@ import {
   GitBranch,
   History,
   Loader2,
+  LocateFixed,
   Maximize2,
   MessageSquarePlus,
   Mic,
@@ -57,6 +58,8 @@ import { isMediaOperationOwned, stopMediaStreamTracks } from "@/assistant/mediaO
 import { assistantActionToolId, policyTargetEnabled, quickActionToolId } from "@/assistant/toolPolicy";
 import { hasAssistantActionProvenance, isOutlineProposal, OUTLINE_FILE, sourceRevisionFromFiles, validateAssistantAction } from "@/assistant/actionValidation";
 import "@/i18n/outlineCopilot";
+import "@/i18n/pageCopilot";
+import { pageIdForRoute } from "@/assistant/pages/registry";
 import "@/i18n/localFirst";
 import { FrozenProposalNotice } from "@/components/frozen/FrozenProposalNotice";
 import { copilotToolRegistry, isCopilotToolIdEnabled } from "@/assistant/tools/registry";
@@ -209,6 +212,17 @@ export function AssistantPanel() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const workingOnId = useId();
+  // The page the Copilot works on first, when the author is on one that has a contract with it (see `@/assistant/pages/registry`).
+  const workingOn = useMemo(() => {
+    const id = pageIdForRoute(route);
+    if (!id) return null;
+    if (route.kind !== "canon") return { id, label: t(`pageCopilot.pages.${id}`) };
+    const structure = structures[route.bookId];
+    const entries = structure ? [...structure.characters, ...structure.locations, ...structure.factions, ...structure.items] : [];
+    const name = entries.find((entry) => entry.path.endsWith(`/${route.slug}.md`))?.name ?? route.slug;
+    return { id, label: `${t("pageCopilot.pages.canon")} · ${name}` };
+  }, [route, structures, t]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const speechRecognitionRef = useRef<any>(null);
@@ -2950,8 +2964,15 @@ export function AssistantPanel() {
             <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(event) => void attachFiles(event.target.files)} accept=".pdf,.docx,.md,.markdown,.txt,image/png,image/jpeg,.jpg,.jpeg" />
             <div className="border-t p-3">
               <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void sendPrompt(draft); }}>
+                {!brainstorming && workingOn && (
+                  <p id={workingOnId} data-copilot-scope={workingOn.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <LocateFixed className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+                    <span className="min-w-0 truncate"><span className="font-medium text-foreground">{t("pageCopilot.workingOn", { page: workingOn.label })}</span><span className="sr-only">. {t("pageCopilot.workingOnHint")}</span></span>
+                  </p>
+                )}
                 <Textarea
                   ref={composerRef}
+                  aria-describedby={!brainstorming && workingOn ? workingOnId : undefined}
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
                   onKeyDown={(event) => {

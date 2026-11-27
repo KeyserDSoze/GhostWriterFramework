@@ -1,0 +1,78 @@
+import type { AppRouteContext, LoadedWriterContext } from "@/assistant/context";
+import { readPageView } from "@/assistant/pages/view";
+import type { LoadedPage, PageCapability, PageEnv, PageId } from "@/assistant/pages/types";
+import type { AppSettings, BookEntry } from "@/types/settings";
+
+/**
+ * The pages that have a contract with the Copilot, and where each of them is. A page's contract is loaded with the first request made on it (or with the first
+ * tool of it the Copilot is asked to run elsewhere): neither the app nor the Copilot's panel carries the pages it is never asked about.
+ */
+
+const ROUTE_PAGES: Partial<Record<AppRouteContext["kind"], PageId>> = {
+  "book-simulated-readers": "readers",
+};
+
+const LOADERS: Partial<Record<PageId, () => Promise<PageCapability>>> = {
+  readers: () => import("@/assistant/pages/readers").then((module) => module.readersPage),
+};
+
+/** The page of a route that has a contract with the Copilot, or `null`. */
+export function pageIdForRoute(route: AppRouteContext): PageId | null {
+  const id = ROUTE_PAGES[route.kind] ?? null;
+  return id && LOADERS[id] ? id : null;
+}
+
+/** Every page that has a contract, in the order the Copilot lists their tools. */
+export function pageIds(): PageId[] {
+  return Object.keys(LOADERS) as PageId[];
+}
+
+export async function loadPageCapability(id: PageId): Promise<PageCapability> {
+  const load = LOADERS[id];
+  if (!load) throw new Error(`No page of the Copilot is called ${id}.`);
+  return load();
+}
+
+/** The language the author reads a proposal in: the request's when it is clearly Italian or English, else the app's. */
+export function promptReadsItalian(prompt: string, settings: Pick<AppSettings, "ui">): boolean {
+  if (/(?<![\p{L}])(?:il|lo|gli|di|del|della|dei|degli|che|non|sono|crea|creami|togli|leva|spegni|accendi|tutti|solo|lettori|lettore|voglio|fammi|metti|cambia|rendi|questo|questa)(?![\p{L}])/iu.test(prompt)) return true;
+  if (/(?<![\p{L}])(?:the|and|of|create|make|turn|remove|only|all|readers?|please|want|change|set|this)(?![\p{L}])/iu.test(prompt)) return false;
+  return settings.ui.language === "it";
+}
+
+/**
+ * The page of a request, with what the Copilot sees of it: `null` when the route has no contract or no book is open. A state that cannot be read is left out (the
+ * request goes on with the rest of the context, as it did before pages had one).
+ */
+export async function loadPage(input: { context: LoadedWriterContext; settings: AppSettings; book: BookEntry | null; branch: string; token: string; prompt: string; accountScope: string | null; signal?: AbortSignal }): Promise<LoadedPage | null> {
+  const structure = input.context.structure;
+  if (!input.context.route || !input.book || !structure) return null;
+  const id = pageIdForRoute(input.context.route);
+  if (!id) return null;
+  const capability = await loadPageCapability(id);
+  const env: PageEnv = {
+    settings: input.settings,
+    book: input.book,
+    branch: input.branch,
+    token: input.token,
+    structure,
+    context: input.context,
+    prompt: input.prompt,
+    italian: promptReadsItalian(input.prompt, input.settings),
+    view: readPageView(id),
+    accountScope: input.accountScope,
+    signal: input.signal,
+  };
+  let state = "";
+  try {
+    state = await capability.state(env);
+  } catch (error) {
+    if (input.signal?.aborted) throw error;
+  }
+  return { id, capability, env, state, instruction: pageInstruction(capability) };
+}
+
+/** What the model is told of the page, in its instructions: the page's own lines, and that the page comes first (its state goes as data). */
+export function pageInstruction(capability: Pick<PageCapability, "prompt">): string {
+  return `CURRENT PAGE. ${capability.prompt}\nWork on this page first: a request that could be about it is about it. Everything else you can do stays available.`;
+}

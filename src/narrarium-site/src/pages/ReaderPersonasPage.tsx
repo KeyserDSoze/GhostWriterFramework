@@ -153,7 +153,8 @@ export function ReaderPersonasPage() {
   if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
   return (
-    <div className="space-y-6">
+    // What the Copilot sees of the page besides its files: the filter and the reader that is open (see `readPageView`).
+    <div className="space-y-6" data-copilot-page="readers" data-copilot-view={JSON.stringify({ filter, ...(selectedId ? { selected: selectedId } : {}) })}>
       <div className="overflow-hidden rounded-3xl border bg-gradient-to-br from-primary/15 via-card to-card p-6 shadow-sm sm:p-8">
         <Badge variant="secondary"><Users className="mr-1.5 h-3.5 w-3.5" />{t("readerPersonas.badge")}</Badge>
         <h1 className="mt-4 font-serif text-3xl font-semibold sm:text-4xl">{t("readerPersonas.title")}</h1>

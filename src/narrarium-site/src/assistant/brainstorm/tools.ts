@@ -7,6 +7,7 @@ import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTo
 import { isCopilotToolIdEnabled } from "@/assistant/tools/registry";
 import { BRAINSTORM_CANON_SECTIONS, summaryOf, type BrainstormContext } from "@/assistant/brainstorm/context";
 import { matchKey } from "@/lib/matchText";
+import { runScopedTool, scopedToolLines, toolData, toolRefused, type ScopedTool, type ScopedToolOutcome } from "@/assistant/scopedTools";
 import { filterEntries } from "@/outline/outlineModel";
 import type { AppSettings } from "@/types/settings";
 
@@ -29,22 +30,10 @@ export interface BrainstormToolEnv {
   now?: () => Date;
 }
 
-export type BrainstormToolOutcome =
-  /** What the tool read or found, for the model's next turn; `note` is a line for the author too. */
-  | { tool: BrainstormToolId; kind: "data"; text: string; note?: string }
-  /** A change the author sees and applies, or not: the turn ends with it. */
-  | { tool: BrainstormToolId; kind: "proposal"; message: AssistantMessage; text: string }
-  /** Not run: a tool Brainstorming does not have (`unknown`), arguments that are not valid, or a refusal of the tool itself. */
-  | { tool: string; kind: "refused"; text: string; unknown: boolean };
+export type BrainstormToolOutcome = ScopedToolOutcome<BrainstormToolId>;
 
-interface BrainstormTool<A> {
-  id: BrainstormToolId;
-  /** What the tool does and what it takes, as the model reads it. */
-  description: string;
-  args: string;
-  schema: z.ZodType<A>;
-  run(args: A, env: BrainstormToolEnv): Promise<BrainstormToolOutcome>;
-}
+/** A tool of Brainstorming: the assistant's scoped tool (`@/assistant/scopedTools`), on Brainstorming's context. */
+type BrainstormTool<A> = ScopedTool<A, BrainstormToolEnv, BrainstormToolId>;
 
 const number = z.number().int().min(1).max(1_000_000);
 const WHOLE_ENTRY_CHARS = 20_000;
@@ -53,8 +42,8 @@ const LISTED_ENTRIES = 30;
 const CANON_CHARS = 8_000;
 const NOTES_CHARS = 20_000;
 
-const data = (tool: BrainstormToolId, text: string, note?: string): BrainstormToolOutcome => ({ tool, kind: "data", text, ...(note ? { note } : {}) });
-const refused = (tool: string, text: string, unknown = false): BrainstormToolOutcome => ({ tool, kind: "refused", text, unknown });
+const data = (tool: BrainstormToolId, text: string, note?: string): BrainstormToolOutcome => toolData(tool, text, note);
+const refused = (tool: string, text: string): BrainstormToolOutcome => toolRefused(tool, text);
 
 function entryText(entry: OutlineChapterEntry, chars: number): string {
   const design = entry.design ? `\nDesign:\n${designText(entry.design, chars)}` : "";
@@ -274,18 +263,10 @@ export function brainstormToolIds(): BrainstormToolId[] {
 
 /** The tools as the model reads them in its instructions. */
 export function brainstormToolLines(): string[] {
-  return TOOLS.map((tool) => `- ${tool.id} ${tool.args}: ${tool.description}.`);
+  return scopedToolLines(TOOLS);
 }
 
 /** Runs one call of the model: a tool of Brainstorming with valid arguments, or nothing at all (a refusal the model and the author are told). */
 export async function runBrainstormTool(call: { tool: string; args?: unknown }, env: BrainstormToolEnv): Promise<BrainstormToolOutcome> {
-  const tool = brainstormToolRegistry.get(call.tool) as BrainstormTool<unknown> | undefined;
-  if (!tool) return refused(call.tool, `There is no tool «${call.tool}» in Brainstorming, so nothing was run. Its only tools are ${BRAINSTORM_TOOL_IDS.join(", ")}: it cannot write prose, change chapters, open pages or use GitHub.`, true);
-  const parsed = tool.schema.safeParse(call.args ?? {});
-  if (!parsed.success) return refused(tool.id, `${tool.id}: the arguments are not valid (${parsed.error.issues.map((issue) => `${issue.path.join(".") || "args"}: ${issue.message}`).join("; ")}), so nothing was run. It takes ${tool.args}.`);
-  try {
-    return await tool.run(parsed.data, env);
-  } catch (error) {
-    return refused(tool.id, `${tool.id} could not be run: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  return runScopedTool(brainstormToolRegistry, call, env, (tool) => `There is no tool «${tool}» in Brainstorming, so nothing was run. Its only tools are ${BRAINSTORM_TOOL_IDS.join(", ")}: it cannot write prose, change chapters, open pages or use GitHub.`) as Promise<BrainstormToolOutcome>;
 }
