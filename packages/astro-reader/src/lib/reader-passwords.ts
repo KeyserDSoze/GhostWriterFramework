@@ -1,12 +1,16 @@
 import { normalizeReaderPassword } from "./reader-protocol.js";
-import { parseReaderPasswordSecretNames } from "./reader-secret-names.js";
+import { isReaderPasswordSlotName, parseReaderPasswordSecretNames } from "./reader-secret-names.js";
 
 /**
  * Which passwords protect this build, read from the environment of the build step:
  *  - `READER_PASSWORD_SECRETS`: the names of the repository secrets that hold the passwords (a repository variable in the Pages workflow:
  *    `READER_PASSWORD_SECRETS: ${{ vars.READER_PASSWORD_SECRETS }}`), for example `READER_PASSWORD_001,READER_PASSWORD_002`;
- *  - `NARRARIUM_READER_SECRETS`: the JSON of the repository's secrets (`${{ toJSON(secrets) }}`, given to the build step only). Only the
- *    names listed above are read from it; every other secret, `GITHUB_TOKEN` included, is never looked at;
+ *  - the SLOTS of version 3 of the Pages workflow: `READER_PASSWORD_001` … `READER_PASSWORD_024`, one environment variable each
+ *    (`READER_PASSWORD_001: ${{ secrets.READER_PASSWORD_001 }}`), given to the build step only. A listed name that is a slot is read from
+ *    its own variable, and no other variable of the environment is ever looked at;
+ *  - `NARRARIUM_READER_SECRETS`: the JSON of the repository's secrets (`${{ toJSON(secrets) }}`, what version 2 of the workflow gave the
+ *    build step, and the way to pass any name that is not a slot). Still read, so that a book whose workflow is version 2 keeps working.
+ *    Only the names listed above are read from it; every other secret, `GITHUB_TOKEN` included, is never looked at;
  *  - `NARRARIUM_READER_PASSWORD`: the single password of the books published before the list existed, still one slot.
  * No name and no single password: the book is public and nothing is encrypted.
  *
@@ -71,15 +75,18 @@ export function pickReaderPasswords(env: Env = process.env): PickedReaderPasswor
   const passwords: ReaderPassword[] = [];
   const missing: string[] = [];
   if (list.names.length > 0) {
-    const secrets = readSecretsJson(env[READER_SECRETS_JSON_ENV]);
-    if (!secrets) {
+    // A slot comes from its own variable; whatever is not found there is looked for in the JSON of the secrets, when the workflow gave it.
+    const fromSlot = (name: string) => (isReaderPasswordSlotName(name) ? normalizeReaderPassword(env[name] ?? "") : "");
+    const slots = new Map(list.names.map((name) => [name, fromSlot(name)] as const));
+    const secrets = list.names.some((name) => !slots.get(name)) ? readSecretsJson(env[READER_SECRETS_JSON_ENV]) : null;
+    if (!secrets && [...slots.values()].every((password) => !password)) {
       throw new ReaderPasswordError(
-        `${READER_PASSWORD_LIST_ENV} lists ${list.names.length} password secret${list.names.length === 1 ? "" : "s"} (${list.names.join(", ")}) but the build received no secrets: the Pages workflow must pass ${READER_SECRETS_JSON_ENV}: \${{ toJSON(secrets) }} to this step. The book was not built, so that it is not published without its passwords.`,
+        `${READER_PASSWORD_LIST_ENV} lists ${list.names.length} password secret${list.names.length === 1 ? "" : "s"} (${list.names.join(", ")}) but the build received none of them: the Pages workflow must pass them to this step, each slot as READER_PASSWORD_001: \${{ secrets.READER_PASSWORD_001 }} (workflow version 3) or all of them as ${READER_SECRETS_JSON_ENV} (version 2). The book was not built, so that it is not published without its passwords.`,
       );
     }
     for (const name of list.names) {
-      const value = secrets.get(name.toUpperCase());
-      const password = typeof value === "string" ? normalizeReaderPassword(value) : "";
+      const value = secrets?.get(name.toUpperCase());
+      const password = slots.get(name) || (typeof value === "string" ? normalizeReaderPassword(value) : "");
       if (password) passwords.push({ name, password });
       else missing.push(name);
     }

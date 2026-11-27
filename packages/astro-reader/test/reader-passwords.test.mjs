@@ -3,8 +3,11 @@ import test from "node:test";
 import { ReaderPasswordError, describeReaderPasswords, pickReaderPasswords } from "../cli-dist/lib/reader-passwords.js";
 import {
   formatReaderPasswordSecretNames,
+  freeReaderPasswordSlotName,
   isReaderPasswordSecretName,
+  isReaderPasswordSlotName,
   nextReaderPasswordSecretName,
+  readerPasswordSlotNames,
   parseReaderPasswordSecretNames,
 } from "../cli-dist/lib/reader-secret-names.js";
 
@@ -120,4 +123,61 @@ test("the list helpers agree with the build on what a list is", () => {
   assert.equal(nextReaderPasswordSecretName(["READER_PASSWORD_001", "READER_PASSWORD_007", "OTHER"]), "READER_PASSWORD_008");
   const roundTrip = pickReaderPasswords({ READER_PASSWORD_SECRETS: formatReaderPasswordSecretNames(["READER_PASSWORD_002"]), NARRARIUM_READER_SECRETS: secrets });
   assert.deepEqual(roundTrip.passwords.map((entry) => entry.name), ["READER_PASSWORD_002"]);
+});
+
+// Version 3 of the workflow: no JSON of all the secrets, one environment variable for each password slot.
+test("the slots of workflow version 3 are read by name, and nothing else of the environment is", () => {
+  const env = {
+    READER_PASSWORD_SECRETS: "READER_PASSWORD_001, READER_PASSWORD_002",
+    READER_PASSWORD_001: "first-secret-value",
+    READER_PASSWORD_002: "second secret value",
+    READER_PASSWORD_003: "a slot that is not listed",
+    GITHUB_TOKEN: "ghs_TOKEN_OF_THE_RUN_0123456789",
+    DEPLOY_KEY: "unrelated-deploy-key",
+  };
+  const picked = pickReaderPasswords(env);
+  assert.deepEqual(picked.passwords, [
+    { name: "READER_PASSWORD_001", password: "first-secret-value" },
+    { name: "READER_PASSWORD_002", password: "second secret value" },
+  ]);
+  assert.deepEqual(picked.missing, []);
+  assertNoValue(JSON.stringify(picked.listed));
+  assertNoValue(describeReaderPasswords(picked));
+});
+
+test("a slot that is listed but empty is left out by name, and the build stops when no slot has a value", () => {
+  const picked = pickReaderPasswords({ READER_PASSWORD_SECRETS: "READER_PASSWORD_001,READER_PASSWORD_002", READER_PASSWORD_001: "first-secret-value", READER_PASSWORD_002: "  " });
+  assert.deepEqual(picked.passwords.map((entry) => entry.name), ["READER_PASSWORD_001"]);
+  assert.deepEqual(picked.missing, ["READER_PASSWORD_002"]);
+  assert.throws(
+    () => pickReaderPasswords({ READER_PASSWORD_SECRETS: "READER_PASSWORD_001", READER_PASSWORD_001: "" }),
+    (error) => error instanceof ReaderPasswordError && /READER_PASSWORD_001/.test(error.message) && /not built/.test(error.message) && /workflow version 3/.test(error.message),
+  );
+});
+
+test("a workflow of version 2 still works: the JSON of the secrets is read for the names that are not found in their own variable, and a slot variable wins", () => {
+  const picked = pickReaderPasswords({ READER_PASSWORD_SECRETS: "READER_PASSWORD_001,READER_PASSWORD_002", NARRARIUM_READER_SECRETS: secrets });
+  assert.deepEqual(picked.passwords.map((entry) => entry.password), ["first-secret-value", "second secret value"]);
+  const mixed = pickReaderPasswords({ READER_PASSWORD_SECRETS: "READER_PASSWORD_001,READER_PASSWORD_002", READER_PASSWORD_001: "from the slot", NARRARIUM_READER_SECRETS: secrets });
+  assert.deepEqual(mixed.passwords, [{ name: "READER_PASSWORD_001", password: "from the slot" }, { name: "READER_PASSWORD_002", password: "second secret value" }]);
+});
+
+test("only the slots are read from their own variable: a listed name that is not a slot never reads the environment", () => {
+  assert.throws(
+    () => pickReaderPasswords({ READER_PASSWORD_SECRETS: "PATH,READER_PASSWORD_025", PATH: "/usr/bin", READER_PASSWORD_025: "beyond the slots" }),
+    (error) => error instanceof ReaderPasswordError && /PATH, READER_PASSWORD_025/.test(error.message) && !/usr\/bin|beyond the slots/.test(error.message),
+  );
+  const fromJson = pickReaderPasswords({ READER_PASSWORD_SECRETS: "READER_PASSWORD_025", NARRARIUM_READER_SECRETS: JSON.stringify({ READER_PASSWORD_025: "beyond the slots" }) });
+  assert.deepEqual(fromJson.passwords, [{ name: "READER_PASSWORD_025", password: "beyond the slots" }]);
+});
+
+test("the slot names: 24 fixed names, the first free one for a new password, none when all are used", () => {
+  const slots = readerPasswordSlotNames();
+  assert.equal(slots.length, 24);
+  assert.ok(slots.every((name) => isReaderPasswordSlotName(name)));
+  for (const name of ["READER_PASSWORD_000", "READER_PASSWORD_025", "READER_PASSWORD_1", "READER_PASSWORD_0001", "NARRARIUM_READER_PASSWORD"]) assert.equal(isReaderPasswordSlotName(name), false, name);
+  assert.equal(freeReaderPasswordSlotName([]), "READER_PASSWORD_001");
+  assert.equal(freeReaderPasswordSlotName(["READER_PASSWORD_001", "reader_password_002", "READER_PASSWORD_004"]), "READER_PASSWORD_003");
+  assert.equal(freeReaderPasswordSlotName(slots), null);
+  assert.equal(freeReaderPasswordSlotName([...slots.slice(0, 23)]), "READER_PASSWORD_024");
 });

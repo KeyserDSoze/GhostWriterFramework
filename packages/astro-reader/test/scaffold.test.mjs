@@ -71,7 +71,8 @@ test("reader scaffold includes canon index pages and configurable core dependenc
     assert.match(pagesWorkflow, /Deploy Reader To GitHub Pages/);
     assert.match(pagesWorkflow, /SITE_URL: https:\/\/example.com/);
     assert.match(pagesWorkflow, /READER_PASSWORD_SECRETS: \$\{\{ vars\.READER_PASSWORD_SECRETS \}\}/);
-    assert.match(pagesWorkflow, /NARRARIUM_READER_SECRETS: \$\{\{ toJSON\(secrets\) \}\}/);
+    assert.match(pagesWorkflow, /READER_PASSWORD_001: \$\{\{ secrets\.READER_PASSWORD_001 \}\}/);
+    assert.doesNotMatch(pagesWorkflow, /toJSON/);
     assert.match(pagesWorkflow, /path: dist\n/);
     assert.doesNotMatch(pagesWorkflow, /# NARRARIUM_READER_PASSWORD/);
     const shellPage = await readFile(path.join(rootPath, "src", "pages", "index.astro"), "utf8");

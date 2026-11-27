@@ -69,6 +69,8 @@ test.before(async () => {
   await addAnnotations(bookRoot);
   builds.public = await buildReaderSite({ bookRoot, name: "public" });
   builds.protected = await buildReaderSite({ bookRoot, name: "protected", env: { READER_PASSWORD_SECRETS: "READER_PASSWORD_001,READER_PASSWORD_002", NARRARIUM_READER_SECRETS: SECRETS_JSON } });
+  // Workflow version 3: no JSON of the secrets, one variable for each slot, and the other secrets of the repository are not in the environment at all.
+  builds.slots = await buildReaderSite({ bookRoot, name: "slots", env: { READER_PASSWORD_SECRETS: "READER_PASSWORD_001,READER_PASSWORD_002", READER_PASSWORD_001: PASSWORDS.first, READER_PASSWORD_002: PASSWORDS.second, READER_PASSWORD_003: "a slot nobody listed" } });
   builds.revoked = await buildReaderSite({ bookRoot, name: "revoked", env: { READER_PASSWORD_SECRETS: "READER_PASSWORD_001", NARRARIUM_READER_SECRETS: SECRETS_JSON } });
   italianRoot = await mkdtemp(path.join(os.tmpdir(), "narrarium-reader-site-it-"));
   await createSampleBook(italianRoot, { title: "Il Porto di Vetro", language: "it", extraParagraphs: 2 });
@@ -154,12 +156,26 @@ test("a password removed from the list does not open the next build", async () =
   assert.ok(await unwrapContentKey(PASSWORDS.first, after.protection));
 });
 
+test("a build with the slots of workflow version 3 protects the book exactly as one with the JSON of version 2 does", async () => {
+  const version = JSON.parse(await readFile(path.join(builds.slots.outDir, "version.json"), "utf8"));
+  assert.equal(version.protected, true);
+  assert.equal(version.protection.slots.length, 2);
+  assert.match(builds.slots.output, /Protected with 2 passwords \(READER_PASSWORD_001, READER_PASSWORD_002\)/);
+  for (const needle of [PASSWORDS.first, PASSWORDS.second, "a slot nobody listed"]) assert.ok(!builds.slots.output.includes(needle), `the log holds «${needle}»`);
+  assert.ok(await unwrapContentKey(PASSWORDS.first, version.protection));
+  assert.ok(await unwrapContentKey(PASSWORDS.second, version.protection));
+  assert.equal(await unwrapContentKey("a slot nobody listed", version.protection), null);
+  // No clear EPUB, as for the other protected build.
+  await assert.rejects(readFile(path.join(builds.slots.outDir, "downloads", "book.epub")));
+});
+
 test("a list of passwords without the secrets stops the build: the book is never published in clear by mistake", async () => {
   const failed = await buildReaderSite({ bookRoot, name: "missing-secrets", env: { READER_PASSWORD_SECRETS: "READER_PASSWORD_001" } });
   try {
     assert.notEqual(failed.code, 0);
     assert.match(failed.output, /READER_PASSWORD_001/);
     assert.match(failed.output, /NARRARIUM_READER_SECRETS/);
+    assert.match(failed.output, /READER_PASSWORD_001: \$\{\{ secrets\.READER_PASSWORD_001 \}\}/);
   } finally {
     await rm(failed.outDir, { recursive: true, force: true });
   }

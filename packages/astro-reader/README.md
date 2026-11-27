@@ -94,7 +94,7 @@ If `EPUBCHECK_CMD` or `EPUBCHECK_JAR` is set, EPUB export and build also run EPU
 
 ## Password protection
 
-A build is public unless passwords are configured. On GitHub the passwords are repository secrets and the repository variable `READER_PASSWORD_SECRETS` lists their names (`READER_PASSWORD_001,READER_PASSWORD_002`); the Pages workflow passes `${{ toJSON(secrets) }}` to the build step only and the build reads only the listed names. Locally, set `NARRARIUM_READER_PASSWORD` (one password) or `READER_PASSWORD_SECRETS` with `NARRARIUM_READER_SECRETS` (a JSON object of name → password).
+A build is public unless passwords are configured. On GitHub the passwords are repository secrets and the repository variable `READER_PASSWORD_SECRETS` lists their names (`READER_PASSWORD_001,READER_PASSWORD_002`); the Pages workflow (version 3) passes the password slots `READER_PASSWORD_001` to `READER_PASSWORD_024`, one variable each, to the build step only, and the build reads only the listed names. Workflows of version 2 passed every secret as JSON (`NARRARIUM_READER_SECRETS`), which GitHub can flag as malicious (“Action required”); the build still reads that input, and `create-narrarium-book --upgrade . --update-pages-workflow` replaces the workflow. Locally, set `NARRARIUM_READER_PASSWORD` (one password) or `READER_PASSWORD_SECRETS` with `NARRARIUM_READER_SECRETS` (a JSON object of name → password).
 
 A protected build publishes only `index.html`, `version.json` and encrypted files under `content/`: the canon pages and `downloads/book.epub` are left out, and the build stops if anything in clear would remain.
 

@@ -165,11 +165,12 @@ For a local build, either set the older single password:
 NARRARIUM_READER_PASSWORD=your-secret-password
 \`\`\`
 
-or the same two variables the workflow passes:
+or the same variables the workflow passes:
 
 \`\`\`bash
 READER_PASSWORD_SECRETS=READER_PASSWORD_001,READER_PASSWORD_002
-NARRARIUM_READER_SECRETS={"READER_PASSWORD_001":"first password","READER_PASSWORD_002":"second password"}
+READER_PASSWORD_001=first password
+READER_PASSWORD_002=second password
 \`\`\`
 
 ## Doctor

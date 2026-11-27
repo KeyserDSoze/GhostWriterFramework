@@ -1,0 +1,74 @@
+# Narrarium Pages workflow, version 2: builds the reader in reader/ and publishes it on GitHub Pages.
+name: Deploy Reader To GitHub Pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: reader/package-lock.json
+
+      - name: Install project dependencies
+        run: npm install
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      # Reader passwords: the repository variable READER_PASSWORD_SECRETS lists the names of the repository
+      # secrets that hold them, for example READER_PASSWORD_001,READER_PASSWORD_002. This step alone receives
+      # the secrets as JSON; the build reads only the listed names and never prints a value. No name: a public book.
+      - name: Build reader site
+        env:
+          NARRARIUM_BOOK_ROOT: .
+          SITE_BASE: /${{ github.event.repository.name }}/
+          READER_PASSWORD_SECRETS: ${{ vars.READER_PASSWORD_SECRETS }}
+          NARRARIUM_READER_SECRETS: ${{ toJSON(secrets) }}
+          NARRARIUM_READER_PASSWORD: ${{ secrets.BOOK_PASSWORD }}
+        run: npm run build
+
+      - name: Check that the passwords protect the reader
+        if: ${{ vars.READER_PASSWORD_SECRETS != '' }}
+        run: |
+          if ! node -e "process.exit(require('./reader/dist/version.json').protected === true ? 0 : 1)"; then
+            echo "::error title=Reader not protected::READER_PASSWORD_SECRETS lists passwords but the reader did not encrypt the book. Update the reader files in reader/ to a version that reads them."
+            exit 1
+          fi
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: reader/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

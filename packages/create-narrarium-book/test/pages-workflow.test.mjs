@@ -81,7 +81,9 @@ test("a new book gets the root Pages workflow that reads the reader passwords fr
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const workflow = await readFile(workflowFile(root), "utf8");
     assert.equal(workflow, buildPagesWorkflow({ readerDir: "reader" }));
-    assert.match(workflow, /NARRARIUM_READER_SECRETS: \$\{\{ toJSON\(secrets\) \}\}/);
+    assert.match(workflow, /READER_PASSWORD_001: \$\{\{ secrets\.READER_PASSWORD_001 \}\}/);
+    assert.match(workflow, /READER_PASSWORD_024: \$\{\{ secrets\.READER_PASSWORD_024 \}\}/);
+    assert.doesNotMatch(workflow, /toJSON/, "no workflow of a new book hands the build step every secret");
     assert.match(workflow, /READER_PASSWORD_SECRETS: \$\{\{ vars\.READER_PASSWORD_SECRETS \}\}/);
     assert.match(workflow, /SITE_BASE: \/\$\{\{ github\.event\.repository\.name \}\}\//);
     const nested = await readFile(path.join(root, "reader", ".github", "workflows", "deploy-pages.yml"), "utf8");

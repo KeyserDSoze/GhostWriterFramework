@@ -27,7 +27,8 @@ Passwords are compared after Unicode NFC normalization and without the spaces ar
 
 - Each password is a repository secret, for example `READER_PASSWORD_001`, `READER_PASSWORD_002`.
 - The repository variable `READER_PASSWORD_SECRETS` lists their names: `READER_PASSWORD_001,READER_PASSWORD_002` (commas, spaces or new lines between them).
-- The Pages workflow (`.github/workflows/deploy-reader-pages.yml`) gives the build step, and only it, `${{ toJSON(secrets) }}` with the list: expressions cannot index the secrets with a variable. The build reads only the listed names and never prints a value; the log names the secrets it used.
+- The Pages workflow (`.github/workflows/deploy-reader-pages.yml`, version 3) gives the build step, and only it, the password SLOTS: `READER_PASSWORD_001: ${{ secrets.READER_PASSWORD_001 }}` up to `READER_PASSWORD_024`, one environment variable each (expressions cannot index the secrets with a variable, and the workflow must not hand the build every secret of the repository). So a book has **24 passwords at most**, and the secret of a password has to be one of those 24 names; Narrarium picks the first free one. The build reads only the listed names and never prints a value; the log names the secrets it used.
+- **Workflow version 2** (reader up to 0.1.61) gave the build step `${{ toJSON(secrets) }}`, every secret of the repository as JSON, which is the pattern of a workflow that steals secrets: GitHub can hold such a file at **Action required** (“GitHub detected that this workflow file may be malicious… Approve and run”) until someone with write access approves it. GitHub does not document its heuristic, so removing `toJSON(secrets)` is the probable cure, not a proven one. The reader still reads that JSON input, so a book on version 2 keeps working; updating the reader (the **Update the reader** card, or `npx create-narrarium-book --upgrade . --update-pages-workflow`) replaces the workflow with version 3. No secret is renamed.
 - If the list names secrets the build did not receive, or none of them has a value, the build stops instead of publishing the book in clear. A listed secret that is missing while others exist is left out and named in the log.
 - After the build, a step checks that `version.json` says the book is protected whenever the list is not empty: a reader too old to read the list cannot publish the book in clear.
 
@@ -59,12 +60,15 @@ Either the single password, in the reader's `.env`:
 NARRARIUM_READER_PASSWORD=your-secret-password
 ```
 
-or the same two variables the workflow passes:
+or the same variables the workflow passes (version 3):
 
 ```bash
 READER_PASSWORD_SECRETS=READER_PASSWORD_001,READER_PASSWORD_002
-NARRARIUM_READER_SECRETS={"READER_PASSWORD_001":"first password","READER_PASSWORD_002":"second password"}
+READER_PASSWORD_001=first password
+READER_PASSWORD_002=second password
 ```
+
+(`NARRARIUM_READER_SECRETS={"READER_PASSWORD_001":"first password"}`, a JSON object of name → password, is still read: it is what a workflow of version 2 passes.)
 
 The build log says which secrets protect the book:
 

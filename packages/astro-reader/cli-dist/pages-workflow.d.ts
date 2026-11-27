@@ -7,15 +7,23 @@
  * it inside a book. Both come from `buildPagesWorkflow`.
  *
  * Passwords: the repository variable READER_PASSWORD_SECRETS lists the names of the secrets that hold them. Secrets cannot be indexed by a
- * variable in an expression, so the build step, and only it, receives `${{ toJSON(secrets) }}`; the reader's build reads the listed names
- * and nothing else, and never prints a value (see `src/lib/reader-passwords.ts`).
+ * variable in an expression, so the build step, and only it, receives the secrets by NAME, one environment variable for each of the 24 password
+ * slots (`READER_PASSWORD_001: ${{ secrets.READER_PASSWORD_001 }}` … `READER_PASSWORD_024`); the reader's build reads the listed names and
+ * nothing else, and never prints a value (see `src/lib/reader-passwords.ts`).
+ *
+ * Version 2 gave the build step `${{ toJSON(secrets) }}`, every secret of the repository as JSON. That is the pattern of a workflow that steals
+ * secrets, and GitHub holds such a file at «Action required» until someone with write access approves it (the heuristic is not documented, so
+ * the cure is probable, not proven). Version 3 names the slots instead. The workflows of version 2 are still recognized, so that the upgrade
+ * replaces them as an untouched file, and the reader still reads their JSON.
  */
+import { READER_PASSWORD_SLOT_COUNT } from "./lib/reader-secret-names.js";
+export { READER_PASSWORD_SLOT_COUNT };
 export declare const PAGES_WORKFLOW_FILE = "deploy-reader-pages.yml";
 export declare const PAGES_WORKFLOW_PATH = ".github/workflows/deploy-reader-pages.yml";
 /** The workflow of a reader that is a repository of its own. */
 export declare const READER_PAGES_WORKFLOW_PATH = ".github/workflows/deploy-pages.yml";
 /** The version this file writes; the first line of the workflow says it, so that a later upgrade knows which text it wrote. */
-export declare const PAGES_WORKFLOW_VERSION = 2;
+export declare const PAGES_WORKFLOW_VERSION = 3;
 export interface PagesWorkflowOptions {
     /** Where the reader is, from the root of the repository: `reader` in a book (the default), `.` for a reader that is its own repository. */
     readerDir?: string;
@@ -29,7 +37,7 @@ export interface PagesWorkflowOptions {
      */
     legacyPasswordSecret?: string;
 }
-/** The workflow text for these options. */
+/** The workflow text for these options (this version: the password slots, no `toJSON(secrets)`). */
 export declare function buildPagesWorkflow(options?: PagesWorkflowOptions): string;
 export type PagesWorkflowStatus = "missing" | "current" | "generated" | "customized";
 export interface PagesWorkflowUpgrade {
@@ -56,6 +64,11 @@ export interface PagesWorkflowUpgrade {
     customizations: string[];
     /** The path of the file in the repository. */
     path: string;
+    /**
+     * The version of the workflow the repository has now, when it is one Narrarium wrote (`1`, `2`: every secret as JSON) or has the mark of one (`2` for a
+     * file with edits that still passes `toJSON(secrets)`); `3` when it is the current one; `null` for none, or for one that says nothing of it.
+     */
+    fromVersion: 1 | 2 | 3 | null;
 }
 /**
  * What to commit to bring a repository's Pages workflow to this version, from the text it has now (`null`: no file). Nothing is committed

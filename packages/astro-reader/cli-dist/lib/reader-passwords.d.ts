@@ -2,8 +2,12 @@
  * Which passwords protect this build, read from the environment of the build step:
  *  - `READER_PASSWORD_SECRETS`: the names of the repository secrets that hold the passwords (a repository variable in the Pages workflow:
  *    `READER_PASSWORD_SECRETS: ${{ vars.READER_PASSWORD_SECRETS }}`), for example `READER_PASSWORD_001,READER_PASSWORD_002`;
- *  - `NARRARIUM_READER_SECRETS`: the JSON of the repository's secrets (`${{ toJSON(secrets) }}`, given to the build step only). Only the
- *    names listed above are read from it; every other secret, `GITHUB_TOKEN` included, is never looked at;
+ *  - the SLOTS of version 3 of the Pages workflow: `READER_PASSWORD_001` … `READER_PASSWORD_024`, one environment variable each
+ *    (`READER_PASSWORD_001: ${{ secrets.READER_PASSWORD_001 }}`), given to the build step only. A listed name that is a slot is read from
+ *    its own variable, and no other variable of the environment is ever looked at;
+ *  - `NARRARIUM_READER_SECRETS`: the JSON of the repository's secrets (`${{ toJSON(secrets) }}`, what version 2 of the workflow gave the
+ *    build step, and the way to pass any name that is not a slot). Still read, so that a book whose workflow is version 2 keeps working.
+ *    Only the names listed above are read from it; every other secret, `GITHUB_TOKEN` included, is never looked at;
  *  - `NARRARIUM_READER_PASSWORD`: the single password of the books published before the list existed, still one slot.
  * No name and no single password: the book is public and nothing is encrypted.
  *

@@ -26,6 +26,7 @@ import {
   pickReaderPasswords,
   type ReaderPassword,
 } from "./reader-passwords.js";
+import { readerPasswordSlotNames } from "./reader-secret-names.js";
 
 /**
  * What a build of the reader publishes besides its pages: the bundle of the book, its EPUB and its images under names that change with
@@ -299,7 +300,8 @@ async function bookFingerprint(root: string): Promise<string> {
 
 /** The variables a build reads, from the process or from `.env`. */
 export function readerBuildEnv(): Record<string, string | undefined> {
-  return readReaderEnvSnapshot([READER_PASSWORD_LIST_ENV, READER_SECRETS_JSON_ENV, READER_LEGACY_PASSWORD_ENV, "NARRARIUM_READER_BOOK_ID", "GITHUB_REPOSITORY_ID"]);
+  // Only these names are ever read from the environment of the build: the list, the JSON of version 2, the single older password and the slots of version 3.
+  return readReaderEnvSnapshot([READER_PASSWORD_LIST_ENV, READER_SECRETS_JSON_ENV, READER_LEGACY_PASSWORD_ENV, ...readerPasswordSlotNames(), "NARRARIUM_READER_BOOK_ID", "GITHUB_REPOSITORY_ID"]);
 }
 
 /**

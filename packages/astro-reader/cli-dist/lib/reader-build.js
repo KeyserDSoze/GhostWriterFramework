@@ -8,6 +8,7 @@ import { renderReaderMarkdown } from "./markdown.js";
 import { READER_AAD, READER_FORMAT, READER_KDF_ITERATIONS, } from "./reader-protocol.js";
 import { readReaderEnvSnapshot } from "./env.js";
 import { READER_LEGACY_PASSWORD_ENV, READER_PASSWORD_LIST_ENV, READER_SECRETS_JSON_ENV, describeReaderPasswords, pickReaderPasswords, } from "./reader-passwords.js";
+import { readerPasswordSlotNames } from "./reader-secret-names.js";
 const imageTypes = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -239,7 +240,8 @@ async function bookFingerprint(root) {
 }
 /** The variables a build reads, from the process or from `.env`. */
 export function readerBuildEnv() {
-    return readReaderEnvSnapshot([READER_PASSWORD_LIST_ENV, READER_SECRETS_JSON_ENV, READER_LEGACY_PASSWORD_ENV, "NARRARIUM_READER_BOOK_ID", "GITHUB_REPOSITORY_ID"]);
+    // Only these names are ever read from the environment of the build: the list, the JSON of version 2, the single older password and the slots of version 3.
+    return readReaderEnvSnapshot([READER_PASSWORD_LIST_ENV, READER_SECRETS_JSON_ENV, READER_LEGACY_PASSWORD_ENV, ...readerPasswordSlotNames(), "NARRARIUM_READER_BOOK_ID", "GITHUB_REPOSITORY_ID"]);
 }
 /**
  * The reader build of this process, shared by the shell, `version.json` and the artifacts so that they agree (one content key per build).

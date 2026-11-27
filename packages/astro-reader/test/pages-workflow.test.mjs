@@ -1,16 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import YAML from "yaml";
+import { readFileSync } from "node:fs";
 import {
   PAGES_WORKFLOW_PATH,
   PAGES_WORKFLOW_VERSION,
+  READER_PASSWORD_SLOT_COUNT,
   buildPagesWorkflow,
   planPagesWorkflowUpgrade,
 } from "../cli-dist/pages-workflow.js";
+import { readerPasswordSlotNames } from "../cli-dist/lib/reader-secret-names.js";
 import * as scaffold from "../cli-dist/scaffold.js";
 
 /** What the site strips from the root workflow (see src/narrarium-site/scripts/generate-book-template.mjs). */
 const SITE_CACHE_LINES = "          cache: npm\n          cache-dependency-path: reader/package-lock.json\n";
+
+const fixture = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
+const SLOTS = Object.fromEntries(readerPasswordSlotNames().map((name) => [name, `\${{ secrets.${name} }}`]));
 
 function stepsOf(text) {
   return YAML.parse(text).jobs.build.steps;
@@ -31,7 +37,7 @@ test("the root workflow of a book gives the secrets to the build step only, with
     NARRARIUM_BOOK_ROOT: ".",
     SITE_BASE: "/${{ github.event.repository.name }}/",
     READER_PASSWORD_SECRETS: "${{ vars.READER_PASSWORD_SECRETS }}",
-    NARRARIUM_READER_SECRETS: "${{ toJSON(secrets) }}",
+    ...SLOTS,
   });
   assert.equal(build.run, "npm run build");
   const check = steps.find((step) => step.name === "Check that the passwords protect the reader");
@@ -50,7 +56,9 @@ test("the site's copy (without the npm cache) is still a workflow that needs no 
   assert.equal(siteCopy, buildPagesWorkflow({ readerDir: "reader", npmCache: false }));
   // The checks of src/narrarium-site/test/bookTemplate.test.mjs and test-browser/bookTemplateParity.test.ts.
   assert.doesNotMatch(siteCopy, /cache/);
-  assert.doesNotMatch(siteCopy, /secrets\./);
+  // The only secrets it names are the password slots; no other secret, and not all of them.
+  assert.deepEqual([...new Set(siteCopy.match(/secrets\.[A-Za-z0-9_]+/g))].sort(), readerPasswordSlotNames().map((name) => `secrets.${name}`));
+  assert.doesNotMatch(siteCopy, /toJSON/);
   assert.match(siteCopy, /actions\/setup-node@v4/);
   assert.match(siteCopy, /actions\/configure-pages@v5/);
   assert.match(siteCopy, /pages: write/);
@@ -74,7 +82,8 @@ test("a reader that is its own repository gets the same steps on its own folder"
   const steps = stepsOf(text);
   const build = steps.find((step) => step.name === "Build reader site");
   assert.equal(build.env.NARRARIUM_BOOK_ROOT, undefined);
-  assert.equal(build.env.NARRARIUM_READER_SECRETS, "${{ toJSON(secrets) }}");
+  assert.equal(build.env.NARRARIUM_READER_SECRETS, undefined);
+  assert.equal(build.env.READER_PASSWORD_001, "${{ secrets.READER_PASSWORD_001 }}");
   assert.equal(steps.find((step) => step.name === "Install project dependencies").run, "npm ci");
   assert.equal(steps.at(-1).with.path, "dist");
   assert.match(steps.find((step) => step.name === "Check that the passwords protect the reader").run, /\.\/dist\/version\.json/);
@@ -173,7 +182,8 @@ test("the single password of an older book is kept as one of its passwords; the 
   assert.equal(plan.settings.legacyPasswordSecret, "NARRARIUM_READER_PASSWORD");
   const build = stepsOf(plan.text).find((step) => step.name === "Build reader site");
   assert.equal(build.env.NARRARIUM_READER_PASSWORD, "${{ secrets.NARRARIUM_READER_PASSWORD }}");
-  assert.equal(build.env.NARRARIUM_READER_SECRETS, "${{ toJSON(secrets) }}");
+  assert.equal(build.env.NARRARIUM_READER_SECRETS, undefined);
+  assert.equal(build.env.READER_PASSWORD_024, "${{ secrets.READER_PASSWORD_024 }}");
   assert.ok(plan.changes.some((change) => change.includes("NARRARIUM_READER_PASSWORD")));
   // Its own secret name, before the other variables, is kept too; and the upgraded file is then current.
   const renamed = oldRootWorkflow({ extraEnv: [] }).replace("          NARRARIUM_BOOK_ROOT: .", "          NARRARIUM_READER_PASSWORD: ${{ secrets.MY_READER_PW }}\n          NARRARIUM_BOOK_ROOT: .");
@@ -185,7 +195,7 @@ test("the single password of an older book is kept as one of its passwords; the 
   const commentedPlan = planPagesWorkflowUpgrade(commented);
   assert.equal(commentedPlan.status, "generated");
   assert.equal(commentedPlan.settings.legacyPasswordSecret, undefined);
-  assert.doesNotMatch(commentedPlan.text, /secrets\./);
+  assert.doesNotMatch(commentedPlan.text, /NARRARIUM_READER_PASSWORD/);
 });
 
 test("a workflow with edits Narrarium cannot merge is never called safe, and the edits are listed", () => {
@@ -229,4 +239,67 @@ test("narrarium-astro-reader/github-pages is importable without Node: no node: i
   const browserEntry = await import("narrarium-astro-reader/github-pages");
   assert.equal(typeof browserEntry.planPagesWorkflowUpgrade, "function");
   assert.equal(typeof browserEntry.disablePagesSite, "function");
+});
+
+test("version 3 passes no `toJSON(secrets)` anywhere, in any variant: a workflow that hands the build step every secret is what GitHub flags", () => {
+  assert.equal(PAGES_WORKFLOW_VERSION, 3);
+  for (const options of [{}, { readerDir: "reader" }, { readerDir: "." }, { pagesDomain: "books.example.com" }, { npmCache: false }, { legacyPasswordSecret: "BOOK_PASSWORD" }, { readerDir: "reader", pagesDomain: "books.example.com", npmCache: false, legacyPasswordSecret: "BOOK_PASSWORD" }]) {
+    const text = buildPagesWorkflow(options);
+    assert.doesNotMatch(text, /toJSON/);
+    assert.doesNotMatch(text, /NARRARIUM_READER_SECRETS/);
+    assert.doesNotMatch(text, /secrets\s*\)/, "no expression takes the secrets as a whole");
+    assert.doesNotMatch(text, /\$\{\{\s*secrets\s*\}\}/);
+    assert.ok(text.startsWith("# Narrarium Pages workflow, version 3:"));
+    YAML.parse(text);
+  }
+});
+
+test("the password slots are fixed names, one variable each, in the build step only, and only the slots (and the single older password) name a secret", () => {
+  assert.equal(READER_PASSWORD_SLOT_COUNT, 24);
+  const slots = readerPasswordSlotNames();
+  assert.equal(slots.length, 24);
+  assert.deepEqual([slots[0], slots[1], slots[23]], ["READER_PASSWORD_001", "READER_PASSWORD_002", "READER_PASSWORD_024"]);
+  const text = buildPagesWorkflow({ readerDir: "reader", legacyPasswordSecret: "BOOK_PASSWORD" });
+  const steps = stepsOf(text);
+  const build = steps.find((step) => step.name === "Build reader site");
+  for (const name of slots) assert.equal(build.env[name], `\${{ secrets.${name} }}`);
+  assert.equal(build.env.READER_PASSWORD_SECRETS, "${{ vars.READER_PASSWORD_SECRETS }}", "the variable still lists the active names");
+  assert.deepEqual(steps.filter((step) => /secrets\./.test(JSON.stringify(step))).map((step) => step.name), ["Build reader site"]);
+  assert.deepEqual([...new Set(text.match(/secrets\.[A-Za-z0-9_]+/g))].sort(), [...slots.map((name) => `secrets.${name}`), "secrets.BOOK_PASSWORD"].sort());
+});
+
+test("a workflow of version 2 is still recognized as untouched, and its upgrade says why and keeps what it had", () => {
+  for (const [name, options] of [
+    ["pages-workflow-v2.yml", { readerDir: "reader" }],
+    ["pages-workflow-v2-domain.yml", { readerDir: "reader", pagesDomain: "books.example.com", npmCache: false }],
+    ["pages-workflow-v2-legacy.yml", { readerDir: "reader", legacyPasswordSecret: "BOOK_PASSWORD" }],
+    ["pages-workflow-v2-own-repository.yml", { readerDir: "." }],
+  ]) {
+    const v2 = fixture(name);
+    assert.match(v2, /toJSON\(secrets\)/, `${name} is a workflow of version 2`);
+    const plan = planPagesWorkflowUpgrade(v2);
+    assert.equal(plan.status, "generated", name);
+    assert.equal(plan.safe, true);
+    assert.equal(plan.fromVersion, 2);
+    assert.equal(plan.text, buildPagesWorkflow(options), name);
+    assert.doesNotMatch(plan.text, /toJSON/);
+    assert.ok(plan.changes.some((change) => /toJSON\(secrets\)/.test(change) && /READER_PASSWORD_001 to READER_PASSWORD_024/.test(change)), "the update says why");
+    assert.ok(plan.changes.some((change) => /no secret is renamed/.test(change)));
+    assert.deepEqual(plan.customizations, []);
+    assert.equal(planPagesWorkflowUpgrade(plan.text).status, "current");
+    assert.equal(planPagesWorkflowUpgrade(plan.text).fromVersion, 3);
+  }
+  assert.ok(planPagesWorkflowUpgrade(fixture("pages-workflow-v2-legacy.yml")).changes.some((change) => change.includes("BOOK_PASSWORD")));
+});
+
+test("a workflow of version 2 with edits is customized (and still said to be version 2); one of version 1 says it comes from version 1", () => {
+  const edited = fixture("pages-workflow-v2.yml").replace("node-version: 22", "node-version: 20");
+  const plan = planPagesWorkflowUpgrade(edited);
+  assert.equal(plan.status, "customized");
+  assert.equal(plan.fromVersion, 2);
+  assert.ok(plan.customizations.includes("+ node-version: 20"));
+  assert.equal(plan.text, buildPagesWorkflow());
+  assert.equal(planPagesWorkflowUpgrade(oldRootWorkflow()).fromVersion, 1);
+  assert.equal(planPagesWorkflowUpgrade(null).fromVersion, null);
+  assert.equal(planPagesWorkflowUpgrade("on: push\njobs: {}\n").fromVersion, null);
 });
