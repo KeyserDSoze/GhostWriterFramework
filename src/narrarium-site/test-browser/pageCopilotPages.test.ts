@@ -26,7 +26,7 @@ import { evaluationStylePage, parseEvaluationDoc, planEvaluationStyle, renderEva
 import { canonPage, parseEntryFile, planCanonChanges, renderEntryFile, visibleFacts, writableCanonFields } from "@/assistant/pages/canon";
 import { autopilotSettingsPage, autopilotSettingsText } from "@/assistant/pages/autopilotSettings";
 import { assetsPage } from "@/assistant/pages/assets";
-import { systemContextBundle } from "@/assistant/service";
+import { pageStateBlock } from "@/assistant/service";
 import type { PageEnv } from "@/assistant/pages/types";
 import type { BookStructure } from "@/types/book";
 import { DEFAULT_SETTINGS, type AppSettings, type BookEntry } from "@/types/settings";
@@ -214,7 +214,7 @@ describe("the page of an entry of the canon", () => {
   it("never shows the Copilot what points to a secret or the author's private notes, nor lists the secrets", async () => {
     const page = await loadPage({ context: context("/app/books/book-1/canon/characters/mara"), settings: SETTINGS, book: BOOK, branch: "main", token: "local", prompt: "make her older", accountScope: null });
     expect(page?.id).toBe("canon");
-    for (const text of [page!.state, systemContextBundle({ context: context("/app/books/book-1/canon/characters/mara"), page } as never)]) {
+    for (const text of [page!.state, pageStateBlock({ page } as never)]) {
       expect(text).toContain("character «Mara Vell» (characters/mara.md)");
       expect(text).toContain("- story_role: protagonist");
       expect(text).toContain("The other characters: Ilan.");

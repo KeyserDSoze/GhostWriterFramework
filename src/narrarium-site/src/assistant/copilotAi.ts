@@ -210,6 +210,8 @@ async function once(createBrowserAi: BrowserAiFactory, attempt: CopilotAttempt):
       accountScope: attempt.accountScope,
       configure: (config) => singleCandidateConfig(config, candidate, capability),
       route: attempt.route,
+      // The turns of the Copilot about one book share the start of their prompt (the book and the conversation come first): the port names their scope, for a provider that takes a key for its cache.
+      cacheScope: "book",
       ...(attempt.onEnd ? { onEnd: attempt.onEnd } : {}),
       ...(attempt.usageTask ? { usage: () => attempt.usageTask } : {}),
     }).complete({

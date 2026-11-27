@@ -92,7 +92,7 @@ describe("the Copilot on the Simulated readers page", () => {
     expect(provider.requests.map((request) => request.tool)).toEqual(["copilot_turn", "reader_personas"]);
     // The turn sees the page: its state, and its tools first.
     expect(provider.requests[0].system).toContain("CURRENT PAGE. The author is on the Simulated readers page");
-    expect(provider.requests[0].system).toContain("Simulated readers: 29 (28 built-in, 1 custom); 9 on:");
+    expect(provider.requests[0].user).toContain("Simulated readers: 29 (28 built-in, 1 custom); 9 on:");
     expect(provider.requests[0].system).toMatch(/The tools of this page, first:\n- read_readers/);
     expect(provider.requests[1].system).toContain("Write exactly 3 readers that match the brief, each a different kind of reader");
     expect(message.text).toContain("Here is the proposal: three historians, and the default readers off.");

@@ -1,7 +1,8 @@
 import { CAPABILITY_FOLLOWS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel } from "@/types/settings";
 
+/** A part of a message. A part of text may say `cacheBreak`: the start of the prompt that stays the same from one call to the next ends with it (the engine's `AiContentPart.cacheBreak`: only a model that has to be told where to cache reads it). */
 export type LlmContentPart =
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; cacheBreak?: boolean }
   | { type: "image"; dataUrl: string };
 
 export interface LlmMessage {

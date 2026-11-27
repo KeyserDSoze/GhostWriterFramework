@@ -4,7 +4,7 @@ import { parseAppRoute, type LoadedWriterContext } from "@/assistant/context";
 import { loadPage, pageIdForPrompt, pageIdForRoute, pageIds, promptReadsItalian } from "@/assistant/pages/registry";
 import { pageViewText, readPageView } from "@/assistant/pages/view";
 import { readersStateText } from "@/assistant/pages/readers";
-import { systemContextBundle } from "@/assistant/service";
+import { pageStateBlock } from "@/assistant/service";
 import type { BookStructure } from "@/types/book";
 import type { AppSettings, BookEntry } from "@/types/settings";
 
@@ -73,7 +73,7 @@ describe("the contract of a page with the Copilot", () => {
     expect(page?.env.italian).toBe(false);
     expect(page?.state).toContain("selected: Captain Ada (reader:custom:captain-ada)");
     expect(page!.instruction).toMatch(/^CURRENT PAGE\. The author is on the Simulated readers page/);
-    const bundle = systemContextBundle({ context: context("/app/books/book-1/simulated-readers"), page } as never);
+    const bundle = pageStateBlock({ page } as never);
     expect(bundle).toContain('<page_state trust="untrusted-data">');
     expect(bundle).toContain("- on · General Reader · reader:standard.general");
   });
@@ -82,7 +82,7 @@ describe("the contract of a page with the Copilot", () => {
     panel.readers = async () => { throw new Error("offline"); };
     const page = await loadPage({ context: context("/app/books/book-1/simulated-readers"), settings: SETTINGS, book: BOOK, branch: "main", token: "local", prompt: "x", accountScope: null });
     expect(page?.state).toBe("");
-    expect(systemContextBundle({ context: context("/app/books/book-1/simulated-readers"), page } as never)).not.toContain("page_state");
+    expect(pageStateBlock({ page } as never)).toBe("");
     expect(await loadPage({ context: context("/app/books/book-1/chapters/001-dawn"), settings: SETTINGS, book: BOOK, branch: "main", token: "local", prompt: "x", accountScope: null })).toBeNull();
     expect(await loadPage({ context: context("/app/books/book-1/simulated-readers"), settings: SETTINGS, book: null, branch: "main", token: "", prompt: "x", accountScope: null })).toBeNull();
   });

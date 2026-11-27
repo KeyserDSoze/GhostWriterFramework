@@ -223,7 +223,7 @@ describe("Brainstorming's turn", () => {
       expect(call[2]).toBe(BRAINSTORMING_CAPABILITY);
       expect(call[3]).toMatchObject({ label: "brainstorming", accountScope: "workspace:test" });
     }
-    const second = mocks.complete.mock.calls[1][1].map((entry: { content: string }) => entry.content).join("\n");
+    const second = mocks.complete.mock.calls[1][1].map((entry: { content: string | Array<{ text?: string }> }) => (typeof entry.content === "string" ? entry.content : entry.content.map((part) => part.text ?? "").join(""))).join("\n");
     expect(second).toContain("TOOL RESULTS");
     expect(second).toContain("Mira opens the vault.");
     expect(second).toContain("multi-file-edit (refused)");

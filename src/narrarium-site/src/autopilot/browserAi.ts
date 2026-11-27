@@ -20,6 +20,7 @@ import { acknowledgeCrossBoundaryFallback, type BoundaryCandidate } from "@/assi
 import { pageEnding } from "@/autopilot/localRuns";
 import { GITHUB_MODELS_BASE } from "@/config/githubModels";
 import { cachedSaving } from "@/costs/cacheSavings";
+import { useCostsStore } from "@/costs/costsStore";
 import { recordUsage } from "@/costs/recordUsage";
 import { ownCallTask } from "@/costs/usageTasks";
 import { inputOfLearning, rememberLearnedModel } from "@/autopilot/learnedModels";
@@ -165,6 +166,11 @@ export interface BrowserAiOptions {
   onEnd?: (end: FetchAiAttemptEnd, debugId: string | undefined) => void;
   /** Whose calls these are, for the costs (see `BrowserAiUsage`). Absent: the book open in the app. */
   usage?: BrowserAiUsage;
+  /**
+   * `book`: the calls of one capability for the book open in the app share the start of their prompt, and say so (`AiRequest.cacheKey`, which the engine sends as a hash to the providers that take one) unless the
+   * request names its own. Absent: the request says what it says (a run names its task itself, and the browser and the personal server then ask the same).
+   */
+  cacheScope?: "book";
 }
 
 /**
@@ -191,6 +197,7 @@ async function settingsOfRun(): Promise<AppSettings> {
 export function createBrowserAi(options: BrowserAiOptions = {}): AiPort {
   return {
     async complete(request: AiRequest): Promise<AiResponse> {
+      if (options.cacheScope === "book" && request.cacheKey === undefined) request = { ...request, cacheKey: `${useCostsStore.getState().currentBookId ?? ""}/${request.capability}` };
       const settings = options.settings ?? await settingsOfRun();
       const picked = pickAiRuntimeConfig(settings);
       const config = options.configure ? options.configure(picked, request) : picked;

@@ -90,7 +90,7 @@ describe("the Copilot on the other pages of a book", () => {
     provider.answers.copilot_turn = [() => ({ reply: "A gothic voice, next to Noir.", calls: [{ tool: "propose_ghostwriter_changes", args: { create: [{ name: "Gothic", tone: "ornate", avoid: ["modern slang"] }] } }] })];
     const message = await ask("add a gothic ghostwriter", "/app/books/book-1/ghostwriters");
     expect(provider.requests[0].system).toContain("CURRENT PAGE. The author is on the Ghostwriters page");
-    expect(provider.requests[0].system).toContain("- Noir · noir · the book's default · dry");
+    expect(provider.requests[0].user).toContain("- Noir · noir · the book's default · dry");
     expect(provider.requests[0].system).toMatch(/The tools of this page, first:\n- read_ghostwriters/);
     expect(message.text).toBe("A gothic voice, next to Noir.\n\nProposed changes to the ghostwriters: 1 created. Nothing changes until you apply the proposal.");
     const action = message.action as unknown as Proposal;
