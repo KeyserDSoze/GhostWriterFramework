@@ -82,7 +82,7 @@ import { SERVER_VERSION } from "./version.js";
 import { OutlineTextLimitError } from "narrarium-engine";
 import { FROZEN_ACTIONS, FROZEN_EDITS_MODES, FrozenChapterError, SERVER_FEATURE_AUTOPILOT_FROZEN, type FrozenAction, type FrozenChangeKind, type FrozenEditsMode } from "narrarium-engine";
 import { REVISION_CHAPTER_MODES, REVISION_REASONS, RevisionCampaignError, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, type ReviseChaptersInput } from "narrarium-engine";
-import { REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, type ReviewBookInput } from "narrarium-engine";
+import { REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, type ReviewBookInput } from "narrarium-engine";
 import { AutopilotDesignError, SERVER_FEATURE_AUTOPILOT_DESIGN, normalizeDesignStart } from "narrarium-engine";
 
 /** Tuning of the server's own limits (the defaults are the ones to run with; tests shorten them). */
@@ -565,15 +565,16 @@ function asReviseChapters(body: Record<string, unknown>): ReviseChaptersInput {
 }
 
 /** The keys of a review of the book (`POST …/autopilot/review`). */
-const REVIEW_BOOK_KEYS = ["targetScore", "maxRounds", "readerRounds", "campaignMaxRounds", "budgetLimit", "budgetTokens", "include", "note"];
+const REVIEW_BOOK_KEYS = ["targetScore", "maxRounds", "readerRounds", "campaignMaxRounds", "budgetLimit", "budgetTokens", "include", "note", "readersTarget", "readerTargets", "readersExcluded"];
 
 /**
- * The body of a review of the book, `{ targetScore, maxRounds?, readerRounds?, campaignMaxRounds?, budgetLimit?, budgetTokens?, include?, note? }`: the shape, which is
- * checked here (a misspelt key is refused, not ignored: the review would run without it), and what it asks, which the engine judges (its `RevisionCampaignError`).
+ * The body of a review of the book, `{ targetScore, maxRounds?, readerRounds?, campaignMaxRounds?, budgetLimit?, budgetTokens?, include?, note?, readersTarget?, readerTargets?,
+ * readersExcluded? }` (the last three are the targets for the readers, `autopilot-review-targets`): the shape, which is checked here (a misspelt key is refused, not ignored:
+ * the review would run without it), and what it asks, which the engine judges (its `RevisionCampaignError`).
  */
 function asReviewBook(body: Record<string, unknown>): ReviewBookInput {
   const refuse = (problem: string): never => {
-    throw new HttpError(400, "invalid_request", `${problem} A review is { "targetScore": 1 to 10, "maxRounds"?: 1 to ${REVIEW_MAX_ROUNDS}, "readerRounds"?: 0 to ${REVIEW_MAX_ROUNDS}, "campaignMaxRounds"?: 0 to ${REVIEW_MAX_CAMPAIGN_ROUNDS}, "budgetLimit"?: number, "budgetTokens"?: number, "include"?: [chapter numbers], "note"?: string }.`);
+    throw new HttpError(400, "invalid_request", `${problem} A review is { "targetScore": 1 to 10, "maxRounds"?: 1 to ${REVIEW_MAX_ROUNDS}, "readerRounds"?: 0 to ${REVIEW_MAX_ROUNDS}, "campaignMaxRounds"?: 0 to ${REVIEW_MAX_CAMPAIGN_ROUNDS}, "budgetLimit"?: number, "budgetTokens"?: number, "include"?: [chapter numbers], "note"?: string, "readersTarget"?: 1 to 10, "readerTargets"?: { reader: 1 to 10 }, "readersExcluded"?: [readers] }.`);
   };
   const unknown = Object.keys(body).filter((key) => !REVIEW_BOOK_KEYS.includes(key));
   if (unknown.length) refuse(`${unknown.slice(0, 3).map(named).join(", ")} cannot be sent here.`);
@@ -582,9 +583,15 @@ function asReviewBook(body: Record<string, unknown>): ReviewBookInput {
   for (const key of ["maxRounds", "readerRounds", "campaignMaxRounds", "budgetLimit", "budgetTokens"]) if (!numeric(key)) refuse(`\`${key}\` must be a number.`);
   if (body.include !== undefined && (!Array.isArray(body.include) || body.include.length > MAX_CAMPAIGN_REQUEST_CHAPTERS)) refuse(`\`include\` is a list of at most ${MAX_CAMPAIGN_REQUEST_CHAPTERS} chapter numbers.`);
   if (body.note !== undefined && typeof body.note !== "string") refuse("`note`, the author's words for the director, must be a string.");
+  if (!numeric("readersTarget")) refuse("`readersTarget`, the vote the readers' average must reach, must be a number.");
+  const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  if (body.readerTargets !== undefined && (!record(body.readerTargets) || Object.keys(body.readerTargets).length > REVIEW_MAX_READER_ENTRIES)) refuse(`\`readerTargets\`, the vote each reader must reach, is an object by the reader's name with at most ${REVIEW_MAX_READER_ENTRIES} readers.`);
+  if (body.readersExcluded !== undefined && (!Array.isArray(body.readersExcluded) || body.readersExcluded.length > REVIEW_MAX_READER_ENTRIES)) refuse(`\`readersExcluded\`, the readers that do not count, is a list of at most ${REVIEW_MAX_READER_ENTRIES} names.`);
   return {
     targetScore: body.targetScore as number,
-    ...Object.fromEntries(["maxRounds", "readerRounds", "campaignMaxRounds", "budgetLimit", "budgetTokens"].filter((key) => body[key] !== undefined).map((key) => [key, body[key]])),
+    ...Object.fromEntries(["maxRounds", "readerRounds", "campaignMaxRounds", "budgetLimit", "budgetTokens", "readersTarget"].filter((key) => body[key] !== undefined).map((key) => [key, body[key]])),
+    ...(body.readerTargets !== undefined ? { readerTargets: body.readerTargets as Record<string, number> } : {}),
+    ...(body.readersExcluded !== undefined ? { readersExcluded: body.readersExcluded as string[] } : {}),
     ...(body.include !== undefined ? { include: body.include as number[] } : {}),
     ...(typeof body.note === "string" ? { note: body.note.slice(0, MAX_CAMPAIGN_NOTE_CHARACTERS) } : {}),
   };
@@ -889,7 +896,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
