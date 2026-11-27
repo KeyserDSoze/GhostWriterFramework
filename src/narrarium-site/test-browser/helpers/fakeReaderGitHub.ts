@@ -16,6 +16,8 @@ export interface FakeReaderGitHub {
   jobs: Array<{ id: number; name: string; conclusion: string | null; steps: unknown[] }>;
   annotations: Record<number, Array<{ message: string }>>;
   owner: { login: string; type: "User" | "Organization" };
+  /** The repository's visibility; `unpublishOnPrivate`: GitHub stops serving Pages when it becomes private (a plan without Pages for private repositories). */
+  repository: { private: boolean; admin: boolean; archived: boolean; unpublishOnPrivate: boolean };
   calls: Array<{ method: string; args: Record<string, unknown> }>;
   /** Makes the next calls of a method fail (the number of times given, or for ever). */
   fail(method: string, failure: FakeFailure, times?: number): void;
@@ -26,7 +28,7 @@ export interface FakeReaderGitHub {
 /** A well-formed repository public key (32 bytes, base64): the real sealed box can run against it. */
 export const FAKE_PUBLIC_KEY = btoa(String.fromCharCode(...Array.from({ length: 32 }, (_, index) => index + 9)));
 
-const MUTATIONS = new Set(["updatePagesSite", "enableWorkflow", "disableWorkflow", "createOrUpdateRepoSecret", "deleteRepoSecret", "createRepoVariable", "updateRepoVariable", "deleteRepoVariable", "createWorkflowDispatch", "createPagesSite", "deletePagesSite"]);
+const MUTATIONS = new Set(["update", "updatePagesSite", "enableWorkflow", "disableWorkflow", "createOrUpdateRepoSecret", "deleteRepoSecret", "createRepoVariable", "updateRepoVariable", "deleteRepoVariable", "createWorkflowDispatch", "createPagesSite", "deletePagesSite"]);
 
 function requestError(failure: FakeFailure): Error {
   return Object.assign(new Error(failure.message ?? `HTTP ${failure.status}`), { status: failure.status, response: { headers: failure.headers ?? {} } });
@@ -46,11 +48,12 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     jobs: [] as FakeReaderGitHub["jobs"],
     annotations: {} as FakeReaderGitHub["annotations"],
     owner: { login: "me", type: "User" } as FakeReaderGitHub["owner"],
+    repository: { private: true, admin: true, archived: false, unpublishOnPrivate: false } as FakeReaderGitHub["repository"],
     calls: [] as FakeReaderGitHub["calls"],
   };
   const failures = new Map<string, FakeFailure & { remaining: number }>();
   const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
-    get: () => ({ data: { owner: state.owner, private: true, default_branch: "main", html_url: "https://github.com/me/book", permissions: { admin: true, push: true, pull: true } } }),
+    get: () => ({ data: { owner: state.owner, private: state.repository.private, visibility: state.repository.private ? "private" : "public", archived: state.repository.archived, default_branch: "main", html_url: "https://github.com/me/book", permissions: { admin: state.repository.admin, push: true, pull: true } } }),
     getRepoPublicKey: () => ({ data: { key_id: "key-1", key: FAKE_PUBLIC_KEY } }),
     createOrUpdateRepoSecret: (args) => { state.secrets.set(String(args.secret_name), String(args.encrypted_value)); return { data: {} }; },
     deleteRepoSecret: (args) => { if (!state.secrets.has(String(args.secret_name))) throw requestError({ status: 404 }); state.secrets.delete(String(args.secret_name)); return { data: {} }; },
@@ -60,6 +63,11 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
     updateRepoVariable: (args) => { if (state.variable.value === null) throw requestError({ status: 404 }); state.variable.value = String(args.value); return { data: {} }; },
     deleteRepoVariable: () => { if (state.variable.value === null) throw requestError({ status: 404 }); state.variable.value = null; return { data: {} }; },
     createWorkflowDispatch: () => { state.runs.unshift({ id: state.runs.length + 1, status: "queued", conclusion: null, html_url: `https://github.com/me/book/actions/runs/${state.runs.length + 1}`, created_at: "2026-11-25T10:00:00Z", head_branch: "main" }); return { data: {} }; },
+    update: (args) => {
+      state.repository.private = args.private === true;
+      if (state.repository.private && state.repository.unpublishOnPrivate) state.pages.enabled = false;
+      return { data: {} };
+    },
     listJobsForWorkflowRun: () => ({ data: { total_count: state.jobs.length, jobs: state.jobs } }),
     listAnnotations: (args) => ({ data: state.annotations[Number(args.check_run_id)] ?? [] }),
     listWorkflowRuns: () => ({ data: { workflow_runs: state.runs } }),
@@ -122,7 +130,7 @@ export function createFakeReaderGitHub(): FakeReaderGitHub {
       return call(name, args);
     },
     rest: {
-      repos: group(["get", "getContent", "getPages", "createPagesSite", "deletePagesSite"]),
+      repos: group(["get", "update", "getContent", "getPages", "createPagesSite", "deletePagesSite"]),
       actions: group(["getRepoPublicKey", "createOrUpdateRepoSecret", "deleteRepoSecret", "listRepoSecrets", "getRepoVariable", "createRepoVariable", "updateRepoVariable", "deleteRepoVariable", "createWorkflowDispatch", "listWorkflowRuns", "listJobsForWorkflowRun"]),
       checks: group(["listAnnotations"]),
     },

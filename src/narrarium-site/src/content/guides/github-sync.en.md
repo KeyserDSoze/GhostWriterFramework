@@ -84,6 +84,14 @@ In **Book Settings**, a book on GitHub has an **Reader access** card. It turns G
 - **When the update is only on this device.** The card compares the working copy on this device with GitHub: if the workflow or `reader/` are updated here but GitHub still has the old ones (or the changes are in local commits not sent yet), it says **Updated on this device, not yet on GitHub**, never "up to date". **Sync now** sends them as the Sync button does and keeps the reason when GitHub refuses (for example a missing **Workflows** permission, which is told as such, or two copies of a file to choose between). While the published reader is the old one and Pages is on, **Turn GitHub Pages off** takes the site down at once, with the workflow and the passwords kept.
 - **When a publication fails.** The card and Reader access name the cause from the annotation of the failed job: the **Actions budget or billing** (with the link to GitHub billing; a job that never started builds nothing, so the published site stays as it was), Actions disabled, a missing permission, or GitHub's own message. Making the repository public gives free minutes but publishes everything in it: do not do it only for this.
 
+## Make the repository public or private
+
+In **Book Settings → GitHub**, the **Repository visibility** card shows whether the repository of the book is public or private (read from the repository, not guessed) and offers **Make public** or **Make private**. It is an action on GitHub, so it needs a connection: offline it is explained and never queued.
+
+- **It needs a permission.** The GitHub app needs **Administration: Read and write**, and only this action needs it: leave it off if you never change a visibility. If the installation does not have it, the card says so and links to the app on GitHub; with a personal access token it is the `repo` scope (classic) or **Administration: Read and write** (fine-grained), and you must be an administrator of the repository. Any refusal is explained (a missing permission, or GitHub's own words for a rule of the organization or the enterprise).
+- **Making it public** asks you to type the name of the repository and says what becomes readable by anyone: the whole history, the drafts, the notes, the settings of the book, and what Narrarium keeps in the repository (`secrets/`, `director.md`, `conversations/`, `drafts/`, with the number of files this device sees). That cannot be undone for what is copied meanwhile. If the book has passwords for its online reader, the card says they protect only the reader's encrypted content on GitHub Pages, not the repository.
+- **Making it private** says what happens to GitHub Pages (on many plans a private repository is not served) and to Actions minutes, then reads the repository and the Pages state again and tells you what GitHub says.
+
 ### Permissions this needs
 
 The token a book uses (the GitHub app, or a personal access token) needs these repository permissions, all **Read and write** (Metadata: Read is always there):
@@ -96,6 +104,7 @@ The token a book uses (the GitHub app, or a personal access token) needs these r
 | Pages | turn Pages on and off, and read its address |
 | Contents and Workflows | read and update the reader workflow file |
 | Checks (read only) | read why a publication failed: GitHub explains a job that never started only in its annotation |
+| Administration (the app: only to change the visibility) | make a repository public or private |
 
 When GitHub refuses a step, the card names the permission that is missing (it reads GitHub's `X-Accepted-GitHub-Permissions` header when there is one) and says where to add it:
 

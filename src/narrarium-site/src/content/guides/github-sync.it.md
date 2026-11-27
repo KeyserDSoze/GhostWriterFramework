@@ -84,6 +84,14 @@ In **Impostazioni del libro**, un libro su GitHub ha la scheda **Accesso al lett
 - **Quando l'aggiornamento è solo su questo dispositivo.** La scheda confronta la copia di lavoro su questo dispositivo con GitHub: se il workflow o `reader/` sono aggiornati qui ma GitHub ha ancora i vecchi (o le modifiche sono in commit locali non ancora inviati), dice **Aggiornato su questo dispositivo, non ancora su GitHub**, mai «aggiornato». **Sincronizza ora** li invia come il pulsante Sincronizza e conserva il motivo se GitHub rifiuta (per esempio il permesso **Workflows** mancante, detto come tale, o due copie di un file tra cui scegliere). Finché il lettore pubblicato è il vecchio e Pages è acceso, **Spegni GitHub Pages** toglie subito il sito, con workflow e password conservati.
 - **Quando una pubblicazione fallisce.** La scheda e Accesso al lettore nominano la causa dall'annotazione del job fallito: il **budget di Actions o la fatturazione** (con il link alla fatturazione di GitHub; un job mai partito non costruisce nulla, quindi il sito pubblicato resta com'era), Actions disattivato, un permesso mancante, o il messaggio di GitHub. Rendere pubblico il repository dà minuti gratuiti ma pubblica tutto ciò che contiene: non farlo solo per questo.
 
+## Rendere pubblico o privato il repository
+
+In **Impostazioni del libro → GitHub**, la scheda **Visibilità del repository** mostra se il repository del libro è pubblico o privato (letto dal repository, non supposto) e offre **Rendi pubblico** o **Rendi privato**. È un'azione su GitHub, quindi serve una connessione: offline viene spiegata e mai messa in coda.
+
+- **Serve un permesso.** La GitHub App ha bisogno di **Administration: Read and write**, e solo questa azione lo richiede: lascialo spento se non cambi mai una visibilità. Se l'installazione non lo ha, la scheda lo dice e rimanda all'app su GitHub; con un token di accesso personale è lo scope `repo` (classico) o **Administration: Read and write** (a grana fine), e devi essere amministratore del repository. Ogni rifiuto viene spiegato (un permesso mancante, o le parole di GitHub per una regola dell'organizzazione o dell'enterprise).
+- **Renderlo pubblico** chiede di scrivere il nome del repository e dice cosa diventa leggibile da chiunque: tutta la cronologia, le bozze, gli appunti, le impostazioni del libro, e ciò che Narrarium conserva nel repository (`secrets/`, `director.md`, `conversations/`, `drafts/`, con il numero di file che questo dispositivo vede). Non si può annullare per ciò che nel frattempo viene copiato. Se il libro ha password per il lettore online, la scheda dice che proteggono solo il contenuto cifrato del lettore su GitHub Pages, non il repository.
+- **Renderlo privato** dice cosa succede a GitHub Pages (in molti piani un repository privato non viene servito) e ai minuti di Actions, poi rilegge il repository e lo stato di Pages e ti dice cosa risponde GitHub.
+
 ### Permessi necessari
 
 Il token che un libro usa (la GitHub App o un token di accesso personale) ha bisogno di questi permessi del repository, tutti **Read and write** (Metadata: Read c'è sempre):
@@ -96,6 +104,7 @@ Il token che un libro usa (la GitHub App o un token di accesso personale) ha bis
 | Pages | attivare e disattivare Pages, e leggerne l'indirizzo |
 | Contents e Workflows | leggere e aggiornare il file del workflow del lettore |
 | Checks (sola lettura) | leggere perché una pubblicazione è fallita: GitHub spiega un job mai partito solo nella sua annotazione |
+| Administration (l'app: solo per cambiare la visibilità) | rendere un repository pubblico o privato |
 
 Quando GitHub rifiuta un passo, la scheda nomina il permesso che manca (legge l'intestazione `X-Accepted-GitHub-Permissions` di GitHub quando c'è) e dice dove aggiungerlo:
 

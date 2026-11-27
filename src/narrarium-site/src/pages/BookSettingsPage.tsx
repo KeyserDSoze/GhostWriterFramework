@@ -44,13 +44,14 @@ export function BookSettingsPage() {
   const [session, setSession] = useState<Session | null>(() => (book ? { base: book, draft: draftOfBook(book) } : null));
   const [tab, setTab] = useState<BookSettingsTab>(() => bookSettingsTabOfHash(location.hash) ?? DEFAULT_BOOK_SETTINGS_TAB);
   const [readerOpened, setReaderOpened] = useState(() => tab === "reader");
+  const [githubOpened, setGithubOpened] = useState(() => tab === "github");
 
   // A link to a tab selects it.
   useEffect(() => {
     const next = bookSettingsTabOfHash(location.hash);
     if (next) setTab(next);
   }, [location.hash, location.key]);
-  useEffect(() => { if (tab === "reader") setReaderOpened(true); }, [tab]);
+  useEffect(() => { if (tab === "reader") setReaderOpened(true); if (tab === "github") setGithubOpened(true); }, [tab]);
 
   const dirty = Boolean(session && isDraftDirty(session.draft, session.base));
   // The draft follows the book when nothing has been edited (the book changed elsewhere: a repository connected, the connection chosen for it); edits are never replaced.
@@ -107,7 +108,7 @@ export function BookSettingsPage() {
 
   const tabs: ConfigTab[] = [
     { key: "general", label: t("bookSettings.tabs.general"), panel: <GeneralTab book={book} name={draft.name} onName={(name) => patch({ name })} presentation={draft.presentation} onPresentation={(change) => setSession((current) => (current ? { ...current, draft: { ...current.draft, presentation: change(current.draft.presentation) } } : current))} /> },
-    { key: "github", label: t("bookSettings.tabs.github"), panel: <GitHubTab book={book} draft={draft} patch={patch} onGoToReader={() => selectTab("reader")} /> },
+    { key: "github", label: t("bookSettings.tabs.github"), panel: <GitHubTab book={book} draft={draft} patch={patch} opened={githubOpened} onGoToReader={() => selectTab("reader")} /> },
     { key: "reader", label: t("bookSettings.tabs.reader"), panel: <OnlineReaderTab book={book} opened={readerOpened && availability.get("reader")?.available !== false} onGoToGitHub={() => selectTab("github")} /> },
     { key: "export", label: t("bookSettings.tabs.export"), panel: <ExportTab book={book} draft={draft.exportDraft} presentation={draft.presentation} onChange={(exportDraft) => patch({ exportDraft })} /> },
     { key: "audit", label: t("bookSettings.tabs.audit"), panel: <AuditTab audit={draft.audit} onChange={(audit) => patch({ audit })} /> },

@@ -284,6 +284,7 @@ function InstallBlock({ installs, installations }: { installs: ReturnType<typeof
           ))}
         </ul>
       )}
+      <p className="text-xs text-muted-foreground">{t("accountSync.github.install.permissions")}</p>
       <p className="text-xs text-muted-foreground">{t("accountSync.github.install.organization")}</p>
       <div className="flex flex-wrap items-center gap-3 text-sm">
         {slug && <ExternalAnchor href={firstManage ? firstManage.settingsUrl : installAppUrl(slug)}>{firstManage ? t("accountSync.github.install.manage") : t("accountSync.github.install.choose")}</ExternalAnchor>}

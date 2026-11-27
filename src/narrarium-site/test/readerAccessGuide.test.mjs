@@ -29,3 +29,10 @@ test("the guide says when an update is only on this device and names the causes 
     ["github-sync.it.md", ["Aggiornato su questo dispositivo, non ancora su GitHub", "Sincronizza ora", "Spegni GitHub Pages", "budget di Actions o la fatturazione", "Checks (sola lettura)"]],
   ]) for (const needle of needles) assert.ok(read(file).includes(needle), `${file}: ${needle}`);
 });
+
+test("the guide explains how to make the repository public or private, with the permission, the typed confirmation and the effect on Pages, in both languages", () => {
+  for (const [file, needles] of [
+    ["github-sync.en.md", ["Repository visibility", "Administration: Read and write", "type the name of the repository", "`secrets/`, `director.md`, `conversations/`, `drafts/`", "never queued", "what happens to GitHub Pages"]],
+    ["github-sync.it.md", ["Visibilità del repository", "Administration: Read and write", "scrivere il nome del repository", "`secrets/`, `director.md`, `conversations/`, `drafts/`", "mai messa in coda", "cosa succede a GitHub Pages"]],
+  ]) for (const needle of needles) assert.ok(read(file).includes(needle), `${file}: ${needle}`);
+});

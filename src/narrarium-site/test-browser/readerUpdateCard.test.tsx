@@ -439,6 +439,16 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
       expect(open).toHaveBeenCalledTimes(1);
     });
 
+    it("asks GitHub for its workflow on the working branch once the tab is open, and not before", async () => {
+      await i18n.changeLanguage(language);
+      const { rerender } = render(<ReaderUpdateNotice book={book} opened={false} onOpen={() => undefined} />);
+      await waitFor(() => expect(env.inspect).toHaveBeenCalled());
+      expect(github.calls.some((call) => call.method === "getContent")).toBe(false);
+      rerender(<ReaderUpdateNotice book={book} opened onOpen={() => undefined} />);
+      await waitFor(() => expect(github.calls.find((call) => call.method === "getContent")?.args).toMatchObject({ ref: "main" }));
+      await waitFor(() => expect(env.inspect.mock.calls.some(([input]) => typeof input.remote?.workflowText === "string")).toBe(true));
+    });
+
     it("shows nothing when the reader is current or there is no reader", async () => {
       await i18n.changeLanguage(language);
       env.inspect.mockImplementation(async () => found({ workflowText: current, folder: folder({ writes: [] }), remote: remoteOk }));

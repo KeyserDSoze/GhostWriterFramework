@@ -62,13 +62,13 @@ export function useWorkingBranch(book: BookEntry): string {
 }
 
 /** The check of a book's reader and the one commit that updates it. `remote` is what GitHub said of Pages and the passwords, when the caller has read it. */
-export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["remote"]) {
+export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["remote"], options: { scope?: string } = {}) {
   const settings = useSettingsStore((state) => state.settings);
   const token = resolveGitHubRemoteToken(book, settings);
   // Checked again when GitHub becomes reachable or not (a connection, a credential GitHub refuses): the delivery of the update follows it.
   const remoteAvailability = useGitHubRemoteAvailability(book, token);
   const branch = useWorkingBranch(book);
-  const key = `${book.id}|${branch}`;
+  const key = `${book.id}|${branch}${options.scope ? `|${options.scope}` : ""}`;
   const entry = useReaderUpdateStore((state) => state.entries[key]) ?? EMPTY;
   const patch = useReaderUpdateStore((state) => state.patch);
   const pagesOn = remote?.pagesOn ?? null;

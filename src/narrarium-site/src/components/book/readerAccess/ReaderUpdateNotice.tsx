@@ -3,15 +3,34 @@ import { ShieldAlert } from "lucide-react";
 import "@/i18n/readerUpdate";
 import { Button } from "@/components/ui/button";
 import type { BookEntry } from "@/types/settings";
-import { useReaderUpdate } from "@/readerUpdate/useReaderUpdate";
+import { useEffect, useState } from "react";
+import { createTrackedGitHubClient } from "@/repository/githubRequest";
+import { useSettingsStore } from "@/store/settingsStore";
+import { resolveGitHubRemoteToken } from "@/types/settings";
+import { readWorkflowFile } from "@/readerAccess/api";
+import { useReaderUpdate, useWorkingBranch } from "@/readerUpdate/useReaderUpdate";
 
 /**
  * In the status of the GitHub tab: said once, in plain words, when the reader of the book is older than the current one, with the way to the update. It shows
  * nothing while checking, when the reader is current and when there is no reader to check; it is a notice, not an alert, so it is not read out at every visit.
  */
-export function ReaderUpdateNotice({ book, onOpen }: { book: BookEntry; onOpen: () => void }) {
+export function ReaderUpdateNotice({ book, onOpen, opened = true }: { book: BookEntry; onOpen: () => void; /** The tab has been shown: only then is GitHub asked for the workflow it has. */ opened?: boolean }) {
   const { t } = useTranslation();
-  const { inspection } = useReaderUpdate(book);
+  const settings = useSettingsStore((state) => state.settings);
+  const token = resolveGitHubRemoteToken(book, settings);
+  const branch = useWorkingBranch(book);
+  // GitHub's workflow on the working branch: without it the notice can only say what this device has not sent.
+  const [workflowText, setWorkflowText] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!opened || !token || (typeof navigator !== "undefined" && navigator.onLine === false)) return undefined;
+    let current = true;
+    void readWorkflowFile(createTrackedGitHubClient(token), { owner: book.owner, repo: book.repo }, branch).then(
+      (file) => { if (current) setWorkflowText(file.present ? file.content ?? null : null); },
+      () => { if (current) setWorkflowText(undefined); },
+    );
+    return () => { current = false; };
+  }, [opened, token, book.owner, book.repo, branch]);
+  const { inspection } = useReaderUpdate(book, { pagesOn: null, passwordsSet: null, ...(workflowText !== undefined ? { workflowText } : {}) }, { scope: "notice" });
   const decision = inspection?.decision;
   if (decision?.kind !== "update" && decision?.kind !== "on-device") return null;
   if (decision.kind === "on-device" && decision.remoteWorkflow !== "old" && decision.remoteWorkflow !== "missing" && decision.unpublished.length === 0) return null;

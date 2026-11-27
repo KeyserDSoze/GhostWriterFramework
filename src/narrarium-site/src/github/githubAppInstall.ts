@@ -15,6 +15,8 @@ export interface AppInstallation {
   /** `owner/repo` of every repository the app may use (only when `selection` is `selected`). */
   repositories: string[];
   suspended: boolean;
+  /** What the owner granted the app on this installation (`administration: "write"`, `contents: "write"`, …), when GitHub says it. */
+  permissions?: Record<string, string>;
   /** Where the owner changes the repositories on GitHub. */
   settingsUrl: string;
 }
@@ -69,7 +71,7 @@ async function pages<T>(path: string, key: string, token: string, signal?: Abort
   return items;
 }
 
-interface RawInstallation { id?: unknown; app_slug?: unknown; account?: { login?: unknown; type?: unknown } | null; repository_selection?: unknown; suspended_at?: unknown; html_url?: unknown }
+interface RawInstallation { id?: unknown; app_slug?: unknown; account?: { login?: unknown; type?: unknown } | null; repository_selection?: unknown; suspended_at?: unknown; html_url?: unknown; permissions?: unknown }
 
 /** The installations of the app the token can see, with the repositories of those installed on selected ones. Throws `InstallationsError`. */
 export async function loadAppInstallations(token: string, options: { slug?: string; signal?: AbortSignal } = {}): Promise<AppInstallation[]> {
@@ -94,6 +96,7 @@ export async function loadAppInstallations(token: string, options: { slug?: stri
       selection,
       repositories,
       suspended: typeof entry.suspended_at === "string" && entry.suspended_at.length > 0,
+      ...(entry.permissions && typeof entry.permissions === "object" ? { permissions: Object.fromEntries(Object.entries(entry.permissions as Record<string, unknown>).filter((pair): pair is [string, string] => typeof pair[1] === "string")) } : {}),
       settingsUrl: typeof entry.html_url === "string" && entry.html_url.startsWith("https://github.com/") ? entry.html_url : type === "Organization" ? `https://github.com/organizations/${encodeURIComponent(account)}/settings/installations/${entry.id}` : `https://github.com/settings/installations/${entry.id}`,
     });
   }

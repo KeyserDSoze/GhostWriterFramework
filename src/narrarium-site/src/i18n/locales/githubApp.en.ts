@@ -44,6 +44,7 @@ const githubAppEn = {
         refresh: "Check again",
         refreshing: "Checking…",
         opensNewTab: "(opens GitHub)",
+        permissions: "The app asks GitHub only for what its features need. «Administration» (Read and write) is needed only for changing a repository’s visibility, from Book settings → GitHub: it can stay off, and everything else keeps working.",
         organization: "To use an organization's repositories, an owner of the organization has to install or approve the app there.",
         error: {
           reconnect: "GitHub did not accept the sign-in. Reconnect GitHub, then check again.",
@@ -139,7 +140,7 @@ const githubAppEn = {
   github: {
     createBook: {
       app: {
-        token: "This is the GitHub connection (the app). It works only on the repositories the app is installed on. It needs the permission «Repository creation» (or «Administration») to create a repository, «Contents» to write the files of the book, and «Workflows» to add the Pages workflow. If one is missing you are told which, and you can create an empty repository on github.com and connect it here.",
+        token: "This is the GitHub connection (the app). It works only on the repositories the app is installed on. It needs the permission «Repository creation» (or «Administration») to create a repository, «Contents» to write the files of the book, and «Workflows» to add the Pages workflow. If one is missing you are told which, and you can create an empty repository on github.com and connect it here. «Administration» (Read and write) is needed only to change a repository’s visibility later (Book settings, GitHub tab); it can stay off.",
         cannotCreate: "The GitHub app cannot create repositories for {{owner}}. It needs the «Repository creation» (or «Administration») permission, and for an organization an owner who approved it. You can also create an empty repository on github.com yourself and connect it here.",
         cannotCreate_account: "The GitHub app cannot create repositories for your account. It needs the «Repository creation» (or «Administration») permission. You can also create an empty repository on github.com yourself and connect it here.",
         workflowNotAllowed: "The Pages workflow was not added: the GitHub app has no «Workflows» permission. The repository is complete without it. Add the file by hand, as shown below, or give the app that permission.",

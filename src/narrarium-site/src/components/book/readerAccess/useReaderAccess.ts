@@ -8,6 +8,7 @@ import { resolveGitHubRemoteToken, type BookEntry, type ReaderPasswordRecord } f
 import { useGitHubRemoteAvailability } from "@/github/remoteAvailability";
 import { readRunFailure, getPagesState, getRepositoryInfo, getWorkflowState, latestRuns, listSecretNames, readPasswordVariable, readWorkflowFile, type PagesState, type RepositoryInfo, type WorkflowRun } from "@/readerAccess/api";
 import { ReaderFlowError, classifyReaderFailure, type ReaderFailure } from "@/readerAccess/errors";
+import { REPOSITORY_VISIBILITY_EVENT } from "@/repoVisibility/model";
 import { classifyRunFailure, type RunFailureInfo } from "@/readerAccess/runFailure";
 import { readerRecordsOf, withReaderRecords, type RemoteReaderState } from "@/readerAccess/model";
 import { addReaderPassword, disableReaderPages, enableReaderPages, removeReaderPassword, republishReader, resumeReaderPassword, type DisablePagesOptions, type ReaderOperationDeps, type ReaderOperationResult } from "@/readerAccess/operations";
@@ -86,6 +87,12 @@ export function useReaderAccess(book: BookEntry) {
   }, [token, usable, repo]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  // A change of the repository's visibility (Book settings, GitHub tab) can stop Pages: the published side is read again.
+  useEffect(() => {
+    const again = () => { void refresh(); };
+    window.addEventListener(REPOSITORY_VISIBILITY_EVENT, again);
+    return () => window.removeEventListener(REPOSITORY_VISIBILITY_EVENT, again);
+  }, [refresh]);
 
   const deps = useCallback((): ReaderOperationDeps | null => {
     const octokit = octokitRef.current;
