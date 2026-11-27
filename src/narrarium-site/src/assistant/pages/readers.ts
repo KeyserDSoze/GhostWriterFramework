@@ -6,17 +6,13 @@ import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import { readerOutputSchema } from "@/assistant/structuredOutput";
 import { toolData, toolRefused, type ScopedToolOutcome } from "@/assistant/scopedTools";
 import type { AssistantFileUpdate, AssistantMessage } from "@/assistant/store";
-import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
-import { isCopilotToolIdEnabled } from "@/assistant/tools/registry";
 import { pageViewText } from "@/assistant/pages/view";
-import { changeCounts, pageProposal, readPageFiles } from "@/assistant/pages/proposal";
+import { changeCounts, pageEditsRefusal, pageProposal, readPageFiles } from "@/assistant/pages/proposal";
 import { structuredCall } from "@/assistant/pages/structured";
-import { PAGE_TOOL, pageIdForPrompt } from "@/assistant/pages/registry";
+import { PAGE_TOOL, pageChangeRule } from "@/assistant/pages/registry";
 import { READER_FIELDS, READER_GROUPS, planReaderChanges, readerFileContent, readerFilePath, selectReaders, type ReaderBatch, type ReaderDraft } from "@/assistant/pages/readerChanges";
 import type { PageCapability, PageEnv, PageTool, PageView } from "@/assistant/pages/types";
 import type { LlmMessage } from "@/assistant/llm";
-import type { AppSettings } from "@/types/settings";
-import { classifyMutationIntent } from "@/assistant/mutationIntent";
 
 /**
  * The Simulated readers page with the Copilot: it sees every reader of the book, the built-in ones included, with whether each is on, and what the author has
@@ -32,7 +28,6 @@ const READERS_PROMPT = [
   "To change them, call propose_reader_changes once with every change of the request (create, edit, turn on, turn off, remove): the author reviews the list of every reader with its resulting state and applies it. Built-in («default») readers are never deleted: «remove» turns them off. «Only» some readers means turning off the others.",
 ].join(" ");
 
-const READER_TOOL = PAGE_TOOL;
 /** How many readers one request may create, and how many of their words the model writes. */
 const MAX_NEW_READERS = 12;
 
@@ -175,10 +170,6 @@ const readReaders: PageTool = {
   },
 };
 
-function readersEditsEnabled(settings: AppSettings): boolean {
-  ensureBuiltinCopilotToolsRegistered();
-  return isCopilotToolIdEnabled(settings, READER_TOOL);
-}
 
 /** The proposal for a batch of changes: every reader with its resulting state, the files that make it, and what the author reads first. */
 export async function proposeReaderChanges(args: ReaderChangesArgs, env: PageEnv): Promise<{ message: AssistantMessage; text: string } | { refused: string }> {
@@ -211,7 +202,7 @@ export async function proposeReaderChanges(args: ReaderChangesArgs, env: PageEnv
     ? `Modifiche proposte ai lettori simulati: ${counts}. Dopo, ${total} ${total === 1 ? "lettore" : "lettori"}, ${on} ${on === 1 ? "acceso" : "accesi"}. Nulla cambia finché non applichi la proposta.`
     : `Proposed changes to the simulated readers: ${counts}. After them, ${total} reader${total === 1 ? "" : "s"}, ${on} on. Nothing changes until you apply the proposal.`;
   const problems = plan.problems.length ? `\n\n${it ? "Non fatto" : "Not done"}: ${plan.problems.join(" ")}` : "";
-  const message = pageProposal({ env, toolId: READER_TOOL, page: "readers", updates, current, rows: plan.rows, text: `${head}${problems}` });
+  const message = pageProposal({ env, toolId: PAGE_TOOL, page: "readers", updates, current, rows: plan.rows, text: `${head}${problems}` });
   return { message, text: `Proposed to the author: ${changeCounts(plan.rows, false)}${plan.problems.length ? ` (not done: ${plan.problems.join(" ")})` : ""}. Nothing is applied until the author confirms.` };
 }
 
@@ -221,7 +212,8 @@ const proposeReaderChangesTool: PageTool = {
   args: READER_CHANGES_ARGS,
   schema: readerChangesSchema as never,
   async run(args: ReaderChangesArgs, env: PageEnv): Promise<ScopedToolOutcome> {
-    if (!readersEditsEnabled(env.settings)) return toolRefused("propose_reader_changes", "Changes of the pages by the Copilot are turned off (Settings > Tools for Copilot, «Change This Page»): say so to the author, and describe the change instead.");
+    const off = pageEditsRefusal(env.settings);
+    if (off) return toolRefused("propose_reader_changes", off);
     const outcome = await proposeReaderChanges(args, env);
     if ("refused" in outcome) return toolRefused("propose_reader_changes", outcome.refused);
     return { tool: "propose_reader_changes", kind: "proposal", message: outcome.message, text: outcome.text };
@@ -244,5 +236,5 @@ export const readersPage: PageCapability = {
   proposeToolId: "propose_reader_changes",
   proposeParameters: { type: "object", properties: { summary: { type: "string" }, create: { type: "object", properties: { count: { type: "integer", minimum: 1, maximum: MAX_NEW_READERS }, brief: { type: "string" } } }, update: { type: "array", items: { type: "object", properties: { reader: { type: "string" }, set: { type: "object" } } } }, enable: STRING_LIST, disable: STRING_LIST, remove: STRING_LIST } },
   // On the page, a request that names the readers and changes something is the batch's; a question goes to the general rules (the list of the readers among them).
-  fallbackToolId: (prompt) => (pageIdForPrompt(prompt, "readers") === "readers" && classifyMutationIntent(prompt, READER_TOOL) === "positive" ? READER_TOOL : null),
+  fallbackToolId: pageChangeRule("readers"),
 };

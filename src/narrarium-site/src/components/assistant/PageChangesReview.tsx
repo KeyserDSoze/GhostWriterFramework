@@ -19,6 +19,9 @@ export interface PageChangesReviewProps {
   onUndo: () => void;
 }
 
+/** The pages whose rows are fields of one thing (the director, a criterion, a fact of an entry): their names are said in the author's language. */
+const NAMED_ROWS = new Set(["director", "evaluation-style", "canon"]);
+
 const CHANGE_STYLE: Record<PageChangeRow["change"], string> = {
   created: "text-emerald-800 dark:text-emerald-300",
   edited: "text-sky-800 dark:text-sky-300",
@@ -58,6 +61,8 @@ export default function PageChangesReview({ action, busy, enabled, onApply, onDi
     statusRef.current?.focus();
   }, [applied, summary, t]);
 
+  const name = (row: PageChangeRow) => (NAMED_ROWS.has(page) ? t(`pageCopilot.review.names.${page}.${row.id}`, { defaultValue: row.name }) : row.name);
+  const kind = (value: string) => t(`pageCopilot.review.kinds.${value}`, { defaultValue: t(`readerPersonas.types.${value}`, { defaultValue: value }) });
   const state = (value: boolean | null | undefined) => (value === null || value === undefined ? t("pageCopilot.review.none") : value ? t("pageCopilot.review.on") : t("pageCopilot.review.off"));
   const changeText = (row: PageChangeRow) => {
     const fields = row.fields?.length ? `: ${row.fields.map((field) => t(`pageCopilot.review.fields.${field}`, { defaultValue: field })).join(", ")}` : "";
@@ -88,8 +93,8 @@ export default function PageChangesReview({ action, busy, enabled, onApply, onDi
             {rows.map((row) => (
               <tr key={row.id} data-change={row.change} className={cn("border-t align-top", row.change !== "unchanged" && "bg-primary/5")}>
                 <th scope="row" className="px-2 py-1.5 font-medium">
-                  <span className="block">{row.name}</span>
-                  {(row.kind || row.builtin) && <span className="block font-normal text-muted-foreground">{[row.kind ? t(`readerPersonas.types.${row.kind}`, { defaultValue: row.kind }) : "", row.builtin ? t("pageCopilot.review.builtin") : ""].filter(Boolean).join(" · ")}</span>}
+                  <span className="block">{name(row)}</span>
+                  {(row.kind || row.builtin) && <span className="block font-normal text-muted-foreground">{[row.kind ? kind(row.kind) : "", row.builtin ? t("pageCopilot.review.builtin") : ""].filter(Boolean).join(" · ")}</span>}
                 </th>
                 {switches && (
                   <td className="whitespace-nowrap px-2 py-1.5">

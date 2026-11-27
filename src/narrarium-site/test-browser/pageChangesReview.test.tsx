@@ -93,4 +93,40 @@ describe("the review of a proposal for a page", () => {
     expect(screen.getByRole("button", { name: "Applica" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Scarta" })).toBeInTheDocument();
   });
+
+  it("shows a proposal for the fields of one thing (the director) field by field, before and after, with the fields named in the author's language", async () => {
+    const director: Action = {
+      kind: "apply-file-updates",
+      bookId: "book-1",
+      updates: [{ path: "director.md", content: "x" }],
+      review: {
+        page: "director",
+        rows: [
+          { id: "strictness", name: "Strictness", change: "edited", from: "7", to: "9" },
+          { id: "redLines", name: "Red lines", change: "edited", from: "—", to: "No deus ex machina" },
+          { id: "approvalScore", name: "Approval score", change: "unchanged", to: "7" },
+        ],
+      },
+    };
+    render(<PageChangesReview action={director} busy={false} enabled {...handlers} />);
+    expect(screen.getByRole("heading", { name: "Proposed changes to the director" })).toBeInTheDocument();
+    expect(screen.getByText("2 edited")).toBeInTheDocument();
+    expect(within(screen.getByRole("table")).getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["Field", "Change"]);
+    expect(screen.getByRole("rowheader", { name: "Strictness" }).closest("tr")).toHaveTextContent("7 → becomes 9Edited");
+    cleanup();
+    await i18n.changeLanguage("it");
+    render(<PageChangesReview action={director} busy={false} enabled {...handlers} />);
+    expect(screen.getByRole("heading", { name: "Modifiche proposte al direttore" })).toBeInTheDocument();
+    expect(within(screen.getByRole("table")).getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["Campo", "Modifica"]);
+    expect(screen.getByRole("rowheader", { name: "Severità" })).toBeInTheDocument();
+    expect(screen.getByRole("rowheader", { name: "Linee rosse" }).closest("tr")).toHaveTextContent("— → diventa No deus ex machina");
+    expect(screen.getByRole("rowheader", { name: "Voto di approvazione" })).toBeInTheDocument();
+  });
+
+  it("names the book's default ghostwriter as such", async () => {
+    const ghostwriters: Action = { kind: "apply-file-updates", bookId: "book-1", updates: [{ path: "ghostwriters/gothic.md", content: "x" }], review: { page: "ghostwriters", rows: [{ id: "gothic", name: "Gothic", change: "created" }, { id: "noir", name: "Noir", kind: "default", change: "unchanged" }] } };
+    render(<PageChangesReview action={ghostwriters} busy={false} enabled {...handlers} />);
+    expect(screen.getByRole("rowheader", { name: /^Noir/ })).toHaveTextContent("the book's default");
+    expect(within(screen.getByRole("table")).getAllByRole("columnheader").map((header) => header.textContent)).toEqual(["Ghostwriter", "Change"]);
+  });
 });

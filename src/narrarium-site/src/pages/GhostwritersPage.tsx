@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { useBooksStore } from "@/store/booksStore";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { FileChangedNotice } from "@/components/book/FileChangedNotice";
 import { ProfileWarnings, confirmProfileSave } from "@/components/book/ProfileWarnings";
@@ -42,10 +43,13 @@ export function GhostwritersPage() {
 
   const list = useMemo(() => structure?.ghostwriters ?? [], [structure]);
 
+  // Nothing is selected yet, or the selected ghostwriter is gone (removed elsewhere, by the Copilot for one): the book's default is shown.
   useEffect(() => {
-    if (selected || !list.length) return;
+    if (!list.length || (selected && list.some((entry) => entry.slug === selected))) return;
     setSelected(list.find((entry) => entry.slug === structure?.ghostwriter)?.slug ?? list[0].slug);
   }, [list, selected, structure?.ghostwriter]);
+  // The book changed elsewhere (the Copilot applied or undid a change, a sync brought files): the file is read again, never over what the author is typing.
+  const generation = useBooksStore((state) => (bookId ? state.structureGenerations[bookId] ?? 0 : 0));
 
   const dirty = Boolean(profile && serializeGhostwriter(profile) !== savedProfile);
   const selectedEntry = selected ? list.find((g) => g.slug === selected) : undefined;
@@ -54,7 +58,7 @@ export function GhostwritersPage() {
   // only for another book, branch or profile, and never over what the author is typing.
   const file = useGuardedDocumentLoad<GhostwriterProfile>({
     document: book && token && selectedEntry ? `${book.id}|${book.owner}/${book.repo}|${selectedEntry.slug}` : null,
-    source: `${branch}|${selectedEntry?.path ?? ""}`,
+    source: `${branch}|${selectedEntry?.path ?? ""}|${generation}`,
     load: async () => {
       const { content } = await readFileWithSha(token, book!.owner, book!.repo, branch, selectedEntry!.path);
       return { value: parseGhostwriter(selectedEntry!.slug, content), version: content };
@@ -196,7 +200,7 @@ export function GhostwritersPage() {
   if (!book) return <Alert variant="destructive"><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
 
   return (
-    <div className="grid min-w-0 max-w-full gap-6 overflow-x-hidden lg:grid-cols-[300px_minmax(0,1fr)]">
+    <div className="grid min-w-0 max-w-full gap-6 overflow-x-hidden lg:grid-cols-[300px_minmax(0,1fr)]" data-copilot-page="ghostwriters" data-copilot-view={JSON.stringify(selected ? { selected } : {})}>
       <div className="min-w-0 space-y-3">
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
           <h1 className="flex items-center gap-2 font-serif text-2xl font-semibold"><Users className="h-5 w-5" />{t("ghostwriters.title")}</h1>

@@ -85,7 +85,7 @@ export function AutopilotSettingsPage() {
   const asking = Boolean(summary?.question);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5">
+    <div className="mx-auto max-w-4xl space-y-5" data-copilot-page="autopilot-settings" data-copilot-view={JSON.stringify({ tab })}>
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
         <div className="min-w-0">
           <h1 className="flex items-center gap-2 font-serif text-3xl font-semibold tracking-tight"><SlidersHorizontal className="h-6 w-6 text-primary" aria-hidden="true" />{t("autopilot.config.title")}{view.loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />}</h1>

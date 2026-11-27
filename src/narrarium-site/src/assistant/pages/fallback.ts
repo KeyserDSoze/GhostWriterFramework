@@ -39,8 +39,8 @@ export async function pageChanges(page: LoadedPage | null, input: BookEnvInput):
   const id = pageIdForPrompt(input.prompt, page?.id) ?? (page?.capability.proposeToolId ? page.id : null);
   if (!id) {
     return reply(promptReadsItalian(input.prompt, input.settings)
-      ? "Apri prima la pagina da modificare: Lettori simulati."
-      : "Open the page to change first: Simulated readers.");
+      ? "Apri prima la pagina da modificare: Lettori simulati, Ghostwriter, Direttore, Stile di valutazione, o un personaggio, un luogo, una fazione o un oggetto."
+      : "Open the page to change first: Simulated readers, Ghostwriters, Director, Evaluation style, or a character, location, faction or item.");
   }
   const env = page?.id === id ? page.env : bookEnv(input);
   if (!env) return reply(promptReadsItalian(input.prompt, input.settings) ? "Apri prima un libro." : "Open a book first.");

@@ -5,6 +5,7 @@ import i18n from "@/i18n";
 import { AssistantPanel } from "@/components/assistant/AssistantPanel";
 import { createEmptyAssistantSession, useAssistantStore } from "@/assistant/store";
 import { useAuthStore } from "@/store/authStore";
+import { useBooksStore } from "@/store/booksStore";
 import { resetAssistantSessionIndex } from "@/assistant/sessionIndex";
 
 // The Copilot says which page it works on first: on a page that has a contract with it, the line above the composer names the page, and the composer is
@@ -48,10 +49,22 @@ describe("the page the Copilot works on", () => {
     expect(await screen.findByText("Sto lavorando su: Lettori simulati")).toBeInTheDocument();
   });
 
-  it("says nothing on a page without a contract", async () => {
-    panelAt("/app/settings");
-    await screen.findByRole("dialog");
-    expect(document.querySelector("[data-copilot-scope]")).toBeNull();
-    expect(document.querySelector("textarea[aria-describedby]")).toBeNull();
+  it("names every page that works with it, and the entry of the canon that is open", async () => {
+    useBooksStore.setState({ structures: { "book-1": { characters: [{ path: "characters/mara.md", sha: "x", size: 1, name: "Mara Vell" }], locations: [], factions: [], items: [] } as never } });
+    for (const [path, label] of [["ghostwriters", "Ghostwriters"], ["director", "Director"], ["evaluation-style", "Evaluation style"], ["autopilot/settings", "Autopilot configuration"], ["assets", "Assets"], ["canon/characters/mara", "Canon · Mara Vell"]]) {
+      panelAt(`/app/books/book-1/${path}`);
+      expect(await screen.findByText(`Working on: ${label}`)).toBeInTheDocument();
+      cleanup();
+    }
+  });
+
+  it("says nothing on a page without a contract, a secret's among them", async () => {
+    for (const path of ["/app/settings", "/app/books/book-1/canon/secrets/the-lie", "/app/books/book-1/chapters/001-dawn"]) {
+      panelAt(path);
+      await screen.findByRole("dialog");
+      expect(document.querySelector("[data-copilot-scope]")).toBeNull();
+      expect(document.querySelector("textarea[aria-describedby]")).toBeNull();
+      cleanup();
+    }
   });
 });

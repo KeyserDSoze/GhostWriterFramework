@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { useBooksStore } from "@/store/booksStore";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { FileChangedNotice } from "@/components/book/FileChangedNotice";
 import { useGuardedDocumentLoad } from "@/hooks/useGuardedDocumentLoad";
@@ -106,6 +107,8 @@ export function EvaluationStylePage() {
   const { settings } = useSettingsStore();
   const { branch } = useWorkingBranch(bookId);
   const { book, structure, error, reload, loading: structureLoading } = useBookStructure(bookId);
+  // The book changed elsewhere (the Copilot applied or undid a change, a sync brought files): the file is read again, never over what the author is typing.
+  const generation = useBooksStore((state) => (bookId ? state.structureGenerations[bookId] ?? 0 : 0));
   const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
@@ -157,7 +160,7 @@ export function EvaluationStylePage() {
   // taken for a missing one: the defaults are shown only for a file that is really not there.
   const file = useGuardedDocumentLoad<{ raw: string; present: boolean }>({
     document: documentKey,
-    source: `${branch}|${language}`,
+    source: `${branch}|${language}|${generation}`,
     load: async () => {
       const found = await readFileWithSha(token, book!.owner, book!.repo, branch, EVALUATION_GUIDELINES_PATH).catch((cause: unknown) => {
         if (isGitHubFileNotFoundError(cause)) return null;

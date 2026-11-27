@@ -110,7 +110,7 @@ export function AssetGalleryPage() {
   const filtered = cards.filter((card) => filter === "all" || (filter === "missing" ? !card.imagePath : card.kind === filter));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-copilot-page="assets" data-copilot-view={JSON.stringify({ filter })}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="font-serif text-3xl font-semibold tracking-tight">{t("assets.title")}</h1>

@@ -24,6 +24,7 @@ import { createBrowserBookStore } from "@/autopilot/browserStore";
 import { formatCount, formatDateTime } from "@/autopilot/format";
 import { approvalCaption, knownLanguage, strictnessCaption } from "@/director/sheetModel";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { useBooksStore } from "@/store/booksStore";
 import { useContainerWidth } from "@/hooks/useContainerWidth";
 import { useGuardedDocumentLoad } from "@/hooks/useGuardedDocumentLoad";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
@@ -102,6 +103,8 @@ export function DirectorPage() {
   const { settings } = useSettingsStore();
   const { branch, ready } = useWorkingBranch(bookId);
   const { book, structure, loading, error, reload } = useBookStructure(bookId);
+  // The book changed elsewhere (the Copilot applied or undid a change, a sync brought files): the file is read again, never over what the author is typing.
+  const generation = useBooksStore((state) => (bookId ? state.structureGenerations[bookId] ?? 0 : 0));
   const token = book ? resolveWorkingCopyToken(book, settings) : "";
   const savedVersion = useAskDirectorStore((state) => state.savedVersion);
 
@@ -164,7 +167,7 @@ export function DirectorPage() {
   // read again only for another book, branch or language, and never over what the author is typing.
   const file = useGuardedDocumentLoad<{ profile: DirectorProfile; exists: boolean }>({
     document: canLoad && book ? `${book.id}|${book.owner}/${book.repo}` : null,
-    source: `${branch}|${language ?? ""}`,
+    source: `${branch}|${language ?? ""}|${generation}`,
     load: async () => {
       const { profile: loaded, exists: present, hash } = await loadDirectorProfile({ book: book!, branch, language });
       return { value: { profile: loaded, exists: present }, version: hash };

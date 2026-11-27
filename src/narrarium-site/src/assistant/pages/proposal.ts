@@ -1,5 +1,9 @@
 import { readFileWithSha, isGitHubFileNotFoundError } from "@/github/githubClient";
 import { sourceRevisionFromFiles } from "@/assistant/actionValidation";
+import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
+import { isCopilotToolIdEnabled } from "@/assistant/tools/registry";
+import { PAGE_TOOL } from "@/assistant/pages/registry";
+import type { AppSettings } from "@/types/settings";
 import type { AssistantFileUpdate, AssistantMessage, PageChangeRow } from "@/assistant/store";
 import type { PageEnv, PageId } from "@/assistant/pages/types";
 
@@ -68,6 +72,12 @@ export function pageProposal(input: { env: PageEnv; toolId: string; page: PageId
       review: { page: input.page, rows: input.rows },
     },
   };
+}
+
+/** Why a page's proposing tool refuses to propose: the author turned «Change This Page» off for the Copilot. `null` when it is on. */
+export function pageEditsRefusal(settings: AppSettings): string | null {
+  ensureBuiltinCopilotToolsRegistered();
+  return isCopilotToolIdEnabled(settings, PAGE_TOOL) ? null : "Changes of the pages by the Copilot are turned off (Settings > Tools for Copilot, «Change This Page»): say so to the author, and describe the change instead.";
 }
 
 /** The first lines of a proposal for the author: what it changes, and that nothing is written before it is applied. */

@@ -13,8 +13,24 @@ const pageCopilotIt = {
       assets: "Asset",
     },
     review: {
-      title: { default: "Modifiche proposte", readers: "Modifiche proposte ai lettori simulati" },
-      item: { default: "Elemento", readers: "Lettore" },
+      title: {
+        default: "Modifiche proposte",
+        readers: "Modifiche proposte ai lettori simulati",
+        ghostwriters: "Modifiche proposte ai ghostwriter",
+        director: "Modifiche proposte al direttore",
+        "evaluation-style": "Modifiche proposte allo stile di valutazione",
+        canon: "Modifiche proposte a questa voce",
+      },
+      item: { default: "Elemento", readers: "Lettore", ghostwriters: "Ghostwriter", director: "Campo", "evaluation-style": "Criterio", canon: "Campo" },
+      kinds: { default: "predefinito del libro" },
+      names: {
+        director: {
+          name: "Nome", persona: "Personalità", autonomy: "Autonomia", strictness: "Severità", approvalScore: "Voto di approvazione", maxReviewRounds: "Giri di revisione per capitolo",
+          priorities: "Priorità", taste: "Gusto", redLines: "Linee rosse", readerWeights: "Peso dei lettori simulati", body: "Visione e regole di decisione",
+        },
+        "evaluation-style": { "@method": "Metodo e severità" },
+        canon: { "@body": "Descrizione" },
+      },
       caption: "{{title}}: ogni elemento con il suo stato dopo la modifica ({{changed}} cambiano, {{count}} in tutto)",
       state: "Acceso / spento",
       change: "Modifica",
@@ -50,6 +66,9 @@ const pageCopilotIt = {
         name: "nome", description: "descrizione", profile: "profilo", aspects: "aspetti", preferredGenres: "generi preferiti", dislikedGenres: "generi non graditi",
         experienceLevel: "esperienza", severity: "severità", audienceAge: "età del pubblico", interests: "interessi", appreciatedElements: "elementi apprezzati",
         frequentCriticisms: "critiche frequenti", customPrompt: "prompt personalizzato",
+        language: "lingua", tone: "tono", voice: "voce", povDefault: "POV predefinito", tenseDefault: "tempo predefinito", sentenceRhythm: "ritmo delle frasi",
+        dialogueStyle: "stile dialoghi", vocabulary: "vocabolario", writingStyle: "stile di scrittura", punctuationStyle: "stile di punteggiatura", influences: "influenze",
+        strengths: "punti di forza", avoid: "da evitare", temperature: "temperatura", body: "istruzioni di stile",
       },
     },
   },
@@ -57,7 +76,7 @@ const pageCopilotIt = {
     tools: {
       "edit-page": {
         name: "Modifica questa pagina",
-        description: "Propone un unico insieme di modifiche alla pagina su cui sei: in Lettori simulati, lettori creati (anche più d'uno alla volta), modificati, accesi o spenti e rimossi; i lettori predefiniti si spengono, non si cancellano mai. Vedi ogni elemento con il suo stato finale, applichi tutto in una sola modifica e puoi annullarla.",
+        description: "Propone un unico insieme di modifiche alla pagina su cui sei: i lettori simulati (anche più d'uno creato alla volta, modificati, accesi o spenti, rimossi; i lettori predefiniti si spengono, non si cancellano mai), i ghostwriter (quello predefinito del libro e l'ultimo non si rimuovono mai), il direttore, lo stile di valutazione, o il personaggio, il luogo, la fazione o l'oggetto che hai aperto. Vedi ogni elemento con il suo stato finale, applichi tutto in una sola modifica e puoi annullarla.",
         output: "Elenco da rivedere di ogni elemento con il suo stato finale",
       },
     },

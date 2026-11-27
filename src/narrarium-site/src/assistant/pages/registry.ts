@@ -1,4 +1,5 @@
 import type { AppRouteContext, LoadedWriterContext } from "@/assistant/context";
+import { classifyMutationIntent } from "@/assistant/mutationIntent";
 import { readPageView } from "@/assistant/pages/view";
 import type { LoadedPage, PageCapability, PageEnv, PageId } from "@/assistant/pages/types";
 import type { AppSettings, BookEntry } from "@/types/settings";
@@ -13,15 +14,34 @@ export const PAGE_TOOL = "edit-page";
 
 const ROUTE_PAGES: Partial<Record<AppRouteContext["kind"], PageId>> = {
   "book-simulated-readers": "readers",
+  "book-ghostwriters": "ghostwriters",
+  "book-director": "director",
+  "book-evaluation-style": "evaluation-style",
+  "book-autopilot-settings": "autopilot-settings",
+  canon: "canon",
+  "book-assets": "assets",
 };
+
+/** The sections of the canon whose entries have a page that works with the Copilot: the secrets and the timeline do not. */
+export const CANON_PAGE_SECTIONS = ["characters", "locations", "factions", "items"] as const;
 
 const LOADERS: Partial<Record<PageId, () => Promise<PageCapability>>> = {
   readers: () => import("@/assistant/pages/readers").then((module) => module.readersPage),
+  ghostwriters: () => import("@/assistant/pages/ghostwriters").then((module) => module.ghostwritersPage),
+  director: () => import("@/assistant/pages/director").then((module) => module.directorPage),
+  "evaluation-style": () => import("@/assistant/pages/evaluationStyle").then((module) => module.evaluationStylePage),
+  "autopilot-settings": () => import("@/assistant/pages/autopilotSettings").then((module) => module.autopilotSettingsPage),
+  canon: () => import("@/assistant/pages/canon").then((module) => module.canonPage),
+  assets: () => import("@/assistant/pages/assets").then((module) => module.assetsPage),
 };
 
 /** The words that name what a page is about, in English and in Italian: a request that has them, and changes something, is about that page. */
 const PAGE_SUBJECTS: Partial<Record<PageId, RegExp>> = {
   readers: /(?<![\p{L}])(?:lettor[ei]|lettrice|lettrici|readers?|personas?)(?![\p{L}])/iu,
+  ghostwriters: /(?<![\p{L}])(?:ghost ?writers?|scrittor[ei] fantasma|voc[ei] narrant[ei]|narrating voices?|writing voices?|writing style|stile di scrittura)(?![\p{L}])/iu,
+  director: /(?<![\p{L}])(?:director|direttore|direttrice|regista|approval score|punteggio di approvazione|red lines|linee rosse)(?![\p{L}])/iu,
+  "evaluation-style": /(?<![\p{L}])(?:criteri[oa]?|criterion|evaluation style|stile di valutazione|evaluation method|metodo di valutazione)(?![\p{L}])/iu,
+  canon: /(?<![\p{L}])(?:personagg(?:io|i)|characters?|luogh?[io]|locations?|places?|fazion[ei]|factions?|oggett[oi]|items?|scheda|descrizione|description|alias(?:es)?)(?![\p{L}])/iu,
 };
 
 /** The page a request names by its subject: the page the author is on when it does, else the first that it names; `null` when it names none. */
@@ -31,8 +51,14 @@ export function pageIdForPrompt(prompt: string, current?: PageId | null): PageId
   return pageIds().find(names) ?? null;
 }
 
+/** The keyword rule of a page that proposes its changes: on the page, a request that names what the page is about and changes something is its batch. */
+export function pageChangeRule(id: PageId): (prompt: string) => string | null {
+  return (prompt) => (pageIdForPrompt(prompt, id) === id && classifyMutationIntent(prompt, PAGE_TOOL) === "positive" ? PAGE_TOOL : null);
+}
+
 /** The page of a route that has a contract with the Copilot, or `null`. */
 export function pageIdForRoute(route: AppRouteContext): PageId | null {
+  if (route.kind === "canon" && !(CANON_PAGE_SECTIONS as readonly string[]).includes(route.section)) return null;
   const id = ROUTE_PAGES[route.kind] ?? null;
   return id && LOADERS[id] ? id : null;
 }

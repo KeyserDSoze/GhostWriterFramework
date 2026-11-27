@@ -13,8 +13,24 @@ const pageCopilotEn = {
       assets: "Assets",
     },
     review: {
-      title: { default: "Proposed changes", readers: "Proposed changes to the simulated readers" },
-      item: { default: "Item", readers: "Reader" },
+      title: {
+        default: "Proposed changes",
+        readers: "Proposed changes to the simulated readers",
+        ghostwriters: "Proposed changes to the ghostwriters",
+        director: "Proposed changes to the director",
+        "evaluation-style": "Proposed changes to the evaluation style",
+        canon: "Proposed changes to this entry",
+      },
+      item: { default: "Item", readers: "Reader", ghostwriters: "Ghostwriter", director: "Field", "evaluation-style": "Criterion", canon: "Field" },
+      kinds: { default: "the book's default" },
+      names: {
+        director: {
+          name: "Name", persona: "Persona", autonomy: "Autonomy", strictness: "Strictness", approvalScore: "Approval score", maxReviewRounds: "Review rounds per chapter",
+          priorities: "Priorities", taste: "Taste", redLines: "Red lines", readerWeights: "Weight of the simulated readers", body: "Vision and decision rules",
+        },
+        "evaluation-style": { "@method": "Method and severity" },
+        canon: { "@body": "Description" },
+      },
       caption: "{{title}}: every item with its state after the change ({{changed}} changing, {{count}} in all)",
       state: "On / off",
       change: "Change",
@@ -50,6 +66,9 @@ const pageCopilotEn = {
         name: "name", description: "description", profile: "profile", aspects: "aspects", preferredGenres: "preferred genres", dislikedGenres: "disliked genres",
         experienceLevel: "experience", severity: "severity", audienceAge: "audience age", interests: "interests", appreciatedElements: "appreciated elements",
         frequentCriticisms: "frequent criticisms", customPrompt: "custom prompt",
+        language: "language", tone: "tone", voice: "voice", povDefault: "default POV", tenseDefault: "default tense", sentenceRhythm: "sentence rhythm",
+        dialogueStyle: "dialogue style", vocabulary: "vocabulary", writingStyle: "writing style", punctuationStyle: "punctuation style", influences: "influences",
+        strengths: "strengths", avoid: "avoid", temperature: "temperature", body: "style instructions",
       },
     },
   },
@@ -57,7 +76,7 @@ const pageCopilotEn = {
     tools: {
       "edit-page": {
         name: "Change This Page",
-        description: "Proposes one batch of changes to the page you are on: on Simulated readers, readers created (several at once), edited, turned on or off and removed; built-in readers are turned off, never deleted. You see every item with its resulting state, apply the batch in one change, and can undo it.",
+        description: "Proposes one batch of changes to the page you are on: the simulated readers (several created at once, edited, turned on or off, removed; built-in readers are turned off, never deleted), the ghostwriters (the book's default and the last one are never removed), the director, the evaluation style, or the character, location, faction or item you have open. You see every item with its resulting state, apply the batch in one change, and can undo it.",
         output: "Reviewable list of every item with its resulting state",
       },
     },

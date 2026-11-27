@@ -15,6 +15,7 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useSettingsStore } from "@/store/settingsStore";
 import { resolveWorkingCopyToken } from "@/types/settings";
 import { useBookStructure } from "@/hooks/useBookStructure";
+import { useBooksStore } from "@/store/booksStore";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { useRegisterProseEditor } from "@/components/editor/useRegisterProseEditor";
 import { useRegisterPageSave } from "@/store/saveStore";
@@ -146,10 +147,16 @@ export function CanonEntityPage() {
 
   useRegisterPageSave({ dirty: isDirty, enabled: Boolean(book && path), onSave: () => handleSave() });
 
+  // The book changed elsewhere (the Copilot applied or undid a change, a sync brought files): the entry is read again, unless the author is editing it.
+  const generation = useBooksStore((state) => (bookId ? state.structureGenerations[bookId] ?? 0 : 0));
+  const dirtyRef = useRef(isDirty);
+  dirtyRef.current = isDirty;
+
   useEffect(() => {
-    const targetKey = book && path ? `${branch}:${path}` : null;
+    const targetKey = book && path ? `${branch}:${path}:${generation}` : null;
     // The file is read from the working copy once it is on this device, never from GitHub before it.
     if (!book || structure?.loadedBranch !== branch || !path || !targetKey || loadedTargetRef.current === targetKey) return;
+    if (dirtyRef.current && loadedTargetRef.current?.startsWith(`${branch}:${path}:`)) return;
     loadedTargetRef.current = targetKey;
     setLoading(true);
     readFileWithSha(token, book.owner, book.repo, branch, path)
@@ -166,7 +173,7 @@ export function CanonEntityPage() {
         toast({ title: t("canon.loadFailed"), description: String(err), variant: "destructive" });
       })
       .finally(() => setLoading(false));
-  }, [book, token, branch, path, structure?.loadedBranch, t, toast]);
+  }, [book, token, branch, path, structure?.loadedBranch, generation, t, toast]);
 
   if (!book) {
     return (

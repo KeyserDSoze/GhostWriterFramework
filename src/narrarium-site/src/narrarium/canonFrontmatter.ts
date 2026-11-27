@@ -10,6 +10,11 @@ const SPECIFIC: Record<CanonEntityKind, string[]> = {
   "timeline-event": ["date", "participants", "significance", "function_in_book", "consequences"],
 };
 
+/** The fields a file of that kind may have besides the protected ones. */
+export function canonExtraFields(kind: CanonEntityKind): string[] {
+  return [...COMMON, ...SPECIFIC[kind]];
+}
+
 export function validateCanonExtraFrontmatter(kind: CanonEntityKind, value: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!value) return {};
   const allowed = new Set([...COMMON, ...SPECIFIC[kind]]);
