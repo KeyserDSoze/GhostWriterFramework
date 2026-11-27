@@ -67,7 +67,7 @@ export function useWorkingBranch(book: BookEntry): string {
 }
 
 /** The check of a book's reader and the one commit that updates it. `remote` is what GitHub said of Pages and the passwords, when the caller has read it. */
-export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["remote"], options: { scope?: string; /** The repository's default branch, when the caller has read it; otherwise the one the book's structure has. */ publishingBranch?: string } = {}) {
+export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["remote"], options: { scope?: string; /** GitHub may be asked for what the publishing branch has (default). `false` while the card is not on the screen: nothing is requested then. */ remoteReads?: boolean; /** The repository's default branch, when the caller has read it; otherwise the one the book's structure has. */ publishingBranch?: string } = {}) {
   const settings = useSettingsStore((state) => state.settings);
   const token = resolveGitHubRemoteToken(book, settings);
   // Checked again when GitHub becomes reachable or not (a connection, a credential GitHub refuses): the delivery of the update follows it.
@@ -75,6 +75,7 @@ export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["re
   const branch = useWorkingBranch(book);
   const structureDefault = useBooksStore((state) => state.structures[book.id]?.defaultBranch);
   const publishingBranch = options.publishingBranch ?? structureDefault;
+  const remoteReads = options.remoteReads !== false;
   const key = `${book.id}|${branch}${options.scope ? `|${options.scope}` : ""}`;
   const entry = useReaderUpdateStore((state) => state.entries[key]) ?? EMPTY;
   const patch = useReaderUpdateStore((state) => state.patch);
@@ -87,12 +88,12 @@ export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["re
     const mine = (newestCheck[key] = (newestCheck[key] ?? 0) + 1);
     patch(key, { checking: true });
     try {
-      const inspection = await inspectReaderUpdate({ book, branch, token, remote: remoteKey, ...(publishingBranch ? { publishingBranch } : {}), loadTemplate: loadBookTemplate });
+      const inspection = await inspectReaderUpdate({ book, branch, token, remote: remoteKey, ...(publishingBranch ? { publishingBranch } : {}), readGitHub: remoteReads, loadTemplate: loadBookTemplate });
       if (newestCheck[key] === mine) patch(key, { inspection, checking: false });
     } catch {
       if (newestCheck[key] === mine) patch(key, { checking: false, inspection: null });
     }
-  }, [book, branch, token, remoteKey, publishingBranch, key, patch, remoteAvailability]);
+  }, [book, branch, token, remoteKey, publishingBranch, remoteReads, key, patch, remoteAvailability]);
 
   useEffect(() => { void check(); }, [check]);
 

@@ -27,6 +27,11 @@ export interface InspectReaderUpdateInput {
   publishingBranch?: string;
   /** The client for GitHub (the site's tracked one by default; a fake in a test). */
   octokit?: Octokit;
+  /**
+   * Whether GitHub may be asked (for the publishing branch when it is not checked out here). `false` reads only this device: the places that are not on the
+   * screen (the notice in a tab that has not been opened) must not make a request to GitHub as a side effect of a page being opened. Default: `true`.
+   */
+  readGitHub?: boolean;
   /** The site's template; it is a lazy chunk of its own, so it is loaded here and only here. */
   loadTemplate: () => Promise<BookTemplate>;
 }
@@ -99,7 +104,7 @@ async function readPublishingSide(input: InspectReaderUpdateInput & { publishing
     if (present && workflow.kind !== "text") return "unreadable";
     return { branch: publishingBranch, source: "working-copy", headSha: local.remoteHeadSha, workflowText: present ? workflow.text ?? null : null, folder, workflowHash: present ? workflow.currentHash : null };
   }
-  if (!input.credential || !input.online) return undefined;
+  if (!input.credential || !input.online || input.readGitHub === false) return undefined;
   try { return await readPublishingBranch(input.octokit ?? createTrackedGitHubClient(input.token), { owner: book.owner, repo: book.repo }, publishingBranch, template, fallbackPackageName); }
   catch { return "unreadable"; }
 }

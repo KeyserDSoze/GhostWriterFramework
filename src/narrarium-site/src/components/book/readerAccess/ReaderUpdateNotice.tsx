@@ -30,7 +30,7 @@ export function ReaderUpdateNotice({ book, onOpen, opened = true }: { book: Book
     );
     return () => { current = false; };
   }, [opened, token, book.owner, book.repo, branch]);
-  const { inspection } = useReaderUpdate(book, { pagesOn: null, passwordsSet: null, ...(workflowText !== undefined ? { workflowText } : {}) }, { scope: "notice" });
+  const { inspection } = useReaderUpdate(book, { pagesOn: null, passwordsSet: null, ...(workflowText !== undefined ? { workflowText } : {}) }, { scope: "notice", remoteReads: opened });
   const decision = inspection?.decision;
   if (decision?.kind !== "update" && decision?.kind !== "on-device") return null;
   if (decision.kind === "on-device" && decision.remoteWorkflow !== "old" && decision.remoteWorkflow !== "missing" && decision.unpublished.length === 0) return null;

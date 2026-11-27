@@ -173,6 +173,14 @@ describe("the update of the reader from a branch that is not the publishing one"
     expect(await listUnpushedLocalCommits(local.meta.id)).toHaveLength(1);
   }, 60_000);
 
+  it("asks GitHub nothing when it is told not to (the card is not on the screen): the update is still known from this device, and nothing is claimed of the publishing branch", async () => {
+    const local = await setup();
+    const inspection = await inspectReaderUpdate({ book: local.book, branch: local.branch, token: local.token, publishingBranch: "main", readGitHub: false, octokit: github.octokit, loadTemplate: loadBookTemplate });
+    expect(asUpdate(inspection)).toMatchObject({ currentNeeded: true, publishing: { branch: "main", state: "unknown" } });
+    expect(asUpdate(inspection).publishingTarget).toBeUndefined();
+    expect(github.calls).toEqual([]);
+  }, 60_000);
+
   it("stays on this device without a credential, and reads nothing from GitHub", async () => {
     const network = blockNetwork();
     const local = await setup({ token: "" });
