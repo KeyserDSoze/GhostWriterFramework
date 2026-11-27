@@ -326,8 +326,8 @@ describe.each(["en", "it"] as const)("Reader access in %s", (language) => {
 
 describe.each(["en", "it"] as const)("passwords can always be prepared, in %s", (language) => {
   const text = language === "en"
-    ? { outdated: /On “main”, the branch the reader is published from, the reader workflow does not read passwords yet\. You can add them anyway: they are saved and prepared on GitHub/, missing: /“main”, the branch the reader is published from, has no reader workflow/, preparedTitle: "Prepared, not protecting yet", preparedLine: "Passwords are prepared, but the published reader does not ask for a password yet: it is public.", used: "In use", result: /Done\. The password is prepared: it is saved and on GitHub, but the reader that is published now does not read passwords/, update: "Update the reader", publishAgain: "Publish again", exposed: /the EPUB answered 200\. It is still public/, activated: /Your prepared passwords are now active/, protectedLine: "The published reader asks for a password.", password: "Password", add: "Add password", publishing: "Being published" }
-    : { outdated: /Su “main”, il ramo da cui il lettore è pubblicato, il workflow del lettore non legge ancora le password\. Puoi aggiungerle lo stesso: vengono salvate e preparate su GitHub/, missing: /“main”, il ramo da cui il lettore è pubblicato, non ha il workflow del lettore/, preparedTitle: "Preparate, non ancora protettive", preparedLine: "Le password sono preparate, ma il lettore pubblicato non chiede ancora una password: è pubblico.", used: "In uso", result: /Fatto\. La password è preparata: è salvata e su GitHub, ma il lettore pubblicato ora non legge le password/, update: "Aggiorna il lettore", publishAgain: "Pubblica di nuovo", exposed: /l'EPUB ha risposto 200\. È ancora pubblico/, activated: /Le tue password preparate ora sono attive/, protectedLine: "Il lettore pubblicato chiede una password.", password: "Password", add: "Aggiungi password", publishing: "In pubblicazione" };
+    ? { outdated: /On “main”, the branch the reader is published from, the reader workflow does not read passwords yet\. You can add them anyway: they are saved and prepared on GitHub/, missing: /“main”, the branch the reader is published from, has no reader workflow/, noteOutdated: /Passwords you add now are only prepared: they protect the reader once “main” has the updated workflow/, noteMissing: /there is no workflow on “main” yet/, preparedTitle: "Prepared, not protecting yet", preparedLine: "Passwords are prepared, but the published reader does not ask for a password yet: it is public.", used: "In use", result: /Done\. The password is prepared: it is saved and on GitHub, but the reader that is published now does not read passwords/, update: "Update the reader", publishAgain: "Publish again", exposed: /the EPUB answered 200\. It is still public/, activated: /Your prepared passwords are now active/, protectedLine: "The published reader asks for a password.", password: "Password", add: "Add password", publishing: "Being published" }
+    : { outdated: /Su “main”, il ramo da cui il lettore è pubblicato, il workflow del lettore non legge ancora le password\. Puoi aggiungerle lo stesso: vengono salvate e preparate su GitHub/, missing: /“main”, il ramo da cui il lettore è pubblicato, non ha il workflow del lettore/, noteOutdated: /Le password che aggiungi ora sono solo preparate: proteggono il lettore quando “main” ha il workflow aggiornato/, noteMissing: /su “main” non c'è ancora un workflow/, preparedTitle: "Preparate, non ancora protettive", preparedLine: "Le password sono preparate, ma il lettore pubblicato non chiede ancora una password: è pubblico.", used: "In uso", result: /Fatto\. La password è preparata: è salvata e su GitHub, ma il lettore pubblicato ora non legge le password/, update: "Aggiorna il lettore", publishAgain: "Pubblica di nuovo", exposed: /l'EPUB ha risposto 200\. È ancora pubblico/, activated: /Le tue password preparate ora sono attive/, protectedLine: "Il lettore pubblicato chiede una password.", password: "Password", add: "Aggiungi password", publishing: "In pubblicazione" };
   const prepared = language === "en" ? "Prepared, not protecting yet" : "Preparata, non ancora protettiva";
   const OLD_WORKFLOW = "name: Deploy reader\nenv:\n  P: ${{ secrets.NARRARIUM_READER_PASSWORD_OLD }}\n";
 
@@ -341,7 +341,7 @@ describe.each(["en", "it"] as const)("passwords can always be prepared, in %s", 
     github.workflowText.value = OLD_WORKFLOW;
     await open(language);
     expect(await screen.findByTestId("reader-workflow-outdated")).toHaveTextContent(text.outdated);
-    expect(screen.getByTestId("reader-add-note")).toHaveTextContent(text.outdated);
+    expect(screen.getByTestId("reader-add-note")).toHaveTextContent(text.noteOutdated);
     expect(screen.getByLabelText(text.password)).toBeEnabled();
     await addOne();
     expect(await screen.findByText(text.result)).toBeInTheDocument();
@@ -365,7 +365,7 @@ describe.each(["en", "it"] as const)("passwords can always be prepared, in %s", 
   it("prepares them as well when there is no workflow, and when the workflow could not be read, and says what is missing", async () => {
     github.workflowPresent.value = false;
     await open(language);
-    expect(await screen.findByTestId("reader-add-note")).toHaveTextContent(text.missing);
+    expect(await screen.findByTestId("reader-add-note")).toHaveTextContent(text.noteMissing);
     await addOne();
     expect(await screen.findByText(text.result)).toBeInTheDocument();
     expect(github.calls.some((call) => call.method === "createWorkflowDispatch")).toBe(false);

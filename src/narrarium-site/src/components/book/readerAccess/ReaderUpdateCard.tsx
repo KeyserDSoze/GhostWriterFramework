@@ -265,7 +265,7 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
             <label className="flex items-start gap-2"><input type="checkbox" className="mt-1" checked={replaceEdits} onChange={(event) => setReplaceEdits(event.target.checked)} /><span className="font-medium">{t("readerUpdate.customized.confirm")}</span></label>
           </section>
         )}
-        <div className="space-y-1 text-sm">
+        <div className="space-y-1 text-sm" data-delivery={decision.delivery} data-publishing-delivery={decision.publishingTarget?.delivery ?? ""}>
           <p>{deliveryLine(t, decision, update.branch)}</p>
           {!decision.publishesFromBranch && (decision.publishing?.state === "unknown" || decision.publishing?.state === "unreadable") && <p className="font-medium">{t("readerUpdate.delivery.otherBranch", { branch: update.branch, publishing: decision.publishing.branch })}</p>}
         </div>

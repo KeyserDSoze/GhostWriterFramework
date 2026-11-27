@@ -20,6 +20,8 @@ const readerAccessIt = {
     publishNow: "Pubblica di nuovo",
     part: { repository: "Repository", pages: "Pages", secrets: "Secrets", variable: "Variabile", runs: "Esecuzioni di pubblicazione", workflow: "Workflow" },
     workflow: {
+      addNoteMissing: "Le password che aggiungi ora sono solo preparate: su “{{branch}}” non c'è ancora un workflow, quindi non viene pubblicato nulla e il libro non è protetto.",
+      addNoteOutdated: "Le password che aggiungi ora sono solo preparate: proteggono il lettore quando “{{branch}}” ha il workflow aggiornato ed è pubblicato.",
       missing: "“{{branch}}”, il ramo da cui il lettore è pubblicato, non ha il workflow del lettore (.github/workflows/deploy-reader-pages.yml), quindi non viene pubblicato nulla. Puoi aggiungere password lo stesso: vengono salvate e preparate su GitHub, e iniziano a proteggere il lettore quando «Aggiorna il lettore» qui sopra aggiunge il workflow e viene pubblicato. Fino ad allora il libro non è protetto.",
       outdated: "Su “{{branch}}”, il ramo da cui il lettore è pubblicato, il workflow del lettore non legge ancora le password. Puoi aggiungerle lo stesso: vengono salvate e preparate su GitHub (un workflow che non le nomina non le legge mai, quindi prepararle non rompe nulla), e iniziano a proteggere il lettore quando è aggiornato e pubblicato. «Aggiorna il lettore» qui sopra lo fa. Fino ad allora il lettore pubblicato è pubblico.",
     },

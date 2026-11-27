@@ -52,7 +52,7 @@ export function ReaderAccessCardView({ access, book }: { access: ReaderAccess; b
   // and the card says so (see `readerPublication`). The branch named is the one the workflow publishes from: the repository's default branch.
   const publishingBranch = snapshot.repository?.defaultBranch ?? "main";
   const workflowReads = workflow === "current" || workflow === "customized";
-  const addNote = snapshot.loadedAt === null ? undefined : workflow === "missing" ? t("readerAccess.workflow.missing", { branch: publishingBranch }) : workflow === "outdated" ? t("readerAccess.workflow.outdated", { branch: publishingBranch }) : undefined;
+  const addNote = snapshot.loadedAt === null ? undefined : workflow === "missing" ? t("readerAccess.workflow.addNoteMissing", { branch: publishingBranch }) : workflow === "outdated" ? t("readerAccess.workflow.addNoteOutdated", { branch: publishingBranch }) : undefined;
   const publication = access.readerState;
   const protectionKey = publication === "protecting" ? "protected" : publication === "public" ? "public" : publication === "unknown" ? "unknown" : publication;
   const goToUpdate = () => {
