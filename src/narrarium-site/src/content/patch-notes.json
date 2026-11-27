@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.128.0",
+    "date": "2026-11-27",
+    "en": {
+      "title": "The reader update says what GitHub really has, names why a publication failed, and a repository can be made public or private",
+      "summary": "The “Update the reader” card no longer says “up to date” while GitHub still has the old reader, it names the cause of a failed publication (for example the Actions budget), and the GitHub tab can make the book's repository public or private.",
+      "changes": [
+        "Update the reader compares this device with GitHub. When the reader is updated in the working copy but GitHub still has the old workflow, or the changes are in local commits not sent yet, the card says “Updated on this device, not yet on GitHub” with the files, and never “up to date”. If GitHub could not be read it says that this only describes this device. The same notice appears in the GitHub tab.",
+        "“Sync now” in that card sends the changes as the Sync button does and keeps the reason when GitHub refuses, as an alert: a conflict opens the sync dialog, and a refused workflow file is told as a missing Workflows permission instead of “conflict”. The card also says what the last automatic sync did (failed and why, GitHub moved, held).",
+        "When a publication fails, the card and Reader access name the cause from the annotation of the failed job: the Actions budget or billing (with the link to the GitHub billing page of the account or organization), Actions disabled (with the link to its settings), a missing permission, or GitHub's own message. A job that never started built nothing, so the published site is what it was. Reading the reason needs the “Checks” permission (read only); without it the card says so. It warns that making a repository public only to get free minutes publishes everything in it.",
+        "While the published reader is the old one and Pages is on, “Turn GitHub Pages off” takes the site down at once, after a confirmation, with the workflow and the passwords kept; the card offers the check from outside so the exposed EPUB can be seen.",
+        "New in the GitHub tab: “Repository visibility” shows whether the repository is public or private, read from GitHub, and offers “Make public” or “Make private”. It is an online action, never queued. Making it public asks you to type the name of the repository, lists what becomes readable (the whole history, drafts, notes, and what Narrarium keeps: secrets/, director.md, conversations/, drafts/, with the number of files this device sees), says it cannot be undone for what is copied meanwhile, and, for a book with online reader passwords, says they do not protect the repository. Making it private says what happens to Pages and Actions and then reads them again.",
+        "Changing the visibility needs the GitHub app permission “Administration” (Read and write), only for this action: the card explains when it is missing, with the way to give it, or which scope a token needs, and shows GitHub's own words when an organization policy forbids it. The GitHub connection panel says that this permission can stay off otherwise."
+      ]
+    },
+    "it": {
+      "title": "L'aggiornamento del lettore dice cosa ha davvero GitHub, nomina perché una pubblicazione è fallita, e un repository si può rendere pubblico o privato",
+      "summary": "La scheda «Aggiorna il lettore» non dice più «aggiornato» mentre GitHub ha ancora il vecchio lettore, nomina la causa di una pubblicazione fallita (per esempio il budget di Actions), e la scheda GitHub può rendere pubblico o privato il repository del libro.",
+      "changes": [
+        "Aggiorna il lettore confronta questo dispositivo con GitHub. Quando il lettore è aggiornato nella copia di lavoro ma GitHub ha ancora il vecchio workflow, o le modifiche sono in commit locali non ancora inviati, la scheda dice «Aggiornato su questo dispositivo, non ancora su GitHub» con i file, e mai «aggiornato». Se non si è potuto leggere GitHub dice che descrive solo questo dispositivo. La stessa segnalazione compare nella scheda GitHub.",
+        "«Sincronizza ora» in quella scheda invia le modifiche come il pulsante Sincronizza e conserva il motivo se GitHub rifiuta, come avviso: un conflitto apre la finestra della sincronizzazione, e un file di workflow rifiutato è detto come permesso Workflows mancante invece di «conflitto». La scheda dice anche cosa ha fatto l'ultima sincronizzazione automatica (fallita e perché, GitHub è andato avanti, trattenuta).",
+        "Quando una pubblicazione fallisce, la scheda e Accesso al lettore nominano la causa dall'annotazione del job fallito: il budget di Actions o la fatturazione (con il link alla pagina di fatturazione di GitHub dell'account o dell'organizzazione), Actions disattivato (con il link alle sue impostazioni), un permesso mancante, o il messaggio di GitHub. Un job mai partito non ha costruito nulla, quindi il sito pubblicato è com'era. Leggere il motivo richiede il permesso «Checks» (sola lettura); senza, la scheda lo dice. Avvisa che rendere pubblico un repository solo per avere minuti gratuiti pubblica tutto ciò che contiene.",
+        "Finché il lettore pubblicato è il vecchio e Pages è acceso, «Spegni GitHub Pages» toglie subito il sito, dopo una conferma, con workflow e password conservati; la scheda propone il controllo da fuori per vedere l'EPUB esposto.",
+        "Novità nella scheda GitHub: «Visibilità del repository» mostra se il repository è pubblico o privato, letto da GitHub, e offre «Rendi pubblico» o «Rendi privato». È un'azione online, mai messa in coda. Renderlo pubblico chiede di scrivere il nome del repository, elenca ciò che diventa leggibile (tutta la cronologia, le bozze, gli appunti, e ciò che Narrarium conserva: secrets/, director.md, conversations/, drafts/, con il numero di file che questo dispositivo vede), dice che non si può annullare per ciò che nel frattempo viene copiato e, per un libro con password del lettore online, che non proteggono il repository. Renderlo privato dice cosa succede a Pages e ad Actions e poi li rilegge.",
+        "Cambiare la visibilità richiede il permesso della GitHub App «Administration» (lettura e scrittura), solo per questa azione: la scheda spiega quando manca, con come darlo, o quale scope serve a un token, e mostra le parole di GitHub quando lo vieta una regola dell'organizzazione. Il pannello della connessione GitHub dice che questo permesso può restare spento altrimenti."
+      ]
+    }
+  },
+  {
     "version": "0.127.0",
     "date": "2026-11-26",
     "en": {
