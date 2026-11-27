@@ -4,15 +4,22 @@ Narrarium clones the active branch into an IndexedDB working copy. Editing write
 
 ## Repository status
 
+The pill in the top bar says what the working copy of the branch on the screen holds:
+
+- **Checking local copy…:** the copy is being read. The pill never says that there is no copy before it knows.
 - **Clean:** no local changes or unpushed commits.
 - **Local changes:** files changed but not committed.
 - **Ahead:** local commits waiting for push.
 - **Remote changed:** GitHub has commits that are not local yet.
 - **Sync incomplete:** the local clone has not been fully verified.
+- **No local copy:** this branch of the book is not on this device yet.
+- When the book has no GitHub credential on this device, or GitHub refused it, the pill adds **GitHub not connected** or **sign in to GitHub again** after what the copy holds: the work stays on this device, and the next sync publishes it once GitHub is connected. A book made on this device and later put on GitHub shows the status of its copy like any other.
 
 ## Full sync
 
-Full Sync reconciles remote changes, preserves or commits local work when possible, and pushes according to the configured policy. Use the repository status dialog for explicit Fetch, Pull, Commit, Push, backup, reclone and repair operations.
+Full Sync reconciles remote changes, preserves or commits local work when possible, and pushes according to the configured policy. Use the repository status dialog for explicit Fetch, Pull, Commit, Push, backup, reclone and repair operations. When it ends it says how many files it brought from GitHub, how many of your changes it kept and how many files it published; a change that is still only on this device is counted, and the next sync publishes it.
+
+When the same file changed both on this device and on GitHub, **Resolve repository conflicts** opens. For each file, keep this device's version or GitHub's (or one side for every file); **Show the differences** shows only the lines that changed, with a few around them. **Apply choices and sync** then shows each step in words (checking GitHub, bringing GitHub's versions, applying your choices, saving a commit, publishing to GitHub) and what came of it. **Stop** works while nothing has changed yet; from the moment your choices are applied the sync runs to its end, so that this device and GitHub never stay halfway. Taking GitHub's version saves this device's version in a recovery copy first, and the page reloads to show GitHub's version.
 
 ## Branches and pull requests
 

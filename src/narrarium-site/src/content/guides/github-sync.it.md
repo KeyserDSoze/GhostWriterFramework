@@ -4,15 +4,22 @@ Narrarium clona il branch attivo in una working copy IndexedDB. Quando disponibi
 
 ## Stato repository
 
+L'indicatore nella barra in alto dice che cosa contiene la working copy del branch sullo schermo:
+
+- **Controllo della copia locale…:** la copia viene letta. L'indicatore non dice mai che la copia manca prima di saperlo.
 - **Pulito:** nessuna modifica locale o commit da pushare.
 - **Modifiche locali:** file modificati ma non committati.
 - **Avanti:** commit locali in attesa di push.
 - **Remote cambiato:** GitHub contiene commit non ancora locali.
 - **Sync incompleta:** il clone locale non è stato verificato completamente.
+- **Nessuna copia locale:** questo branch del libro non è ancora su questo dispositivo.
+- Quando il libro non ha una credenziale GitHub su questo dispositivo, o GitHub l'ha rifiutata, l'indicatore aggiunge **GitHub non collegato** o **accedi di nuovo a GitHub** dopo quello che contiene la copia: il lavoro resta su questo dispositivo, e il prossimo sync lo pubblica appena GitHub è collegato. Un libro creato su questo dispositivo e poi messo su GitHub mostra lo stato della sua copia come tutti gli altri.
 
 ## Sync completo
 
-Il Sync completo riconcilia le modifiche remote, preserva o committa il lavoro locale quando possibile e pusha secondo la policy configurata. Il dialog stato repository espone Fetch, Pull, Commit, Push, backup, reclone e riparazione.
+Il Sync completo riconcilia le modifiche remote, preserva o committa il lavoro locale quando possibile e pusha secondo la policy configurata. Il dialog stato repository espone Fetch, Pull, Commit, Push, backup, reclone e riparazione. Alla fine dice quanti file ha portato da GitHub, quante tue modifiche ha mantenuto e quanti file ha pubblicato; una modifica che è ancora solo su questo dispositivo viene contata, e la pubblica il prossimo sync.
+
+Quando lo stesso file è cambiato sia su questo dispositivo sia su GitHub si apre **Risolvi i conflitti del repository**. Per ogni file tieni la versione di questo dispositivo o quella di GitHub (oppure una parte per tutti i file); **Mostra le differenze** mostra solo le righe cambiate, con qualche riga attorno. **Applica scelte e sincronizza** mostra poi ogni passo a parole (controllo di GitHub, ricezione delle versioni di GitHub, applicazione delle tue scelte, salvataggio di un commit, pubblicazione su GitHub) e com'è andata. **Interrompi** funziona finché non è ancora cambiato niente; da quando le tue scelte vengono applicate il sync arriva fino in fondo, perché questo dispositivo e GitHub non restino mai a metà. Prendere la versione di GitHub salva prima la versione di questo dispositivo in una copia di recupero, e la pagina si ricarica per mostrare la versione di GitHub.
 
 ## Branch e pull request
 
