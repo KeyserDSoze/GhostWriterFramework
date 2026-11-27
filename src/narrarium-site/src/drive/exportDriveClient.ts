@@ -9,6 +9,18 @@ const GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const GRAPH_DRIVE_API = "https://graph.microsoft.com/v1.0/me/drive";
 const MIME_JSON = "application/json";
 
+/**
+ * Google answered «not found» for the folder an export goes to. With the scope Narrarium asks at sign-in (`drive.file`) it sees only the files and folders it
+ * created itself, so a folder that was already there is «not found» to it: the person is told, and may allow full access to Drive (a restricted scope, which
+ * Google warns about) for this one export, or choose a folder Narrarium made.
+ */
+export class GoogleFolderAccessError extends Error {
+  constructor() {
+    super("Google Drive does not let Narrarium use this folder: it did not create it.");
+    this.name = "GoogleFolderAccessError";
+  }
+}
+
 export interface DriveFolderEntry {
   id: string;
   name: string;
@@ -54,6 +66,7 @@ async function listAllGoogleExportEntries(accessToken: string, folderId: string)
   do {
     const query = new URLSearchParams({ q: `'${folderId.replace(/'/g, "\\'")}' in parents and trashed=false`, spaces: "drive", fields: "files(id,name,appProperties),nextPageToken", pageSize: "1000", ...(pageToken ? { pageToken } : {}) });
     const response = await fetch(`${GOOGLE_DRIVE_API}/files?${query}`, { headers: authHeaders(accessToken) });
+    if (response.status === 404) throw new GoogleFolderAccessError();
     assertOk(response, "Google Drive export reconciliation", "google", accessToken);
     const page = await response.json() as { files?: GoogleExportEntry[]; nextPageToken?: string };
     entries.push(...(page.files ?? []));
@@ -166,6 +179,7 @@ export async function uploadGoogleDriveFile(
     headers: authHeaders(accessToken),
     body: form,
   });
+  if (response.status === 404) throw new GoogleFolderAccessError();
   assertOk(response, "Google Drive export upload", "google", accessToken);
   const created = (await response.json()) as UploadedDriveFile;
   const resolvedName = uniqueGoogleExportName(fileName, created.id);

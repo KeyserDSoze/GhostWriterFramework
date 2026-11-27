@@ -82,7 +82,11 @@ async function googleAccountKey(token: string): Promise<string> {
 async function googleRootId(token: string): Promise<string> {
   if (activeRoot?.token !== token) {
     const promise = fetch(`${GOOGLE_DRIVE_API}/files/root?fields=id`, { headers: headers(token) })
-      .then(async (response) => { assertOk(response, "Google Drive root folder lookup"); const value = await response.json() as { id?: string }; if (!value.id) throw new Error("Google Drive root folder identity is unavailable."); return value.id; })
+      .then(async (response) => {
+        // With the scope Narrarium asks (drive.file) Google may not show the root folder itself, only what Narrarium made in it: the folders are then
+        // recognised by their marker, their name, their owner and their single parent, without comparing that parent with the root.
+        if (response.status === 403 || response.status === 404) return "";
+        assertOk(response, "Google Drive root folder lookup"); const value = await response.json() as { id?: string }; if (!value.id) throw new Error("Google Drive root folder identity is unavailable."); return value.id; })
       .finally(() => { if (activeRoot?.promise === promise) activeRoot = null; });
     activeRoot = { token, promise };
   }
@@ -107,7 +111,7 @@ export async function listVerifiedGoogleAppFolders(token: string): Promise<Verif
     && folder.ownedByMe === true
     && folder.trashed === false
     && folder.parents?.length === 1
-    && folder.parents[0] === rootId);
+    && (!rootId || folder.parents[0] === rootId));
 }
 
 async function findLegacyFolder(token: string): Promise<VerifiedGoogleAppFolder | null> {
@@ -123,7 +127,7 @@ async function findLegacyFolder(token: string): Promise<VerifiedGoogleAppFolder 
   const candidates = ((await response.json() as { files?: VerifiedGoogleAppFolder[] }).files ?? [])
     .sort((left, right) => (left.createdTime ?? "\uffff").localeCompare(right.createdTime ?? "\uffff") || left.id.localeCompare(right.id));
   for (const folder of candidates) {
-    if (folder.name !== APP_FOLDER_NAME || folder.mimeType !== FOLDER_MIME || folder.ownedByMe !== true || folder.trashed !== false || folder.parents?.length !== 1 || folder.parents[0] !== rootId) continue;
+    if (folder.name !== APP_FOLDER_NAME || folder.mimeType !== FOLDER_MIME || folder.ownedByMe !== true || folder.trashed !== false || folder.parents?.length !== 1 || (rootId && folder.parents[0] !== rootId)) continue;
     const childParams = new URLSearchParams({ q: `name='settings.json' and '${folder.id}' in parents and trashed=false`, spaces: "drive", fields: "files(id,name,parents,trashed,ownedByMe,mimeType,createdTime)", orderBy: "createdTime,name" });
     const childResponse = await fetch(`${GOOGLE_DRIVE_API}/files?${childParams}`, { headers: headers(token) });
     assertOk(childResponse, "Google legacy settings lookup");

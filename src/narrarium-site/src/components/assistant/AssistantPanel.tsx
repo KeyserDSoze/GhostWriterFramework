@@ -107,7 +107,8 @@ import {
   type BranchDiffFile,
 } from "@/github/githubClient";
 import { confirmPullRequestProposal } from "@/assistant/pullRequestProposal";
-import { uploadDriveFile } from "@/drive/exportDriveClient";
+import { GoogleFolderAccessError, uploadDriveFile } from "@/drive/exportDriveClient";
+import "@/i18n/googleAccess";
 import { createAssistantChatArchive, serializeAssistantChatArchive } from "@/assistant/chatArchive";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } from "@/assistant/speech";
@@ -1329,7 +1330,7 @@ export function AssistantPanel() {
       }
       toast({ title: options.destination === "download" ? t("assistant.toastChatExported") : t("assistant.toastChatSavedToDrive") });
     } catch (err) {
-      toast({ title: t("assistant.toastChatExportFailed"), description: String(err), variant: "destructive" });
+      toast({ title: t("assistant.toastChatExportFailed"), description: err instanceof GoogleFolderAccessError ? t("googleAccess.folderAccess.body") : String(err), variant: "destructive" });
     } finally {
       setBusy(false);
     }

@@ -24,10 +24,14 @@ function sameSession(left: AssistantSession, right: AssistantSession): boolean {
   return JSON.stringify(portableSession(left)) === JSON.stringify(portableSession(right));
 }
 
-export async function prepareLegacyGoogleChatImport(): Promise<LegacyGoogleChatImportPlan> {
+/**
+ * `token` is full access to Drive (the restricted scope) that the person allowed for this import: with the connection's own access, Narrarium sees only the
+ * folders it created, which is where the chats of an older version are when this client made them; without them the person is offered the full access.
+ */
+export async function prepareLegacyGoogleChatImport(options: { token?: string } = {}): Promise<LegacyGoogleChatImportPlan> {
   const connection = useConnectionStore.getState().configuration.google;
   if (!connection) throw new Error("Google Drive is not connected on this device.");
-  const token = await acquireGoogleConnectionToken();
+  const token = options.token ?? await acquireGoogleConnectionToken();
   registerCloudAccount("google", token, connection.identity.providerAccountId);
 
   const metas = await listAssistantSessionsStrict("google", token);

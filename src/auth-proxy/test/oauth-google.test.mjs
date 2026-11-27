@@ -50,6 +50,14 @@ describe("POST /oauth/google/token", () => {
     });
   });
 
+  it("never names a scope to Google, and ignores one the caller sends: the scopes are the browser's choice, the Worker only swaps the code", async () => {
+    provider.reply(() => jsonResponse(200, GOOGLE_TOKEN_REPLY));
+    await oauthCall("/oauth/google/token", { json: { code: "4/0AGoogleAuthCode", scope: "https://www.googleapis.com/auth/drive" } });
+    const form = formOf(provider.calls[0]);
+    assert.equal("scope" in form, false);
+    assert.ok(!JSON.stringify(provider.calls[0].init.body ?? "").includes("auth/drive"));
+  });
+
   it("omits the optional fields that Google did not send", async () => {
     provider.reply(() => jsonResponse(200, { access_token: "ya29.only-access", expires_in: 1800, token_type: "Bearer" }));
     const response = await oauthCall("/oauth/google/token", { json: { code: "c" } });
@@ -158,6 +166,12 @@ describe("POST /oauth/google/refresh", () => {
       client_secret: FAKE_GOOGLE_SECRET,
       grant_type: "refresh_token",
     });
+  });
+
+  it("renews without naming a scope either: the refresh keeps what the person granted", async () => {
+    provider.reply(() => jsonResponse(200, { access_token: "ya29.new", expires_in: 3599 }));
+    await oauthCall("/oauth/google/refresh", { json: { refreshToken: "1//google-refresh-token", scope: "https://www.googleapis.com/auth/drive" } });
+    assert.equal("scope" in formOf(provider.calls[0]), false);
   });
 
   it("omits scope when Google does not send one", async () => {

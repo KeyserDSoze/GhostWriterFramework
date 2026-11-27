@@ -6,6 +6,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/components/ui/use-toast";
+import "@/i18n/googleAccess";
+import { GoogleFullAccessNotice } from "@/components/auth/GoogleFullAccessNotice";
+import type { GoogleScopeGrant } from "@/account/googleScopeConsent";
 import { createGoogleDriveFolder, listGoogleDriveFolders, type DriveFolderEntry } from "@/drive/exportDriveClient";
 
 interface GoogleDriveFolderDialogProps {
@@ -13,9 +16,12 @@ interface GoogleDriveFolderDialogProps {
   onOpenChange: (open: boolean) => void;
   accessToken: string;
   onSelect: (folder: DriveFolderEntry) => void;
+  /** The person allowed full access to Drive here, to see folders Narrarium did not create: the parent keeps the token for the export that follows. */
+  onFullAccess?: (grant: GoogleScopeGrant) => void;
+  hint?: string;
 }
 
-export function GoogleDriveFolderDialog({ open, onOpenChange, accessToken, onSelect }: GoogleDriveFolderDialogProps) {
+export function GoogleDriveFolderDialog({ open, onOpenChange, accessToken: sessionToken, onSelect, onFullAccess, hint }: GoogleDriveFolderDialogProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const rootFolder: DriveFolderEntry = { id: "root", name: t("export.myDrive") };
@@ -25,6 +31,10 @@ export function GoogleDriveFolderDialog({ open, onOpenChange, accessToken, onSel
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [fullToken, setFullToken] = useState<string | null>(null);
+  // Narrarium sees only the folders it made; the full access a person allowed for now lists every folder.
+  const accessToken = fullToken ?? sessionToken;
 
   useEffect(() => {
     setStack((current) => (current.length === 0 ? [rootFolder] : [{ id: "root", name: rootFolder.name }, ...current.slice(1)]));
@@ -109,6 +119,17 @@ export function GoogleDriveFolderDialog({ open, onOpenChange, accessToken, onSel
             <FolderPlus className="mr-1 h-4 w-4" />
             {t("export.newFolder")}
           </Button>
+        )}
+
+        {fullToken ? (
+          <p role="status" className="text-xs text-muted-foreground">{t("googleAccess.folders.showingAll")}</p>
+        ) : asking ? (
+          <GoogleFullAccessNotice reason="browse" hint={hint} onDismiss={() => setAsking(false)} onGranted={(grant) => { setFullToken(grant.accessToken); setAsking(false); setStack([rootFolder]); onFullAccess?.(grant); }} />
+        ) : (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <p>{t("googleAccess.folders.note")}</p>
+            <Button type="button" variant="outline" size="sm" onClick={() => setAsking(true)}>{t("googleAccess.folders.showAll")}</Button>
+          </div>
         )}
 
         <ScrollArea className="h-72 rounded-lg border">

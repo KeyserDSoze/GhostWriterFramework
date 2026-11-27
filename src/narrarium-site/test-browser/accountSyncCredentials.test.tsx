@@ -45,7 +45,7 @@ import { useAccountSyncStore } from "@/account/accountSync";
 import { resetBrokerAvailabilityForTests } from "@/account/credentialBroker";
 import { closeCredentialVaultForTests, loadRefreshToken } from "@/account/credentialVault";
 import { MICROSOFT_CALLBACK_MESSAGE, resetMicrosoftSignInForTests } from "@/account/microsoftSignIn";
-import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
+import { GOOGLE_SIGN_IN_SCOPES } from "@/config/googleAuth";
 import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS } from "@/types/settings";
@@ -214,7 +214,7 @@ describe.each(["it", "en"] as const)("Account & Sync credentials in %s", (langua
       net.reply("GET", "https://www.googleapis.com/oauth2/v3/userinfo", { sub: "g-1", name: "Writer", email: "writer@example.com", picture: "" });
       await open(language);
 
-      await act(async () => { await google.options.implicit.onSuccess?.({ access_token: SECRETS.accessFresh, expires_in: 3599, scope: GOOGLE_DRIVE_SCOPES }); });
+      await act(async () => { await google.options.implicit.onSuccess?.({ access_token: SECRETS.accessFresh, expires_in: 3599, scope: GOOGLE_SIGN_IN_SCOPES }); });
 
       await waitFor(() => expect(stateOf().google?.accessToken).toBe(SECRETS.accessFresh));
       expect(stateOf().google?.refreshToken).toBe(SECRETS.refresh);
@@ -226,7 +226,7 @@ describe.each(["it", "en"] as const)("Account & Sync credentials in %s", (langua
       net.reply("GET", "https://www.googleapis.com/oauth2/v3/userinfo", { sub: "g-2", name: "Someone else", email: "else@example.com", picture: "" });
       await open(language);
 
-      await act(async () => { await google.options.implicit.onSuccess?.({ access_token: SECRETS.accessFresh, expires_in: 3599, scope: GOOGLE_DRIVE_SCOPES }); });
+      await act(async () => { await google.options.implicit.onSuccess?.({ access_token: SECRETS.accessFresh, expires_in: 3599, scope: GOOGLE_SIGN_IN_SCOPES }); });
 
       await waitFor(() => expect(stateOf().google?.identity.providerAccountId).toBe("g-2"));
       expect(stateOf().google?.refreshToken).toBeUndefined();
@@ -314,8 +314,8 @@ describe.each(["it", "en"] as const)("Account & Sync credentials in %s", (langua
 
       expect(google.triggers["auth-code"]).toHaveBeenCalledTimes(1);
       expect(google.triggers.implicit).not.toHaveBeenCalled();
-      expect(google.options["auth-code"]).toMatchObject({ flow: "auth-code", ux_mode: "popup", scope: GOOGLE_DRIVE_SCOPES });
-      expect(google.options.implicit).toMatchObject({ scope: GOOGLE_DRIVE_SCOPES });
+      expect(google.options["auth-code"]).toMatchObject({ flow: "auth-code", ux_mode: "popup", scope: GOOGLE_SIGN_IN_SCOPES });
+      expect(google.options.implicit).toMatchObject({ scope: GOOGLE_SIGN_IN_SCOPES });
       expect(google.options.implicit.flow).toBeUndefined();
     });
 
@@ -325,7 +325,7 @@ describe.each(["it", "en"] as const)("Account & Sync credentials in %s", (langua
       net.reply("GET", "https://www.googleapis.com/oauth2/v3/userinfo", { sub: "g-1", name: "Writer", email: "writer@example.com", picture: "" });
       await open(language);
 
-      await act(async () => { await google.options["auth-code"].onSuccess?.({ code: SECRETS.code, scope: GOOGLE_DRIVE_SCOPES }); });
+      await act(async () => { await google.options["auth-code"].onSuccess?.({ code: SECRETS.code, scope: GOOGLE_SIGN_IN_SCOPES }); });
 
       await waitFor(() => expect(stateOf().google?.refreshToken).toBe(SECRETS.refresh));
       await waitFor(() => expect(sync.syncOne).toHaveBeenCalledWith("google-drive"));
@@ -340,7 +340,7 @@ describe.each(["it", "en"] as const)("Account & Sync credentials in %s", (langua
       net.reply("GET", "https://www.googleapis.com/oauth2/v3/userinfo", { sub: "g-1", name: "Writer", email: "writer@example.com", picture: "" });
       await open(language);
 
-      await act(async () => { await google.options["auth-code"].onSuccess?.({ code: SECRETS.code, scope: GOOGLE_DRIVE_SCOPES }); });
+      await act(async () => { await google.options["auth-code"].onSuccess?.({ code: SECRETS.code, scope: GOOGLE_SIGN_IN_SCOPES }); });
 
       const notice = await screen.findByText(text.noRefresh);
       expect(notice.closest("[role='status']")).not.toBeNull();
@@ -357,7 +357,7 @@ describe.each(["it", "en"] as const)("Account & Sync credentials in %s", (langua
       fireEvent.click(await within(card("Google Drive")).findByRole("button", { name: text.upgrade }));
       expect(google.triggers["auth-code"]).toHaveBeenCalledTimes(1);
 
-      await act(async () => { await google.options["auth-code"].onSuccess?.({ code: SECRETS.code, scope: GOOGLE_DRIVE_SCOPES }); });
+      await act(async () => { await google.options["auth-code"].onSuccess?.({ code: SECRETS.code, scope: GOOGLE_SIGN_IN_SCOPES }); });
 
       const alert = await screen.findByRole("alert");
       expect(alert).toHaveTextContent(text.wrongAccount);
@@ -468,7 +468,7 @@ describe.each(["it", "en"] as const)("Account & Sync credentials in %s", (langua
       await brokerReady();
       net.reply("POST", `${BROKER_BASE}/oauth/google/token`, { error: "invalid_grant", message: "x" }, 400);
       await open(language);
-      await act(async () => { await google.options["auth-code"].onSuccess?.({ code: SECRETS.code, scope: GOOGLE_DRIVE_SCOPES }); });
+      await act(async () => { await google.options["auth-code"].onSuccess?.({ code: SECRETS.code, scope: GOOGLE_SIGN_IN_SCOPES }); });
       const alert = await screen.findByRole("alert");
       expect(alert).toHaveTextContent(language === "it" ? /codice di accesso è stato rifiutato/ : /sign-in code was rejected/);
       expect(alert.textContent).not.toContain(SECRETS.code);

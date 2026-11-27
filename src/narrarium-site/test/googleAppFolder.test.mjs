@@ -170,3 +170,17 @@ test("deletion removes only verified IDs and a later reconnect recreates one mar
     await release();
   }
 });
+
+test("with the scope Narrarium asks (drive.file) Google may hide the root folder: the app folder is still recognised by its marker, its name, its owner and its one parent", async () => {
+  installBrowserStorage();
+  resetGoogleAppFolderCacheForTests();
+  globalThis.fetch = async (url) => String(url).includes("/files/root?") ? jsonResponse({ error: { code: 404, message: "File not found: root." } }, 404) : jsonResponse({ files: [
+    canonicalFolder("owned"),
+    { ...canonicalFolder("shared"), ownedByMe: false },
+    { ...canonicalFolder("renamed"), name: "Other" },
+    canonicalFolder("unmarked", {}),
+    { ...canonicalFolder("two-parents"), parents: ["a", "b"] },
+  ] });
+  const folders = await listVerifiedGoogleAppFolders("token");
+  assert.deepEqual(folders.map((folder) => folder.id), ["owned"]);
+});

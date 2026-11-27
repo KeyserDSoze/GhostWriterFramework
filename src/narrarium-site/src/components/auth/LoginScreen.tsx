@@ -11,7 +11,7 @@ import { readAccountContinuity } from "@/auth/accountContinuity";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftMsalInstance, microsoftSilentRequest, setMicrosoftRememberMe } from "@/config/msal";
 import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
-import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
+import { GOOGLE_SIGN_IN_SCOPES } from "@/config/googleAuth";
 import { cloudDeletionReconnectState, registerCloudAccount, resumeCloudWrites } from "@/drive/cloudWriteBarrier";
 import { clearLegacyRecoveryLoginRequest, consumeLegacyRecoveryLoginRequest, matchesLegacyRecoveryLoginRequest, normalizeAppReturnTo, readLegacyRecoveryLoginRequest } from "@/auth/legacyRecoveryLogin";
 import { resolveUpdateAwareLoginReturnTo } from "@/pwaUpdateIntent";
@@ -74,7 +74,7 @@ export function LoginScreen() {
   }
 
   const login = useGoogleLogin({
-    scope: GOOGLE_DRIVE_SCOPES,
+    scope: GOOGLE_SIGN_IN_SCOPES,
     onSuccess: async (tokenResponse) => {
       setLoadingProvider("google");
       setError(null);

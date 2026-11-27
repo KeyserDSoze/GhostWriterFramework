@@ -7,7 +7,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { LocalTime } from "@/components/ui/local-time";
 import { Switch } from "@/components/ui/switch";
-import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
+import { GOOGLE_SIGN_IN_SCOPES } from "@/config/googleAuth";
+import "@/i18n/googleAccess";
+import { GoogleFullAccessNotice } from "@/components/auth/GoogleFullAccessNotice";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftMsalInstance, microsoftSilentRequest, setMicrosoftRememberMe } from "@/config/msal";
 import { useConnectionStore } from "@/account/connectionStore";
 import { completeGoogleCodeConnection, completeMicrosoftBrokerConnection } from "@/account/brokerConnect";
@@ -46,6 +48,7 @@ export function AccountSyncPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [legacyNeedsFullAccess, setLegacyNeedsFullAccess] = useState(false);
   const [localSummary, setLocalSummary] = useState<{ modifiedAtUtc: string; books: number; chats: number; dirty: boolean } | null>(null);
   const brokerGoogle = useBrokerAvailability("google");
   const brokerMicrosoft = useBrokerAvailability("microsoft");
@@ -77,7 +80,7 @@ export function AccountSyncPage() {
   const googleCodeLogin = useGoogleLogin({
     flow: "auth-code",
     ux_mode: "popup",
-    scope: GOOGLE_DRIVE_SCOPES,
+    scope: GOOGLE_SIGN_IN_SCOPES,
     onSuccess: async (response) => {
       setBusy("google");
       setError(null);
@@ -96,7 +99,7 @@ export function AccountSyncPage() {
   });
 
   const googleLogin = useGoogleLogin({
-    scope: GOOGLE_DRIVE_SCOPES,
+    scope: GOOGLE_SIGN_IN_SCOPES,
     onSuccess: async (response) => {
       setBusy("google");
       setError(null);
@@ -245,14 +248,17 @@ export function AccountSyncPage() {
     finally { setBusy(null); }
   }
 
-  async function importLegacyGoogleChats() {
+  async function importLegacyGoogleChats(fullAccessToken?: string) {
     setBusy("google-legacy-chats");
     setError(null);
     setNotice(null);
     try {
-      const plan = await prepareLegacyGoogleChatImport();
+      const plan = await prepareLegacyGoogleChatImport({ token: fullAccessToken });
+      setLegacyNeedsFullAccess(false);
       if (!plan.total) {
         setNotice(italian ? "Nessuna chat legacy trovata su Google Drive." : "No legacy chats were found on Google Drive.");
+        // Not found with the access Narrarium has: an older version may have kept them where Google hides them. Full access is offered, never assumed.
+        if (!fullAccessToken) setLegacyNeedsFullAccess(true);
         return;
       }
       if (plan.conflicts.length) throw new Error(`${italian ? "Le chat legacy sono in conflitto con chat locali correnti" : "Legacy chats conflict with current local chats"}: ${plan.conflicts.join(", ")}.`);
@@ -342,7 +348,7 @@ export function AccountSyncPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <ConnectionCard title="Google Drive" icon={<Cloud className="h-5 w-5" />} connected={Boolean(configuration.google)} enabled={configuration.google?.replica.enabled} status={configuration.google?.replica.status} errorKind={configuration.google?.replica.errorKind} errorMessage={configuration.google?.replica.lastErrorMessage} lastSync={configuration.google?.replica.lastSuccessfulSyncAtUtc} busy={syncing || busy === "google" || busy === "google-drive" || busy === "google-legacy-chats"} onToggle={(enabled) => useConnectionStore.getState().setEnabled("google-drive", enabled)} credentials={configuration.google && <CredentialStatus provider="google" connection={configuration.google} brokerAvailable={brokerGoogle} busy={syncing || busy !== null} onUpgrade={() => connectGoogleAccount(true)} />} onConnect={() => connectGoogleAccount()} onReconnect={() => connectGoogleAccount(true)} onSync={() => runSync("google-drive")} onDisconnect={() => disconnect("google-drive")} onDelete={() => removeRemote("google-drive")}>
-          {configuration.google && <div className="space-y-2 border-t pt-3"><p className="text-xs text-muted-foreground">{italian ? "Recupera le conversazioni conservate nella vecchia cartella Google Drive/Narrarium/chats. L'importazione non modifica i file originali." : "Recover conversations stored in the old Google Drive/Narrarium/chats folder. Importing does not modify the original files."}</p><Button size="sm" variant="outline" onClick={() => void importLegacyGoogleChats()} disabled={syncing || busy !== null}>{busy === "google-legacy-chats" && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}{italian ? "Importa chat legacy" : "Import legacy chats"}</Button></div>}
+          {configuration.google && <div className="space-y-2 border-t pt-3"><p className="text-xs text-muted-foreground">{italian ? "Recupera le conversazioni conservate nella vecchia cartella Google Drive/Narrarium/chats. L'importazione non modifica i file originali." : "Recover conversations stored in the old Google Drive/Narrarium/chats folder. Importing does not modify the original files."}</p><Button size="sm" variant="outline" onClick={() => void importLegacyGoogleChats()} disabled={syncing || busy !== null}>{busy === "google-legacy-chats" && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}{italian ? "Importa chat legacy" : "Import legacy chats"}</Button>{legacyNeedsFullAccess && <><p className="text-xs text-muted-foreground">{t("googleAccess.legacy.notFound")}</p><GoogleFullAccessNotice reason="legacy" hint={configuration.google.identity.email} onDismiss={() => setLegacyNeedsFullAccess(false)} onGranted={(grant) => void importLegacyGoogleChats(grant.accessToken)} /></>}</div>}
         </ConnectionCard>
         <ConnectionCard title="OneDrive" icon={<Cloud className="h-5 w-5" />} connected={Boolean(configuration.microsoft)} enabled={configuration.microsoft?.replica.enabled} status={configuration.microsoft?.replica.status} errorKind={configuration.microsoft?.replica.errorKind} errorMessage={configuration.microsoft?.replica.lastErrorMessage} lastSync={configuration.microsoft?.replica.lastSuccessfulSyncAtUtc} busy={syncing || busy === "microsoft" || busy === "onedrive"} credentials={configuration.microsoft && <CredentialStatus provider="microsoft" connection={configuration.microsoft} brokerAvailable={brokerMicrosoft} busy={syncing || busy !== null} onUpgrade={() => connectMicrosoft(true)} />} onToggle={(enabled) => useConnectionStore.getState().setEnabled("onedrive", enabled)} onConnect={() => connectMicrosoft()} onReconnect={() => connectMicrosoft(true)} onSync={() => runSync("onedrive")} onDisconnect={() => disconnect("onedrive")} onDelete={() => removeRemote("onedrive")}>
           <div role="status" className={microsoftPending ? "space-y-1 border-t pt-3 text-xs" : undefined}>{microsoftPending && <><p className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" /><span>{t("accountSync.microsoftSignIn.waiting")}</span></p><p className="text-muted-foreground">{t("accountSync.microsoftSignIn.hint")}</p></>}</div>

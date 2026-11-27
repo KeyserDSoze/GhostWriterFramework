@@ -7,7 +7,7 @@ import { Loader2 } from "lucide-react";
 import { useAuthStore } from "@/store/authStore";
 import { useUiStore } from "@/store/uiStore";
 import { ensureMsalInitialized, findMicrosoftAccountIn, microsoftSilentRequest } from "@/config/msal";
-import { GOOGLE_DRIVE_SCOPES } from "@/config/googleAuth";
+import { GOOGLE_SIGN_IN_SCOPES } from "@/config/googleAuth";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 import { WanderingAuthGhost } from "@/components/auth/WanderingAuthGhost";
 import { accountIdentity, beginLegacyAccountUpgrade, isAccountIdentityCurrent, normalizedAccountEmail, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
@@ -136,7 +136,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
   }
 
   const silentLogin = useGoogleLogin({
-    scope: GOOGLE_DRIVE_SCOPES,
+    scope: GOOGLE_SIGN_IN_SCOPES,
     // prompt: "none" → no UI silent token refresh while the Google session cookie is alive.
     prompt: "none",
     hint: user?.email,

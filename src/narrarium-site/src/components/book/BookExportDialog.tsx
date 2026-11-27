@@ -12,7 +12,10 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/use-toast";
 import { useAuthStore } from "@/store/authStore";
 import { buildBookExportArtifacts, loadBookExportSnapshot, type BookExportFormat } from "@/export/bookExport";
-import { uploadDriveFile, type DriveFolderEntry } from "@/drive/exportDriveClient";
+import { GoogleFolderAccessError, uploadDriveFile, type DriveFolderEntry } from "@/drive/exportDriveClient";
+import "@/i18n/googleAccess";
+import { GoogleFullAccessNotice } from "@/components/auth/GoogleFullAccessNotice";
+import type { GoogleScopeGrant } from "@/account/googleScopeConsent";
 import { GoogleDriveFolderDialog } from "@/components/book/GoogleDriveFolderDialog";
 import { OneDriveFolderDialog } from "@/components/book/OneDriveFolderDialog";
 
@@ -59,6 +62,9 @@ export function BookExportDialog(props: {
     : null);
   const [microsoftFolderPath, setMicrosoftFolderPath] = useState(savedSettings.microsoftDriveFolderPath ?? "Apps/Narrarium/Exports");
   const [googleFolderDialogOpen, setGoogleFolderDialogOpen] = useState(false);
+  // Full access to Drive, allowed by the person for this session only, when the folder was not made by Narrarium.
+  const [fullAccess, setFullAccess] = useState<GoogleScopeGrant | null>(null);
+  const [folderAccessIssue, setFolderAccessIssue] = useState(false);
   const [oneDriveFolderDialogOpen, setOneDriveFolderDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -136,7 +142,7 @@ export function BookExportDialog(props: {
 
       if (uploadToDrive && user && accessToken) {
         for (const artifact of artifacts) {
-          await uploadDriveFile(user.provider, accessToken, {
+          await uploadDriveFile(user.provider, fullAccess && fullAccess.expiresAt > Date.now() ? fullAccess.accessToken : accessToken, {
             googleFolderId: googleFolder?.id,
             microsoftFolderPath,
             fileName: artifact.fileName,
@@ -149,6 +155,7 @@ export function BookExportDialog(props: {
       toast({ title: t("export.success", { count: artifacts.length }) });
       setOpen(false);
     } catch (err) {
+      if (err instanceof GoogleFolderAccessError) { setFolderAccessIssue(true); return; }
       toast({ title: t("export.failed"), description: String(err), variant: "destructive" });
     } finally {
       setBusy(false);
@@ -234,6 +241,13 @@ export function BookExportDialog(props: {
                   </Button>
                 </div>
               )}
+              {uploadToDrive && user?.provider === "google" && folderAccessIssue && (
+                <div className="space-y-2" role="alert" data-testid="export-folder-access">
+                  <p className="text-sm font-medium">{t("googleAccess.folderAccess.title")}</p>
+                  <p className="text-xs text-muted-foreground">{t("googleAccess.folderAccess.body")}</p>
+                  <GoogleFullAccessNotice reason="export" hint={user.email} onGranted={(grant) => { setFullAccess(grant); setFolderAccessIssue(false); }} />
+                </div>
+              )}
               {uploadToDrive && user?.provider === "microsoft" && (
                 <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
                   <div>
@@ -262,6 +276,8 @@ export function BookExportDialog(props: {
           open={googleFolderDialogOpen}
           onOpenChange={setGoogleFolderDialogOpen}
           accessToken={accessToken}
+          hint={user?.email}
+          onFullAccess={setFullAccess}
           onSelect={setGoogleFolder}
         />
       )}
