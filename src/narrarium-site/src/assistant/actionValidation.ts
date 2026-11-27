@@ -117,6 +117,7 @@ export function isValidAssistantActionShape(action: AssistantAction): boolean {
     && Number.isSafeInteger(action.workflowRequestId) && action.workflowRequestId >= 0
     && typeof action.ownerSessionId === "string" && typeof action.ownerRequestId === "string";
   if (action.kind === "navigate") return typeof action.to === "string" && action.to.startsWith("/app/") && !action.to.includes("\\");
+  if (action.kind === "raise-routing-limit") return (action.key === "maxTokenAttempts" || action.key === "maxEstimatedCost") && Number.isFinite(action.from) && Number.isFinite(action.to) && action.to > action.from;
   if (action.kind === "read-aloud") return Array.isArray(action.paths) && action.paths.length > 0 && action.paths.every(safePath);
   return false;
 }

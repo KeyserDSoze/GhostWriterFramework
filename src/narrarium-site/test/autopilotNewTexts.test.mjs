@@ -281,7 +281,7 @@ test("every kind of error the engine tells has a title, an explanation and a sho
   }
   assert.deepEqual(kinds.map((kind) => get(autopilotIt, `autopilot.failure.kind.${kind}.title`)), [
     "Problema di connessione", "Accesso rifiutato dal provider", "Troppe richieste", "Risposta troppo lenta", "Risposta troncata dal limite di output", "Il provider ha rifiutato la richiesta",
-    "Il libro è cambiato altrove", "Budget raggiunto", "Limite raggiunto", "Un file del profilo ha problemi", "Configurazione dell'AI da correggere", "Errore del provider", "Errore",
+    "Il libro è cambiato altrove", "Limite di instradamento raggiunto", "Limite raggiunto", "Un file del profilo ha problemi", "Configurazione dell'AI da correggere", "Errore del provider", "Errore",
   ]);
   // A title says what happened; the explanation says what it means and what to do, and is a sentence of its own.
   for (const kind of kinds) assert.notEqual(get(autopilotEn, `autopilot.failure.kind.${kind}.title`), get(autopilotEn, `autopilot.failure.kind.${kind}.explain`));

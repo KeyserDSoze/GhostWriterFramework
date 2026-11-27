@@ -5,6 +5,10 @@ const aiRouterEn = {
       title: "Routing options",
       description: "Privacy of fallbacks and execution limits",
     },
+    raised: {
+      previous: "raised from {{value}} on {{date}}, for a request whose fallbacks it had kept out.",
+      restore: "Put back {{value}}",
+    },
     runNote: "An autopilot is running in this tab. A change you make here applies to its next call in this tab, even before it is saved. Save it to keep it after a reload and to apply it to a run in another tab of this browser.",
     sections: {
       text: {
@@ -189,6 +193,7 @@ const aiRouterEn = {
     },
   },
   settings: {
+    windowDefaultHint: "Empty: {{tokens}} tokens are assumed, the window of most models today. Every request to this model is judged by this window: whether it fits, and what is cut to fit.",
     thinkingDefault: "Default thinking",
     thinkingNone: "None (not set)",
     thinkingDefaultHint: "How hard the models of this integration think when a task does not choose a level in the AI Router: the level of a route always wins over this one. A model that does not reason may refuse a level (error 400): then choose “Automatic”.",

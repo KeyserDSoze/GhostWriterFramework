@@ -212,7 +212,7 @@ describe("a log that has not caught up with the events", () => {
 describe("the title of each kind, in the words of the app", () => {
   it.each([
     ["network", "Problema di connessione"], ["auth", "Accesso rifiutato dal provider"], ["rate_limit", "Troppe richieste"], ["timeout", "Risposta troppo lenta"],
-    ["truncated", "Risposta troncata dal limite di output"], ["refused", "Il provider ha rifiutato la richiesta"], ["conflict", "Il libro è cambiato altrove"], ["budget", "Budget raggiunto"],
+    ["truncated", "Risposta troncata dal limite di output"], ["refused", "Il provider ha rifiutato la richiesta"], ["conflict", "Il libro è cambiato altrove"], ["budget", "Limite di instradamento raggiunto"],
     ["limit", "Limite raggiunto"], ["profile", "Un file del profilo ha problemi"], ["config", "Configurazione dell'AI da correggere"], ["provider", "Errore del provider"], ["unknown", "Errore"],
   ] as const)("says %s in Italian: %s", async (kind, words) => {
     await i18n.changeLanguage("it");

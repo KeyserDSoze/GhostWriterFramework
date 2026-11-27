@@ -148,6 +148,25 @@ describe("AI Router: every control is found by its label", () => {
     expect(useSettingsStore.getState().settings.routingExecution?.maxCandidates).toBe(3);
   });
 
+  it("opens the routing options for a link from a refusal, says the limit a refusal raised and the value it had, and puts it back", async () => {
+    const raisedFrom = { maxEstimatedCost: 5, at: "2026-11-27T10:00:00.000Z" };
+    await show("/app/settings/ai-router#routing-options", { aiIntegrations: ALL, taskRouting: ROUTES, costCurrency: "USD", routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxEstimatedCost: 8, raisedFrom } });
+    const options = document.getElementById("routing-options") as HTMLDetailsElement;
+    await waitFor(() => expect(options.open).toBe(true));
+    expect(document.activeElement).toBe(options.querySelector("summary"));
+    const note = options.querySelector<HTMLElement>('[data-raised-limit="maxEstimatedCost"]')!;
+    expect(note).toHaveTextContent(`${t("routing.maxEstimatedCost")}: raised from $5.00 on`);
+    fireEvent.click(within(note).getByRole("button", { name: "Put back $5.00" }));
+    expect(useSettingsStore.getState().settings.routingExecution).toEqual(DEFAULT_SETTINGS.routingExecution);
+    expect(options.querySelector("[data-raised-limit]")).toBeNull();
+  });
+
+  it("forgets what a refusal raised a limit from once the author sets the limit by hand", async () => {
+    await routerPage({ aiIntegrations: ALL, taskRouting: ROUTES, routingExecution: { ...DEFAULT_SETTINGS.routingExecution, maxEstimatedCost: 8, raisedFrom: { maxEstimatedCost: 5, at: "2026-11-27T10:00:00.000Z" } } });
+    change(screen.getByLabelText(t("routing.maxEstimatedCost")), "12");
+    expect(useSettingsStore.getState().settings.routingExecution).toEqual({ ...DEFAULT_SETTINGS.routingExecution, maxEstimatedCost: 12, raisedFrom: undefined });
+  });
+
   // The old page drew one box per task, with a group named after the task; the new one is a table per kind of task with a tab per level,
   // so a control is named after its task AND its tab ("Model for Director, Fallback 1").
   it.each(LANGUAGES)("names the endpoint and the model of every route after its task and its tab, in the table of the text tasks (%s)", async (language) => {

@@ -19,7 +19,8 @@ export function useSendAiConfiguration() {
   const [state, setState] = useState<SendState>("idle");
   const [reason, setReason] = useState("");
 
-  async function send() {
+  /** Whether the server took it: the state says it too. */
+  async function send(): Promise<boolean> {
     setState("sending");
     try {
       const connection = server.status === "online" ? server.connection : null;
@@ -27,9 +28,11 @@ export function useSendAiConfiguration() {
       const { client } = await verifiedServer({ connection });
       setSent(await client.putAiConfig(pickAiRuntimeConfig(useSettingsStore.getState().settings)));
       setState("sent");
+      return true;
     } catch (error) {
       setReason(error instanceof Error ? error.message : String(error));
       setState("failed");
+      return false;
     }
   }
 

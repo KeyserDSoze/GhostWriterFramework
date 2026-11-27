@@ -59,6 +59,9 @@ export function canonicalAssistantActionToolIds(action: AssistantAction): string
         return ["open-audit"];
       }
       return ["navigate-app"];
+    case "raise-routing-limit":
+      // A change of the author's own settings, offered after a refusal: no tool of the Copilot runs it.
+      return [];
     case "apply-file-updates":
     case "undo-file-updates":
       // A proposal for the outline (the Scaletta) is the Copilot's «Edit the Outline», one for a page (the readers…) «Change This Page»; every other one is

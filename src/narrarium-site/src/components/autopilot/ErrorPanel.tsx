@@ -10,6 +10,8 @@ import { ErrorFiles } from "@/components/autopilot/StopNotices";
 import { KindIcon } from "@/components/autopilot/KindIcon";
 import { ProviderWords } from "@/components/autopilot/ProviderWords";
 import { RouteTrail } from "@/components/autopilot/RouteTrail";
+import { RoutingLimitNotice } from "@/components/autopilot/RoutingLimitNotice";
+import { routingBudgetOfError } from "@/assistant/routingLimitRaise";
 import { ServerAiNote } from "@/components/autopilot/ServerAiNote";
 import { APP_VERSION } from "@/config/version";
 import { transportBadges } from "@/debug/attemptBadges";
@@ -330,6 +332,7 @@ function FailurePanel({ bookId, control, actions, wait }: FailurePanelProps) {
         </div>
       )}
       {showRoute && <RouteTrail route={route} integrationName={integrationName} />}
+      {(kind === "budget" || routingBudgetOfError(source.detail)) && <RoutingLimitNotice detail={source.detail} ended={source.ended} host={host} disabled={busy !== null || noAi} resume={commands.resume} />}
       {timeout && <TimeoutNotice note={timeout} />}
       {retryAfter !== null && <p data-error-retry-after className="text-sm font-medium">{t("autopilot.failure.retryAfter", { time: formatCountdown(retryAfter, language) })}</p>}
       {source.retry && <Countdown at={source.retry.at} notBefore={notBefore} />}

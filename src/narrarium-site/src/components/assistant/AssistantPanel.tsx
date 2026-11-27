@@ -114,6 +114,9 @@ import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { speakText, splitIntoStrofe, transcribeAudio, type SpeechController } from "@/assistant/speech";
 import { classifyConfirmationRouted, completeTextRouted, sttMode } from "@/assistant/router";
 import { describeAiFailure } from "@/assistant/aiFailure";
+import { saveRoutingLimitRaise, saveRoutingLimitRestore } from "@/assistant/routingLimitSave";
+import { formatWhole } from "@/autopilot/format";
+import { formatMoney } from "@/costs/money";
 import { listenToRetries, retryNoticeText } from "@/assistant/retryNotice";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
@@ -200,6 +203,13 @@ const BrainstormProposal = lazy(() => brainstormParts().then((module) => ({ defa
 /** The review of a proposal for a page (the readers' batch…), loaded with the first one. */
 const PageChangesReview = lazy(() => import("@/components/assistant/PageChangesReview"));
 
+/** The conversation the model reads with a request: every message but the request itself, and, for a request sent again, only what came before it. */
+function conversationBefore(messages: readonly AssistantMessage[], requestId: string, again: boolean): AssistantMessage[] {
+  if (!again) return messages.filter((message) => message.id !== requestId);
+  const at = messages.findIndex((message) => message.id === requestId);
+  return at < 0 ? messages.filter((message) => message.id !== requestId) : messages.slice(0, at);
+}
+
 export function AssistantPanel() {
   const { t } = useTranslation();
   const location = useLocation();
@@ -216,6 +226,8 @@ export function AssistantPanel() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const workingOnId = useId();
+  // A request a routing limit refused, to send again once the raised limit is in the settings (see `raiseRoutingLimitAndSend`).
+  const [sendAgain, setSendAgain] = useState<{ prompt: string; messageId: string } | null>(null);
   // The page the Copilot works on first, when the author is on one that has a contract with it (see `@/assistant/pages/registry`).
   const workingOn = useMemo(() => {
     const id = pageIdForRoute(route);
@@ -258,6 +270,9 @@ export function AssistantPanel() {
   const activePathnameRef = useRef(location.pathname);
   const activeSecretPath = directSecretPath(route);
   const contextAccessGenerationRef = useRef(0);
+  // The book's structure being loaded again by a request of its own (after a change it made, or after it failed, see `runPromptWithMutationRefresh`): not a change of the
+  // context the request was made in, which would drop its reply, or the words of its failure, in silence.
+  const ownRefreshRef = useRef(0);
   const contextAccessSnapshotRef = useRef({ pathname: location.pathname, bookId, branch, secretPath: activeSecretPath, settings, structures, workingBranches });
   const settingsRef = useRef(settings);
   const sessionSaveQueueRef = useRef(assistantSessionSaveQueue);
@@ -367,9 +382,13 @@ export function AssistantPanel() {
       || previous.settings !== settings
       || previous.structures !== structures
       || previous.workingBranches !== workingBranches) {
+      const ownRefresh = ownRefreshRef.current > 0 && previous.structures !== structures && previous.pathname === location.pathname && previous.bookId === bookId && previous.branch === branch
+        && previous.secretPath === activeSecretPath && previous.settings === settings && previous.workingBranches === workingBranches;
       contextAccessSnapshotRef.current = { pathname: location.pathname, bookId, branch, secretPath: activeSecretPath, settings, structures, workingBranches };
-      contextAccessGenerationRef.current += 1;
-      activePromptRef.current?.controller.abort(new DOMException("The assistant context changed.", "AbortError"));
+      if (!ownRefresh) {
+        contextAccessGenerationRef.current += 1;
+        activePromptRef.current?.controller.abort(new DOMException("The assistant context changed.", "AbortError"));
+      }
     }
     pendingRewriteRef.current = resolveLiveVoiceRewrite(pendingRewriteRef.current, "source-switch").pending;
     confirmedMutationRef.current?.controller.abort(new DOMException("The confirmed mutation context changed.", "AbortError"));
@@ -1440,7 +1459,11 @@ export function AssistantPanel() {
     consumeLaunchMode();
   }, [consumeLaunchMode, launchMode]);
 
-  async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal; attachmentTarget?: AttachmentImportTarget }): Promise<AssistantMessage | null> {
+  /**
+   * Sends a request. `again` sends once more the author's message `again` (a request a routing limit refused, after the limit was raised): it is not added to the chat a second
+   * time, and the model reads the conversation as it was before it.
+   */
+  async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal; attachmentTarget?: AttachmentImportTarget; again?: string }): Promise<AssistantMessage | null> {
     const accountScope = localWorkspaceScope();
     const trimmed = prompt.trim();
     if (!trimmed || useAssistantStore.getState().busy) return null;
@@ -1490,6 +1513,8 @@ export function AssistantPanel() {
     });
     localAudioHandledRef.current = false;
     let streamedMessageId: string | null = null;
+    // Whether this request loaded its book again (`ownRefreshRef`): until it ends, that is not a change of its context.
+    let refreshedOwnBook = false;
     const updateStreamedReply = (text: string) => {
       if (!ownsRequest()) return;
       if (text) setRetryNotice(null);
@@ -1503,15 +1528,15 @@ export function AssistantPanel() {
       }
     };
     try {
-      if (session.mode === "brainstorming") return await askBrainstorming(trimmed, session, controller.signal, ownsRequest, accountScope, { onText: updateStreamedReply, streamedId: () => streamedMessageId });
+      if (session.mode === "brainstorming") return await askBrainstorming(trimmed, session, controller.signal, ownsRequest, accountScope, { onText: updateStreamedReply, streamedId: () => streamedMessageId }, options?.again);
       const booksState = useBooksStore.getState();
       const routeContext = await loadWriterContext(location.pathname, settings, settings.books, booksState.structures, booksState.workingBranches, branch);
       if (!ownsRequest()) return null;
       const book = routeContext.book;
       const token = book ? resolveWorkingCopyToken(book, settings) : "";
-      const userMessage = { id: crypto.randomUUID(), role: "user" as const, text: trimmed };
+      const userMessage = { id: options?.again ?? crypto.randomUUID(), role: "user" as const, text: trimmed };
       const secretPath = routeContext.route ? directSecretPath(routeContext.route) : null;
-      useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage], sensitiveSecretPaths: secretPath ? [...new Set([...(current.sensitiveSecretPaths ?? []), secretPath])] : current.sensitiveSecretPaths }));
+      useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, contextTitle: routeContext.title, updatedAt: new Date().toISOString(), messages: options?.again ? current.messages : [...current.messages, userMessage], sensitiveSecretPaths: secretPath ? [...new Set([...(current.sensitiveSecretPaths ?? []), secretPath])] : current.sensitiveSecretPaths }));
       setDraft("");
       const strofaReply = await tryHandleStrofaCommand(trimmed, mediaOperation);
       if (!ownsRequest()) return null;
@@ -1540,7 +1565,7 @@ export function AssistantPanel() {
         book,
         branch,
         token,
-        history: latestSession.messages.filter((message) => message.id !== userMessage.id),
+        history: conversationBefore(latestSession.messages, userMessage.id, Boolean(options?.again)),
         compactSummary: latestSession.archive?.summary ?? latestSession.compactSummary,
         compactedMessageCount: latestSession.compactedMessageCount,
         attachments: latestSession.attachments,
@@ -1551,7 +1576,10 @@ export function AssistantPanel() {
         requestOwner: { requestId, sessionId: session.id },
         accountScope,
       }), async () => {
-        if (book) await refreshBookAfterMutation({ book, token, branch: routeContext.branch ?? branch });
+        if (!book) return;
+        if (!refreshedOwnBook) ownRefreshRef.current += 1;
+        refreshedOwnBook = true;
+        await refreshBookAfterMutation({ book, token, branch: routeContext.branch ?? branch });
       });
       if (!ownsRequest()) return null;
       const actionBranch = reply.action?.kind === "read-aloud" ? routeContext.structure?.loadedBranch ?? branch : routeContext.branch;
@@ -1574,7 +1602,7 @@ export function AssistantPanel() {
       return finalReply;
     } catch (err) {
       if (!ownsRequest()) return null;
-      const failure = describeAiFailure(err, t);
+      const failure = describeAiFailure(err, t, useSettingsStore.getState().settings);
       const errorMessage = { id: streamedMessageId ?? crypto.randomUUID(), role: "assistant" as const, text: failure?.text ?? (err instanceof Error ? err.message : t("assistant.requestFailed")), ...(failure?.action ? { action: failure.action } : {}), branch };
       if (streamedMessageId) useAssistantStore.getState().updateSessionMessage(session.id, streamedMessageId, { text: errorMessage.text, branch, ...(failure?.action ? { action: failure.action } : {}) });
       else useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, errorMessage] }));
@@ -1583,6 +1611,7 @@ export function AssistantPanel() {
     } finally {
       options?.signal?.removeEventListener("abort", abortFromCaller);
       stopListeningToRetries();
+      if (refreshedOwnBook) ownRefreshRef.current -= 1;
       endUsageTask();
       setRetryNotice(null);
       if (controller.signal.aborted) setRequestStatus("");
@@ -1591,6 +1620,41 @@ export function AssistantPanel() {
         setBusy(false);
       }
     }
+  }
+
+  // A request a routing limit refused, sent again once the raised limit is in the settings (the render after the click has them).
+  useEffect(() => {
+    if (!sendAgain) return;
+    setSendAgain(null);
+    void sendPrompt(sendAgain.prompt, { again: sendAgain.messageId });
+    // The request is sent by the render that has the new settings, once: `sendPrompt` is that render's.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sendAgain]);
+
+  /** The limit of a refusal, as the chat says it: tokens with the separators of the app's language, a cost in the currency of the settings. */
+  function routingLimitValue(key: "maxTokenAttempts" | "maxEstimatedCost", value: number): string {
+    return key === "maxTokenAttempts" ? formatWhole(value) : formatMoney(value, settings.costCurrency || "USD");
+  }
+
+  /** «Raise the limit and send»: the limit is raised in the settings (the one it replaces remembered), the message says so, and the author's request is sent again. */
+  function raiseRoutingLimitAndSend(message: AssistantMessage) {
+    const action = message.action;
+    if (action?.kind !== "raise-routing-limit" || action.raised) return;
+    const session = useAssistantStore.getState().currentSession;
+    const at = session?.messages.findIndex((entry) => entry.id === message.id) ?? -1;
+    const request = at > 0 ? [...session!.messages.slice(0, at)].reverse().find((entry) => entry.role === "user") : undefined;
+    void saveRoutingLimitRaise(action);
+    useAssistantStore.getState().updateMessage(message.id, { action: { ...action, raised: true }, text: `${message.text}\n\n${t("autopilot.failure.routingLimit.raised", { from: routingLimitValue(action.key, action.from), to: routingLimitValue(action.key, action.to) })}` });
+    // Sent once the settings are the new ones (the next render has them).
+    if (request) setSendAgain({ prompt: request.text, messageId: request.id });
+  }
+
+  /** «Put back»: the limit a refusal raised is back to the value the author had. */
+  function restoreRoutingLimit(message: AssistantMessage) {
+    const action = message.action;
+    if (action?.kind !== "raise-routing-limit" || !action.raised) return;
+    void saveRoutingLimitRestore(action.key, action.from);
+    useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("autopilot.failure.routingLimit.restored", { value: routingLimitValue(action.key, action.from) })}` });
   }
 
   /** Adds what a proposal kept aside (the author's own entries of the Synopsis, `review.optional`) to what Apply writes: nothing is written by this, only the proposal changes. */
@@ -1615,10 +1679,10 @@ export function AssistantPanel() {
    * A request to Brainstorming: its own runner (loaded with its first request), with only its own tools and the Synopsis of its book as its context.
    * None of the Copilot's tools, local commands or voice commands is reached from here.
    */
-  async function askBrainstorming(prompt: string, session: AssistantSession, signal: AbortSignal, ownsRequest: () => boolean, accountScope: string | null, stream: { onText: (text: string) => void; streamedId: () => string | null }): Promise<AssistantMessage | null> {
+  async function askBrainstorming(prompt: string, session: AssistantSession, signal: AbortSignal, ownsRequest: () => boolean, accountScope: string | null, stream: { onText: (text: string) => void; streamedId: () => string | null }, again?: string): Promise<AssistantMessage | null> {
     const book = session.bookId ? settings.books.find((entry) => entry.id === session.bookId) ?? null : null;
-    const userMessage: AssistantMessage = { id: crypto.randomUUID(), role: "user", text: prompt };
-    useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage] }));
+    const userMessage: AssistantMessage = { id: again ?? crypto.randomUUID(), role: "user", text: prompt };
+    if (!again) useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage] }));
     setDraft("");
     const { runBrainstormPrompt } = await import("@/assistant/brainstorm/runner");
     const latest = useAssistantStore.getState().currentSession;
@@ -1629,7 +1693,7 @@ export function AssistantPanel() {
       book,
       branch,
       structure: book ? useBooksStore.getState().structures[book.id] : undefined,
-      history: latest.messages.filter((message) => message.id !== userMessage.id),
+      history: conversationBefore(latest.messages, userMessage.id, Boolean(again)),
       signal,
       accountScope,
       onText: stream.onText,
@@ -2825,6 +2889,19 @@ export function AssistantPanel() {
                 <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>
                 <FrozenProposalNotice book={bookEntryOf(message.action.bookId)} branch={message.action.branch ?? branch} files={[{ path: message.action.paragraphPath, body: message.action.proposedBody }]} />
               </>
+            )}
+            {message.action?.kind === "raise-routing-limit" && (
+              <div className="mt-2 flex flex-wrap items-center gap-2" data-routing-limit={message.action.key}>
+                {message.action.raised ? (
+                  <Button size="sm" variant="outline" onClick={() => restoreRoutingLimit(message)} disabled={busy}>{t("autopilot.failure.routingLimit.restore", { value: routingLimitValue(message.action.key, message.action.from) })}</Button>
+                ) : (
+                  <>
+                    <Button size="sm" onClick={() => raiseRoutingLimitAndSend(message)} disabled={busy}>{t("autopilot.failure.routingLimit.raiseAndSend", { value: routingLimitValue(message.action.key, message.action.to) })}</Button>
+                    <Button asChild size="sm" variant="outline"><Link to="/app/settings/ai-router#routing-options">{t("autopilot.failure.routingLimit.open")}</Link></Button>
+                    <p className="w-full text-xs text-muted-foreground">{t("autopilot.failure.routingLimit.raiseHint", { from: routingLimitValue(message.action.key, message.action.from) })}</p>
+                  </>
+                )}
+              </div>
             )}
             {message.action?.kind === "navigate" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" disabled={!isAssistantActionEnabled(message.action)} onClick={() => void executeNavigationAction(message.action!)}><BookOpen className="mr-1.5 h-3.5 w-3.5" />{message.action.label ?? t("assistant.openLocation")}</Button></div>}
             {message.action?.kind === "read-aloud" && <div className="mt-2 flex items-center gap-2"><Button size="sm" variant="outline" onClick={() => void replayReadAloud(index)} disabled={!isAssistantActionEnabled(message.action)}><Play className="mr-1.5 h-3.5 w-3.5" />{t("assistant.playAloud")}</Button></div>}

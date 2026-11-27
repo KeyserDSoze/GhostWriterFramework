@@ -5,6 +5,10 @@ const aiRouterIt = {
       title: "Opzioni di instradamento",
       description: "Riservatezza dei fallback e limiti di esecuzione",
     },
+    raised: {
+      previous: "alzato da {{value}} il {{date}}, per una richiesta di cui aveva escluso i fallback.",
+      restore: "Rimetti {{value}}",
+    },
     runNote: "In questa scheda lavora un autopilot. Una modifica fatta qui vale per la sua prossima chiamata in questa scheda, anche prima di essere salvata. Salvala per mantenerla dopo un ricaricamento e per applicarla a un'esecuzione in un'altra scheda di questo browser.",
     sections: {
       text: {
@@ -189,6 +193,7 @@ const aiRouterIt = {
     },
   },
   settings: {
+    windowDefaultHint: "Vuoto: si assumono {{tokens}} token, la finestra della maggior parte dei modelli di oggi. Ogni richiesta a questo modello è giudicata su questa finestra: se ci sta, e cosa viene tagliato per farcela stare.",
     thinkingDefault: "Thinking predefinito",
     thinkingNone: "Nessuno (non impostato)",
     thinkingDefaultHint: "Quanto ragionano i modelli di questa integrazione quando un compito non sceglie un livello nel Router AI: il livello di una rotta vince sempre su questo. Un modello che non ragiona può rifiutare un livello (errore 400): in quel caso scegli «Automatico».",

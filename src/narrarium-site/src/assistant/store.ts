@@ -118,6 +118,18 @@ export type AssistantAction = (
       label?: string;
     }
   | {
+      /**
+       * A call whose fallbacks the routing limits left out (Settings > AI Router > Routing options): the author can raise `key` from `from` to `to` (what the fallbacks needed,
+       * `estimated`, with room) and send the request again, in one click. `raised` once it is: the message then offers to put `from` back.
+       */
+      kind: "raise-routing-limit";
+      key: "maxTokenAttempts" | "maxEstimatedCost";
+      from: number;
+      to: number;
+      estimated: number;
+      raised?: boolean;
+    }
+  | {
       kind: "read-aloud";
       bookId: string;
       title: string;

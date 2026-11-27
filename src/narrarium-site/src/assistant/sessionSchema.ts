@@ -136,6 +136,14 @@ function action(value: unknown, label: string): AssistantAction {
       const existingPullRequests = raw.existingPullRequests.map((item, index) => { const pull = object(item, `${label}.existingPullRequests[${index}]`); if (!Number.isSafeInteger(pull.number) || (pull.number as number) < 1) throw new AssistantSessionValidationError(`${label}.existingPullRequests[${index}] is invalid.`); return { number: pull.number as number, title: text(pull.title, `${label}.existingPullRequests[${index}].title`, 500), htmlUrl: text(pull.htmlUrl, `${label}.existingPullRequests[${index}].htmlUrl`, 2048), state: text(pull.state, `${label}.existingPullRequests[${index}].state`, 32) }; });
       return { ...common, kind, bookId: bookId(), base: branch(raw.base, `${label}.base`), head: branch(raw.head, `${label}.head`), title: text(raw.title, `${label}.title`, 500), body: text(raw.body, `${label}.body`), baseRevision: text(raw.baseRevision, `${label}.baseRevision`, 256), headRevision: text(raw.headRevision, `${label}.headRevision`, 256), changedFiles, existingPullRequests } as AssistantAction;
     }
+    case "raise-routing-limit": {
+      const number = (value: unknown, where: string) => {
+        if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new AssistantSessionValidationError(`${label}.${where} is invalid.`);
+        return value;
+      };
+      if (raw.key !== "maxTokenAttempts" && raw.key !== "maxEstimatedCost") throw new AssistantSessionValidationError(`${label}.key is invalid.`);
+      return { kind, key: raw.key, from: number(raw.from, "from"), to: number(raw.to, "to"), estimated: number(raw.estimated, "estimated"), ...(raw.raised === true ? { raised: true } : {}) } as AssistantAction;
+    }
     case "navigate": {
       const to = text(raw.to, `${label}.to`, 2048);
       if (!to.startsWith("/app/") || to.includes("\\") || /[\x00-\x1f]/.test(to)) throw new AssistantSessionValidationError(`${label}.to is unsafe.`);

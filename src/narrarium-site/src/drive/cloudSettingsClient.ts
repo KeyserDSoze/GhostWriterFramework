@@ -436,15 +436,22 @@ function normalizePersonalServer(raw: unknown): AppSettings["personalServer"] {
 
 function normalizeRoutingExecution(raw: unknown): AppSettings["routingExecution"] {
   const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
-  const bounded = (key: keyof AppSettings["routingExecution"], min: number, max: number) => {
+  const bounded = (key: "maxCandidates" | "maxTotalDurationMs" | "maxTokenAttempts" | "maxEstimatedCost", min: number, max: number) => {
     const value = source[key];
     return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : DEFAULT_SETTINGS.routingExecution[key];
   };
+  const raised = source.raisedFrom && typeof source.raisedFrom === "object" && !Array.isArray(source.raisedFrom) ? source.raisedFrom as Record<string, unknown> : null;
+  const previous = (key: "maxTokenAttempts" | "maxEstimatedCost", min: number, max: number) => {
+    const value = raised?.[key];
+    return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? { [key]: key === "maxTokenAttempts" ? Math.floor(value) : value } : {};
+  };
+  const raisedFrom = raised && typeof raised.at === "string" && !Number.isNaN(Date.parse(raised.at)) ? { ...previous("maxTokenAttempts", 1_000, 2_000_000), ...previous("maxEstimatedCost", 0.01, 1_000), at: raised.at } : null;
   return {
     maxCandidates: Math.floor(bounded("maxCandidates", 1, 8)),
     maxTotalDurationMs: Math.floor(bounded("maxTotalDurationMs", 1_000, 600_000)),
     maxTokenAttempts: Math.floor(bounded("maxTokenAttempts", 1_000, 2_000_000)),
     maxEstimatedCost: bounded("maxEstimatedCost", 0.01, 1_000),
+    ...(raisedFrom && Object.keys(raisedFrom).length > 1 ? { raisedFrom } : {}),
   };
 }
 

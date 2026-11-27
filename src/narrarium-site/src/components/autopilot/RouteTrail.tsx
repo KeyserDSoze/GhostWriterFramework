@@ -33,7 +33,7 @@ export function RouteTrail({ route, integrationName }: { route: readonly Autopil
               <p>
                 <span className="font-medium">{target}</span>
                 {" — "}
-                {left ? t("autopilot.route.leftOut", { reason: leftOutReason(t, { reason: step.leftOut, why: step.why, promptTokens: step.promptTokens, windowTokens: step.windowTokens }) }) : outcomeWords(t, step, language)}
+                {left ? t("autopilot.route.leftOut", { reason: leftOutReason(t, { reason: step.leftOut, why: step.why, promptTokens: step.promptTokens, windowTokens: step.windowTokens, windowDefault: step.windowDefault }) }) : outcomeWords(t, step, language)}
                 {showDuration && <span className="text-muted-foreground"> · {t("autopilot.route.took", { time: formatLimit(step.durationMs as number, language) })}</span>}
               </p>
               {!left && (step.endpoint || step.apiVersion || step.protocol) && (

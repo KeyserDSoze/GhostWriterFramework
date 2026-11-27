@@ -91,6 +91,11 @@ export interface RoutingExecutionLimits {
   maxTotalDurationMs: number;
   maxTokenAttempts: number;
   maxEstimatedCost: number;
+  /**
+   * The values the author had before a limit was raised from a refusal (the chat's or the autopilot's «Raise the limit and send»), and when: what «Restore» puts back. Absent
+   * when no limit was raised that way, or it was put back.
+   */
+  raisedFrom?: { maxTokenAttempts?: number; maxEstimatedCost?: number; at: string };
 }
 
 /** A single chat model entry inside an integration, with its own price and roles. */

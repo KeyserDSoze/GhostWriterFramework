@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { forgetRaise, restoredLimits, type RoutingLimitKey } from "@/assistant/routingLimitRaise";
+import { formatDateTime, formatWhole } from "@/autopilot/format";
+import { DEFAULT_MAX_INPUT_TOKENS } from "@/assistant/promptBudget";
+import { formatMoney } from "@/costs/money";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, Bot, ChevronRight, Cloud, CloudOff, Coins, Download, Github, Highlighter, Loader2, Mic, Plug, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -883,7 +887,7 @@ function ChatModelsEditor({ integrationId, provider, apiVersion, endpoint, apiKe
               {provider === "azure_openai" && (
                 <ModelApiVersionField model={model} inherited={inheritedApiVersion({ apiVersion })} hintId={`${id}-api-version-hint`} ignored={Boolean(normalizeEndpointUrl(model.endpointUrl))} onChange={(next) => patchModel(model.id, { apiVersion: next })} />
               )}
-              <TokenLimitField label={t("settings.maxInputTokens")} value={model.maxInputTokens} onChange={(v) => patchModel(model.id, { maxInputTokens: v })} />
+              <TokenLimitField label={t("settings.maxInputTokens")} value={model.maxInputTokens} onChange={(v) => patchModel(model.id, { maxInputTokens: v })} placeholder={String(DEFAULT_MAX_INPUT_TOKENS)} hint={t("settings.windowDefaultHint", { tokens: formatWhole(DEFAULT_MAX_INPUT_TOKENS) })} />
               <TokenLimitField label={t("settings.maxOutputTokens")} value={model.maxOutputTokens} onChange={(v) => patchModel(model.id, { maxOutputTokens: v })} />
               <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
                 <Label htmlFor={`${id}-${model.id}-tools`} className="text-xs">{t("settings.forcedToolCalls")}</Label>
@@ -958,7 +962,7 @@ function PriceField({ label, value, onChange }: { label: string; value: number |
   );
 }
 
-function TokenLimitField({ label, value, onChange }: { label: string; value: number | undefined; onChange: (v: number | undefined) => void }) {
+function TokenLimitField({ label, value, onChange, hint, placeholder = "0" }: { label: string; value: number | undefined; onChange: (v: number | undefined) => void; hint?: string; placeholder?: string }) {
   const id = useId();
   return (
     <div className="grid gap-1">
@@ -969,15 +973,17 @@ function TokenLimitField({ label, value, onChange }: { label: string; value: num
         inputMode="numeric"
         min="0"
         step="1"
+        aria-describedby={hint ? `${id}-hint` : undefined}
         value={value ?? ""}
         onChange={(e) => {
           const raw = e.target.value.trim();
           const next = raw === "" ? undefined : Math.max(0, Math.floor(Number(raw)));
           onChange(Number.isFinite(next) ? next : undefined);
         }}
-        placeholder="0"
+        placeholder={placeholder}
         className="h-8 text-sm"
       />
+      {hint && <p id={`${id}-hint`} className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }
@@ -1046,12 +1052,28 @@ function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; p
   const { t } = useTranslation();
   const id = useId();
   const execution = settings.routingExecution ?? DEFAULT_SETTINGS.routingExecution;
+  // A refusal of the Copilot or of the autopilot links here (`#routing-options`): the options open, come into view and take the focus, once per entry of the history.
+  const location = useLocation();
+  const options = useRef<HTMLDetailsElement>(null);
+  const followed = useRef("");
+  useEffect(() => {
+    const element = options.current;
+    if (!element || hashName(location.hash) !== "routing-options" || followed.current === location.key) return;
+    followed.current = location.key;
+    element.open = true;
+    element.scrollIntoView?.({ block: "center" });
+    element.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
+  }, [location.hash, location.key]);
+  const raisedFrom = execution.raisedFrom;
+  const limitValue = (key: RoutingLimitKey, value: number) => (key === "maxTokenAttempts" ? formatWhole(value) : formatMoney(value, settings.costCurrency || "USD"));
+  // A limit set by hand is the author's own again: what a refusal raised it from is forgotten.
+  const setLimit = (key: RoutingLimitKey, value: number) => patchSettings({ routingExecution: { ...forgetRaise(execution, key), [key]: value } });
 
   return (
     <div className="space-y-4">
       <RouterRunNote settings={settings} />
       <ToolsOnlyField settings={settings} patchSettings={patchSettings} />
-      <details className="rounded-lg border border-layer bg-card [&[open]>summary_.chev]:rotate-90">
+      <details ref={options} id="routing-options" className="rounded-lg border border-layer bg-card [&[open]>summary_.chev]:rotate-90">
         <summary className="flex cursor-pointer list-none items-center gap-2 p-3 [&::-webkit-details-marker]:hidden">
           <ChevronRight className="chev h-4 w-4 shrink-0 text-muted-foreground transition-transform" aria-hidden="true" />
           <div className="min-w-0">
@@ -1073,8 +1095,14 @@ function TaskRoutingBody({ settings, patchSettings }: { settings: AppSettings; p
           <div className="grid gap-3 rounded-lg border bg-muted/10 p-3 sm:grid-cols-2">
             <TokenLimitField label={t("routing.maxCandidates")} value={execution.maxCandidates} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxCandidates: Math.min(8, Math.max(1, value ?? 4)) } })} />
             <TokenLimitField label={t("routing.maxTotalDuration")} value={execution.maxTotalDurationMs} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxTotalDurationMs: Math.min(600_000, Math.max(1_000, value ?? 180_000)) } })} />
-            <TokenLimitField label={t("routing.maxTokenAttempts")} value={execution.maxTokenAttempts} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxTokenAttempts: Math.min(2_000_000, Math.max(1_000, value ?? 200_000)) } })} />
-            <PriceField label={t("routing.maxEstimatedCost")} value={execution.maxEstimatedCost} onChange={(value) => patchSettings({ routingExecution: { ...execution, maxEstimatedCost: Math.min(1_000, Math.max(0.01, value ?? 5)) } })} />
+            <TokenLimitField label={t("routing.maxTokenAttempts")} value={execution.maxTokenAttempts} onChange={(value) => setLimit("maxTokenAttempts", Math.min(2_000_000, Math.max(1_000, value ?? 200_000)))} />
+            <PriceField label={t("routing.maxEstimatedCost")} value={execution.maxEstimatedCost} onChange={(value) => setLimit("maxEstimatedCost", Math.min(1_000, Math.max(0.01, value ?? 5)))} />
+            {raisedFrom && (["maxTokenAttempts", "maxEstimatedCost"] as const).filter((key) => raisedFrom[key] !== undefined).map((key) => (
+              <p key={key} data-raised-limit={key} className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:col-span-2">
+                <span>{t(`routing.${key}`)}: {t("routing.raised.previous", { value: limitValue(key, raisedFrom[key]!), date: formatDateTime(raisedFrom.at) })}</span>
+                <Button type="button" size="sm" variant="outline" onClick={() => patchSettings({ routingExecution: restoredLimits(execution, key) })}>{t("routing.raised.restore", { value: limitValue(key, raisedFrom[key]!) })}</Button>
+              </p>
+            ))}
           </div>
         </div>
       </details>
