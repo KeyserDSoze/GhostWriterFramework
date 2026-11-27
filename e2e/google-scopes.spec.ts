@@ -86,6 +86,8 @@ test("signing in to Google Drive asks for no restricted scope, and the card says
   test.setTimeout(120_000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  // The welcome tour opens a modal a moment after the page loads on a slow machine, and a modal makes the rest of the page unreachable by role: it is seen already.
+  await page.addInitScript(() => localStorage.setItem("narrarium-onboarding-completed", "1"));
   await page.route("https://accounts.google.com/gsi/client", (route) => route.fulfill({ status: 200, contentType: "text/javascript", body: GSI_STUB }));
   await page.route(/\/oauth\/status/, (route) => route.abort());
   const google = await stubGoogle(page);
@@ -109,6 +111,7 @@ test("signing in to Google Drive asks for no restricted scope, and the card says
   const state = card.getByTestId("sync-state");
   await expect(state).toHaveAttribute("data-state", "all-synced", { timeout: 30_000 });
   await expect(state).toContainText(/All synced · last check/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(card.getByRole("button", { name: "Sync", exact: true })).toHaveCount(0);
   await expect(card.getByRole("button", { name: "Check now" })).toBeVisible();
   await expect(card.getByText("Follows the general setting, which is on.")).toBeVisible();
