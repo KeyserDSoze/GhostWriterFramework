@@ -49,6 +49,9 @@ export interface PageCapability {
    * page come before the general ones); `null` when the request is not about the page.
    */
   fallbackToolId?(prompt: string): string | null;
+  /** The page's tool that proposes its changes, and the JSON schema of its arguments: what a model that cannot call tools is asked to write (`pageChangesFromPrompt`). */
+  proposeToolId?: string;
+  proposeParameters?: Record<string, unknown>;
 }
 
 /** The page of a request, loaded: its contract, what the Copilot sees of it, and what its tools work on. */

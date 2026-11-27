@@ -56,7 +56,7 @@ import { isAssistantRequestOwned, isConfirmedMutationOwned, type AssistantReques
 import { resolveChatNoteDestination, reusableChatNoteOperation, type ChatNoteDestination } from "@/assistant/chatNoteSave";
 import { isMediaOperationOwned, stopMediaStreamTracks } from "@/assistant/mediaOwnership";
 import { assistantActionToolId, policyTargetEnabled, quickActionToolId } from "@/assistant/toolPolicy";
-import { hasAssistantActionProvenance, isOutlineProposal, OUTLINE_FILE, sourceRevisionFromFiles, validateAssistantAction } from "@/assistant/actionValidation";
+import { hasAssistantActionProvenance, isOutlineProposal, isWholeProposal, OUTLINE_FILE, sourceRevisionFromFiles, validateAssistantAction } from "@/assistant/actionValidation";
 import "@/i18n/outlineCopilot";
 import "@/i18n/pageCopilot";
 import { pageIdForRoute } from "@/assistant/pages/registry";
@@ -196,6 +196,8 @@ const BrainstormIdentity = lazy(() => brainstormParts().then((module) => ({ defa
 const BrainstormBack = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormBack })));
 const BrainstormEmpty = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormEmpty })));
 const BrainstormProposal = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormProposal })));
+/** The review of a proposal for a page (the readers' batch…), loaded with the first one. */
+const PageChangesReview = lazy(() => import("@/components/assistant/PageChangesReview"));
 
 export function AssistantPanel() {
   const { t } = useTranslation();
@@ -2157,7 +2159,8 @@ export function AssistantPanel() {
     const action = message.action;
     if (!requireAssistantActionEnabled(action)) return;
     // A proposal for the outline is applied whole: moving an entry rewrites the ones it passes.
-    const updates = pendingFileUpdates(action.updates, isOutlineProposal(action) ? undefined : selectedPaths);
+    // A proposal for the outline, or a page's batch, is applied whole.
+    const updates = pendingFileUpdates(action.updates, isWholeProposal(action) ? undefined : selectedPaths);
     const book = settings.books.find((entry) => entry.id === action.bookId);
     const token = book ? resolveWorkingCopyToken(book, settings) : "";
     if (!book || !token || updates.length === 0) return;
@@ -2207,6 +2210,7 @@ export function AssistantPanel() {
           kind: allApplied ? "undo-file-updates" : "apply-file-updates",
           bookId: action.bookId,
           updates: nextUpdates,
+          ...(action.review ? { review: action.review } : {}),
           toolId: action.toolId,
           owner: action.owner,
           repo: action.repo,
@@ -2739,7 +2743,22 @@ export function AssistantPanel() {
                 <BrainstormProposal action={message.action} book={bookEntryOf(message.action.bookId)} branch={branch} busy={busy} enabled={isAssistantActionEnabled(message.action)} onApply={() => void applySelectedFileUpdates(index)} onUndo={() => void undoFileUpdates(index)} />
               </Suspense>
             )}
-            {message.action?.kind === "apply-file-updates" && !brainstorming && (
+            {(message.action?.kind === "apply-file-updates" || message.action?.kind === "undo-file-updates") && message.action.review && !brainstorming && (
+              <Suspense fallback={null}>
+                <PageChangesReview
+                  action={message.action as Parameters<typeof PageChangesReview>[0]["action"]}
+                  busy={busy}
+                  enabled={isAssistantActionEnabled(message.action)}
+                  onApply={() => void applySelectedFileUpdates(index)}
+                  onUndo={() => void undoFileUpdates(index)}
+                  onDiscard={() => {
+                    useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("pageCopilot.review.discarded")}` });
+                    composerRef.current?.focus();
+                  }}
+                />
+              </Suspense>
+            )}
+            {message.action?.kind === "apply-file-updates" && !message.action.review && !brainstorming && (
               <div className="mt-2 rounded-xl border bg-muted/30 p-3 text-xs">
                 <p className="mb-2 font-medium">{t("assistant.proposedChanges")}</p>
                 <div className="space-y-2">
@@ -2755,7 +2774,7 @@ export function AssistantPanel() {
                             {loadingDiffPath === diffKey ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
                             {showDiff ? t("assistant.hideDiff") : t("assistant.showDiff")}
                           </Button>
-                          {!isOutlineProposal(message.action!) && <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy || update.status === "applied" || !isAssistantActionEnabled(message.action!)}>{t("assistant.applyThisFile")}</Button>}
+                          {!isWholeProposal(message.action!) && <Button size="sm" variant="outline" onClick={() => void applySelectedFileUpdates(index, [update.path])} disabled={busy || update.status === "applied" || !isAssistantActionEnabled(message.action!)}>{t("assistant.applyThisFile")}</Button>}
                         </div>
                         {showDiff ? (
                           <FileDiff previous={previousContents[diffKey] ?? ""} next={update.content ?? ""} className="mt-2 max-h-64" />
@@ -2776,7 +2795,7 @@ export function AssistantPanel() {
                 </div>
               </div>
             )}
-            {message.action?.kind === "undo-file-updates" && !brainstorming && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.undoChanges")}</Button></div>}
+            {message.action?.kind === "undo-file-updates" && !message.action.review && !brainstorming && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.undoChanges")}</Button></div>}
             {message.action?.kind === "apply-paragraph-rewrite" && (
               <>
                 <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.rewriteReady")}</Badge><Button size="sm" onClick={() => void applyRewrite(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.applyToParagraph")}</Button><Button asChild size="sm" variant="outline"><Link to={`/app/books/${message.action.bookId}/chapters/${message.action.chapterSlug}`}>{t("assistant.openChapter")}</Link></Button></div>
@@ -2965,9 +2984,11 @@ export function AssistantPanel() {
             <div className="border-t p-3">
               <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void sendPrompt(draft); }}>
                 {!brainstorming && workingOn && (
-                  <p id={workingOnId} data-copilot-scope={workingOn.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <p data-copilot-scope={workingOn.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <LocateFixed className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
-                    <span className="min-w-0 truncate"><span className="font-medium text-foreground">{t("pageCopilot.workingOn", { page: workingOn.label })}</span><span className="sr-only">. {t("pageCopilot.workingOnHint")}</span></span>
+                    <span className="min-w-0 truncate font-medium text-foreground">{t("pageCopilot.workingOn", { page: workingOn.label })}</span>
+                    {/* What the composer is described by: the page, and what it means, in one sentence (a hidden element a description may still name). */}
+                    <span id={workingOnId} hidden>{`${t("pageCopilot.workingOn", { page: workingOn.label })}. ${t("pageCopilot.workingOnHint")}`}</span>
                   </p>
                 )}
                 <Textarea

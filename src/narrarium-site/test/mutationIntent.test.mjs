@@ -33,6 +33,7 @@ const cases = [
   ["delete-current-entity", "delete this character", "elimina questo personaggio", "who is this character?", "non eliminare questo personaggio"],
   ["delete-reader-evaluation", "delete reader evaluation", "elimina la valutazione del lettore", "show reader evaluation", "non eliminare la valutazione del lettore"],
   ["delete-audit", "delete the audit", "elimina l'audit", "show the audit", "non eliminare l'audit"],
+  ["edit-page", "turn off all the default readers", "spegni tutti i lettori di default", "which readers are on?", "non spegnere i lettori"],
 ];
 
 test("the mutation policy covers every mutating built-in tool", () => {

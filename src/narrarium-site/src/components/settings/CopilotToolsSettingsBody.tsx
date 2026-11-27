@@ -7,6 +7,8 @@ import type { AppSettings } from "@/types/settings";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import { localizeCopilotToolArea, localizeCopilotToolPrerequisite, localizeCopilotToolText } from "@/assistant/tools/presentation";
 import { copilotToolRegistry, isCopilotToolEnabled } from "@/assistant/tools/registry";
+// The names of the tools of the pages travel with the Copilot's own texts.
+import "@/i18n/pageCopilot";
 
 ensureBuiltinCopilotToolsRegistered();
 

@@ -251,6 +251,8 @@ export async function runAssistantPrompt(input: {
     "create-from-research": () => proposeEntityFromResearch({ ...promptInput, book, branch, token }),
     "multi-file-edit": () => proposeMultiFileUpdates({ ...promptInput, book, branch, token }),
     "edit-outline": () => proposeOutlineEditFromPrompt({ ...promptInput, book, branch, token }),
+    // The batch of a page (its own tool, loaded with it) for a model that cannot call tools: the keyword rules reach it.
+    "edit-page": async () => (await import("@/assistant/pages/fallback")).pageChanges(page, { context, settings, book: selectedBook, branch, token, prompt, accountScope, signal }),
   } as const;
   assertExecutableHandlerMap(handlers);
 
@@ -321,6 +323,8 @@ export async function runAssistantPrompt(input: {
     if (!tool) throw new Error(`Copilot handler ${legacyHandlerId} has no tool descriptor.`);
     return executeTool(tool.id, handlerMutationIntent(lowered, legacyHandlerId) ?? undefined);
   }
+  // A change that no rule recognised, made on a page that proposes its own changes, is about that page.
+  if (page?.capability.proposeToolId && classifyMutationIntent(prompt, "edit-page") === "positive") return executeTool("edit-page", "positive");
   return executeTool("answer-from-context");
 }
 
@@ -343,7 +347,8 @@ async function runWithTools(input: PromptInput & { book: BookEntry | null; token
       italian: promptIsItalian(input.prompt, input.settings),
       page: input.page ?? null,
       env: input.page?.env ?? bookEnv({ ...input, book: input.book }),
-      catalogue: copilotToolRegistry.list().filter((tool) => tool.handlerId && tool.id !== "answer-from-context" && available(tool)).map((tool) => ({ id: tool.id, name: tool.name, description: tool.description })),
+      // The plain answer is the turn's reply, and the batch of a page is its own tool's: neither is a tool of the catalogue in the loop.
+      catalogue: copilotToolRegistry.list().filter((tool) => tool.handlerId && tool.id !== "answer-from-context" && tool.id !== "edit-page" && available(tool)).map((tool) => ({ id: tool.id, name: tool.name, description: tool.description })),
       prompt: input.prompt,
       target: input.token ? await resolveTargetBody(input, input.token) : null,
       messages: (instruction, request) => [buildSystemMessage(input, instruction), buildUserMessage(input, request)],

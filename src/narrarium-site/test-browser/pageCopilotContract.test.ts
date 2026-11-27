@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mergeReaderPersonas, parseReaderPersona, serializeReaderPersona, emptyReaderPersona, type ReaderPersonaProfile } from "narrarium-engine";
 import { parseAppRoute, type LoadedWriterContext } from "@/assistant/context";
-import { loadPage, pageIdForRoute, pageIds, promptReadsItalian } from "@/assistant/pages/registry";
+import { loadPage, pageIdForPrompt, pageIdForRoute, pageIds, promptReadsItalian } from "@/assistant/pages/registry";
 import { pageViewText, readPageView } from "@/assistant/pages/view";
 import { readersStateText } from "@/assistant/pages/readers";
 import { systemContextBundle } from "@/assistant/service";
@@ -91,5 +91,14 @@ describe("the contract of a page with the Copilot", () => {
     expect(promptReadsItalian("creami solo lettori storici, di diverso tipo, e leva tutti i lettori di default", SETTINGS)).toBe(true);
     expect(promptReadsItalian("create only historical readers and turn off all the default ones", { ui: { language: "it" } } as AppSettings)).toBe(false);
     expect(promptReadsItalian("ok", { ui: { language: "it" } } as AppSettings)).toBe(true);
+  });
+
+  it("knows the page a request names by its subject, the page the author is on first", () => {
+    expect(pageIdForPrompt("creami solo lettori storici e leva quelli di default")).toBe("readers");
+    expect(pageIdForPrompt("turn off the critical reader", "readers")).toBe("readers");
+    expect(pageIdForPrompt("create a chapter about the harbor")).toBeNull();
+    // «Lettura» and «readership» are not the readers.
+    expect(pageIdForPrompt("migliora la lettura del capitolo")).toBeNull();
+    expect(pageIdForPrompt("think about the readership")).toBeNull();
   });
 });

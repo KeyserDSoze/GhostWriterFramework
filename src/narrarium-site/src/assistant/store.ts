@@ -29,6 +29,34 @@ export interface AssistantFileUpdate {
   error?: string;
 }
 
+/** One line of the review of a proposal for a page: a thing of the page (a reader, a ghostwriter, a field) with its resulting state and what changes. */
+export interface PageChangeRow {
+  /** What the thing is in the book: a reader's id, a ghostwriter's slug, the key of a field. */
+  id: string;
+  name: string;
+  /** What kind of thing it is, as the table says it (standard, genre, custom…). */
+  kind?: string;
+  builtin?: boolean;
+  /** On or off before and after, for what has a switch: `null` when it does not exist before (created) or after (removed). */
+  before?: boolean | null;
+  after?: boolean | null;
+  /** A value before and after, for a field (short). */
+  from?: string;
+  to?: string;
+  change: "created" | "edited" | "turned-on" | "turned-off" | "removed" | "unchanged";
+  /** The fields that change. */
+  fields?: string[];
+  /** Removing it was asked, and it is built in: it is turned off instead. */
+  kept?: boolean;
+}
+
+/** The review of a proposal for a page: every thing of the page with its resulting state, shown before it is applied. */
+export interface PageChangesReview {
+  /** The page (`PageId`). */
+  page: string;
+  rows: PageChangeRow[];
+}
+
 export interface AssistantActionProvenance {
   toolId: string;
   owner: string;
@@ -51,11 +79,14 @@ export type AssistantAction = (
       kind: "apply-file-updates";
       bookId: string;
       updates: AssistantFileUpdate[];
+      /** A proposal for a page: what the author reviews in place of the files. */
+      review?: PageChangesReview;
     }
   | {
       kind: "undo-file-updates";
       bookId: string;
       updates: AssistantFileUpdate[];
+      review?: PageChangesReview;
     }
   | {
       kind: "switch-book-branch";

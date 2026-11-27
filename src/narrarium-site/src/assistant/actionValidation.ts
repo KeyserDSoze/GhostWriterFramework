@@ -40,8 +40,25 @@ export const OUTLINE_FILE = /^outline\/(?:book\.md|brainstorm\.md|chapters\/\d+\
 const MAX_FILE_UPDATES = 8;
 const MAX_OUTLINE_UPDATES = 100;
 
+/** The files of the simulated readers: one per reader, `personas/<slug>.md` (a built-in reader has one once it changes). */
+export const PERSONA_FILE = /^personas\/[^/]+\.md$/;
+
+/**
+ * The files whose proposals are applied whole: the outline (moving an entry rewrites the ones it passes) and the files of a page's batch (readers created,
+ * turned off and removed together, as the author reviewed them). Such a proposal may touch up to 100 files, and delete files.
+ */
+const WHOLE_PROPOSAL_FILES = [OUTLINE_FILE, PERSONA_FILE];
+
+function updatesOf(updates: unknown[], files: RegExp): boolean {
+  return updates.every((update) => Boolean(update) && typeof update === "object" && typeof (update as { path?: unknown }).path === "string" && files.test((update as { path: string }).path));
+}
+
 function outlineUpdates(updates: unknown[]): boolean {
-  return updates.every((update) => Boolean(update) && typeof update === "object" && typeof (update as { path?: unknown }).path === "string" && OUTLINE_FILE.test((update as { path: string }).path));
+  return updatesOf(updates, OUTLINE_FILE);
+}
+
+function wholeUpdates(updates: unknown[]): boolean {
+  return WHOLE_PROPOSAL_FILES.some((files) => updatesOf(updates, files));
 }
 
 /**
@@ -52,14 +69,19 @@ export function isOutlineProposal(action: AssistantAction): boolean {
   return (action.kind === "apply-file-updates" || action.kind === "undo-file-updates") && Array.isArray(action.updates) && action.updates.length > 0 && outlineUpdates(action.updates);
 }
 
+/** A proposal that is applied whole: the outline's, or a page's batch (see `WHOLE_PROPOSAL_FILES`). */
+export function isWholeProposal(action: AssistantAction): boolean {
+  return (action.kind === "apply-file-updates" || action.kind === "undo-file-updates") && Array.isArray(action.updates) && action.updates.length > 0 && wholeUpdates(action.updates);
+}
+
 function validUpdates(updates: unknown): boolean {
   if (!Array.isArray(updates) || updates.length === 0) return false;
-  const outline = outlineUpdates(updates);
-  if (updates.length > (outline ? MAX_OUTLINE_UPDATES : MAX_FILE_UPDATES)) return false;
+  const whole = wholeUpdates(updates);
+  if (updates.length > (whole ? MAX_OUTLINE_UPDATES : MAX_FILE_UPDATES)) return false;
   return updates.every((update) => (
     update && typeof update === "object"
     && safePath((update as { path?: unknown }).path)
-    && (typeof (update as { content?: unknown }).content === "string" || (outline && (update as { content?: unknown }).content === null))
+    && (typeof (update as { content?: unknown }).content === "string" || (whole && (update as { content?: unknown }).content === null))
   ));
 }
 

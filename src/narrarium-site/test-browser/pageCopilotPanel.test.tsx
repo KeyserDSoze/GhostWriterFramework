@@ -37,8 +37,8 @@ describe("the page the Copilot works on", () => {
     const scope = await screen.findByText("Working on: Simulated readers");
     const line = scope.closest("[data-copilot-scope]")!;
     expect(line).toHaveAttribute("data-copilot-scope", "readers");
-    const composer = document.querySelector<HTMLTextAreaElement>(`textarea[aria-describedby="${line.id}"]`);
-    expect(composer).not.toBeNull();
+    const composer = document.querySelector<HTMLTextAreaElement>("textarea[aria-describedby]");
+    expect(line.querySelector(`#${CSS.escape(composer!.getAttribute("aria-describedby")!)}`)).not.toBeNull();
     expect(composer).toHaveAccessibleDescription("Working on: Simulated readers. Requests are about this page first; everything else the Copilot can do stays available.");
   });
 

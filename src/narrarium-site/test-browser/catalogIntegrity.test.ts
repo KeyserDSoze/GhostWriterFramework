@@ -31,6 +31,7 @@ const EXPECTED_PREREQUISITES: Record<string, CopilotToolPrerequisite[]> = {
   "create-note": ["book open", "context loaded"],
   "multi-file-edit": ["book open", "context loaded"],
   "edit-outline": ["book open", "context loaded"],
+  "edit-page": ["book open", "context loaded"],
   "review-context": ["context loaded"],
   "summarize-context": ["context loaded"],
   "answer-from-context": ["context loaded"],

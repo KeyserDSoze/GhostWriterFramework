@@ -8,6 +8,9 @@ import type { AppSettings, BookEntry } from "@/types/settings";
  * tool of it the Copilot is asked to run elsewhere): neither the app nor the Copilot's panel carries the pages it is never asked about.
  */
 
+/** The tool of the Copilot's catalogue that changes the page the author is on (the batch of its proposing tool): what the author turns on or off in Settings. */
+export const PAGE_TOOL = "edit-page";
+
 const ROUTE_PAGES: Partial<Record<AppRouteContext["kind"], PageId>> = {
   "book-simulated-readers": "readers",
 };
@@ -15,6 +18,18 @@ const ROUTE_PAGES: Partial<Record<AppRouteContext["kind"], PageId>> = {
 const LOADERS: Partial<Record<PageId, () => Promise<PageCapability>>> = {
   readers: () => import("@/assistant/pages/readers").then((module) => module.readersPage),
 };
+
+/** The words that name what a page is about, in English and in Italian: a request that has them, and changes something, is about that page. */
+const PAGE_SUBJECTS: Partial<Record<PageId, RegExp>> = {
+  readers: /(?<![\p{L}])(?:lettor[ei]|lettrice|lettrici|readers?|personas?)(?![\p{L}])/iu,
+};
+
+/** The page a request names by its subject: the page the author is on when it does, else the first that it names; `null` when it names none. */
+export function pageIdForPrompt(prompt: string, current?: PageId | null): PageId | null {
+  const names = (id: PageId) => Boolean(LOADERS[id] && PAGE_SUBJECTS[id]?.test(prompt));
+  if (current && names(current)) return current;
+  return pageIds().find(names) ?? null;
+}
 
 /** The page of a route that has a contract with the Copilot, or `null`. */
 export function pageIdForRoute(route: AppRouteContext): PageId | null {
@@ -40,8 +55,19 @@ export function promptReadsItalian(prompt: string, settings: Pick<AppSettings, "
   return settings.ui.language === "it";
 }
 
+export interface BookEnvInput {
+  context: LoadedWriterContext;
+  settings: AppSettings;
+  book: BookEntry | null;
+  branch: string;
+  token: string;
+  prompt: string;
+  accountScope: string | null;
+  signal?: AbortSignal;
+}
+
 /** What the tools of a page work on when the request was made elsewhere in the book: the book, and no view of the page. `null` without a book. */
-export function bookEnv(input: { context: LoadedWriterContext; settings: AppSettings; book: BookEntry | null; branch: string; token: string; prompt: string; accountScope: string | null; signal?: AbortSignal }): PageEnv | null {
+export function bookEnv(input: BookEnvInput): PageEnv | null {
   const structure = input.context.structure;
   if (!input.book || !structure) return null;
   return { settings: input.settings, book: input.book, branch: input.branch, token: input.token, structure, context: input.context, prompt: input.prompt, italian: promptReadsItalian(input.prompt, input.settings), view: null, accountScope: input.accountScope, signal: input.signal };
@@ -51,7 +77,7 @@ export function bookEnv(input: { context: LoadedWriterContext; settings: AppSett
  * The page of a request, with what the Copilot sees of it: `null` when the route has no contract or no book is open. A state that cannot be read is left out (the
  * request goes on with the rest of the context, as it did before pages had one).
  */
-export async function loadPage(input: { context: LoadedWriterContext; settings: AppSettings; book: BookEntry | null; branch: string; token: string; prompt: string; accountScope: string | null; signal?: AbortSignal }): Promise<LoadedPage | null> {
+export async function loadPage(input: BookEnvInput): Promise<LoadedPage | null> {
   const structure = input.context.structure;
   if (!input.context.route || !input.book || !structure) return null;
   const id = pageIdForRoute(input.context.route);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowDown, ArrowUp, Copy, Loader2, Plus, RotateCcw, Save, Trash2, Users } from "lucide-react";
@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useBooksStore } from "@/store/booksStore";
 import { useWorkingBranch } from "@/github/useWorkingBranch";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
@@ -52,12 +53,17 @@ export function ReaderPersonasPage() {
     } finally { setLoading(false); }
   }
 
-  useEffect(() => { void load(); }, [book?.id, structure?.loadedBranch, token]);
+  // The book changed elsewhere (the Copilot applied or undid a batch, a sync brought files): the readers are read again, unless the author is editing one.
+  const generation = useBooksStore((state) => (bookId ? state.structureGenerations[bookId] ?? 0 : 0));
+  const personaFiles = structure ? structure.readerPersonas.map((entry) => entry.path).join("|") : null;
+  const editing = useRef(false);
+  useEffect(() => { if (!editing.current) void load(); }, [book?.id, structure?.loadedBranch, token, generation, personaFiles]);
   const visible = useMemo(() => profiles.filter((profile) => filter === "all" || profile.readerType === filter), [filter, profiles]);
   const orphanPaths = structure ? findOrphanReaderEvaluationPaths(structure) : [];
   const orphanAuditPaths = structure ? findOrphanAuditPaths(structure) : [];
 
   const dirty = Boolean(draft && JSON.stringify(draft) !== savedDraft);
+  editing.current = dirty;
 
   async function allowProfileChange(): Promise<boolean> {
     return resolveUnsavedChanges({

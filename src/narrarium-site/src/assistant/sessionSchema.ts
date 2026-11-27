@@ -1,6 +1,6 @@
-import type { AssistantAction, AssistantAttachment, AssistantLosslessArchiveManifest, AssistantLosslessSegment, AssistantLosslessSegmentRef, AssistantMessage, AssistantNoteSaveOperation, AssistantQuarantinedAction, AssistantSession, AssistantSessionArchive, AssistantSessionProvenance } from "./store.ts";
+import type { AssistantAction, PageChangesReview, AssistantAttachment, AssistantLosslessArchiveManifest, AssistantLosslessSegment, AssistantLosslessSegmentRef, AssistantMessage, AssistantNoteSaveOperation, AssistantQuarantinedAction, AssistantSession, AssistantSessionArchive, AssistantSessionProvenance } from "./store.ts";
 import { emptyAssistantArchiveRollup, emptyAssistantSessionArchive, normalizeAssistantSession } from "./store.ts";
-import { hasAssistantActionProvenance, OUTLINE_FILE } from "./actionValidation.ts";
+import { hasAssistantActionProvenance, OUTLINE_FILE, PERSONA_FILE } from "./actionValidation.ts";
 
 export const ASSISTANT_SESSION_SCHEMA_VERSION = 1 as const;
 export const MAX_ASSISTANT_SESSION_BYTES = 8 * 1024 * 1024;
@@ -72,9 +72,31 @@ function update(value: unknown, label: string) {
   const raw = object(value, label);
   if (raw.status !== undefined && raw.status !== "pending" && raw.status !== "applied" && raw.status !== "failed") throw new AssistantSessionValidationError(`${label}.status is invalid.`);
   const path = repositoryPath(raw.path, `${label}.path`);
-  // Only an entry of the outline is deleted by a proposal (`content: null`), and only then is there no hash of what was written.
-  const deletion = raw.content === null && OUTLINE_FILE.test(path);
+  // Only an entry of the outline, or the file of a reader of the author, is deleted by a proposal (`content: null`), and only then is there no hash of
+  // what was written.
+  const deletion = raw.content === null && (OUTLINE_FILE.test(path) || PERSONA_FILE.test(path));
   return { path, content: deletion ? null : text(raw.content, `${label}.content`), ...(raw.reason === undefined ? {} : { reason: text(raw.reason, `${label}.reason`, 10_000) }), ...(raw.previousContent === undefined ? {} : { previousContent: raw.previousContent === null ? null : text(raw.previousContent, `${label}.previousContent`) }), ...(raw.status === undefined ? {} : { status: raw.status }), ...(raw.appliedHash === undefined ? {} : { appliedHash: deletion && raw.appliedHash === null ? null : text(raw.appliedHash, `${label}.appliedHash`, 256) }), ...(raw.error === undefined ? {} : { error: text(raw.error, `${label}.error`, 10_000) }) };
+}
+
+const PAGE_CHANGES = new Set(["created", "edited", "turned-on", "turned-off", "removed", "unchanged"]);
+
+/** The review of a proposal for a page, as the chat keeps it: at most 200 rows of short texts, switches and field names. */
+function pageReview(value: unknown, label: string): PageChangesReview {
+  const raw = object(value, label);
+  if (!Array.isArray(raw.rows) || raw.rows.length > 200) throw new AssistantSessionValidationError(`${label}.rows is invalid.`);
+  return {
+    page: identifier(raw.page, `${label}.page`),
+    rows: raw.rows.map((item, index) => {
+      const where = `${label}.rows[${index}]`;
+      const row = object(item, where);
+      const out: Record<string, unknown> = {};
+      for (const key of ["id", "name", "change", "kind", "from", "to"]) if (row[key] !== undefined) out[key] = text(row[key], `${where}.${key}`, 2_000);
+      for (const key of ["builtin", "kept", "before", "after"]) if (typeof row[key] === "boolean" || (row[key] === null && (key === "before" || key === "after"))) out[key] = row[key];
+      if (Array.isArray(row.fields) && row.fields.length <= 40) out.fields = row.fields.map((field, position) => text(field, `${where}.fields[${position}]`, 80));
+      if (typeof out.id !== "string" || typeof out.name !== "string" || !PAGE_CHANGES.has(out.change as string)) throw new AssistantSessionValidationError(`${where} is invalid.`);
+      return out as unknown as PageChangesReview["rows"][number];
+    }),
+  };
 }
 
 function action(value: unknown, label: string): AssistantAction {
@@ -94,7 +116,7 @@ function action(value: unknown, label: string): AssistantAction {
     case "apply-file-updates":
     case "undo-file-updates": {
       if (!Array.isArray(raw.updates) || raw.updates.length > 100) throw new AssistantSessionValidationError(`${label}.updates is invalid.`);
-      return { ...common, kind, bookId: bookId(), updates: raw.updates.map((item, index) => update(item, `${label}.updates[${index}]`)) } as AssistantAction;
+      return { ...common, kind, bookId: bookId(), updates: raw.updates.map((item, index) => update(item, `${label}.updates[${index}]`)), ...(raw.review === undefined ? {} : { review: pageReview(raw.review, `${label}.review`) }) } as AssistantAction;
     }
     case "switch-book-branch": return { ...common, kind, bookId: bookId(), branchName: branch(raw.branchName, `${label}.branchName`), ...(typeof raw.createIfMissing === "boolean" ? { createIfMissing: raw.createIfMissing } : {}), ...(raw.baseBranch === undefined ? {} : { baseBranch: branch(raw.baseBranch, `${label}.baseBranch`) }) } as AssistantAction;
     case "confirm-create-pull-request": {

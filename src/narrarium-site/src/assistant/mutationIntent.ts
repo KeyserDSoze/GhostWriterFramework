@@ -19,6 +19,7 @@ const MUTATION_VERBS: Record<string, RegExp> = {
   "deep-research": /\b(run|start|conduct|perform|do|save|esegui|eseguire|avvia|avviare|fai|fare|conduci|condurre|salva|salvare)\b/i,
   "create-from-research": /\b(create|add|generate|crea|creare|aggiungi|aggiungere|genera|generare)\b/i,
   "create-simulated-reader": /\b(create|add|define|crea|creare|aggiungi|aggiungere|definisci|definire)\b/i,
+  "edit-page": /\b(create|add|make|remove|delete|turn|enable|disable|change|edit|set|keep|tune|crea|creami|creare|aggiungi|aggiungere|togli|togliere|leva|levare|rimuovi|rimuovere|elimina|eliminare|cancella|cancellare|spegni|spegnere|accendi|accendere|attiva|attivare|disattiva|disattivare|modifica|modificare|cambia|cambiare|rendi|rendere|imposta|impostare|metti|mettere|tieni|tenere)\b/i,
   "toggle-simulated-reader": /\b(enable|disable|activate|deactivate|toggle|abilita|abilitare|disabilita|disabilitare|attiva|attivare|disattiva|disattivare|riattiva|riattivare)\b/i,
   "evaluate-with-readers": /\b(evaluate|review|run|valuta|valutare|recensisci|recensire|esegui|eseguire|fai valutare|fare valutare)\b/i,
   "summarize-reader-evaluations": /\b(summarize|compare|write|save|sintetizza|sintetizzare|riassumi|riassumere|confronta|confrontare|scrivi|scrivere|salva|salvare)\b/i,

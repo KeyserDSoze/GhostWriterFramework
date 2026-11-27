@@ -36,6 +36,7 @@ const LLM_TASKS: Readonly<Record<string, ChatCapability>> = {
   "import-attachments": "default",
   "multi-file-edit": "default",
   "edit-outline": "default",
+  "edit-page": "copilot",
   "review-context": "review",
   "rewrite-current-paragraph": "default",
   "run-audit": "audit",
