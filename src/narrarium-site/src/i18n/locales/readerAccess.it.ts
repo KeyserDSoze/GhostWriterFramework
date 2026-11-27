@@ -20,11 +20,8 @@ const readerAccessIt = {
     publishNow: "Pubblica di nuovo",
     part: { repository: "Repository", pages: "Pages", secrets: "Secrets", variable: "Variabile", runs: "Esecuzioni di pubblicazione", workflow: "Workflow" },
     workflow: {
-      missing: "Questo repository non ha il workflow del lettore (.github/workflows/deploy-reader-pages.yml), quindi con Pages attivo non viene pubblicato nulla. «Aggiorna il lettore», qui sopra, lo aggiunge.",
-      outdated: "Il workflow del lettore di questo repository non legge ancora le password, quindi una password aggiunta qui non proteggerebbe il lettore pubblicato. «Aggiorna il lettore», qui sopra, lo porta al passo; le password si potranno aggiungere dopo.",
-      blockedMissing: "Per ora non si possono aggiungere password a questo repository: non ha il workflow del lettore.",
-      blockedOutdated: "Per ora non si possono aggiungere password: il workflow del lettore di questo repository non le legge, quindi il lettore resterebbe pubblico.",
-      blockedUnknown: "Per ora non si possono aggiungere password: non è stato possibile leggere il workflow del lettore di questo repository.",
+      missing: "“{{branch}}”, il ramo da cui il lettore è pubblicato, non ha il workflow del lettore (.github/workflows/deploy-reader-pages.yml), quindi non viene pubblicato nulla. Puoi aggiungere password lo stesso: vengono salvate e preparate su GitHub, e iniziano a proteggere il lettore quando «Aggiorna il lettore» qui sopra aggiunge il workflow e viene pubblicato. Fino ad allora il libro non è protetto.",
+      outdated: "Su “{{branch}}”, il ramo da cui il lettore è pubblicato, il workflow del lettore non legge ancora le password. Puoi aggiungerle lo stesso: vengono salvate e preparate su GitHub (un workflow che non le nomina non le legge mai, quindi prepararle non rompe nulla), e iniziano a proteggere il lettore quando è aggiornato e pubblicato. «Aggiorna il lettore» qui sopra lo fa. Fino ad allora il lettore pubblicato è pubblico.",
     },
     passwords: {
       title: "Password del lettore",

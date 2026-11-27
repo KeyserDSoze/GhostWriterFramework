@@ -305,7 +305,7 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
   const syncFailure = failureText(update.syncFailure);
 
   return (
-    <Card aria-labelledby={titleId} data-testid="reader-update-card">
+    <Card id="reader-update-card" tabIndex={-1} aria-labelledby={titleId} data-testid="reader-update-card" className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <CardHeader>
         <CardTitle id={titleId} className="flex items-center gap-2"><RefreshCw aria-hidden="true" className="h-4 w-4" />{t("readerUpdate.title")}</CardTitle>
       </CardHeader>

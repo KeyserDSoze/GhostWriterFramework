@@ -52,19 +52,15 @@ const readerRunIt = {
   },
   readerPrepared: {
     title: "Preparate, non ancora protettive",
-    state: "Preparata, non ancora protettiva",
-    statePublishing: "In pubblicazione",
     public: "Il lettore pubblicato ora non chiede nessuna password, quindi il libro è ancora pubblico: chiunque abbia l'indirizzo può leggerlo e l'EPUB si può scaricare. Le password qui sotto sono salvate e scritte su GitHub, pronte.",
+    publishHelp: "Il workflow legge già queste password: pubblicare di nuovo costruisce il lettore con esse, e diventano attive senza doverle scrivere di nuovo.",
     update: "Aggiorna il lettore",
     updateHelp: "Aggiornare il lettore gli dà il workflow che legge queste password. Quando è pubblicato diventano attive, senza doverle scrivere di nuovo.",
     outside: {
       exposed: "Controllato da fuori: l'EPUB ha risposto {{status}}. È ancora pubblico.",
       notProtected: "Controllato da fuori: il lettore non dice di essere protetto. È ancora pubblico.",
     },
-    publishing: "Una pubblicazione è in corso. Le password non sono confermate attive finché non finisce e il lettore non viene controllato da fuori.",
-    unknown: "Le password ci sono, ma non si è potuto leggere se il lettore pubblicato le usa. Controlla da fuori.",
     activated: "Le tue password preparate ora sono attive: controllato da fuori, il lettore chiede una password e l'EPUB non è pubblicato.",
-    safe: "Inerti per il vecchio workflow: non legge mai questi secret, quindi prepararli non cambia nulla di ciò che è pubblicato e non rompe niente.",
   },
   readerAccess: {
     protection: {
@@ -74,11 +70,6 @@ const readerRunIt = {
     state: {
       prepared: "Preparata, non ancora protettiva",
       publishing: "In pubblicazione",
-    },
-    workflow: {
-      outdatedPrepared: "Il workflow del lettore di questo repository non legge ancora le password. Puoi aggiungerle lo stesso: vengono salvate e preparate su GitHub, e iniziano a proteggere il lettore quando è aggiornato e pubblicato. «Aggiorna il lettore» qui sopra lo fa.",
-      missingPrepared: "Questo repository non ha il workflow del lettore (.github/workflows/deploy-reader-pages.yml), quindi non viene pubblicato nulla. Puoi aggiungere password lo stesso: vengono preparate, e iniziano a proteggere il lettore quando «Aggiorna il lettore» qui sopra aggiunge il workflow e viene pubblicato.",
-      unknownPrepared: "Il workflow del lettore di questo repository non si è potuto leggere. Le password che aggiungi vengono salvate e preparate; proteggono il lettore solo quando il workflow pubblicato le legge.",
     },
     result: {
       preparedDeferred: "Fatto. La password è preparata: è salvata e su GitHub, ma il lettore pubblicato ora non legge le password, quindi resta pubblico finché il lettore non è aggiornato e pubblicato.",

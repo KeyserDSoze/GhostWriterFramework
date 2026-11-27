@@ -11,6 +11,7 @@ import { ReaderFlowError, classifyReaderFailure, type ReaderFailure } from "@/re
 import { REPOSITORY_VISIBILITY_EVENT } from "@/repoVisibility/model";
 import { classifyRunFailure, type RunFailureInfo } from "@/readerAccess/runFailure";
 import { readerProtection, readerRecordsOf, withReaderRecords, type RemoteReaderState } from "@/readerAccess/model";
+import { inspectReaderWorkflow } from "@/readerAccess/workflowPlan";
 import { readerPublication, workflowPublishesPasswords } from "@/readerRun/publication";
 import { isGoing } from "@/readerRun/model";
 import { usePublicationRun } from "@/readerRun/usePublicationRun";
@@ -96,6 +97,8 @@ export function useReaderAccess(book: BookEntry) {
     return () => window.removeEventListener(REPOSITORY_VISIBILITY_EVENT, again);
   }, [refresh]);
 
+  const workflowState = snapshot.workflow ? inspectReaderWorkflow(snapshot.workflow.present ? snapshot.workflow.content ?? "" : null) : null;
+  const workflowReads = workflowState === "current" || workflowState === "customized";
   const deps = useCallback((): ReaderOperationDeps | null => {
     const octokit = octokitRef.current;
     if (!octokit) return null;
@@ -103,6 +106,8 @@ export function useReaderAccess(book: BookEntry) {
       octokit,
       repo,
       branch: snapshot.repository?.defaultBranch ?? "main",
+      // A change of the passwords starts the workflow only when the workflow reads them: the secrets of an old or missing one wait, inert, for the update.
+      dispatchOnChange: workflowReads,
       records: {
         get: () => readerRecordsOf(useSettingsStore.getState().settings, repo.owner, repo.repo),
         set: async (next: ReaderPasswordRecord[]) => {
@@ -114,7 +119,7 @@ export function useReaderAccess(book: BookEntry) {
       // The sealed box is its own chunk: nothing of it is loaded until a password is saved.
       seal: async (value, publicKey) => (await import("@/readerAccess/sealedBox")).sealSecret(value, publicKey),
     };
-  }, [repo, save, snapshot.repository?.defaultBranch]);
+  }, [repo, save, snapshot.repository?.defaultBranch, workflowReads]);
 
   const run = useCallback(async (kind: ReaderOperationKind, work: (deps: ReaderOperationDeps) => Promise<ReaderOperationResult>): Promise<ReaderOperationResult | null> => {
     const operationDeps = deps();

@@ -52,19 +52,15 @@ const readerRunEn = {
   },
   readerPrepared: {
     title: "Prepared, not protecting yet",
-    state: "Prepared, not protecting yet",
-    statePublishing: "Being published",
     public: "The reader that is published now does not ask for a password, so the book is still public: anyone with the address can read it, and the EPUB can be downloaded. The passwords below are saved and written on GitHub, ready.",
+    publishHelp: "The workflow already reads these passwords: publishing again builds the reader with them, and they become active without typing them again.",
     update: "Update the reader",
     updateHelp: "Updating the reader gives it the workflow that reads these passwords. When it is published they become active, without typing them again.",
     outside: {
       exposed: "Checked from outside: the EPUB answered {{status}}. It is still public.",
       notProtected: "Checked from outside: the reader does not say it is protected. It is still public.",
     },
-    publishing: "A publication is going. The passwords are not confirmed active until it ends and the reader is checked from outside.",
-    unknown: "Passwords are set, but whether the published reader uses them could not be read. Check from outside.",
     activated: "Your prepared passwords are now active: checked from outside, the reader asks for a password and the EPUB is not published.",
-    safe: "Inert for the old workflow: it never reads these secrets, so preparing them changes nothing that is published and breaks nothing.",
   },
   readerAccess: {
     protection: {
@@ -74,11 +70,6 @@ const readerRunEn = {
     state: {
       prepared: "Prepared, not protecting yet",
       publishing: "Being published",
-    },
-    workflow: {
-      outdatedPrepared: "This repository's reader workflow does not read passwords yet. You can add them anyway: they are saved and prepared on GitHub, and they start protecting the reader when it is updated and published. “Update the reader” above does that.",
-      missingPrepared: "This repository has no reader workflow (.github/workflows/deploy-reader-pages.yml), so nothing is published. You can add passwords anyway: they are prepared, and they start protecting the reader once “Update the reader” above adds the workflow and it is published.",
-      unknownPrepared: "The reader workflow of this repository could not be read. Passwords you add are saved and prepared; they protect the reader only when the published workflow reads them.",
     },
     result: {
       preparedDeferred: "Done. The password is prepared: it is saved and on GitHub, but the reader that is published now does not read passwords, so it is still public until the reader is updated and published.",

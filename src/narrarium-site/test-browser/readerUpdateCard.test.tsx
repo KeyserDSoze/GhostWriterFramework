@@ -293,6 +293,20 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
     });
   });
 
+  it("is the one action that fixes passwords that are only prepared: the notice of the passwords leads to this card", async () => {
+    github.secrets.set("READER_PASSWORD_001", "x");
+    github.variable.value = "READER_PASSWORD_001";
+    github.workflowText.value = legacy;
+    await open(language);
+    await screen.findByTestId("reader-update-exposure");
+    const notice = await screen.findByTestId("reader-prepared");
+    const go = within(notice).getByRole("button", { name: language === "en" ? "Update the reader" : "Aggiorna il lettore" });
+    fireEvent.click(go);
+    await waitFor(() => expect(document.activeElement).toBe(card()));
+    // The exposure of the old reader is still said, beside the prepared passwords.
+    expect(screen.getByTestId("reader-update-exposure")).toHaveTextContent(text.exposure);
+  });
+
   it("says when the publishing workflow is paused, because Pages was turned off", async () => {
     github.workflowState.value = "disabled_manually";
     await open(language);

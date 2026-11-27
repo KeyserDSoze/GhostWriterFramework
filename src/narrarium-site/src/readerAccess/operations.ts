@@ -24,6 +24,12 @@ export interface ReaderOperationDeps {
   repo: RepositoryRef;
   /** The branch the workflow is started on. */
   branch: string;
+  /**
+   * Whether a change of the passwords starts the workflow (the default). It is turned off for a repository whose workflow does not read the passwords (or is
+   * missing): the secret and the variable are written all the same and wait there, inert, for the workflow that reads them; starting the old one would only
+   * publish the same public reader again (or fail, with no workflow). «Publish again» and turning Pages on always start it.
+   */
+  dispatchOnChange?: boolean;
   /** The passwords Narrarium keeps for this repository: read when needed, replaced as a whole. `set` resolves once the change is kept (saved and queued for sync). */
   records: { get(): ReaderPasswordRecord[]; set(next: ReaderPasswordRecord[]): Promise<void> };
   /** Seals a secret's text for GitHub's public key. It is the lazy chunk of the sealed box, passed in so that tests need not load it. */
@@ -41,6 +47,8 @@ export interface ReaderOperationResult {
   failed?: { step: ReaderOperationStep; failure: ReaderFailure };
   /** True when the workflow was started (so a run exists to follow). */
   dispatched: boolean;
+  /** The change was made and nothing was published for it, on purpose: the repository's workflow does not read the passwords (see `dispatchOnChange`). */
+  deferred?: boolean;
   /** The secret that the operation was about. */
   secretName?: string;
 }
@@ -103,7 +111,8 @@ async function publish(deps: ReaderOperationDeps, run: Run, record: ReaderPasswo
   return null;
 }
 
-async function startWorkflow(deps: ReaderOperationDeps, run: Run, secretName?: string): Promise<ReaderOperationResult> {
+async function startWorkflow(deps: ReaderOperationDeps, run: Run, secretName?: string, options: { change?: boolean } = {}): Promise<ReaderOperationResult> {
+  if (options.change && deps.dispatchOnChange === false) return { ...run.ok(secretName), deferred: true };
   try {
     await run.step("dispatch", () => dispatchWorkflow(deps.octokit, deps.repo, deps.branch));
     run.dispatched = true;
@@ -128,7 +137,7 @@ export async function addReaderPassword(deps: ReaderOperationDeps, input: { labe
     return run.fail(run.done.includes("check") ? "save" : "check", error);
   }
   const stopped = await publish(deps, run, record);
-  return stopped ?? startWorkflow(deps, run, record.secretName);
+  return stopped ?? startWorkflow(deps, run, record.secretName, { change: true });
 }
 
 /**
@@ -141,7 +150,7 @@ export async function resumeReaderPassword(deps: ReaderOperationDeps, secretName
   if (!record) return run.fail("check", new ReaderFlowError("repository", { kind: "other" }), secretName);
   const stopped = await publish(deps, run, record);
   if (stopped) return stopped;
-  return options.dispatch === false ? run.ok(secretName) : startWorkflow(deps, run, secretName);
+  return options.dispatch === false ? run.ok(secretName) : startWorkflow(deps, run, secretName, { change: true });
 }
 
 /**
@@ -184,7 +193,7 @@ export async function removeReaderPassword(deps: ReaderOperationDeps, secretName
   } catch (error) {
     return run.fail(step, error, secretName);
   }
-  return startWorkflow(deps, run, secretName);
+  return startWorkflow(deps, run, secretName, { change: true });
 }
 
 /** Starts the publishing workflow again (after a failed run, or when the start itself failed). */

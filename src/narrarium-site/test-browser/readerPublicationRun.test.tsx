@@ -63,7 +63,7 @@ async function open(language: "en" | "it") {
 const panel = () => screen.getByTestId("reader-publication");
 const phase = () => panel().getAttribute("data-phase");
 async function publish(language: "en" | "it") {
-  fireEvent.click(await screen.findByRole("button", { name: TEXTS[language].publishAgain }));
+  fireEvent.click((await screen.findAllByRole("button", { name: TEXTS[language].publishAgain }))[0]);
   await screen.findByTestId("reader-publication");
 }
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });

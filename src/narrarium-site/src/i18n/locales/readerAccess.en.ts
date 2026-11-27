@@ -20,11 +20,8 @@ const readerAccessEn = {
     publishNow: "Publish again",
     part: { repository: "Repository", pages: "Pages", secrets: "Secrets", variable: "Variable", runs: "Publishing runs", workflow: "Workflow" },
     workflow: {
-      missing: "This repository has no reader workflow (.github/workflows/deploy-reader-pages.yml), so nothing is published when Pages is on. “Update the reader” above adds it.",
-      outdated: "This repository's reader workflow does not read passwords yet, so a password added here would not protect the published reader. “Update the reader” above brings it up to date; passwords can be added after that.",
-      blockedMissing: "Passwords cannot be added to this repository yet: it has no reader workflow.",
-      blockedOutdated: "Passwords cannot be added yet: the reader workflow of this repository does not read them, so the reader would stay public.",
-      blockedUnknown: "Passwords cannot be added now: the reader workflow of this repository could not be read.",
+      missing: "“{{branch}}”, the branch the reader is published from, has no reader workflow (.github/workflows/deploy-reader-pages.yml), so nothing is published. You can add passwords anyway: they are saved and prepared on GitHub, and they start protecting the reader once “Update the reader” above adds the workflow and it is published. Until then the book is not protected.",
+      outdated: "On “{{branch}}”, the branch the reader is published from, the reader workflow does not read passwords yet. You can add them anyway: they are saved and prepared on GitHub (a workflow that does not name them never reads them, so preparing them breaks nothing), and they start protecting the reader when it is updated and published. “Update the reader” above does that. Until then the published reader is public.",
     },
     passwords: {
       title: "Passwords",

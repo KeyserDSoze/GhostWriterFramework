@@ -292,3 +292,43 @@ describe("Pages", () => {
     });
   });
 });
+
+describe("passwords prepared for a workflow that does not read them", () => {
+  const prepared = (): ReaderOperationDeps => ({ ...deps(), dispatchOnChange: false });
+
+  it("writes the secret and lists it in the variable, as for any other workflow, but starts nothing: an old workflow would only publish the same public reader", async () => {
+    const result = await addReaderPassword(prepared(), { label: "Beta readers", value: PASSWORD });
+    expect(result).toEqual({ ok: true, done: ["check", "save", "secret", "variable", "save"], dispatched: false, deferred: true, secretName: name(1) });
+    expect(github.order()).toEqual([`createOrUpdateRepoSecret:${name(1)}`, "updateRepoVariable", "createRepoVariable"]);
+    expect(github.secrets.has(name(1))).toBe(true);
+    expect(github.variable.value).toBe(name(1));
+    expect(stored).toEqual([expect.objectContaining({ secretName: name(1), status: "active" })]);
+  });
+
+  it("is harmless for a workflow that never names them: the old workflow of the reader package reads neither the variable nor any secret", async () => {
+    const { default: v1 } = await import("./fixtures/pagesWorkflowV1.yml?raw");
+    expect(v1).not.toMatch(/secrets\./);
+    expect(v1).not.toMatch(/vars\./);
+    expect(v1).not.toContain("READER_PASSWORD");
+    // Only the workflow that names the list receives the secrets: «toJSON(secrets)» is in the current one, not in the old one.
+    expect(v1).not.toContain("toJSON(secrets)");
+  });
+
+  it("removes a password the same way: nothing is started, and the published reader is left as it is", async () => {
+    await addReaderPassword(prepared(), { label: "x", value: PASSWORD });
+    github.calls.length = 0;
+    const result = await removeReaderPassword(prepared(), name(1));
+    expect(result).toMatchObject({ ok: true, dispatched: false, deferred: true });
+    expect(github.calls.some((call) => call.method === "createWorkflowDispatch")).toBe(false);
+    expect(github.secrets.has(name(1))).toBe(false);
+  });
+
+  it("starts the workflow for «Publish again» and for turning Pages on whatever the workflow reads: the person asked for exactly that", async () => {
+    expect(await republishReader(prepared())).toMatchObject({ ok: true, dispatched: true });
+    expect(github.calls.filter((call) => call.method === "createWorkflowDispatch")).toHaveLength(1);
+  });
+
+  it("starts the workflow for a change when the workflow reads the passwords (the default)", async () => {
+    expect(await addReaderPassword({ ...deps(), dispatchOnChange: true }, { label: "x", value: PASSWORD })).toMatchObject({ dispatched: true });
+  });
+});

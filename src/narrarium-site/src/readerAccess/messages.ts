@@ -85,7 +85,8 @@ export interface ReaderResultText {
 
 export function describeReaderResult(kind: ReaderOperationKind, result: ReaderOperationResult, tokenKind: GitHubTokenKind = "unknown"): ReaderResultText {
   if (result.ok) {
-    const headline = kind === "disable-pages" ? "readerAccess.result.pagesOff"
+    const headline = result.deferred ? (kind === "remove" ? "readerAccess.result.removedDeferred" : "readerAccess.result.preparedDeferred")
+      : kind === "disable-pages" ? "readerAccess.result.pagesOff"
       : kind === "enable-pages" ? (result.dispatched ? "readerAccess.result.pagesOnPublishing" : "readerAccess.result.pagesOn")
         : result.dispatched ? "readerAccess.result.publishing" : "readerAccess.result.done";
     return { tone: "success", headline: { key: headline }, done: [], retry: false };

@@ -1,7 +1,8 @@
 import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, ExternalLink, Loader2, Lock, Power, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, Lock, Power, RefreshCw, ShieldAlert } from "lucide-react";
 import "@/i18n/readerAccess";
+import "@/i18n/readerRun";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -9,8 +10,9 @@ import { LocalTime } from "@/components/ui/local-time";
 import type { BookEntry } from "@/types/settings";
 import { describeReaderFailure } from "@/readerAccess/messages";
 import { LEGACY_READER_SECRET } from "@/readerAccess/contract";
-import { readerProtection, reconcileReaderPasswords, type ReaderPasswordRow } from "@/readerAccess/model";
+import { reconcileReaderPasswords, type ReaderPasswordRow } from "@/readerAccess/model";
 import { inspectReaderWorkflow } from "@/readerAccess/workflowPlan";
+import { rowActivation } from "@/readerRun/publication";
 import { PublicationRun } from "@/components/book/readerAccess/PublicationRun";
 import { AddPasswordForm } from "@/components/book/readerAccess/AddPasswordForm";
 import { RunFailureNotice } from "@/components/book/readerAccess/RunFailureNotice";
@@ -41,14 +43,23 @@ export function ReaderAccessCardView({ access, book }: { access: ReaderAccess; b
   const lastAction = useRef<(() => void) | null>(null);
 
   const rows = reconcileReaderPasswords(records, snapshot.remote);
-  const protection = readerProtection(snapshot.remote);
   const run = snapshot.runs?.[0];
   const tracked = access.publication.tracked;
   const pages = snapshot.pages;
   const busy = access.busy !== null;
   const workflow = snapshot.workflow ? inspectReaderWorkflow(snapshot.workflow.present ? snapshot.workflow.content ?? "" : null) : null;
-  // Passwords are only added to a repository whose workflow reads them: otherwise the reader would stay public while the owner believes it is protected.
-  const addBlockedReason = snapshot.loadedAt === null ? undefined : workflow === "current" || workflow === "customized" ? undefined : workflow === "missing" ? t("readerAccess.workflow.blockedMissing") : workflow === "outdated" ? t("readerAccess.workflow.blockedOutdated") : t("readerAccess.workflow.blockedUnknown");
+  // Passwords can always be prepared. They protect the reader only when the published workflow reads them, so until then they are «prepared», never «protecting»,
+  // and the card says so (see `readerPublication`). The branch named is the one the workflow publishes from: the repository's default branch.
+  const publishingBranch = snapshot.repository?.defaultBranch ?? "main";
+  const workflowReads = workflow === "current" || workflow === "customized";
+  const addNote = snapshot.loadedAt === null ? undefined : workflow === "missing" ? t("readerAccess.workflow.missing", { branch: publishingBranch }) : workflow === "outdated" ? t("readerAccess.workflow.outdated", { branch: publishingBranch }) : undefined;
+  const publication = access.readerState;
+  const protectionKey = publication === "protecting" ? "protected" : publication === "public" ? "public" : publication === "unknown" ? "unknown" : publication;
+  const goToUpdate = () => {
+    const target = document.getElementById("reader-update-card");
+    target?.scrollIntoView?.({ block: "start", behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    target?.focus({ preventScroll: true });
+  };
   const protectingElsewhere = (row: ReaderPasswordRow) => rows.some((other) => other.secretName !== row.secretName && (other.state === "active" || other.state === "legacy" || other.state === "unknown-value"));
   const failureLines = (Object.entries(snapshot.failures) as Array<[string, NonNullable<(typeof snapshot.failures)[keyof typeof snapshot.failures]>]>)
     .map(([part, failure]) => ({ part, text: describeReaderFailure(failure, access.tokenKind) }));
@@ -88,26 +99,44 @@ export function ReaderAccessCardView({ access, book }: { access: ReaderAccess; b
 
         {workflow === "outdated" && (
           <div className="space-y-2 rounded-md border p-2 text-xs" data-testid="reader-workflow-outdated">
-            <p>{t("readerAccess.workflow.outdated")}</p>
+            <p>{t("readerAccess.workflow.outdated", { branch: publishingBranch })}</p>
           </div>
         )}
 
         {workflow === "missing" && (
           <div className="space-y-2 rounded-md border p-2 text-xs" data-testid="reader-workflow-missing">
-            <p>{t("readerAccess.workflow.missing")}</p>
+            <p>{t("readerAccess.workflow.missing", { branch: publishingBranch })}</p>
           </div>
         )}
 
         <section aria-labelledby={`${titleId}-pw`} className="space-y-3">
           <h3 id={`${titleId}-pw`} className="text-sm font-medium">{t("readerAccess.passwords.title")}</h3>
-          <p role="status" className="text-xs text-muted-foreground">{t(`readerAccess.protection.${protection}`)}</p>
+          <p role="status" className="text-xs text-muted-foreground" data-testid="reader-protection" data-publication={access.readerStateReady ? publication : "checking"}>{snapshot.loadedAt === null || !access.readerStateReady ? t("readerAccess.loading") : t(`readerAccess.protection.${protectionKey}`)}</p>
+          {access.readerStateReady && publication === "prepared" && (
+            <section aria-labelledby={`${titleId}-prepared`} className="space-y-2 rounded-md border border-amber-600/50 bg-amber-50 p-3 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" data-testid="reader-prepared">
+              <h4 id={`${titleId}-prepared`} className="flex items-start gap-2 text-sm font-semibold"><ShieldAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{t("readerPrepared.title")}</h4>
+              <p>{t("readerPrepared.public")}</p>
+              {access.outside.result?.kind === "epub-exposed" && <p className="font-medium">{t("readerPrepared.outside.exposed", { status: access.outside.result.status })}</p>}
+              {access.outside.result?.kind === "not-protected" && <p className="font-medium">{t("readerPrepared.outside.notProtected")}</p>}
+              <p className="text-xs">{workflowReads ? t("readerPrepared.publishHelp") : t("readerPrepared.updateHelp")}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {workflowReads
+                  ? <Button type="button" size="sm" disabled={busy} onClick={act(() => void access.republish())}><RefreshCw aria-hidden="true" className="mr-1 h-4 w-4" />{t("readerAccess.publishNow")}</Button>
+                  : <Button type="button" size="sm" onClick={goToUpdate}><RefreshCw aria-hidden="true" className="mr-1 h-4 w-4" />{t("readerPrepared.update")}</Button>}
+                {access.outside.siteUrl && <Button type="button" size="sm" variant="outline" disabled={access.outside.running} onClick={() => void access.outside.check()}>{access.outside.running ? <Loader2 aria-hidden="true" className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" /> : null}{t("readerRun.outside.check")}</Button>}
+              </div>
+            </section>
+          )}
+          {access.readerStateReady && publication === "protecting" && access.outside.result?.kind === "protected" && tracked?.state === "succeeded" && (
+            <p role="status" className="flex items-start gap-2 text-sm font-medium" data-testid="reader-activated"><CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{t("readerPrepared.activated")}</p>
+          )}
           {rows.length === 0 && snapshot.loadedAt !== null && <p className="text-muted-foreground">{t("readerAccess.passwords.none")}</p>}
           {rows.length > 0 && (
             <ul className="space-y-2" aria-label={t("readerAccess.passwords.listLabel")}>
-              {rows.map((row) => <PasswordRow key={row.secretName} row={row} busy={busy} onRemove={() => setRemoving(row)} onRetry={() => void access.resume(row.secretName)} />)}
+              {rows.map((row) => <PasswordRow key={row.secretName} row={row} busy={busy} activation={access.readerStateReady ? rowActivation(row, publication) : null} onRemove={() => setRemoving(row)} onRetry={() => void access.resume(row.secretName)} />)}
             </ul>
           )}
-          <AddPasswordForm busy={access.busy === "add"} blockedReason={addBlockedReason} onAdd={(input) => { lastAction.current = () => void access.add(input); return access.add(input); }} />
+          <AddPasswordForm busy={access.busy === "add"} note={addNote} onAdd={(input) => { lastAction.current = () => void access.add(input); return access.add(input); }} />
         </section>
 
         {snapshot.runFailure && <RunFailureNotice compact failure={snapshot.runFailure} book={book} repository={snapshot.repository} />}

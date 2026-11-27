@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { LocalTime } from "@/components/ui/local-time";
 import type { ReaderPasswordRow } from "@/readerAccess/model";
 import { LEGACY_READER_SECRET } from "@/readerAccess/contract";
+import type { RowActivation } from "@/readerRun/publication";
 
 /** A revealed password hides itself again after this long, so that a screen left open does not keep showing it. */
 export const REVEAL_MS = 60_000;
@@ -14,10 +15,12 @@ interface Props {
   busy: boolean;
   onRemove: () => void;
   onRetry: () => void;
+  /** Whether a password that is in place on GitHub is in use (the published reader asks for it), prepared (it does not yet) or being published. */
+  activation?: RowActivation | null;
 }
 
 /** One password: its name, when it was made, what state it is in (in words), the value masked until asked for, a copy button, and what can be done with it. */
-export function PasswordRow({ row, busy, onRemove, onRetry }: Props) {
+export function PasswordRow({ row, busy, onRemove, onRetry, activation }: Props) {
   const { t } = useTranslation();
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -48,7 +51,7 @@ export function PasswordRow({ row, busy, onRemove, onRetry }: Props) {
     <li className="space-y-2 rounded-md border p-3" data-testid="reader-password">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <p className="font-medium">{label}</p>
-        <p className="text-xs font-medium" data-state={row.state}>{t(`readerAccess.state.${row.state}`)}</p>
+        <p className="text-xs font-medium" data-state={activation ?? row.state}>{t(`readerAccess.state.${activation && activation !== "active" ? activation : row.state}`)}</p>
       </div>
       <p className="text-xs text-muted-foreground">
         <span>{t("readerAccess.secretName")}: <code>{row.secretName}</code></span>

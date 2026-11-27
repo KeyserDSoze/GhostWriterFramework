@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Octokit } from "@octokit/rest";
 
@@ -14,6 +14,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry, type ReaderPasswordRecord } from "@/types/settings";
 import { LEGACY_READER_SECRET } from "@/readerAccess/contract";
 import { usePublicationStore } from "@/readerRun/store";
+import { useOutsideStore } from "@/readerRun/outsideStore";
 import { createFakeReaderGitHub, type FakeReaderGitHub } from "./helpers/fakeReaderGitHub";
 
 const PASSWORD = "Alpha-PASSWORD-canary-7731";
@@ -47,11 +48,17 @@ let github: FakeReaderGitHub;
 function reset(records: ReaderPasswordRecord[] = []) {
   localStorage.clear();
   usePublicationStore.setState({ entries: {}, live: {} });
+  useOutsideStore.setState({ entries: {} });
   github = createFakeReaderGitHub();
   github.pages.enabled = true;
   env.octokit = github.octokit;
   env.save.mockClear();
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, defaultGitHubToken: "github_pat_default", books: [book], ...(records.length ? { readerAccess: { "me/book": records } } : {}) } });
+}
+
+/** A publication that succeeded and was built by a workflow that reads the passwords: the published reader is the one that asks for them. */
+function publishedWithPasswords() {
+  github.runs.push({ id: 3, status: "completed", conclusion: "success", html_url: "https://github.com/me/book/actions/runs/3", created_at: "2026-11-20T09:00:00Z", head_branch: "main", head_sha: "built", event: "push" });
 }
 
 async function open(language: "en" | "it") {
@@ -107,6 +114,7 @@ describe.each(["en", "it"] as const)("Reader access in %s", (language) => {
       reset([record(1)]);
       github.variable.value = name(1);
       github.secrets.set(name(1), "x");
+      publishedWithPasswords();
       await open(language);
       const row = within(await waitFor(() => rowOf("Reader 1")));
       expect(await screen.findByText(text.protected)).toBeInTheDocument();
@@ -139,6 +147,7 @@ describe.each(["en", "it"] as const)("Reader access in %s", (language) => {
       github.secrets.set(LEGACY_READER_SECRET, "x");
       github.secrets.set(name(3), "x");
       github.variable.value = name(3);
+      publishedWithPasswords();
       await open(language);
       const legacy = within(await waitFor(() => rowOf(text.legacy)));
       expect(legacy.queryByRole("button", { name: /Show|Mostra/ })).toBeNull();
@@ -183,7 +192,8 @@ describe.each(["en", "it"] as const)("Reader access in %s", (language) => {
       expect(kept()).toEqual([expect.objectContaining({ label: "Beta readers", value: field.value === "" ? expect.anything() : expect.stringMatching(/-/), secretName: name(1), status: "active" })]);
       expect(env.save).toHaveBeenCalled();
       expect(JSON.stringify(github.calls)).not.toContain(kept()[0].value);
-      await waitFor(() => expect(within(rowOf("Beta readers")).getByText(text.used)).toBeInTheDocument());
+      // The publication of the new password is going: it is not called «in use» before the published reader is known to ask for it.
+      await waitFor(() => expect(within(rowOf("Beta readers")).getByText(language === "en" ? "Being published" : "In pubblicazione")).toBeInTheDocument());
       expect(screen.getByText(text.runQueued)).toBeInTheDocument();
       expect((screen.getByLabelText(text.passwordField) as HTMLInputElement).value).toBe("");
     });
@@ -314,34 +324,110 @@ describe.each(["en", "it"] as const)("Reader access in %s", (language) => {
   });
 });
 
-describe.each(["en", "it"] as const)("passwords are only added to a workflow that reads them, in %s", (language) => {
+describe.each(["en", "it"] as const)("passwords can always be prepared, in %s", (language) => {
   const text = language === "en"
-    ? { outdated: /does not read passwords yet, so a password added here would not protect the published reader/, blockedOutdated: /the reader workflow of this repository does not read them, so the reader would stay public/, blockedMissing: /it has no reader workflow/, blockedUnknown: /the reader workflow of this repository could not be read/, add: "Add password", password: "Password" }
-    : { outdated: /non legge ancora le password, quindi una password aggiunta qui non proteggerebbe il lettore pubblicato/, blockedOutdated: /non le legge, quindi il lettore resterebbe pubblico/, blockedMissing: /non ha il workflow del lettore/, blockedUnknown: /non è stato possibile leggere il workflow del lettore/, add: "Aggiungi password", password: "Password" };
+    ? { outdated: /On “main”, the branch the reader is published from, the reader workflow does not read passwords yet\. You can add them anyway: they are saved and prepared on GitHub/, missing: /“main”, the branch the reader is published from, has no reader workflow/, preparedTitle: "Prepared, not protecting yet", preparedLine: "Passwords are prepared, but the published reader does not ask for a password yet: it is public.", used: "In use", result: /Done\. The password is prepared: it is saved and on GitHub, but the reader that is published now does not read passwords/, update: "Update the reader", publishAgain: "Publish again", exposed: /the EPUB answered 200\. It is still public/, activated: /Your prepared passwords are now active/, protectedLine: "The published reader asks for a password.", password: "Password", add: "Add password", publishing: "Being published" }
+    : { outdated: /Su “main”, il ramo da cui il lettore è pubblicato, il workflow del lettore non legge ancora le password\. Puoi aggiungerle lo stesso: vengono salvate e preparate su GitHub/, missing: /“main”, il ramo da cui il lettore è pubblicato, non ha il workflow del lettore/, preparedTitle: "Preparate, non ancora protettive", preparedLine: "Le password sono preparate, ma il lettore pubblicato non chiede ancora una password: è pubblico.", used: "In uso", result: /Fatto\. La password è preparata: è salvata e su GitHub, ma il lettore pubblicato ora non legge le password/, update: "Aggiorna il lettore", publishAgain: "Pubblica di nuovo", exposed: /l'EPUB ha risposto 200\. È ancora pubblico/, activated: /Le tue password preparate ora sono attive/, protectedLine: "Il lettore pubblicato chiede una password.", password: "Password", add: "Aggiungi password", publishing: "In pubblicazione" };
+  const prepared = language === "en" ? "Prepared, not protecting yet" : "Preparata, non ancora protettiva";
+  const OLD_WORKFLOW = "name: Deploy reader\nenv:\n  P: ${{ secrets.NARRARIUM_READER_PASSWORD_OLD }}\n";
 
-  it("blocks the form, and says why, when the repository's workflow does not name the passwords", async () => {
-    github.workflowText.value = "name: Deploy reader\nenv:\n  P: ${{ secrets.NARRARIUM_READER_PASSWORD }}\n";
+  async function addOne() {
+    await screen.findByText(language === "en" ? /No password yet/ : /Ancora nessuna password/);
+    fireEvent.change(screen.getByLabelText(text.password), { target: { value: `${PASSWORD}-new` } });
+    fireEvent.click(screen.getByRole("button", { name: text.add }));
+  }
+
+  it("lets a password be added while the workflow does not read passwords: the secret and the variable are written, nothing is published for it, and it is only prepared", async () => {
+    github.workflowText.value = OLD_WORKFLOW;
     await open(language);
     expect(await screen.findByTestId("reader-workflow-outdated")).toHaveTextContent(text.outdated);
-    expect(screen.getByTestId("reader-add-blocked")).toHaveTextContent(text.blockedOutdated);
-    expect(screen.getByLabelText(text.password)).toBeDisabled();
-    expect(screen.getByRole("button", { name: text.add })).toBeDisabled();
-    expect(github.order()).toEqual([]);
+    expect(screen.getByTestId("reader-add-note")).toHaveTextContent(text.outdated);
+    expect(screen.getByLabelText(text.password)).toBeEnabled();
+    await addOne();
+    expect(await screen.findByText(text.result)).toBeInTheDocument();
+    // Written on GitHub at once (an old workflow never reads them), and the old workflow is not started for it.
+    expect(github.order()).toEqual([`createOrUpdateRepoSecret:${name(1)}`, "updateRepoVariable", "createRepoVariable"]);
+    expect(github.calls.some((call) => call.method === "createWorkflowDispatch")).toBe(false);
+    expect(screen.queryByTestId("reader-publication")).toBeNull();
+    expect(kept()).toEqual([expect.objectContaining({ secretName: name(1), status: "active" })]);
+    // …and it is never called «in use» or «protected» while the published reader is public.
+    const row = within(await waitFor(() => screen.getAllByTestId("reader-password")[0]));
+    expect(row.getByText(prepared)).toBeInTheDocument();
+    expect(row.queryByText(text.used)).toBeNull();
+    expect(screen.getByTestId("reader-protection")).toHaveTextContent(text.preparedLine);
+    expect(screen.queryByText(text.protectedLine)).toBeNull();
+    const notice = screen.getByTestId("reader-prepared");
+    expect(within(notice).getByRole("heading", { name: text.preparedTitle })).toBeInTheDocument();
+    expect(within(notice).getByRole("button", { name: text.update })).toBeInTheDocument();
+    expect(screen.queryByTestId("reader-activated")).toBeNull();
   });
 
-  it("blocks it when there is no workflow, and when the workflow could not be read", async () => {
+  it("prepares them as well when there is no workflow, and when the workflow could not be read, and says what is missing", async () => {
     github.workflowPresent.value = false;
     await open(language);
-    expect(await screen.findByTestId("reader-add-blocked")).toHaveTextContent(text.blockedMissing);
+    expect(await screen.findByTestId("reader-add-note")).toHaveTextContent(text.missing);
+    await addOne();
+    expect(await screen.findByText(text.result)).toBeInTheDocument();
+    expect(github.calls.some((call) => call.method === "createWorkflowDispatch")).toBe(false);
     cleanup();
     reset();
     github.fail("getContent", { status: 403 });
     await open(language);
-    expect(await screen.findByTestId("reader-add-blocked")).toHaveTextContent(text.blockedUnknown);
-    expect(screen.getByRole("button", { name: text.add })).toBeDisabled();
+    await waitFor(() => expect(screen.getByTestId("reader-read-failures")).toBeInTheDocument());
+    expect(screen.getByLabelText(text.password)).toBeEnabled();
   });
 
-  it("still lets a stored password be removed while adding is blocked", async () => {
+  it("makes the prepared passwords active, without typing them again, once a publication built by a workflow that reads them has succeeded and the outside check passes", async () => {
+    reset([record(1)]);
+    github.variable.value = name(1);
+    github.secrets.set(name(1), "x");
+    // Before: the published reader is the old one.
+    github.runs.unshift({ id: 5, status: "completed", conclusion: "success", html_url: "x", created_at: "2026-11-24T09:00:00Z", head_branch: "main", head_sha: "oldsha", event: "push" });
+    github.workflowTextAt.oldsha = OLD_WORKFLOW;
+    await open(language);
+    const row = within(await waitFor(() => rowOf("Reader 1")));
+    await waitFor(() => expect(row.getByText(prepared)).toBeInTheDocument());
+    expect(screen.getByTestId("reader-protection")).toHaveTextContent(text.preparedLine);
+    // The workflow is updated and published: a newer run, built by a workflow that reads the passwords, has succeeded.
+    github.runs.unshift({ id: 6, status: "completed", conclusion: "success", html_url: "x", created_at: "2026-11-27T09:00:00Z", head_branch: "main", head_sha: "newsha", event: "push" });
+    github.workflowTextAt.newsha = "name: Deploy reader\nenv:\n  PASSWORDS: ${{ vars.READER_PASSWORD_SECRETS }}\n";
+    fireEvent.click(screen.getByRole("button", { name: language === "en" ? "Check again" : "Ricontrolla" }));
+    await waitFor(() => expect(row.getByText(text.used)).toBeInTheDocument());
+    expect(screen.getByTestId("reader-protection")).toHaveTextContent(text.protectedLine);
+    expect(screen.queryByTestId("reader-prepared")).toBeNull();
+    expect(kept()[0].value).toBe(`${PASSWORD}-1`);
+  });
+
+  it("does not call them active while the outside check says the book is still public, whatever the workflow says", async () => {
+    reset([record(1)]);
+    github.variable.value = name(1);
+    github.secrets.set(name(1), "x");
+    github.runs.unshift({ id: 6, status: "completed", conclusion: "success", html_url: "x", created_at: "2026-11-27T09:00:00Z", head_branch: "main", head_sha: "newsha", event: "push" });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ status: 200, ok: true, json: async () => ({}) })));
+    await open(language);
+    const row = within(await waitFor(() => rowOf("Reader 1")));
+    await waitFor(() => expect(row.getByText(text.used)).toBeInTheDocument());
+    fireEvent.click(within(screen.getByTestId("reader-protection").parentElement!).queryByRole("button", { name: language === "en" ? "Check from outside" : "Controlla da fuori" }) ?? document.createElement("button"));
+    const { useOutsideStore } = await import("@/readerRun/outsideStore");
+    await act(async () => { await useOutsideStore.getState().check("https://me.github.io/book/"); });
+    await waitFor(() => expect(row.getByText(prepared)).toBeInTheDocument());
+    expect(screen.getByTestId("reader-prepared")).toHaveTextContent(text.exposed);
+    expect(row.queryByText(text.used)).toBeNull();
+  });
+
+  it("offers «Publish again» instead of the update when the workflow already reads them but the published reader does not use them yet", async () => {
+    reset([record(1)]);
+    github.variable.value = name(1);
+    github.secrets.set(name(1), "x");
+    github.runs.unshift({ id: 5, status: "completed", conclusion: "success", html_url: "x", created_at: "2026-11-24T09:00:00Z", head_branch: "main", head_sha: "oldsha", event: "push" });
+    github.workflowTextAt.oldsha = OLD_WORKFLOW;
+    await open(language);
+    const notice = await screen.findByTestId("reader-prepared");
+    expect(within(notice).getByRole("button", { name: text.publishAgain })).toBeInTheDocument();
+    expect(within(notice).queryByRole("button", { name: text.update })).toBeNull();
+  });
+
+  it("still lets a stored password be removed while the workflow does not read them", async () => {
     reset([record(1)]);
     github.variable.value = name(1);
     github.secrets.set(name(1), "x");

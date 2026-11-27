@@ -119,3 +119,12 @@ describe("what the published reader is doing when an operation stops", () => {
     expect(describeReaderResult("disable-pages", { ok: true, done: [], dispatched: false }).headline.key).toBe("readerAccess.result.pagesOff");
   });
 });
+
+describe("what a change that was only prepared says", () => {
+  it("says the password is prepared and that the published reader does not read passwords yet, for an add, and that nothing was published, for a removal", () => {
+    expect(describeReaderResult("add", { ok: true, done: [], dispatched: false, deferred: true }).headline.key).toBe("readerAccess.result.preparedDeferred");
+    expect(describeReaderResult("resume", { ok: true, done: [], dispatched: false, deferred: true }).headline.key).toBe("readerAccess.result.preparedDeferred");
+    expect(describeReaderResult("remove", { ok: true, done: [], dispatched: false, deferred: true }).headline.key).toBe("readerAccess.result.removedDeferred");
+    expect(describeReaderResult("add", { ok: true, done: [], dispatched: true }).headline.key).toBe("readerAccess.result.publishing");
+  });
+});
