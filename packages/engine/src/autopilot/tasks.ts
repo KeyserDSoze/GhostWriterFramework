@@ -235,6 +235,21 @@ function request(lines: Array<string | false | undefined | null>): string {
   return currentRequest(lines.filter((line): line is string => Boolean(line && line.trim())).join("\n\n"));
 }
 
+/**
+ * The prompt of a call that is made again and again about the same material (the rounds of a review, the revisions of a plan, the scenes repaired of a chapter): what stays the same from one call to the next
+ * (`stable`) first, then what changes with each call (`changing`: the fixes of the last round, the findings of this one), and the request, which changes too, last. A provider that caches the start of a prompt serves
+ * everything before the first thing that changes from its cache, and one that has to be told where (`cache_control`) is told it ends there. The words are the same as with the request first: only their order is not.
+ */
+function stableFirst(stable: Array<string | false | undefined | null>, changing: Array<string | false | undefined | null>, asked: string): { user: string; cacheBreak: number } {
+  const closing = "\n</repository_content>";
+  const text = data([...stable, ...changing]);
+  const first = data(stable);
+  // The stable sections end where the first one that changes begins: inside the one block of data, after their blank line (`data` joins the sections with one); when nothing changes, where the request begins.
+  const changes = changing.some((section) => Boolean(section && section.trim()));
+  const stableEnd = changes ? first.length - closing.length + 2 : text.length + 2;
+  return { user: `${text}\n\n${asked}`, cacheBreak: Math.min(stableEnd, text.length + 2) };
+}
+
 /** A limit on the reply of a step, sized for a book in a Latin script and grown for the language of this one (unchanged for Italian and English). */
 function outputLimit(ctx: TaskContext, tokens: number): number {
   return scaleOutputTokens(tokens, ctx.snapshot.book.language);
@@ -1291,7 +1306,20 @@ async function runPlanReview(ctx: TaskContext): Promise<TaskResult> {
     capability: AI_CAPABILITIES.director,
     label: "autopilot:plan-review",
     system: directorSystemPrompt(ctx.director, ctx.language),
-    user: `${request([
+    ...stableFirst([
+      bookHeader(ctx),
+      briefBlock(ctx),
+      outlineBookSection(view),
+      style.block,
+      design ? `STORY DESIGN:\n${design}` : "",
+      `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true }) || "-"}`,
+    ], [
+      outlineListSection([...view.entries.values()], planFocus(plan), "AUTHOR'S OUTLINE (binding)"),
+      listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
+      plan.readerReactions.length
+        ? `SIMULATED READERS:\n${plan.readerReactions.map((reaction) => `- ${reaction.name} (weight ${ctx.director.readerWeights[reaction.slug] ?? 1}): ${reaction.interest}/10 — ${reaction.reaction}${reaction.concerns.length ? ` Concerns: ${reaction.concerns.join("; ")}.` : ""}${reaction.wishes.length ? ` Wishes: ${reaction.wishes.join("; ")}.` : ""}`).join("\n")}`
+        : "",
+    ], request([
       `Review the concept and the chapter plan before any prose is written (review ${plan.rounds + 1}).`,
       "Approve when the plan delivers the brief and the vision with a satisfying shape; otherwise list precise changes chapter by chapter. Weigh the simulated readers by their weights: do not chase every opinion.",
       view.any ? "The author's outline (AUTHOR'S OUTLINE, in the data) binds the plan: never ask to change its chapters, their order, their titles or their events; ask only for what enriches them." : "",
@@ -1299,19 +1327,7 @@ async function runPlanReview(ctx: TaskContext): Promise<TaskResult> {
       lastRound ? "This is the final plan review: approve it and turn anything still imperfect into standing guidance." : "",
       ctx.director.autonomy === "full" ? "Never ask the author: decide." : "Ask the author (questionForAuthor) only for a critical choice you cannot settle from the vision and the author's rules.",
       authorRules(ctx, false),
-    ])}\n\n${data([
-      bookHeader(ctx),
-      briefBlock(ctx),
-      outlineBookSection(view),
-      outlineListSection([...view.entries.values()], planFocus(plan), "AUTHOR'S OUTLINE (binding)"),
-      style.block,
-      design ? `STORY DESIGN:\n${design}` : "",
-      `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true }) || "-"}`,
-      listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
-      plan.readerReactions.length
-        ? `SIMULATED READERS:\n${plan.readerReactions.map((reaction) => `- ${reaction.name} (weight ${ctx.director.readerWeights[reaction.slug] ?? 1}): ${reaction.interest}/10 — ${reaction.reaction}${reaction.concerns.length ? ` Concerns: ${reaction.concerns.join("; ")}.` : ""}${reaction.wishes.length ? ` Wishes: ${reaction.wishes.join("; ")}.` : ""}`).join("\n")}`
-        : "",
-    ])}`,
+    ])),
     json: PLAN_REVIEW_TOOL,
     maxOutputTokens: outputLimit(ctx, 4000),
   });
@@ -1424,7 +1440,23 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
     capability: AI_CAPABILITIES.director,
     label: "autopilot:plan-review",
     system: directorSystemPrompt(ctx.director, ctx.language),
-    user: `${request([
+    ...stableFirst([
+      bookHeader(ctx),
+      briefBlock(ctx),
+      outlineBookSection(view),
+      style.block,
+      storyDesign ? `STORY DESIGN:\n${storyDesign}` : "",
+      `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true }) || "-"}`,
+    ], [
+      outlineListSection([...view.entries.values()], planFocus(plan), "AUTHOR'S OUTLINE (binding)"),
+      ...designData.sections,
+      listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
+      entriesSection,
+      findings.length ? `DESIGN CHECKS (found without a model):\n${findings.slice(0, 30).map((finding) => `- ${designFindingText(finding, "en")}`).join("\n")}${findings.length > 30 ? `\n- … and ${findings.length - 30} more` : ""}` : "DESIGN CHECKS (found without a model): nothing.",
+      plan.readerReactions.length
+        ? `SIMULATED READERS:\n${plan.readerReactions.map((reaction) => `- ${reaction.name} (weight ${ctx.director.readerWeights[reaction.slug] ?? 1}): ${reaction.interest}/10 — ${reaction.reaction}${reaction.concerns.length ? ` Concerns: ${reaction.concerns.join("; ")}.` : ""}${reaction.wishes.length ? ` Wishes: ${reaction.wishes.join("; ")}.` : ""}`).join("\n")}`
+        : "",
+    ], request([
       `Review the design of the book before any prose is written (review ${roundNumber} of at most ${Math.max(maxRounds, roundNumber)}).`,
       `Approve when the design delivers the brief and the vision with a satisfying shape and deserves ${target}/10 or more; otherwise list precise changes chapter by chapter. Weigh the simulated readers by their weights: do not chase every opinion.`,
       ...DESIGN_DIRECTOR_RULES,
@@ -1433,22 +1465,7 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
       lastRound ? "This is the final review of the design: approve it unless a critical inconsistency is left, and turn anything still imperfect into standing guidance." : "",
       ctx.director.autonomy === "full" ? "Never ask the author a question of taste: decide." : "Ask the author (questionForAuthor) only for a critical choice you cannot settle from the vision and the author's rules.",
       authorRules(ctx, false),
-    ])}\n\n${data([
-      bookHeader(ctx),
-      briefBlock(ctx),
-      outlineBookSection(view),
-      outlineListSection([...view.entries.values()], planFocus(plan), "AUTHOR'S OUTLINE (binding)"),
-      style.block,
-      storyDesign ? `STORY DESIGN:\n${storyDesign}` : "",
-      `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true }) || "-"}`,
-      ...designData.sections,
-      listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
-      entriesSection,
-      findings.length ? `DESIGN CHECKS (found without a model):\n${findings.slice(0, 30).map((finding) => `- ${designFindingText(finding, "en")}`).join("\n")}${findings.length > 30 ? `\n- … and ${findings.length - 30} more` : ""}` : "DESIGN CHECKS (found without a model): nothing.",
-      plan.readerReactions.length
-        ? `SIMULATED READERS:\n${plan.readerReactions.map((reaction) => `- ${reaction.name} (weight ${ctx.director.readerWeights[reaction.slug] ?? 1}): ${reaction.interest}/10 — ${reaction.reaction}${reaction.concerns.length ? ` Concerns: ${reaction.concerns.join("; ")}.` : ""}${reaction.wishes.length ? ` Wishes: ${reaction.wishes.join("; ")}.` : ""}`).join("\n")}`
-        : "",
-    ])}`,
+    ])),
     json: DESIGN_REVIEW_TOOL,
     maxOutputTokens: outputLimit(ctx, 5000),
   });
@@ -2036,12 +2053,7 @@ async function runSpecialists(ctx: TaskContext): Promise<TaskResult> {
     capability: AI_CAPABILITIES.specialist,
     label: `autopilot:specialists:${chapter.number}`,
     system: specialistsSystemPrompt(ctx.language),
-    user: `${request([
-      `Review chapter ${chapter.number} «${chapter.title}» (review round ${review.round}). Return at most 12 findings, most important first, using the scene numbers of the markers.`,
-      review.previousFixes.length ? `These fixes were applied after the previous round: verify them and report only remaining or new real problems.\n${bulletList(review.previousFixes)}` : "",
-      style.rule,
-      authorRules(ctx, false),
-    ])}\n\n${data([
+    ...stableFirst([
       bookHeader(ctx),
       `GHOSTWRITER PROFILE:\n${ghostwriterBlock(ghostwriter)}`,
       style.block,
@@ -2049,10 +2061,16 @@ async function runSpecialists(ctx: TaskContext): Promise<TaskResult> {
       chapterPlanBlock(chapter),
       `SCENE PLANS:\n${chapter.scenes.map((scene) => `- Scene ${scene.number} «${scene.title}»: ${scene.goal}`).join("\n")}`,
       `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: false }) || "-"}`,
-      relevant.length ? `CANON DETAILS:\n${await canonDetails(ctx.store, relevant, 600)}` : "",
       secrets ? `SECRETS AND REVEAL RULES:\n${secrets}` : "",
       `CHAPTER TEXT:\n${markedChapterText(source.paragraphs, sceneLimit(ctx, 14000))}`,
-    ])}`,
+      // What the chapter's text names is read from the text: it goes after it, so that everything before the text stays the same while the text is not touched.
+      relevant.length ? `CANON DETAILS:\n${await canonDetails(ctx.store, relevant, 600)}` : "",
+    ], [], request([
+      `Review chapter ${chapter.number} «${chapter.title}» (review round ${review.round}). Return at most 12 findings, most important first, using the scene numbers of the markers.`,
+      review.previousFixes.length ? `These fixes were applied after the previous round: verify them and report only remaining or new real problems.\n${bulletList(review.previousFixes)}` : "",
+      style.rule,
+      authorRules(ctx, false),
+    ])),
     json: FINDINGS_TOOL,
     maxOutputTokens: outputLimit(ctx, 5000),
   });
@@ -2121,20 +2139,7 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
     label: `autopilot:director-review:${chapter.number}`,
     // The profile as the policy makes it: its approval score is the target (the same profile, word for word, without a policy).
     system: directorSystemPrompt(target === ctx.director.approvalScore ? ctx.director : { ...ctx.director, approvalScore: target }, ctx.language),
-    user: `${request([
-      `Decide on chapter ${chapter.number} «${chapter.title}» (review round ${review.round} of ${maxRounds}).`,
-      "For EVERY finding decide exactly once: accept it with a precise, minimal remediation for the ghostwriter and its scene number, or reject it with the reason. Reject unfounded or unanchored findings, findings against the vision or the author's rules, and single-reader taste the intended audience would not share.",
-      `Score the chapter from 1 to 10. Verdict "approve" when it deserves at least ${target}/10 and nothing critical remains; otherwise "revise".`,
-      gate ? "The readers' targets in the data are rules too: the chapter is closed only when they are reached. Accept the concrete corrections of the readers under their target that serve the book's vision, each with a precise fix and its scene." : "",
-      style.rule,
-      review.authorEdit
-        ? "The author changed this chapter after it was approved: judge the chapter as it is now. The author's text stays as it is: no fix will be applied and there is no other round, so your accepted fixes are advice for the author."
-        : last ? "This is the LAST review round: accepted fixes will be applied and the chapter closed without another review, so accept only what really matters." : "",
-      authorNote ? `The author's note on the change: «${authorNote}»` : "",
-      "Add standing guidance for the next chapters when this chapter taught you something.",
-      ctx.director.autonomy === "full" ? "Never ask the author: decide." : "Ask the author (questionForAuthor) only for a critical matter you must not settle alone.",
-      authorRules(ctx, false),
-    ])}\n\n${data([
+    ...stableFirst([
       bookHeader(ctx),
       directorGuidance(ctx),
       style.block,
@@ -2147,10 +2152,25 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
         : "",
       readersSummary ? `READERS PANEL SUMMARY:\n${readersSummary}` : "",
       gate ? readersTargetsBlock(ctx, review, gate) : "",
+      `CHAPTER TEXT:\n${markedChapterText(source.paragraphs, perScene)}`,
+      // What changes with each round (the fixes of the last one, the findings of this one) goes after the text, which does not change until a fix is applied.
+    ], [
       review.previousFixes.length ? `FIXES APPLIED AFTER THE PREVIOUS ROUND:\n${bulletList(review.previousFixes)}` : "",
       `FINDINGS TO DECIDE:\n${review.findings.length ? review.findings.map(findingLine).join("\n\n") : "None."}`,
-      `CHAPTER TEXT:\n${markedChapterText(source.paragraphs, perScene)}`,
-    ])}`,
+    ], request([
+      `Decide on chapter ${chapter.number} «${chapter.title}» (review round ${review.round} of ${maxRounds}).`,
+      "For EVERY finding decide exactly once: accept it with a precise, minimal remediation for the ghostwriter and its scene number, or reject it with the reason. Reject unfounded or unanchored findings, findings against the vision or the author's rules, and single-reader taste the intended audience would not share.",
+      `Score the chapter from 1 to 10. Verdict "approve" when it deserves at least ${target}/10 and nothing critical remains; otherwise "revise".`,
+      gate ? "The readers' targets in the data are rules too: the chapter is closed only when they are reached. Accept the concrete corrections of the readers under their target that serve the book's vision, each with a precise fix and its scene." : "",
+      style.rule,
+      review.authorEdit
+        ? "The author changed this chapter after it was approved: judge the chapter as it is now. The author's text stays as it is: no fix will be applied and there is no other round, so your accepted fixes are advice for the author."
+        : last ? "This is the LAST review round: accepted fixes will be applied and the chapter closed without another review, so accept only what really matters." : "",
+      authorNote ? `The author's note on the change: «${authorNote}»` : "",
+      "Add standing guidance for the next chapters when this chapter taught you something.",
+      ctx.director.autonomy === "full" ? "Never ask the author: decide." : "Ask the author (questionForAuthor) only for a critical matter you must not settle alone.",
+      authorRules(ctx, false),
+    ])),
     json: CHAPTER_REVIEW_TOOL,
     maxOutputTokens: outputLimit(ctx, 6000),
   });
@@ -2316,24 +2336,25 @@ async function rewriteScene(ctx: TaskContext, chapter: PlannedChapter, scene: Pl
     capability: AI_CAPABILITIES.writer,
     label: `autopilot:${mode}:${chapter.number}.${scene.number}`,
     system: writerSystemPrompt(ctx.language),
-    user: `${request([
-      mode === "repair"
-        ? `Revise scene ${scene.number} of chapter ${chapter.number} «${scene.title}» applying ONLY these fixes approved by the director:`
-        : `Rewrite scene ${scene.number} of chapter ${chapter.number} «${scene.title}» to honor the author's revision:`,
-      instructions.map((instruction, index) => `${index + 1}. ${instruction}`).join("\n"),
-      "Keep everything else as it is: events, facts, voice, rhythm, secrets and approximate length, unless an instruction requires otherwise. Return the complete revised scene.",
-      authorRules(ctx),
-    ])}\n\n${data([
+    ...stableFirst([
       bookHeader(ctx),
       `GHOSTWRITER PROFILE:\n${ghostwriterBlock(ghostwriter)}`,
       directorGuidance(ctx),
+    ], [
       scenePlanBlock(scene),
       relevant.length ? `RELEVANT CANON:\n${await canonDetails(ctx.store, relevant)}` : "",
       secrets ? `SECRETS AND REVEAL RULES:\n${secrets}` : "",
       neighbors.previousEnding ? `PREVIOUS SCENE ENDING:\n${neighbors.previousEnding}` : "",
       neighbors.nextOpening ? `NEXT SCENE OPENING (keep it consistent):\n${neighbors.nextOpening}` : "",
       `CURRENT SCENE:\n${loaded.document.body}`,
-    ])}`,
+    ], request([
+      mode === "repair"
+        ? `Revise scene ${scene.number} of chapter ${chapter.number} «${scene.title}» applying ONLY these fixes approved by the director:`
+        : `Rewrite scene ${scene.number} of chapter ${chapter.number} «${scene.title}» to honor the author's revision:`,
+      instructions.map((instruction, index) => `${index + 1}. ${instruction}`).join("\n"),
+      "Keep everything else as it is: events, facts, voice, rhythm, secrets and approximate length, unless an instruction requires otherwise. Return the complete revised scene.",
+      authorRules(ctx),
+    ])),
     maxOutputTokens: sceneOutputLimit(ctx, Math.max(originalWords, 300)),
     temperature: Math.min(0.7, ghostwriter?.temperature ?? 0.7),
   });

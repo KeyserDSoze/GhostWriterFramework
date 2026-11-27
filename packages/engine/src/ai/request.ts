@@ -192,6 +192,23 @@ function wireContent(content: AiMessage["content"]): ChatWireMessage["content"] 
   return content.map((part) => (part.type === "text" ? { type: "text" as const, text: part.text } : { type: "image_url" as const, image_url: { url: part.dataUrl } }));
 }
 
+/**
+ * What a part that says `cacheBreak` is for a provider that is not told where to cache: nothing. Its text and the text that follows it are one part, so that the words of a message, and the way they are
+ * cut into parts, are exactly what they would be if the host had never said where the stable start of the prompt ends.
+ */
+function withoutBreaks(messages: readonly AiMessage[]): AiMessage[] {
+  return messages.map((message) => {
+    if (typeof message.content === "string" || !message.content.some((part) => part.type === "text" && part.cacheBreak)) return message;
+    const parts: AiContentPart[] = [];
+    for (const part of message.content) {
+      const before = parts[parts.length - 1];
+      if (part.type === "text" && before?.type === "text" && before.cacheBreak) parts[parts.length - 1] = { type: "text", text: `${before.text}${part.text}`, ...(part.cacheBreak ? { cacheBreak: true } : {}) };
+      else parts.push(part);
+    }
+    return { role: message.role, content: parts.map((part) => (part.type === "text" && part.cacheBreak ? { type: "text" as const, text: part.text } : part)) };
+  });
+}
+
 /** A part of text that an Anthropic model is told to cache up to (`cache_control`), or an image. */
 type CachedWirePart = { type: "text"; text: string; cache_control?: { type: "ephemeral" } } | { type: "image_url"; image_url: { url: string } };
 
@@ -420,18 +437,19 @@ export function buildChatRequest(
   const notes: string[] = [];
   if (integration.streamMode !== "off" && !stream) notes.push(`Streaming was not used: "${model}" is declared as not streaming (supportsStreaming is off).`);
   const conversation = conversationOf(request, request.json && !useTools ? jsonInstruction(request.json) : undefined);
-  const messages = conversation.map((message): ChatWireMessage => ({ role: message.role, content: wireContent(message.content) }));
+  // The hint that helps the provider find the cache of an earlier request with the same start: a key for OpenAI and Azure OpenAI (when the host named the scope), the blocks that end the stable start for an Anthropic model.
+  let cacheHint = options.promptCacheHints === false ? undefined : promptCacheHintFor(candidate, target.url, protocol);
+  if (cacheHint === "prompt_cache_key" && !request.cacheKey) cacheHint = undefined;
+  if (cacheHint === "cache_control" && responses) cacheHint = undefined;
+  const messages = (cacheHint === "cache_control" ? conversation : withoutBreaks(conversation)).map((message): ChatWireMessage => ({ role: message.role, content: wireContent(message.content) }));
   const outputLimit = requestOutputLimit(request, candidate);
   // The output limit and the thinking level are the one field each of the Responses API (`max_output_tokens`, `reasoning.effort`); Chat Completions has the parameters that its model families expect.
   const body: Record<string, unknown> = responses
     ? { model, input: responsesInput(messages), ...(outputLimit ? { max_output_tokens: outputLimit } : {}) }
     : { model, messages, ...completionTokenLimit(integration.provider, model, outputLimit, candidate.underlyingModel, apiVersion) };
   if (request.temperature !== undefined && !isReasoningModel(integration.provider, model, candidate.underlyingModel)) body.temperature = request.temperature;
-  // The hint that helps the provider find the cache of an earlier request with the same start: a key for OpenAI and Azure OpenAI (when the host named the scope), the blocks that end the stable start for an Anthropic model.
-  let cacheHint = options.promptCacheHints === false ? undefined : promptCacheHintFor(candidate, target.url, protocol);
   if (cacheHint === "prompt_cache_key" && request.cacheKey) body.prompt_cache_key = promptCacheKey(request.cacheKey);
-  else if (cacheHint === "cache_control" && !responses) body.messages = cacheControlled(conversation, request.cacheBreak);
-  else cacheHint = undefined;
+  else if (cacheHint === "cache_control") body.messages = cacheControlled(conversation, request.cacheBreak);
   // A model that refuses a level when the request carries function tools is sent none with them, or `none` when it takes no request without a level (it keeps the level for a request without tools).
   // The Responses API takes both together, so it has no such rule (`withToolsRule`).
   const off = useTools ? withToolsRule(candidate) : undefined;

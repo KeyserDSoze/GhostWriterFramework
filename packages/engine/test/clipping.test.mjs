@@ -55,7 +55,9 @@ function sceneBlock(user, number) {
   const start = user.indexOf(`=== SCENE ${number}:`);
   assert.ok(start >= 0, `scene ${number} is not in the prompt`);
   const next = user.indexOf("=== SCENE ", start + 10);
-  const end = user.indexOf("\n</repository_content>", start);
+  // The text of the chapter is followed by what changes with each round (the fixes and the findings, the details of the canon it names) and then by the end of the data.
+  const ends = ["\n\nFIXES APPLIED AFTER", "\n\nFINDINGS TO DECIDE:", "\n\nCANON DETAILS:", "\n</repository_content>"].map((marker) => user.indexOf(marker, start)).filter((at) => at >= 0);
+  const end = Math.min(...ends);
   return user.slice(start, next >= 0 && next < end ? next : end);
 }
 

@@ -173,6 +173,26 @@ test("an Anthropic model is told where to cache: cache_control on the system mes
   assert.equal(buildChatRequest({ integration: openrouter, model: "gpt-5" }, request).cacheHint, undefined, "a model of another family is sent neither: a gateway that nobody said caches may refuse the key");
 });
 
+test("where the stable start ends changes nothing of what a provider that is not told where to cache is sent: the parts around it are one part, and the words are the same", () => {
+  const split = { system: "", user: "", messages: [{ role: "system", content: "S" }, { role: "user", content: [{ type: "text", text: "STABLE|", cacheBreak: true }, { type: "text", text: "changing" }, { type: "image", dataUrl: "data:image/png;base64,AA==" }] }] };
+  const whole = { system: "", user: "", messages: [{ role: "system", content: "S" }, { role: "user", content: [{ type: "text", text: "STABLE|changing" }, { type: "image", dataUrl: "data:image/png;base64,AA==" }] }] };
+  for (const integration of [integrationOf("azure_openai", AZURE), integrationOf("openai", "https://llm.example.test/v1"), integrationOf("openai", "https://openrouter.ai/api/v1")]) {
+    const left = buildChatRequest({ integration, model: "gpt-5" }, { ...split, cacheKey: "book/copilot" });
+    const right = buildChatRequest({ integration, model: "gpt-5" }, { ...whole, cacheKey: "book/copilot" });
+    assert.deepEqual(left.body, right.body, integration.endpoint);
+    assert.deepEqual(left.messages, right.messages);
+  }
+  // Three parts in a row: only what follows the break is joined to it.
+  const three = buildChatRequest({ integration: integrationOf("openai", "https://llm.example.test/v1"), model: "m" }, { system: "", user: "", messages: [{ role: "user", content: [{ type: "text", text: "A", cacheBreak: true }, { type: "text", text: "B" }, { type: "text", text: "C" }] }] });
+  assert.deepEqual(three.body.messages[0].content, [{ type: "text", text: "AB" }, { type: "text", text: "C" }]);
+  // The host's messages are never changed.
+  assert.equal(split.messages[1].content[0].cacheBreak, true);
+  assert.equal(split.messages[1].content.length, 3);
+  // An Anthropic model is told where, with the same words.
+  const claude = buildChatRequest({ integration: integrationOf("openai", "https://openrouter.ai/api/v1"), model: "anthropic/claude-sonnet-4.5" }, split);
+  assert.deepEqual(claude.body.messages[1].content.map((part) => [part.type, part.text, part.cache_control?.type]), [["text", "STABLE|", "ephemeral"], ["text", "changing", undefined], ["image_url", undefined, undefined]]);
+});
+
 test("the hint is a pure function of the model and its address", () => {
   const azure = { integration: { provider: "azure_openai" }, model: "m" };
   assert.equal(promptCacheHintFor(azure, "https://r.openai.azure.com/openai/v1/chat/completions", "chat-completions"), "prompt_cache_key");
