@@ -1,7 +1,7 @@
-import { Suspense, lazy, useId, useMemo, useState, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useId, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { BookOpen, CheckCircle2, Clapperboard, Download, Plus, RotateCcw, Target } from "lucide-react";
+import { BookOpen, CheckCircle2, Clapperboard, Download, Loader2, Plus, RotateCcw, Target } from "lucide-react";
 import { chapterReading, type ReviewRecord } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { ReadFirstBlock } from "@/components/autopilot/result/ReadFirst";
@@ -11,8 +11,10 @@ import { useBandModel } from "@/components/autopilot/AutopilotControlBand";
 import { finalReviewOf, finalVerdict, workedSince, workedTime, type FinalVerdict } from "@/autopilot/bandModel";
 import { formatCost, formatCount, formatDate, formatDuration, voteText } from "@/autopilot/format";
 import { scalettaHref } from "@/autopilot/pageRoute";
+import type { OpenChapter } from "@/autopilot/chapterReading";
 import { chapterScores, readFirst, reviewRounds } from "@/autopilot/resultModel";
 import { withAutopilotTranslations } from "@/i18n/autopilot";
+import { useBackGestureClose } from "@/components/layout/historyStep";
 import { openAskDirector } from "@/store/askDirectorStore";
 import { cn } from "@/lib/utils";
 import type { BookStructure } from "@/types/book";
@@ -20,6 +22,18 @@ import type { BookEntry } from "@/types/settings";
 
 // «Review the book again» is a chunk of its own: nothing of it is loaded until the author opens it.
 const ReviewBookDialog = lazy(withAutopilotTranslations(() => import("@/components/autopilot/result/ReviewBookDialog")));
+// A chapter read in a window over the result is one too: its text, its type and its folder reading are loaded with the first chapter that is opened.
+const ChapterReadingModal = lazy(withAutopilotTranslations(() => import("@/components/autopilot/result/ChapterReadingModal")));
+
+/** Shown while the window of a chapter is on its way, after a short wait so that a chunk that comes at once leaves no flash. */
+function OpeningChapter() {
+  const { t } = useTranslation();
+  return (
+    <div role="status" className="pointer-events-none fixed left-1/2 top-4 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full border border-layer bg-background px-4 py-2 text-sm shadow-lg animate-in fade-in-0 duration-200 [animation-delay:250ms] [animation-fill-mode:backwards]">
+      <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" />{t("autopilot.result.reading.opening")}
+    </div>
+  );
+}
 
 /** The words of the director are cut to a few lines when they are longer than this: the rest is one button away. */
 const VERDICT_CLAMP_CHARACTERS = 280;
@@ -166,6 +180,14 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true, review }: Au
   const rounds = useMemo(() => reviewRounds(scores), [scores]);
   const [reviewing, setReviewing] = useState(false);
   const [reviewOpened, setReviewOpened] = useState(false);
+  // The chapter read in a window (by its folder), and the link that opened it, which has the focus again when the window closes.
+  const [reading, setReading] = useState<{ slug: string; opener: HTMLElement } | null>(null);
+  const openChapter = useCallback<OpenChapter>((slug, opener) => setReading({ slug, opener }), []);
+  const goToChapter = useCallback((slug: string) => setReading((current) => (current ? { ...current, slug } : current)), []);
+  const closeChapter = useCallback(() => setReading(null), []);
+  // On a phone the window is the screen: the back gesture closes it and the page stays. Its step in the history is kept here, which is there while the window opens and closes (a window that
+  // is closed before its step is made, by Escape at once, still gives it back).
+  const followLink = useBackGestureClose(reading !== null, closeChapter, "chapter-reading");
   // The title of a chapter is asked for the rows that are drawn: the plan is searched, and never read whole.
   const byNumber = useMemo(() => new Map((chapters ?? []).map((chapter) => [chapter.number, chapter] as const)), [chapters]);
   if (!model || !model.completed) return null;
@@ -193,6 +215,8 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true, review }: Au
   const titleOf = (number: number) => byNumber.get(number)?.title;
   const lastReview = state?.reviews?.[state.reviews.length - 1];
   const openReview = review && state ? () => { setReviewOpened(true); setReviewing(true); } : undefined;
+  // The chapter links open the chapter in a window when the book can be read here (its working copy is the one the page has); without, they are links.
+  const readHere = review && state ? openChapter : undefined;
 
   return (
     <section data-autopilot-result aria-labelledby={titleId} className="space-y-5 rounded-2xl border border-layer bg-card p-4 shadow-sm sm:p-5">
@@ -207,11 +231,16 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true, review }: Au
       {state && (hasReadings || state.options.review?.readersTarget !== undefined || Object.keys(state.options.review?.readerTargets ?? {}).length > 0) && <TargetsBlock bookId={bookId} state={state} structure={review?.structure} />}
       {scores.length > 0 && (
         <div className={cn("grid gap-6", wide && "grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]")}>
-          <ScoresBlock bookId={bookId} scores={scores} linkedSlugs={linkedSlugs} titleOf={titleOf} />
-          <ReadFirstBlock bookId={bookId} items={first} linkedSlugs={linkedSlugs} titleOf={titleOf} />
+          <ScoresBlock bookId={bookId} scores={scores} linkedSlugs={linkedSlugs} titleOf={titleOf} onOpenChapter={readHere} />
+          <ReadFirstBlock bookId={bookId} items={first} linkedSlugs={linkedSlugs} titleOf={titleOf} onOpenChapter={readHere} />
         </div>
       )}
       <ActionsBar bookId={bookId} onReview={openReview} />
+      {reading && review && state && (
+        <Suspense fallback={<OpeningChapter />}>
+          <ChapterReadingModal bookId={bookId} book={review.book} branch={review.branch} state={state} linkedSlugs={linkedSlugs} slug={reading.slug} onNavigate={goToChapter} onClose={closeChapter} returnFocusTo={reading.opener} onLinkClick={followLink} />
+        </Suspense>
+      )}
       {reviewOpened && review && state && (
         <Suspense fallback={null}>
           <ReviewBookDialog open={reviewing} onClose={() => setReviewing(false)} book={review.book} branch={review.branch} structure={review.structure} state={state} />

@@ -2,6 +2,7 @@ import { useId, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { initialRows, moreRows, scoreSeries, scoreSummary, sortScores, type ChapterScore, type ScoreOrder } from "@/autopilot/resultModel";
+import { chapterLinkClick, type OpenChapter } from "@/autopilot/chapterReading";
 import { formatCount } from "@/autopilot/format";
 import { cn } from "@/lib/utils";
 
@@ -87,7 +88,7 @@ function ReadersCell({ entry, none }: { entry: ChapterScore; none: string }) {
  * How the director judged the chapters: the picture of the final scores, the order they are listed in, and the table of all of them (the final score, the score of each
  * round of the review, the readers' average). A long book is a window of the table with a button for the rest; the lowest scores first is one click.
  */
-export function ScoresBlock({ bookId, scores, linkedSlugs, titleOf }: { bookId: string; scores: readonly ChapterScore[]; linkedSlugs: ReadonlySet<string>; titleOf: TitleOf }) {
+export function ScoresBlock({ bookId, scores, linkedSlugs, titleOf, onOpenChapter }: { bookId: string; scores: readonly ChapterScore[]; linkedSlugs: ReadonlySet<string>; titleOf: TitleOf; onOpenChapter?: OpenChapter }) {
   const { t } = useTranslation();
   const titleId = useId();
   const captionId = useId();
@@ -132,7 +133,7 @@ export function ScoresBlock({ bookId, scores, linkedSlugs, titleOf }: { bookId: 
               return (
                 <tr key={entry.number} className="border-b last:border-b-0">
                   <th scope="row" className="min-w-[8rem] px-2 py-1 text-left font-normal">
-                    {linkedSlugs.has(entry.slug) ? <Link to={chapterHref(bookId, entry.slug)} className="inline-flex min-h-6 items-center underline decoration-foreground/40 underline-offset-4 hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{label}</Link> : label}
+                    {linkedSlugs.has(entry.slug) ? <Link to={chapterHref(bookId, entry.slug)} onClick={chapterLinkClick(onOpenChapter, entry.slug)} aria-haspopup={onOpenChapter ? "dialog" : undefined} data-chapter-link={entry.slug} className="inline-flex min-h-6 items-center underline decoration-foreground/40 underline-offset-4 hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{label}</Link> : label}
                   </th>
                   <ScoreCell value={entry.final} none={none} strong />
                   {Array.from({ length: rounds }, (_, index) => <ScoreCell key={index} value={entry.rounds[index] ?? null} none={none} revised={entry.verdicts?.[index] === "revise" ? revised : undefined} />)}

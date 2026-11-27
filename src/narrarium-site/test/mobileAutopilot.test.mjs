@@ -16,8 +16,11 @@ test("the table of the chapter map scrolls inside its own frame: what screen rea
   const region = /<div role="region"[^>]*className="([^"]*)"/.exec(table)?.[1] ?? "";
   assert.match(region, /\brelative\b/, "the frame of the table is positioned");
   assert.match(region, /\boverflow-auto\b/);
-  const panel = await read("src/components/autopilot/map/ChapterPanel.tsx");
-  assert.match(panel, /<div className="relative overflow-x-auto">\s*<table aria-labelledby=\{id\}/, "the table of the rounds of a chapter too");
+  // The table of the rounds of a chapter (the map's panel and the reading window share it) has the same frame, which a keyboard can reach to scroll it.
+  const rounds = await read("src/components/autopilot/map/ChapterRounds.tsx");
+  const frame = /<div role="region"[^>]*className="([^"]*)"[^>]*>\s*<table aria-labelledby=\{id\}/.exec(rounds)?.[1] ?? "";
+  assert.match(frame, /\brelative\b/, "the table of the rounds of a chapter too");
+  assert.match(frame, /\boverflow-x-auto\b/);
 });
 
 test("the grid of the chapter map: scene cells a finger can hit, and a frame that gives the scroll back to the page", async () => {

@@ -2,10 +2,11 @@ import { useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } 
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { AlertOctagon, AlertTriangle, BookOpen, CheckCircle2, Clapperboard, Info, Loader2, PlusCircle, Users, X, XCircle } from "lucide-react";
-import { directorOpinionPath, parseDirectorOpinionRecord, type AutopilotState, type ChapterRound, type PlannedChapter, type ReviewDecision, type ReviewFinding } from "narrarium-engine";
+import { directorOpinionPath, parseDirectorOpinionRecord, type AutopilotState, type PlannedChapter, type ReviewDecision, type ReviewFinding } from "narrarium-engine";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { DirectorVerdictBadge } from "@/components/director/DirectorOpinionView";
+import { Rounds } from "@/components/autopilot/map/ChapterRounds";
 import { SCENE_ICON, SCENE_STYLE } from "@/components/autopilot/map/mapVisuals";
 import { chapterStateText, type MapRowModel } from "@/components/autopilot/map/MapGrid";
 import { formatCount } from "@/autopilot/format";
@@ -24,89 +25,6 @@ function Part({ title, children, icon }: { title: string; children: ReactNode; i
 }
 
 const vote = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
-
-/**
- * How the votes went from round to round: a bar for the director's vote of each round, and a lighter one for the readers' average where they read (the
- * first round). A picture, so one image to a screen reader with what it shows said in words: the table beside it has every figure. The height of a bar
- * is the vote, out of ten, and the figure is written over it: nothing is told by colour.
- */
-function RoundsTrend({ rounds }: { rounds: readonly ChapterRound[] }) {
-  const { t } = useTranslation();
-  const votes = rounds.map((round) => vote(round.director));
-  const readers = rounds.map((round) => vote(round.readers)).find((value) => value !== null) ?? null;
-  const said = votes.filter((value): value is number => value !== null).map(formatCount).join(" → ");
-  if (!said) return null;
-  const label = [t("autopilot.chapterPanel.rounds.chart", { votes: said }), readers !== null ? t("autopilot.chapterPanel.rounds.chartReaders", { score: formatCount(readers) }) : null].filter(Boolean).join(" ");
-  return (
-    <div role="img" aria-label={label} className="mx-auto flex h-28 max-w-md items-end gap-4 border-b border-border px-1">
-      {rounds.map((round, index) => {
-        const director = votes[index];
-        const read = vote(round.readers);
-        return (
-          <div key={index} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
-            <div className="flex h-full w-full items-end justify-center gap-1">
-              {director !== null && (
-                <div className="flex h-full w-8 flex-col items-center justify-end">
-                  <span className="text-xs font-semibold tabular-nums">{formatCount(director)}</span>
-                  <div className="w-full rounded-t-sm bg-primary" style={{ height: `${Math.max(4, director * 8)}%` }} />
-                </div>
-              )}
-              {read !== null && (
-                <div className="flex h-full w-6 flex-col items-center justify-end">
-                  <span className="text-xs tabular-nums text-muted-foreground">{formatCount(read)}</span>
-                  <div className="w-full rounded-t-sm border border-primary bg-primary/20" style={{ height: `${Math.max(4, read * 8)}%` }} />
-                </div>
-              )}
-            </div>
-            <span className="text-xs tabular-nums text-muted-foreground">{index + 1}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** The rounds of review the plan recorded for the chapter, as a table, after the picture of their votes. */
-function Rounds({ rounds }: { rounds: readonly ChapterRound[] }) {
-  const { t } = useTranslation();
-  const id = useId();
-  if (!rounds.length) return <p className="text-sm text-muted-foreground">{t("autopilot.chapterPanel.rounds.none")}</p>;
-  const dash = <span aria-hidden="true">—</span>;
-  return (
-    <div className="space-y-3">
-      <RoundsTrend rounds={rounds} />
-      <div className="flex flex-wrap gap-3 text-xs text-muted-foreground" aria-hidden="true">
-        <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded-sm bg-primary" />{t("autopilot.chapterPanel.rounds.director")}</span>
-        <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded-sm border border-primary bg-primary/20" />{t("autopilot.chapterPanel.rounds.readers")}</span>
-      </div>
-      <div className="relative overflow-x-auto">
-        <table aria-labelledby={id} className="w-full border-collapse text-sm">
-          <caption id={id} className="sr-only">{t("autopilot.chapterPanel.rounds.title")}</caption>
-          <thead>
-            <tr className="border-b text-xs text-muted-foreground">
-              <th scope="col" className="px-2 py-1 text-left font-medium">{t("autopilot.chapterPanel.rounds.round")}</th>
-              <th scope="col" className="px-2 py-1 text-right font-medium">{t("autopilot.chapterPanel.rounds.director")}</th>
-              <th scope="col" className="px-2 py-1 text-right font-medium">{t("autopilot.chapterPanel.rounds.readers")}</th>
-              <th scope="col" className="px-2 py-1 text-left font-medium">{t("autopilot.chapterPanel.rounds.verdict")}</th>
-              <th scope="col" className="px-2 py-1 text-left font-medium">{t("autopilot.chapterPanel.rounds.fixes")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rounds.map((round, index) => (
-              <tr key={index} className="border-b last:border-b-0">
-                <th scope="row" className="px-2 py-1 text-left font-normal tabular-nums">{index + 1}</th>
-                <td className="px-2 py-1 text-right tabular-nums">{vote(round.director) !== null ? formatCount(round.director!) : <>{dash}<span className="sr-only">{t("autopilot.map.table.none")}</span></>}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{vote(round.readers) !== null ? formatCount(round.readers!) : <>{dash}<span className="sr-only">{t("autopilot.map.table.none")}</span></>}</td>
-                <td className="px-2 py-1">{round.verdict ? t(`autopilot.chapterPanel.rounds.${round.verdict}`) : dash}</td>
-                <td className="px-2 py-1">{round.accepted !== undefined || round.rejected !== undefined ? t("autopilot.chapterPanel.rounds.fixesValue", { accepted: round.accepted ?? 0, rejected: round.rejected ?? 0 }) : dash}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
 
 const SEVERITY_ICON = { critical: AlertOctagon, major: AlertTriangle, minor: Info } as const;
 const SEVERITY_STYLE = {
