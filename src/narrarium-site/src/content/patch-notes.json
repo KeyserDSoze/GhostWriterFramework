@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.131.1",
+    "date": "2026-11-27",
+    "en": {
+      "title": "Google sign-in no longer drags in the old full Drive permission",
+      "summary": "If you had allowed full access to your Drive under an older version, Google still showed the «not verified app» warning at sign-in. Signing in now asks only for the current permissions and nothing that was allowed before.",
+      "changes": [
+        "Every Google sign-in, connection and renewal now tells Google not to add the permissions your account allowed earlier, so the consent covers only the hidden app folder and the files Narrarium creates, and the warning about full access to Drive no longer comes back.",
+        "The permission asked on purpose (exporting into an existing folder, recovering old chats) keeps adding to what is already allowed, as before.",
+        "Check Google configuration now shows that earlier permissions are not added, says that a project in «Testing» also shows the unverified-app screen, and tells you to remove Narrarium's previous access at myaccount.google.com/connections if the warning still appears."
+      ]
+    },
+    "it": {
+      "title": "L'accesso con Google non si porta più dietro il vecchio permesso completo su Drive",
+      "summary": "Se con una versione precedente avevi consentito l'accesso completo al tuo Drive, Google mostrava ancora l'avviso «app non verificata» all'accesso. Ora l'accesso chiede solo i permessi attuali e nulla di ciò che era stato consentito prima.",
+      "changes": [
+        "Ogni accesso, connessione e rinnovo con Google dice ora a Google di non aggiungere i permessi che il tuo account aveva consentito in precedenza: il consenso riguarda solo la cartella nascosta dell'app e i file che Narrarium crea, e l'avviso sull'accesso completo a Drive non torna più.",
+        "Il permesso chiesto di proposito (esportare in una cartella esistente, recuperare le vecchie chat) continua ad aggiungersi a quelli già consentiti, come prima.",
+        "Controlla la configurazione di Google ora mostra che i permessi precedenti non vengono aggiunti, dice che un progetto in «Test» mostra anch'esso la schermata di app non verificata, e ti dice di togliere l'accesso precedente di Narrarium su myaccount.google.com/connections se l'avviso compare ancora."
+      ]
+    }
+  },
+  {
     "version": "0.131.0",
     "date": "2026-11-27",
     "en": {
