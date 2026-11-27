@@ -1419,6 +1419,15 @@ export async function settleLocalRepositoryAttachment(input: {
         if (repository.remoteKind !== "none") throw new Error("The local repository is already connected to a remote.");
         repositories.put({ ...repository, ...input.remote, remoteKind: "github", remoteHeadSha: input.remoteHeadSha, remoteStatus: "clean", remoteChanged: false, remoteCheckedAt: now, lastRemoteHead: input.remoteHeadSha, lastKnownChanged: false, updatedAt: now });
         for (const expected of input.expectedFiles) {
+          // A deletion of the local book: the repository was made without the file, so there is nothing left to publish and nothing to mark.
+          if (expected.status === "deleted") {
+            const deletedRequest = files.get(expected.key);
+            deletedRequest.onsuccess = () => {
+              const current = deletedRequest.result as LocalRepositoryFile | undefined;
+              if (current && localFileVersion(current) === localFileVersion(expected)) files.delete(expected.key);
+            };
+            continue;
+          }
           const sha = input.pushedShas[expected.path];
           if (!sha) continue;
           const currentRequest = files.get(expected.key);
@@ -2063,15 +2072,113 @@ export async function renameLocalTextFileAtomically(input: {
   return file;
 }
 
-export async function localStatus(repoIdValue: string): Promise<LocalRepoStatus> {
-  const files = await allFromIndex<LocalRepositoryFile>("files", "repoId", repoIdValue);
-  const out: LocalRepoStatus = { clean: 0, modified: 0, new: 0, deleted: 0, dirty: 0, ahead: 0 };
+/** The version of each path that the commits still to be published hold: the latest commit that names the path wins. */
+function pendingCommitEntries(commits: readonly LocalCommit[]): Map<string, LocalCommitFile> {
+  const entries = new Map<string, LocalCommitFile>();
+  for (const commit of commits.filter((entry) => !entry.pushed).sort(compareLocalCommitOrder)) for (const file of commit.files) entries.set(file.path, file);
+  return entries;
+}
+
+/**
+ * A file marked as committed that no commit still to be published holds: a settlement took the commit away and left the mark (attaching a local book to
+ * GitHub did so with its deletions). It is a change of this device all the same, and while it carries the mark no commit takes it, so nothing publishes it.
+ */
+function isOrphanedCommittedFile(file: LocalRepositoryFile, pending: ReadonlyMap<string, LocalCommitFile>): boolean {
+  if (file.committed !== true) return false;
+  const entry = pending.get(file.path);
+  return !entry || !localFileMatchesCommitResult(file, entry);
+}
+
+/** What such a file is without the mark: `null` for the deletion of a file GitHub never had, which leaves nothing to publish. */
+function statusWithoutOrphanedCommit(file: LocalRepositoryFile): LocalFileStatus | null {
+  if (file.status === "deleted") return file.baseSha ? "deleted" : null;
+  if (!file.baseSha) return "new";
+  return file.baseHash && file.currentHash === file.baseHash ? "clean" : "modified";
+}
+
+/** The status of a working copy from its files and commits, a file marked as committed without its commit counted as the change it is. */
+export function countLocalRepositoryStatus(files: readonly LocalRepositoryFile[], commits: readonly LocalCommit[]): LocalRepoStatus {
+  const pending = pendingCommitEntries(commits);
+  const out: LocalRepoStatus = { clean: 0, modified: 0, new: 0, deleted: 0, dirty: 0, ahead: commits.filter((commit) => !commit.pushed).length };
   for (const file of files) {
-    if (file.status === "clean" || !file.committed) out[file.status] += 1;
+    if (isOrphanedCommittedFile(file, pending)) {
+      const status = statusWithoutOrphanedCommit(file);
+      if (status) out[status] += 1;
+    } else if (file.status === "clean" || !file.committed) out[file.status] += 1;
   }
   out.dirty = out.modified + out.new + out.deleted;
-  out.ahead = (await listUnpushedLocalCommits(repoIdValue)).length;
   return out;
+}
+
+export async function localStatus(repoIdValue: string): Promise<LocalRepoStatus> {
+  const [files, commits] = await Promise.all([
+    allFromIndex<LocalRepositoryFile>("files", "repoId", repoIdValue),
+    allFromIndex<LocalCommit>("commits", "repoId", repoIdValue),
+  ]);
+  return countLocalRepositoryStatus(files, commits);
+}
+
+/** The paths whose change is still only on this device: saved and not committed, committed and not published, or marked as committed without a commit. */
+export async function listUnpublishedLocalPaths(repoIdValue: string): Promise<string[]> {
+  const [files, commits] = await Promise.all([
+    allFromIndex<LocalRepositoryFile>("files", "repoId", repoIdValue),
+    allFromIndex<LocalCommit>("commits", "repoId", repoIdValue),
+  ]);
+  const pending = pendingCommitEntries(commits);
+  const paths = new Set(pending.keys());
+  for (const file of files) {
+    if (isOrphanedCommittedFile(file, pending)) {
+      const status = statusWithoutOrphanedCommit(file);
+      if (status && status !== "clean") paths.add(file.path);
+    } else if (file.status !== "clean" && !file.committed) paths.add(file.path);
+  }
+  return [...paths].sort();
+}
+
+/**
+ * Takes the mark off the files that carry it without a commit still to be published (`isOrphanedCommittedFile`): they become the changes they are, so the
+ * next commit holds them and the sync publishes them; the deletion of a file GitHub never had is dropped. Returns the paths it settled.
+ */
+export async function settleOrphanedCommittedFiles(repoIdValue: string, scope: RepositoryOperationScope): Promise<string[]> {
+  const db = await openDb();
+  return new Promise<string[]>((resolve, reject) => {
+    const tx = guardedWriteTransaction(db, ["repositories", "files", "commits"], repoIdValue);
+    const files = tx.objectStore("files");
+    const settled: string[] = [];
+    let validationError: Error | null = null;
+    let validated = false;
+    let rows: LocalRepositoryFile[] | undefined;
+    let commits: LocalCommit[] | undefined;
+    const apply = () => {
+      if (!validated || !rows || !commits) return;
+      const pending = pendingCommitEntries(commits);
+      const now = new Date().toISOString();
+      for (const file of rows) {
+        if (!isOrphanedCommittedFile(file, pending)) continue;
+        const status = statusWithoutOrphanedCommit(file);
+        if (status === null) files.delete(file.key);
+        else files.put({ ...file, status, committed: false, updatedAt: now });
+        settled.push(file.path);
+      }
+    };
+    const repositoryRequest = tx.objectStore("repositories").get(repoIdValue);
+    repositoryRequest.onsuccess = () => {
+      try { validateRepositoryOperation(repositoryRequest.result as LocalRepositoryMeta | undefined, scope); }
+      catch (error) { validationError = error as Error; tx.abort(); return; }
+      validated = true;
+      apply();
+    };
+    repositoryRequest.onerror = () => tx.abort();
+    const filesRequest = files.index("repoId").getAll(repoIdValue);
+    filesRequest.onsuccess = () => { rows = filesRequest.result as LocalRepositoryFile[]; apply(); };
+    filesRequest.onerror = () => tx.abort();
+    const commitsRequest = tx.objectStore("commits").index("repoId").getAll(repoIdValue);
+    commitsRequest.onsuccess = () => { commits = commitsRequest.result as LocalCommit[]; apply(); };
+    commitsRequest.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve(settled.sort());
+    tx.onerror = () => reject(validationError ?? transactionError(tx));
+    tx.onabort = () => reject(validationError ?? transactionError(tx) ?? new Error("Local commit settlement was aborted."));
+  });
 }
 
 export async function getLocalRepositoryStatusSnapshot(owner: string, repo: string, branch: string, scope: string): Promise<{ meta: LocalRepositoryMeta; status: LocalRepoStatus } | null> {
@@ -2080,24 +2187,28 @@ export async function getLocalRepositoryStatusSnapshot(owner: string, repo: stri
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(["repositories", "files", "commits"], "readonly");
-    const repositoryRequest = tx.objectStore("repositories").get(id);
-    const filesRequest = tx.objectStore("files").index("repoId").getAll(id);
-    const commitsRequest = tx.objectStore("commits").index("repoId").getAll(id);
-    let meta: LocalRepositoryMeta | undefined;
-    let files: LocalRepositoryFile[] | undefined;
-    let commits: LocalCommit[] | undefined;
-    const finish = () => {
-      if (!files || !commits || repositoryRequest.readyState !== "done") return;
-      if (!meta || meta.accountScope !== scope || !isCurrentAccountScope(scope)) { resolve(null); return; }
-      const status: LocalRepoStatus = { clean: 0, modified: 0, new: 0, deleted: 0, dirty: 0, ahead: commits.filter((commit) => !commit.pushed).length };
-      for (const file of files) if (file.status === "clean" || !file.committed) status[file.status] += 1;
-      status.dirty = status.modified + status.new + status.deleted;
-      resolve({ meta, status });
+    const repositories = tx.objectStore("repositories");
+    const exactRequest = repositories.get(id);
+    const candidatesRequest = repositories.index("remote").getAll(IDBKeyRange.only([owner, repo, branch]));
+    const failed = () => reject(tx.error ?? new Error("Local repository status could not be read."));
+    let loaded = 0;
+    // The copy the sync works on (`getLocalRepository`): a book made on this device and then put on GitHub keeps the id it had, under its GitHub name.
+    const select = () => {
+      if (++loaded !== 2) return;
+      const exact = exactRequest.result as LocalRepositoryMeta | undefined;
+      const meta = exact?.accountScope === scope ? exact : (candidatesRequest.result as LocalRepositoryMeta[]).find((candidate) => candidate.accountScope === scope);
+      if (!meta || !isCurrentAccountScope(scope)) { resolve(null); return; }
+      const filesRequest = tx.objectStore("files").index("repoId").getAll(meta.id);
+      const commitsRequest = tx.objectStore("commits").index("repoId").getAll(meta.id);
+      let files: LocalRepositoryFile[] | undefined;
+      let commits: LocalCommit[] | undefined;
+      const finish = () => { if (files && commits) resolve({ meta, status: countLocalRepositoryStatus(files, commits) }); };
+      filesRequest.onsuccess = () => { files = filesRequest.result as LocalRepositoryFile[]; finish(); };
+      commitsRequest.onsuccess = () => { commits = commitsRequest.result as LocalCommit[]; finish(); };
+      filesRequest.onerror = commitsRequest.onerror = failed;
     };
-    repositoryRequest.onsuccess = () => { meta = repositoryRequest.result as LocalRepositoryMeta | undefined; finish(); };
-    filesRequest.onsuccess = () => { files = filesRequest.result as LocalRepositoryFile[]; finish(); };
-    commitsRequest.onsuccess = () => { commits = commitsRequest.result as LocalCommit[]; finish(); };
-    repositoryRequest.onerror = filesRequest.onerror = commitsRequest.onerror = () => reject(tx.error ?? new Error("Local repository status could not be read."));
+    exactRequest.onsuccess = candidatesRequest.onsuccess = select;
+    exactRequest.onerror = candidatesRequest.onerror = failed;
     tx.onabort = () => reject(tx.error ?? new Error("Local repository status transaction was aborted."));
   });
 }

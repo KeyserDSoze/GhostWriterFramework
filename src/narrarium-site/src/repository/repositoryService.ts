@@ -24,6 +24,7 @@ import {
   getLocalRepositoryById,
   listAllLocalFiles,
   listDirtyLocalFiles,
+  listUnpublishedLocalPaths,
   listUnpushedLocalCommits,
   recordRepositoryDiagnostic,
   type RepositoryDiagnosticOperation,
@@ -50,6 +51,7 @@ import {
   sha256Bytes,
   settleLocalSourceOverwriteAtomically,
   settleLocalRepositoryAttachment,
+  settleOrphanedCommittedFiles,
   updateLocalRepositoryHead,
   type LocalCommitFile,
   type LocalRepositoryMeta,
@@ -118,6 +120,8 @@ export interface PushLocalCommitsInput {
   allowRemoteOverwrite?: boolean;
   confirmed?: boolean;
   signal?: AbortSignal;
+  /** Called after each file the push sends to GitHub, with how many of them there are. */
+  onFilePublished?: (done: number, total: number) => void;
 }
 
 export interface ExactRepositoryTarget {
@@ -134,6 +138,25 @@ export interface SyncResult {
   keptLocal: number;
   committed: number;
   pushed: number;
+  /** The changes still only on this device when the sync ended (they wait for the next one): none when it published everything. */
+  unpublished: number;
+}
+
+/** The steps of a full sync, in their order, as the author follows them while it runs. */
+export type RepositorySyncStep = "waiting" | "checking" | "downloading" | "merging" | "committing" | "publishing";
+
+export interface RepositorySyncProgress {
+  step: RepositorySyncStep;
+  /** For `downloading` and `publishing`: the files done, of `total`. */
+  done?: number;
+  total?: number;
+}
+
+export interface RepositorySyncOptions {
+  conflictResolutions?: Record<string, RepositorySyncConflictChoice>;
+  onProgress?: (progress: RepositorySyncProgress) => void;
+  /** Stops the sync while it has changed nothing yet (up to the end of the download); from the merge on it runs to its end and the signal is ignored. */
+  signal?: AbortSignal;
 }
 
 export type RepositorySyncConflictResolution = "local" | "remote";
@@ -550,7 +573,10 @@ export async function attachLocalBookToGitHub(input: {
   const scope = operationScope({ bookId: input.book.id, owner: "", repo: "", branch: input.book.activeBranch ?? `local:${input.book.localRepositoryId ?? input.book.id}`, accountIdentity: localWorkspaceScope() });
   const local = await getLocalRepositoryByBook(input.book.id, scope.accountIdentity);
   if (!local || local.remoteKind !== "none") throw new Error("The local-only working copy is unavailable or already connected.");
-  const localFiles = (await listAllLocalFiles(local.id)).filter((file) => file.status !== "deleted");
+  // The commits are read before the files: a commit made while the book uploads is not among those marked as published, and the next sync publishes it.
+  const commits = await listUnpushedLocalCommits(local.id);
+  const allFiles = await listAllLocalFiles(local.id);
+  const localFiles = allFiles.filter((file) => file.status !== "deleted");
   if (!localFiles.length) throw new Error("The local book has no files to publish.");
   const [{ createCompleteBookRepository }, { loadBookTemplate, templateFilesMissingFrom }] = await Promise.all([import("@/github/bookRepository"), import("@/narrarium/bookTemplate")]);
   const files: import("@/github/bookRepository").BookRepositoryFile[] = [];
@@ -589,8 +615,7 @@ export async function attachLocalBookToGitHub(input: {
     if (!sha || !("content" in file)) continue;
     await putCleanLocalFile({ repoId: local.id, path: file.path, kind: "text", text: file.content, baseSha: sha, size: utf8Bytes(file.content) }, scope).catch(() => undefined);
   }
-  const commits = await listUnpushedLocalCommits(local.id);
-  await settleLocalRepositoryAttachment({ repoId: local.id, scope, remoteHeadSha: creation.headSha, expectedFiles: localFiles, commitIds: commits.map((entry) => entry.id), pushedShas, remote: { owner: creation.owner, repo: creation.repo, branch, defaultBranch: branch } });
+  await settleLocalRepositoryAttachment({ repoId: local.id, scope, remoteHeadSha: creation.headSha, expectedFiles: allFiles, commitIds: commits.map((entry) => entry.id), pushedShas, remote: { owner: creation.owner, repo: creation.repo, branch, defaultBranch: branch } });
   await addLocalRepoLog(local.id, scope, "push", `Attached local book to ${creation.owner}/${creation.repo} at ${creation.headSha.slice(0, 7)}`);
   return { owner: creation.owner, repo: creation.repo, branch, remoteHeadSha: creation.headSha, repoId: local.id, creation };
 }
@@ -1170,20 +1195,24 @@ export async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: P
 
   const pushedShas: Record<string, string | null> = {};
   const treeEntries = [] as Array<{ path: string; mode: "100644"; type: "blob"; sha: string | null }>;
+  let published = 0;
   for (const [path, file] of changedPaths) {
     if (!file) {
       // Skip deletions for paths that are not blobs on the remote (avoids BadObjectState).
       if (remoteBlobPaths.size > 0 && !remoteBlobPaths.has(path)) {
         pushedShas[path] = null;
+        input.onFilePublished?.(++published, changedPaths.size);
         continue;
       }
       treeEntries.push({ path, mode: "100644", type: "blob", sha: null });
       pushedShas[path] = null;
+      input.onFilePublished?.(++published, changedPaths.size);
       continue;
     }
     const blob = await createBlobForFile(octokit, meta, file, input.signal);
     treeEntries.push({ path, mode: "100644", type: "blob", sha: blob });
     pushedShas[path] = blob;
+    input.onFilePublished?.(++published, changedPaths.size);
   }
   if (treeEntries.length === 0) {
     // Nothing valid to push (e.g. only stale directory-deletions). Mark commits
@@ -1230,40 +1259,53 @@ export async function pushLocalCommitsLocked(meta: LocalRepositoryMeta, input: P
   return { commitSha: commit.data.sha, files: treeEntries.length, ...(settlement.skippedPaths.length ? { recoveryPaths: settlement.skippedPaths } : {}) };
 }
 
-export async function syncFullRepository(input: ExactRepositoryTarget & { token: string; conflictResolutions?: Record<string, RepositorySyncConflictChoice> }): Promise<SyncResult> {
+export async function syncFullRepository(input: ExactRepositoryTarget & { token: string } & RepositorySyncOptions): Promise<SyncResult> {
   const scope = operationScope(input);
   const selected = await exactLocalRepository(input, scope);
   const operationId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
   await diagnostic({ meta: selected, scope, operationId, operation: "sync", stage: "start", outcome: "started", startedAt });
+  // Another operation on this working copy goes first: when it takes more than a moment, the author is told that the sync waits for it.
+  const waiting = input.onProgress ? setTimeout(() => input.onProgress?.({ step: "waiting" }), 600) : undefined;
   try {
-    const result = await withRepositoryMutationLease(selected.id, async () => syncFullRepositoryLeased(await exactLocalRepository(input, scope), input, scope));
+    const result = await withRepositoryMutationLease(selected.id, async () => {
+      clearTimeout(waiting);
+      return syncFullRepositoryLeased(await exactLocalRepository(input, scope), input, scope);
+    });
     await diagnostic({ meta: selected, scope, operationId, operation: "sync", stage: "finalize", outcome: "success", startedAt, durationMs: Date.now() - Date.parse(startedAt), fileCount: result.pulled + result.committed, });
     return result;
   } catch (error) {
     const classified = classifyRepositoryError(error, "compare");
     await diagnostic({ meta: selected, scope, operationId, operation: "sync", stage: "merge", outcome: classified.kind === "abort" ? "cancelled" : "failure", startedAt, durationMs: Date.now() - Date.parse(startedAt), error: classified });
     throw error;
+  } finally {
+    clearTimeout(waiting);
   }
 }
 
-async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactRepositoryTarget & { token: string; conflictResolutions?: Record<string, RepositorySyncConflictChoice> }, scope: RepositoryOperationScope): Promise<SyncResult> {
+async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactRepositoryTarget & { token: string } & RepositorySyncOptions, scope: RepositoryOperationScope): Promise<SyncResult> {
   if (meta.remoteKind === "none") throw new Error("This book is local-only. Connect it to GitHub before synchronizing.");
+  const { signal, onProgress } = input;
+  signal?.throwIfAborted();
   const previous = await markLocalRepositoryRemoteChecking(meta.id, scope, meta.remoteHeadSha);
   try {
+  onProgress?.({ step: "checking" });
+  // A change marked as committed without its commit is a change like the others: the commit of this sync takes it and the push publishes it.
+  await settleOrphanedCommittedFiles(meta.id, scope);
   const pendingBeforeSync = await listUnpushedLocalCommits(meta.id);
   const octokit = trackedOctokit(input.token, input);
   // A branch made on this device is published first; then it syncs like any other.
   if (meta.pendingBranch) {
+    signal?.throwIfAborted();
     await publishPendingBranchLeased(meta, octokit, scope);
     meta = await exactLocalRepository(input, scope);
   }
-  const { remoteHeadSha, changed: remoteChanged } = await resolveRemoteChangeState(octokit, meta);
+  const { remoteHeadSha, changed: remoteChanged } = await resolveRemoteChangeState(octokit, meta, signal);
   let pulled = 0;
   let keptLocal = 0;
   let syncPreflightIncludesRecovery = false;
   if (remoteChanged) {
-    const remoteTree = await octokit.rest.git.getTree({ owner: meta.owner, repo: meta.repo, tree_sha: remoteHeadSha, recursive: "1" });
+    const remoteTree = await octokit.rest.git.getTree({ owner: meta.owner, repo: meta.repo, tree_sha: remoteHeadSha, recursive: "1", request: { signal } });
     if (remoteTree.data.truncated) throw new Error("Remote tree is truncated; sync stopped without advancing the local head.");
     const remoteBlobEntries = (remoteTree.data.tree ?? []).filter((entry) => entry.type === "blob" && entry.path);
     const remoteByPath = new Map(remoteBlobEntries.map((entry) => [entry.path!, entry.sha!]));
@@ -1276,6 +1318,23 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
     const writes: Array<{ path: string; sha: string; bytes: Uint8Array; kind: "text" | "binary"; localText?: string }> = [];
     const seenResolutions = new Set<string>();
     let staleChoices = false;
+    // The files the loop below reads from GitHub, counted first so the author sees how far the download is.
+    let downloaded = 0;
+    const toDownload = [...new Set([...localByPath.keys(), ...remoteByPath.keys()])].filter((path) => {
+      const local = localByPath.get(path);
+      const remoteSha = remoteByPath.get(path);
+      if (!remoteSha) return false;
+      const resolution = input.conflictResolutions?.[path];
+      if (resolution) return resolution.choice === "remote";
+      return local ? remoteSha !== local.baseSha : true;
+    }).length;
+    if (toDownload) onProgress?.({ step: "downloading", done: 0, total: toDownload });
+    const download = async (path: string, sha: string) => {
+      signal?.throwIfAborted();
+      const bytes = await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, sha, transferMeter, signal);
+      onProgress?.({ step: "downloading", done: ++downloaded, total: Math.max(toDownload, downloaded) });
+      return bytes;
+    };
     for (const path of new Set([...localByPath.keys(), ...remoteByPath.keys()])) {
       const local = localByPath.get(path);
       const remoteSha = remoteByPath.get(path);
@@ -1299,7 +1358,7 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
         } else {
           if (!remoteSha) deletes.push(path);
           else {
-            const bytes = await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, remoteSha, transferMeter);
+            const bytes = await download(path, remoteSha);
             remoteBytes.set(path, bytes);
             writes.push({ path, sha: remoteSha, bytes, kind: isTextPath(path) ? "text" : "binary" });
           }
@@ -1308,7 +1367,7 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
       }
       if (localChanged && remoteChangedFromBase) {
         const bytes = remoteSha
-          ? await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, remoteSha, transferMeter)
+          ? await download(path, remoteSha)
           : null;
         if (remoteSha && bytes && local && local.status !== "deleted") {
           remoteBytes.set(path, bytes);
@@ -1354,7 +1413,7 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
         continue;
       }
       if (local?.baseSha === remoteSha) continue;
-      const bytes = remoteBytes.get(path) ?? await fetchBlobBytesForRepository(input.token, meta.owner, meta.repo, path, remoteSha, transferMeter);
+      const bytes = remoteBytes.get(path) ?? await download(path, remoteSha);
       writes.push({ path, sha: remoteSha, bytes, kind: isTextPath(path) ? "text" : "binary" });
     }
     if (Object.keys(input.conflictResolutions ?? {}).some((path) => !seenResolutions.has(path))) staleChoices = true;
@@ -1363,6 +1422,9 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
     const recoveryBytes = pendingBeforeSync.length ? localFiles.reduce((sum, file) => sum + file.size, 0) + transferMeter.measuredBytes : 0;
     assertRepositoryAggregateBytes(transferMeter.measuredBytes + recoveryBytes, "transfer", await repositoryTransferAllowance());
     const resolvedRemoteConflict = Object.values(input.conflictResolutions ?? {}).some((resolution) => resolution.choice === "remote");
+    // The last moment a stop leaves everything as it was: from here on the working copy changes, and the sync runs to its end.
+    signal?.throwIfAborted();
+    onProgress?.({ step: "merging" });
     if (pendingBeforeSync.length > 0 || resolvedRemoteConflict) {
       await createLocalRecoverySnapshot(meta.id, `Before conflict-aware full sync from ${meta.remoteHeadSha}`, scope);
       syncPreflightIncludesRecovery = true;
@@ -1379,6 +1441,8 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
     await addLocalRepoLog(meta.id, scope, "pull", `Sync pulled ${pulled} remote files and kept ${keptLocal} non-conflicting local files`);
   } else {
     if (Object.keys(input.conflictResolutions ?? {}).length) throw new RepositorySyncChoiceStaleError();
+    signal?.throwIfAborted();
+    onProgress?.({ step: "merging" });
     await updateLocalRepositoryHead(meta.id, scope, remoteHeadSha);
     if (remoteHeadSha !== meta.remoteHeadSha) await addLocalRepoLog(meta.id, scope, "pull", `Remote head changed to ${remoteHeadSha.slice(0, 7)} with no file-content differences`);
     else await markLocalRepositoryRemoteCheck(meta.id, scope, meta.remoteHeadSha, remoteHeadSha, false);
@@ -1392,6 +1456,7 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
     }
     await createLocalRecoverySnapshot(meta.id, `Before full sync from ${meta.remoteHeadSha}`, scope);
   }
+  onProgress?.({ step: "committing" });
   await restoreUnpushedCommitsAsDirty(meta.id, scope);
   const dirtyAfterMerge = await listDirtyLocalFiles(meta.id);
   let committed = 0;
@@ -1410,14 +1475,22 @@ async function syncFullRepositoryLeased(meta: LocalRepositoryMeta, input: ExactR
   let pushed = 0;
   if (ahead.length) {
     const lockedMeta = await exactLocalRepository(input, scope);
-    pushed = (await pushLocalCommitsLocked(lockedMeta, { ...input, expectedRemoteHeadSha: remoteHeadSha }, scope)).files;
+    onProgress?.({ step: "publishing" });
+    // Without the signal: a push stopped halfway would leave GitHub and this device unsure of each other.
+    const publish: PushLocalCommitsInput = {
+      bookId: input.bookId, token: input.token, repoId: input.repoId, owner: input.owner, repo: input.repo, branch: input.branch, accountIdentity: input.accountIdentity,
+      expectedRemoteHeadSha: remoteHeadSha,
+      onFilePublished: (done, total) => onProgress?.({ step: "publishing", done, total }),
+    };
+    pushed = (await pushLocalCommitsLocked(lockedMeta, publish, scope)).files;
     // Re-read the branch head after push. This closes the race where the periodic
     // remote check sees the new commit between updateRef and the IndexedDB update.
     const finalRef = await octokit.rest.git.getRef({ owner: meta.owner, repo: meta.repo, ref: `heads/${meta.branch}` });
     await updateLocalRepositoryHead(meta.id, scope, finalRef.data.object.sha);
   }
+  const unpublished = (await listUnpublishedLocalPaths(meta.id)).length;
   await addLocalRepoLog(meta.id, scope, "push", `Full sync complete: pulled ${pulled}, kept local ${keptLocal}, committed ${committed}, pushed ${pushed}`);
-  return { pulled, keptLocal, committed, pushed };
+  return { pulled, keptLocal, committed, pushed, unpublished };
   } catch (error) {
     const classified = classifyRepositoryError(error, "compare");
     await markLocalRepositoryRemoteFailure(meta.id, scope, meta.remoteHeadSha, classified.kind, previous).catch(() => undefined);

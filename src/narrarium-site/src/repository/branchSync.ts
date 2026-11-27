@@ -5,6 +5,7 @@ import {
   listDirtyLocalFiles,
   listUnpushedLocalCommits,
   markLocalRepositoryRemoteCheck,
+  settleOrphanedCommittedFiles,
   updateLocalRepositoryHead,
   type LocalRepositoryMeta,
 } from "@/repository/localRepository";
@@ -50,6 +51,8 @@ export async function autoSyncBranch(input: ExactRepositoryTarget & { token: str
   return withRepositoryMutationLease(selected.id, async () => {
     let meta = await exactLocalRepository(input, scope);
     if (meta.remoteKind === "none") return { outcome: "held" };
+    // A change marked as committed without its commit is work like any other (see the full sync): it is pushed, never left behind as «nothing to do».
+    await settleOrphanedCommittedFiles(meta.id, scope);
     const octokit = trackedOctokit(input.token, input);
     const request = { request: { signal: input.signal } };
     let published = false;
