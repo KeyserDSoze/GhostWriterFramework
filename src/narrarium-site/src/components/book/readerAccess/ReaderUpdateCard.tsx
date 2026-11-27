@@ -10,7 +10,7 @@ import { describeReaderFailure } from "@/readerAccess/messages";
 import { LEGACY_READER_SECRET } from "@/readerAccess/contract";
 import { readerProtection } from "@/readerAccess/model";
 import type { ReaderAccess } from "@/components/book/readerAccess/useReaderAccess";
-import type { ReaderUpdateDecision } from "@/readerUpdate/decision";
+import type { ReaderUpdateDecision, UpdateTarget } from "@/readerUpdate/decision";
 import { outsideCheckCommand, outsideCheckUrls, runOutsideCheck, type OutsideCheckResult } from "@/readerUpdate/outsideCheck";
 import { RunFailureNotice } from "@/components/book/readerAccess/RunFailureNotice";
 import { useBranchSyncStore } from "@/branches/syncStore";
@@ -23,38 +23,86 @@ type OnDevice = Extract<ReaderUpdateDecision, { kind: "on-device" }>;
 
 const RUN_KEY = { queued: "queued", running: "running", succeeded: "succeeded", failed: "failed", cancelled: "cancelled" } as const;
 
-function UpdateDetails({ update }: { update: Update }) {
+interface PlanView { branch: string; plan: Pick<UpdateTarget, "workflow" | "workflowChanges" | "folder">; legacyPassword: boolean }
+
+/** What the update changes, branch by branch when it is made on two: the publishing branch's plan and the working branch's are listed apart, and said to be the same files when they are. */
+function UpdateDetails({ plans }: { plans: PlanView[] }) {
   const { t } = useTranslation();
-  const added = update.folder.writes.filter((file) => file.change === "added");
-  const replaced = update.folder.writes.filter((file) => file.change === "replaced");
-  const params = { replaced: replaced.length, added: added.length, version: update.folder.version ?? "" };
-  const files: Array<[string, string[]]> = [["filesReplaced", replaced.map((file) => file.path)], ["filesAdded", added.map((file) => file.path)], ["filesDeleted", update.folder.deletes.map((file) => file.path)]];
+  const same = plans.length === 2 && plans[0].plan.workflowChanges === plans[1].plan.workflowChanges
+    && JSON.stringify(plans[0].plan.folder.writes.map((file) => [file.path, file.content])) === JSON.stringify(plans[1].plan.folder.writes.map((file) => [file.path, file.content]))
+    && plans[0].plan.folder.deletes.length === plans[1].plan.folder.deletes.length;
+  const shown = same ? [plans[0]] : plans;
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <h4 className="text-sm font-medium">{t("readerUpdate.what")}</h4>
-      <ul className="ml-4 list-disc space-y-1 break-words text-sm">
-        {update.workflowChanges && <li>{t(update.workflow.status === "missing" ? "readerUpdate.workflowAdd" : "readerUpdate.workflowUpgrade")}</li>}
-        {update.workflowChanges && update.workflow.settings.legacyPasswordSecret && <li>{t("readerUpdate.workflowLegacy", { name: LEGACY_READER_SECRET })}</li>}
-        {update.folder.writes.length > 0 && <li>{t(update.folder.version ? "readerUpdate.folder" : "readerUpdate.folderNoVersion", params)}</li>}
-        {update.folder.deletes.length > 0 && <li>{t("readerUpdate.deletes", { count: update.folder.deletes.length })}</li>}
-        {update.folder.kept.length > 0 && <li>{t("readerUpdate.kept", { count: update.folder.kept.length })}</li>}
-        <li>{t("readerUpdate.untouched")}</li>
-      </ul>
-      {update.folder.writes.length + update.folder.deletes.length > 0 && (
-        <details className="text-xs">
-          <summary className="inline-flex min-h-6 cursor-pointer items-center font-medium underline underline-offset-2">{t("readerUpdate.files")}</summary>
-          <div className="mt-2 space-y-2">
-            {files.filter(([, paths]) => paths.length > 0).map(([label, paths]) => (
-              <div key={label}>
-                <p className="font-medium">{t(`readerUpdate.${label}`)} ({paths.length})</p>
-                <ul className="max-h-40 overflow-auto break-all font-mono text-muted-foreground">{paths.map((path) => <li key={path}>{path}</li>)}</ul>
-              </div>
-            ))}
+      {same && <p className="text-xs text-muted-foreground" data-testid="reader-update-same">{t("readerUpdate.branches.same")}</p>}
+      {shown.map(({ branch, plan, legacyPassword }) => {
+        const added = plan.folder.writes.filter((file) => file.change === "added");
+        const replaced = plan.folder.writes.filter((file) => file.change === "replaced");
+        const params = { replaced: replaced.length, added: added.length, version: plan.folder.version ?? "" };
+        const files: Array<[string, string[]]> = [["filesReplaced", replaced.map((file) => file.path)], ["filesAdded", added.map((file) => file.path)], ["filesDeleted", plan.folder.deletes.map((file) => file.path)]];
+        return (
+          <div key={branch} className="space-y-2" data-testid="reader-update-plan">
+            {shown.length > 1 && <h5 className="text-sm font-medium">{t("readerUpdate.branches.plan", { branch })}</h5>}
+            <ul className="ml-4 list-disc space-y-1 break-words text-sm">
+              {plan.workflowChanges && <li>{t(plan.workflow.status === "missing" ? "readerUpdate.workflowAdd" : "readerUpdate.workflowUpgrade")}</li>}
+              {plan.workflowChanges && legacyPassword && <li>{t("readerUpdate.workflowLegacy", { name: LEGACY_READER_SECRET })}</li>}
+              {plan.folder.writes.length > 0 && <li>{t(plan.folder.version ? "readerUpdate.folder" : "readerUpdate.folderNoVersion", params)}</li>}
+              {plan.folder.deletes.length > 0 && <li>{t("readerUpdate.deletes", { count: plan.folder.deletes.length })}</li>}
+              {plan.folder.kept.length > 0 && <li>{t("readerUpdate.kept", { count: plan.folder.kept.length })}</li>}
+              <li>{t("readerUpdate.untouched")}</li>
+            </ul>
+            {plan.folder.writes.length + plan.folder.deletes.length > 0 && (
+              <details className="text-xs">
+                <summary className="inline-flex min-h-6 cursor-pointer items-center font-medium underline underline-offset-2">{t("readerUpdate.files")}</summary>
+                <div className="mt-2 space-y-2">
+                  {files.filter(([, paths]) => paths.length > 0).map(([label, paths]) => (
+                    <div key={label}>
+                      <p className="font-medium">{t(`readerUpdate.${label}`)} ({paths.length})</p>
+                      <ul className="max-h-40 overflow-auto break-all font-mono text-muted-foreground">{paths.map((path) => <li key={path}>{path}</li>)}</ul>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
-        </details>
-      )}
+        );
+      })}
     </div>
   );
+}
+
+/** The branches the card is about, and what each has: «main (publishes the reader): old reader; this branch: reader up to date». Nothing when the author works on the publishing branch itself. */
+function BranchStates({ decision, branch }: { decision: Extract<ReaderUpdateDecision, { kind: "update" | "on-device" | "current" }>; branch: string }) {
+  const { t } = useTranslation();
+  const titleId = useId();
+  const publishing = decision.publishing;
+  if (!publishing) return null;
+  const mine = decision.kind === "update" && decision.currentNeeded ? "old" : "updated";
+  const theirs = publishing.state === "current" ? "updated" : publishing.state;
+  return (
+    <section aria-labelledby={titleId} className="space-y-1 rounded-md border p-3 text-sm" data-testid="reader-branches">
+      <h4 id={titleId} className="font-medium">{t("readerUpdate.branches.title")}</h4>
+      <ul className="space-y-1">
+        <li data-branch="publishing" data-state={theirs}><strong>{t("readerUpdate.branches.publishing", { branch: publishing.branch })}</strong>: {t(`readerUpdate.branches.state.${theirs}`)}</li>
+        <li data-branch="current" data-state={mine}><strong>{t("readerUpdate.branches.current", { branch })}</strong>: {t(`readerUpdate.branches.state.${mine}`)}</li>
+      </ul>
+    </section>
+  );
+}
+
+/** What the update does where it is made, in one sentence: on both branches, only on the publishing one, only here because the publishing branch cannot be reached, or on this one. */
+function deliveryLine(t: (key: string, options?: Record<string, unknown>) => string, decision: Update, branch: string): string {
+  const publishing = decision.publishing;
+  const params = { branch, publishing: publishing?.branch ?? "" };
+  const target = decision.publishingTarget;
+  if (target) {
+    if (target.delivery !== "now") return t("readerUpdate.delivery.publishingLater", { ...params, why: t(`readerUpdate.delivery.publishingLaterWhy.${target.delivery === "no-credential" ? "no-credential" : target.delivery === "offline" ? "offline" : "unknown"}`) });
+    return t(decision.currentNeeded ? "readerUpdate.delivery.both" : "readerUpdate.delivery.publishingOnly", params);
+  }
+  if (publishing?.state === "unknown") return t("readerUpdate.delivery.publishingLater", { ...params, why: t(`readerUpdate.delivery.publishingLaterWhy.${decision.delivery === "no-credential" ? "no-credential" : decision.delivery === "offline" ? "offline" : "unknown"}`) });
+  if (publishing?.state === "unreadable") return t("readerUpdate.delivery.publishingUnreadable", params);
+  return t(`readerUpdate.delivery.${decision.delivery}`, params);
 }
 
 function TurnPagesOff({ onAsk }: { onAsk: () => void }) {
@@ -100,8 +148,9 @@ function OnDeviceBody({ decision, lastAuto, branch, syncing, onSync, pagesOn, on
             : t(`readerUpdate.onDevice.auto.${lastAuto.outcome === "name-taken" || lastAuto.outcome === "gone" ? "other" : lastAuto.outcome}`)}
         </p>
       )}
+      <BranchStates decision={decision} branch={branch} />
       <p className="text-sm">{t(`readerUpdate.onDevice.delivery.${decision.delivery}`, { branch })}</p>
-      {!decision.publishesFromBranch && <p className="text-sm font-medium">{t("readerUpdate.delivery.otherBranch", { branch })}</p>}
+      {!decision.publishesFromBranch && (decision.publishing?.state === "unknown" || decision.publishing?.state === "unreadable") && <p className="text-sm font-medium">{t("readerUpdate.delivery.otherBranch", { branch, publishing: decision.publishing.branch })}</p>}
       {pagesOn && exposure === "password-old-reader" && <TurnPagesOff onAsk={onTurnOff} />}
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" disabled={syncing || blocked} aria-describedby={blocked ? "reader-sync-blocked" : undefined} onClick={onSync}>
@@ -172,7 +221,7 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
     passwordsSet: snapshot.loadedAt === null ? null : readerProtection(snapshot.remote) === "protected" ? true : readerProtection(snapshot.remote) === "public" ? false : null,
     ...(workflowRead ? { workflowText: snapshot.workflow!.present ? snapshot.workflow!.content ?? null : null } : {}),
   };
-  const update = useReaderUpdate(book, remote);
+  const update = useReaderUpdate(book, remote, snapshot.repository?.defaultBranch ? { publishingBranch: snapshot.repository.defaultBranch } : {});
   const [pagesOffAsked, setPagesOffAsked] = useState(false);
   const lastAutoOutcome = useBranchSyncStore((state) => state.books[book.id]?.branches[workingBranch]);
   const lastAuto = lastAutoOutcome && ["failed", "diverged", "held", "gone", "name-taken"].includes(lastAutoOutcome.outcome) ? lastAutoOutcome : null;
@@ -201,6 +250,7 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
     body = <p role="status" className="text-muted-foreground">{t("readerUpdate.unreadable")}</p>;
   } else if (decision.kind === "update") {
     const exposure = decision.exposure;
+    const needsReplace = (decision.currentNeeded && decision.customized) || Boolean(decision.publishingTarget?.customized);
     body = (
       <div className="space-y-4">
         <section className={`space-y-1 rounded-md border p-3 ${exposure === "password-old-reader" ? "border-destructive/60 bg-destructive/5" : "border-amber-600/50 bg-amber-50 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"}`} data-testid="reader-update-exposure">
@@ -208,25 +258,26 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
           <p className="text-sm">{t(`readerUpdate.exposure.${exposure}.body`)}</p>
         </section>
         {snapshot.workflowState === "paused" && <p role="note" className="text-sm">{t("readerUpdate.paused")}</p>}
-        <UpdateDetails update={decision} />
-        {decision.customized && (
+        <BranchStates decision={decision} branch={update.branch} />
+        <UpdateDetails plans={[...(decision.publishingTarget ? [{ branch: decision.publishingTarget.branch, plan: decision.publishingTarget, legacyPassword: decision.publishingTarget.workflow.settings.legacyPasswordSecret !== undefined }] : []), ...(decision.currentNeeded ? [{ branch: update.branch, plan: decision, legacyPassword: decision.workflow.settings.legacyPasswordSecret !== undefined }] : [])]} />
+        {(decision.customized || decision.publishingTarget?.customized) && (
           <section className="space-y-2 rounded-md border border-amber-600/50 p-3 text-sm" data-testid="reader-update-customized">
             <h4 className="font-medium">{t("readerUpdate.customized.title")}</h4>
             <p>{t("readerUpdate.customized.body")}</p>
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 text-xs" tabIndex={0} aria-label={t("readerUpdate.customized.title")}>{decision.workflow.customizations.join("\n")}</pre>
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 text-xs" tabIndex={0} aria-label={t("readerUpdate.customized.title")}>{[...(decision.publishingTarget?.customized ? decision.publishingTarget.workflow.customizations : []), ...(decision.customized ? decision.workflow.customizations : [])].join("\n")}</pre>
             <label className="flex items-start gap-2"><input type="checkbox" className="mt-1" checked={replaceEdits} onChange={(event) => setReplaceEdits(event.target.checked)} /><span className="font-medium">{t("readerUpdate.customized.confirm")}</span></label>
           </section>
         )}
         <div className="space-y-1 text-sm">
-          <p>{t(`readerUpdate.delivery.${decision.delivery}`, { branch: update.branch })}</p>
-          {!decision.publishesFromBranch && <p className="font-medium">{t("readerUpdate.delivery.otherBranch", { branch: update.branch })}</p>}
+          <p>{deliveryLine(t, decision, update.branch)}</p>
+          {!decision.publishesFromBranch && (decision.publishing?.state === "unknown" || decision.publishing?.state === "unreadable") && <p className="font-medium">{t("readerUpdate.delivery.otherBranch", { branch: update.branch, publishing: decision.publishing.branch })}</p>}
         </div>
         {remote.pagesOn === true && exposure === "password-old-reader" && <TurnPagesOff onAsk={() => setPagesOffAsked(true)} />}
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" disabled={busy || (decision.customized && !replaceEdits)} aria-describedby={decision.customized && !replaceEdits ? `${titleId}-needed` : undefined} onClick={() => void doUpdate()}>
+          <Button type="button" disabled={busy || (needsReplace && !replaceEdits)} aria-describedby={needsReplace && !replaceEdits ? `${titleId}-needed` : undefined} onClick={() => void doUpdate()}>
             {busy ? <Loader2 aria-hidden="true" className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" /> : <RefreshCw aria-hidden="true" className="mr-1 h-4 w-4" />}{busy ? t("readerUpdate.updating") : t("readerUpdate.update")}
           </Button>
-          {decision.customized && !replaceEdits && <span id={`${titleId}-needed`} className="text-xs text-muted-foreground">{t("readerUpdate.customized.needed")}</span>}
+          {needsReplace && !replaceEdits && <span id={`${titleId}-needed`} className="text-xs text-muted-foreground">{t("readerUpdate.customized.needed")}</span>}
         </div>
       </div>
     );
@@ -240,7 +291,12 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
       : decision.kind === "no-working-copy" ? t("readerUpdate.noWorkingCopy")
       : decision.kind === "local-only" ? t("readerUpdate.localOnly")
       : t("readerUpdate.unreadable");
-    body = <p role="status" className="flex items-start gap-2">{decision.kind === "current" && <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />}<span>{message}</span></p>;
+    body = (
+      <div className="space-y-3">
+        <p role="status" className="flex items-start gap-2">{decision.kind === "current" && <CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />}<span>{message}</span></p>
+        {decision.kind === "current" && <BranchStates decision={decision} branch={update.branch} />}
+      </div>
+    );
   }
 
   const failureText = (failure: ReaderUpdateFailure | null) => failure ? (failure.kind === "refused-customized" ? t("readerUpdate.failure.customized")
@@ -263,8 +319,30 @@ export function ReaderUpdateCard({ book, access }: { book: BookEntry; access: Re
         {syncFailure && <p role="alert" data-testid="reader-sync-failure" className="flex items-start gap-2 rounded-md border border-destructive/50 p-3 text-destructive"><AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" /><span><strong>{t("readerUpdate.onDevice.notSent")}</strong> {syncFailure}</span></p>}
         {access.outcome?.kind === "disable-pages" && <p role="status" data-testid="reader-pages-off-result" className="rounded-md border border-primary/40 bg-primary/5 p-3 font-medium">{access.outcome.result.ok ? t("readerUpdate.pagesOff.done") : t("readerUpdate.pagesOff.failed")}</p>}
         {update.outcome && (
-          <div role="status" className="space-y-1 rounded-md border border-primary/40 bg-primary/5 p-3" data-testid="reader-update-outcome">
-            <p className="flex items-start gap-2 font-medium"><CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{update.outcome.published ? t("readerUpdate.result.published", { branch: update.branch, sha: update.outcome.commitSha.slice(0, 7) }) : t("readerUpdate.result.local")}</p>
+          <div role="status" className="space-y-2 rounded-md border border-primary/40 bg-primary/5 p-3" data-testid="reader-update-outcome">
+            {(update.outcome.published || update.outcome.branches.some((entry) => entry.status === "local")) && (
+              <p className="flex items-start gap-2 font-medium"><CheckCircle2 aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{update.outcome.published ? t("readerUpdate.result.published", { branch: update.outcome.publishedBranch ?? update.branch, sha: update.outcome.commitSha.slice(0, 7) }) : t("readerUpdate.result.local")}</p>
+            )}
+            <ul className="space-y-1 text-sm" data-testid="reader-update-branches">
+              {update.outcome.branches.map((entry) => (
+                <li key={entry.branch} data-branch={entry.role} data-status={entry.status}>{t(`readerUpdate.branchResult.${entry.status}`, { branch: entry.branch, sha: (entry.commitSha ?? "").slice(0, 7), message: entry.githubMessage ?? "" })}</li>
+              ))}
+            </ul>
+            {update.outcome.pullRequestOffer && !update.pullRequest && (
+              <div className="space-y-2" data-testid="reader-update-pr-offer">
+                <p className="text-sm">{t("readerUpdate.pullRequest.offer", { branch: update.outcome.pullRequestOffer.base })}</p>
+                <Button type="button" size="sm" variant="outline" disabled={update.openingPullRequest} onClick={() => void update.openPullRequest(t("readerUpdate.pullRequest.body"))}>
+                  {update.openingPullRequest ? <Loader2 aria-hidden="true" className="mr-1 h-4 w-4 animate-spin motion-reduce:animate-none" /> : null}{update.openingPullRequest ? t("readerUpdate.pullRequest.opening") : t("readerUpdate.pullRequest.open")}
+                </Button>
+              </div>
+            )}
+            {update.pullRequest && (
+              <p className="text-sm" data-testid="reader-update-pr-done">
+                {t("readerUpdate.pullRequest.done", { branch: update.outcome.pullRequestOffer?.base ?? "" })}{" "}
+                <a className="font-medium underline underline-offset-2" href={update.pullRequest.url} target="_blank" rel="noopener noreferrer">{t("readerUpdate.pullRequest.link", { number: update.pullRequest.number })}<ExternalLink aria-hidden="true" className="ml-1 inline h-3 w-3" /><span className="sr-only"> {t("readerAccess.opensNewTab")}</span></a>
+              </p>
+            )}
+            {update.pullRequestFailed && <p role="alert" className="text-sm text-destructive">{t("readerUpdate.pullRequest.failed")}</p>}
             {update.outcome.published && (
               <p className="text-xs text-muted-foreground">
                 {t("readerUpdate.run.label")}: {outcomeRun

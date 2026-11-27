@@ -8,13 +8,14 @@ const env = vi.hoisted(() => ({
   save: vi.fn(async () => true),
   inspect: vi.fn(),
   apply: vi.fn(),
+  openPr: vi.fn(),
   sync: vi.fn(),
 }));
 vi.mock("@/repository/githubRequest", () => ({ createTrackedGitHubClient: () => env.octokit }));
 vi.mock("@/drive/useSettings", () => ({ useSettings: () => ({ save: env.save }) }));
 vi.mock("@/readerAccess/sealedBox", () => ({ sealSecret: (value: string) => `sealed:${value.length}` }));
 vi.mock("@/readerUpdate/inspect", () => ({ inspectReaderUpdate: env.inspect }));
-vi.mock("@/readerUpdate/apply", () => ({ applyReaderUpdate: env.apply }));
+vi.mock("@/readerUpdate/apply", () => ({ applyReaderUpdate: env.apply, openReaderUpdatePullRequest: env.openPr }));
 vi.mock("@/repository/repositoryService", async (importOriginal) => ({ ...await importOriginal<typeof import("@/repository/repositoryService")>(), syncFullRepository: env.sync }));
 vi.mock("@/narrarium/bookTemplate", async (importOriginal) => ({ ...await importOriginal<typeof import("@/narrarium/bookTemplate")>(), loadBookTemplate: async () => ({ format: 1, placeholders: { package: "p", readerPackage: "r" }, files: {} }) }));
 
@@ -52,7 +53,7 @@ const TEXTS = {
   en: {
     title: "Update the reader", exposure: "Your published book is less private than it looks", exposureBody: /still publishes the EPUB \(downloads\/book\.epub\) and the titles of the chapters in clear/, what: "What the update changes",
     workflow: /Updates the workflow so that the reader can have several passwords/, legacy: /The password you use today \(the secret NARRARIUM_READER_PASSWORD\) stays valid/, folder: /Replaces 1 files of the reader\/ folder and adds 1, at the version 0\.1\.61/, untouched: /The files of your book/,
-    now: /Narrarium makes one commit on the branch “main”/, noCredential: /This book has no GitHub credential on this device/, offline: /You are offline/, otherBranch: /“draft” is not a branch the workflow publishes from/, update: "Update the reader",
+    now: /Narrarium makes one commit on the branch “main”/, noCredential: /This book has no GitHub credential on this device/, offline: /You are offline/, otherBranch: /“draft” is not the branch the reader is published from \(“main” is\)/, update: "Update the reader",
     customized: "This workflow has edits of yours", replace: "Replace my edits with the standard workflow", needed: /Tick “Replace my edits” to update/, published: /The update is committed on “main” and published \(commit abc1234\)/, local: /committed on this device\. It is published at the next sync/,
     waiting: /Waiting for GitHub to start the publication/, current: /The reader of this book is up to date: its workflow and its reader\/ folder are the ones of version 0\.1\.61/, check: "Check now", protectedResult: /Protected: the EPUB answers 404/, exposed: /The EPUB is still published in clear \(it answered 200\)/, unreachable: /The browser cannot read the answer/, copy: "Copy the line",
     refused: /“Replace my edits” was not ticked: nothing was committed/, changed: /A file changed after it was checked/, permission: /lacks the permission “Workflows”/, onDeviceTitle: "Updated on this device, not yet on GitHub", remoteOld: /On GitHub the workflow is the old one/, localCommits: /3 files\) that GitHub does not have yet/, filesSummary: "Show the 3 files not on GitHub yet", syncNow: "Sync now", notSent: /Not sent to GitHub\./, conflict: /choose between two copies of a file/, sentRun: /Waiting for GitHub to start the publication/, pagesOffButton: "Turn GitHub Pages off", pagesOffConfirm: "Turn Pages off", pagesOffDone: /GitHub Pages is off: the old reader is no longer published/, currentUnchecked: /GitHub could not be checked just now/, noCredentialSync: /has no GitHub credential on this device, so nothing can be sent/, offlineSync: /You are offline, so nothing can be sent now/,
@@ -63,7 +64,7 @@ const TEXTS = {
   it: {
     title: "Aggiorna il lettore", exposure: "Il tuo libro pubblicato è meno riservato di quanto sembra", exposureBody: /pubblica ancora l'EPUB \(downloads\/book\.epub\) e i titoli dei capitoli in chiaro/, what: "Cosa cambia l'aggiornamento",
     workflow: /Aggiorna il workflow perché il lettore possa avere più password/, legacy: /La password che usi oggi \(il segreto NARRARIUM_READER_PASSWORD\) resta valida/, folder: /Sostituisce 1 file della cartella reader\/ e ne aggiunge 1, alla versione 0\.1\.61/, untouched: /I file del tuo libro/,
-    now: /Narrarium fa un solo commit sul ramo “main”/, noCredential: /Questo libro non ha una credenziale GitHub su questo dispositivo/, offline: /Sei offline/, otherBranch: /“draft” non è un ramo da cui il workflow pubblica/, update: "Aggiorna il lettore",
+    now: /Narrarium fa un solo commit sul ramo “main”/, noCredential: /Questo libro non ha una credenziale GitHub su questo dispositivo/, offline: /Sei offline/, otherBranch: /“draft” non è il ramo da cui il lettore è pubblicato \(lo è “main”\)/, update: "Aggiorna il lettore",
     customized: "Questo workflow ha modifiche tue", replace: "Sostituisci le mie modifiche con il workflow standard", needed: /Spunta “Sostituisci le mie modifiche” per aggiornare/, published: /L'aggiornamento è salvato su “main” e pubblicato \(commit abc1234\)/, local: /salvato su questo dispositivo\. Viene pubblicato alla prossima sincronizzazione/,
     waiting: /In attesa che GitHub avvii la pubblicazione/, current: /Il lettore di questo libro è aggiornato: il suo workflow e la sua cartella reader\/ sono quelli della versione 0\.1\.61/, check: "Controlla ora", protectedResult: /Protetto: l'EPUB risponde 404/, exposed: /L'EPUB è ancora pubblicato in chiaro \(ha risposto 200\)/, unreachable: /Il browser non riesce a leggere la risposta/, copy: "Copia la riga",
     refused: /“Sostituisci le mie modifiche” non era spuntato: non è stato salvato nulla/, changed: /Un file è cambiato dopo il controllo/, permission: /non ha il permesso “Workflows”/, onDeviceTitle: "Aggiornato su questo dispositivo, non ancora su GitHub", remoteOld: /Su GitHub il workflow è quello vecchio/, localCommits: /3 file\) che GitHub non ha ancora/, filesSummary: "Mostra i 3 file non ancora su GitHub", syncNow: "Sincronizza ora", notSent: /Non inviato a GitHub\./, conflict: /scelga tra due copie di un file/, sentRun: /In attesa che GitHub avvii la pubblicazione/, pagesOffButton: "Spegni GitHub Pages", pagesOffConfirm: "Spegni Pages", pagesOffDone: /GitHub Pages è spento: il vecchio lettore non è più pubblicato/, currentUnchecked: /controllare GitHub in questo momento/, noCredentialSync: /non ha una credenziale GitHub su questo dispositivo, quindi non si può inviare nulla/, offlineSync: /Sei offline, quindi ora non si può inviare nulla/,
@@ -82,6 +83,7 @@ beforeEach(() => {
   env.save.mockClear();
   env.inspect.mockReset().mockImplementation(async () => found());
   env.apply.mockReset();
+  env.openPr.mockReset();
   env.sync.mockReset();
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, defaultGitHubToken: "github_pat_default", books: [book] } });
 });
@@ -130,14 +132,14 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
       counter += 1;
       book = { ...book, id: `reader-update-${counter}` };
     }
-    env.inspect.mockImplementation(async () => found({ branch: "draft" }));
+    env.inspect.mockImplementation(async () => found({ branch: "draft", publishingBranch: "main" }));
     book = { ...book, id: `reader-update-draft-${counter}`, activeBranch: "draft" };
     await open(language);
     expect(await within(card()).findByText(text.otherBranch)).toBeInTheDocument();
   });
 
   it("commits once on the button, says it was published, and follows the publication of that commit until its run is there", async () => {
-    env.apply.mockResolvedValue({ commitSha: "abc1234def", published: true, paths: ["x"] });
+    env.apply.mockResolvedValue({ commitSha: "abc1234def", published: true, paths: ["x"], publishedBranch: "main", branches: [{ branch: "main", role: "current", status: "published", commitSha: "abc1234def" }] });
     await open(language);
     await screen.findByTestId("reader-update-exposure");
     fireEvent.click(within(card()).getByRole("button", { name: text.update }));
@@ -150,7 +152,7 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
   it("shows the run of the commit that was published, and offers the outside check once that run has succeeded", async () => {
     env.apply.mockImplementation(async () => {
       github.runs.unshift({ id: 9, status: "completed", conclusion: "success", html_url: "https://github.com/me/book/actions/runs/9", created_at: "2026-11-25T10:00:00Z", head_branch: "main", head_sha: "abc1234def" });
-      return { commitSha: "abc1234def", published: true, paths: ["x"] };
+      return { commitSha: "abc1234def", published: true, paths: ["x"], publishedBranch: "main", branches: [{ branch: "main", role: "current", status: "published", commitSha: "abc1234def" }] };
     });
     await open(language);
     await screen.findByTestId("reader-update-exposure");
@@ -161,7 +163,7 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
   });
 
   it("says that the update waits on this device when it could not be published", async () => {
-    env.apply.mockResolvedValue({ commitSha: "local-1", published: false, paths: ["x"] });
+    env.apply.mockResolvedValue({ commitSha: "local-1", published: false, paths: ["x"], publishedBranch: null, branches: [{ branch: "main", role: "current", status: "local", commitSha: "local-1" }] });
     await open(language);
     await screen.findByTestId("reader-update-exposure");
     fireEvent.click(within(card()).getByRole("button", { name: text.update }));
@@ -170,7 +172,7 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
 
   it("does not let a workflow with edits be replaced without the owner's tick, shows the differing lines, and then passes the tick on", async () => {
     env.inspect.mockImplementation(async () => found({ workflowText: `${current}\n  notify:\n    runs-on: ubuntu-latest\n` }));
-    env.apply.mockResolvedValue({ commitSha: "abc1234def", published: false, paths: ["x"] });
+    env.apply.mockResolvedValue({ commitSha: "abc1234def", published: false, paths: ["x"], publishedBranch: null, branches: [{ branch: "main", role: "current", status: "local", commitSha: "abc1234def" }] });
     await open(language);
     const section = await screen.findByTestId("reader-update-customized");
     expect(within(section).getByText(text.customized)).toBeInTheDocument();
@@ -198,6 +200,91 @@ describe.each(["en", "it"] as const)("Update the reader in %s", (language) => {
     env.apply.mockRejectedValueOnce(Object.assign(new Error("refusing to allow an OAuth App to create or update workflow `.github/workflows/deploy-reader-pages.yml` without `workflow` scope"), { status: 404 }));
     fireEvent.click(button());
     await waitFor(() => expect(within(card()).getByRole("alert")).toHaveTextContent(text.permission));
+  });
+
+  describe("on a branch that is not the one the reader is published from", () => {
+    const publishingRead = (workflowText: string | null = legacy) => ({ branch: "main", source: "github" as const, headSha: "head-1", workflowText, workflowHash: null, folder: folder() });
+    const onFeature = (overrides: Partial<ReaderUpdateInputs> = {}) => found({ branch: "feature/x", publishingBranch: "main", publishing: publishingRead(), ...overrides });
+    const branchText = language === "en"
+      ? { states: "Branches", publishing: "“main” (publishes the reader)", current: "“feature/x” (this branch)", old: "old reader: it needs the update", updated: "reader up to date", both: /one commit on “main”, the branch the reader is published from, directly on GitHub, and one on “feature\/x”/, later: /“main”, the branch the reader is published from, cannot be reached now \(you are offline\)/, same: /Both branches get the same files/, published: /“main”: updated on GitHub \(commit abc1234\)/, protectedLine: /“main” is protected.*GitHub said: “Changes must be made through a pull request\.”/, openPr: "Open a pull request", prLink: "Open pull request #7 on GitHub", pending: /not updated yet, it could not be reached now/, changed: /“main” changed after the check/ }
+      : { states: "Rami", publishing: "“main” (pubblica il lettore)", current: "“feature/x” (questo ramo)", old: "lettore vecchio: serve l'aggiornamento", updated: "lettore aggiornato", both: /un commit su “main”, il ramo da cui il lettore è pubblicato, direttamente su GitHub, e uno su “feature\/x”/, later: /“main”, il ramo da cui il lettore è pubblicato, non è raggiungibile ora \(sei offline\)/, same: /I due rami ricevono gli stessi file/, published: /“main”: aggiornato su GitHub \(commit abc1234\)/, protectedLine: /“main” è protetto.*GitHub ha detto: «Changes must be made through a pull request\.»/, openPr: "Apri una pull request", prLink: "Apri la pull request #7 su GitHub", pending: /non ancora aggiornato, non era raggiungibile ora/, changed: /“main” è cambiato dopo il controllo/ };
+
+    beforeEach(() => { book = { ...book, id: `reader-update-feature-${counter}`, activeBranch: "feature/x" }; });
+
+    it("names the branches and what each one has, and says the update is made on both with the same files", async () => {
+      env.inspect.mockImplementation(async () => onFeature());
+      await open(language);
+      const branches = await screen.findByTestId("reader-branches");
+      expect(within(branches).getByText(branchText.states)).toBeInTheDocument();
+      const items = within(branches).getAllByRole("listitem");
+      expect(items[0]).toHaveTextContent(branchText.publishing);
+      expect(items[0]).toHaveTextContent(branchText.old);
+      expect(items[1]).toHaveTextContent(branchText.current);
+      expect(within(card()).getByText(branchText.both)).toBeInTheDocument();
+      expect(within(card()).getByText(branchText.same)).toBeInTheDocument();
+      expect(within(card()).getAllByTestId("reader-update-plan")).toHaveLength(1);
+    });
+
+    it("says that only the publishing branch is old when this branch is already updated", async () => {
+      env.inspect.mockImplementation(async () => onFeature({ workflowText: current, folder: folder({ writes: [] }) }));
+      await open(language);
+      const branches = await screen.findByTestId("reader-branches");
+      expect(within(branches).getAllByRole("listitem")[0]).toHaveTextContent(branchText.old);
+      expect(within(branches).getAllByRole("listitem")[1]).toHaveTextContent(branchText.updated);
+    });
+
+    it("says that it stays on this device, not yet on main, when main cannot be reached", async () => {
+      env.inspect.mockImplementation(async () => found({ branch: "feature/x", publishingBranch: "main", online: false }));
+      await open(language);
+      expect(await within(card()).findByText(branchText.later)).toBeInTheDocument();
+    });
+
+    it("reports each branch after the update, and the one that was not reached", async () => {
+      env.inspect.mockImplementation(async () => onFeature());
+      env.apply.mockResolvedValue({ commitSha: "abc1234def", published: true, paths: ["x"], publishedBranch: "main", branches: [{ branch: "main", role: "publishing", status: "published", commitSha: "abc1234def" }, { branch: "feature/x", role: "current", status: "local", commitSha: "l1" }] });
+      await open(language);
+      await screen.findByTestId("reader-branches");
+      fireEvent.click(within(card()).getByRole("button", { name: text.update }));
+      const outcome = await screen.findByTestId("reader-update-outcome");
+      expect(within(outcome).getByText(branchText.published)).toBeInTheDocument();
+      expect(within(outcome).getAllByRole("listitem")).toHaveLength(2);
+      expect(env.apply.mock.calls[0][0]).toMatchObject({ branch: "feature/x" });
+    });
+
+    it("says a branch that moved was left alone, and one that was not reached is not yet updated", async () => {
+      env.inspect.mockImplementation(async () => onFeature());
+      env.apply.mockResolvedValue({ commitSha: "l1", published: false, paths: ["x"], publishedBranch: null, branches: [{ branch: "main", role: "publishing", status: "changed" }, { branch: "feature/x", role: "current", status: "local", commitSha: "l1" }] });
+      await open(language);
+      await screen.findByTestId("reader-branches");
+      fireEvent.click(within(card()).getByRole("button", { name: text.update }));
+      expect(await within(await screen.findByTestId("reader-update-outcome")).findByText(branchText.changed)).toBeInTheDocument();
+      cleanup();
+      env.apply.mockResolvedValue({ commitSha: "l1", published: false, paths: ["x"], publishedBranch: null, branches: [{ branch: "main", role: "publishing", status: "pending" }, { branch: "feature/x", role: "current", status: "local", commitSha: "l1" }] });
+      book = { ...book, id: `reader-update-feature-b-${counter}` };
+      await open(language);
+      await screen.findByTestId("reader-branches");
+      fireEvent.click(within(card()).getByRole("button", { name: text.update }));
+      expect(await within(await screen.findByTestId("reader-update-outcome")).findByText(branchText.pending)).toBeInTheDocument();
+    });
+
+    it("says that main is protected with GitHub's own words and offers the pull request, which opens in a new tab once made", async () => {
+      env.inspect.mockImplementation(async () => onFeature());
+      const offer = { base: "main", baseHeadSha: "head-1", title: "Update the reader", message: "Update the reader\n", mutations: [] };
+      env.apply.mockResolvedValue({ commitSha: "l1", published: false, paths: ["x"], publishedBranch: null, pullRequestOffer: offer, branches: [{ branch: "main", role: "publishing", status: "protected", githubMessage: "Changes must be made through a pull request." }, { branch: "feature/x", role: "current", status: "published", commitSha: "l1" }] });
+      env.openPr.mockResolvedValue({ url: "https://github.com/me/book/pull/7", number: 7, branch: "narrarium/update-reader-20261127" });
+      await open(language);
+      await screen.findByTestId("reader-branches");
+      fireEvent.click(within(card()).getByRole("button", { name: text.update }));
+      const outcome = await screen.findByTestId("reader-update-outcome");
+      expect(within(outcome).getByText(branchText.protectedLine)).toBeInTheDocument();
+      fireEvent.click(within(outcome).getByRole("button", { name: branchText.openPr }));
+      const link = await within(outcome).findByRole("link", { name: new RegExp(branchText.prLink.replace(/[#]/g, "\\#")) });
+      expect(link).toHaveAttribute("href", "https://github.com/me/book/pull/7");
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(env.openPr).toHaveBeenCalledTimes(1);
+      expect(env.openPr.mock.calls[0][0]).toMatchObject({ offer });
+      expect(within(outcome).queryByRole("button", { name: branchText.openPr })).toBeNull();
+    });
   });
 
   it("says when the publishing workflow is paused, because Pages was turned off", async () => {

@@ -158,6 +158,70 @@ describe("whether the reader of a book needs updating", () => {
   });
 });
 
+describe("the update when the author works on a branch that is not the publishing one", () => {
+  const plan = (writes: number, workflowText: string | null): import("@/readerUpdate/publishingBranch").PublishingBranchRead => ({
+    branch: "main", source: "github", headSha: "head-1", workflowText, workflowHash: null,
+    folder: folder({ writes: Array.from({ length: writes }, (_, index) => ({ path: `reader/src/f${index}.ts`, content: "new", change: "replaced" as const, expectedHash: `h${index}` })) }),
+  });
+  const onFeature = { ...base, branch: "feature/x", publishingBranch: "main" } satisfies ReaderUpdateInputs;
+
+  it("takes the publishing branch from the repository: the one it names is the one, whatever it is called", () => {
+    expect(decideReaderUpdate({ ...base, branch: "main", publishingBranch: "trunk" })).toMatchObject({ publishesFromBranch: false });
+    expect(decideReaderUpdate({ ...base, branch: "trunk", publishingBranch: "trunk" })).toMatchObject({ publishesFromBranch: true });
+    expect(decideReaderUpdate({ ...base, branch: "master", publishingBranch: "master" })).toMatchObject({ publishesFromBranch: true });
+    // Only when the repository has not been asked are main and master taken for it.
+    expect(decideReaderUpdate({ ...base, branch: "master" })).toMatchObject({ publishesFromBranch: true });
+  });
+
+  it("plans the update on the publishing branch as well when it has an old reader, with the files of that branch's own state", () => {
+    const decision = decideReaderUpdate({ ...onFeature, publishing: plan(2, v1) });
+    expect(decision).toMatchObject({ kind: "update", currentNeeded: true, publishing: { branch: "main", state: "old" }, publishingTarget: { branch: "main", source: "github", headSha: "head-1", workflowChanges: true, delivery: "now" } });
+    expect(decision.kind === "update" && decision.publishingTarget?.folder.writes).toHaveLength(2);
+  });
+
+  it("offers the update for the publishing branch alone when this branch is already updated, and says so", () => {
+    const decision = decideReaderUpdate({ ...onFeature, workflowText: current, folder: folder({ writes: [] }), publishing: plan(1, v1) });
+    expect(decision).toMatchObject({ kind: "update", currentNeeded: false, publishing: { state: "old" }, publishingTarget: { branch: "main" } });
+  });
+
+  it("says that only this branch is old when the publishing branch is current, and is not exposed", () => {
+    const decision = decideReaderUpdate({ ...onFeature, remote: { pagesOn: true, passwordsSet: true }, publishing: plan(0, current) });
+    expect(decision).toMatchObject({ kind: "update", currentNeeded: true, exposure: "branch-only", publishing: { state: "current" } });
+    expect(decision.kind === "update" && decision.publishingTarget).toBeUndefined();
+  });
+
+  it("is current when both branches are, and keeps the two states for the cards", () => {
+    const decision = decideReaderUpdate({ ...onFeature, workflowText: current, folder: folder({ writes: [] }), publishing: plan(0, current) });
+    expect(decision).toMatchObject({ kind: "current", publishing: { branch: "main", state: "current" } });
+  });
+
+  it("claims nothing of the publishing branch when GitHub could not be asked, or did not answer, and keeps the exposure of the old reader", () => {
+    expect(decideReaderUpdate({ ...onFeature, online: false })).toMatchObject({ kind: "update", currentNeeded: true, publishing: { branch: "main", state: "unknown" }, exposure: "old-reader", delivery: "offline" });
+    expect(decideReaderUpdate({ ...onFeature, publishing: "unreadable" })).toMatchObject({ kind: "update", publishing: { state: "unreadable" } });
+    expect(decideReaderUpdate({ ...onFeature, credential: false })).toMatchObject({ kind: "update", publishing: { state: "unknown" }, delivery: "no-credential" });
+  });
+
+  it("waits on this device for the publishing branch when GitHub cannot be reached now (not yet on main)", () => {
+    const decision = decideReaderUpdate({ ...onFeature, credential: false, publishing: plan(1, v1) });
+    expect(decision).toMatchObject({ kind: "update", publishingTarget: { delivery: "no-credential" } });
+  });
+
+  it("has no publishing side when the author works on the publishing branch itself", () => {
+    const decision = decideReaderUpdate({ ...base, publishingBranch: "main" });
+    expect(decision).toMatchObject({ kind: "update", currentNeeded: true, publishesFromBranch: true });
+    expect(decision.kind === "update" && decision.publishing).toBeUndefined();
+  });
+
+  it("makes the same commit for both branches: the same files in the same order", () => {
+    const decision = decideReaderUpdate({ ...onFeature, publishing: plan(2, v1) });
+    if (decision.kind !== "update" || !decision.publishingTarget) throw new Error("expected both");
+    const mine = buildReaderUpdateCommit(decision, { replaceEdits: false, workflowHash: "wf" });
+    const theirs = buildReaderUpdateCommit(decision.publishingTarget, { replaceEdits: false, workflowHash: null, unchecked: true });
+    expect(theirs.mutations.every((mutation) => !("expectedCurrentHash" in mutation))).toBe(true);
+    expect(theirs.mutations.find((mutation) => mutation.path.endsWith("deploy-reader-pages.yml"))?.content).toBe(mine.mutations.find((mutation) => mutation.path.endsWith("deploy-reader-pages.yml"))?.content);
+  });
+});
+
 describe("the commit of the update", () => {
   const update = () => {
     const decision = decideReaderUpdate({ ...base, folder: folder({ writes: [

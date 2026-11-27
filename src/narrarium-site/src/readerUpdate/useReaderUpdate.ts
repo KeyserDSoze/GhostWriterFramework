@@ -11,7 +11,8 @@ import { currentRepositoryScopeIdentity, captureRepositoryOperationScope } from 
 import { getLocalRepository } from "@/repository/localRepository";
 import { RepositorySyncConflictError, syncFullRepository } from "@/repository/repositoryService";
 import { useRepositorySyncStore } from "@/store/repositorySyncStore";
-import { applyReaderUpdate, type ReaderUpdateOutcome } from "@/readerUpdate/apply";
+import { applyReaderUpdate, openReaderUpdatePullRequest, type ReaderUpdateOutcome } from "@/readerUpdate/apply";
+import type { UpdatePullRequest } from "@/readerUpdate/publishingBranch";
 import { CustomizedWorkflowRefused } from "@/readerUpdate/commit";
 import type { ReaderUpdateInputs } from "@/readerUpdate/decision";
 import { inspectReaderUpdate, type ReaderUpdateInspection } from "@/readerUpdate/inspect";
@@ -34,12 +35,16 @@ interface Entry {
   syncing: boolean;
   /** Why the last «Sync now» did not publish, in the same terms as a failed update. */
   syncFailure: ReaderUpdateFailure | null;
+  /** The pull request that was opened to carry the update to a protected publishing branch. */
+  pullRequest: UpdatePullRequest | null;
+  openingPullRequest: boolean;
+  pullRequestFailed: boolean;
 }
 
 /** The newest check of each book and branch: a slower, older one (made before GitHub was read) never replaces what a newer one found. */
 const newestCheck: Record<string, number> = {};
 
-const EMPTY: Entry = { inspection: null, checking: false, applying: false, outcome: null, failure: null, syncing: false, syncFailure: null };
+const EMPTY: Entry = { inspection: null, checking: false, applying: false, outcome: null, failure: null, syncing: false, syncFailure: null, pullRequest: null, openingPullRequest: false, pullRequestFailed: false };
 
 /** What was found for each book and branch, so that the tab of the reader and the notice of the GitHub tab show the same thing and one refreshes the other. */
 const useReaderUpdateStore = create<{ entries: Record<string, Entry>; patch: (key: string, change: Partial<Entry>) => void }>((set) => ({
@@ -62,12 +67,14 @@ export function useWorkingBranch(book: BookEntry): string {
 }
 
 /** The check of a book's reader and the one commit that updates it. `remote` is what GitHub said of Pages and the passwords, when the caller has read it. */
-export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["remote"], options: { scope?: string } = {}) {
+export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["remote"], options: { scope?: string; /** The repository's default branch, when the caller has read it; otherwise the one the book's structure has. */ publishingBranch?: string } = {}) {
   const settings = useSettingsStore((state) => state.settings);
   const token = resolveGitHubRemoteToken(book, settings);
   // Checked again when GitHub becomes reachable or not (a connection, a credential GitHub refuses): the delivery of the update follows it.
   const remoteAvailability = useGitHubRemoteAvailability(book, token);
   const branch = useWorkingBranch(book);
+  const structureDefault = useBooksStore((state) => state.structures[book.id]?.defaultBranch);
+  const publishingBranch = options.publishingBranch ?? structureDefault;
   const key = `${book.id}|${branch}${options.scope ? `|${options.scope}` : ""}`;
   const entry = useReaderUpdateStore((state) => state.entries[key]) ?? EMPTY;
   const patch = useReaderUpdateStore((state) => state.patch);
@@ -80,19 +87,19 @@ export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["re
     const mine = (newestCheck[key] = (newestCheck[key] ?? 0) + 1);
     patch(key, { checking: true });
     try {
-      const inspection = await inspectReaderUpdate({ book, branch, token, remote: remoteKey, loadTemplate: loadBookTemplate });
+      const inspection = await inspectReaderUpdate({ book, branch, token, remote: remoteKey, ...(publishingBranch ? { publishingBranch } : {}), loadTemplate: loadBookTemplate });
       if (newestCheck[key] === mine) patch(key, { inspection, checking: false });
     } catch {
       if (newestCheck[key] === mine) patch(key, { checking: false, inspection: null });
     }
-  }, [book, branch, token, remoteKey, key, patch, remoteAvailability]);
+  }, [book, branch, token, remoteKey, publishingBranch, key, patch, remoteAvailability]);
 
   useEffect(() => { void check(); }, [check]);
 
   const apply = useCallback(async (options: { replaceEdits: boolean }): Promise<ReaderUpdateOutcome | null> => {
     const current = useReaderUpdateStore.getState().entries[key]?.inspection;
     if (!current || current.decision.kind !== "update" || useReaderUpdateStore.getState().entries[key]?.applying) return null;
-    patch(key, { applying: true, failure: null, outcome: null });
+    patch(key, { applying: true, failure: null, outcome: null, pullRequest: null, pullRequestFailed: false });
     try {
       const outcome = await applyReaderUpdate({ book, branch, token, update: current.decision, workflowHash: current.workflowHash, replaceEdits: options.replaceEdits });
       patch(key, { applying: false, outcome });
@@ -125,5 +132,20 @@ export function useReaderUpdate(book: BookEntry, remote?: ReaderUpdateInputs["re
     }
   }, [book, branch, token, key, patch, check]);
 
-  return { ...entry, branch, check, apply, syncNow, dismissSyncFailure: () => patch(key, { syncFailure: null }), dismissFailure: () => patch(key, { failure: null }) };
+  /** The way that works when the publishing branch is protected: a pull request from a branch that carries the update. */
+  const openPullRequest = useCallback(async (body: string): Promise<UpdatePullRequest | null> => {
+    const offer = useReaderUpdateStore.getState().entries[key]?.outcome?.pullRequestOffer;
+    if (!offer || useReaderUpdateStore.getState().entries[key]?.openingPullRequest) return null;
+    patch(key, { openingPullRequest: true, pullRequestFailed: false });
+    try {
+      const pullRequest = await openReaderUpdatePullRequest({ book, token, offer, body });
+      patch(key, { openingPullRequest: false, pullRequest });
+      return pullRequest;
+    } catch {
+      patch(key, { openingPullRequest: false, pullRequestFailed: true });
+      return null;
+    }
+  }, [book, token, key, patch]);
+
+  return { ...entry, branch, publishingBranch, check, apply, syncNow, openPullRequest, dismissSyncFailure: () => patch(key, { syncFailure: null }), dismissFailure: () => patch(key, { failure: null }) };
 }

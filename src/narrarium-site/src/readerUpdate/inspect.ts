@@ -1,4 +1,6 @@
+import type { Octokit } from "@octokit/rest";
 import { bookStorageMode, type BookEntry } from "@/types/settings";
+import { createTrackedGitHubClient } from "@/repository/githubRequest";
 import { isUsableGitHubToken } from "@/github/remoteAvailability";
 import { getLocalFile, getLocalRepository, listDirtyLocalFiles, listLocalFilesUnder, listUnpushedLocalCommits, sha256Text } from "@/repository/localRepository";
 import { captureRepositoryOperationScope, currentRepositoryScopeIdentity } from "@/repository/repositoryOperationScope";
@@ -6,6 +8,7 @@ import { PAGES_WORKFLOW_PATH } from "@/github/bookRepository";
 import { packageNameForTitle, type BookTemplate } from "@/narrarium/bookTemplate";
 import { decideReaderUpdate, type ReaderUpdateDecision, type ReaderUpdateInputs } from "@/readerUpdate/decision";
 import { READER_DIR, READER_PACKAGE_JSON, planReaderFolder } from "@/readerUpdate/folderPlan";
+import { readPublishingBranch, type PublishingBranchRead } from "@/readerUpdate/publishingBranch";
 
 /** What the check of a book's reader found, with what the commit of its update needs to be sure nothing changed in between. */
 export interface ReaderUpdateInspection {
@@ -20,6 +23,10 @@ export interface InspectReaderUpdateInput {
   branch: string;
   token: string;
   remote?: ReaderUpdateInputs["remote"];
+  /** The repository's default branch: the branch the workflow publishes from. When it is not `branch`, what it has is read too. */
+  publishingBranch?: string;
+  /** The client for GitHub (the site's tracked one by default; a fake in a test). */
+  octokit?: Octokit;
   /** The site's template; it is a lazy chunk of its own, so it is loaded here and only here. */
   loadTemplate: () => Promise<BookTemplate>;
 }
@@ -30,7 +37,7 @@ export interface InspectReaderUpdateInput {
  */
 export async function inspectReaderUpdate(input: InspectReaderUpdateInput): Promise<ReaderUpdateInspection> {
   const { book, branch } = input;
-  const base = { storage: bookStorageMode(book), branch, online: typeof navigator === "undefined" || navigator.onLine !== false, remote: input.remote } as const;
+  const base = { storage: bookStorageMode(book), branch, online: typeof navigator === "undefined" || navigator.onLine !== false, remote: input.remote, ...(input.publishingBranch ? { publishingBranch: input.publishingBranch } : {}) } as const;
   const checkedAt = Date.now();
   const nothing = (storage: ReaderUpdateInputs["storage"], workingCopy: boolean): ReaderUpdateInspection => ({
     decision: decideReaderUpdate({ ...base, storage, workingCopy, workflowText: undefined, folder: null, credential: false, localChanges: false }),
@@ -54,6 +61,10 @@ export async function inspectReaderUpdate(input: InspectReaderUpdateInput): Prom
     fallbackPackageName: `${packageNameForTitle(book.repo)}-reader`,
     hash: sha256Text,
   });
+  const credential = isUsableGitHubToken(input.token) && meta.remoteKind !== "none";
+  const publishing = input.publishingBranch && input.publishingBranch !== branch
+    ? await readPublishingSide({ ...input, publishingBranch: input.publishingBranch, template, credential, online: base.online, scope, identity })
+    : undefined;
   const [dirty, ahead] = await Promise.all([listDirtyLocalFiles(meta.id), listUnpushedLocalCommits(meta.id)]);
   const readerPath = (path: string) => path === PAGES_WORKFLOW_PATH || path.startsWith(`${READER_DIR}/`);
   const unpublished = [...new Set([...dirty.map((file) => file.path), ...ahead.flatMap((commit) => commit.files.map((file) => file.path))].filter(readerPath))].sort();
@@ -63,9 +74,32 @@ export async function inspectReaderUpdate(input: InspectReaderUpdateInput): Prom
     workflowText,
     folder,
     // The credential is the one decision of remoteAvailability: none, the local token, or one GitHub refused all leave the commit on this device.
-    credential: isUsableGitHubToken(input.token) && meta.remoteKind !== "none",
+    credential,
+    ...(publishing !== undefined ? { publishing } : {}),
     localChanges: dirty.length > 0 || ahead.length > 0,
     unpublished,
   });
   return { decision, workflowHash: workflow && workflow.status !== "deleted" ? workflow.currentHash : null, checkedAt };
+}
+
+/**
+ * What the publishing branch has when the author works on another one: its working copy on this device when there is one (the plan is then checked file by file,
+ * like the working branch's), otherwise GitHub's own copy of the branch. Without a credential or a connection it is not read at all (`undefined`): nothing is
+ * claimed of it, and the update stays on this device. A branch GitHub did not give is `"unreadable"`.
+ */
+async function readPublishingSide(input: InspectReaderUpdateInput & { publishingBranch: string; template: BookTemplate; credential: boolean; online: boolean; scope: ReturnType<typeof captureRepositoryOperationScope>; identity: ReturnType<typeof currentRepositoryScopeIdentity> }): Promise<PublishingBranchRead | "unreadable" | undefined> {
+  const { book, publishingBranch, template, scope, identity } = input;
+  const fallbackPackageName = `${packageNameForTitle(book.repo)}-reader`;
+  const local = identity ? await getLocalRepository(book.owner, book.repo, publishingBranch, scope).catch(() => null) : null;
+  if (local && local.cloneComplete === true) {
+    const workflow = await getLocalFile(local.id, PAGES_WORKFLOW_PATH, scope);
+    const readerFiles = await listLocalFilesUnder(local.id, `${READER_DIR}/`, scope);
+    const folder = await planReaderFolder({ template, existing: new Map(readerFiles.map((file) => [file.path, file.currentHash])), existingPackageJson: readerFiles.find((file) => file.path === READER_PACKAGE_JSON)?.text ?? null, fallbackPackageName, hash: sha256Text });
+    const present = workflow && workflow.status !== "deleted";
+    if (present && workflow.kind !== "text") return "unreadable";
+    return { branch: publishingBranch, source: "working-copy", headSha: local.remoteHeadSha, workflowText: present ? workflow.text ?? null : null, folder, workflowHash: present ? workflow.currentHash : null };
+  }
+  if (!input.credential || !input.online) return undefined;
+  try { return await readPublishingBranch(input.octokit ?? createTrackedGitHubClient(input.token), { owner: book.owner, repo: book.repo }, publishingBranch, template, fallbackPackageName); }
+  catch { return "unreadable"; }
 }
