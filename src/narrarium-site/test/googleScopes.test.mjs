@@ -34,7 +34,11 @@ test("every Google sign-in, connection and silent renewal asks for the default s
     assert.ok(scopes.length > 0, `${relative(file)} names no scope`);
     for (const scope of scopes) assert.equal(scope, "GOOGLE_SIGN_IN_SCOPES", `${relative(file)}: ${scope}`);
     assert.match(text, /from "@\/config\/googleAuth"/);
+    // Every request of scopes says it adds nothing that was granted before: the sign-in library sends include_granted_scopes=true when it is not told.
+    const includes = [...text.matchAll(/\binclude_granted_scopes:\s*([^,\n]+)/g)].map((match) => match[1].trim());
+    assert.deepEqual(includes, scopes.map(() => "GOOGLE_INCLUDE_GRANTED_SCOPES"), `${relative(file)} must say include_granted_scopes for every scope it asks`);
   }
+  assert.match(read(path.join(root, "config", "googleAuth.ts")), /GOOGLE_INCLUDE_GRANTED_SCOPES = false;/);
 });
 
 test("the only other request for a Google scope is the incremental one, and it is opened by a person's choice", () => {

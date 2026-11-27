@@ -10,12 +10,12 @@ const GSI_STUB = `
 window.__gsi = { inits: [], requests: [] };
 window.google = { accounts: { oauth2: {
   initTokenClient(config) {
-    window.__gsi.inits.push({ method: "initTokenClient", scope: config.scope });
-    return { requestAccessToken() { window.__gsi.requests.push({ method: "implicit", scope: config.scope }); setTimeout(() => config.callback({ access_token: "e2e-google-access", expires_in: 3600, scope: config.scope, token_type: "Bearer" }), 0); } };
+    window.__gsi.inits.push({ method: "initTokenClient", scope: config.scope, include: config.include_granted_scopes });
+    return { requestAccessToken() { window.__gsi.requests.push({ method: "implicit", scope: config.scope, include: config.include_granted_scopes }); setTimeout(() => config.callback({ access_token: "e2e-google-access", expires_in: 3600, scope: config.scope, token_type: "Bearer" }), 0); } };
   },
   initCodeClient(config) {
-    window.__gsi.inits.push({ method: "initCodeClient", scope: config.scope });
-    return { requestCode() { window.__gsi.requests.push({ method: "code", scope: config.scope }); } };
+    window.__gsi.inits.push({ method: "initCodeClient", scope: config.scope, include: config.include_granted_scopes });
+    return { requestCode() { window.__gsi.requests.push({ method: "code", scope: config.scope, include: config.include_granted_scopes }); } };
   },
 } } };
 `;
@@ -99,7 +99,10 @@ test("signing in to Google Drive asks for no restricted scope, and the card says
 
   // The permissions asked in the sign-in window: identity and the two non-sensitive Drive ones, never the restricted `drive`.
   await expect.poll(() => page.evaluate(() => (window as unknown as { __gsi: { requests: unknown[] } }).__gsi.requests.length)).toBeGreaterThan(0);
-  const gsi = await page.evaluate(() => (window as unknown as { __gsi: { inits: Array<{ scope: string }>; requests: Array<{ scope: string }> } }).__gsi);
+  const gsi = await page.evaluate(() => (window as unknown as { __gsi: { inits: Array<{ scope: string; include: unknown }>; requests: Array<{ scope: string; include: unknown }> } }).__gsi);
+  // The sign-in library merges every permission this account ever granted to the client unless it is told not to: an account that allowed full access to Drive
+  // under an older version would be asked for it again. Every default flow says `false`.
+  for (const { include } of [...gsi.inits, ...gsi.requests]) expect(include).toBe(false);
   for (const { scope } of [...gsi.inits, ...gsi.requests]) {
     const scopes = scope.split(/\s+/);
     expect(scopes).toEqual(expect.arrayContaining(["openid", "profile", "email", "https://www.googleapis.com/auth/drive.appdata", "https://www.googleapis.com/auth/drive.file"]));

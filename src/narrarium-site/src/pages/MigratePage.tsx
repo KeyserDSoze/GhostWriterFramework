@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuthStore, type AuthProvider } from "@/store/authStore";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftSilentRequest } from "@/config/msal";
-import { GOOGLE_SIGN_IN_SCOPES } from "@/config/googleAuth";
+import { GOOGLE_INCLUDE_GRANTED_SCOPES, GOOGLE_SIGN_IN_SCOPES } from "@/config/googleAuth";
 import { MICROSOFT_CLIENT_ID } from "@/config/publicClients";
 import {
   migrateCloudData,
@@ -63,6 +63,7 @@ export function MigratePage() {
 
   const connectGoogle = useGoogleLogin({
     scope: GOOGLE_SIGN_IN_SCOPES,
+    include_granted_scopes: GOOGLE_INCLUDE_GRANTED_SCOPES,
     onSuccess: async (tokenResponse) => {
       try {
         const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {

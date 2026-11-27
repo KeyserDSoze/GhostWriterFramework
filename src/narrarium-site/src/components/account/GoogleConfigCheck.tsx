@@ -23,6 +23,7 @@ export function GoogleConfigCheck() {
         <ul className="ml-4 list-disc break-words text-xs" data-testid="google-config-scopes">
           {report.scopes.map((scope) => <li key={scope}>{t(`googleAccess.check.scope.${scope.replace("https://www.googleapis.com/auth/drive.", "")}`, { defaultValue: scope })}</li>)}
         </ul>
+        <p className="text-xs" data-testid="google-config-granted" data-include-granted-scopes={String(report.includeGrantedScopes)}>{t("googleAccess.check.includeGranted")}</p>
         <p className="flex items-start gap-2 text-xs"><CheckCircle2 aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />{t("googleAccess.check.notAsked")}</p>
       </div>
       <div className="space-y-1">

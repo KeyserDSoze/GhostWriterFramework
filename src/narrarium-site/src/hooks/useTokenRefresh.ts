@@ -3,7 +3,7 @@ import { useGoogleLogin } from "@react-oauth/google";
 import { useMsal } from "@azure/msal-react";
 import { useAuthStore } from "@/store/authStore";
 import { findMicrosoftAccountIn, microsoftSilentRequest } from "@/config/msal";
-import { GOOGLE_SIGN_IN_SCOPES } from "@/config/googleAuth";
+import { GOOGLE_INCLUDE_GRANTED_SCOPES, GOOGLE_SIGN_IN_SCOPES } from "@/config/googleAuth";
 import { registerCloudAccount } from "@/drive/cloudWriteBarrier";
 import { accountIdentity, isAccountIdentityCurrent, requireGoogleProviderAccountId } from "@/auth/accountIdentity";
 
@@ -24,6 +24,7 @@ export function useTokenRefresh() {
 
   const refreshGoogle = useGoogleLogin({
     scope: GOOGLE_SIGN_IN_SCOPES,
+    include_granted_scopes: GOOGLE_INCLUDE_GRANTED_SCOPES,
     prompt: "none",
     hint: user?.email,
     onSuccess: async (tokenResponse) => {

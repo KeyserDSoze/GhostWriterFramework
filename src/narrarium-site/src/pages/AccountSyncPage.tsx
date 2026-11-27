@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { LocalTime } from "@/components/ui/local-time";
 import { Switch } from "@/components/ui/switch";
-import { GOOGLE_SIGN_IN_SCOPES } from "@/config/googleAuth";
+import { GOOGLE_INCLUDE_GRANTED_SCOPES, GOOGLE_SIGN_IN_SCOPES } from "@/config/googleAuth";
 import "@/i18n/googleAccess";
 import { GoogleFullAccessNotice } from "@/components/auth/GoogleFullAccessNotice";
 import { ensureMsalInitialized, MICROSOFT_SCOPES, microsoftMsalInstance, microsoftSilentRequest, setMicrosoftRememberMe } from "@/config/msal";
@@ -89,6 +89,7 @@ export function AccountSyncPage() {
     flow: "auth-code",
     ux_mode: "popup",
     scope: GOOGLE_SIGN_IN_SCOPES,
+    include_granted_scopes: GOOGLE_INCLUDE_GRANTED_SCOPES,
     onSuccess: async (response) => {
       setBusy("google");
       setError(null);
@@ -108,6 +109,7 @@ export function AccountSyncPage() {
 
   const googleLogin = useGoogleLogin({
     scope: GOOGLE_SIGN_IN_SCOPES,
+    include_granted_scopes: GOOGLE_INCLUDE_GRANTED_SCOPES,
     onSuccess: async (response) => {
       setBusy("google");
       setError(null);

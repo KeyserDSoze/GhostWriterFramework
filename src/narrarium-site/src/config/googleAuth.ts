@@ -19,6 +19,14 @@ export const GOOGLE_IDENTITY_SCOPES: readonly string[] = ["openid", "profile", "
 /** The scopes of every sign-in and connection (AuthGuard, the login, Account & Sync, the migration, the silent renewal). `useGoogleLogin` adds the identity ones. */
 export const GOOGLE_SIGN_IN_SCOPES = [GOOGLE_SCOPE_APPDATA, GOOGLE_SCOPE_FILE].join(" ");
 
+/**
+ * `include_granted_scopes`: Google's sign-in library sends it as TRUE by default, and then merges every scope this account ever granted to this client into the
+ * consent screen. An account that allowed full access to Drive under an older version would see the restricted scope again, and the «Google has not verified
+ * this app» warning with it. Every default flow sends FALSE, so the consent is for the scopes above and nothing else. Only the incremental request of a person's
+ * choice (`requestGoogleScope`) sends TRUE, because it asks for one more permission on top of what was allowed.
+ */
+export const GOOGLE_INCLUDE_GRANTED_SCOPES = false;
+
 /** Everything a sign-in asks for, identity included, one by one: what the diagnostic shows and what the tests hold to the console's list. */
 export function googleSignInScopeList(): string[] {
   return [...GOOGLE_IDENTITY_SCOPES, ...GOOGLE_SIGN_IN_SCOPES.split(" ")];

@@ -19,6 +19,7 @@ describe("what the check of the Google configuration reports", () => {
     expect(report.scopes).toEqual(googleSignInScopeList());
     expect(includesRestrictedGoogleScope(report.scopes)).toBe(false);
     expect(report.project).toMatch(/^\d{6,}$/);
+    expect(report.includeGrantedScopes).toBe(false);
   });
 });
 
@@ -26,8 +27,8 @@ afterEach(async () => { cleanup(); await i18n.changeLanguage("en"); });
 
 describe.each(["en", "it"] as const)("Check Google configuration in %s", (language) => {
   const text = language === "en"
-    ? { title: "Check Google configuration", scopes: "Permissions asked at every sign-in", appdata: /drive\.appdata — a hidden app folder \(non-sensitive\)/, file: /drive\.file — the files and folders Narrarium creates \(non-sensitive\)/, notAsked: /Never asked at sign-in: full access to Drive/, project: /^Project number \d+ \(the rest of the id is not shown\)$/, audience: /Publishing status must be “In production”.*7 days/, grants: /myaccount\.google\.com\/connections/ }
-    : { title: "Controlla la configurazione di Google", scopes: "Permessi chiesti a ogni accesso", appdata: /drive\.appdata — una cartella nascosta dell'app \(non sensibile\)/, file: /drive\.file — i file e le cartelle che Narrarium crea \(non sensibile\)/, notAsked: /Mai chiesto all'accesso: l'accesso completo a Drive/, project: /^Numero del progetto \d+ \(il resto dell'id non viene mostrato\)$/, audience: /«In produzione».*7 giorni/, grants: /myaccount\.google\.com\/connections/ };
+    ? { title: "Check Google configuration", scopes: "Permissions asked at every sign-in", appdata: /drive\.appdata — a hidden app folder \(non-sensitive\)/, file: /drive\.file — the files and folders Narrarium creates \(non-sensitive\)/, notAsked: /Never asked at sign-in: full access to Drive/, project: /^Project number \d+ \(the rest of the id is not shown\)$/, audience: /Publishing status must be “In production”.*unverified app.*7 days/, unverified: /Testing” Google also shows the “unverified app” screen/, grants: /If the warning still appears.*myaccount\.google\.com\/connections/ }
+    : { title: "Controlla la configurazione di Google", scopes: "Permessi chiesti a ogni accesso", appdata: /drive\.appdata — una cartella nascosta dell'app \(non sensibile\)/, file: /drive\.file — i file e le cartelle che Narrarium crea \(non sensibile\)/, notAsked: /Mai chiesto all'accesso: l'accesso completo a Drive/, project: /^Numero del progetto \d+ \(il resto dell'id non viene mostrato\)$/, audience: /«In produzione».*non verificata.*7 giorni/, unverified: /«Test» Google mostra anche la schermata «app non verificata»/, grants: /Se l'avviso compare ancora.*myaccount\.google\.com\/connections/ };
 
   it("shows the permissions, the project number only, and the checklist for the owner of the project", async () => {
     await i18n.changeLanguage(language);
@@ -40,6 +41,9 @@ describe.each(["en", "it"] as const)("Check Google configuration in %s", (langua
     expect(scopes.getByText(text.appdata)).toBeInTheDocument();
     expect(scopes.getByText(text.file)).toBeInTheDocument();
     expect(within(check).getByText(text.notAsked)).toBeInTheDocument();
+    expect(screen.getByTestId("google-config-granted")).toHaveAttribute("data-include-granted-scopes", "false");
+    expect(screen.getByTestId("google-config-granted").textContent).toMatch(/include_granted_scopes = false/);
+    expect(within(check).getByText(text.unverified)).toBeInTheDocument();
     expect(screen.getByTestId("google-config-client").textContent).toMatch(text.project);
     expect(within(check).getByText(text.audience)).toBeInTheDocument();
     expect(within(check).getByText(text.grants)).toBeInTheDocument();

@@ -314,8 +314,8 @@ describe.each(["it", "en"] as const)("Account & Sync credentials in %s", (langua
 
       expect(google.triggers["auth-code"]).toHaveBeenCalledTimes(1);
       expect(google.triggers.implicit).not.toHaveBeenCalled();
-      expect(google.options["auth-code"]).toMatchObject({ flow: "auth-code", ux_mode: "popup", scope: GOOGLE_SIGN_IN_SCOPES });
-      expect(google.options.implicit).toMatchObject({ scope: GOOGLE_SIGN_IN_SCOPES });
+      expect(google.options["auth-code"]).toMatchObject({ flow: "auth-code", ux_mode: "popup", scope: GOOGLE_SIGN_IN_SCOPES, include_granted_scopes: false });
+      expect(google.options.implicit).toMatchObject({ scope: GOOGLE_SIGN_IN_SCOPES, include_granted_scopes: false });
       expect(google.options.implicit.flow).toBeUndefined();
     });
 
