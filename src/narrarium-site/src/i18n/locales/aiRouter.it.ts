@@ -228,6 +228,12 @@ const aiRouterIt = {
     modelNoResponsesApi: "GitHub Models non ha l'API Responses: lascia questo modello su Chat Completions, oppure dagli un indirizzo suo.",
     modelNoAddress: "Per questo modello non si può costruire un indirizzo: l'integrazione non ha un endpoint. Dai un endpoint all'integrazione, o un indirizzo suo a questo modello.",
     modelResponsesVersionNote: "La versione API dell'integrazione ({{integration}}) è anteriore all'API Responses, quindi il modello viene chiamato con {{version}}. Dai al modello una versione API sua per cambiarla.",
+    promptCaching: "Supporta la cache dei prompt",
+    promptCachingUnknown: "Non si sa: Narrarium lo scopre",
+    promptCachingSupported: "Sì",
+    promptCachingUnsupported: "No: non inviare suggerimenti di cache",
+    promptCachingLearned: "Sì: imparato in automatico",
+    promptCachingHint: "Cache dei prompt: provider come OpenAI e Azure OpenAI tengono l'inizio di un prompt lungo (1.024 token o più) e fanno pagare meno l'input che servono da quella cache; i prezzi sono in questa riga. Narrarium tiene uguale l'inizio dei suoi prompt da una chiamata all'altra perché possa essere servito dalla cache, e invia il suggerimento che aiuta il provider a trovarlo. «Non si sa» gli lascia imparare dalle risposte: quando una riporta token in cache, il modello è segnato come imparato. «No» non invia suggerimenti e non conta su nessun risparmio.",
     noThinkingWithToolsUnused: "Non usata finché questo modello è chiamato con l'API Responses, che accetta insieme un livello di thinking e i function tool. Vale di nuovo su Chat Completions.",
   },
 };

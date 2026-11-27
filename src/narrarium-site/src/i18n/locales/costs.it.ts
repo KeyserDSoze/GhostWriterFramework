@@ -83,6 +83,18 @@ export default {
     estimate: {
       withCost: "≈ {{tokens}} token e ≈ {{amount}}, stimati",
     },
+    cache: {
+      title: "Cache dei prompt",
+      summary: "{{share}} dell'input ({{cached}} di {{input}} token) è stato servito dalla cache del provider.",
+      saved: "Al prezzo pieno dell'input, ha fatto risparmiare",
+      noSaving: "Imposta il prezzo in cache del modello per vedere quanto ha fatto risparmiare.",
+      none: "Nessuna chiamata ha riportato token serviti da una cache. OpenAI e Azure OpenAI mettono in cache da soli un prompt di 1.024 token o più, e l'input che servono da lì costa meno; dai al modello il suo prezzo in cache per vedere quanto fa risparmiare.",
+      setPrices: "Apri le integrazioni AI",
+      by_one: "Per modello e uso ({{count}} riga)",
+      by_other: "Per modello e uso ({{count}} righe)",
+      line: "{{share}} da cache · {{cached}} su {{input}}",
+      savedShort: "risparmiati",
+    },
     dashboard: {
       intro: "Quanto ha speso ogni libro, per ogni uso, come l'hanno registrato i tuoi browser: filtra, scegli le righe, ordinale, esportale.",
       export: "Esporta CSV",
@@ -279,6 +291,7 @@ export default {
     perModel: "Per modello",
     priceInput: "Input ({{unit}} / 1M token)",
     priceCached: "Input in cache ({{unit}} / 1M token)",
+    priceCacheWrite: "Scrittura in cache ({{unit}} / 1M token)",
     priceOutput: "Output ({{unit}} / 1M token)",
     imageTokenPricing: "Immagini a token (modelli gpt-image)",
     priceImgInputText: "Img: input testo ({{unit}} / 1M)",

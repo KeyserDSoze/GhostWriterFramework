@@ -59,6 +59,9 @@ import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { PREVIEW_PAUSE_MS } from "@/components/autopilot/config/RunPreview";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
+import { useCostsStore } from "@/costs/costsStore";
+import { addToLedger, ledgerWriterId, localDay } from "@/costs/ledger";
+import { emptyCostsFile } from "@/costs/model";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { longPlan } from "./helpers/autopilotFixtures";
 import { SCALETTA_IDEA, SCALETTA_SYNOPSIS, renderWithScaletta, sizeFiles } from "./helpers/scaletta";
@@ -631,5 +634,54 @@ describe("a book that runs on the personal server", () => {
     await showFresh();
     expect(mocks.verified).not.toHaveBeenCalled();
     expect(preview().querySelector("[data-note='server']")).toBeNull();
+  });
+});
+
+describe("the prompt cache", () => {
+  const PRICED = (extra: Record<string, unknown> = {}) => withModels(CLOUD, [{ ...CLOUD.chatModels![0], pricing: { inputPerMTok: 2, cachedPerMTok: 0.2, outputPerMTok: 8 }, ...extra }]);
+  /** What this browser recorded of the model: four calls, 20,000 tokens in, 12,000 of them served from the provider's cache. */
+  const recordedCalls = (cachedTokens = 12_000) => {
+    const delta = { key: { period: localDay(new Date()), bookId: "book-1", source: "autopilot", capability: "autopilot", integrationId: "cloud", model: "writer-1", currency: "EUR" }, counters: { calls: 4, tasks: 4, inputTokens: 20_000, cachedTokens, outputTokens: 1000, cost: 0.02 } };
+    const file = { ...emptyCostsFile(), ledger: addToLedger(undefined, ledgerWriterId("device-a", "2026-11-01T00:00:00.000Z"), [delta], new Date(), "EUR") };
+    useCostsStore.setState({ file, persisted: file, dirty: false });
+  };
+  afterEach(() => useCostsStore.setState({ file: emptyCostsFile(), persisted: emptyCostsFile(), dirty: false }));
+
+  it("is counted on, and said, when this browser measured one: the share of the input a model's provider served from it in the calls it recorded", async () => {
+    recordedCalls();
+    await showFresh("en", [PRICED()]);
+    const note = preview().querySelector("[data-note='caching']") as HTMLElement;
+    expect(note).not.toBeNull();
+    expect(note).toHaveTextContent(t("autopilot.estimate.basis.cachingMeasured", { measured: "writer-1 60%" }));
+    const measured = engineSays(DEFAULT_BRIEF, DEFAULT_OPTIONS, { models: estimateModelsFromConfig(pickAiRuntimeConfig(settings()), undefined, { "writer-1": 0.6 }) });
+    const plain = engineSays(DEFAULT_BRIEF, DEFAULT_OPTIONS);
+    expect(measured.cost!.min).toBeLessThan(plain.cost!.min);
+    expect(range("cost").min).toBeCloseTo(measured.cost!.min, 6);
+    expect(range("cost").max).toBeCloseTo(measured.cost!.max, 6);
+    expect(range("cost").max, "the worst case counts on none").toBeCloseTo(plain.cost!.max, 6);
+  });
+
+  it("is said in Italian too", async () => {
+    recordedCalls();
+    await showFresh("it", [PRICED()]);
+    expect(preview().querySelector("[data-note='caching']")).toHaveTextContent(t("autopilot.estimate.basis.cachingMeasured", { measured: "writer-1 60%" }));
+    expect(t("autopilot.estimate.basis.cachingMeasured", { measured: "x" })).toMatch(/cache dei prompt/);
+  });
+
+  it("is not counted on for a model declared as not caching, nor when nothing was measured and the start of the requests is short", async () => {
+    recordedCalls();
+    await showFresh("en", [PRICED({ promptCaching: "unsupported" })]);
+    expect(preview().querySelector("[data-note='caching']")).toBeNull();
+    expect(range("cost").min).toBeCloseTo(engineSays(DEFAULT_BRIEF, DEFAULT_OPTIONS).cost!.min, 6);
+    cleanup();
+    useCostsStore.setState({ file: emptyCostsFile(), persisted: emptyCostsFile(), dirty: false });
+    await showFresh("en", [PRICED()]);
+    expect(preview().querySelector("[data-note='caching']")).toBeNull();
+  });
+
+  it("is not measured from a model that never reported a cached token: its provider may not cache at all", async () => {
+    recordedCalls(0);
+    await showFresh("en", [PRICED()]);
+    expect(preview().querySelector("[data-note='caching']")).toBeNull();
   });
 });

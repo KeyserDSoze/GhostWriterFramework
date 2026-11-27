@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, Coins, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BudgetsPanel } from "@/components/costs/budget/BudgetsPanel";
+import { CachePanel } from "@/components/costs/dashboard/CachePanel";
 import { CostsTable } from "@/components/costs/dashboard/CostsTable";
 import { DashboardFiltersBar } from "@/components/costs/dashboard/DashboardFilters";
 import { useBookAutopilots } from "@/components/costs/dashboard/useBookAutopilots";
@@ -188,6 +189,8 @@ export function CostsPage() {
         </dl>
         {server.count > 0 && <p data-server-totals className="mt-1 text-xs text-muted-foreground">{t("costs.dashboard.server.totals", { count: server.count, spend: money.totals(server.spend, { empty: "—" }) })}</p>}
       </section>
+
+      <CachePanel rows={kept} integrationName={integrationName} relabels={money.relabels} />
 
       <BudgetsPanel lines={budgets.lines} budgets={budgets.budgets} warnAt={budgets.warnAt} bookName={bookName} currency={money.display} rates={money.rates} serverBooks={books.some((book) => book.autopilotHost === "server")} />
 

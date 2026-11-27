@@ -850,6 +850,8 @@ const autopilotIt = {
         speed_other: "Il tempo si basa su ciò che questo libro ha già fatto: la velocità dei suoi modelli, misurata su {{count}} passi.",
         tokens_one: "I token scritti si basano su ciò che questo libro ha già fatto: {{value}} token a parola, misurati su {{count}} scena.",
         tokens_other: "I token scritti si basano su ciò che questo libro ha già fatto: {{value}} token a parola, misurati su {{count}} scene.",
+        cachingMeasured: "Il caso migliore conta sulla cache dei prompt, al prezzo della cache: la parte dell'input servita dalle cache dei provider nelle tue chiamate precedenti (misurata: {{measured}}). Il peggiore non conta su nessuna.",
+        cachingStart: "Il caso migliore conta sulla cache dei prompt, al prezzo della cache: l'inizio fisso di ogni richiesta, che i provider mettono in cache quando è abbastanza lungo. Il peggiore non conta su nessuna.",
       },
       server: {
         asking: "Sto chiedendo al tuo server personale quali modelli ha…",

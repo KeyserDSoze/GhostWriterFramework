@@ -95,7 +95,7 @@ describe("a call, in words", () => {
       Took: "42s",
       "First words after": "1s",
       Received: "15 B (14 characters)",
-      Tokens: "31,200 in (4,000 cached) · 2,100 out",
+      Tokens: "31,200 in (4,000 cached, 13%) · 2,100 out",
       Cost: "$0.0412",
     });
     expect(facts.Sent).toMatch(/^system \d+ B, user \d+ B$/);

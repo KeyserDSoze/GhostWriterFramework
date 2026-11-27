@@ -190,6 +190,14 @@ export function RunPreview({ inputs, form, dirty, bookId, startPreset }: RunPrev
         {serverNote && <li data-note="server" className="flex gap-1.5 text-xs text-muted-foreground"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{t(`autopilot.estimate.server.${serverNote}`)}</li>}
         {!inputs.reading && !sources.book.read && <li data-note="unread" className="flex gap-1.5 text-xs text-muted-foreground"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{t("autopilot.estimate.unread")}</li>}
         {basis.measuredModels.length > 0 && <li data-note="measured" className="flex gap-1.5 text-xs text-muted-foreground"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{t("autopilot.estimate.basis.speed", { count: basis.speedSamples })}</li>}
+        {basis.caching && (
+          <li data-note="caching" className="flex gap-1.5 text-xs text-muted-foreground">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            {basis.caching.measured.length > 0
+              ? t("autopilot.estimate.basis.cachingMeasured", { measured: basis.caching.measured.map((entry) => `${entry.model} ${entry.percent}%`).join(", ") })
+              : t("autopilot.estimate.basis.cachingStart")}
+          </li>
+        )}
         {basis.tokensPerWord && <li data-note="tokens" className="flex gap-1.5 text-xs text-muted-foreground"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{t("autopilot.estimate.basis.tokens", { count: basis.tokensPerWord.samples, value: oneDecimal(basis.tokensPerWord.value) })}</li>}
       </ul>
 

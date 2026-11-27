@@ -74,6 +74,7 @@ const autopilotCallsIt = {
         structured: "Risponde con",
         tokens: "Token",
         tokensValue: "{{input}} in ingresso ({{cached}} in cache) · {{output}} in uscita",
+        tokensCached: "{{input}} in ingresso ({{cached}} in cache, {{share}}) · {{output}} in uscita",
         tokensUnknown: "non indicati",
         cost: "Costo",
         costUnknown: "non noto",

@@ -123,6 +123,7 @@ test("only the views of the settings page import the lazy catalogue (the router 
     "src/components/settings/ModelApiVersionField.tsx",
     "src/components/settings/ModelRequestFields.tsx",
     "src/components/settings/NoThinkingWithToolsField.tsx",
+    "src/components/settings/PromptCachingField.tsx",
     "src/components/settings/ReasoningParameterField.tsx",
     "src/components/settings/endpoint/ModelCatalogDialog.tsx",
     "src/components/settings/router/RouterSections.tsx",

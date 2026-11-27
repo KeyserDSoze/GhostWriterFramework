@@ -17,6 +17,7 @@ import { ProviderWords } from "@/components/autopilot/ProviderWords";
 import { TARGET } from "@/components/autopilot/calls/ui";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { cachedShare } from "@/costs/cacheSavings";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 
@@ -70,7 +71,7 @@ function CallFacts({ record, now }: { record: AiCallRecord; now: number }) {
       <Fact term={t("autopilot.calls.call.sent")}>{t("autopilot.calls.call.sentValue", { system: formatBytes(request.system.storedBytes), user: formatBytes(request.user.storedBytes) })}{images}</Fact>
       {answer && <Fact term={t("autopilot.calls.call.answer")}>{t("autopilot.calls.call.answerValue", { size: formatBytes(answer.storedBytes), characters: formatCount(answer.characters) })}</Fact>}
       {request.structured && request.tool && <Fact term={t("autopilot.calls.call.structured")}><code className="font-mono">{request.tool}</code></Fact>}
-      <Fact term={t("autopilot.calls.call.tokens")}>{use.tokens ? t("autopilot.calls.call.tokensValue", { input: formatCount(use.tokens.input), cached: formatCount(use.tokens.cached), output: formatCount(use.tokens.output) }) : t("autopilot.calls.call.tokensUnknown")}</Fact>
+      <Fact term={t("autopilot.calls.call.tokens")}>{use.tokens ? (use.tokens.cached > 0 ? t("autopilot.calls.call.tokensCached", { input: formatCount(use.tokens.input), cached: formatCount(use.tokens.cached), share: `${Math.round(cachedShare(use.tokens.input, use.tokens.cached) * 100)}%`, output: formatCount(use.tokens.output) }) : t("autopilot.calls.call.tokensValue", { input: formatCount(use.tokens.input), cached: formatCount(use.tokens.cached), output: formatCount(use.tokens.output) })) : t("autopilot.calls.call.tokensUnknown")}</Fact>
       <Fact term={t("autopilot.calls.call.cost")}>{costWords(t, use)}</Fact>
       {record.dropped && <Fact term={t("autopilot.calls.call.limits")}>{t(`autopilot.calls.call.dropped.${record.dropped}`)}</Fact>}
     </dl>

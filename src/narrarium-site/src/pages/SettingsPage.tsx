@@ -12,6 +12,10 @@ import { IntegrationRequestFields } from "@/components/settings/IntegrationReque
 import { normalizeEndpointUrl } from "narrarium-engine";
 import { ModelApiVersionField, apiVersionLooksValid, inheritedApiVersion } from "@/components/settings/ModelApiVersionField";
 import { ModelRequestFields, protocolOf, type ModelRequestPatch } from "@/components/settings/ModelRequestFields";
+import { PromptCachingField } from "@/components/settings/PromptCachingField";
+import { cachedModelKey, modelsThatCached } from "@/costs/cacheModel";
+import { useCostsStore } from "@/costs/costsStore";
+import { usageRows } from "@/costs/legacyCosts";
 import { NoThinkingWithToolsField } from "@/components/settings/NoThinkingWithToolsField";
 import { ReasoningParameterField } from "@/components/settings/ReasoningParameterField";
 import { EndpointTools } from "@/components/settings/endpoint/EndpointTools";
@@ -709,6 +713,9 @@ function ChatModelsEditor({ integrationId, provider, apiVersion, endpoint, apiKe
   const [loadingCatalog, setLoadingCatalog] = useState(false);
   const [remoteModels, setRemoteModels] = useState<OpenAICompatibleModel[]>([]);
   const [selectedRemoteModel, setSelectedRemoteModel] = useState("");
+  const costs = useCostsStore((store) => store.file);
+  // The models whose provider served tokens from its cache in a call of the ledger: the row says «learned automatically» for the ones that have said nothing.
+  const cachedModels = useMemo(() => modelsThatCached(usageRows(costs, "")), [costs]);
   const unit = usePriceUnit();
 
   useEffect(() => {
@@ -809,6 +816,7 @@ function ChatModelsEditor({ integrationId, provider, apiVersion, endpoint, apiKe
           <p id={`${id}-tools-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.forcedToolCallsHint")}</p>
           <p id={`${id}-thinking-parameter-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.thinkingParameterHint")}</p>
           <p id={`${id}-no-thinking-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.noThinkingWithToolsHint")}</p>
+          <p id={`${id}-caching-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.promptCachingHint")}</p>
           {provider === "azure_openai" && <p id={`${id}-api-version-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.modelApiVersionHint")}</p>}
           <p id={`${id}-request-hint`} className="mt-1 text-xs text-muted-foreground">{t("settings.modelRequestHint")}</p>
         </div>
@@ -883,6 +891,11 @@ function ChatModelsEditor({ integrationId, provider, apiVersion, endpoint, apiKe
               </div>
               <ReasoningParameterField model={model} hintId={`${id}-thinking-parameter-hint`} onChange={(reasoningParameter) => patchModel(model.id, { reasoningParameter })} />
               <NoThinkingWithToolsField model={model} hintId={`${id}-no-thinking-hint`} unused={protocolOf(model) === "responses"} onChange={(noThinkingWithTools) => patchModel(model.id, { noThinkingWithTools })} />
+              <div data-prompt-caching-row className="grid gap-2 sm:col-span-3 sm:grid-cols-3">
+                <PromptCachingField model={model} cached={cachedModels.has(cachedModelKey(integrationId, model.name))} hintId={`${id}-caching-hint`} onChange={(promptCaching) => patchModel(model.id, { promptCaching })} />
+                <PriceField label={t("costs.priceCached", { unit })} value={model.pricing?.cachedPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, cachedPerMTok: v } })} />
+                <PriceField label={t("costs.priceCacheWrite", { unit })} value={model.pricing?.cacheWritePerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, cacheWritePerMTok: v } })} />
+              </div>
               <ModelRequestFields model={model} integration={{ provider, endpoint, apiVersion }} hintId={`${id}-request-hint`} onChange={(request) => setModelRequest(model.id, request)} />
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -906,9 +919,8 @@ function ChatModelsEditor({ integrationId, provider, apiVersion, endpoint, apiKe
             <PriceDetails anchor={modelPriceAnchor(integrationId, model.id)} className="mt-2 rounded-md border bg-muted/20 p-2">
               <summary className="cursor-pointer py-1 text-xs font-medium [@media(pointer:coarse)]:py-3">{t("costs.chatPricingTitle")}</summary>
               <p className="mt-1 text-xs text-muted-foreground">{t("costs.chatPricingHint", { currency: unit })}</p>
-              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 <PriceField label={t("costs.priceInput", { unit })} value={model.pricing?.inputPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, inputPerMTok: v } })} />
-                <PriceField label={t("costs.priceCached", { unit })} value={model.pricing?.cachedPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, cachedPerMTok: v } })} />
                 <PriceField label={t("costs.priceOutput", { unit })} value={model.pricing?.outputPerMTok} onChange={(v) => patchModel(model.id, { pricing: { ...model.pricing, outputPerMTok: v } })} />
               </div>
             </PriceDetails>
