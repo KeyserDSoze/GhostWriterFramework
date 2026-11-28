@@ -14,8 +14,9 @@ export const MICROSOFT_REDIRECT_URI = "https://narrarium.net/auth/microsoft-call
 export const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 export const FAKE_GITHUB_CLIENT_ID = "Iv1.fakegithubclient00";
 export const GITHUB_GRANT_URL = `https://api.github.com/applications/${FAKE_GITHUB_CLIENT_ID}/grant`;
+export const GITHUB_TOKEN_REVOKE_URL = `https://api.github.com/applications/${FAKE_GITHUB_CLIENT_ID}/token`;
 export const GITHUB_REDIRECT_URI = "https://narrarium.net/auth/github/callback";
-export const PROVIDER_URLS = [GOOGLE_TOKEN_URL, GOOGLE_REVOKE_URL, MICROSOFT_TOKEN_URL, GITHUB_TOKEN_URL, GITHUB_GRANT_URL];
+export const PROVIDER_URLS = [GOOGLE_TOKEN_URL, GOOGLE_REVOKE_URL, MICROSOFT_TOKEN_URL, GITHUB_TOKEN_URL, GITHUB_GRANT_URL, GITHUB_TOKEN_REVOKE_URL];
 
 // Obviously fake values: nothing in this suite is, or resembles, a real credential.
 export const FAKE_GOOGLE_CLIENT_ID = "fake-google-client.apps.googleusercontent.com";
@@ -214,6 +215,15 @@ export const OAUTH_ROUTES = [
     request: { token: "ghu_github-token-to-revoke" },
     fields: { token: 4096 },
     upstream: GITHUB_GRANT_URL,
+    success: 204,
+    reply: () => new Response(null, { status: 204 }),
+  },
+  {
+    label: "github revoke-token",
+    path: "/oauth/github/revoke-token",
+    request: { token: "ghu_github-token-to-revoke-alone" },
+    fields: { token: 4096 },
+    upstream: GITHUB_TOKEN_REVOKE_URL,
     success: 204,
     reply: () => new Response(null, { status: 204 }),
   },

@@ -66,10 +66,12 @@ const PROVIDERS = {
     clientSecretVariable: "GITHUB_APP_CLIENT_SECRET",
     tokenUrl: "https://github.com/login/oauth/access_token",
     grantUrl: (clientId) => `https://api.github.com/applications/${encodeURIComponent(clientId)}/grant`,
+    tokenRevokeUrl: (clientId) => `https://api.github.com/applications/${encodeURIComponent(clientId)}/token`,
   },
 };
 
-const ACTIONS = new Set(["token", "refresh", "revoke"]);
+// "revoke-token" exists for GitHub only (see githubRevokeToken): a pair that is not in HANDLERS is not a route.
+const ACTIONS = new Set(["token", "refresh", "revoke", "revoke-token"]);
 
 // Provider errors that mean the user has to sign in again.
 const REAUTHENTICATION_ERRORS = new Set(["invalid_grant", "interaction_required", "consent_required", "login_required"]);
@@ -158,7 +160,7 @@ export function isOAuthPath(pathname) {
 function matchRoute(pathname) {
   if (pathname === "/oauth/status") return { status: true };
   const parts = pathname.split("/");
-  if (parts.length === 4 && parts[1] === "oauth" && Object.hasOwn(PROVIDERS, parts[2]) && ACTIONS.has(parts[3])) {
+  if (parts.length === 4 && parts[1] === "oauth" && Object.hasOwn(PROVIDERS, parts[2]) && ACTIONS.has(parts[3]) && Object.hasOwn(HANDLERS, `${parts[2]}/${parts[3]}`)) {
     return { provider: parts[2], action: parts[3] };
   }
   return null;
@@ -576,10 +578,9 @@ function basicAuthorization(clientId, clientSecret) {
   return `Basic ${btoa(binary)}`;
 }
 
-// Deleting the grant revokes every token the app holds for that user, on every device.
-async function githubRevoke(body, { provider, credentials }) {
-  const token = readField(body, "token");
-  const { status, text } = await callUpstream(provider, provider.grantUrl(credentials.clientId), {
+// One DELETE on GitHub's authorization API with the client id and secret as Basic authentication: of the whole grant, or of a single token.
+async function deleteGithubAuthorization(provider, url, credentials, token) {
+  const { status, text } = await callUpstream(provider, url, {
     method: "DELETE",
     headers: {
       Accept: "application/vnd.github+json",
@@ -590,10 +591,23 @@ async function githubRevoke(body, { provider, credentials }) {
     },
     body: JSON.stringify({ access_token: token }),
   });
-  // 404: there is no such grant (already revoked, or a token GitHub no longer knows): nothing is left to revoke.
+  // 404: there is no such grant or token (already revoked, or one GitHub no longer knows): nothing is left to revoke.
   if ((status >= 200 && status < 300) || status === 404) return noContent();
   if (status === 401) throw wrongGithubCredentials();
   throw describeFailure(provider, status, parseJson(text), { reauthenticate: false });
+}
+
+// Deleting the grant revokes every token the app holds for that user, on every device.
+async function githubRevoke(body, { provider, credentials }) {
+  const token = readField(body, "token");
+  return deleteGithubAuthorization(provider, provider.grantUrl(credentials.clientId), credentials, token);
+}
+
+// Deleting one token revokes that token and leaves the user's other tokens, and their authorization of the app, alone. It is for a caller that holds a token of its own
+// (the personal server's connection, made with the device flow): `revoke` would sign out the user's browser too.
+async function githubRevokeToken(body, { provider, credentials }) {
+  const token = readField(body, "token");
+  return deleteGithubAuthorization(provider, provider.tokenRevokeUrl(credentials.clientId), credentials, token);
 }
 
 const HANDLERS = {
@@ -606,6 +620,7 @@ const HANDLERS = {
   "github/token": githubToken,
   "github/refresh": githubRefresh,
   "github/revoke": githubRevoke,
+  "github/revoke-token": githubRevokeToken,
 };
 
 async function handleProviderRoute(request, env, route, allowedOrigin) {

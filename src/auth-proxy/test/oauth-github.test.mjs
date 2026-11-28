@@ -7,6 +7,7 @@ import {
   GITHUB_GRANT_URL,
   GITHUB_REDIRECT_URI,
   GITHUB_TOKEN_REPLY,
+  GITHUB_TOKEN_REVOKE_URL,
   GITHUB_TOKEN_URL,
   assertError,
   assertNoneOf,
@@ -360,11 +361,122 @@ describe("POST /oauth/github/revoke", () => {
   });
 });
 
+describe("POST /oauth/github/revoke-token", () => {
+  it("deletes that one token, not the user's whole authorization of the app: the URL is /token, never /grant", async () => {
+    provider.reply(() => new Response(null, { status: 204 }));
+    const response = await oauthCall("/oauth/github/revoke-token", { json: REVOKE_REQUEST });
+    assert.equal(await readJson(response, 204), null);
+
+    assert.equal(provider.calls.length, 1);
+    const call = provider.calls[0];
+    assert.equal(call.url, GITHUB_TOKEN_REVOKE_URL);
+    assert.notEqual(call.url, GITHUB_GRANT_URL, "the grant covers the browser's sign-in too: deleting it would sign the user out everywhere");
+    assert.equal(call.init.method, "DELETE");
+    assert.equal(call.init.redirect, "manual");
+    const headers = headersOf(call);
+    assert.equal(headers.get("authorization"), BASIC);
+    assert.equal(headers.get("accept"), "application/vnd.github+json");
+    assert.equal(headers.get("content-type"), "application/json");
+    assert.ok(headers.get("user-agent"), "GitHub's API requires a User-Agent");
+    assert.deepEqual(JSON.parse(String(call.init.body)), { access_token: REVOKE_REQUEST.token });
+  });
+
+  it("puts the client id in the path, encoded, and never takes the URL from the body", async () => {
+    provider.reply(() => new Response(null, { status: 204 }));
+    const env = configuredEnv({ GITHUB_APP_CLIENT_ID: "Iv1/odd id?x" });
+    await oauthCall("/oauth/github/revoke-token", { json: { ...REVOKE_REQUEST, url: "https://evil.example/token", client_id: "evil" } }, env);
+    assert.equal(provider.calls[0].url, "https://api.github.com/applications/Iv1%2Fodd%20id%3Fx/token");
+  });
+
+  it("treats a token GitHub no longer knows (404) as revoked", async () => {
+    provider.reply(() => jsonResponse(404, { message: "Not Found" }));
+    assert.equal(await readJson(await oauthCall("/oauth/github/revoke-token", { json: REVOKE_REQUEST }), 204), null);
+  });
+
+  it("reports wrong client credentials (401) as not_configured and other failures as upstream_error", async () => {
+    provider.reply(() => jsonResponse(401, { message: "Bad credentials" }));
+    await assertError(await oauthCall("/oauth/github/revoke-token", { json: REVOKE_REQUEST }), 501, "not_configured");
+    for (const status of [422, 403, 500]) {
+      provider.reply(() => jsonResponse(status, { message: "Validation Failed, rate limit, Server Error" }));
+      const body = await assertError(await oauthCall("/oauth/github/revoke-token", { json: REVOKE_REQUEST }), 502, "upstream_error");
+      assert.ok(!body.message.includes("Validation") && !body.message.includes("rate limit"));
+    }
+  });
+
+  it("still validates its body", async () => {
+    await assertError(await oauthCall("/oauth/github/revoke-token", { json: {} }), 400, "invalid_request");
+    assert.equal(provider.calls.length, 0);
+  });
+
+  it("is a GitHub route only: Google and Microsoft have none, and the answer says so without calling anyone", async () => {
+    for (const provider_ of ["google", "microsoft"]) await assertError(await oauthCall(`/oauth/${provider_}/revoke-token`, { json: REVOKE_REQUEST }), 404, "not_found");
+    assert.equal(provider.calls.length, 0);
+  });
+});
+
+describe("a server calling the broker (no Origin header, as a personal server does)", () => {
+  // The personal server keeps its own GitHub connection (device authorization) and renews it through these routes. It sends no Origin, and the Worker serves it as it serves curl: the secret
+  // never leaves the Worker, and CORS headers are for browsers only.
+  const SERVER_CALL = { origin: null };
+
+  it("refreshes through the same github/refresh route the browser uses, and gets GitHub's rotated pair", async () => {
+    provider.reply(() => jsonResponse(200, GITHUB_TOKEN_REPLY));
+    const response = await oauthCall("/oauth/github/refresh", { ...SERVER_CALL, json: REFRESH_REQUEST });
+    assert.deepEqual(await readJson(response, 200), {
+      accessToken: "ghu_fakegithubaccesstoken0123456789",
+      expiresIn: 28800,
+      refreshToken: "ghr_fakegithubrefreshtoken0123456789",
+      refreshTokenExpiresIn: 15897600,
+    });
+    assert.equal(response.headers.get("access-control-allow-origin"), null, "no CORS headers for a caller that is not a browser");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(formOf(provider.calls[0]), { client_id: FAKE_GITHUB_CLIENT_ID, client_secret: FAKE_GITHUB_SECRET, grant_type: "refresh_token", refresh_token: REFRESH_REQUEST.refreshToken });
+  });
+
+  it("follows GitHub's rotation: the new refresh token works once, and the one it replaced is refused with invalid_grant (the pair the browser holds is never involved)", async () => {
+    let current = "ghr_server-pair-0";
+    let issued = 0;
+    provider.reply((call) => {
+      const sent = formOf(call).refresh_token;
+      if (sent !== current) return jsonResponse(200, { error: "bad_refresh_token", error_description: "The refresh token passed is incorrect or expired." });
+      issued += 1;
+      current = `ghr_server-pair-${issued}`;
+      return jsonResponse(200, { access_token: `ghu_server-access-${issued}`, expires_in: 28800, refresh_token: current, refresh_token_expires_in: 15897600, token_type: "bearer", scope: "" });
+    });
+    const first = await readJson(await oauthCall("/oauth/github/refresh", { ...SERVER_CALL, json: { refreshToken: "ghr_server-pair-0" } }), 200);
+    assert.equal(first.refreshToken, "ghr_server-pair-1");
+    const second = await readJson(await oauthCall("/oauth/github/refresh", { ...SERVER_CALL, json: { refreshToken: first.refreshToken } }), 200);
+    assert.equal(second.refreshToken, "ghr_server-pair-2");
+    await assertError(await oauthCall("/oauth/github/refresh", { ...SERVER_CALL, json: { refreshToken: first.refreshToken } }), 400, "invalid_grant");
+  });
+
+  it("revokes the server's token alone through github/revoke-token, and a browser's pair would be untouched", async () => {
+    provider.reply(() => new Response(null, { status: 204 }));
+    const response = await oauthCall("/oauth/github/revoke-token", { ...SERVER_CALL, json: REVOKE_REQUEST });
+    assert.equal(await readJson(response, 204), null);
+    assert.equal(response.headers.get("access-control-allow-origin"), null);
+    assert.equal(provider.calls.length, 1);
+    assert.equal(provider.calls[0].url, GITHUB_TOKEN_REVOKE_URL);
+  });
+
+  it("is still refused an Origin that is not allowed, as a browser of another site is", async () => {
+    await assertError(await oauthCall("/oauth/github/refresh", { origin: "https://evil.example", json: REFRESH_REQUEST }), 403, "forbidden_origin");
+    assert.equal(provider.calls.length, 0);
+  });
+
+  it("answers a GitHub App that issues tokens that never expire with 502, so that the server never keeps one", async () => {
+    provider.reply(() => jsonResponse(200, { access_token: "ghu_forever", token_type: "bearer", scope: "" }));
+    const body = await assertError(await oauthCall("/oauth/github/refresh", { ...SERVER_CALL, json: REFRESH_REQUEST }), 502, "upstream_error");
+    assert.match(body.message, /Expire user authorization tokens/);
+  });
+});
+
 describe("GitHub provider configuration", () => {
   const ROUTES = [
     ["/oauth/github/token", TOKEN_REQUEST],
     ["/oauth/github/refresh", REFRESH_REQUEST],
     ["/oauth/github/revoke", REVOKE_REQUEST],
+    ["/oauth/github/revoke-token", REVOKE_REQUEST],
   ];
 
   it("answers 501 not_configured for every route while the client id or the secret is missing", async () => {
@@ -430,6 +542,7 @@ describe("GitHub: the secret and the tokens never leak", () => {
     ["/oauth/github/token", TOKEN_REQUEST],
     ["/oauth/github/refresh", REFRESH_REQUEST],
     ["/oauth/github/revoke", REVOKE_REQUEST],
+    ["/oauth/github/revoke-token", REVOKE_REQUEST],
   ];
 
   async function battery() {
