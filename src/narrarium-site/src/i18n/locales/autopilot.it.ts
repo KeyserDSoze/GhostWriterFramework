@@ -844,6 +844,11 @@ const autopilotIt = {
       wildcards: "I Fuori dal coro guardano il progetto",
       unknown: "Passo dell'autopilot",
     },
+    designChoice: {
+      title: "Aspetta te: scegli il pitch da cui progettare il libro",
+      body: "Il Brainstormer ha proposto dei pitch alternativi, e i lettori e il direttore li hanno giudicati. La progettazione prosegue quando ne hai scelto uno nello Studio e hai ripreso la corsa.",
+      open: "Scegli il pitch nello Studio",
+    },
     profileProblems: {
       title: "Aspetta te: ci sono problemi nei file dei profili",
       explain: "L'autopilot non usa un profilo che non riesce a leggere così com'è scritto e non sostituisce mai il file con i valori predefiniti. Correggi i file elencati qui.",

@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { AutopilotSession, summarizeAutopilotState, type AutopilotEvent, type AutopilotStateSummary } from "narrarium-engine";
+import { AutopilotSession, summarizeAutopilotState, writeOutlineBrief, type AutopilotEvent, type AutopilotStateSummary } from "narrarium-engine";
 import { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } from "narrarium-engine/testing";
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { presentFeedEvent } from "@/autopilot/format";
 import { isProfileProblemStop, problemLines, profilePagesFor } from "@/autopilot/stopReason";
+import { isPitchChoiceStop, studioHref } from "@/autopilot/pitchChoice";
 
 const AT = "2026-11-21T10:00:00.000Z";
 const START = { brief: { idea: "x", wordsPerScene: 300 }, options: { readers: false, readersOnPlan: false, pauseAfterPlan: false } };
@@ -118,6 +119,35 @@ describe("the message of that stop, as readable lines", () => {
 
   it("keeps a heading it does not recognise as the first line, rather than losing it", () => {
     expect(problemLines("Fix these first. director.md: a · personas/x.md: c")).toEqual(["Fix these first.", "director.md: a", "personas/x.md: c"]);
+  });
+});
+
+describe("a design that waits for the author's choice of a pitch", () => {
+  it("is a wait without a question that is not a profile to correct, and leads to the Studio", async () => {
+    const store = new MemoryBookStore(seedBookFiles({ chapters: 0 }));
+    await writeOutlineBrief(store, { idea: "A harbor town built on glass hides a lie that the tide will tell.", wordsPerScene: 200 });
+    const session = new AutopilotSession({ bookId: "book-1", store, ai: createFakeAutopilotAi(), host: "browser", hostLabel: "test", retryDelayMs: 0 });
+    await session.start({ design: { chapters: 2, workflow: { alternatives: 3, pitchChoice: "author" } }, options: { readersOnPlan: false, pauseAfterPlan: false } });
+    await session.waitForIdle();
+    const waiting = summarizeAutopilotState((await session.snapshot()).state!);
+    expect(waiting).toMatchObject({ status: "waiting-author", question: null, design: { active: true, choosePitch: true } });
+    expect(isPitchChoiceStop(waiting)).toBe(true);
+    expect(isProfileProblemStop(waiting)).toBe(false);
+    expect(studioHref("book 1")).toBe("/app/books/book%201/outline?tab=studio");
+    // Once she has chosen, nothing is waited for.
+    const state = (await session.snapshot()).state!;
+    await session.chooseDesignPitch({ id: state.design!.alternatives!.pitches[0].id });
+    const chosen = summarizeAutopilotState((await session.snapshot()).state!);
+    expect(isPitchChoiceStop(chosen)).toBe(false);
+  });
+
+  it("is told apart by the summary alone: any other stop without a question is still a profile problem", () => {
+    const base = { status: "waiting-author" as const, question: null };
+    expect(isProfileProblemStop(base)).toBe(true);
+    expect(isProfileProblemStop({ ...base, design: { active: true, chapters: 2, rounds: 0, maxRounds: 3 } })).toBe(true);
+    expect(isProfileProblemStop({ ...base, design: { active: true, chapters: 2, rounds: 0, maxRounds: 3, choosePitch: true } })).toBe(false);
+    expect(isPitchChoiceStop({ status: "paused", design: { active: true, chapters: 2, rounds: 0, maxRounds: 3, choosePitch: true } })).toBe(false);
+    expect(isPitchChoiceStop(null)).toBe(false);
   });
 });
 

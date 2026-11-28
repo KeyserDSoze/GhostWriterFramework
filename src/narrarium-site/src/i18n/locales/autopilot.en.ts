@@ -844,6 +844,11 @@ const autopilotEn = {
       wildcards: "The wildcards look at the design",
       unknown: "Autopilot step",
     },
+    designChoice: {
+      title: "Waiting for you: choose the pitch the book is designed from",
+      body: "The Brainstormer proposed alternative pitches, and the readers and the director judged them. The design goes on when you have chosen one in the Studio and resumed the run.",
+      open: "Choose the pitch in the Studio",
+    },
     profileProblems: {
       title: "Waiting for you: there are problems in the profile files",
       explain: "The autopilot does not use a profile it cannot read as it is written, and it never replaces the file with the defaults. Correct the files listed here.",

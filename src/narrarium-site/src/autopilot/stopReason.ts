@@ -11,10 +11,10 @@ const PROFILE_FILE = String.raw`(?:director\.md|evaluation-guidelines\.md|(?:gho
 /**
  * A run that waits for the author without a question to answer: the engine stops this way when a profile file (the director,
  * a ghostwriter, a simulated reader) has problems, before it spends anything. A director's question is `waiting-author` too, but it
- * carries the question.
+ * carries the question; and so is a design that waits for the author to choose a pitch, which says so (`design.choosePitch`).
  */
-export function isProfileProblemStop(summary: Pick<AutopilotStateSummary, "status" | "question"> | null | undefined): boolean {
-  return summary?.status === "waiting-author" && !summary.question;
+export function isProfileProblemStop(summary: Pick<AutopilotStateSummary, "status" | "question" | "design"> | null | undefined): boolean {
+  return summary?.status === "waiting-author" && !summary.question && !summary.design?.choosePitch;
 }
 
 /** The engine joins the problems of its message with this, after a heading, and says how many more there are in brackets. */

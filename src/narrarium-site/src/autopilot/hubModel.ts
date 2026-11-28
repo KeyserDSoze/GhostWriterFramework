@@ -1,4 +1,4 @@
-import type { AutopilotActivity, AutopilotState, AutopilotStateSummary } from "narrarium-engine";
+import { summarizeDesign, type AutopilotActivity, type AutopilotState, type AutopilotStateSummary } from "narrarium-engine";
 import { matchKey } from "@/lib/matchText";
 
 /**
@@ -9,7 +9,7 @@ import { matchKey } from "@/lib/matchText";
 
 /**
  * The state of a book's autopilot, as its card says it in words: it never started, it runs (or waits to try a failed step again), it is paused
- * (or its plan waits for the author's approval), it waits for an answer (or for profile files to be corrected), it stopped on an error, or the
+ * (or its plan waits for the author's approval), it waits for an answer (or for the choice of a pitch, or for profile files to be corrected), it stopped on an error, or the
  * book is finished.
  */
 export type HubState = "new" | "running" | "retrying" | "paused" | "plan" | "question" | "profiles" | "error" | "completed";
@@ -24,15 +24,17 @@ interface StateFacts {
   question: AutopilotStateSummary["question"];
   retry?: AutopilotStateSummary["retry"];
   awaitingPlan: boolean;
+  /** The design waits for the author to choose a pitch: a wait without a question that is not a profile to correct. */
+  choosePitch?: boolean;
 }
 
-function classify({ status, question, retry, awaitingPlan }: StateFacts): HubState {
+function classify({ status, question, retry, awaitingPlan, choosePitch }: StateFacts): HubState {
   switch (status) {
     case "running":
       return retry ? "retrying" : "running";
     case "waiting-author":
-      // A run that waits without a question waits for its profile files to be corrected (see `isProfileProblemStop`).
-      return question ? "question" : "profiles";
+      // A run that waits without a question waits for its profile files to be corrected (see `isProfileProblemStop`), unless a design waits for the choice of a pitch: an answer too.
+      return question || choosePitch ? "question" : "profiles";
     case "paused":
       return awaitingPlan ? "plan" : "paused";
     case "error":
@@ -46,9 +48,9 @@ function classify({ status, question, retry, awaitingPlan }: StateFacts): HubSta
 }
 
 /** The state of a book whose summary was worked out (the card has it: `useAutopilotControl`). */
-export function hubState(summary: Pick<AutopilotStateSummary, "status" | "question" | "retry"> | null, state: Pick<AutopilotState, "plan"> | null): HubState {
+export function hubState(summary: Pick<AutopilotStateSummary, "status" | "question" | "retry" | "design"> | null, state: Pick<AutopilotState, "plan"> | null): HubState {
   if (!summary) return "new";
-  return classify({ status: summary.status, question: summary.question, retry: summary.retry, awaitingPlan: Boolean(state?.plan?.awaitingAuthor) });
+  return classify({ status: summary.status, question: summary.question, retry: summary.retry, awaitingPlan: Boolean(state?.plan?.awaitingAuthor), choosePitch: summary.design?.choosePitch });
 }
 
 /**
@@ -63,6 +65,7 @@ export function hubStateOf(state: AutopilotState | null, live: AutopilotStateSum
     question: fresh ? fresh.question : state.question,
     retry: fresh?.retry,
     awaitingPlan: Boolean(state.plan?.awaitingAuthor),
+    choosePitch: fresh ? fresh.design?.choosePitch : summarizeDesign(state.design)?.choosePitch,
   });
 }
 

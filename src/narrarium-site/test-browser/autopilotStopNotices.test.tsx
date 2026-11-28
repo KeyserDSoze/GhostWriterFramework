@@ -168,6 +168,37 @@ describe("the page of a run that waits because a profile file has problems", () 
     expect(screen.queryByRole("link", { name: t("autopilot.profileProblems.openDirector") })).not.toBeInTheDocument();
   });
 
+  it("does not take a design that waits for the author's choice of a pitch for a profile problem: it says what it waits for, and leads to the Studio", async () => {
+    const waiting = {
+      design: {
+        startedAt: T0,
+        chapters: 6,
+        rounds: [],
+        workflow: { alternatives: 3, pitchChoice: "author" as const },
+        alternatives: { pitches: [], evaluations: {}, recommended: { id: "p2", reason: "Sharper." } },
+      },
+    };
+    waiting.design.alternatives.pitches = [1, 2, 3].map((number) => ({ id: `p${number}`, title: `Pitch ${number}`, logline: "", premise: "", protagonist: "", stakes: "", twist: "", tone: "", difference: "" })) as never;
+    seed({ message: "Choose the pitch the book is designed from.", ...waiting });
+    const view = render(<Page />);
+    const notice = document.querySelector("[data-design-choice-notice]") as HTMLElement;
+    expect(notice).not.toBeNull();
+    expect(within(notice).getByRole("heading", { level: 2, name: t("autopilot.designChoice.title") })).toBeInTheDocument();
+    expect(link(t("autopilot.designChoice.open")).getAttribute("href")).toBe("/app/books/book-1/outline?tab=studio");
+    expect(screen.queryByText(t("autopilot.profileProblems.title"))).not.toBeInTheDocument();
+    view.unmount();
+    await i18n.changeLanguage("it");
+    seed({ message: "Scegli il pitch da cui progettare il libro.", ...waiting });
+    render(<Page />);
+    expect(link("Scegli il pitch nello Studio").getAttribute("href")).toBe("/app/books/book-1/outline?tab=studio");
+    // The same wait without a pitch to choose is a profile that must be corrected, as it always was.
+    cleanup();
+    seed({ message: message(DIRECTOR_PROBLEM) });
+    render(<Page />);
+    expect(document.querySelector("[data-design-choice-notice]")).toBeNull();
+    expect(screen.getByText("Aspetta te: ci sono problemi nei file dei profili")).toBeInTheDocument();
+  });
+
   it("is announced once, however many times the state is heard again with the same words", async () => {
     seed({ message: message(DIRECTOR_PROBLEM) });
     render(<Page />);

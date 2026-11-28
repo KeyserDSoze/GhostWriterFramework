@@ -19,6 +19,20 @@ describe("the state a card says", () => {
     expect(hubState(summarizeAutopilotState(state({ status: "waiting-author" })), null)).toBe("profiles");
   });
 
+  it("says a design that waits for the author's choice of a pitch waits for an answer, and not for profile files, from the summary and from the saved state", () => {
+    const waiting = state({
+      status: "waiting-author",
+      design: { startedAt: T0, chapters: 6, rounds: [], workflow: { alternatives: 3, pitchChoice: "author" }, alternatives: { pitches: [{ id: "p1" }, { id: "p2" }] as never, evaluations: {}, recommended: { id: "p2", reason: "Sharper." } } },
+    });
+    expect(hubState(summarizeAutopilotState(waiting), null)).toBe("question");
+    expect(hubStateOf(waiting, undefined)).toBe("question");
+    // The same wait with the pitch chosen, or with no pitches, is what it always was.
+    const chosen = { ...waiting, design: { ...waiting.design!, alternatives: { ...waiting.design!.alternatives!, selected: { id: "p1", by: "author" as const, reason: "", at: T0 } } } };
+    expect(hubState(summarizeAutopilotState(chosen), null)).toBe("profiles");
+    expect(hubStateOf(chosen, undefined)).toBe("profiles");
+    expect(hubRank("question")).toBe(0);
+  });
+
   it("for the order, follows the newest of what was heard and what was read, as the page's summary does", () => {
     const saved = state({ status: "paused" });
     const heard = { ...summarizeAutopilotState(saved), status: "waiting-author" as const, question: QUESTION, updatedAt: T1 };
