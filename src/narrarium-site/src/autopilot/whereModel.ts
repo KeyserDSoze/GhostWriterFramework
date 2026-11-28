@@ -30,6 +30,11 @@ export interface WhereMoveInput {
   consentGithub: boolean;
   /** The server already holds the GitHub token of the book. */
   serverHasGithubToken: boolean;
+  /**
+   * The author chose the server's own GitHub connection for the book (and the server says it is connected): no copy of the token is sent, so the book needs no consent for it.
+   * Absent: the book signs in with a token that was sent, as it always did.
+   */
+  githubConnection?: boolean;
   /** What the quick command that opened the card asked for (the side, and when). */
   intent: HandoverRequest | null;
 }
@@ -70,7 +75,7 @@ function blockerOf(input: WhereMoveInput, toServer: boolean, mode: WhereMode): W
     if (input.server === "disabled") return "no-server";
     if (input.server === "unverified") return "unverified";
   }
-  if (toServer && input.github && !input.consentGithub && !input.serverHasGithubToken) return "github-consent";
+  if (toServer && input.github && !input.githubConnection && !input.consentGithub && !input.serverHasGithubToken) return "github-consent";
   return null;
 }
 

@@ -10,8 +10,19 @@ import type { WhereBlocker, WhereMode } from "@/autopilot/whereModel";
 import type { BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
 
-/** What the author did not give the server that a run needs: it is said where the consent is, and the box it is about points at it. */
-export type ConsentProblem = "ai" | "github" | null;
+/** What the author did not give the server that a run needs: it is said where the consent is, and the box it is about points at it. `github-connection`: the server's own connection was chosen and the server is not connected. */
+export type ConsentProblem = "ai" | "github" | "github-connection" | null;
+
+/**
+ * How a GitHub book signs in to GitHub on the server, as the card knows it. `connected`: the server's own GitHub connection is connected, so it can be chosen (`chosen`: it is, which is the
+ * default then, since the owner connected it explicitly). `hint`: it is not connected and could be (not started, or lost): the card says where to connect it.
+ */
+export interface GithubVia {
+  connected: boolean;
+  chosen: boolean;
+  login?: string;
+  hint: "connect" | "lost" | null;
+}
 
 /** A sentence, next to what it explains, that says why something is not open now; the control it is about points at it. */
 export function Why({ id, children, role = "note", className }: { id: string; children: ReactNode; role?: "note" | "alert" | "status"; className?: string }) {
@@ -95,9 +106,12 @@ export function ToServerPanel(props: PassProps & {
   consent: { ai: boolean; github: boolean };
   onConsent: (change: { ai?: boolean; github?: boolean }) => void;
   problem: ConsentProblem;
+  githubVia: GithubVia;
+  onVia: (via: "connection" | "token") => void;
 }) {
   const { t } = useTranslation();
-  const { book, mode, blocker, plan, running, github, server, consent, onConsent, problem, onCancel, planRef } = props;
+  const { book, mode, blocker, plan, running, github, server, consent, onConsent, problem, onCancel, planRef, githubVia, onVia } = props;
+  const choosing = github && githubVia.connected;
   const blockedId = `where-move-blocked-${book.id}`;
   const problemId = `where-move-problem-${book.id}`;
   const ready = server === "ready";
@@ -111,8 +125,30 @@ export function ToServerPanel(props: PassProps & {
             <>
               {running && <p className="text-xs">{t("autopilot.where.finishLead")}</p>}
               <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={consent.ai} aria-invalid={problem === "ai" || undefined} aria-describedby={problem === "ai" ? problemId : undefined} onChange={(event) => onConsent({ ai: event.target.checked })} />{t("autopilot.where.consentAi")}</label>
-              {github && <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={consent.github} aria-invalid={problem === "github" || undefined} aria-describedby={problem === "github" ? problemId : undefined} onChange={(event) => onConsent({ github: event.target.checked })} />{t("autopilot.where.consentGithub")}</label>}
-              {github && <GitHubServerTokenNotice book={book} />}
+              {github && !choosing && <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={consent.github} aria-invalid={problem === "github" || undefined} aria-describedby={problem === "github" ? problemId : undefined} onChange={(event) => onConsent({ github: event.target.checked })} />{t("autopilot.where.consentGithub")}</label>}
+              {choosing && (
+                <fieldset className="space-y-1.5" data-where-github-access>
+                  <legend className="text-xs font-medium">{t("autopilot.where.githubAccess")}</legend>
+                  <label className="flex items-start gap-2 text-xs">
+                    <input type="radio" name={`where-github-${book.id}`} className="mt-0.5" checked={githubVia.chosen} aria-invalid={problem === "github-connection" || undefined} aria-describedby={problem === "github-connection" ? problemId : undefined} onChange={() => onVia("connection")} />
+                    <span>
+                      {t("autopilot.where.githubViaConnection")}
+                      <span className="block text-muted-foreground">{githubVia.login ? t("autopilot.where.githubViaConnectionHelp", { login: githubVia.login }) : t("autopilot.where.githubViaConnectionHelpNoLogin")}</span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 text-xs">
+                    <input type="radio" name={`where-github-${book.id}`} className="mt-0.5" checked={!githubVia.chosen} onChange={() => onVia("token")} />
+                    <span>{t("autopilot.where.consentGithub")}</span>
+                  </label>
+                </fieldset>
+              )}
+              {github && !githubVia.chosen && <GitHubServerTokenNotice book={book} />}
+              {github && !choosing && githubVia.hint && (
+                <p role="note" className="text-xs text-muted-foreground" data-where-github-hint={githubVia.hint}>
+                  {t(githubVia.hint === "lost" ? "autopilot.where.githubLostHint" : "autopilot.where.githubConnectHint")}{" "}
+                  <Link className="underline" to="/app/settings/server">{t("personalServer.title")}</Link>.
+                </p>
+              )}
             </>
           ) : null}
           {blocker && <BlockedWhy id={blockedId} blocker={blocker} onAllowGithub={() => onConsent({ github: true })} />}

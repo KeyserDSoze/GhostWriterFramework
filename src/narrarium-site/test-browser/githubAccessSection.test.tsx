@@ -11,6 +11,7 @@ import i18n from "@/i18n";
 import { GitHubAccessSection, type GitHubAccessSectionProps } from "@/components/account/GitHubAccessSection";
 import { GitHubServerTokenNotice } from "@/components/book/GitHubServerTokenNotice";
 import { BookGitHubAccess } from "@/components/book/BookGitHubAccess";
+import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useConnectionStore } from "@/account/connectionStore";
 import type { LocalGitHubConnection } from "@/account/types";
 import { setConnectedGitHubToken } from "@/github/githubCredentialRuntime";
@@ -66,6 +67,7 @@ afterEach(async () => {
   setConnectedGitHubToken(undefined);
   useConnectionStore.setState({ hydrated: true, configuration: {} });
   useSettingsStore.setState({ settings: DEFAULT_SETTINGS });
+  useAutopilotStore.setState({ views: {} });
   await i18n.changeLanguage("en");
 });
 
@@ -250,6 +252,15 @@ describe.each(["en", "it"] as const)("the GitHub card in %s", (language) => {
       await open(language, props({ connection: app() }), [book({ autopilotHost: "server" }), book({ id: "b2", repo: "two", name: "Two", bookToken: "ghp_own", autopilotHost: "server" })]);
       expect(await screen.findAllByText(text.serverWarning)).toHaveLength(1);
     });
+
+    it("does not warn about the 8 hours for a book that the server runs on its own GitHub connection: it holds no copy of a token", async () => {
+      net.reply("GET", INSTALLATIONS, { installations: [installation("all")] });
+      setConnectedGitHubToken("ghu_app", "app");
+      useAutopilotStore.setState({ views: { b1: { ...emptyView("b1"), server: { bookId: "b1", githubAuth: "connection", hasGithubToken: false } as never }, b2: { ...emptyView("b2"), server: { bookId: "b2", githubAuth: "token", hasGithubToken: true } as never } } });
+      await open(language, props({ connection: app() }), [book({ autopilotHost: "server" }), book({ id: "b2", repo: "two", name: "Two", autopilotHost: "server" })]);
+      expect(await screen.findAllByText(text.serverWarning)).toHaveLength(1);
+      expect(screen.getByText(text.uses(text.appUses))).toBeInTheDocument();
+    });
   });
 });
 
@@ -268,6 +279,20 @@ describe("in a book's own settings", () => {
     expect(screen.getByText(language === "it" ? "Questo libro usa: la tua connessione GitHub (l'app)." : "This book uses: your GitHub connection (the app).")).toBeInTheDocument();
     expect(await screen.findByText(language === "it" ? /me\/one non è tra i repository che l'app può usare/ : /me\/one is not among the repositories the app can use/)).toBeInTheDocument();
     expect(screen.getByTestId("github-server-token-notice")).toHaveTextContent(text.serverWarning);
+  });
+
+  it("shows no server warning for a book that the server runs on its own GitHub connection, whichever token it would use here", async () => {
+    setConnectedGitHubToken("ghu_app", "app");
+    const current = book({ autopilotHost: "server" });
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, books: [current] } });
+    useConnectionStore.setState({ hydrated: true, configuration: { github: app() } });
+    useAutopilotStore.setState({ views: { b1: { ...emptyView("b1"), server: { bookId: "b1", githubAuth: "connection", hasGithubToken: false } as never } } });
+    const { container } = render(<MemoryRouter><GitHubServerTokenNotice book={current} /></MemoryRouter>);
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByTestId("github-server-token-notice")).not.toBeInTheDocument();
+    // The same book, when the server holds a token copy for it, is warned about.
+    useAutopilotStore.setState({ views: { b1: { ...emptyView("b1"), server: { bookId: "b1", githubAuth: "token", hasGithubToken: true } as never } } });
+    await waitFor(() => expect(screen.getByTestId("github-server-token-notice")).toBeInTheDocument());
   });
 
   it("shows no server warning for a personal access token, and nothing for a local book", async () => {

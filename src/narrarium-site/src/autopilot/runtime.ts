@@ -230,6 +230,8 @@ export function describeAutopilotError(error: unknown): string {
     if (error.code === "book_not_found") return i18n.t("autopilot.where.serverBookMissing");
     if (error.code === "ai_not_configured") return `${error.message} ${i18n.t("personalServer.aiMissing")}`;
     if (error.code === "maintenance") return i18n.t("personalServer.updates.maintenance");
+    if (error.code === "github_connection_required") return i18n.t("autopilot.errors.githubConnectionRequired");
+    if (error.code === "github_connection_unavailable") return i18n.t("autopilot.errors.githubConnectionUnavailable");
     const conflicts = githubConflictFiles(error);
     if (conflicts !== null) return i18n.t("autopilot.errors.githubConflict", { count: conflicts });
   }
@@ -1255,14 +1257,14 @@ export class BrowserAutopilotRuntime {
    * Host the book's autopilot on the personal server. GitHub books travel through GitHub (the server
    * clones and pushes the same branch); local books are uploaded file by file with the shared sync.
    */
-  moveToServer(bookId: string, consent: { sendAiConfiguration: boolean; sendGitHubToken: boolean }): Promise<void> {
+  moveToServer(bookId: string, consent: { sendAiConfiguration: boolean; sendGitHubToken: boolean; githubAuth?: "connection" }): Promise<void> {
     return this.operations.run(bookId, "moveToServer", () => {
       if (this.sessions.get(bookId)?.session.running) throw new AutopilotBusyError(browserLabel());
       return this.holdingTheBook(bookId, "moveToServer", () => this.moveToServerNow(bookId, consent));
     });
   }
 
-  private async moveToServerNow(bookId: string, consent: { sendAiConfiguration: boolean; sendGitHubToken: boolean }): Promise<void> {
+  private async moveToServerNow(bookId: string, consent: { sendAiConfiguration: boolean; sendGitHubToken: boolean; githubAuth?: "connection" }): Promise<void> {
     const book = findBook(bookId);
     if (!hasServer(this.currentConnection())) throw new AutopilotSetupError("no-server");
     // The AI keys and the GitHub token are sent only to a server that proved the identity this device paired with.
@@ -1271,16 +1273,20 @@ export class BrowserAutopilotRuntime {
     if (consent.sendAiConfiguration) await aiClient.putAiConfig(pickAiRuntimeConfig(settings()));
     let storage: ServerBookStorage = { kind: "local" };
     let githubToken: string | undefined;
+    let githubAuth: "connection" | undefined;
     if (bookStorageMode(book) === "github") {
+      // The browser publishes the book with its own token, whichever way the server signs in to GitHub afterwards.
       const token = resolveGitHubRemoteToken(book, settings());
       if (!isUsableGitHubToken(token)) throw new AutopilotSetupError("github-token");
       await syncFullRepository({ bookId: book.id, owner: book.owner, repo: book.repo, branch, accountIdentity: currentRepositoryScopeIdentity(), token });
       storage = { kind: "github", owner: book.owner, repo: book.repo, branch };
-      if (consent.sendGitHubToken) githubToken = token;
+      // The server's own GitHub connection: no copy of any token travels, and the server refuses the registration (`412 github_connection_required`) while it is not connected.
+      if (consent.githubAuth === "connection") githubAuth = "connection";
+      else if (consent.sendGitHubToken) githubToken = token;
     }
     // The publication above can take a while: the server proves itself again before it receives the book (and the token).
     const { client } = await this.requireServer();
-    const summary = await client.registerBook(book.id, { title: book.name, storage, ...(githubToken ? { githubToken } : {}) });
+    const summary = await client.registerBook(book.id, { title: book.name, storage, ...(githubToken ? { githubToken } : {}), ...(githubAuth ? { githubAuth } : {}) });
     if (storage.kind === "local") {
       // Files the server already has and that differ from these are not overwritten: the author settles them first.
       const outcome = await this.syncNow(bookId, { message: "Upload from Narrarium", throwOnError: true });
@@ -1299,7 +1305,9 @@ export class BrowserAutopilotRuntime {
     if (!token || !hasServer(this.currentConnection())) return;
     for (const book of settings().books) {
       if (autopilotHostOf(book) !== "server" || bookStorageMode(book) !== "github" || resolveGitHubCredential(book, settings())?.source !== "app") continue;
-      if (!useAutopilotStore.getState().views[book.id]?.server?.hasGithubToken) continue;
+      const held = useAutopilotStore.getState().views[book.id]?.server;
+      // A book on the server's own GitHub connection holds no copy of any token: there is nothing to keep fresh, and nothing to send.
+      if (!held?.hasGithubToken || held.githubAuth === "connection") continue;
       try {
         const { client } = await this.requireServer();
         await client.registerBook(book.id, { title: book.name, storage: { kind: "github", owner: book.owner, repo: book.repo, branch: resolveBookBranch(book) }, githubToken: token });
@@ -1830,13 +1838,19 @@ export class BrowserAutopilotRuntime {
     if (limits && !serverHasQuickControls(info)) throw new AutopilotControlsUnsupportedError();
     if (consent?.sendAiConfiguration !== true && (await client.aiStatus()).configured !== true) throw new HandoverConsentError("ai");
     if (bookStorageMode(book) === "github") {
-      if (consent?.sendGitHubToken === true) {
+      const store = useAutopilotStore.getState();
+      const known = store.server.books.find((entry) => entry.bookId === bookId) ?? store.views[bookId]?.server;
+      if (consent?.githubAuth === "connection" || (consent?.sendGitHubToken !== true && known?.githubAuth === "connection")) {
+        // The book signs in with the server's own GitHub connection (the author chose it, or the server already holds the book that way): it must be connected now, and no token is needed
+        // there. The browser still needs a token of its own to publish the book before it moves.
+        if (!serverSupportsGitHubConnection(info)) throw new HandoverConsentError("github-connection");
+        const status = await client.githubConnection();
+        useAutopilotStore.getState().setServer({ githubConnection: status });
+        if (status.state !== "connected") throw new HandoverConsentError("github-connection");
         if (!isUsableGitHubToken(resolveGitHubRemoteToken(book, settings()))) throw new AutopilotSetupError("github-token");
-      } else {
-        const store = useAutopilotStore.getState();
-        const known = store.server.books.find((entry) => entry.bookId === bookId) ?? store.views[bookId]?.server;
-        if (!known?.hasGithubToken) throw new HandoverConsentError("github");
-      }
+      } else if (consent?.sendGitHubToken === true) {
+        if (!isUsableGitHubToken(resolveGitHubRemoteToken(book, settings()))) throw new AutopilotSetupError("github-token");
+      } else if (!known?.hasGithubToken) throw new HandoverConsentError("github");
     }
   }
 
@@ -1846,7 +1860,7 @@ export class BrowserAutopilotRuntime {
    * tab is looked at again for a little while before the plan gives up.
    */
   private async moveForHandover(bookId: string, to: HandoverSide, consent?: HandoverConsent): Promise<void> {
-    const move = () => (to === "server" ? this.moveToServer(bookId, { sendAiConfiguration: consent?.sendAiConfiguration === true, sendGitHubToken: consent?.sendGitHubToken === true }) : this.moveToBrowser(bookId));
+    const move = () => (to === "server" ? this.moveToServer(bookId, { sendAiConfiguration: consent?.sendAiConfiguration === true, sendGitHubToken: consent?.sendGitHubToken === true, ...(consent?.githubAuth === "connection" ? { githubAuth: "connection" as const } : {}) }) : this.moveToBrowser(bookId));
     for (let attempt = 0; ; attempt += 1) {
       try {
         await move();

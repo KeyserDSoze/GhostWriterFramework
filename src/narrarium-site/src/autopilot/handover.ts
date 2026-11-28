@@ -33,6 +33,11 @@ export interface HandoverPlan {
 export interface HandoverConsent {
   sendAiConfiguration: boolean;
   sendGitHubToken: boolean;
+  /**
+   * `connection`: the GitHub book signs in with the server's own GitHub connection, and no copy of any token is sent (`sendGitHubToken` is then `false`). It is the author's choice in the
+   * flow of "Where it runs", offered only while the server's connection is connected, and it makes the move refuse (a consent that is missing) when the server says it is not.
+   */
+  githubAuth?: "connection";
 }
 
 /** What the author asks for. */
@@ -71,8 +76,9 @@ export class HandoverRefusedError extends Error {
  */
 export class HandoverConsentError extends Error {
   readonly code = "consent-missing";
-  constructor(readonly missing: "ai" | "github") {
-    super(i18n.t(`autopilot.quick.handover.consent.${missing}`));
+  /** `github-connection`: the book was to use the server's own GitHub connection, and the server is not connected to GitHub (or its connection was lost). */
+  constructor(readonly missing: "ai" | "github" | "github-connection") {
+    super(i18n.t(`autopilot.quick.handover.consent.${missing === "github-connection" ? "githubConnection" : missing}`));
     this.name = "HandoverConsentError";
   }
 }

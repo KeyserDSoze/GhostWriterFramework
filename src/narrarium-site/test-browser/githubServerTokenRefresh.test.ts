@@ -39,6 +39,22 @@ describe("the server's copy of a book's GitHub token follows the app's renewals"
     expect(registerBook).not.toHaveBeenCalled();
   });
 
+  it("leaves alone a book that the server runs on its own GitHub connection: it holds no copy of a token, so there is nothing to keep fresh and nothing to send", async () => {
+    arrange([book(), book({ id: "b2", repo: "two" })], { b1: true, b2: true });
+    useAutopilotStore.getState().patchView("b1", { server: { hasGithubToken: false, githubAuth: "connection" } as never });
+    // A server that says both (it should not) is still not sent a token for a book that is on the connection.
+    useAutopilotStore.getState().patchView("b2", { server: { hasGithubToken: true, githubAuth: "connection" } as never });
+    await autopilotRuntime.refreshServerGitHubToken("ghu_fresh");
+    expect(registerBook).not.toHaveBeenCalled();
+  });
+
+  it("still keeps fresh the copy of a book that the server holds a token for", async () => {
+    arrange([book()], { b1: true });
+    useAutopilotStore.getState().patchView("b1", { server: { hasGithubToken: true, githubAuth: "token" } as never });
+    await autopilotRuntime.refreshServerGitHubToken("ghu_fresh");
+    expect(registerBook).toHaveBeenCalledTimes(1);
+  });
+
   it("does nothing without a personal server, without a token, or when the connection is not the app's", async () => {
     arrange([book()], { b1: true });
     useSettingsStore.setState({ settings: { ...useSettingsStore.getState().settings, personalServer: undefined } });

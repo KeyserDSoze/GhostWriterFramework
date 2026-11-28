@@ -59,6 +59,18 @@ describe("the way to the other side, for the side chosen in «Where it runs»", 
     expect(move({ github: false, consentGithub: false }).blocker).toBeNull();
   });
 
+  it("does not ask for the token either when the author chose the server's own GitHub connection: no copy of the token is sent, so there is nothing to consent to", () => {
+    expect(move({ github: true, consentGithub: false, githubConnection: true }).blocker).toBeNull();
+    expect(move({ github: true, consentGithub: false, githubConnection: true, running: true }).blocker).toBeNull();
+    expect(move({ github: true, consentGithub: false, githubConnection: false }).blocker).toBe("github-consent");
+  });
+
+  it("still says what is most basic first with the connection chosen: the server and the book's state are as before", () => {
+    expect(move({ github: true, githubConnection: true, busy: true }).blocker).toBe("busy");
+    expect(move({ github: true, githubConnection: true, server: "disabled" }).blocker).toBe("no-server");
+    expect(move({ github: true, githubConnection: true, server: "unverified" }).blocker).toBe("unverified");
+  });
+
   it("says what is most basic first: a busy book before a missing server before a missing consent", () => {
     expect(move({ busy: true, server: "disabled", github: true, consentGithub: false }).blocker).toBe("busy");
     expect(move({ server: "unverified", github: true, consentGithub: false }).blocker).toBe("unverified");

@@ -50,7 +50,7 @@ import { QuestionCard } from "@/components/autopilot/QuestionCard";
 import { PendingReviews } from "@/components/autopilot/PendingReviews";
 import { BookRoundSlot } from "@/components/autopilot/BookRoundSlot";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
-import { BlockedWhy, ToBrowserPanel, ToServerPanel, Why, type ConsentProblem } from "@/components/autopilot/WherePanels";
+import { BlockedWhy, ToBrowserPanel, ToServerPanel, Why, type ConsentProblem, type GithubVia } from "@/components/autopilot/WherePanels";
 import { isHandoverConsentError, type HandoverRequest } from "@/autopilot/handover";
 import { activePlan, radiosBlocker, syncBlocker, whereMove, type WhereMode } from "@/autopilot/whereModel";
 import { ErrorPanel } from "@/components/autopilot/ErrorPanel";
@@ -73,6 +73,8 @@ import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
 import { useAutopilotStore, type SyncOutcome } from "@/autopilot/store";
 import { useServerConnection } from "@/autopilot/serverConnection";
+import { isServerGitHubConnected } from "@/autopilot/serverGitHub";
+import { useServerGitHub } from "@/autopilot/useServerGitHub";
 import { formatDateTime, syncStatusText } from "@/autopilot/format";
 import { isProfileProblemStop } from "@/autopilot/stopReason";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -523,6 +525,14 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
   const serverReady = server.status === "online";
   const serverBook = view.server;
   useEffect(() => setChoice(host), [host]);
+  // How a GitHub book signs in to GitHub on the server. The server's own GitHub connection is read when the author is looking at the way to the server for this book (or at a book that already
+  // runs there on it), never when the page mounts, and chosen by default once it is connected: the owner connected it explicitly, and no copy of the token is sent.
+  const [via, setVia] = useState<"connection" | "token" | null>(null);
+  const onConnectionHere = host === "server" && serverBook?.githubAuth === "connection";
+  const gh = useServerGitHub({ active: github && serverReady && ((choice === "server" && host === "browser") || onConnectionHere) });
+  const ghConnected = isServerGitHubConnected(gh.connection);
+  const useConnection = github && ghConnected && (via ?? "connection") === "connection";
+  const githubVia: GithubVia = { connected: ghConnected, chosen: useConnection, ...(gh.connection?.login ? { login: gh.connection.login } : {}), hint: gh.offer !== "ready" ? null : gh.connection?.state === "disconnected" ? "connect" : gh.connection?.state === "needs-reconnect" ? "lost" : null };
 
   const setHost = (next: "browser" | "server") => setAutopilotHost(book.id, next, save);
   // The quick commands send the author here when a consent is missing: the side they wanted to pass to is already chosen, and what they asked for (after the step, now, one step there)
@@ -556,7 +566,7 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
     target.scrollIntoView?.({ block: "center" });
     target.focus({ preventScroll: true });
   });
-  const where = whereMove({ choice, host, running, busy: busy !== null, plan, server: serverReady ? "ready" : server.status === "disabled" ? "disabled" : "unverified", github, consentGithub, serverHasGithubToken: Boolean(serverBook?.hasGithubToken), intent });
+  const where = whereMove({ choice, host, running, busy: busy !== null, plan, server: serverReady ? "ready" : server.status === "disabled" ? "disabled" : "unverified", github, consentGithub, serverHasGithubToken: Boolean(serverBook?.hasGithubToken), githubConnection: useConnection, intent });
   const radiosOff = radiosBlocker({ busy: busy !== null });
   const syncOff = syncBlocker({ busy: busy !== null, server: serverReady ? "ready" : server.status === "disabled" ? "disabled" : "unverified" });
   const acting = busy === "move" || busy === "handover";
@@ -568,7 +578,7 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
       to: choice,
       ...(mode === "now" ? { when: "now" as const } : {}),
       ...(mode === "step" ? { returnAfterSteps: intent?.returnAfterSteps ?? 1 } : {}),
-      ...(choice === "server" ? { consent: { sendAiConfiguration: consentAi, sendGitHubToken: github && consentGithub } } : {}),
+      ...(choice === "server" ? { consent: { sendAiConfiguration: consentAi, sendGitHubToken: github && !useConnection && consentGithub, ...(github && useConnection ? { githubAuth: "connection" as const } : {}) } } : {}),
     };
     // The focus goes to the plan as soon as it is there (it is asked for before the plan exists, and waits for it), and comes back to the button when the plan fails to be made.
     focusNext.current = "plan";
@@ -577,6 +587,8 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
       onError: (error) => {
         if (!isHandoverConsentError(error)) return false;
         setProblem(error.missing);
+        // The server's connection is not what the card believed: ask the server again, so that the choice shows what is true.
+        if (error.missing === "github-connection") void gh.refresh().catch(() => undefined);
         return true;
       },
     }).then((armed) => {
@@ -589,7 +601,7 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
     void commands.cancelHandover().then((cancelled) => { if (!cancelled) focusNext.current = null; setProblem(null); });
   };
   const move = () => void run("move", async (runtime, id) => {
-    await runtime.moveToServer(id, { sendAiConfiguration: consentAi, sendGitHubToken: github && consentGithub });
+    await runtime.moveToServer(id, { sendAiConfiguration: consentAi, sendGitHubToken: github && !useConnection && consentGithub, ...(github && useConnection ? { githubAuth: "connection" as const } : {}) });
     await setHost("server");
     toast({ title: t("autopilot.where.moved") });
   });
@@ -647,7 +659,7 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
       </div>
       {radiosOff && <Why id={`where-radios-${book.id}`}>{t("autopilot.quick.where.busy")}</Why>}
       {choice === "server" && host === "browser" && (
-        <ToServerPanel {...panelProps} github={github} server={serverReady ? "ready" : server.status === "disabled" ? "disabled" : "unverified"} consent={{ ai: consentAi, github: consentGithub }} onConsent={(change) => { if (change.ai !== undefined) setConsentAi(change.ai); if (change.github !== undefined) setConsentGithub(change.github); setProblem(null); }} problem={problem} />
+        <ToServerPanel {...panelProps} github={github} server={serverReady ? "ready" : server.status === "disabled" ? "disabled" : "unverified"} consent={{ ai: consentAi, github: consentGithub }} onConsent={(change) => { if (change.ai !== undefined) setConsentAi(change.ai); if (change.github !== undefined) setConsentGithub(change.github); setProblem(null); }} problem={problem} githubVia={githubVia} onVia={(next) => { setVia(next); if (next === "token") setConsentGithub(true); setProblem(null); }} />
       )}
       {host === "server" && (
         <div className="space-y-2">
@@ -656,6 +668,10 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
           ) : serverReady ? (
             <p className="text-xs text-amber-800 dark:text-amber-300">{t("autopilot.where.serverBookMissing")}</p>
           ) : null}
+          {onConnectionHere && <p className="text-xs text-muted-foreground" data-where-server-connection>{t("autopilot.where.serverViaConnection")}</p>}
+          {onConnectionHere && gh.connection && !ghConnected && (
+            <p role="note" className="text-xs text-amber-800 dark:text-amber-300" data-where-server-connection-down>{t("autopilot.where.serverConnectionDown")} <Link className="underline" to="/app/settings/server">{t("personalServer.title")}</Link>.</p>
+          )}
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" disabled={syncOff !== null} aria-describedby={syncOff ? `where-sync-why-${book.id}` : undefined} onClick={() => void run("sync", async (runtime, id) => { toast(syncToast(t, await runtime.syncWithServer(id, { push: true }))); })}>
               {busy === "sync" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}{t("autopilot.where.sync")}

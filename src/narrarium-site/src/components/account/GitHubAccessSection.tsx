@@ -17,6 +17,7 @@ import { installAppUrl, type AppInstallation } from "@/github/githubAppInstall";
 import { useAppInstallations } from "@/github/useAppInstallations";
 import { useBrokerAvailability } from "@/hooks/useBrokerAvailability";
 import { useSettings } from "@/drive/useSettings";
+import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import type { BookEntry } from "@/types/settings";
 
@@ -233,11 +234,13 @@ function BookLine({ line, book, offer, switching, disabled, onUse, outcome }: { 
   const uses = t(`accountSync.github.books.uses.${line.source ?? "none"}`);
   // The dialog stays where it is when the token it saves makes the warning of the line go.
   const token = usePersonalTokenDialog(book);
+  // The warning is about a copy of the app's token that the server cannot renew: a book on the server's own GitHub connection holds none.
+  const onConnection = useAutopilotStore((state) => state.views[line.bookId]?.server?.githubAuth === "connection");
   return (
     <li className="space-y-0.5">
       <p>{t("accountSync.github.books.line", { book: line.name, uses })}</p>
       {line.reach && <ReachNote line={line} />}
-      {line.serverWithAppToken && (
+      {line.serverWithAppToken && !onConnection && (
         <div className="space-y-1.5">
           <p className="flex items-start gap-2 text-amber-800 dark:text-amber-300"><AlertTriangle aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />{t("accountSync.github.server.warning")}</p>
           {book && <UsePersonalTokenButton book={book} named onOpen={token.open} />}
