@@ -27,6 +27,7 @@ import type { BookEntry } from "@/types/settings";
 const DesignDialog = lazy(() => import("@/components/outline/studio/DesignDialog"));
 const StudioReviews = lazy(() => import("@/components/outline/studio/StudioReviews"));
 const DesignProposals = lazy(() => import("@/components/outline/studio/DesignProposals"));
+const DesignRounds = lazy(() => import("@/components/outline/studio/DesignRounds"));
 
 export interface StudioTabProps {
   book: BookEntry;
@@ -193,16 +194,7 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
       {(status.kind === "active" || status.kind === "ready") && status.rounds.length > 0 && (
         <section aria-labelledby="studio-rounds-title" className="space-y-2 rounded-2xl border border-layer bg-card p-4 shadow-sm">
           <h2 id="studio-rounds-title" className="text-base font-semibold">{t("design.studio.rounds.title")}</h2>
-          <ol data-design-rounds className="space-y-1 text-sm">
-            {status.rounds.map((round) => (
-              <li key={`${round.round}-${round.at}`} data-design-round={round.round}>
-                {t("design.studio.rounds.row", { round: round.round, score: voteText(round.score), verdict: t(`design.studio.rounds.verdict.${round.verdict}`) })}
-                {round.readers !== undefined && <> · {t("design.studio.rounds.readers", { score: voteText(round.readers) })}</>}
-                {round.critical > 0 && <> · {t("design.studio.rounds.critical", { count: round.critical })}</>}
-                {round.findings > 0 && <> · {t("design.studio.rounds.findings", { count: round.findings })}</>}
-              </li>
-            ))}
-          </ol>
+          <Suspense fallback={null}><DesignRounds rounds={status.rounds} target={status.target} /></Suspense>
         </section>
       )}
 
