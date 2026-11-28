@@ -189,6 +189,8 @@ export interface SeedBook {
   repo: string;
   name: string;
   files: Record<string, string>;
+  /** A book on GitHub with its complete working copy on this device (a clone at `head-base`), instead of a book kept on this device. */
+  github?: { owner: string; repo: string; branch: string; token: string };
 }
 
 /** The tasks of the text router: what a model has to be tagged with to be asked for one, and the rows of its table. */
@@ -197,7 +199,9 @@ export const TEXT_TASKS = ["default", "editor-actions", "copilot", "brainstormin
 const libraryOf = (books: readonly SeedBook[]) => ({
   ui: { language: "en", theme: "light" },
   repository: { autoFetchOnOpen: false, autoFetchIntervalMinutes: 0, autoPullWhenClean: false },
-  books: books.map((book) => ({ id: book.id, storageMode: "local-only", localRepositoryId: book.repo, owner: "", repo: "", name: book.name, tokenIndex: null, activeBranch: `local:${book.repo}`, addedAt: "2026-11-20T00:00:00.000Z" })),
+  books: books.map((book) => book.github
+    ? { id: book.id, owner: book.github.owner, repo: book.github.repo, name: book.name, tokenIndex: null, activeBranch: book.github.branch, addedAt: "2026-11-20T00:00:00.000Z" }
+    : { id: book.id, storageMode: "local-only", localRepositoryId: book.repo, owner: "", repo: "", name: book.name, tokenIndex: null, activeBranch: `local:${book.repo}`, addedAt: "2026-11-20T00:00:00.000Z" }),
 });
 
 export function settingsOf(providerUrl: string, books: readonly SeedBook[]) {
@@ -265,7 +269,7 @@ export async function seed(target: Page | BrowserContext, settings: ReturnType<t
     if (url.pathname === "/drive/v3/files/root") return json({ id: "e2e-root" });
     if (url.pathname === "/drive/v3/files" && q.includes("mimeType=")) return json({ files: [{ id: "e2e-folder", name: "Narrarium", createdTime: "2024-01-01T00:00:00.000Z", mimeType: "application/vnd.google-apps.folder", parents: ["e2e-root"], ownedByMe: true, trashed: false, appProperties: { narrariumAppFolder: "v1" } }] });
     if (url.pathname === "/drive/v3/files" && q.includes("settings.json")) return json({ files: [{ id: "e2e-settings", name: "settings.json", parents: ["e2e-folder"], trashed: false, ownedByMe: true, mimeType: "application/json", createdTime: "2024-01-01T00:00:00.000Z" }] });
-    if (url.pathname === "/drive/v3/files/e2e-settings" && url.searchParams.has("alt")) return json({ version: 2, defaultGitHubToken: "", extraGitHubTokens: [], ...settings });
+    if (url.pathname === "/drive/v3/files/e2e-settings" && url.searchParams.has("alt")) return json({ version: 2, defaultGitHubToken: books.find((book) => book.github)?.github?.token ?? "", extraGitHubTokens: [], ...settings });
     if (url.pathname === "/drive/v3/files/e2e-settings") return json({ id: "e2e-settings", name: "settings.json", parents: ["e2e-folder"], trashed: false, ownedByMe: true, mimeType: "application/json", version: "1", modifiedTime: "2024-01-01T00:00:00.000Z" });
     if (url.pathname === "/drive/v3/files/e2e-folder" && route.request().method() === "PATCH") return json({ id: "e2e-folder" });
     if (url.pathname === "/drive/v3/files" && (q.includes("costs.json") || q.includes("clipboard.json"))) return json({ files: [] });
@@ -284,7 +288,7 @@ export async function seed(target: Page | BrowserContext, settings: ReturnType<t
     if (recordingOff.length) window.localStorage.setItem("narrarium.aiCalls.recording.v1", JSON.stringify(recordingOff));
     const keyOf = encodeURIComponent(`${user.provider}:${user.providerAccountId}`);
     window.localStorage.setItem(`narrarium-settings-cache-v2:${keyOf}`, JSON.stringify({ schemaVersion: 2, accountScope: `${user.provider}:${user.providerAccountId}`, baseRevision: "1", base: settings }));
-    window.sessionStorage.setItem(`narrarium-settings-credentials-v1:${keyOf}`, JSON.stringify({ defaultGitHubToken: "", extraGitHubTokens: [], azureOpenAIApiKey: "", integrationApiKeys: Object.fromEntries(settings.aiIntegrations.map((entry) => [entry.id, entry.apiKey])), deepSearchApiKeys: { braveApiKey: "", tavilyApiKey: "" }, bookTokens: {} }));
+    window.sessionStorage.setItem(`narrarium-settings-credentials-v1:${keyOf}`, JSON.stringify({ defaultGitHubToken: books.find((book) => book.github)?.github?.token ?? "", extraGitHubTokens: [], azureOpenAIApiKey: "", integrationApiKeys: Object.fromEntries(settings.aiIntegrations.map((entry) => [entry.id, entry.apiKey])), deepSearchApiKeys: { braveApiKey: "", tavilyApiKey: "" }, bookTokens: {} }));
     window.localStorage.setItem("narrarium-account-continuity-v1", JSON.stringify({ version: 1, accounts: { google: { version: 1, provider: "google", providerAccountId: user.providerAccountId, normalizedEmail: user.email, displayName: user.name, picture: user.picture, createdAt: 1704067200000, lastSeen: now } } }));
     window.sessionStorage.setItem("narrarium-auth-session-v1", JSON.stringify({ version: 1, state: { accessToken: "e2e-google-token", accessTokenExpiry: now + 3_600_000, provider: user.provider, providerAccountId: user.providerAccountId } }));
 
@@ -318,7 +322,7 @@ export async function seed(target: Page | BrowserContext, settings: ReturnType<t
       const db = await openDatabase();
       const rows: Array<{ book: typeof books[number]; branch: string; repositoryId: string; prepared: Array<Record<string, unknown>> }> = [];
       for (const book of books) {
-        const branch = `local:${book.repo}`;
+        const branch = book.github ? book.github.branch : `local:${book.repo}`;
         const repositoryId = `${accountIdentity}::${branch}`;
         const prepared = await Promise.all(Object.entries(book.files).map(async ([path, content], index) => {
           const hash = await sha256(content);
@@ -331,7 +335,7 @@ export async function seed(target: Page | BrowserContext, settings: ReturnType<t
         const transaction = db.transaction(names, "readwrite");
         for (const name of names) transaction.objectStore(name).clear();
         for (const { book, branch, repositoryId, prepared } of rows) {
-          transaction.objectStore("repositories").put({ id: repositoryId, localInstanceId: "e2e-local-instance", bookId: book.id, repositoryKind: "book", remoteKind: "none", localRepositoryId: book.repo, owner: "", repo: "", branch, defaultBranch: branch, remoteHeadSha: "local:e2e-seed", clonedAt: "2026-11-20T00:00:00.000Z", updatedAt: "2026-11-20T00:00:00.000Z", cloneComplete: true, cloneStatus: "complete", expectedFileCount: prepared.length, nextCommitOrder: 0, accountScope: accountIdentity, operationFence: 0 });
+          transaction.objectStore("repositories").put({ id: repositoryId, localInstanceId: "e2e-local-instance", bookId: book.id, repositoryKind: "book", ...(book.github ? { remoteKind: "github", owner: book.github.owner, repo: book.github.repo, remoteHeadSha: "head-base" } : { remoteKind: "none", localRepositoryId: book.repo, owner: "", repo: "", remoteHeadSha: "local:e2e-seed" }), branch, defaultBranch: branch, clonedAt: "2026-11-20T00:00:00.000Z", updatedAt: "2026-11-20T00:00:00.000Z", cloneComplete: true, cloneStatus: "complete", expectedFileCount: prepared.length, nextCommitOrder: 0, accountScope: accountIdentity, operationFence: 0 });
           for (const file of prepared) transaction.objectStore("files").put(file);
         }
         transaction.oncomplete = () => done();
