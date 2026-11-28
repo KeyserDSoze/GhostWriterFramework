@@ -31,7 +31,7 @@ export function ChecksSection({ findings, language, shownChapters, onShowEntry, 
       {all.length > 0 && (
         <div className="flex flex-wrap items-center gap-3">
           <Label htmlFor={`${id}-severity`} className="text-xs font-medium">{t("bibleStudio.decisions.filterLabel")}</Label>
-          <select id={`${id}-severity`} value={severity} onChange={(event) => setSeverity(event.target.value as typeof severity)} className="h-9 rounded-md border border-input bg-background px-2 text-sm">
+          <select id={`${id}-severity`} value={severity} onChange={(event) => setSeverity(event.target.value as typeof severity)} className="h-9 rounded-md border border-field bg-background px-2 text-sm">
             <option value="all">{t("bibleStudio.checks.filters.all")}</option>
             <option value="warning">{t("bibleStudio.checks.filters.warning")}</option>
             <option value="info">{t("bibleStudio.checks.filters.info")}</option>

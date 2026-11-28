@@ -1,14 +1,6 @@
 /** Texts of the decisions, questions, threads, timeline, guidelines, table of designs, checks and the lock on changes (see `@/i18n/bibleStudio`). */
 const bibleStudioEn = {
   bibleStudio: {
-    sections: {
-      decisions: "Decisions",
-      questions: "Open questions",
-      threads: "Setups and payoffs",
-      timeline: "Timeline",
-      guidelines: "Guidelines",
-      table: "All the chapter designs",
-    },
     themes: {
       audience: "Audience",
       audienceHint: "Who the book is for: their age, what they read, what they expect from it.",

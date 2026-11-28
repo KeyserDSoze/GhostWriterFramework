@@ -202,7 +202,8 @@ describe("the threads of setup and payoff", () => {
     fireEvent.click(within(section).getByRole("button", { name: t("bibleStudio.threads.save") }));
     await waitFor(() => expect(mocks.store.files.has("bible/threads.md")).toBe(true));
     expect(readBibleThreads(mocks.store.files.get("bible/threads.md")).value.threads).toEqual([{ id: "t-001", title: "The keeper's lamp", setup: { chapter: 2, note: "" }, status: "open" }]);
-    const checks = root.querySelector<HTMLElement>("[data-bible-checks]")!;
+    // The list of findings is made again when the file is read again: it is looked for in the section, not kept.
+    const checks = root.querySelector<HTMLElement>("#bible-checks")!;
     await waitFor(() => expect(checks.querySelector("[data-design-finding='thread-without-payoff']")).not.toBeNull());
     expect(checks).toHaveTextContent("The thread «The keeper's lamp» is set up in chapter 2 and has no payoff");
   });

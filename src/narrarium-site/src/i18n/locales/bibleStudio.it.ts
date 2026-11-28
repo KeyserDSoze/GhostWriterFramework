@@ -1,14 +1,6 @@
 /** Testi di decisioni, domande, fili, cronologia, linee guida, tabella dei progetti, controlli e blocco delle modifiche (vedi `@/i18n/bibleStudio`). */
 const bibleStudioIt = {
   bibleStudio: {
-    sections: {
-      decisions: "Decisioni",
-      questions: "Domande aperte",
-      threads: "Preparazioni e chiusure",
-      timeline: "Cronologia",
-      guidelines: "Linee guida",
-      table: "Tutti i progetti dei capitoli",
-    },
     themes: {
       audience: "Pubblico",
       audienceHint: "A chi è rivolto il libro: età, cosa legge, cosa si aspetta.",

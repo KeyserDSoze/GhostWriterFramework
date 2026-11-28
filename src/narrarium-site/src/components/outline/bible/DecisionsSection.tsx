@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Lock, LockOpen } from "lucide-react";
 import { BIBLE_DECISIONS_FILE, answerQuestion, askQuestion, captureDecision, setDecisionStatus, type BibleDecision, type BibleQuestion } from "narrarium-engine";
 import "@/i18n/bibleStudio";
+import "@/i18n/design";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,7 +46,7 @@ export function DecisionsSection({ data, source, onSaved, serverWithoutDecisions
       {data.decisionsProblems.length > 0 && <p role="alert" className="text-xs text-amber-800 dark:text-amber-300">{t("bibleStudio.decisions.problems", { problems: data.decisionsProblems.join("; ") })}</p>}
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Label htmlFor={filterId} className="text-xs font-medium">{t("bibleStudio.decisions.filterLabel")}</Label>
-        <select id={filterId} value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} className="h-9 rounded-md border border-input bg-background px-2 text-sm">
+        <select id={filterId} value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} className="h-9 rounded-md border border-field bg-background px-2 text-sm">
           <option value="all">{t("bibleStudio.decisions.filter.all")}</option>
           <option value="locked">{t("bibleStudio.decisions.filter.locked")}</option>
           <option value="open">{t("bibleStudio.decisions.filter.open")}</option>
@@ -152,7 +153,7 @@ function QuestionsBlock({ questions, busy, onAsk, onAnswer }: { questions: reado
   const [asking, setAsking] = useState("");
   return (
     <div className="space-y-3 border-t pt-4">
-      <h4 className="text-sm font-semibold">{t("bibleStudio.sections.questions")}</h4>
+      <h4 className="text-sm font-semibold">{t("design.bible.sections.questions")}</h4>
       <p className="max-w-3xl text-sm text-muted-foreground">{t("bibleStudio.questions.intro")}</p>
       {questions.length === 0
         ? <p className="text-sm text-muted-foreground">{t("bibleStudio.questions.empty")}</p>

@@ -40,9 +40,6 @@ export interface BibleTabProps {
 }
 
 const SECTION_IDS = { premise: "bible-premise", themes: "bible-themes", decisions: "bible-decisions", world: "bible-world", cast: "bible-cast", places: "bible-places", factions: "bible-factions", items: "bible-items", secrets: "bible-secrets", threads: "bible-threads", timeline: "bible-timeline", table: "bible-table", guidelines: "bible-guidelines", checks: "bible-checks" } as const;
-/** The sections whose title is `bibleStudio`'s (the others are `design.bible`'s). */
-const STUDIO_SECTIONS = new Set<keyof typeof SECTION_IDS>(["decisions", "threads", "timeline", "table", "guidelines"]);
-const sectionTitle = (t: (key: string) => string, key: keyof typeof SECTION_IDS) => t(`${STUDIO_SECTIONS.has(key) ? "bibleStudio" : "design.bible"}.sections.${key}`);
 
 /**
  * The Bible: the parts of the book that make its story, composed from its own files and read again when the autopilot or a sync changes them. The themes, the
@@ -76,7 +73,7 @@ export function BibleTab({ bookId, book, branch = "main", source, entries, state
         <nav aria-label={t("design.bible.nav")}>
           <ul className="flex flex-wrap gap-x-3 gap-y-1 text-sm">
             {(Object.keys(SECTION_IDS) as Array<keyof typeof SECTION_IDS>).map((key) => (
-              <li key={key}><a href={`#${SECTION_IDS[key]}`} className="inline-flex min-h-6 items-center underline underline-offset-4 [@media(pointer:coarse)]:min-h-11">{sectionTitle(t, key)}</a></li>
+              <li key={key}><a href={`#${SECTION_IDS[key]}`} className="inline-flex min-h-6 items-center underline underline-offset-4 [@media(pointer:coarse)]:min-h-11">{t(`design.bible.sections.${key}`)}</a></li>
             ))}
           </ul>
         </nav>
@@ -94,7 +91,7 @@ export function BibleTab({ bookId, book, branch = "main", source, entries, state
         <ThemesEditor data={data} source={source} onSaved={reload} />
       </Section>
 
-      <Section id={SECTION_IDS.decisions} title={t("bibleStudio.sections.decisions")}>
+      <Section id={SECTION_IDS.decisions} title={t("design.bible.sections.decisions")}>
         <DecisionsSection data={data} source={source} onSaved={reload} serverWithoutDecisions={serverWithoutDecisions} />
       </Section>
 
@@ -117,21 +114,21 @@ export function BibleTab({ bookId, book, branch = "main", source, entries, state
           : <ul className="space-y-3">{data.secrets.map((secret) => <li key={secret.path}><SecretCard bookId={bookId} secret={secret} nameOf={nameOf} findings={secretFindings(secret.slug)} language={language} /></li>)}</ul>}
       </Section>
 
-      <Section id={SECTION_IDS.threads} title={t("bibleStudio.sections.threads")}>
+      <Section id={SECTION_IDS.threads} title={t("design.bible.sections.threads")}>
         <ThreadsSection data={data} source={source} onSaved={reload} />
       </Section>
 
-      <Section id={SECTION_IDS.timeline} title={t("bibleStudio.sections.timeline")}>
+      <Section id={SECTION_IDS.timeline} title={t("design.bible.sections.timeline")}>
         <TimelineSection data={data} language={language} shownChapters={shownChapters} onShowEntry={onShowEntry} />
       </Section>
 
-      <Section id={SECTION_IDS.table} title={t("bibleStudio.sections.table")}>
+      <Section id={SECTION_IDS.table} title={t("design.bible.sections.table")}>
         <Suspense fallback={null}>
           <DesignTable entries={entries} findings={data.findings} onShowEntry={onShowEntry} />
         </Suspense>
       </Section>
 
-      <Section id={SECTION_IDS.guidelines} title={t("bibleStudio.sections.guidelines")}>
+      <Section id={SECTION_IDS.guidelines} title={t("design.bible.sections.guidelines")}>
         <GuidelinesSection data={data} files={fileMap} source={source} onSaved={reload} />
       </Section>
 

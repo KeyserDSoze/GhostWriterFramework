@@ -26,6 +26,12 @@ const designEn = {
         items: "Items",
         secrets: "Secrets and reveals",
         checks: "Checks of the design",
+        questions: "Open questions",
+        decisions: "Decisions",
+        threads: "Setups and payoffs",
+        timeline: "Timeline",
+        guidelines: "Guidelines",
+        table: "All the chapter designs",
       },
       premise: {
         storyDesign: "Story design",

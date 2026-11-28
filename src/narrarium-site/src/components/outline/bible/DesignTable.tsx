@@ -62,7 +62,7 @@ export default function DesignTable({ entries, findings, onShowEntry }: { entrie
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-field`} className="text-xs font-medium">{t("bibleStudio.table.filters.field")}</Label>
-          <select id={`${id}-field`} value={filters.field} onChange={(event) => setFilters({ ...filters, field: event.target.value as OutlineDesignKey | "" })} className="h-9 rounded-md border border-input bg-background px-2 text-sm">
+          <select id={`${id}-field`} value={filters.field} onChange={(event) => setFilters({ ...filters, field: event.target.value as OutlineDesignKey | "" })} className="h-9 rounded-md border border-field bg-background px-2 text-sm">
             <option value="">{t("bibleStudio.table.filters.anyField")}</option>
             {OUTLINE_DESIGN_FIELDS.map((field) => <option key={field.key} value={field.key}>{t(`outline.design.fields.${field.key}`, { defaultValue: OUTLINE_DESIGN_LABELS[field.key] })}</option>)}
           </select>

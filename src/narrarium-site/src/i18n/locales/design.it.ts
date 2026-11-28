@@ -26,6 +26,12 @@ const designIt = {
         items: "Oggetti",
         secrets: "Segreti e rivelazioni",
         checks: "Controlli del progetto",
+        questions: "Domande aperte",
+        decisions: "Decisioni",
+        threads: "Preparazioni e chiusure",
+        timeline: "Cronologia",
+        guidelines: "Linee guida",
+        table: "Tutti i progetti dei capitoli",
       },
       premise: {
         storyDesign: "Progetto della storia",

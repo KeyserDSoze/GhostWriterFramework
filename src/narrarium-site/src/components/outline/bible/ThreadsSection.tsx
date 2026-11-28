@@ -80,7 +80,7 @@ export function ThreadsSection({ data, source, onSaved }: { data: BibleData; sou
             </div>
             <div className="space-y-1">
               <Label htmlFor={`${id}-${index}-status`} className="text-xs font-medium">{t("bibleStudio.threads.status")}</Label>
-              <select id={`${id}-${index}-status`} value={row.status} disabled={busy} onChange={(event) => update(index, { status: event.target.value as ThreadStatus })} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
+              <select id={`${id}-${index}-status`} value={row.status} disabled={busy} onChange={(event) => update(index, { status: event.target.value as ThreadStatus })} className="h-9 w-full rounded-md border border-field bg-background px-2 text-sm">
                 {(["open", "paid", "dropped"] as const).map((state) => <option key={state} value={state}>{t(`bibleStudio.threads.state.${state}`)}</option>)}
               </select>
             </div>
