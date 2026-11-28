@@ -1233,37 +1233,43 @@ function speedOfModel(speeds: EstimateSpeeds | undefined, model: string): number
  */
 export function estimateModelsFromConfig(config: AiRuntimeConfig | null | undefined, speeds?: EstimateSpeeds, caching?: EstimateCacheHitRates): Partial<Record<EstimateCapability, EstimateModel>> {
   const models: Partial<Record<EstimateCapability, EstimateModel>> = {};
-  const configuration = asRecord(config);
-  if (!Array.isArray(configuration.aiIntegrations)) return models;
-  const usable = { ...configuration, aiIntegrations: configuration.aiIntegrations.filter((integration) => integration && typeof integration === "object") } as unknown as AiRuntimeConfig;
   for (const capability of ESTIMATE_CAPABILITIES) {
-    let candidate: ReturnType<typeof resolveAiCandidates>[number] | undefined;
-    try {
-      candidate = resolveAiCandidates(usable, capability)[0];
-    } catch {
-      // A configuration the router cannot read has no model for this capability.
-    }
-    if (!candidate) continue;
-    const model: EstimateModel = { model: candidate.model };
-    if (candidate.integration.provider === "azure_openai") model.provider = "azure_openai";
-    if (candidate.underlyingModel) model.underlyingModel = candidate.underlyingModel;
-    if (candidate.maxInputTokens) model.maxInputTokens = candidate.maxInputTokens;
-    if (candidate.maxOutputTokens) model.maxOutputTokens = candidate.maxOutputTokens;
-    const pricing: NonNullable<EstimateModel["pricing"]> = {};
-    for (const key of ["inputPerMTok", "cachedPerMTok", "cacheWritePerMTok", "outputPerMTok"] as const) {
-      const price = candidate.pricing?.[key];
-      if (typeof price === "number" && Number.isFinite(price)) pricing[key] = price;
-    }
-    if (Object.keys(pricing).length) model.pricing = pricing;
-    if (candidate.supportsReasoning !== undefined) model.supportsReasoning = candidate.supportsReasoning;
-    if (candidate.promptCaching) model.promptCaching = candidate.promptCaching;
-    const rate = cacheHitRateOf(caching, candidate.model);
-    if (rate !== undefined) model.cacheHitRate = rate;
-    const speed = speedOfModel(speeds, candidate.model);
-    if (speed) model.tokensPerSecond = speed;
-    models[capability] = model;
+    const model = estimateModelOf(config, capability, speeds, caching);
+    if (model) models[capability] = model;
   }
   return models;
+}
+
+/** The model of one task as the router would choose it, as `estimateModelsFromConfig` describes it; `null` when the configuration has none for it. */
+export function estimateModelOf(config: AiRuntimeConfig | null | undefined, capability: string, speeds?: EstimateSpeeds, caching?: EstimateCacheHitRates): EstimateModel | null {
+  const configuration = asRecord(config);
+  if (!Array.isArray(configuration.aiIntegrations)) return null;
+  const usable = { ...configuration, aiIntegrations: configuration.aiIntegrations.filter((integration) => integration && typeof integration === "object") } as unknown as AiRuntimeConfig;
+  let candidate: ReturnType<typeof resolveAiCandidates>[number] | undefined;
+  try {
+    candidate = resolveAiCandidates(usable, capability)[0];
+  } catch {
+    // A configuration the router cannot read has no model for this capability.
+  }
+  if (!candidate) return null;
+  const model: EstimateModel = { model: candidate.model };
+  if (candidate.integration.provider === "azure_openai") model.provider = "azure_openai";
+  if (candidate.underlyingModel) model.underlyingModel = candidate.underlyingModel;
+  if (candidate.maxInputTokens) model.maxInputTokens = candidate.maxInputTokens;
+  if (candidate.maxOutputTokens) model.maxOutputTokens = candidate.maxOutputTokens;
+  const pricing: NonNullable<EstimateModel["pricing"]> = {};
+  for (const key of ["inputPerMTok", "cachedPerMTok", "cacheWritePerMTok", "outputPerMTok"] as const) {
+    const price = candidate.pricing?.[key];
+    if (typeof price === "number" && Number.isFinite(price)) pricing[key] = price;
+  }
+  if (Object.keys(pricing).length) model.pricing = pricing;
+  if (candidate.supportsReasoning !== undefined) model.supportsReasoning = candidate.supportsReasoning;
+  if (candidate.promptCaching) model.promptCaching = candidate.promptCaching;
+  const rate = cacheHitRateOf(caching, candidate.model);
+  if (rate !== undefined) model.cacheHitRate = rate;
+  const speed = speedOfModel(speeds, candidate.model);
+  if (speed) model.tokensPerSecond = speed;
+  return model;
 }
 
 /**

@@ -25,8 +25,16 @@ export * from "./profiles/ghostwriter.js";
 export * from "./profiles/readers.js";
 export * from "./profiles/director.js";
 export * from "./profiles/evaluation-style.js";
+export * from "./profiles/wildcards.js";
 
 export * from "./readers/evaluation.js";
+
+export * from "./wildcards/context.js";
+export * from "./wildcards/estimate.js";
+export * from "./wildcards/ideas.js";
+export * from "./wildcards/journal.js";
+export * from "./wildcards/room.js";
+export * from "./wildcards/triage.js";
 
 export * from "./ai/types.js";
 export * from "./ai/config.js";

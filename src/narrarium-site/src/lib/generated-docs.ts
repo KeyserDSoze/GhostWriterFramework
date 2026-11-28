@@ -453,6 +453,27 @@ export const docEntries: DocEntry[] = [
     }
   },
   {
+    "title": "Wildcards (Fuori dal coro)",
+    "href": "/docs/wildcards",
+    "slug": "wildcards",
+    "group": "reference",
+    "groupLabel": "Reference",
+    "sourcePath": "docs/wildcards.md",
+    "summary": "The wildcards are a writers' room next to the Director, the Ghostwriters and the simulated Readers. The readers **judge**: they simulate the audience and give a score that the autopilot follows. The wildcards **propose and check**: they give ideas and findings, never a score, and nothing they say is applied by itself. The Director triages what they give in the autopilot (adopted, adapted or rejected, always with the reason), the author decides in a review table (accept or skip, one apply), and the ghostwriters use what was accepted as material.",
+    "translations": {
+      "en": {
+        "title": "Wildcards (Fuori dal coro)",
+        "summary": "The wildcards are a writers' room next to the Director, the Ghostwriters and the simulated Readers. The readers **judge**: they simulate the audience and give a score that the autopilot follows. The wildcards **propose and check**: they give ideas and findings, never a score, and nothing they say is applied by itself. The Director triages what they give in the autopilot (adopted, adapted or rejected, always with the reason), the author decides in a review table (accept or skip, one apply), and the ghostwriters use what was accepted as material.",
+        "sourcePath": "docs/wildcards.md"
+      },
+      "it": {
+        "title": "Wildcards (Fuori dal coro)",
+        "summary": "The wildcards are a writers' room next to the Director, the Ghostwriters and the simulated Readers. The readers **judge**: they simulate the audience and give a score that the autopilot follows. The wildcards **propose and check**: they give ideas and findings, never a score, and nothing they say is applied by itself. The Director triages what they give in the autopilot (adopted, adapted or rejected, always with the reason), the author decides in a review table (accept or skip, one apply), and the ghostwriters use what was accepted as material.",
+        "sourcePath": "docs/wildcards.md"
+      }
+    }
+  },
+  {
     "title": "narrarium-astro-reader",
     "href": "/docs/astro-reader",
     "slug": "astro-reader",
@@ -630,6 +651,7 @@ export const docMarkdown: Record<string, () => Promise<{ default: string }>> = {
   "docs/revise-paragraph.md": () => import("../../../../docs/revise-paragraph.md?raw"),
   "docs/story-bible.md": () => import("../../../../docs/story-bible.md?raw"),
   "docs/style-profiles.md": () => import("../../../../docs/style-profiles.md?raw"),
+  "docs/wildcards.md": () => import("../../../../docs/wildcards.md?raw"),
   "packages/astro-reader/README.md": () => import("../../../../packages/astro-reader/README.md?raw"),
   "packages/core/README.md": () => import("../../../../packages/core/README.md?raw"),
   "packages/create-narrarium-book/README.md": () => import("../../../../packages/create-narrarium-book/README.md?raw"),

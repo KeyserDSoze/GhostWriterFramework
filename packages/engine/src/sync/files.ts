@@ -2,13 +2,16 @@ import { mergeOutlineJournals, pruneOutlineJournal, serializeOutlineJournal } fr
 import { OUTLINE_CHANGES_FILE, isSafeBookPath, isTextBookPath } from "../book/paths.js";
 import type { BookFileChange, BookFileContent, BookFileEntry, BookStore } from "../book/store.js";
 import { sha256Hex } from "../util/hash.js";
+import { IDEAS_JOURNAL_FILE, mergeIdeasJournals, pruneIdeasJournal, serializeIdeasJournal } from "../wildcards/journal.js";
 
 /**
  * The text of a file that two sides changed apart, when the book can join the two without anyone choosing: the journal of the Synopsis
- * (`outline/changes.yml`), which is append-only, is the series of both. `null` for every other file: a conflict to settle.
+ * (`outline/changes.yml`) and the journal of the room (`bible/ideas.yml`), which are append-only, are the entries of both. `null` for every other
+ * file: a conflict to settle.
  */
 export function mergeBookFileVersions(path: string, local: string, remote: string, now: Date = new Date()): string | null {
   if (path === OUTLINE_CHANGES_FILE) return serializeOutlineJournal(pruneOutlineJournal(mergeOutlineJournals(local, remote), now));
+  if (path === IDEAS_JOURNAL_FILE) return serializeIdeasJournal(pruneIdeasJournal(mergeIdeasJournals(local, remote), now));
   return null;
 }
 

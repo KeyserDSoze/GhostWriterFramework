@@ -113,6 +113,10 @@ export interface FakeAiOptions {
   designReview?: (round: number, user: string) => Record<string, unknown>;
   /** The director's corrections of the whole book (a review of the book in a book-level round), by the number of the request (default: one correction of chapter 1, citing the first point). */
   bookCorrections?: (call: number, user: string) => Record<string, unknown>;
+  /** The reply of a wildcard of the room, by its name (default: two ideas, or two findings for a sentinel, about the chapter it reads). */
+  wildcardIdeas?: (name: string, user: string) => unknown;
+  /** The Director's triage of the room's ideas, by their ids (default: the first adopted, the second adapted, the others rejected). */
+  wildcardTriage?: (ids: string[], user: string) => unknown;
 }
 
 function prose(words: number, seed: string): string {
@@ -292,6 +296,36 @@ export function createFakeAutopilotAi(options: FakeAiOptions = {}): AiPort & { c
         return { summary: "Only the first scene changes.", targets: [{ chapterNumber: 1, sceneNumber: 1, instruction: "Apply the author's revision." }] };
       case "book_corrections":
         return options.bookCorrections?.(calls.filter((entry) => entry.json?.name === "book_corrections").length, user) ?? { summary: "The ending needs its setup.", corrections: [{ chapterNumber: 1, change: "Plant the setup of the ending in the first scene.", reason: "The ending pays off a promise the book never made.", cites: [1] }] };
+      case "wildcard_ideas": {
+        const name = /You are «([^»]+)»/.exec(user)?.[1] ?? "A wildcard";
+        if (options.wildcardIdeas) return options.wildcardIdeas(name, user);
+        const sentinel = /a sentinel: you check/.test(user);
+        const chapter = Number(/WHAT THE ROOM READS: [^\n]*?(?:Chapter|Capitolo) (\d+)/.exec(user)?.[1] ?? "0");
+        const chapters = chapter ? [chapter] : [];
+        return {
+          items: sentinel
+            ? [
+              { title: `${name}: a loose thread`, idea: "The lighthouse key is shown and never used.", why: "A promise the reader will remember.", changes: "Pay it off or cut it.", chapters, risk: "None.", audacity: 2, evidence: "the key on the hook", severity: "major" },
+              { title: `${name}: a date`, idea: "The storm lasts two days here and one in the summary.", why: "Continuity.", changes: "Align the duration.", chapters, risk: "None.", audacity: 1, evidence: "two days of wind", severity: "minor" },
+            ]
+            : [
+              { title: `${name}: tell it from the tide`, idea: "Let the tide narrate the night of the flood.", why: "Nobody expects it, and it carries the dread.", changes: "One scene changes point of view.", chapters, risk: "It may feel like a trick.", audacity: 8 },
+              { title: `${name}: Orrin's own plan`, idea: "Give Orrin a plan of his own that Mira stumbles on.", why: "The antagonist acts instead of waiting.", changes: "Adds a beat to the confrontation.", chapters, risk: "Longer chapter.", audacity: 6 },
+            ],
+        };
+      }
+      case "wildcard_triage": {
+        const ids = [...new Set([...user.matchAll(/\[(idea-[0-9a-f]{16})\]/g)].map((match) => match[1]))];
+        if (options.wildcardTriage) return options.wildcardTriage(ids, user);
+        return {
+          decisions: ids.map((id, index) => (index === 0
+            ? { id, verdict: "adopted", reason: "It lifts the chapter where it sags." }
+            : index === 1
+              ? { id, verdict: "adapted", reason: "The core is right, the form too loud.", adaptation: "Keep the idea, in one paragraph only." }
+              : { id, verdict: "rejected", reason: "It breaks the tone the author set." })),
+          summary: "One idea adopted, one adapted.",
+        };
+      }
       case "director_opinion":
         return { verdict: "revise", score: 7, summary: "Good, but the middle drags.", answer: user.includes("asks you") ? "Yes, keep it." : undefined, strengths: ["Atmosphere"], concerns: [{ severity: "major", issue: "Pacing", suggestion: "Cut a scene" }], decisions: ["Keep the ending"], nextSteps: ["Tighten chapter 2"], questionsForAuthor: [] };
       default:

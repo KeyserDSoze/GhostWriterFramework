@@ -445,6 +445,8 @@ export const COPILOT_CAPABILITY = "copilot";
  * (`AI_CAPABILITY_FOLLOWS`).
  */
 export const BRAINSTORMING_CAPABILITY = "brainstorming";
+/** The router's task of the wildcards («Fuori dal coro»): the voices of the room, asked by the author, the Copilot, Brainstorming or the autopilot. */
+export const WILDCARDS_CAPABILITY = "wildcards";
 /**
  * The task a task follows while it has no route of its own: its route is the followed task's, and a model the author allows the followed task is allowed
  * it too (not the other way round). Without that route either, it is resolved as the followed task is, with its own tags first: the models tagged for it,
