@@ -90,6 +90,7 @@ accepted, plus `GET /oauth/status`.
 | `POST /oauth/github/token` | `{"code", "codeVerifier", "redirectUri"}` | `{"accessToken", "expiresIn", "refreshToken", "refreshTokenExpiresIn"?, "scope"?}` |
 | `POST /oauth/github/refresh` | `{"refreshToken"}` | `{"accessToken", "expiresIn", "refreshToken", "refreshTokenExpiresIn"?, "scope"?}` |
 | `POST /oauth/github/revoke` | `{"token"}` | `204`, no body |
+| `POST /oauth/github/revoke-token` | `{"token"}` | `204`, no body |
 
 Notes:
 
@@ -131,6 +132,18 @@ Notes:
   for the user, on every device. A `404` (no such grant) is answered `204` too. Send a
   **fresh** access token (refresh first): with an expired one GitHub cannot find the grant,
   and the user must then revoke the app at *Settings → Applications*.
+- **GitHub `/revoke-token`**: deletes **one token** and nothing else
+  (`DELETE https://api.github.com/applications/{client_id}/token`, the same Basic authentication, the
+  token in the body); the user's other tokens, and their authorization of the app, stay. It is for a
+  caller that holds a token of its own: the personal server's connection to GitHub, made with the device
+  flow, whose *Disconnect* would otherwise sign the user's browser out. A `404` is answered `204` too, a
+  `401` is `501 not_configured`, and the route exists for GitHub only (`/oauth/google/revoke-token` is a
+  `404`). A Worker from before this route answers `404 not_found`.
+- **A server calling the broker.** The personal server renews its own GitHub pair through
+  `/oauth/github/refresh` (the route above) and revokes it through `/oauth/github/revoke-token`. It sends
+  no `Origin` header, and the Worker serves it as it serves any caller without one (no CORS headers; the
+  secret never leaves the Worker); GitHub rotates the refresh token, so the answer carries the new one
+  and the old one stops working. See `packages/server/docs/github-connection.md`.
 - **GitHub reports OAuth errors inside an HTTP `200` JSON body**
   (`{"error":"bad_verification_code"}`), so the broker reads the body for an `error` before
   trusting the status: `bad_verification_code`, `bad_refresh_token` and `invalid_grant` →
