@@ -30,6 +30,7 @@ import {
 import { readBrief } from "./brief.js";
 import { createAnnotationsCampaign, readAnnotationNotes, type ReviseAnnotationsInput } from "./annotations.js";
 import { chooseDesignPitch, type DesignPitchChoice } from "./design-alternatives.js";
+import { decideFinding, type FindingDecisionInput } from "./design-coherence.js";
 import { RevisionCampaignError, cancelRevisionCampaign, createReviewCampaign, createRevisionCampaign, decideBookCorrections as decideCorrections, recordRevisionCampaign, type BookCorrectionsDecision, type ReviewBookInput, type ReviseChaptersInput, type RevisionCampaignResult } from "./campaign.js";
 import { createModelMemory, type AiModelMemory } from "../ai/memory.js";
 import { applyLiveAttempt, applyLiveProgress, startLive } from "./live.js";
@@ -887,6 +888,17 @@ export class AutopilotSession {
     if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
     const at = this.now().toISOString();
     return this.mutate("Autopilot: the author chose the pitch", (state) => chooseDesignPitch(state, input, at), { create: false });
+  }
+
+  /**
+   * The author decides about a finding of the analysis of the design: asks the autopilot to fix it, takes it herself, says it is not a problem, or takes the decision back. Saved
+   * at once; a fix is carried out by the design run the author starts next. Refused with an `AutopilotDesignError`: `no_findings`, `unknown_finding`, `not_fixable`, `invalid_request`.
+   */
+  async decideDesignFinding(input: FindingDecisionInput): Promise<AutopilotState> {
+    if (this.starting) await this.starting.catch(() => undefined);
+    if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
+    const at = this.now().toISOString();
+    return this.mutate("Autopilot: the author decided about a finding of the design", (state) => decideFinding(state, input, at), { create: false });
   }
 
   /** Cancel the chapters of the campaign that wait (the one being worked finishes): what the reason does with them is its own (`cancel`). Answers as `reviseChapters`. */

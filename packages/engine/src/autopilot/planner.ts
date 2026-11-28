@@ -897,6 +897,21 @@ export function phaseOf(state: AutopilotState): AutopilotPhase {
   return current.status === "review" ? "review" : "write";
 }
 
+/** What the run says when a review of the design on request is done: what it found. */
+function designReviewedMessage(state: AutopilotState, italian: boolean): string {
+  const design = state.design!;
+  const chosen = design.reviewing?.chapters;
+  const weak = (chosen ?? Object.keys(design.reviewed ?? {}).map(Number)).filter((number) => design.reviewed?.[String(number)]?.verdict === "revise").length;
+  const open = design.coherence?.findings.filter((finding) => finding.status === "open" || finding.status === "fixing").length ?? 0;
+  if (chosen) {
+    const which = chosen.length === 1 ? `${italian ? "del capitolo" : "of chapter"} ${chosen[0]}` : `${italian ? "dei capitoli" : "of chapters"} ${chosen.join(", ")}`;
+    return italian ? `Revisione del progetto ${which} completata: ${weak ? `${weak} con punti deboli` : "nessun punto debole"}.` : `Review of the design ${which} done: ${weak ? `${weak} with weak points` : "no weak point"}.`;
+  }
+  return italian
+    ? `Revisione del progetto completata: ${open === 1 ? "un problema aperto" : `${open} problemi aperti`}, ${weak === 1 ? "un capitolo" : `${weak} capitoli`} con punti deboli.`
+    : `Review of the design done: ${open === 1 ? "one open finding" : `${open} open findings`}, ${weak === 1 ? "one chapter" : `${weak} chapters`} with weak points.`;
+}
+
 /** What the run says when the design is ready: how many chapters, and what to do next. */
 function designReadyMessage(state: AutopilotState, italian: boolean): string {
   const chapters = state.plan?.chapters.filter((chapter) => !chapter.imported).length ?? 0;
@@ -908,6 +923,13 @@ function designReadyMessage(state: AutopilotState, italian: boolean): string {
 /** The next AI step, or the reason to stop. Never calls AI and never mutates the state. */
 export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedStep {
   const italian = isItalian(ctx.language);
+  // A review of the design on request (`AutopilotDesign.reviewing`): the chapters not judged as they are, then the analysis of the structure, and the run stops. It does nothing else, whatever waits.
+  if (state.design?.reviewing) {
+    const review = nextDesignReview(state, ctx.snapshot);
+    if (review?.kind === "design-coherence") return { kind: "task", task: descriptor(review.kind, "plan", ctx) };
+    if (review) return { kind: "task", task: { ...descriptor(review.kind, "plan", ctx, { from: review.from, to: review.to }), chapterNumber: review.from } };
+    return { kind: "stop", status: "paused", message: designReviewedMessage(state, italian), code: "designReviewed" };
+  }
   // A campaign held for the author (the rounds of a review of the book the author allowed are done): nothing goes on until the author starts the run again.
   if (state.campaign?.held && !state.revision && !state.review) {
     return { kind: "stop", status: "paused", message: state.campaign.held.message || (italian ? "La revisione aspetta te: riavvia l'autopilot per continuare." : "The review waits for you: start the autopilot again to go on."), code: "reviewHeld" };

@@ -150,7 +150,7 @@ export async function runDesignChapterReview(ctx: TaskContext): Promise<TaskResu
       [...around].length ? `THE CHAPTERS BESIDE THEM (for what they take and leave; not under review):\n${[...around].sort((left, right) => left - right).map((number) => `Chapter ${number}${byNumber.get(number)!.intact ? "" : " (the author's)"}:\n${entryText(byNumber.get(number)!, NEIGHBOUR_CHARACTERS)}`).join("\n\n")}` : "",
       `CHAPTERS UNDER REVIEW:\n${asked.map((number) => `Chapter ${number}${byNumber.get(number)!.intact ? "" : " (the author's entry: binding)"}:\n${entryText(byNumber.get(number)!, REVIEWED_CHARACTERS)}`).join("\n\n")}`,
     ], request([
-      `Review the design of ${asked.length === 1 ? `chapter ${asked[0]}` : `chapters ${asked.join(", ")}`} of the book, each with the chapters beside it, before any prose is written. Round ${round} of the design${round > 1 ? ": the design was rewritten since the last round, so judge the chapters as they are now" : ""}.`,
+      `Review the design of ${asked.length === 1 ? `chapter ${asked[0]}` : `chapters ${asked.join(", ")}`} of the book, each with the chapters beside it, before any prose is written. ${design.reviewing ? "This is a review on request of the design as it is now." : `Round ${round} of the design${round > 1 ? ": the design was rewritten since the last round, so judge the chapters as they are now" : ""}.`}`,
       ...designRubricRule("applicable"),
       "For every chapter give its verdict (ok: it can be written as it is; revise: a criterion falls short and its design should change) and a summary of what works and what to change.",
       authorRules(ctx, false),

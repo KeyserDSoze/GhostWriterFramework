@@ -1171,8 +1171,11 @@ export interface AutopilotDesign {
   rubric?: DesignRubrics;
   /** The latest review of every chapter, by its number (`DesignChapterReview`). */
   reviewed?: Record<string, DesignChapterReview>;
-  /** A review of the design on request goes on (`DesignStartInput.reviewOnly`): the chapters it looks at (absent: all), and whether it is over. */
-  reviewing?: { chapters?: number[]; startedAt: string; done?: boolean };
+  /**
+   * A review of the design on request (`DesignStartInput.reviewOnly`): the chapters it looks at (absent: the whole design), and when it began. While it is there the run
+   * does only the review, and stops; any other start takes it away.
+   */
+  reviewing?: { chapters?: number[]; startedAt: string };
   /** The alternative pitches of the design, and the choice (`DesignAlternatives`). */
   alternatives?: DesignAlternatives;
   /** The findings of the analysis of the whole structure (`DesignCoherence`). */
@@ -1185,6 +1188,11 @@ export interface DesignStartInput {
   chapters?: number;
   /** How the design is reviewed: a value sets it, `null` takes it back (`ReviewPolicyUpdate`). */
   review?: ReviewPolicyUpdate | null;
+  /**
+   * A review of the design that exists, on request, instead of a design run: the chapters of the Synopsis that are not written are judged chapter by chapter and, for the
+   * whole design, its structure is analysed; nothing is designed, nothing is written, and the run stops. `chapters`: only those (absent: the whole design). It stands alone.
+   */
+  reviewOnly?: { chapters?: number[] };
   /** What the run does besides the plain design: a value sets it, `null` takes it back (`DesignWorkflow`). */
   workflow?: DesignWorkflow | null;
 }
@@ -1378,7 +1386,8 @@ export type AutopilotMessageCode =
   | "designPitchChosen"
   | "designPitchChoice"
   | "designCoherence"
-  | "designProposals";
+  | "designProposals"
+  | "designReviewed";
 
 /**
  * Which candidate of the route a call asks now, and how: what the `call-attempt` event says and `AutopilotLive.trying` keeps, so that a client shows it as the request is sent. Only

@@ -10,6 +10,9 @@ import type { AutopilotState } from "./types.js";
  * only the hashes of the files of the snapshot, never a file, so that the planner can say it without waiting for a store.
  */
 
+/** What the signature of an analysis is set to when a review on request asks for it again: it is no real signature, so that the design is analysed once more. */
+export const STALE_SIGNATURE = "00000000";
+
 /** A short fingerprint of a text (FNV-1a over its code units), eight hex digits: it tells that something changed, and is not a defence against anybody. */
 export function shortHash(text: string): string {
   let hash = 0x811c9dc5;

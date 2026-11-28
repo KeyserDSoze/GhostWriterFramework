@@ -94,13 +94,13 @@ export function normalizeReviewed(value: unknown): Record<string, DesignChapterR
   return Object.keys(reviewed).length ? reviewed : undefined;
 }
 
-/** A review of the design on request that goes on, as a file says it: the chapters it looks at (none listed: all), and whether it is over. */
+/** A review of the design on request, as a file says it: the chapters it looks at (none listed: all). */
 export function normalizeReviewing(value: unknown): AutopilotDesign["reviewing"] {
   const source = asRecord(value);
   const startedAt = moment(source.startedAt);
   if (!startedAt) return undefined;
   const chapters = [...new Set(asArray(source.chapters).filter((number): number is number => typeof number === "number" && Number.isInteger(number) && number >= 1 && number <= 1_000_000))].sort((left, right) => left - right);
-  return { startedAt, ...(chapters.length ? { chapters } : {}), ...(source.done === true ? { done: true } : {}) };
+  return { startedAt, ...(chapters.length ? { chapters } : {}) };
 }
 
 function text(value: unknown, limit: number): string {
@@ -220,7 +220,7 @@ export interface DesignFlow {
 
 export function designFlow(design: Pick<AutopilotDesign, "workflow" | "reviewing"> | null | undefined): DesignFlow {
   // A review on request is a review: every part that judges is on, whatever the workflow of the design says, and nothing is proposed.
-  if (design?.reviewing && !design.reviewing.done) return { rubric: true, chapterReview: true, coherence: !design.reviewing.chapters, alternatives: 0, pitchChoice: "director" };
+  if (design?.reviewing) return { rubric: true, chapterReview: true, coherence: !design.reviewing.chapters, alternatives: 0, pitchChoice: "director" };
   const on = (key: (typeof SWITCHES)[number]) => design?.workflow?.[key] === true;
   const alternatives = design?.workflow?.alternatives ?? 0;
   return { rubric: on("rubric"), chapterReview: on("chapterReview"), coherence: on("coherence"), alternatives, pitchChoice: alternatives && design?.workflow?.pitchChoice === "author" ? "author" : "director" };

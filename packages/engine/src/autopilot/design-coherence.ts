@@ -7,7 +7,7 @@ import type { OutlineChapterEntry } from "../book/outline.js";
 import { STORY_DESIGN_FILE } from "../book/paths.js";
 import { asArray, asRecord } from "../util/json.js";
 import { isItalian, languageName, truncate } from "../util/text.js";
-import { loadDesignCheckInput } from "./design.js";
+import { AutopilotDesignError, loadDesignCheckInput } from "./design.js";
 import { coherenceSignature, reviewableChapters, shortHash } from "./design-flow.js";
 import {
   COHERENCE_FINDINGS_KEPT,
@@ -25,6 +25,7 @@ import {
 import { outlineDesignGaps } from "./outline-check.js";
 import { specialistsSystemPrompt } from "./prompts.js";
 import { bookHeader, briefBlock, data, designContext, outlineOf, outputLimit, request, type TaskContext, type TaskResult } from "./tasks.js";
+import type { AutopilotState } from "./types.js";
 
 /**
  * The analysis of the whole structure of a design (`design-coherence`): the specialist who reads every chapter together looks for what does not hold together (a
@@ -317,6 +318,42 @@ export function readFindingDecisions(value: unknown, findings: readonly Coherenc
 export function applyFindingDecisions(findings: readonly CoherenceFinding[], decisions: readonly FindingDecision[], at: string): CoherenceFinding[] {
   const dismissed = new Map(decisions.filter((entry) => entry.decision === "dismiss").map((entry) => [entry.id, entry.reason]));
   return findings.map((finding) => (dismissed.has(finding.id) ? { ...finding, status: "dismissed" as const, decision: { by: "director" as const, reason: dismissed.get(finding.id)!, at } } : finding));
+}
+
+export const FINDING_ACTIONS = ["fix", "mine", "dismiss", "reopen"] as const;
+export type FindingAction = (typeof FINDING_ACTIONS)[number];
+
+/** What the author decides about a finding (`AutopilotSession.decideDesignFinding`): `fix` (ask the autopilot to fix it), `mine` (handle it herself), `dismiss` (it is not a problem), `reopen` (take the decision back). */
+export interface FindingDecisionInput {
+  id: string;
+  action: FindingAction;
+  /** Why, in the author's words (optional). */
+  reason?: string;
+}
+
+/**
+ * The state after the author decided about a finding. `fix` asks the autopilot to fix it: the finding blocks the approval of the design until it is fixed, and the design run
+ * that follows rewrites the chapters it revises; it is refused for a finding that concerns only the author's entries (the autopilot proposes for them, it never rewrites
+ * them). Throws an `AutopilotDesignError`: `no_findings`, `unknown_finding` (none by that id, or one fixed already), `not_fixable`, `invalid_request` (an action that is not one).
+ */
+export function decideFinding(state: AutopilotState, input: FindingDecisionInput, at: string): AutopilotState {
+  const coherence = state.design?.coherence;
+  if (!coherence?.findings.length) throw new AutopilotDesignError("no_findings", "The design has no findings to decide about.");
+  if (!FINDING_ACTIONS.includes(input.action)) throw new AutopilotDesignError("invalid_request", `action must be one of ${FINDING_ACTIONS.join(", ")}.`);
+  const id = typeof input.id === "string" ? input.id.trim() : "";
+  const finding = coherence.findings.find((entry) => entry.id === id);
+  if (!finding) throw new AutopilotDesignError("unknown_finding", `There is no finding ${typeof input.id === "string" ? `«${input.id.slice(0, 20)}»` : "with that id"}.`);
+  if (finding.status === "fixed") throw new AutopilotDesignError("unknown_finding", "That finding is fixed already: a later analysis does not find it any more.");
+  if (input.action === "fix" && finding.owner === "author") {
+    throw new AutopilotDesignError("not_fixable", "That finding concerns only the entries you wrote: the autopilot proposes for them and never rewrites them, so it is yours to handle.");
+  }
+  const reason = typeof input.reason === "string" ? input.reason.trim().slice(0, 600) : "";
+  const status: CoherenceFinding["status"] = input.action === "fix" ? "fixing" : input.action === "mine" ? "mine" : input.action === "dismiss" ? "dismissed" : "open";
+  const { decision: _decision, ...rest } = finding;
+  const decided: CoherenceFinding = input.action === "reopen" ? { ...rest, status } : { ...rest, status, decision: { by: "author", ...(reason ? { reason } : {}), at } };
+  const next = structuredClone(state);
+  next.design!.coherence = { ...coherence, findings: coherence.findings.map((entry) => (entry.id === id ? decided : entry)) };
+  return next;
 }
 
 function hasText(entry: OutlineChapterEntry): boolean {

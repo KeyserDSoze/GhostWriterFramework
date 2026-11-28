@@ -28,7 +28,7 @@ import { readBrief } from "./brief.js";
 import { applyFrozenDecision, authorHeldChapters, campaignGoesOn, frozenAnswerAction, isFrozenQuestion, settleFrozenChanges } from "./frozen.js";
 import { mergeCampaign, resumeCampaign } from "./campaign.js";
 import { outlinePlanStatus } from "./outline-check.js";
-import { beginDesign, designPlaceholderChanges, endDesign, normalizeDesignStart } from "./design.js";
+import { beginDesign, beginDesignReview, designPlaceholderChanges, endDesign, normalizeDesignStart } from "./design.js";
 import { advanceState, bookChapters, extensionNote, nextStep, phaseOf, type PlanNote, type PlannerContext, type TaskDescriptor } from "./planner.js";
 import { profileProblems, profileProblemsMessage, profileProblemsTitle } from "./profile-check.js";
 import {
@@ -1162,7 +1162,8 @@ export class AutopilotRun {
       ...fresh,
       brief,
       options: normalizeOptions(start.options ?? {}, state.options),
-      plan: state.plan ? { ...state.plan, awaitingAuthor: false } : null,
+      // Starting is the author's go-ahead to a plan that waits for it; a review of the design on request is not.
+      plan: state.plan && !(design && design.reviewOnly) ? { ...state.plan, awaitingAuthor: false } : state.plan,
       status: "running",
       message: null,
       lastError: null,
@@ -1171,7 +1172,11 @@ export class AutopilotRun {
     let outlineChapters = await this.outlineChapters();
     // A design run (`StartOptions.design`): it begins (or goes on with what the start says now), the Synopsis gets the empty entries of the chapters it lacks; `false` ends it.
     const designChanges: BookFileChange[] = [];
-    if (design) {
+    if (design && design.reviewOnly) {
+      // A review of the design on request: nothing is designed or written, and the run stops when the chapters are judged.
+      const language = await loadBookSnapshot(store, this.cache).then((snapshot) => languageCode(snapshot.book.language), () => this.language);
+      next = beginDesignReview(next, design.reviewOnly, { now: startedAt, outlineChapters, language });
+    } else if (design) {
       const language = await loadBookSnapshot(store, this.cache).then((snapshot) => languageCode(snapshot.book.language), () => this.language);
       const begun = beginDesign(next, design, { now: startedAt, outlineChapters, idea: brief.idea, language });
       next = begun.state;
@@ -1180,6 +1185,11 @@ export class AutopilotRun {
     } else if (design === false && next.design && !next.design.endedAt) {
       next = structuredClone(next);
       endDesign(next, "author", startedAt);
+    }
+    // A review on request ends with its run: any other start leaves it.
+    if (!(design && design.reviewOnly) && next.design?.reviewing) {
+      next = structuredClone(next);
+      delete next.design!.reviewing;
     }
     state = extendPlanIfNeeded(next, outlineChapters);
     state = stampState(this.drainQueue(state, "start"), this.now());

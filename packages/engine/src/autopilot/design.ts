@@ -10,6 +10,7 @@ import { parseMarkdown } from "../markdown/frontmatter.js";
 import type { DirectorProfile } from "../profiles/director.js";
 import { isItalian } from "../util/text.js";
 import { isPlannedChapterWritten } from "./chapter-state.js";
+import { STALE_SIGNATURE } from "./design-flow.js";
 import { readWorkflowInput } from "./design-state.js";
 import { normalizeReviewPolicy } from "./review-policy.js";
 import { MAX_BOOK_CHAPTERS, designActive, designMaxRounds } from "./state.js";
@@ -25,7 +26,18 @@ export const DESIGN_DEFAULT_CHAPTERS = 12;
 /** The most chapters a design run is asked for at once: a longer book is designed in more runs, or from a Synopsis that already has its entries. */
 export const DESIGN_MAX_CHAPTERS = 500;
 
-export type AutopilotDesignErrorCode = "invalid_request" | "design_written" | "design_no_description" | "no_pitches" | "unknown_pitch" | "pitch_locked";
+export type AutopilotDesignErrorCode =
+  | "invalid_request"
+  | "design_written"
+  | "design_no_description"
+  | "no_pitches"
+  | "unknown_pitch"
+  | "pitch_locked"
+  | "design_active"
+  | "design_no_chapters"
+  | "no_findings"
+  | "unknown_finding"
+  | "not_fixable";
 
 /**
  * A design run that cannot begin: what was asked is not one (`invalid_request`), the autopilot has already written chapters of the book (`design_written`: a design is
@@ -46,10 +58,11 @@ export function normalizeDesignStart(value: unknown): DesignStartInput | false |
   if (value === undefined || value === null) return undefined;
   if (value === false) return false;
   if (value === true) return {};
-  if (typeof value !== "object" || Array.isArray(value)) throw new AutopilotDesignError("invalid_request", "design must be true, false or { chapters?, review? }.");
+  if (typeof value !== "object" || Array.isArray(value)) throw new AutopilotDesignError("invalid_request", "design must be true, false or { chapters?, review?, workflow?, reviewOnly? }.");
   const source = value as Record<string, unknown>;
-  const unknown = Object.keys(source).filter((key) => key !== "chapters" && key !== "review" && key !== "workflow");
-  if (unknown.length) throw new AutopilotDesignError("invalid_request", `design does not take ${unknown.map((key) => `«${key}»`).join(", ")}: it takes chapters, review and workflow.`);
+  const unknown = Object.keys(source).filter((key) => key !== "chapters" && key !== "review" && key !== "workflow" && key !== "reviewOnly");
+  if (unknown.length) throw new AutopilotDesignError("invalid_request", `design does not take ${unknown.map((key) => `«${key}»`).join(", ")}: it takes chapters, review, workflow and reviewOnly.`);
+  if (source.reviewOnly !== undefined) return { reviewOnly: readReviewOnly(source) };
   const input: DesignStartInput = {};
   if (source.chapters !== undefined) {
     const chapters = source.chapters;
@@ -74,6 +87,20 @@ export function normalizeDesignStart(value: unknown): DesignStartInput | false |
     }
   }
   return input;
+}
+
+/** A review on request, checked: `true` (the whole design) or `{ chapters? }`, and nothing else beside it. */
+function readReviewOnly(source: Record<string, unknown>): NonNullable<DesignStartInput["reviewOnly"]> {
+  if (Object.keys(source).length > 1) throw new AutopilotDesignError("invalid_request", "design.reviewOnly stands alone: it takes no chapters, review or workflow of a design.");
+  const value = source.reviewOnly;
+  if (value === true) return {};
+  if (typeof value !== "object" || value === null || Array.isArray(value) || Object.keys(value).some((key) => key !== "chapters")) throw new AutopilotDesignError("invalid_request", "design.reviewOnly must be true or { chapters? }.");
+  const chapters = (value as { chapters?: unknown }).chapters;
+  if (chapters === undefined) return {};
+  if (!Array.isArray(chapters) || !chapters.length || chapters.length > DESIGN_MAX_CHAPTERS || chapters.some((number) => typeof number !== "number" || !Number.isSafeInteger(number) || number < 1)) {
+    throw new AutopilotDesignError("invalid_request", "design.reviewOnly.chapters must be a list of chapter numbers from 1.");
+  }
+  return { chapters: [...new Set(chapters as number[])].sort((left, right) => left - right) };
 }
 
 /** The chapters of the plan the autopilot has written prose for (the author's own, `imported`, do not count). */
@@ -146,6 +173,34 @@ export function beginDesign(state: AutopilotState, input: DesignStartInput, cont
     delete next.plan.wildcardsMaterial;
   }
   return { state: next, chapters };
+}
+
+/**
+ * The state a start makes when it asks for a review of the design on request (`DesignStartInput.reviewOnly`): the design is kept as it is (the book never designed by the
+ * autopilot gets a record that says so), `reviewing` says what is reviewed, and what the review asks again is forgotten: the chapters asked for were not reviewed, and the
+ * analysis of the structure is stale for a review of the whole design. Throws `AutopilotDesignError`: `design_active` (a design run goes on), `design_no_chapters` (the
+ * Synopsis has none), `invalid_request` (a chapter that is not in it).
+ */
+export function beginDesignReview(state: AutopilotState, input: NonNullable<DesignStartInput["reviewOnly"]>, context: { now: string; outlineChapters: number; language?: string }): AutopilotState {
+  const italian = isItalian(context.language);
+  if (designActive(state)) {
+    throw new AutopilotDesignError("design_active", italian ? "Una progettazione è in corso: lasciala finire prima di chiedere una revisione." : "A design run goes on: let it finish before a review is asked.");
+  }
+  if (!context.outlineChapters) throw new AutopilotDesignError("design_no_chapters", italian ? "La Sinossi non ha capitoli da rivedere." : "The Synopsis has no chapters to review.");
+  const missing = input.chapters?.find((number) => number > context.outlineChapters);
+  if (missing !== undefined) throw new AutopilotDesignError("invalid_request", italian ? `Il capitolo ${missing} non è nella Sinossi.` : `Chapter ${missing} is not in the Synopsis.`);
+  const next: AutopilotState = structuredClone(state);
+  const base: AutopilotDesign = next.design ?? { startedAt: context.now, chapters: context.outlineChapters, rounds: [], endedAt: context.now, outcome: "author" };
+  const reviewed = { ...(base.reviewed ?? {}) };
+  for (const key of input.chapters ? input.chapters.map(String) : Object.keys(reviewed)) delete reviewed[key];
+  const { reviewed: _reviewed, reviewing: _reviewing, coherence, ...rest } = base;
+  next.design = {
+    ...rest,
+    ...(Object.keys(reviewed).length ? { reviewed } : {}),
+    ...(coherence ? { coherence: input.chapters ? coherence : { ...coherence, sig: STALE_SIGNATURE } } : {}),
+    reviewing: { startedAt: context.now, ...(input.chapters ? { chapters: input.chapters } : {}) },
+  };
+  return next;
 }
 
 /**
