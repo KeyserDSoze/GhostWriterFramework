@@ -30,6 +30,8 @@ export type StepCategory = "director" | "readers" | "specialists" | "writing" | 
 const CATEGORY: Partial<Record<AutopilotTaskKind, StepCategory>> = {
   "director-review": "director",
   "plan-review": "director",
+  "design-chapter-review": "director",
+  "design-pitch-review": "director",
   final: "director",
   "book-corrections": "director",
   // The room of the wildcards before the review of a design: the director triages what it gives.
@@ -39,6 +41,8 @@ const CATEGORY: Partial<Record<AutopilotTaskKind, StepCategory>> = {
   "readers-summary": "readers",
   "plan-reader": "readers",
   specialists: "specialists",
+  "design-coherence": "specialists",
+  "design-pitches": "writing",
   concept: "writing",
   "summarize-imported": "writing",
   plan: "writing",
@@ -203,6 +207,10 @@ const BOOK_LEVEL: Partial<Record<AutopilotTaskKind, GroupKind>> = {
   "plan-reader": "plan",
   "plan-review": "plan",
   wildcards: "plan",
+  "design-pitches": "plan",
+  "design-pitch-review": "plan",
+  "design-chapter-review": "plan",
+  "design-coherence": "plan",
   final: "final",
   // The director's corrections of the whole book are asked of the book's judgement: they are in the group of the review of the book.
   "book-corrections": "final",

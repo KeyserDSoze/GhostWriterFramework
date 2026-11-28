@@ -49,7 +49,7 @@ export interface PlanReview {
 }
 
 /** The steps of the planning: a log that has anything else between two of them was written in between. */
-const PLANNING: ReadonlySet<AutopilotTaskKind> = new Set(["concept", "summarize-imported", "plan", "plan-reader", "wildcards", "plan-review", "freeze"]);
+const PLANNING: ReadonlySet<AutopilotTaskKind> = new Set(["concept", "summarize-imported", "plan", "plan-reader", "wildcards", "plan-review", "freeze", "design-pitches", "design-pitch-review", "design-chapter-review", "design-coherence"]);
 
 /**
  * The director's reviews of the plan in the planning that led to it, oldest first: the reviews that worked since the last step that was not part of

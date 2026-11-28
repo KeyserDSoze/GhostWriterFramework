@@ -75,6 +75,23 @@ describe("the director's reviews of the plan", () => {
     ]);
   });
 
+  it("are found across the steps of the reviews of a design: the analysis of the structure and the panel's review of the chapters come between two of the director's", () => {
+    const activities = [
+      activityOf("design-pitches", { phase: "concept", startedAt: at(0) }),
+      activityOf("design-pitch-review", { phase: "concept", startedAt: at(20) }),
+      activityOf("concept", { phase: "concept", startedAt: at(40) }),
+      activityOf("plan", { phase: "plan", startedAt: at(60) }),
+      activityOf("design-chapter-review", { phase: "plan", startedAt: at(90) }),
+      activityOf("design-coherence", { phase: "plan", startedAt: at(110) }),
+      review("revise 7/10 — The reveal costs Mira nothing.", 130),
+      activityOf("plan", { phase: "plan", startedAt: at(170) }),
+      activityOf("design-chapter-review", { phase: "plan", startedAt: at(190) }),
+      activityOf("design-coherence", { phase: "plan", startedAt: at(210) }),
+      review("approve 8.5/10 — Now the reveal hurts.", 230),
+    ];
+    expect(planReviews(activities).map((entry) => [entry.verdict, entry.score])).toEqual([["revise", 7], ["approve", 8.5]]);
+  });
+
   it("leave out the reviews of an earlier planning: the book was written in between", () => {
     const activities = [
       review("approve 7/10 — The first plan.", 0),

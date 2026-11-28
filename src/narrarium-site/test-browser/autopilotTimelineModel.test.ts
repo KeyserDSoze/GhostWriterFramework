@@ -34,9 +34,10 @@ const titles = (target: TimelineGroup) => target.rows.map((row) => (row.kind ===
 describe("what a step is about", () => {
   it.each([
     ["director-review", "director"], ["plan-review", "director"], ["final", "director"], ["book-corrections", "director"], ["wildcards", "director"], ["impact", "director"],
+    ["design-chapter-review", "director"], ["design-pitch-review", "director"],
     ["reader", "readers"], ["readers-summary", "readers"], ["plan-reader", "readers"],
-    ["specialists", "specialists"],
-    ["concept", "writing"], ["plan", "writing"], ["scenes", "writing"], ["write", "writing"], ["repair", "writing"], ["revise", "writing"], ["consolidate", "writing"], ["summarize-imported", "writing"],
+    ["specialists", "specialists"], ["design-coherence", "specialists"],
+    ["design-pitches", "writing"], ["concept", "writing"], ["plan", "writing"], ["scenes", "writing"], ["write", "writing"], ["repair", "writing"], ["revise", "writing"], ["consolidate", "writing"], ["summarize-imported", "writing"],
   ] as const)("calls %s a step of the %s", (task, category) => {
     expect(categoryOf(task)).toBe(category);
   });
@@ -165,6 +166,21 @@ describe("the groups: a chapter, and in it a round of the review", () => {
     expect(group(timeline, "plan").steps, "the wildcards before the review of a design are part of the plan").toBe(5);
     expect(group(timeline, "other").kind).toBe("other");
     expect(group(timeline, "final").kind).toBe("final");
+  });
+
+  it("puts the steps of the reviews of a design, which are about no chapter, with the concept and the plan: the pitches, their judgement, the review of the chapters and the analysis of the structure", () => {
+    const list = [
+      stepOf("design-pitches", { from: 0 }),
+      stepOf("design-pitch-review", { from: 40 }),
+      stepOf("concept", { from: 80 }),
+      stepOf("plan", { from: 120 }),
+      stepOf("design-chapter-review", { from: 160 }),
+      stepOf("design-coherence", { from: 200 }),
+      stepOf("plan-review", { from: 240 }),
+    ];
+    const timeline = buildTimeline({ activities: list, events: [] });
+    expect(timeline.groups.map((candidate) => candidate.key)).toEqual(["plan"]);
+    expect(group(timeline, "plan").steps).toBe(7);
   });
 
   it("puts the director's corrections of the whole book in the group of the review of the book, whose verdict they do not change", () => {
