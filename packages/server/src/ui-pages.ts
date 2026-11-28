@@ -1,4 +1,5 @@
 import { DEVICES_HTML } from "./ui-devices.js";
+import { GITHUB_HTML } from "./ui-github.js";
 import { HEALTH_HTML, HISTORY_HTML, LOG_HTML, RISKS_HTML, RUNS_HTML } from "./ui-views.js";
 
 /**
@@ -80,7 +81,9 @@ const OVERVIEW = page("overview", `<div class="tiles" id="ov-tiles"></div>
         <dl class="facts" id="facts"></dl>
       </section>`);
 
-const BOOKS = page("books", RUNS_HTML);
+const BOOKS = page("books", `${RUNS_HTML}
+
+      ${GITHUB_HTML}`);
 
 const UPDATES = page("updates", `<section class="panel" id="updates">
         <div class="panel-head"><h2 id="updates-title" data-i18n="updatesVersion">Version</h2><button type="button" class="ghost small" id="updates-check" data-i18n="check">Check again</button></div>

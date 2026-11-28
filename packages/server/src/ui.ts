@@ -7,6 +7,7 @@
  */
 
 import { DEVICES_JS } from "./ui-devices.js";
+import { GITHUB_JS } from "./ui-github.js";
 import { LOGIN_HTML, MENU_ICON, NAV_HTML, PAGES, PAGES_HTML } from "./ui-pages.js";
 import { ADMIN_CSS } from "./ui-style.js";
 import { VIEWS_JS } from "./ui-views.js";
@@ -211,6 +212,7 @@ export const ADMIN_JS = String.raw`"use strict";
     renderAudit();
     renderViews();
     renderDevices();
+    renderGithub();
     renderChrome();
     updateTitle();
   }
@@ -264,7 +266,7 @@ export const ADMIN_JS = String.raw`"use strict";
     ["client-rows", "audit-rows", "mcp-books", "passkey-rows", "ai-pending", "ai-approved", "facts", "spend-facts", "tunnel-facts", "pairing-box", "token-value", "passkey-link-value"].forEach(function (id) { $(id).textContent = ""; });
     $("token-box").classList.add("hidden"); $("passkey-link-box").classList.add("hidden");
     if (timer) { clearInterval(timer); timer = null; }
-    resetViews(); resetDevices(); renderBadges();
+    resetViews(); resetDevices(); resetGithub(); renderBadges();
     $("login-error").textContent = message || "";
     updateTitle();
     if (wasIn && $("login-title").focus) $("login-title").focus();
@@ -275,14 +277,14 @@ export const ADMIN_JS = String.raw`"use strict";
     $("layout").classList.add("signed"); $("logout").classList.remove("hidden"); $("menu-button").classList.remove("hidden");
     showLoading(LOADING);
     show(routeOf(location.hash) || "overview", false);
-    refresh(); loadUpdates(); loadMcp(); loadAudit(false); loadViews(); loadDevices();
+    refresh(); loadUpdates(); loadMcp(); loadAudit(false); loadViews(); loadDevices(); loadGithub();
     renderChrome();
     if (!timer) timer = setInterval(poll, 20000);
   }
   function poll() {
     if (document.visibilityState !== "visible") return;
     polling = true;
-    try { refresh(true); loadMcp(); if (!audit.older) loadAudit(false); loadViews(); loadDevices(); } finally { polling = false; }
+    try { refresh(true); loadMcp(); if (!audit.older) loadAudit(false); loadViews(); loadDevices(); loadGithub(); } finally { polling = false; }
   }
 
   // ---- pages: one at a time, each at an address of its own
@@ -292,7 +294,7 @@ export const ADMIN_JS = String.raw`"use strict";
   /** What a page shows is read again when it is opened, so a page that was left a while ago is not stale. */
   function visit(id) {
     if (id === "overview") { refresh(true); loadHealth(); loadRuns(); loadRisks(); }
-    else if (id === "books") loadRuns();
+    else if (id === "books") { loadRuns(); loadGithub(); }
     else if (id === "updates") { loadUpdates(); loadHistory(); }
     else if (id === "clients" || id === "ai" || id === "network") refresh(true);
     else if (id === "apps") { loadMcp(); if (!audit.older) loadAudit(false); }
@@ -611,12 +613,14 @@ export const ADMIN_JS = String.raw`"use strict";
   }
 ${VIEWS_JS}
 ${DEVICES_JS}
+${GITHUB_JS}
   function lines(id) { return $(id).value.split(/\r?\n/).map(function (line) { return line.trim(); }).filter(Boolean); }
   function copyText(id) { navigator.clipboard.writeText($(id).textContent).then(function () { toast(t("copied")); }, fail); }
   document.addEventListener("DOMContentLoaded", function () {
     applyTexts();
     bindViews();
     bindDevices();
+    bindGithub();
     $("lang").addEventListener("click", function () { lang = lang === "it" ? "en" : "it"; localStorage.setItem("narrarium-admin-lang", lang); applyTexts(); if (state) loadUpdates(); });
     $("skip").addEventListener("click", function (event) { event.preventDefault(); $("main").focus(); });
     $("menu-button").addEventListener("click", function () {

@@ -968,6 +968,12 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     const spendStatus = (): ServerSpendStatus => spend.status(spendSettingsOf(data.config));
     /** The same status for the owner, with what only the owner is told (a record that was damaged and started again from zero). */
     const adminSpend = () => ({ ...spendStatus(), ...(spend.warning ? { warning: spend.warning } : {}) });
+    /** The server's own GitHub connection for the admin panel: its status, the books that use it, and the owner's list of brokers when there is one. */
+    const adminGithub = () => ({
+      ...githubConnection.status(),
+      books: books.all().filter(({ book }) => book.githubAuth === "connection").length,
+      ...(data.config.githubConnection?.allowedBrokerOrigins ? { allowedBrokerOrigins: data.config.githubConnection.allowedBrokerOrigins } : {}),
+    });
     /** The owner's switch for the records of the AI calls, and what bounds them: what the panel's section says. */
     const adminCalls = () => ({ enabled: callsSettings().enabled, budgetBytes: callsBudgetBytes, minFreeBytes: callsMinFreeBytes });
 
@@ -2082,6 +2088,19 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           const removed = await tunnel.remove();
           await note("tunnel.remove");
           sendJson(response, 200, removed);
+          return;
+        }
+        // The server's own GitHub connection, as the owner sees it: the status (public things only), how many books use it, and the owner's list of brokers when there is one. The owner connects it from
+        // Narrarium (which knows the GitHub App's client id and the broker); here it is read, and disconnected.
+        if (path === "/admin/api/github" && request.method === "GET") {
+          sendJson(response, 200, adminGithub());
+          return;
+        }
+        if (path === "/admin/api/github/disconnect" && request.method === "POST") {
+          const was = githubConnection.status().state;
+          await githubConnection.disconnect();
+          if (was !== "disconnected") await note("github.disconnect");
+          sendJson(response, 200, adminGithub());
           return;
         }
         if (path === "/admin/api/updates" && request.method === "GET") {
