@@ -136,11 +136,24 @@ export type ServerBookStorage =
   | { kind: "github"; owner: string; repo: string; branch: string }
   | { kind: "local" };
 
+/**
+ * How a GitHub book of the server proves itself to GitHub: `token` keeps a copy of a token the browser sent (a personal access token, or the GitHub App token of
+ * the browser, which lasts eight hours and which the server cannot renew), `connection` uses the server's own connection to GitHub (`ServerGitHubConnection`),
+ * which renews itself and is independent from the browser's sign-in. A request that says nothing keeps what the book has (a new book: `token`).
+ */
+export const GITHUB_AUTH_MODES = ["token", "connection"] as const;
+export type GitHubAuthMode = (typeof GITHUB_AUTH_MODES)[number];
+
 export interface RegisterBookRequest {
   title: string;
   storage: ServerBookStorage;
-  /** GitHub token for this book, sent only with the author's consent. `null` removes it. */
+  /** GitHub token for this book, sent only with the author's consent. `null` removes it. Not sent with `githubAuth: "connection"`, which keeps no copy of any token. */
   githubToken?: string | null;
+  /**
+   * `connection`: the book uses the server's own GitHub connection (`412 github_connection_required` while it is not `connected`; the book keeps no token). `token`: a token
+   * copy, as every server always did. Absent: the book keeps its way (a new book: `token`). Only a server that announces `SERVER_FEATURE_GITHUB_CONNECTION` knows `connection`.
+   */
+  githubAuth?: GitHubAuthMode;
 }
 
 export interface ServerBookSync {
@@ -156,7 +169,10 @@ export interface ServerBookSummary {
   bookId: string;
   title: string;
   storage: ServerBookStorage;
+  /** Whether the server holds a token copy for this book (never true for a book on the server's own GitHub connection). */
   hasGithubToken: boolean;
+  /** For a book on GitHub, how it proves itself (`GitHubAuthMode`); absent from a book that is not on GitHub and from a server that does not announce `SERVER_FEATURE_GITHUB_CONNECTION`. */
+  githubAuth?: GitHubAuthMode;
   ready: boolean;
   /** Changes whenever a file of the book changes on the server. */
   revision: string;
@@ -314,6 +330,81 @@ export function serverSupportsGithubConflicts(info: { features?: unknown } | rea
   const features = Array.isArray(info) ? info : (info as { features?: unknown } | null | undefined)?.features;
   return Array.isArray(features) && features.includes(SERVER_FEATURE_GITHUB_CONFLICTS);
 }
+
+/**
+ * The `ServerInfo.features` entry of a server that can connect to GitHub on its own, through the GitHub App's device authorization, and renew that connection without any browser:
+ * `GET`, `POST` and `DELETE /api/v1/github/connection` (see `ServerGitHubConnection`), and `githubAuth: "connection"` in `RegisterBookRequest`. A server without it answers 404 to the routes
+ * and ignores `githubAuth`: the engine's client refuses before sending (`feature_unavailable`).
+ */
+export const SERVER_FEATURE_GITHUB_CONNECTION = "server-github-connection";
+
+/** Whether the server announces its own GitHub connection. Takes its info or the list of its features. Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsGitHubConnection(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  const features = Array.isArray(info) ? info : (info as { features?: unknown } | null | undefined)?.features;
+  return Array.isArray(features) && features.includes(SERVER_FEATURE_GITHUB_CONNECTION);
+}
+
+/** The states of the server's GitHub connection: nothing, waiting for the owner to type the code on github.com, working, or lost (GitHub refused to renew it) until it is connected again. */
+export const GITHUB_CONNECTION_STATES = ["disconnected", "pending", "connected", "needs-reconnect"] as const;
+export type GitHubConnectionState = (typeof GITHUB_CONNECTION_STATES)[number];
+
+/**
+ * Why the connection is not working or could not be made, as a code the app translates (the `message` is in English, built by the server, and says what to switch on or do):
+ * the GitHub App has «Enable Device Flow» off, or «Expire user authorization tokens» off; the owner refused or let the code expire on github.com; GitHub refused a renewal;
+ * the broker (the Worker that holds the client secret) cannot be reached, or is not configured for GitHub; GitHub cannot be reached; GitHub does not know the client id, or answered
+ * with an error the server has no word for.
+ */
+export const GITHUB_CONNECTION_PROBLEM_CODES = [
+  "device-flow-disabled",
+  "expiring-tokens-off",
+  "access-denied",
+  "code-expired",
+  "renewal-failed",
+  "broker-unreachable",
+  "broker-not-configured",
+  "github-unreachable",
+  "client-id-rejected",
+  "github-rejected",
+] as const;
+export type GitHubConnectionProblemCode = (typeof GITHUB_CONNECTION_PROBLEM_CODES)[number];
+
+/**
+ * The server's own connection to GitHub (`GET /api/v1/github/connection`, permission `read`). It carries only what is public: the code the owner types on github.com, the address
+ * where to type it and the dates; never the device code, the access token or the refresh token, which stay on the server.
+ */
+export interface ServerGitHubConnection {
+  state: GitHubConnectionState;
+  /** The GitHub account that authorized the server, once known. */
+  login?: string;
+  connectedAt?: string;
+  /** When the access token was last renewed by the server itself. */
+  renewedAt?: string;
+  /** The access token lasts eight hours; the server renews it ahead. */
+  accessTokenExpiresAt?: string;
+  /** The refresh token lasts about six months from the last renewal. */
+  refreshTokenExpiresAt?: string;
+  /** The origin of the broker the server renews through (pinned when the connection was made: changing it needs a disconnect first). */
+  broker?: string;
+  /** While `pending`: what the owner does on github.com. `interval` is how often (seconds) the server asks GitHub whether the owner has finished. */
+  pending?: { userCode: string; verificationUri: string; expiresAt: string; interval: number };
+  problem?: { code: GitHubConnectionProblemCode; message: string };
+}
+
+/** The body of `POST /api/v1/github/connection` (permission `write`): the public client id of the GitHub App and the broker that holds its client secret, both pinned until a disconnect. */
+export interface ConnectGitHubRequest {
+  clientId: string;
+  broker: string;
+}
+
+/** The codes of the refusals that the connection and the books that use it answer, in the same style as `github_token_required`. */
+export const GITHUB_CONNECTION_ERROR_CODES = {
+  /** `412` on registering a book with `githubAuth: "connection"` (or using one) while the connection is not `connected`. */
+  required: "github_connection_required",
+  /** `409` on connecting while a connection exists or is waiting (disconnect first), or with a client id or broker other than the pinned ones. */
+  exists: "github_connection_exists",
+  /** `502` when a book's access token is expired and the broker cannot renew it. */
+  unavailable: "github_connection_unavailable",
+} as const;
 
 /**
  * The `ServerInfo.features` entry of a server that keeps the records of the AI calls of its autopilot runs (what was sent as the system and the user message, and what came back, also

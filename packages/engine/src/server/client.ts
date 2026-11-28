@@ -15,6 +15,7 @@ import {
   serverSupportsAutopilotAutoResume,
   serverSupportsAutopilotRetry,
   serverSupportsDesign,
+  serverSupportsGitHubConnection,
   serverSupportsGithubConflicts,
   serverSupportsOutlineApply,
   serverSupportsReviewBook,
@@ -28,6 +29,7 @@ import {
   verifyServerIdentity,
   type AskDirectorRequest,
   type AskDirectorResponse,
+  type ConnectGitHubRequest,
   type KeepCallTaskRequest,
   type ErrorResponse,
   type EventsResponse,
@@ -52,6 +54,7 @@ import {
   type ServerCallText,
   type ServerCompatibility,
   type ServerDeleteCallsResponse,
+  type ServerGitHubConnection,
   type ServerIdentityCheck,
   type ServerInfo,
   type ServerManifest,
@@ -357,6 +360,48 @@ export class NarrariumServerClient {
   async resolveGithubConflicts(bookId: string, request: ResolveGithubConflictsRequest): Promise<ResolveGithubConflictsResponse> {
     await this.assertGithubConflicts();
     return this.request("POST", bookRoute(bookId, "/github-conflicts/resolve"), request, { timeoutMs: 300_000 });
+  }
+
+  /** The server announced `SERVER_FEATURE_GITHUB_CONNECTION`: asked once, and again until it says yes (a server that is updated meanwhile is found). */
+  private githubConnectionSupported = false;
+
+  /** The routes of the server's own GitHub connection go only to a server that announces them: an older one is refused here, before anything is sent. */
+  private async assertGitHubConnection(): Promise<void> {
+    if (this.githubConnectionSupported) return;
+    if (!serverSupportsGitHubConnection(await this.info())) {
+      throw new ServerRequestError("This personal server cannot connect to GitHub by itself (it does not announce the feature server-github-connection): update the server.", 501, "feature_unavailable");
+    }
+    this.githubConnectionSupported = true;
+  }
+
+  /**
+   * The server's own GitHub connection as it is now: `GET /api/v1/github/connection` (permission `read`; a server that announces `SERVER_FEATURE_GITHUB_CONNECTION`, else
+   * `feature_unavailable` before anything is sent). While it is `pending` the answer carries the code the owner types on github.com; the server finishes the connection by itself,
+   * so a page only reads this.
+   */
+  async githubConnection(): Promise<ServerGitHubConnection> {
+    await this.assertGitHubConnection();
+    return this.request("GET", "/api/v1/github/connection", undefined, { timeoutMs: 15_000 });
+  }
+
+  /**
+   * Start the connection: `POST /api/v1/github/connection` (permission `write`). The server asks GitHub for a device code with the public `clientId` and answers the status `pending`
+   * (with the code to type on github.com), or `disconnected` with the `problem` when GitHub refused (for example `device-flow-disabled`); it then waits for the owner by itself. The
+   * `clientId` and the `broker` are pinned: `409 github_connection_exists` while a connection is connected or waiting, or when they differ from the pinned ones after a loss; `422 invalid_url`
+   * for a broker that is not https (or plain http on this computer), has credentials, a query or a fragment, or is not on the owner's list (`githubConnection.allowedBrokerOrigins`).
+   */
+  async connectGitHub(request: ConnectGitHubRequest): Promise<ServerGitHubConnection> {
+    await this.assertGitHubConnection();
+    return this.request("POST", "/api/v1/github/connection", request, { timeoutMs: 60_000 });
+  }
+
+  /**
+   * Disconnect: `DELETE /api/v1/github/connection` (permission `write`). The server asks the broker to revoke its own token (best effort) and deletes the stored pair; the books that used
+   * the connection stop with `github_connection_required` until it is connected again. Already disconnected is not an error. Answers the status.
+   */
+  async disconnectGitHub(): Promise<ServerGitHubConnection> {
+    await this.assertGitHubConnection();
+    return this.request("DELETE", "/api/v1/github/connection", undefined, { timeoutMs: 60_000 });
   }
 
   /** The server announced `SERVER_FEATURE_AUTOPILOT_CALLS`: asked once, and again until it says yes (a server that is updated meanwhile is found). */
