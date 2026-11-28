@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.144.0",
+    "date": "2026-11-28",
+    "en": {
+      "title": "The move to your server finishes where you chose it, a token fixes the 8-hour warning in place, and your server can connect to GitHub by itself",
+      "summary": "«Pass to the server after this step» no longer ends in a card where every button is disabled: the card finishes the move and says why whenever something waits. The amber notice about the GitHub app's 8-hour token has its fix in place, and your personal server can now sign in to GitHub on its own and renew that sign-in with no browser open.",
+      "changes": [
+        "Choosing «Pass to the server after this step» (or «now») while the autopilot runs, when your server still needs your consent, opens «Where it runs» with the move ready to finish: you choose what to send with the book, and the button passes it when the step ends. The card says «The book will pass to the server when the current step ends» and has a button to cancel. Nothing is sent while the step runs, and nothing at all if you cancel. The radios are no longer disabled by a run that goes on, and the same works the other way round, to bring a run back from the server.",
+        "Every disabled button of «Where it runs» says why, in words next to it, and offers the one action when there is one: no server, a server that is not verified, a move already planned, a consent missing (with the button that sends the token), another operation in progress. A consent your server still lacks is said next to its box. In English the band now says «Pass to…», as the Italian already did.",
+        "The amber notice about the GitHub app's 8-hour token has a button, «Use a personal access token for this book»: a small window explains how to make the token and what it needs (Contents: Read and write), checks it with GitHub only when you press the button, saves it for the book, and gives it to your server if the server runs the book. The notice then goes. The same button is in the book's settings and on the book's line in Account & Sync.",
+        "In Settings → Personal server, the new card «GitHub connection of the server» connects your server to GitHub once: you type a short code on GitHub, and the server finishes by itself and renews its sign-in with no browser open, so its books are no longer limited to 8 hours. It shows who the server is connected as, and if the GitHub App is missing a setting it names the exact switch to turn on («Enable Device Flow», «Expire user authorization tokens»). It needs a server update; an older server shows a short line saying so. The server's admin panel shows the connection too, with its own Disconnect.",
+        "In «Where it runs», a GitHub book can use the server's own connection instead of a copy of its token: it is the default once the server is connected, nothing of your token is sent, and the 8-hour warning does not appear for that book."
+      ]
+    },
+    "it": {
+      "title": "Il passaggio al server si conclude dove l'hai scelto, un token risolve sul posto l'avviso delle 8 ore, e il tuo server può collegarsi da solo a GitHub",
+      "summary": "«Passa al server dopo questo passo» non finisce più in una scheda dove ogni pulsante è disattivato: la scheda conclude il passaggio e dice il perché ogni volta che qualcosa aspetta. L'avviso arancione sul token da 8 ore della GitHub App ha la sua soluzione sul posto, e il tuo server personale può ora accedere a GitHub per conto suo e rinnovare l'accesso senza nessun browser aperto.",
+      "changes": [
+        "Se scegli «Passa al server dopo questo passo» (o «subito») mentre l'autopilota gira e il server ha ancora bisogno del tuo consenso, si apre «Dove gira» con il passaggio pronto da concludere: scegli cosa inviare con il libro e il pulsante lo passa quando il passo finisce. La scheda dice «Il libro passerà al server quando il passo in corso finisce» e ha un pulsante per annullare. Finché il passo gira non viene inviato nulla, e se annulli non parte niente. Le opzioni non sono più disattivate da un'esecuzione in corso, e lo stesso vale al contrario, per riportare dal server un'esecuzione in corso.",
+        "Ogni pulsante disattivato di «Dove gira» dice il perché, a parole, accanto a sé, e offre l'unica azione possibile quando c'è: nessun server, un server non verificato, un passaggio già pianificato, un consenso mancante (con il pulsante che invia il token), un'altra operazione in corso. Un consenso che al server manca ancora è detto accanto alla sua casella.",
+        "L'avviso arancione sul token da 8 ore della GitHub App ha un pulsante, «Usa un token di accesso personale per questo libro»: una piccola finestra spiega come crearlo e di cosa ha bisogno (Contenuti: lettura e scrittura), lo controlla con GitHub solo quando premi il pulsante, lo salva per il libro e lo dà al tuo server se è lui a gestire il libro. L'avviso poi scompare. Lo stesso pulsante è nelle impostazioni del libro e sulla riga del libro in Account e sincronizzazione.",
+        "In Impostazioni → Server personale, la nuova scheda «Connessione a GitHub del server» collega il tuo server a GitHub una volta: scrivi un breve codice su GitHub e il server finisce da solo e rinnova l'accesso senza nessun browser aperto, quindi i suoi libri non sono più limitati a 8 ore. Mostra con quale account è collegato e, se alla GitHub App manca un'impostazione, nomina l'interruttore esatto da attivare («Enable Device Flow», «Expire user authorization tokens»). Serve un server aggiornato; uno più vecchio mostra una riga che lo dice. Anche il pannello di amministrazione del server mostra la connessione, con il suo Scollega.",
+        "In «Dove gira», un libro su GitHub può usare la connessione propria del server al posto di una copia del suo token: è la scelta predefinita quando il server è collegato, non viene inviato nulla del tuo token e l'avviso delle 8 ore non compare per quel libro."
+      ]
+    }
+  },
+  {
     "version": "0.143.0",
     "date": "2026-11-28",
     "en": {
