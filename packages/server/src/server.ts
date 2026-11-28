@@ -82,7 +82,7 @@ import { SERVER_VERSION } from "./version.js";
 import { OutlineTextLimitError } from "narrarium-engine";
 import { FROZEN_ACTIONS, FROZEN_EDITS_MODES, FrozenChapterError, SERVER_FEATURE_AUTOPILOT_FROZEN, type FrozenAction, type FrozenChangeKind, type FrozenEditsMode } from "narrarium-engine";
 import { REVISION_CHAPTER_MODES, REVISION_REASONS, RevisionCampaignError, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, type ReviseChaptersInput } from "narrarium-engine";
-import { REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, type ReviewBookInput } from "narrarium-engine";
+import { BOOK_ROUND_MODES, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, type BookCorrectionsDecision, type ReviewBookInput } from "narrarium-engine";
 import { AutopilotDesignError, SERVER_FEATURE_AUTOPILOT_DESIGN, normalizeDesignStart } from "narrarium-engine";
 
 /** Tuning of the server's own limits (the defaults are the ones to run with; tests shorten them). */
@@ -302,7 +302,7 @@ const FROZEN_ERROR_STATUS: Record<string, number> = { chapter_not_found: 404, no
  * A campaign that cannot be recorded: what was asked is not one (400), one goes on already, a chapter has no such change now or it changed since, the book is not
  * finished, or every chapter has the target of a review already (409).
  */
-const CAMPAIGN_ERROR_STATUS: Record<string, number> = { invalid_request: 400, campaign_active: 409, not_changed: 409, stale: 409, not_finished: 409, nothing_to_review: 409 };
+const CAMPAIGN_ERROR_STATUS: Record<string, number> = { invalid_request: 400, campaign_active: 409, not_changed: 409, stale: 409, not_finished: 409, nothing_to_review: 409, no_proposal: 409 };
 
 /** A design that cannot begin: what was asked is not one (400), the autopilot has written chapters of the book, or the book has no description to design it from (409). */
 const DESIGN_ERROR_STATUS: Record<string, number> = { invalid_request: 400, design_written: 409, design_no_description: 409 };
@@ -565,7 +565,7 @@ function asReviseChapters(body: Record<string, unknown>): ReviseChaptersInput {
 }
 
 /** The keys of a review of the book (`POST …/autopilot/review`). */
-const REVIEW_BOOK_KEYS = ["targetScore", "maxRounds", "readerRounds", "campaignMaxRounds", "budgetLimit", "budgetTokens", "include", "note", "readersTarget", "readerTargets", "readersExcluded"];
+const REVIEW_BOOK_KEYS = ["targetScore", "maxRounds", "readerRounds", "campaignMaxRounds", "budgetLimit", "budgetTokens", "include", "note", "readersTarget", "readerTargets", "readersExcluded", "bookRound"];
 
 /**
  * The body of a review of the book, `{ targetScore, maxRounds?, readerRounds?, campaignMaxRounds?, budgetLimit?, budgetTokens?, include?, note?, readersTarget?, readerTargets?,
@@ -584,6 +584,7 @@ function asReviewBook(body: Record<string, unknown>): ReviewBookInput {
   if (body.include !== undefined && (!Array.isArray(body.include) || body.include.length > MAX_CAMPAIGN_REQUEST_CHAPTERS)) refuse(`\`include\` is a list of at most ${MAX_CAMPAIGN_REQUEST_CHAPTERS} chapter numbers.`);
   if (body.note !== undefined && typeof body.note !== "string") refuse("`note`, the author's words for the director, must be a string.");
   if (!numeric("readersTarget")) refuse("`readersTarget`, the vote the readers' average must reach, must be a number.");
+  if (body.bookRound !== undefined && !(BOOK_ROUND_MODES as readonly unknown[]).includes(body.bookRound)) refuse(`\`bookRound\`, what the review does when every chapter has its targets and the book does not, is one of: ${BOOK_ROUND_MODES.join(", ")}.`);
   const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
   if (body.readerTargets !== undefined && (!record(body.readerTargets) || Object.keys(body.readerTargets).length > REVIEW_MAX_READER_ENTRIES)) refuse(`\`readerTargets\`, the vote each reader must reach, is an object by the reader's name with at most ${REVIEW_MAX_READER_ENTRIES} readers.`);
   if (body.readersExcluded !== undefined && (!Array.isArray(body.readersExcluded) || body.readersExcluded.length > REVIEW_MAX_READER_ENTRIES)) refuse(`\`readersExcluded\`, the readers that do not count, is a list of at most ${REVIEW_MAX_READER_ENTRIES} names.`);
@@ -592,9 +593,26 @@ function asReviewBook(body: Record<string, unknown>): ReviewBookInput {
     ...Object.fromEntries(["maxRounds", "readerRounds", "campaignMaxRounds", "budgetLimit", "budgetTokens", "readersTarget"].filter((key) => body[key] !== undefined).map((key) => [key, body[key]])),
     ...(body.readerTargets !== undefined ? { readerTargets: body.readerTargets as Record<string, number> } : {}),
     ...(body.readersExcluded !== undefined ? { readersExcluded: body.readersExcluded as string[] } : {}),
+    ...(body.bookRound !== undefined ? { bookRound: body.bookRound as ReviewBookInput["bookRound"] } : {}),
     ...(body.include !== undefined ? { include: body.include as number[] } : {}),
     ...(typeof body.note === "string" ? { note: body.note.slice(0, MAX_CAMPAIGN_NOTE_CHARACTERS) } : {}),
   };
+}
+
+/**
+ * The body of a decision about the corrections of the whole book, `{ round, action: "apply" | "decline", chosen? }` (`autopilot-review-book-round`): the shape, which is checked here (a
+ * misspelt key is refused, not ignored: the author would decide something else), and what it asks, which the engine judges (its `RevisionCampaignError`: `no_proposal`, `stale`).
+ */
+function asBookCorrectionsDecision(body: Record<string, unknown>): BookCorrectionsDecision {
+  const refuse = (problem: string): never => {
+    throw new HttpError(400, "invalid_request", `${problem} A decision is { "round": the round looked at, "action": "apply" or "decline", "chosen"?: the numbers of the corrections to carry out, from 1 }.`);
+  };
+  const unknown = Object.keys(body).filter((key) => !["round", "action", "chosen"].includes(key));
+  if (unknown.length) refuse(`${unknown.slice(0, 3).map(named).join(", ")} cannot be sent here.`);
+  if (typeof body.round !== "number" || !Number.isFinite(body.round)) refuse("`round` is the round of the review the author looked at, a number.");
+  if (body.action !== "apply" && body.action !== "decline") refuse("`action` is `apply` or `decline`.");
+  if (body.chosen !== undefined && (!Array.isArray(body.chosen) || body.chosen.length > MAX_CAMPAIGN_REQUEST_CHAPTERS || body.chosen.some((number) => typeof number !== "number" || !Number.isFinite(number)))) refuse(`\`chosen\` is a list of at most ${MAX_CAMPAIGN_REQUEST_CHAPTERS} numbers.`);
+  return { round: body.round as number, action: body.action as "apply" | "decline", ...(body.chosen !== undefined ? { chosen: body.chosen as number[] } : {}) };
 }
 
 /** The folder of a chapter in the address (`…/chapters/:slug/freeze`): a name in `chapters/`, not a path (no separator, no control character), and short. */
@@ -896,7 +914,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -1354,6 +1372,14 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           books.assertNotInMaintenance();
           const runtime = books.get(params[0]);
           return runtime.session.reviewBook(asReviewBook(asObject(await readBody(request, SMALL_BODY))));
+        },
+      },
+      // The author's decision about the corrections of the whole book that wait for it (a review that asks first): the ones chosen are carried out by the next run, nothing is started.
+      {
+        method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/review\/corrections$/, scope: "run", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          return runtime.session.decideBookCorrections(asBookCorrectionsDecision(asObject(await readBody(request, SMALL_BODY))));
         },
       },
       {

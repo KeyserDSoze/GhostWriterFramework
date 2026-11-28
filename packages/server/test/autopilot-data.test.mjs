@@ -180,7 +180,8 @@ test("S5: a failed attempt that is retried says its kind and where it happened, 
 test("S5: the final verdict is in the state, in the snapshot's summary, in the list and in the last state event, as the engine summarizes it", async () => {
   const { done, messages } = await slow();
   const { state } = done.snapshot;
-  assert.deepEqual(Object.keys(state.finalReview).sort(), ["at", "score", "text", "verdict"]);
+  assert.deepEqual(Object.keys(state.finalReview).sort(), ["at", "points", "score", "text", "verdict"]);
+  assert.ok(state.finalReview.points.length > 0 && state.finalReview.points.every((point) => typeof point === "string" && point.length > 0), "the points of the judgement, which the corrections of the book cite");
   assert.ok(["approve", "revise"].includes(state.finalReview.verdict));
   assert.ok(typeof state.finalReview.score === "number" && state.finalReview.score >= 0 && state.finalReview.score <= 10);
   assert.ok(state.finalReview.text.length > 0 && state.finalReview.text.length <= FINAL_REVIEW_TEXT_CHARACTERS);
@@ -190,6 +191,7 @@ test("S5: the final verdict is in the state, in the snapshot's summary, in the l
 
   const expected = summarizeAutopilotState(state, { pausePending: null, limits: null, defaultPublish: "step" });
   assert.ok(expected.finalReview.text.length <= FINAL_REVIEW_SUMMARY_CHARACTERS);
+  assert.deepEqual(Object.keys(expected.finalReview).sort(), ["at", "score", "text", "verdict"], "the summary does not carry the points: they are in the state");
   assert.deepEqual(done.snapshot.summary, expected, "the summary of the snapshot is what the engine makes of the state, field for field");
   assert.deepEqual(done.list[0].autopilot, expected, "the list says the same");
   assert.deepEqual(stateEvents(messages).at(-1), expected, "and so does the last state event of the run");

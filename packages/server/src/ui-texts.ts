@@ -216,7 +216,7 @@ const en: ViewTexts = {
   runsSteps: {
     concept: "concept", "summarize-imported": "summarizing imported text", plan: "planning", "plan-reader": "reader check of the plan", "plan-review": "plan review", replan: "re-planning", scenes: "scene outline",
     write: "writing", reader: "reader feedback", "readers-summary": "summary of the readers", specialists: "specialist checks", "director-review": "director review", repair: "repairing",
-    consolidate: "consolidating", impact: "impact check", revise: "revising", final: "final pass", freeze: "freezing chapters",
+    consolidate: "consolidating", impact: "impact check", revise: "revising", final: "final pass", "book-corrections": "corrections of the whole book", freeze: "freezing chapters",
   },
 
   histTitle: "Update history",
@@ -476,7 +476,7 @@ const it: ViewTexts = {
   runsSteps: {
     concept: "concept", "summarize-imported": "riassunto del testo importato", plan: "pianificazione", "plan-reader": "controllo dei lettori sul piano", "plan-review": "revisione del piano", replan: "nuova pianificazione",
     scenes: "scaletta delle scene", write: "scrittura", reader: "commenti dei lettori", "readers-summary": "sintesi dei lettori", specialists: "controlli specialistici", "director-review": "revisione del direttore",
-    repair: "riparazione", consolidate: "consolidamento", impact: "verifica dell'impatto", revise: "revisione", final: "passaggio finale", freeze: "blocco dei capitoli",
+    repair: "riparazione", consolidate: "consolidamento", impact: "verifica dell'impatto", revise: "revisione", final: "passaggio finale", "book-corrections": "correzioni del libro intero", freeze: "blocco dei capitoli",
   },
 
   histTitle: "Storico degli aggiornamenti",
