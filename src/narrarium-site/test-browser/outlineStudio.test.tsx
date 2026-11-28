@@ -194,7 +194,7 @@ describe("the Studio", () => {
     expect(dialog.querySelector("[data-design-wildcards-estimate]")).toHaveTextContent(t("autopilot.review.wildcards.estimateNoPrice", { voices: 4, calls: "5–10" }));
     fireEvent.click(within(dialog).getByRole("button", { name: t("design.dialog.submit", { count: 12 }) }));
     await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledTimes(1));
-    expect(mocks.runtime.start).toHaveBeenCalledWith("book-1", { design: { chapters: 12, review: null }, options: { readersOnPlan: true, budgetLimit: 0, review: { wildcards: { design: true } } } });
+    expect(mocks.runtime.start).toHaveBeenCalledWith("book-1", { design: { chapters: 12, review: null, workflow: { rubric: true, chapterReview: true, coherence: true, alternatives: 3 } }, options: { readersOnPlan: true, budgetLimit: 0, review: { wildcards: { design: true } } } });
   });
 
   it("keeps the room the run has at a stall when the author leaves the design without it, and offers nothing of it to a personal server that predates it", async () => {

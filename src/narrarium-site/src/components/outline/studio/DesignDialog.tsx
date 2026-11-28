@@ -141,7 +141,7 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
   const spentCurrency = state?.stats.currency || money.display;
   const spent = money.amount(state?.stats.cost ?? 0, state?.stats.currency, { zero: "amount" });
   const running = view.snapshot?.running === true || view.busyInAnotherTab;
-  const canSubmit = reading.valid && !workflow.problem && chapters > 0 && !modeBlocked && busy === null && !running;
+  const canSubmit = reading.valid && (complete || !workflow.problem) && chapters > 0 && !modeBlocked && busy === null && !running;
   const reason = choice.reason === "written"
     ? t("design.mode.reason.written", { count: choice.chapters })
     : choice.reason === "missing"
@@ -152,7 +152,7 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
     if (!canSubmit) return;
     const done = await run("start", async (runtime, bookId) => {
       if (pastBudgets) runtime.allowBudgetOverrun(bookId);
-      await runtime.start(bookId, { design: { ...reading.input, ...(workflow.workflow ? { workflow: workflow.workflow } : {}) }, options: { readersOnPlan: form.readers, budgetLimit: reading.budgetLimit, ...(roomChange !== undefined ? { review: { wildcards: roomChange } } : {}) } });
+      await runtime.start(bookId, { design: { ...reading.input, ...(workflow.workflow && !complete ? { workflow: workflow.workflow } : {}) }, options: { readersOnPlan: form.readers, budgetLimit: reading.budgetLimit, ...(roomChange !== undefined && !complete ? { review: { wildcards: roomChange } } : {}) } });
     });
     if (done) {
       onStarted();
@@ -224,7 +224,7 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
               <span id={`${id}-readers-hint`} className="block text-xs text-muted-foreground">{t("design.dialog.readers.hint")}</span>
             </span>
           </label>
-          <label className="flex min-h-11 cursor-pointer items-start gap-2 text-sm sm:col-span-2">
+          {!complete && <label className="flex min-h-11 cursor-pointer items-start gap-2 text-sm sm:col-span-2">
             <input type="checkbox" data-design-wildcards="" className="mt-0.5 h-4 w-4 accent-primary" checked={roomOn} disabled={wildcardsUnsupported} aria-labelledby={`${id}-wildcards-label`} aria-describedby={`${id}-wildcards-hint`} onChange={(event) => change({ wildcardsDesign: event.target.checked })} />
             <span className="min-w-0">
               <span id={`${id}-wildcards-label`} className="font-medium">{t("design.dialog.wildcards.label")}</span>
@@ -233,7 +233,7 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
                 {roomText && <span data-design-wildcards-estimate="" className="block">{roomText}</span>}
               </span>
             </span>
-          </label>
+          </label>}
           <OptionalNumberField id={`${id}-target`} label={t("autopilot.review.target.label")} value={form.target} placeholder={t("autopilot.review.target.placeholder", { score: formatCount(director.approvalScore) })} hint={t("design.dialog.target.hint")} problem={problemText(reading.review.problems.target, { min: TARGET_MIN, max: TARGET_MAX })} unit="/10" decimals onChange={(value) => change({ target: value })} />
           <OptionalNumberField id={`${id}-rounds`} label={t("design.dialog.rounds.label")} value={form.rounds} placeholder="3" hint={t("design.dialog.rounds.hint")} problem={problemText(reading.review.problems.rounds, { min: 1, max: REVIEW_MAX_ROUNDS })} onChange={(value) => change({ rounds: value })} />
           <OptionalNumberField id={`${id}-reader-rounds`} label={t("design.dialog.readerRounds.label")} value={form.readerRounds} placeholder="1" hint={t("design.dialog.readerRounds.hint")} problem={problemText(reading.review.problems.readerRounds, { min: 1, max: REVIEW_MAX_ROUNDS })} disabled={!form.readers} onChange={(value) => change({ readerRounds: value })} />
@@ -250,7 +250,7 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
           />
         </div>
 
-        <WorkflowFields form={workflowForm} onChange={changeWorkflow} supported={reviewsSupported} alternativesAllowed={alternativesAllowed} problem={workflow.problem} />
+        {!complete && <WorkflowFields form={workflowForm} onChange={changeWorkflow} supported={reviewsSupported} alternativesAllowed={alternativesAllowed} problem={workflow.problem} />}
 
         {estimate && <EstimateLine label={t("design.dialog.estimate")} estimate={estimate} currency={inputs.sources.currency || "USD"} />}
         {estimate && <BudgetOutlook bookId={book.id} {...outlookOf(estimate, inputs.sources.currency || "USD", "designed")} {...(canSubmit ? { onStartAnyway: () => void submit(true) } : {})} busy={busy !== null} />}

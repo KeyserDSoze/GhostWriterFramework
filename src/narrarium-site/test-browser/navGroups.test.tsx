@@ -185,7 +185,7 @@ describe("the Synopsis", () => {
 
 describe("the Brainstormer", () => {
   it("is in the Profiles group, after the director, and the menu of the book stays around its page with its entry marked as the current one", () => {
-    expect(bookMenuGroups("book-1").find((entry) => entry.id === "profiles")?.items.map((item) => item.labelKey)).toEqual(["director.title", "nav.brainstormer", "ghostwriters.title", "evaluationStyle.title", "readerPersonas.title"]);
+    expect(bookMenuGroups("book-1").find((entry) => entry.id === "profiles")?.items.map((item) => item.labelKey)).toEqual(["director.title", "nav.brainstormer", "ghostwriters.title", "evaluationStyle.title", "readerPersonas.title", "nav.wildcards"]);
     open("desktop", `${ROOT}/brainstormer`);
     expect(within(group("nav.groupProfiles")).getByRole("link", { name: t("nav.brainstormer") })).toHaveAttribute("aria-current", "page");
     for (const [key] of GROUPS) expect(group(key)).toBeInTheDocument();
