@@ -125,6 +125,8 @@ export interface FakeAiOptions {
    * all of them or one by criterion (default 7.5). Added to every reply that asks for the rubric and has none.
    */
   designRubric?: (subject: string, round: number) => number | Record<string, number>;
+  /** The scores of the criteria of the chapters the review of a design judges (`chapter` and the number of the review), as `designRubric`: a number for all, or one by criterion (default 7.5). */
+  chapterRubric?: (chapter: number, round: number) => number | Record<string, number>;
 }
 
 /** The rubric of a reply: the twelve criteria with their scores (a number for all, or one by criterion), the weak ones with an issue and a proposal. */
@@ -239,11 +241,13 @@ export function createFakeAutopilotAi(options: FakeAiOptions = {}): AiPort & { c
         const count = options.chapters ?? (range ? range[1] - range[0] + 1 : 2);
         const start = range ? range[0] : 1;
         const numbers = Array.from({ length: count }, (_, index) => start + index);
+        // A design asked to be revised comes back with a changed summary, so that the chapters it rewrote are not the ones it left.
+        const revised = /Revise the design of chapters/.test(user);
         return {
           chapters: numbers.map((number) => ({
             number,
             title: `Chapter Title ${number}`,
-            summary: `Summary of chapter ${number}.`,
+            summary: `Summary of chapter ${number}.${revised ? " Revised." : ""}`,
             design: {
               goal: `Goal of chapter ${number}.`,
               pov: ["Mira Vale"],
@@ -274,6 +278,18 @@ export function createFakeAutopilotAi(options: FakeAiOptions = {}): AiPort & { c
               redHerrings: numbers.includes(1) ? [{ chapter: 1, note: "The storms are blamed." }] : [],
             }]
             : [],
+        };
+      }
+      case "design_chapter_review": {
+        const round = Number(/Round (\d+) of the design/.exec(user)?.[1] ?? "1");
+        const section = user.slice(user.indexOf("CHAPTERS UNDER REVIEW:"));
+        const chapters = [...section.matchAll(/^Chapter (\d+)(?: \(the author's entry: binding\))?:$/gm)].map((match) => Number(match[1]));
+        return {
+          chapters: chapters.map((chapterNumber) => {
+            const asked = options.chapterRubric?.(chapterNumber, round) ?? 7.5;
+            const weak = Object.values(typeof asked === "number" ? { all: asked } : asked).some((score) => score < 7);
+            return { chapterNumber, verdict: weak ? "revise" : "ok", summary: weak ? `Chapter ${chapterNumber} has weak points.` : `Chapter ${chapterNumber} holds.`, rubric: fakeRubric(asked, { applicable: true }) };
+          }),
         };
       }
       case "design_reaction":

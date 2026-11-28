@@ -77,6 +77,7 @@ export * from "./autopilot/design.js";
 export * from "./autopilot/design-review-types.js";
 export * from "./autopilot/design-rubric.js";
 export * from "./autopilot/design-state.js";
+export * from "./autopilot/design-flow.js";
 export * from "./autopilot/frozen.js";
 export * from "./autopilot/story-so-far.js";
 export { TASK_EXECUTORS, cleanProse, renderPlanMarkdown, sameCanonEntity, type TaskContext, type TaskResult, type TaskAi } from "./autopilot/tasks.js";

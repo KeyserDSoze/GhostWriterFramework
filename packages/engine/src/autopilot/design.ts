@@ -131,6 +131,7 @@ export function beginDesign(state: AutopilotState, input: DesignStartInput, cont
     ...(previous?.ledgers ? { ledgers: previous.ledgers } : {}),
     ...(workflow && Object.keys(workflow).length ? { workflow } : {}),
     ...(previous?.rubric ? { rubric: previous.rubric } : {}),
+    ...(previous?.reviewed ? { reviewed: previous.reviewed } : {}),
   };
   next.design = design;
   if (!going && next.plan) {

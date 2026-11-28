@@ -54,6 +54,23 @@ export interface DesignRubricSubject {
 /** The subjects that were judged, by key: `design` (the director's), `reader:<slug>`, `chapter:<number>`, `pitch:<id>`. */
 export type DesignRubrics = Record<string, DesignRubricSubject>;
 
+/** What the design keeps of the review of a chapter: what it was made of (so that only the chapters that changed are reviewed again) and what it said. */
+export interface DesignChapterReview {
+  /** The fingerprint of the entry of the chapter and of the entries beside it when it was reviewed (`chapterReviewSignature`). */
+  sig: string;
+  round: number;
+  at: string;
+  /** The mean of its criteria that apply; `null` when there was nothing to judge (an entry with no text). */
+  overall: number | null;
+  verdict: "ok" | "revise";
+  summary: string;
+}
+
+/** The chapters one call of the review of the chapters judges, each with the chapters beside it. */
+export const DESIGN_REVIEW_BATCH_CHAPTERS = 4;
+/** The most characters of what a review says of a chapter, as of the rest of its texts: more is rejected, never cut. */
+export const DESIGN_SUMMARY_CHARACTERS = 400;
+
 /** The score under which a criterion is a weak point of what is judged: it is told, and a rewrite starts from it. */
 export const DESIGN_WEAK_SCORE = 7;
 

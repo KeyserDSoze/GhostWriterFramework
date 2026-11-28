@@ -98,6 +98,7 @@ import { readerGate, reviewBookRound, reviewMaxRounds, reviewReaderTargets, revi
 import { blockersText, readerStanding } from "./review-readers.js";
 import { PLAN_BATCH_CHAPTERS, SCENES_PER_CHAPTER, batchesNamed, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, sceneFile, scenesForChapter, type TaskDescriptor } from "./planner.js";
 import { designFindingsInsight, designLastRound, designPlateau, designReaderRounds, designTarget, endDesign, loadDesignCheckInput, planBatchChapters } from "./design.js";
+import { chapterReviewsSection, runDesignChapterReview } from "./design-chapter-review.js";
 import { DESIGN_RUBRIC_NOTES, DESIGN_RUBRIC_TOKENS, designRubricRule, readDesignRubric, recordRubric, rubricLine, rubricOverall, rubricProposals } from "./design-rubric.js";
 import { designFlow } from "./design-state.js";
 import { outlineDesignGaps } from "./outline-check.js";
@@ -178,7 +179,7 @@ export interface TaskResult {
 
 // ─── Shared prompt fragments ────────────────────────────────────────────────
 
-function bookHeader(ctx: TaskContext): string {
+export function bookHeader(ctx: TaskContext): string {
   const brief = ctx.state.brief;
   return [
     `BOOK: ${ctx.snapshot.book.title}`,
@@ -188,7 +189,7 @@ function bookHeader(ctx: TaskContext): string {
   ].filter(Boolean).join("\n");
 }
 
-function briefBlock(ctx: TaskContext): string {
+export function briefBlock(ctx: TaskContext): string {
   const brief = ctx.state.brief;
   return [
     brief.idea ? `AUTHOR'S IDEA:\n${brief.idea}` : "",
@@ -198,7 +199,7 @@ function briefBlock(ctx: TaskContext): string {
 }
 
 /** Author rules travel as instructions (they come from the author), never as repository data. */
-function authorRules(ctx: TaskContext, includeNotes = true): string {
+export function authorRules(ctx: TaskContext, includeNotes = true): string {
   const blocks: string[] = [];
   if (ctx.state.constraints.length) blocks.push(`Binding author rules:\n${bulletList(ctx.state.constraints)}`);
   if (includeNotes && ctx.notes.length) blocks.push(`Author notes for this step (they override your own choices):\n${bulletList(ctx.notes.map((note) => note.text))}`);
@@ -207,11 +208,11 @@ function authorRules(ctx: TaskContext, includeNotes = true): string {
   return blocks.join("\n\n");
 }
 
-function directorGuidance(ctx: TaskContext): string {
+export function directorGuidance(ctx: TaskContext): string {
   return ctx.state.directorNotes.length ? `DIRECTOR'S STANDING GUIDANCE:\n${bulletList(ctx.state.directorNotes)}` : "";
 }
 
-function directorTaste(profile: DirectorProfile): string {
+export function directorTaste(profile: DirectorProfile): string {
   return [
     profile.priorities.length ? `Priorities:\n${bulletList(profile.priorities)}` : "",
     profile.taste.length ? `Taste:\n${bulletList(profile.taste)}` : "",
@@ -243,11 +244,11 @@ function scenePlanBlock(scene: PlannedScene, label = "THIS SCENE"): string {
   ].filter(Boolean).join("\n");
 }
 
-function data(sections: Array<string | false | undefined | null>): string {
+export function data(sections: Array<string | false | undefined | null>): string {
   return untrustedData("repository_content", sections.filter((section): section is string => Boolean(section && section.trim())).join("\n\n"));
 }
 
-function request(lines: Array<string | false | undefined | null>): string {
+export function request(lines: Array<string | false | undefined | null>): string {
   return currentRequest(lines.filter((line): line is string => Boolean(line && line.trim())).join("\n\n"));
 }
 
@@ -256,7 +257,7 @@ function request(lines: Array<string | false | undefined | null>): string {
  * (`stable`) first, then what changes with each call (`changing`: the fixes of the last round, the findings of this one), and the request, which changes too, last. A provider that caches the start of a prompt serves
  * everything before the first thing that changes from its cache, and one that has to be told where (`cache_control`) is told it ends there. The words are the same as with the request first: only their order is not.
  */
-function stableFirst(stable: Array<string | false | undefined | null>, changing: Array<string | false | undefined | null>, asked: string): { user: string; cacheBreak: number } {
+export function stableFirst(stable: Array<string | false | undefined | null>, changing: Array<string | false | undefined | null>, asked: string): { user: string; cacheBreak: number } {
   const closing = "\n</repository_content>";
   const text = data([...stable, ...changing]);
   const first = data(stable);
@@ -267,7 +268,7 @@ function stableFirst(stable: Array<string | false | undefined | null>, changing:
 }
 
 /** A limit on the reply of a step, sized for a book in a Latin script and grown for the language of this one (unchanged for Italian and English). */
-function outputLimit(ctx: TaskContext, tokens: number): number {
+export function outputLimit(ctx: TaskContext, tokens: number): number {
   return scaleOutputTokens(tokens, ctx.snapshot.book.language);
 }
 
@@ -301,7 +302,7 @@ function ghostwriterOf(ctx: TaskContext, chapter: ChapterInfo): Promise<Ghostwri
 const outlineReaders = new WeakMap<TaskContext, OutlineReader>();
 
 /** The outline of the book: the run's reader (with its cache), or one over the snapshot for a step that runs on its own. */
-function outlineOf(ctx: TaskContext): OutlineReader {
+export function outlineOf(ctx: TaskContext): OutlineReader {
   if (ctx.outline) return ctx.outline;
   let reader = outlineReaders.get(ctx);
   if (!reader) {
@@ -1124,7 +1125,7 @@ const DESIGN_ENTRIES_CHARS = 16_000;
  * What every step of a design reads besides a plan's: the themes and the tone, the rules of the world (`bible/`), the secrets with their ledger, and the ghostwriter
  * who will write the book (so that the design fits a voice it can be written in).
  */
-async function designContext(ctx: TaskContext): Promise<{ sections: string[] }> {
+export async function designContext(ctx: TaskContext): Promise<{ sections: string[] }> {
   const [themesFile, worldFile, secrets, ghostwriter] = await Promise.all([
     ctx.store.read(BIBLE_THEMES_FILE),
     ctx.store.read(BIBLE_WORLD_FILE),
@@ -1168,7 +1169,7 @@ async function secretsLedgerBlock(ctx: TaskContext): Promise<string> {
 }
 
 /** The designs the entries of the Synopsis have for chapters `from` to `to` (all of them without a range), a block each, within the share of a prompt. */
-async function designedEntriesSection(ctx: TaskContext, from: number | undefined, to: number | undefined, label: string): Promise<string> {
+export async function designedEntriesSection(ctx: TaskContext, from: number | undefined, to: number | undefined, label: string): Promise<string> {
   const entries = (await outlineOf(ctx).chapters()).filter((entry) => entry.design && (from === undefined || entry.number >= from) && (to === undefined || entry.number <= to));
   if (!entries.length) return "";
   const share = Math.max(400, Math.floor(DESIGN_ENTRIES_CHARS / entries.length));
@@ -1446,12 +1447,13 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
   const italian = isItalian(ctx.language);
   await assertRewritable(ctx, await secretsToPlace(ctx, plan));
   const outline = outlineOf(ctx);
-  const [storyDesign, view, checkInput, designData, entriesSection] = await Promise.all([
+  const [storyDesign, view, checkInput, designData, entriesSection, chapterReviews] = await Promise.all([
     readBody(ctx.store, STORY_DESIGN_FILE, 5000),
     authorOutline(ctx),
     loadDesignCheckInput(ctx.store, ctx.snapshot, outline, ctx.state),
     designContext(ctx),
     designedEntriesSection(ctx, undefined, undefined, "THE DESIGN OF EVERY CHAPTER"),
+    flow.chapterReview ? chapterReviewsSection(ctx) : Promise.resolve(""),
   ]);
   const findings: DesignFinding[] = [...designFindings(checkInput), ...outlineDesignGaps(checkInput.chapters)];
   const told = designFindingsInsight(findings, ctx.language);
@@ -1480,6 +1482,7 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
       ...designData.sections,
       listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
       entriesSection,
+      chapterReviews,
       findings.length ? `DESIGN CHECKS (found without a model):\n${findings.slice(0, 30).map((finding) => `- ${findingText(finding, "en")}`).join("\n")}${findings.length > 30 ? `\n- … and ${findings.length - 30} more` : ""}` : "DESIGN CHECKS (found without a model): nothing.",
       plan.readerReactions.length
         ? `SIMULATED READERS:\n${plan.readerReactions.map((reaction) => `- ${reaction.name} (weight ${ctx.director.readerWeights[reaction.slug] ?? 1}): ${reaction.interest}/10 — ${reaction.reaction}${reaction.concerns.length ? ` Concerns: ${reaction.concerns.join("; ")}.` : ""}${reaction.wishes.length ? ` Wishes: ${reaction.wishes.join("; ")}.` : ""}${flow.rubric && design.rubric?.[`reader:${reaction.slug}`] ? ` Rubric: ${rubricLine(design.rubric[`reader:${reaction.slug}`].latest)}.` : ""}`).join("\n")}`
@@ -2903,6 +2906,7 @@ export const TASK_EXECUTORS: Record<TaskDescriptor["kind"], (ctx: TaskContext) =
   plan: runPlan,
   "plan-reader": runPlanReader,
   "plan-review": runPlanReview,
+  "design-chapter-review": runDesignChapterReview,
   replan: runReplan,
   scenes: runScenes,
   write: runWrite,

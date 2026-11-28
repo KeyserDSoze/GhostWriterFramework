@@ -8,6 +8,7 @@ import { advanceRevisionCampaign, campaignChapter, chapterVote } from "./campaig
 import { readerGate, reviewMaxRounds, reviewReaderRounds, reviewWildcards, type ReaderTargets } from "./review-policy.js";
 import { blockersText, readerStanding } from "./review-readers.js";
 import { planBatchChapters } from "./design.js";
+import { nextDesignReview } from "./design-flow.js";
 import { designActive } from "./state.js";
 import type { AutopilotInsightFigures, AutopilotMessageCode, AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, InsightTone, PlannedChapter, PlannedScene } from "./types.js";
 
@@ -200,6 +201,17 @@ export function describeTask(kind: AutopilotTaskKind, language: string, params: 
         reason: text(language, "The director stands in for the author and approves or corrects the plan.", "Il direttore sostituisce l'autore e approva o corregge il piano."),
         next: text(language, "Plan the scenes of the first chapter.", "Pianificare le scene del primo capitolo."),
       };
+    case "design-chapter-review": {
+      const batch = params.from !== undefined && params.to !== undefined ? { from: params.from, to: params.to } : null;
+      const one = batch?.from === batch?.to;
+      return {
+        title: batch
+          ? text(language, one ? `Reviewing the design of chapter ${batch.from}` : `Reviewing the design of chapters ${batch.from}-${batch.to}`, one ? `Revisione del progetto del capitolo ${batch.from}` : `Revisione del progetto dei capitoli ${batch.from}-${batch.to}`)
+          : text(language, "Reviewing the design of the chapters", "Revisione del progetto dei capitoli"),
+        reason: text(language, "The director, the ghostwriter who will write them and the readers judge every chapter with the chapters beside it, on the twelve criteria.", "Il direttore, il ghostwriter che li scriverà e i lettori giudicano ogni capitolo insieme ai capitoli accanto, sui dodici criteri."),
+        next: text(language, "The director reviews the whole design.", "Il direttore valuta l'intero progetto."),
+      };
+    }
     case "replan":
       return params.outline === "removed"
         ? {
@@ -939,6 +951,9 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
     }
     // A design run asks the room of the wildcards once, before the review of its plan, when the review policy turns it on: the director triages what it gives.
     if (designing && !plan.wildcardsDone && reviewWildcards(state).design) return { kind: "task", task: descriptor("wildcards", "plan", ctx, { design: true }) };
+    // The chapters of a design that changed since they were reviewed are reviewed, before the director looks at the whole.
+    const review = designing ? nextDesignReview(state, ctx.snapshot) : null;
+    if (review) return { kind: "task", task: { ...descriptor(review.kind, "plan", ctx, { from: review.from, to: review.to }), chapterNumber: review.from } };
     return { kind: "task", task: descriptor("plan-review", "plan", ctx, { design: designing }) };
   }
 

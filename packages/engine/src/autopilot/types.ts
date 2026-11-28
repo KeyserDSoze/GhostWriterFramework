@@ -5,7 +5,7 @@ import type { AiErrorBody } from "../ai/provider-error.js";
 import type { AiAttemptThinking, AiThinkingWhy } from "../ai/request.js";
 import type { AiCallDropReason, AiCallStatus } from "./calls/types.js";
 import type { ChapterFreezeAuthor, FrozenChapterChanges } from "../book/freeze.js";
-import type { DesignRubrics } from "./design-review-types.js";
+import type { DesignChapterReview, DesignRubrics } from "./design-review-types.js";
 
 /** Lifecycle of the autopilot of one book. */
 export type AutopilotStatus = "idle" | "running" | "paused" | "waiting-author" | "error" | "completed";
@@ -21,6 +21,7 @@ export type AutopilotTaskKind =
   | "plan"
   | "plan-reader"
   | "plan-review"
+  | "design-chapter-review"
   | "replan"
   | "scenes"
   | "write"
@@ -1114,6 +1115,8 @@ export type DesignPolicy = Pick<ReviewPolicy, "targetScore" | "maxRounds" | "rea
  */
 export interface DesignWorkflow {
   rubric?: boolean;
+  /** The design of every chapter is reviewed with the chapters beside it (`design-chapter-review`), and a chapter that changed is reviewed again. */
+  chapterReview?: boolean;
 }
 
 /** The reviews of a design when the policy says nothing: the director looks at it up to three times, as at a plan. */
@@ -1151,6 +1154,10 @@ export interface AutopilotDesign {
   workflow?: DesignWorkflow;
   /** The rubric of the subjects that were judged, with how their scores went (`DesignRubrics`). */
   rubric?: DesignRubrics;
+  /** The latest review of every chapter, by its number (`DesignChapterReview`). */
+  reviewed?: Record<string, DesignChapterReview>;
+  /** A review of the design on request goes on (`DesignStartInput.reviewOnly`): the chapters it looks at (absent: all), and whether it is over. */
+  reviewing?: { chapters?: number[]; startedAt: string; done?: boolean };
 }
 
 /** A design run asked with a start (`StartOptions.design`). */
@@ -1344,7 +1351,8 @@ export type AutopilotMessageCode =
   | "designAuthorEntries"
   | "designEscalated"
   | "wildcardsTriaged"
-  | "wildcardsNone";
+  | "wildcardsNone"
+  | "designChapterReview";
 
 /**
  * Which candidate of the route a call asks now, and how: what the `call-attempt` event says and `AutopilotLive.trying` keeps, so that a client shows it as the request is sent. Only
@@ -1542,6 +1550,10 @@ export interface AutopilotInsightFigures {
   voices?: number;
   ideas?: number;
   accepted?: number;
+  /** A review of the chapters of a design: the chapters it covers (`from` to `to`) and how many of their criteria fell short. */
+  from?: number;
+  to?: number;
+  weak?: number;
 }
 
 /** A campaign as a summary says it: the chapters it works (`follow`), how many are over, the one being worked, and the ones that wait. */
