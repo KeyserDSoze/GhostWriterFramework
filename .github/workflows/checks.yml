@@ -188,6 +188,10 @@ jobs:
         with:
           chromium: "true"
 
+      # Some E2E files start a real personal server from its build (e2e/helpers/personal-server.ts imports packages/server/dist/testing.mjs).
+      - name: Build the personal server
+        run: npm run build -w narrarium-server
+
       # The E2E site is built as the deployed one is; the component tests run without these variables, as they always did.
       - name: Build E2E site
         env:
