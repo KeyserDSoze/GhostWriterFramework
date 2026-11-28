@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.143.0",
+    "date": "2026-11-28",
+    "en": {
+      "title": "Fixes reach narrarium.net sooner, and every change is still fully checked",
+      "summary": "A small correction of the site (a wrong text or translation, a style, a contained bug) can now go live after a quick set of checks, a few minutes after it is ready, while the complete checks still run on it in the same run. The complete checks of every other change take about a third of the time they took, so new versions of the site arrive sooner without being checked less.",
+      "changes": [
+        "A small, reviewed fix of the site is published after the type check, the tests related to what it changed, the production build with its size limits and a short set of browser tests of the main pages (home, login, the pages of a book, its settings, the Copilot panel, the autopilot page): about six minutes instead of twenty to thirty. The complete checks run on it at the same time, and their result is part of the same run.",
+        "Changes to accounts, sign-in and security, to the engine of the autopilot, to the personal server, to the reader and to the libraries the site uses always wait for the complete checks before they are published, whatever their author asks.",
+        "The complete checks now run in parallel: the publication of a new version waits about seven minutes instead of twenty to thirty, with the same tests and the same coverage limits.",
+        "If a published version has a problem, the previous one can be published again in about two minutes, exactly as it was when it went live."
+      ]
+    },
+    "it": {
+      "title": "Le correzioni arrivano prima su narrarium.net, e ogni modifica è ancora controllata per intero",
+      "summary": "Una piccola correzione del sito (un testo o una traduzione sbagliati, uno stile, un difetto circoscritto) ora può andare online dopo una serie breve di controlli, pochi minuti dopo che è pronta, mentre i controlli completi girano comunque nella stessa esecuzione. I controlli completi di ogni altra modifica richiedono circa un terzo del tempo di prima, così le nuove versioni del sito arrivano prima senza essere controllate di meno.",
+      "changes": [
+        "Una piccola correzione del sito, già rivista, viene pubblicata dopo il controllo dei tipi, i test legati a ciò che ha cambiato, la build di produzione con i suoi limiti di dimensione e una breve serie di test nel browser delle pagine principali (home, accesso, le pagine di un libro, le sue impostazioni, il pannello del Copilot, la pagina dell'autopilot): circa sei minuti invece di venti o trenta. I controlli completi girano nello stesso momento, e il loro esito fa parte della stessa esecuzione.",
+        "Le modifiche agli account, all'accesso e alla sicurezza, al motore dell'autopilot, al server personale, al lettore e alle librerie che il sito usa aspettano sempre i controlli completi prima di essere pubblicate, qualunque cosa chieda chi le ha scritte.",
+        "I controlli completi ora girano in parallelo: la pubblicazione di una nuova versione aspetta circa sette minuti invece di venti o trenta, con gli stessi test e gli stessi limiti di copertura.",
+        "Se una versione pubblicata ha un problema, quella precedente può essere pubblicata di nuovo in circa due minuti, esattamente com'era quando è andata online."
+      ]
+    }
+  },
+  {
     "version": "0.142.0",
     "date": "2026-11-28",
     "en": {
