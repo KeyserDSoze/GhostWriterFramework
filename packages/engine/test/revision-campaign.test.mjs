@@ -175,7 +175,7 @@ test("the author's refusals: a chapter with no change, a change that moved on, a
   assert.equal(stateOf(store).campaign, undefined, "nothing was saved");
   await session.reviseChapters({ reason: "outline-change", chapters: [{ number: 1, mode: "follow" }] });
   assert.equal(await refused({ reason: "outline-change", chapters: [{ number: 1, mode: "keep" }] }), "campaign_active", "one at a time: wait for it, or cancel what waits");
-  assert.deepEqual(engine.REVISION_CAMPAIGN_ERROR_CODES, ["invalid_request", "campaign_active", "not_changed", "stale", "not_finished", "nothing_to_review"]);
+  assert.deepEqual(engine.REVISION_CAMPAIGN_ERROR_CODES, ["invalid_request", "campaign_active", "not_changed", "stale", "not_finished", "nothing_to_review", "no_proposal"]);
   assert.deepEqual(["stale", "frozen", 409, undefined].map(engine.isRevisionCampaignErrorCode), [true, false, false, false]);
 });
 

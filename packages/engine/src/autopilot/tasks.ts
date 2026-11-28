@@ -85,9 +85,12 @@ import {
 import { sha256Hex } from "../util/hash.js";
 import { asArray, asInteger, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
 import { bulletList, clipText, countWords, isItalian, languageName, OUTPUT_TOKENS_CEILING, sceneCharacterLimit, scaleOutputTokens, tokensPerWord, truncate } from "../util/text.js";
+import { BOOK_CORRECTIONS_TOOL, bookRoundText, readBookCorrections, verdictPoints, type BookChapterAccess } from "./book-round.js";
+import { acceptBookCorrections, chapterVote } from "./campaign.js";
+import { consultPlateauBreakers, type ReviewPlateau } from "./plateau.js";
 import { chapterLines, layoutChapters, listSection, outlineList, type ChapterFormat } from "./outline.js";
 import { legacyChapters, queuedMarkReviewed, startedReview } from "./frozen.js";
-import { readerGate, reviewMaxRounds, reviewReaderTargets, reviewTarget, type ReaderTargets } from "./review-policy.js";
+import { readerGate, reviewBookRound, reviewMaxRounds, reviewReaderTargets, reviewTarget, type ReaderTargets } from "./review-policy.js";
 import { blockersText, readerStanding } from "./review-readers.js";
 import { PLAN_BATCH_CHAPTERS, SCENES_PER_CHAPTER, batchesNamed, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, sceneFile, scenesForChapter, type TaskDescriptor } from "./planner.js";
 import { designFindingsInsight, designLastRound, designPlateau, designReaderRounds, designTarget, endDesign, loadDesignCheckInput, planBatchChapters } from "./design.js";
@@ -118,6 +121,7 @@ import {
   specialistsSystemPrompt,
   writerSystemPrompt,
 } from "./prompts.js";
+import { BOOK_CORRECTIONS_MAX } from "./types.js";
 import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES, CONCEPT_LOGLINE_CHARACTERS, closedRound, designActive, designMaxRounds, normalizeFinalReview, readingRound, recordChapterRound } from "./state.js";
 import { STORY_SO_FAR_MAX_WORDS, STORY_SO_FAR_TARGET_WORDS, pruneStorySnapshots, readStorySoFar, renderTotalResumeBody, storySoFarExcess } from "./story-so-far.js";
 import type { AuthorIntervention, AutopilotInsightFigures, AutopilotMessageCode, AutopilotPlan, AutopilotState, DesignOutcome, FrozenChapterView, InsightTone, PlannedChapter, PlannedScene, ReviewDecision, ReviewFinding, RevisionRequest } from "./types.js";
@@ -2692,12 +2696,122 @@ async function runFinal(ctx: TaskContext): Promise<TaskResult> {
     ...(ctx.evaluationStyle ? { evaluationStyle: ctx.evaluationStyle } : {}),
   });
   ctx.state.finalDone = true;
-  const finalReview = normalizeFinalReview({ verdict: result.opinion.verdict === "approve" ? "approve" : "revise", score: result.opinion.score, text: result.opinion.summary, at: result.opinion.createdAt });
+  const finalReview = normalizeFinalReview({ verdict: result.opinion.verdict === "approve" ? "approve" : "revise", score: result.opinion.score, text: result.opinion.summary, at: result.opinion.createdAt, points: verdictPoints(result.opinion) });
   if (finalReview) ctx.state.finalReview = finalReview;
   else delete ctx.state.finalReview;
   const change = await changeFor(ctx, result.path, () => renderDirectorOpinion(result.opinion, ctx.language));
   ctx.insight(result.opinion.verdict === "approve" ? "ok" : "warning", isItalian(ctx.language) ? `Giudizio finale del direttore: ${result.opinion.score}/10` : `Director's final judgement: ${result.opinion.score}/10`, result.opinion.summary);
   return { changes: compact([change]), summary: `${result.opinion.verdict} ${result.opinion.score}/10 — ${result.opinion.summary}` };
+}
+
+/**
+ * The director's corrections of the whole book (`BookRound`, #113). A review of the book got every chapter to its targets and the director's vote of the whole book is still under the
+ * target: the director says which chapters to change, what to change in each and why, citing the points of its last judgement of the book. When a plateau made the round, the plateau
+ * breakers that were registered (`plateau.ts`) are asked first, once, and what they found is read with the request. The corrections are checked (a chapter of the plan, what and why,
+ * a point cited), kept in the round, and either shown to the author (`ask`: the run stops until they decide) or carried out at once (`apply`: the chapters they name become the chapters
+ * of the round, each revised and reviewed again). A reply with nothing to carry out ends the review; so does a breaker that stops it.
+ */
+async function runBookCorrections(ctx: TaskContext): Promise<TaskResult> {
+  const campaign = ctx.state.campaign;
+  const review = campaign?.review;
+  const round = review?.book;
+  if (!campaign || !review || !round || round.status !== "asking") return { changes: [], summary: "No book-level round waits for its corrections." };
+  const target = review.targetScore;
+  const plan = ctx.state.plan;
+  const italian = isItalian(ctx.language);
+  // The chapters the director may ask a change of are the ones of the review; the others are the author's (frozen by the author, written before the autopilot, or waiting for a decision of theirs).
+  const inScope = new Set(review.scope);
+  const access: BookChapterAccess = new Map((plan?.chapters ?? []).map((chapter) => [chapter.number, inScope.has(chapter.number) ? "open" as const : "author" as const]));
+
+  // A plateau made the round: whoever registered to take it on is asked first, once. A breaker that has nothing ends the review.
+  if (round.plateau && !round.plateau.consulted) {
+    round.plateau.consulted = true;
+    const last = review.history[review.history.length - 1] ?? review.start;
+    const plateau: ReviewPlateau = {
+      campaignId: campaign.id,
+      round: review.round,
+      target,
+      votes: { lowest: last.lowest, book: last.book, below: last.below, ...(last.readers !== undefined ? { readers: last.readers } : {}) },
+      history: review.history.map((entry) => ({ ...entry })),
+      kind: last.below === 0 ? "book" : "chapters",
+      broken: review.broken ?? 0,
+      language: ctx.language,
+    };
+    const answer = await consultPlateauBreakers(plateau, { bookId: ctx.bookId, state: ctx.state, store: ctx.store, snapshot: ctx.snapshot, signal: ctx.signal, ai: ctx.ai, insight: (tone, title, detail) => ctx.insight(tone, title, detail) });
+    if (answer.action === "stop") {
+      round.status = "stopped";
+      round.stop = "plateau";
+      return { changes: [], summary: "No plateau breaker had anything to add: the review ends." };
+    }
+    round.material = answer.material;
+    review.broken = (review.broken ?? 0) + 1;
+    // The plateau is taken on: the round that follows is its own, and two more rounds that raise nothing end the review as they always did.
+    review.stalled = 0;
+    ctx.insight("info", italian ? "Lo stallo viene affrontato con del materiale nuovo: il direttore lo legge insieme alle correzioni del libro" : "The plateau is taken on with new material: the director reads it with the corrections of the book", clipText(answer.material, 600), { code: "plateauBroken" });
+  }
+
+  const points = round.verdict.points;
+  const design = await readBody(ctx.store, STORY_DESIGN_FILE, 3000);
+  const vote = (value: number | null | undefined) => (value === null || value === undefined ? "no vote" : `${value}/10`);
+  const chapters = (plan?.chapters ?? []).map((chapter) => {
+    const mine = access.get(chapter.number) === "author";
+    return `Chapter ${chapter.number}${quotedTitle(chapter.title)}${mine ? " — THE AUTHOR'S (not to be changed without them)" : ""}: the director's vote ${vote(chapterVote(chapter))}${chapter.summary ? `; ${truncate(chapter.summary, 320)}` : ""}`;
+  });
+  const before = review.history.filter((entry) => entry.bookRound).slice(-3).map((entry) => {
+    const asked = entry.bookRound!.corrections.map((correction) => `chapter ${correction.chapter}: ${truncate(correction.change, 200)} [${correction.status}${correction.why ? `, ${correction.why}` : ""}]`).join("; ");
+    return `Round ${entry.round}: asked ${asked || "nothing"}. The book went from ${vote(entry.bookRound!.score)} to ${vote(entry.book)}.`;
+  });
+  const judgement = ctx.state.finalReview;
+  const response = await ctx.ai({
+    capability: AI_CAPABILITIES.director,
+    label: "autopilot:book-corrections",
+    system: directorSystemPrompt(ctx.director, ctx.language),
+    user: `${request([
+      `Every chapter of the book has reached its targets (${target}/10), but your judgement of the whole book is ${vote(round.verdict.score)}: under the target. A chapter can be good and the book still not: what is missing is across the chapters (arcs, promises, rhythm, setups and payoffs, the ending, the weight of the parts).`,
+      `Say which chapters to change to raise the book, what to change in each and why. Each correction must answer at least one of the ${points.length} POINTS OF YOUR JUDGEMENT: cite its number in "cites". Choose the fewest corrections that matter (at most ${BOOK_CORRECTIONS_MAX}); ask a change of a few scenes, never of a whole chapter when a few scenes will do; do not repeat what an earlier round asked and the book did not answer.`,
+      chapters.some((line) => line.includes("THE AUTHOR'S")) ? "The chapters marked THE AUTHOR'S are the author's: prefer corrections in the others, and ask a change of an author's chapter only when nothing else can answer the point (the author decides about it, it is never changed by itself)." : "",
+      "If nothing in the chapters can raise the book (it is for the author to decide), return no corrections and say so in the summary.",
+      round.material ? "WHAT THE ROOM FOUND (ideas and findings that were proposed for this plateau, and that you may use or leave): read it with the points, and fold what is worth it into the corrections." : "",
+    ])}\n\n${data([
+      bookHeader(ctx),
+      design ? `STORY DESIGN:\n${design}` : "",
+      `YOUR JUDGEMENT OF THE WHOLE BOOK: ${vote(round.verdict.score)}${judgement?.text ? `\n${truncate(judgement.text, 1200)}` : ""}`,
+      points.length ? `POINTS OF YOUR JUDGEMENT (cite them by number):\n${points.map((point, index) => `${index + 1}. ${point}`).join("\n")}` : "",
+      `CHAPTERS:\n${chapters.join("\n")}`,
+      before.length ? `WHAT EARLIER ROUNDS ASKED OF THE BOOK:\n${before.join("\n")}` : "",
+      round.material ? `WHAT THE ROOM FOUND:\n${round.material}` : "",
+    ])}`,
+    json: BOOK_CORRECTIONS_TOOL,
+    maxOutputTokens: outputLimit(ctx, 3500),
+  });
+  const subject = "The corrections of the book";
+  const output = requireStructuredFields(response.json, { corrections: "list" }, subject);
+  const read = readBookCorrections(output, access, points.length);
+  if (asArray(output.corrections).length && !read.corrections.length) {
+    throw new AiReplyRejectedError(`${subject} were rejected: ${read.problems.slice(0, 5).join(" ")} Use the numbers of the CHAPTERS list and of the POINTS OF YOUR JUDGEMENT.`);
+  }
+  round.corrections = read.corrections;
+  if (read.summary) round.summary = read.summary;
+  const figures = { round: review.round, target, ...(round.verdict.score !== null ? { book: round.verdict.score } : {}) };
+  if (!read.corrections.length) {
+    // The review ends (the campaign says why, with the director's words): there is nothing to carry out.
+    round.status = "stopped";
+    round.stop = "none";
+    return { changes: [], summary: `No correction — ${read.summary}` };
+  }
+  const count = read.corrections.length;
+  if (reviewBookRound(ctx.state) === "ask") {
+    round.status = "proposed";
+    const told = bookRoundText(ctx.language, "proposed", { score: round.verdict.score, target, count, chapters: new Set(read.corrections.map((correction) => correction.chapter)).size });
+    ctx.insight("warning", told.title, [told.detail, read.summary].filter(Boolean).join(" "), { code: "bookRoundProposed", figures: { ...figures, corrections: count, chapters: new Set(read.corrections.map((correction) => correction.chapter)).size } });
+  } else {
+    const touched = acceptBookCorrections(ctx.state, null);
+    if (touched.length) {
+      const told = bookRoundText(ctx.language, "applied", { score: round.verdict.score, target, count: round.corrections.filter((correction) => correction.status === "waiting").length, chapters: touched.length });
+      ctx.insight("ok", told.title, read.summary, { code: "bookRoundApplied", figures: { ...figures, corrections: round.corrections.filter((correction) => correction.status === "waiting").length, chapters: touched.length } });
+    }
+  }
+  return { changes: [], summary: `${count} ${count === 1 ? "correction" : "corrections"} — ${read.summary}` };
 }
 
 /**
@@ -2765,5 +2879,6 @@ export const TASK_EXECUTORS: Record<TaskDescriptor["kind"], (ctx: TaskContext) =
   impact: runImpact,
   revise: runRevise,
   final: runFinal,
+  "book-corrections": runBookCorrections,
   freeze: runFreeze,
 };

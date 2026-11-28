@@ -3,7 +3,7 @@ import type { EvaluationTarget } from "../book/paths.js";
 import type { BookFileChange, BookFileContent, BookFileEntry } from "../book/store.js";
 import type { DirectorOpinion } from "../director/opinion.js";
 import type { FrozenChapterResult, FrozenStatus } from "../autopilot/frozen.js";
-import type { ReviewBookInput, ReviseChaptersInput, RevisionCampaignResult } from "../autopilot/campaign.js";
+import type { BookCorrectionsDecision, ReviewBookInput, ReviseChaptersInput, RevisionCampaignResult } from "../autopilot/campaign.js";
 import type { RevisionReason } from "../autopilot/types.js";
 import type { AutopilotEvent, AutopilotLiveOptions, AutopilotPauseMode, AutopilotSnapshot, AutopilotStateSummary, FrozenAction, FrozenChangeKind, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
 import type { AiCallField } from "../autopilot/calls/types.js";
@@ -522,6 +522,29 @@ export function serverSupportsReviewTargets(info: { features?: unknown } | reado
   return announces(info, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS);
 }
 
+/**
+ * The `ServerInfo.features` entry of a server whose engine has the book-level round of a review (#113): when every chapter has its targets and the director's vote of the whole book
+ * does not, the director lists the corrections of the whole book (which chapters to change, what in each and why) and the review carries them out, or shows them to the author first
+ * (`ReviewPolicy.bookRound`, and `bookRound` of a review of the book); the author decides on them with `POST …/autopilot/review/corrections` (`BookCorrectionsRequest`). An older one drops
+ * `bookRound` from `configure`, `start` and the review of the book without a word, and would end the review where it always did: the engine's client refuses to send it there.
+ */
+export const SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND = "autopilot-review-book-round";
+
+/** Whether the server announces the book-level round of a review (`autopilot-review-book-round`). Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsReviewBookRound(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  return announces(info, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND);
+}
+
+/**
+ * Whether a review policy (or a review of the book) turns the book-level round on (`apply` or `ask`). `off` and `null` take it back, which an older server has nothing of to take back:
+ * they are sent anywhere.
+ */
+export function asksReviewBookRound(policy: unknown): boolean {
+  if (!policy || typeof policy !== "object") return false;
+  const mode = (policy as { bookRound?: unknown }).bookRound;
+  return mode === "apply" || mode === "ask";
+}
+
 /** The fields of a review policy (or of a review of the book) that need `autopilot-review-targets`. */
 export const REVIEW_TARGET_FIELDS = ["readersTarget", "readerTargets", "readersExcluded"] as const;
 
@@ -558,6 +581,8 @@ export const CAMPAIGN_FEATURES: Readonly<Record<RevisionReason, string>> = {
 export type ReviseChaptersRequest = ReviseChaptersInput;
 /** The body of `POST /api/v1/books/:id/autopilot/review` (`AutopilotSession.reviewBook`). */
 export type ReviewBookRequest = ReviewBookInput;
+/** The body of `POST /api/v1/books/:id/autopilot/review/corrections` (`AutopilotSession.decideBookCorrections`): the author's decision about the corrections of the book that wait for it. */
+export type BookCorrectionsRequest = BookCorrectionsDecision;
 /** The answer of `POST` and `DELETE …/autopilot/campaign`: the campaign as it is saved (`null`: none goes on), and the changes after it. */
 export type RevisionCampaignResponse = RevisionCampaignResult;
 /** The answer of `POST …/chapters/:slug/freeze`. */

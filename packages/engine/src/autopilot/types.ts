@@ -32,6 +32,8 @@ export type AutopilotTaskKind =
   | "impact"
   | "revise"
   | "final"
+  /** The director's corrections of the whole book, asked when every chapter of a review has its targets and the book has not (`BookRound`). */
+  | "book-corrections"
   /** Freezing, without the model: the chapters an older engine approved (once), and the changes the author marked as reviewed. */
   | "freeze";
 
@@ -198,20 +200,102 @@ export interface ReviewCampaign {
   readersExcluded?: string[];
   /** Chapters of the author's (written before the autopilot, or frozen by the author) that the author chose to have reviewed too. */
   include?: number[];
+  /** What this review does when every chapter has its targets and the book does not (`BookRoundMode`); absent: the run's policy (`ReviewPolicy.bookRound`), else `off`. */
+  bookRound?: BookRoundMode;
   /** The chapters the review may revise, in the order of the book: the autopilot's, and the author's the author included. Its votes are of these chapters. */
   scope: number[];
   /** The round in progress, from 1. */
   round: number;
   /** The round the current run began with: the rounds the cap counts are `round - windowStart + 1`. A start moves it to the round in progress. */
   windowStart: number;
-  /** The chapters of the round are reviewed (`chapters`), or the book is judged again (`verdict`). */
-  phase: "chapters" | "verdict";
+  /**
+   * The chapters of the round are reviewed (`chapters`), the book is judged again (`verdict`), or the round is a book-level one and the director is asked for the corrections of
+   * the whole book, or the author for the decision about them (`book`, with `book`).
+   */
+  phase: "chapters" | "verdict" | "book";
   /** The votes before the campaign. */
   start: ReviewVotes;
   /** The rounds over, oldest first (at most `MAX_REVIEW_ROUNDS_KEPT`). */
   history: ReviewRoundRecord[];
   /** Rounds over in a row that raised neither the lowest vote of a chapter nor the vote of the book. */
   stalled: number;
+  /** The book-level round in progress (`bookRound`), from the moment it is asked for until its round is over. */
+  book?: BookRound;
+  /** How many times a plateau breaker (`ReviewPlateauBreaker`) took the review on after a plateau: at most `PLATEAU_BREAKS_MAX`. */
+  broken?: number;
+}
+
+/**
+ * What a review of the book does when every chapter has its targets and the director's vote of the whole book does not (`ReviewPolicy.bookRound`): nothing more (`off`: the review
+ * ends, as it always did), carry out the corrections of the whole book that the director asks for (`apply`), or show them to the author first and carry out those the author chooses (`ask`).
+ */
+export type BookRoundMode = "off" | "apply" | "ask";
+
+export const BOOK_ROUND_MODES: readonly BookRoundMode[] = ["off", "apply", "ask"];
+
+/** The most corrections a book-level round keeps, and the characters of each part of one, of a point of the verdict and of what a plateau breaker gives the director. */
+export const BOOK_CORRECTIONS_MAX = 12;
+export const BOOK_CORRECTION_CHANGE_CHARACTERS = 700;
+export const BOOK_CORRECTION_REASON_CHARACTERS = 500;
+export const BOOK_POINT_CHARACTERS = 400;
+export const BOOK_POINTS_MAX = 20;
+export const BOOK_MATERIAL_CHARACTERS = 6000;
+/** The rounds of the history of a review that keep what was asked of the book, and the times a plateau breaker may take a review on. */
+export const BOOK_ROUNDS_KEPT = 10;
+export const PLATEAU_BREAKS_MAX = 3;
+
+/** Where a correction of the book is: waiting (to be decided, then for its chapter's turn), applied (its chapter was revised and reviewed again), or left out (`why`). */
+export type BookCorrectionStatus = "waiting" | "applied" | "left-out";
+
+/** Why a correction was left out: the chapter is the author's (and the author did not choose it), the author did not choose it, or its chapter is no longer in the plan. */
+export type BookCorrectionWhy = "author" | "declined" | "gone";
+
+/**
+ * One cross-chapter correction the director asked for after judging the whole book: the chapter to change, what to change in it and why, and the points of the verdict it answers
+ * (their numbers in `BookRound.verdict.points`, from 1).
+ */
+export interface BookCorrection {
+  chapter: number;
+  change: string;
+  reason: string;
+  cites: number[];
+  /** The chapter is the author's (frozen by the author, or written before the autopilot): the correction is carried out only when the author chooses it. */
+  held?: "author";
+  status: BookCorrectionStatus;
+  why?: BookCorrectionWhy;
+}
+
+/** Where a book-level round is: the director is asked (`asking`), the author decides (`proposed`), the chapters are revised (`applying`), or it ended without a correction to carry out (`declined`, `stopped`). */
+export type BookRoundStatus = "asking" | "proposed" | "applying" | "declined" | "stopped";
+
+/**
+ * A book-level round of a review (#113): the director judged the whole book under the target while every chapter has its targets, so it lists what to change across the chapters.
+ * The corrections are asked once the round begins, shown to the author first when the review asks it (`ask`), and then carried out chapter by chapter (a revision of the chapter, which
+ * is reviewed again), after which the director judges the book again: the round is over like any other, and what it asked is kept in `ReviewRoundRecord.book`.
+ */
+export interface BookRound {
+  /** The round of the review it is. */
+  round: number;
+  status: BookRoundStatus;
+  /** The judgement of the book that the round answers: its vote, and its points as it said them (what the corrections cite, from 1). */
+  verdict: { score: number | null; points: string[] };
+  corrections: BookCorrection[];
+  /** The director's words on what it asks, in short. */
+  summary?: string;
+  /** What a plateau breaker gave the director to read with the request. */
+  material?: string;
+  /** A plateau made this round: the breakers (`ReviewPlateauBreaker`) are consulted before the director is, once. */
+  plateau?: { consulted: boolean };
+  /** Why a round that ended with nothing to carry out did: a plateau (the breakers had nothing), the director asked nothing, or what it asked is the author's. */
+  stop?: "plateau" | "none" | "author";
+}
+
+/** What a book-level round came to, as the history of a review keeps it. */
+export interface BookRoundRecord {
+  score: number | null;
+  points: string[];
+  corrections: BookCorrection[];
+  summary?: string;
 }
 
 /**
@@ -231,6 +315,8 @@ export interface ReviewRoundRecord extends ReviewVotes {
   /** The chapters the round reviewed. */
   chapters: number[];
   endedAt: string;
+  /** A book-level round: what the director asked of the book, and what became of it (only the latest `BOOK_ROUNDS_KEPT` rounds keep it). */
+  bookRound?: BookRoundRecord;
 }
 
 /** How a review of the book ended: the target reached, no chapter under it (the book's own vote is not), a plateau, or the author cancelled it. */
@@ -245,6 +331,8 @@ export interface ReviewRecord {
   to: ReviewVotes;
   startedAt: string;
   endedAt: string;
+  /** What the director asked of the whole book in the book-level rounds of the review (#113), the latest `BOOK_ROUNDS_KEPT`, with what became of each correction. Absent when there was none. */
+  bookRounds?: Array<BookRoundRecord & { round: number }>;
 }
 
 /**
@@ -362,6 +450,12 @@ export interface ReviewPolicy {
   readerTargets?: Record<string, number>;
   /** The readers that do not count (their slugs): they still read, and what they say is shown, but they are left out of the readers' average and of the gate. */
   readersExcluded?: string[];
+  /**
+   * What a review of the book does when every chapter has its targets and the director's vote of the whole book does not (`BookRoundMode`): absent or `off`, it ends there, as it
+   * always did; `apply`, the director lists the corrections of the whole book (which chapters to change, what in each, and why) and the review carries them out; `ask`, the author
+   * looks at them first. A review of the book launched later can say otherwise for itself.
+   */
+  bookRound?: BookRoundMode;
 }
 
 /** The most rounds of review of a chapter, of the readers' and of a review of the book that the policy accepts. */
@@ -754,6 +848,11 @@ export interface AutopilotFinalReview {
   text: string;
   /** When the director gave it. */
   at: string;
+  /**
+   * What the judgement said that a correction can answer, numbered from 1 when it is cited: its concerns (severity, issue, suggestion) and its next steps, each cut to
+   * `BOOK_POINT_CHARACTERS` (at most `BOOK_POINTS_MAX`). Absent from a state whose judgement an older engine made.
+   */
+  points?: string[];
 }
 
 /**
@@ -1135,6 +1234,12 @@ export type AutopilotMessageCode =
   | "reviewDone"
   | "reviewStopped"
   | "reviewHeld"
+  | "bookRoundAsked"
+  | "bookRoundProposed"
+  | "bookRoundApplied"
+  | "bookRoundNone"
+  | "bookRoundAuthor"
+  | "plateauBroken"
   | "readersTargetMissed"
   | "budgetReached"
   | "tokenBudgetReached"
@@ -1340,7 +1445,10 @@ export interface AutopilotInsightFigures {
   designOutcome?: DesignOutcome;
   findings?: number;
   critical?: number;
+  /** The chapters of a design run, or the chapters a book-level round of a review asks changes of. */
   chapters?: number;
+  /** A book-level round of a review: how many corrections the director asked for. */
+  corrections?: number;
 }
 
 /** A campaign as a summary says it: the chapters it works (`follow`), how many are over, the one being worked, and the ones that wait. */
@@ -1356,9 +1464,10 @@ export interface AutopilotCampaignSummary {
   held?: boolean;
   /**
    * A review of the book: the round in progress and the rounds allowed since the run began (`maxRounds`: absent, no limit), the target, whether the book is
-   * being judged, the latest votes (the lowest vote of a chapter of the review, the book's), and the money cap of the book (`options.budgetLimit`; 0: none).
+   * being judged, the latest votes (the lowest vote of a chapter of the review, the book's), and the money cap of the book (`options.budgetLimit`; 0: none). In a book-level
+   * round (`bookRound`): where it is, how many corrections the director asked for and how many are carried out.
    */
-  review?: { round: number; roundsThisRun: number; maxRounds?: number; targetScore: number; phase: "chapters" | "verdict"; lowest: number | null; book: number | null; budgetLimit: number; readers?: number | null; readersTarget?: number };
+  review?: { round: number; roundsThisRun: number; maxRounds?: number; targetScore: number; phase: "chapters" | "verdict" | "book"; lowest: number | null; book: number | null; budgetLimit: number; readers?: number | null; readersTarget?: number; bookRound?: { status: BookRoundStatus; corrections: number; applied: number } };
 }
 
 /**

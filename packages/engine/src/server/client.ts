@@ -20,7 +20,9 @@ import {
   serverSupportsReviewBook,
   serverSupportsReviewPolicy,
   serverSupportsReviewTargets,
+  serverSupportsReviewBookRound,
   asksReviewTargets,
+  asksReviewBookRound,
   CAMPAIGN_FEATURES,
   verifyServerIdentity,
   type AskDirectorRequest,
@@ -32,6 +34,7 @@ import {
   type GithubConflictsResponse,
   type ResolveFrozenChangeRequest,
   type ReviseChaptersRequest,
+  type BookCorrectionsRequest,
   type ReviewBookRequest,
   type RevisionCampaignResponse,
   type PairingRequest,
@@ -259,6 +262,9 @@ export class NarrariumServerClient {
     }
     if (asksReviewTargets(review) && !serverSupportsReviewTargets(info)) {
       throw new ServerRequestError(`This personal server does not know the targets for the readers (it does not announce the feature autopilot-review-targets): it would review as if you had set none. Update the server, or leave readersTarget, readerTargets and readersExcluded out.`, 501, "feature_unavailable");
+    }
+    if (asksReviewBookRound(review) && !serverSupportsReviewBookRound(info)) {
+      throw new ServerRequestError(`This personal server does not know the book-level round of a review (it does not announce the feature autopilot-review-book-round): it would end the review where it always did. Update the server, or leave bookRound out.`, 501, "feature_unavailable");
     }
     if (longRetry !== undefined && !serverSupportsAutopilotRetry(info)) {
       throw new ServerRequestError(`This personal server does not have "Retry later" (it does not announce the feature autopilot-retry): update the server, or leave longRetry out.`, 501, "feature_unavailable");
@@ -495,7 +501,23 @@ export class NarrariumServerClient {
     if (asksReviewTargets(request) && !serverSupportsReviewTargets(info)) {
       throw new ServerRequestError("This personal server does not know the targets for the readers (it does not announce the feature autopilot-review-targets): it would review as if you had set none. Update the server, or leave readersTarget, readerTargets and readersExcluded out.", 501, "feature_unavailable");
     }
+    if (asksReviewBookRound(request) && !serverSupportsReviewBookRound(info)) {
+      throw new ServerRequestError("This personal server does not know the book-level round of a review (it does not announce the feature autopilot-review-book-round): it would end the review where it always did. Update the server, or leave bookRound out.", 501, "feature_unavailable");
+    }
     return this.request("POST", bookRoute(bookId, "/autopilot/review"), request);
+  }
+
+  /**
+   * Decide about the corrections of the whole book that wait for the author: `POST …/autopilot/review/corrections` (`BookCorrectionsRequest`, the engine's
+   * `AutopilotSession.decideBookCorrections`). Needs `SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND`, else `feature_unavailable` before anything is sent. A refusal carries the code of the
+   * engine's `RevisionCampaignError` (`invalid_request`, `no_proposal`, `stale`). Nothing is started.
+   */
+  async decideBookCorrections(bookId: string, request: BookCorrectionsRequest): Promise<RevisionCampaignResponse> {
+    const info = await this.info();
+    if (!serverSupportsReviewBookRound(info)) {
+      throw new ServerRequestError("This personal server does not know the book-level round of a review (it does not announce the feature autopilot-review-book-round): update the server.", 501, "feature_unavailable");
+    }
+    return this.request("POST", bookRoute(bookId, "/autopilot/review/corrections"), request);
   }
 
   /** Cancel the chapters of the campaign that wait (the one being worked finishes; a review of the book ends with it): `DELETE …/autopilot/campaign`. A server with the campaigns of any reason has it. */

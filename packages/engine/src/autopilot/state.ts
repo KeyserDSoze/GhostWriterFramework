@@ -4,7 +4,7 @@ import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, a
 import { clipText, countWords } from "../util/text.js";
 import { normalizeErrorDetail, normalizeErrorKind } from "./errors.js";
 import { normalizeReviewPolicy } from "./review-policy.js";
-import { AUTOPILOT_PUBLISH_MODES, DESIGN_DEFAULT_ROUNDS, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, REVISION_CHAPTER_MODES, REVISION_CHAPTER_STATUSES, REVISION_REASONS } from "./types.js";
+import { AUTOPILOT_PUBLISH_MODES, BOOK_CORRECTIONS_MAX, BOOK_CORRECTION_CHANGE_CHARACTERS, BOOK_CORRECTION_REASON_CHARACTERS, BOOK_MATERIAL_CHARACTERS, BOOK_POINTS_MAX, BOOK_POINT_CHARACTERS, BOOK_ROUNDS_KEPT, BOOK_ROUND_MODES, DESIGN_DEFAULT_ROUNDS, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, REVISION_CHAPTER_MODES, REVISION_CHAPTER_STATUSES, REVISION_REASONS } from "./types.js";
 import type {
   AutopilotActivity,
   AutopilotDesign,
@@ -53,6 +53,9 @@ import type {
   ReviewRecord,
   ReviewRoundRecord,
   ReviewVotes,
+  BookCorrection,
+  BookRound,
+  BookRoundRecord,
   QuestionChoice,
   RevisionRequest,
   RevisionSource,
@@ -400,11 +403,13 @@ export function normalizeFinalReview(value: unknown): AutopilotFinalReview | und
   const verdict = typeof source.verdict === "string" ? source.verdict.trim().toLowerCase() : "";
   const score = readVote(source.score);
   if ((verdict !== "approve" && verdict !== "revise") || score === undefined) return undefined;
+  const points = asArray(source.points).filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => clipText(entry.replace(/\s+/g, " ").trim(), BOOK_POINT_CHARACTERS)).slice(0, BOOK_POINTS_MAX);
   return {
     verdict,
     score,
     text: clipText(typeof source.text === "string" ? source.text.trim() : "", FINAL_REVIEW_TEXT_CHARACTERS),
     at: typeof source.at === "string" ? source.at.trim() : "",
+    ...(points.length ? { points } : {}),
   };
 }
 
@@ -676,6 +681,55 @@ function normalizeReviewVotes(value: unknown): ReviewVotes {
   return { lowest: readVote(source.lowest) ?? null, book: readVote(source.book) ?? null, below: asInteger(source.below, 0, 0, MAX_BOOK_CHAPTERS), ...(readers !== undefined ? { readers } : {}) };
 }
 
+/** A correction of the whole book as a file says it: a chapter, what to change and why; `null` for anything else. */
+function normalizeBookCorrection(value: unknown): BookCorrection | null {
+  const source = asRecord(value);
+  const chapter = asInteger(source.chapter, 0, 0, MAX_BOOK_CHAPTERS);
+  const change = readText(source.change, BOOK_CORRECTION_CHANGE_CHARACTERS);
+  const reason = readText(source.reason, BOOK_CORRECTION_REASON_CHARACTERS);
+  const status = source.status === "applied" || source.status === "left-out" ? source.status : "waiting";
+  if (!chapter || !change || !reason) return null;
+  const cites = [...new Set(asArray(source.cites).map((cite) => asInteger(cite, 0, 0, 1000)).filter((cite) => cite > 0))].sort((left, right) => left - right).slice(0, BOOK_POINTS_MAX);
+  const why = status === "left-out" && (source.why === "author" || source.why === "declined" || source.why === "gone") ? source.why : undefined;
+  return { chapter, change, reason, cites, ...(source.held === "author" ? { held: "author" as const } : {}), status, ...(why ? { why } : {}) };
+}
+
+function normalizeBookPoints(value: unknown): string[] {
+  return asArray(value).filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => clipText(entry.replace(/\s+/g, " ").trim(), BOOK_POINT_CHARACTERS)).slice(0, BOOK_POINTS_MAX);
+}
+
+/** What a book-level round came to, as a file says it (a history entry, or the record of a review that is over). */
+function normalizeBookRoundRecord(value: unknown): BookRoundRecord | undefined {
+  const source = asRecord(value);
+  const corrections = asArray(source.corrections).map(normalizeBookCorrection).filter((entry): entry is BookCorrection => entry !== null).slice(0, BOOK_CORRECTIONS_MAX);
+  if (!corrections.length) return undefined;
+  const summary = readText(source.summary, 800);
+  return { score: source.score === null ? null : readVote(source.score) ?? null, points: normalizeBookPoints(source.points), corrections, ...(summary ? { summary } : {}) };
+}
+
+/** The book-level round in progress as a file says it; anything that is not one is none. */
+function normalizeBookRound(value: unknown): BookRound | undefined {
+  const source = asRecord(value);
+  const round = asInteger(source.round, 0, 0, 100_000);
+  const status = source.status === "asking" || source.status === "proposed" || source.status === "applying" || source.status === "declined" || source.status === "stopped" ? source.status : undefined;
+  if (!round || !status) return undefined;
+  const verdict = asRecord(source.verdict);
+  const corrections = asArray(source.corrections).map(normalizeBookCorrection).filter((entry): entry is BookCorrection => entry !== null).slice(0, BOOK_CORRECTIONS_MAX);
+  const summary = readText(source.summary, 800);
+  const material = readText(source.material, BOOK_MATERIAL_CHARACTERS);
+  const stop = source.stop === "plateau" || source.stop === "none" || source.stop === "author" ? source.stop : undefined;
+  return {
+    round,
+    status,
+    verdict: { score: verdict.score === null ? null : readVote(verdict.score) ?? null, points: normalizeBookPoints(verdict.points) },
+    corrections,
+    ...(summary ? { summary } : {}),
+    ...(material ? { material } : {}),
+    ...(asRecord(source.plateau).consulted !== undefined ? { plateau: { consulted: asRecord(source.plateau).consulted === true } } : {}),
+    ...(stop ? { stop } : {}),
+  };
+}
+
 /** A review of the book as a campaign keeps it; anything that is not one (no target, no round) is none, and the campaign is no review. */
 function normalizeReviewCampaign(value: unknown): ReviewCampaign | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -695,8 +749,14 @@ function normalizeReviewCampaign(value: unknown): ReviewCampaign | undefined {
     const number = asInteger(record.round, 0, 0, 100_000);
     if (!at || !number) return null;
     const chapters = asArray(record.chapters).map((chapter) => asInteger(chapter, 0, 0, MAX_BOOK_CHAPTERS)).filter((chapter) => chapter > 0).slice(0, MAX_CAMPAIGN_CHAPTERS);
-    return { round: number, chapters, ...normalizeReviewVotes(record), endedAt: at };
+    const asked = normalizeBookRoundRecord(record.bookRound);
+    return { round: number, chapters, ...normalizeReviewVotes(record), endedAt: at, ...(asked ? { bookRound: asked } : {}) };
   }).filter((entry): entry is ReviewRoundRecord => entry !== null).slice(-MAX_REVIEW_ROUNDS_KEPT);
+  const bookRound = typeof source.bookRound === "string" ? BOOK_ROUND_MODES.find((entry) => entry === source.bookRound) : undefined;
+  const book = normalizeBookRound(source.book);
+  // A round of the book without its record is a round of the verdict: the book is judged again.
+  const phase = source.phase === "book" && book ? "book" : source.phase === "verdict" || source.phase === "book" ? "verdict" : "chapters";
+  const broken = asInteger(source.broken, 0, 0, 1000);
   return {
     targetScore,
     ...(maxRounds ? { maxRounds } : {}),
@@ -704,14 +764,17 @@ function normalizeReviewCampaign(value: unknown): ReviewCampaign | undefined {
     ...(readerPolicy?.readersTarget !== undefined ? { readersTarget: readerPolicy.readersTarget } : {}),
     ...(readerPolicy?.readerTargets ? { readerTargets: readerPolicy.readerTargets } : {}),
     ...(readerPolicy?.readersExcluded ? { readersExcluded: readerPolicy.readersExcluded } : {}),
+    ...(bookRound ? { bookRound } : {}),
     ...(include.length ? { include } : {}),
     scope,
     round,
     windowStart: Math.min(round, Math.max(1, asInteger(source.windowStart, round, 1, 100_000))),
-    phase: source.phase === "verdict" ? "verdict" : "chapters",
+    phase,
     start: normalizeReviewVotes(source.start),
     history,
     stalled: asInteger(source.stalled, 0, 0, 100_000),
+    ...(book && (phase === "book" || book.status === "applying") ? { book } : {}),
+    ...(broken ? { broken } : {}),
   };
 }
 
@@ -724,11 +787,12 @@ function normalizeCampaign(value: unknown): RevisionCampaign | undefined {
   const createdAt = readMoment(source.createdAt);
   const seen = new Set<number>();
   const chapters = asArray(source.chapters).map(normalizeCampaignChapter).filter((entry): entry is RevisionCampaignChapter => entry !== null && !seen.has(entry.number) && Boolean(seen.add(entry.number))).slice(0, MAX_CAMPAIGN_CHAPTERS);
-  if (!id || !reason || !createdAt || !chapters.length) return undefined;
   const note = readText(source.note, CAMPAIGN_NOTE_CHARACTERS);
   // A review of the book without its review is no review: the campaign is none.
   const review = reason === "review-target" ? normalizeReviewCampaign(source.review) : undefined;
   if (reason === "review-target" && !review) return undefined;
+  // A review that begins in a book-level round has no chapter yet: the director is asked for the corrections first.
+  if (!id || !reason || !createdAt || (!chapters.length && review?.phase !== "book")) return undefined;
   const heldSource = asRecord(source.held);
   const heldAt = readMoment(heldSource.at);
   const held = heldAt ? { at: heldAt, message: readText(heldSource.message, 600) ?? "" } : undefined;
@@ -757,7 +821,12 @@ function normalizeReviewRecords(value: unknown): ReviewRecord[] | undefined {
     const endedAt = readMoment(source.endedAt);
     const outcome = source.outcome === "target" || source.outcome === "chapters" || source.outcome === "plateau" || source.outcome === "cancelled" ? source.outcome : undefined;
     if (targetScore === undefined || !startedAt || !endedAt || !outcome) return null;
-    return { targetScore, rounds: asInteger(source.rounds, 0, 0, 100_000), outcome, from: normalizeReviewVotes(source.from), to: normalizeReviewVotes(source.to), startedAt, endedAt };
+    const bookRounds = asArray(source.bookRounds).map((entry) => {
+      const record = normalizeBookRoundRecord(entry);
+      const round = asInteger(asRecord(entry).round, 0, 0, 100_000);
+      return record && round ? { round, ...record } : null;
+    }).filter((entry): entry is BookRoundRecord & { round: number } => entry !== null).slice(-BOOK_ROUNDS_KEPT);
+    return { targetScore, rounds: asInteger(source.rounds, 0, 0, 100_000), outcome, from: normalizeReviewVotes(source.from), to: normalizeReviewVotes(source.to), startedAt, endedAt, ...(bookRounds.length ? { bookRounds } : {}) };
   }).filter((entry): entry is ReviewRecord => entry !== null).slice(-MAX_REVIEW_RECORDS);
   return records.length ? records : undefined;
 }
@@ -771,9 +840,9 @@ export function summarizeCampaign(campaign: RevisionCampaign | undefined, option
   if (!campaign) return undefined;
   const worked = campaign.chapters.filter((chapter) => chapter.mode === "follow");
   const review = campaign.review;
-  // A review that judges the book has no chapter waiting, and goes on all the same.
-  const goesOn = worked.some((chapter) => chapter.status === "waiting" || chapter.status === "working") || (review?.phase === "verdict");
-  if (!worked.length || !goesOn) return undefined;
+  // A review that judges the book, or asks the director for the corrections of the whole book, has no chapter waiting, and goes on all the same.
+  const goesOn = worked.some((chapter) => chapter.status === "waiting" || chapter.status === "working") || (review?.phase === "verdict") || (review?.phase === "book");
+  if ((!worked.length && review?.phase !== "book") || !goesOn) return undefined;
   const last = review?.history[review.history.length - 1] ?? review?.start;
   return {
     id: campaign.id,
@@ -798,6 +867,7 @@ export function summarizeCampaign(campaign: RevisionCampaign | undefined, option
           // With a target for the readers: the lowest average of the readers that count in the latest votes, and the target of that average.
           ...(last?.readers !== undefined ? { readers: last.readers } : {}),
           ...((review.readersTarget ?? options?.review?.readersTarget) !== undefined ? { readersTarget: review.readersTarget ?? options?.review?.readersTarget } : {}),
+          ...(review.book ? { bookRound: { status: review.book.status, corrections: review.book.corrections.length, applied: review.book.corrections.filter((correction) => correction.status === "applied").length } } : {}),
         },
       }
       : {}),
@@ -1256,7 +1326,7 @@ export function summarizeAutopilotState(state: AutopilotState, context: Autopilo
     pendingNotes: state.interventions.filter((entry) => entry.scope === "next_step" && entry.status === "pending").length,
     constraints: state.constraints.length,
     updatedAt: state.updatedAt,
-    ...(state.finalReview ? { finalReview: { ...state.finalReview, text: clipText(state.finalReview.text, FINAL_REVIEW_SUMMARY_CHARACTERS) } } : {}),
+    ...(state.finalReview ? { finalReview: { verdict: state.finalReview.verdict, score: state.finalReview.score, text: clipText(state.finalReview.text, FINAL_REVIEW_SUMMARY_CHARACTERS), at: state.finalReview.at } } : {}),
     ...(context.pausePending === undefined ? {} : { pausePending: context.pausePending }),
     ...(context.limits === undefined ? {} : { limits: context.limits }),
     publish: effectivePublish(state.options, context.defaultPublish),

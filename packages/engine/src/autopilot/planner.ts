@@ -3,6 +3,7 @@ import { chapterNumberFromSlug, chapterSlug, paragraphFilePath, paragraphSlug } 
 import type { DirectorProfile } from "../profiles/director.js";
 import { countWords, isItalian } from "../util/text.js";
 import { advancePendingReviews, frozenQuestionMessage, inRevision, isFrozenQuestion, needsFreezeStep, noteOutlineRewrite, startedReview, type PlannerFrozen } from "./frozen.js";
+import { bookRoundText } from "./book-round.js";
 import { advanceRevisionCampaign, campaignChapter, chapterVote } from "./campaign.js";
 import { readerGate, reviewMaxRounds, reviewReaderRounds, type ReaderTargets } from "./review-policy.js";
 import { blockersText, readerStanding } from "./review-readers.js";
@@ -295,6 +296,12 @@ export function describeTask(kind: AutopilotTaskKind, language: string, params: 
         title: text(language, "The director reviews the whole book", "Il direttore valuta l'intero libro"),
         reason: text(language, "Arcs, promises and open threads are checked once every chapter is approved.", "Archi, promesse e fili aperti si verificano quando tutti i capitoli sono approvati."),
         next: text(language, "The autopilot is complete.", "L'autopilot è completato."),
+      };
+    case "book-corrections":
+      return {
+        title: text(language, "The director lists the corrections of the whole book", "Il direttore elenca le correzioni del libro intero"),
+        reason: text(language, "Every chapter has its targets and the book does not: the director says which chapters to change, what to change in each and why.", "Ogni capitolo ha i suoi obiettivi e il libro no: il direttore dice quali capitoli cambiare, cosa cambiare in ciascuno e perché."),
+        next: text(language, "The corrections are carried out chapter by chapter, then the book is judged again.", "Le correzioni vengono eseguite capitolo per capitolo, poi il libro viene giudicato di nuovo."),
       };
     case "freeze":
       return {
@@ -843,6 +850,8 @@ function editedChapter(state: AutopilotState): PlannedChapter | undefined {
 }
 
 export function phaseOf(state: AutopilotState): AutopilotPhase {
+  // A review of the book in a book-level round: the director is judging the whole book, whatever the chapters say.
+  if (state.campaign?.review?.phase === "book") return "final";
   // A book that was complete stays complete while the director only reviews a change of the author's.
   if (state.finalDone && !state.plan?.chapters.some((chapter) => chapter.status !== "done")) return "completed";
   if (!state.concept.done) return "concept";
@@ -883,6 +892,14 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
       const scene = chapter?.scenes.find((entry) => entry.number === target.sceneNumber);
       if (chapter && scene) return { kind: "task", task: descriptor("revise", "write", ctx, { chapter, scene }) };
     }
+  }
+
+  // A book-level round of a review of the book: the director is asked for the corrections of the whole book, or the run stops for the author to decide on them.
+  const bookRound = state.campaign?.reason === "review-target" && state.campaign.review?.phase === "book" ? state.campaign.review.book : undefined;
+  if (bookRound?.status === "asking") return { kind: "task", task: descriptor("book-corrections", "final", ctx) };
+  if (bookRound?.status === "proposed") {
+    const told = bookRoundText(ctx.language, "proposed", { score: bookRound.verdict.score, target: state.campaign!.review!.targetScore, count: bookRound.corrections.length, chapters: new Set(bookRound.corrections.map((correction) => correction.chapter)).size });
+    return { kind: "stop", status: "paused", message: told.title, code: "bookRoundProposed" };
   }
 
   // A change of the author's being reviewed comes before the plan: its chapter is reviewed (or written again) first.

@@ -1,6 +1,6 @@
 import type { DirectorProfile } from "../profiles/director.js";
 import { clampNumber, numericValue } from "../profiles/read.js";
-import { REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, type AutopilotState, type ReviewPolicy } from "./types.js";
+import { REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, type AutopilotState, type BookRoundMode, type ReviewPolicy } from "./types.js";
 
 /**
  * How the chapters and the book are reviewed (`ReviewPolicy`): the vote they must reach, the rounds of review of a chapter, the rounds the simulated readers
@@ -41,6 +41,16 @@ function readersExcludedOf(value: unknown, base: ReviewPolicy["readersExcluded"]
 }
 
 /**
+ * The book-level round as the policy keeps it: `apply` or `ask`; `off` and `null` take it back (the policy keeps none), and a value that is not a mode leaves what there was.
+ * Read softly, as the rest of the policy.
+ */
+function bookRoundOf(value: unknown, base: ReviewPolicy["bookRound"]): Exclude<BookRoundMode, "off"> | undefined {
+  if (value === null || value === "off") return undefined;
+  if (value === "apply" || value === "ask") return value;
+  return base === "apply" || base === "ask" ? base : undefined;
+}
+
+/**
  * The policy as the options keep it: each value in its range, a value that is not a number left out; `null` (or nothing usable) is no policy. The targets of the readers
  * are read softly, as the rest: a vote out of range is brought into it, a reader or a vote that cannot be read is left out, and nothing makes the whole policy fail.
  */
@@ -61,6 +71,7 @@ export function normalizeReviewPolicy(value: unknown, base?: ReviewPolicy): Revi
   const readersTarget = pick("readersTarget", 1, 10, 1);
   const readerTargets = readerTargetsOf(source.readerTargets, base?.readerTargets);
   const readersExcluded = readersExcludedOf(source.readersExcluded, base?.readersExcluded);
+  const bookRound = bookRoundOf(source.bookRound, base?.bookRound);
   if (targetScore !== undefined) policy.targetScore = targetScore;
   if (maxRounds !== undefined) policy.maxRounds = maxRounds;
   if (readerRounds !== undefined) policy.readerRounds = readerRounds;
@@ -68,6 +79,7 @@ export function normalizeReviewPolicy(value: unknown, base?: ReviewPolicy): Revi
   if (readersTarget !== undefined) policy.readersTarget = readersTarget;
   if (readerTargets) policy.readerTargets = readerTargets;
   if (readersExcluded) policy.readersExcluded = readersExcluded;
+  if (bookRound) policy.bookRound = bookRound;
   return Object.keys(policy).length ? policy : undefined;
 }
 
@@ -118,6 +130,14 @@ export function reviewMaxRounds(state: PolicyState, director: Pick<DirectorProfi
  */
 export function reviewReaderRounds(state: PolicyState): number {
   return reviewInProgress(state)?.readerRounds ?? state.options.review?.readerRounds ?? 1;
+}
+
+/**
+ * What the review does when every chapter has its targets and the book does not: the review of the book in progress's own (it may say `off` for itself), else the run's policy,
+ * else `off`, the review that ends there as it always did.
+ */
+export function reviewBookRound(state: PolicyState): BookRoundMode {
+  return reviewInProgress(state)?.bookRound ?? state.options.review?.bookRound ?? "off";
 }
 
 /** The readers' targets in force: the review of the book in progress's, else the run's; `undefined` when neither names any. */

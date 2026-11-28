@@ -28,7 +28,7 @@ import {
   type FrozenWorkItem,
 } from "./frozen.js";
 import { readBrief } from "./brief.js";
-import { RevisionCampaignError, cancelRevisionCampaign, createReviewCampaign, createRevisionCampaign, recordRevisionCampaign, type ReviewBookInput, type ReviseChaptersInput, type RevisionCampaignResult } from "./campaign.js";
+import { RevisionCampaignError, cancelRevisionCampaign, createReviewCampaign, createRevisionCampaign, decideBookCorrections as decideCorrections, recordRevisionCampaign, type BookCorrectionsDecision, type ReviewBookInput, type ReviseChaptersInput, type RevisionCampaignResult } from "./campaign.js";
 import { createModelMemory, type AiModelMemory } from "../ai/memory.js";
 import { applyLiveAttempt, applyLiveProgress, startLive } from "./live.js";
 import { outlinePlanStatus, type OutlineWrittenChange } from "./outline-check.js";
@@ -840,6 +840,18 @@ export class AutopilotSession {
       const next = recordRevisionCampaign(state, createReviewCampaign(input, state, snapshot, now, campaign.id), at, this.running);
       return Object.keys(caps).length ? { ...next, options: normalizeOptions(caps, next.options) } : next;
     }, { create: false });
+    return this.campaignResult();
+  }
+
+  /**
+   * Decide about the corrections of the whole book that wait for the author (a review in a book-level round that asks first: `ReviewPolicy.bookRound` is `ask`): the ones chosen are
+   * carried out by the next run, the others are left out, or all are declined and the review ends. Saved at once; nothing is started (the author starts the autopilot to go on). Refused
+   * with a `RevisionCampaignError`: `invalid_request`, `no_proposal` (nothing waits for a decision), `stale` (the round changed since the author looked at it). Answers as `reviseChapters`.
+   */
+  async decideBookCorrections(input: BookCorrectionsDecision): Promise<RevisionCampaignResult> {
+    if (this.starting) await this.starting.catch(() => undefined);
+    if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
+    await this.mutate("Autopilot: the author decided about the corrections of the book", (state) => decideCorrections(state, input), { create: false });
     return this.campaignResult();
   }
 

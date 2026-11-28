@@ -111,6 +111,8 @@ export interface FakeAiOptions {
   failOn?: { call: number; error: Error };
   /** The director's review of a design, by the number of the review (default: approve at 8 with nothing to change). */
   designReview?: (round: number, user: string) => Record<string, unknown>;
+  /** The director's corrections of the whole book (a review of the book in a book-level round), by the number of the request (default: one correction of chapter 1, citing the first point). */
+  bookCorrections?: (call: number, user: string) => Record<string, unknown>;
 }
 
 function prose(words: number, seed: string): string {
@@ -288,6 +290,8 @@ export function createFakeAutopilotAi(options: FakeAiOptions = {}): AiPort & { c
         return { summary: "Mira confronts Orrin.", recap: "- Scene 1: arrival.\n- Scene 2: confrontation.", stateChanges: { open_loops_add: ["the wall"] }, storySoFar: "Mira has started to uncover the lie." };
       case "revision_impact":
         return { summary: "Only the first scene changes.", targets: [{ chapterNumber: 1, sceneNumber: 1, instruction: "Apply the author's revision." }] };
+      case "book_corrections":
+        return options.bookCorrections?.(calls.filter((entry) => entry.json?.name === "book_corrections").length, user) ?? { summary: "The ending needs its setup.", corrections: [{ chapterNumber: 1, change: "Plant the setup of the ending in the first scene.", reason: "The ending pays off a promise the book never made.", cites: [1] }] };
       case "director_opinion":
         return { verdict: "revise", score: 7, summary: "Good, but the middle drags.", answer: user.includes("asks you") ? "Yes, keep it." : undefined, strengths: ["Atmosphere"], concerns: [{ severity: "major", issue: "Pacing", suggestion: "Cut a scene" }], decisions: ["Keep the ending"], nextSteps: ["Tighten chapter 2"], questionsForAuthor: [] };
       default:

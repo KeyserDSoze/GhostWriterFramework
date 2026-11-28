@@ -2,10 +2,15 @@ import type { BookSnapshot } from "../book/snapshot.js";
 import { inRevision, startedReview } from "./chapter-state.js";
 import { authorHeldChapters, beginOutlineRewrite, campaignGoesOn, isFrozenQuestion, withDeferral, withoutDeferrals, type FrozenStatus, type FrozenWorkItem, type PlannerFrozen } from "./frozen.js";
 import type { PlanNote } from "./planner.js";
-import { gateFor, normalizeReviewPolicy, readerGate, type ReaderTargets } from "./review-policy.js";
+import { bookCorrectionInstruction, bookRoundRecord, bookRoundText } from "./book-round.js";
+import { plateauBreakers } from "./plateau.js";
+import { gateFor, normalizeReviewPolicy, readerGate, reviewBookRound, type ReaderTargets } from "./review-policy.js";
 import { blockerText, chapterStanding } from "./review-readers.js";
 import { CAMPAIGN_NOTE_CHARACTERS, MAX_BOOK_CHAPTERS, MAX_CAMPAIGN_CHAPTERS, MAX_REVIEW_RECORDS, MAX_REVIEW_ROUNDS_KEPT } from "./state.js";
 import {
+  BOOK_ROUNDS_KEPT,
+  BOOK_ROUND_MODES,
+  PLATEAU_BREAKS_MAX,
   REVIEW_MAX_CAMPAIGN_ROUNDS,
   REVIEW_MAX_ROUNDS,
   REVISION_CHAPTER_MODES,
@@ -13,6 +18,7 @@ import {
   type AutopilotInsightFigures,
   type AutopilotMessageCode,
   type AutopilotState,
+  type BookRoundMode,
   type PlannedChapter,
   type ReviewOutcome,
   type ReviewRecord,
@@ -45,10 +51,10 @@ import { clipText, isItalian } from "../util/text.js";
  *   wrote is rewritten only because the author chose it here: the autopilot never does it on its own.
  */
 
-export type RevisionCampaignErrorCode = "invalid_request" | "campaign_active" | "not_changed" | "stale" | "not_finished" | "nothing_to_review";
+export type RevisionCampaignErrorCode = "invalid_request" | "campaign_active" | "not_changed" | "stale" | "not_finished" | "nothing_to_review" | "no_proposal";
 
 /** The codes of `RevisionCampaignError`, which the personal server answers with as they are. */
-export const REVISION_CAMPAIGN_ERROR_CODES: readonly RevisionCampaignErrorCode[] = ["invalid_request", "campaign_active", "not_changed", "stale", "not_finished", "nothing_to_review"];
+export const REVISION_CAMPAIGN_ERROR_CODES: readonly RevisionCampaignErrorCode[] = ["invalid_request", "campaign_active", "not_changed", "stale", "not_finished", "nothing_to_review", "no_proposal"];
 
 /** Whether a code is one of `RevisionCampaignError`'s. A host that sent a campaign reads the refusal of the server with it. */
 export function isRevisionCampaignErrorCode(code: unknown): code is RevisionCampaignErrorCode {
@@ -58,7 +64,7 @@ export function isRevisionCampaignErrorCode(code: unknown): code is RevisionCamp
 /**
  * A campaign that cannot be recorded: what was asked is not one (`invalid_request`), one goes on (`campaign_active`), a chapter has no such change (`not_changed`), or it
  * changed since the author saw it (`stale`); a review of the book asked of a book that is not finished (`not_finished`), or whose chapters all have the target already
- * (`nothing_to_review`).
+ * (`nothing_to_review`); corrections of the whole book decided on when none waits for the author (`no_proposal`).
  */
 export class RevisionCampaignError extends Error {
   constructor(readonly code: RevisionCampaignErrorCode, message: string) {
@@ -117,6 +123,8 @@ export interface RevisionReasonHandler {
   afterChapters?(state: AutopilotState, campaign: RevisionCampaign, frozen: PlannerFrozen, report: (note: PlanNote) => void, language: string): CampaignNext;
   /** A run starts: the campaign held for the author goes on, and what the reason counts since a run began starts again (mutates the campaign). */
   resume?(state: AutopilotState, campaign: RevisionCampaign, at: string): void;
+  /** A chapter of the campaign is over, done or skipped (`item.status`, `item.why`): what the reason keeps of it (mutates `state`). */
+  chapterEnded?(state: AutopilotState, campaign: RevisionCampaign, item: RevisionCampaignChapter): void;
   /** The codes of its insights about a chapter, when they are not the campaigns' (`campaignChapterDone`, `campaignSkipped`). */
   codes?: { chapterDone: AutopilotMessageCode; skipped: AutopilotMessageCode };
   /** The numbers of the insight about a chapter done. */
@@ -275,8 +283,30 @@ function rememberReview(state: AutopilotState, campaign: RevisionCampaign, outco
   if (!review) return;
   const last = review.history[review.history.length - 1];
   const to = outcome === "cancelled" || !last ? plainVotes(reviewVotes(state, review.scope, review.targetScore, readerGate({ options: state.options, campaign }))) : plainVotes(last);
-  const record: ReviewRecord = { targetScore: review.targetScore, rounds: review.history.length, outcome, from: plainVotes(review.start), to, startedAt: campaign.createdAt, endedAt: at };
+  // What the director asked of the whole book in this review (book-level rounds, #113): the rounds over and the one that ended it, the corrections nobody got to marked as left out.
+  const asked = [
+    ...review.history.filter((entry) => entry.bookRound).map((entry) => ({ round: entry.round, ...entry.bookRound! })),
+    ...(review.book ? [{ round: review.book.round, ...bookRoundRecord(review.book) }] : []),
+  ].map((entry) => ({ ...entry, corrections: entry.corrections.map((correction) => (correction.status === "waiting" ? { ...correction, status: "left-out" as const, why: correction.why ?? ("declined" as const) } : correction)) })).slice(-BOOK_ROUNDS_KEPT);
+  const record: ReviewRecord = { targetScore: review.targetScore, rounds: review.history.length, outcome, from: plainVotes(review.start), to, startedAt: campaign.createdAt, endedAt: at, ...(asked.length ? { bookRounds: asked } : {}) };
   state.reviews = [...(state.reviews ?? []), record].slice(-MAX_REVIEW_RECORDS);
+}
+
+/** What the readers' targets keep the chapters of a review from, in words: the chapters under the average, those with a reader under its own target, those not read yet. Empty without targets. */
+function readersBlockedText(state: Pick<AutopilotState, "plan">, scope: readonly number[], gate: ReaderTargets | undefined, readers: number | null | undefined, language: string): string {
+  if (!gate) return "";
+  const blocking = readersBlocking(state, scope, gate);
+  const italian = isItalian(language);
+  const chapters = (count: number) => (italian ? (count === 1 ? "1 capitolo" : `${count} capitoli`) : count === 1 ? "1 chapter" : `${count} chapters`);
+  const parts: string[] = [];
+  if (blocking.average && gate.average !== undefined) {
+    parts.push(italian
+      ? `la media dei lettori è sotto ${vote(gate.average)} in ${chapters(blocking.average)}${readers != null ? ` (la più bassa: ${vote(readers)})` : ""}`
+      : `the readers' average is under ${vote(gate.average)} in ${chapters(blocking.average)}${readers != null ? ` (the lowest: ${vote(readers)})` : ""}`);
+  }
+  if (blocking.reader) parts.push(italian ? `un lettore è sotto il proprio obiettivo in ${chapters(blocking.reader)}` : `a reader is under its own target in ${chapters(blocking.reader)}`);
+  if (blocking.unread) parts.push(italian ? `${chapters(blocking.unread)} senza un voto attuale dei lettori` : `${chapters(blocking.unread)} without a current vote of the readers`);
+  return parts.join("; ");
 }
 
 const reviewTarget: RevisionReasonHandler = {
@@ -295,6 +325,16 @@ const reviewTarget: RevisionReasonHandler = {
     if (authors) {
       if (review) review.scope = review.scope.filter((number) => number !== chapter.number);
       return { outcome: "skip", why: "author" };
+    }
+    const book = review?.book;
+    if (book?.status === "applying") {
+      // A book-level round: the chapter is revised for what the director asked of it for the whole book, and reviewed again when the revision is over.
+      if (!book.corrections.some((correction) => correction.chapter === chapter.number && correction.status === "waiting")) return { outcome: "skip", why: "gone" };
+      state.revision = { id: `${campaign.id}-${review!.round}-${chapter.number}`, instruction: bookCorrectionInstruction(book, chapter.number), createdAt: frozen.now, targets: null, cursor: 0, onlyChapter: chapter.number };
+      if (state.review?.chapterNumber === chapter.number) state.review = null;
+      state.finalDone = false;
+      delete state.finalReview;
+      return { outcome: "started" };
     }
     // Reviewed again from its first round, with the target of the review; the simulated readers read it again only when the review asks for it.
     chapter.status = "review";
@@ -326,6 +366,8 @@ const reviewTarget: RevisionReasonHandler = {
   afterChapters(state, campaign, frozen, report, language) {
     const review = campaign.review;
     if (!review) return "end";
+    // A book-level round (#113): the director is asked for the corrections of the whole book, or the author decides on them, before any chapter of the round begins.
+    if (review.phase === "book") return afterBookPhase(state, campaign, frozen, report, language);
     if (review.phase === "chapters") {
       // The round's chapters are over: the director judges the whole book again (the run's last step), and the round is judged by it. A round that reviewed
       // nothing (the author has its chapters) left the book as it was judged: it is judged at once by the votes there are.
@@ -347,24 +389,21 @@ const reviewTarget: RevisionReasonHandler = {
     const closer = Boolean(gate) && (raised(now.readers ?? null, previous.readers ?? null) || now.below < previous.below);
     review.stalled = raised(now.lowest, previous.lowest) || raised(now.book, previous.book) || closer ? 0 : review.stalled + 1;
     const reviewed = campaign.chapters.filter((item) => item.mode === "follow" && item.status === "done").map((item) => item.number);
-    review.history = [...review.history, { round: review.round, chapters: reviewed, ...plainVotes(now), endedAt: frozen.now }].slice(-MAX_REVIEW_ROUNDS_KEPT);
+    const asked = review.book;
+    review.history = [...review.history, { round: review.round, chapters: reviewed, ...plainVotes(now), endedAt: frozen.now, ...(asked ? { bookRound: bookRoundRecord(asked) } : {}) }].slice(-MAX_REVIEW_ROUNDS_KEPT);
+    delete review.book;
+    // Only the latest rounds keep what the director asked of the book: the state does not grow with the rounds of a long review.
+    let keeping = review.history.filter((entry) => entry.bookRound).length;
+    for (const entry of review.history) {
+      if (keeping <= BOOK_ROUNDS_KEPT) break;
+      if (entry.bookRound) {
+        delete entry.bookRound;
+        keeping -= 1;
+      }
+    }
     const figures = { round: review.round, target, ...(now.lowest !== null ? { lowest: now.lowest } : {}), ...(now.book !== null ? { book: now.book } : {}), below: now.below, ...(now.readers != null ? { readers: now.readers } : {}), ...(gate?.average !== undefined ? { readersTarget: gate.average } : {}) };
     // What the readers' targets keep the chapters from, in words (empty without them): the first thing a plateau or a round says about them.
-    const blocking = gate ? readersBlocking(state, review.scope, gate) : undefined;
-    const blockedText = (): string => {
-      if (!gate || !blocking) return "";
-      const italian = isItalian(language);
-      const chapters = (count: number) => (italian ? (count === 1 ? "1 capitolo" : `${count} capitoli`) : count === 1 ? "1 chapter" : `${count} chapters`);
-      const parts: string[] = [];
-      if (blocking.average && gate.average !== undefined) {
-        parts.push(italian
-          ? `la media dei lettori è sotto ${vote(gate.average)} in ${chapters(blocking.average)}${now.readers != null ? ` (la più bassa: ${vote(now.readers)})` : ""}`
-          : `the readers' average is under ${vote(gate.average)} in ${chapters(blocking.average)}${now.readers != null ? ` (the lowest: ${vote(now.readers)})` : ""}`);
-      }
-      if (blocking.reader) parts.push(italian ? `un lettore è sotto il proprio obiettivo in ${chapters(blocking.reader)}` : `a reader is under its own target in ${chapters(blocking.reader)}`);
-      if (blocking.unread) parts.push(italian ? `${chapters(blocking.unread)} senza un voto attuale dei lettori` : `${chapters(blocking.unread)} without a current vote of the readers`);
-      return parts.join("; ");
-    };
+    const blockedText = (): string => readersBlockedText(state, review.scope, gate, now.readers, language);
     report({
       key: `review-round:${campaign.id}:${review.round}`,
       tone: "info",
@@ -377,36 +416,66 @@ const reviewTarget: RevisionReasonHandler = {
       report({ key: `review-end:${campaign.id}`, tone, code, title, ...(detail ? { detail } : {}), figures: { ...figures, rounds: review.history.length, outcome } });
       return "end";
     };
-    const rounds = review.history.length;
-    if (now.below === 0 && now.book !== null && now.book >= target) {
-      return finish("target", "ok", "reviewDone", text(language, `The book reached the target: ${vote(now.book)}, every chapter at ${target}/10 or more${gate ? " and with the readers at their targets" : ""} (${rounds === 1 ? "1 round" : `${rounds} rounds`})`, `Il libro ha raggiunto l'obiettivo: ${vote(now.book)}, ogni capitolo a ${target}/10 o più${gate ? " e con i lettori ai loro obiettivi" : ""} (${rounds === 1 ? "1 giro" : `${rounds} giri`})`));
-    }
-    if (now.below === 0) {
-      return finish("chapters", "info", "reviewStopped", text(language, `Every chapter reached ${target}/10${gate ? " with its readers at their targets" : ""}, the book as a whole got ${vote(now.book)}: the review ends here`, `Ogni capitolo ha raggiunto ${target}/10${gate ? " con i suoi lettori ai loro obiettivi" : ""}, il libro nel suo insieme ha ${vote(now.book)}: la revisione finisce qui`), text(language, "What the director asks of the whole book is in its last judgement: the chapters have nothing left under the target to review.", "Ciò che il direttore chiede al libro intero è nel suo ultimo giudizio: nei capitoli non resta nulla sotto l'obiettivo da rivedere."));
-    }
-    if (review.stalled >= 2) {
-      const readersSaid = gate && now.readers != null ? text(language, ` nor the readers (${vote(now.readers)})`, ` né i lettori (${vote(now.readers)})`) : "";
-      const blockedBy = blockedText();
-      return finish("plateau", "warning", "reviewStopped", text(language, `The review stopped: two rounds in a row raised neither the lowest chapter (${vote(now.lowest)}) nor the book (${vote(now.book)})${readersSaid}`, `La revisione si è fermata: due giri di fila non hanno alzato né il capitolo più basso (${vote(now.lowest)}) né il libro (${vote(now.book)})${readersSaid}`), `${blockedBy ? `${blockedBy.charAt(0).toUpperCase()}${blockedBy.slice(1)}. ` : ""}${text(language, "Another round would spend without getting closer to the target: change the target, the director or the chapters, then review the book again.", "Un altro giro spenderebbe senza avvicinarsi all'obiettivo: cambia l'obiettivo, il direttore o i capitoli, poi rivedi di nuovo il libro.")}`);
-    }
-    // Another round, with the chapters still under the target.
-    review.round += 1;
-    review.phase = "chapters";
-    campaign.chapters = now.chapters.map((number) => ({ number, mode: "follow" as const, status: "waiting" as const }));
-    const cap = state.options.review?.campaignMaxRounds ?? 0;
-    if (cap > 0 && review.round - review.windowStart + 1 > cap) {
+    // A cap of the rounds allowed since the run began holds the review for the author: the round that would begin waits for the author to start the autopilot again.
+    const holdAtCap = (): boolean => {
+      const cap = state.options.review?.campaignMaxRounds ?? 0;
+      if (!(cap > 0 && review.round - review.windowStart + 1 > cap)) return false;
       const done = review.round - review.windowStart;
       const message = text(language, `${done === 1 ? "1 round" : `${done} rounds`} of the review done, as many as you allowed: start the autopilot again to go on for ${cap === 1 ? "1 more" : `${cap} more`}`, `${done === 1 ? "1 giro" : `${done} giri`} della revisione fatti, quanti ne hai permessi: riavvia l'autopilot per continuare per altri ${cap}`);
       campaign.held = { at: frozen.now, message };
       state.limitReached = { kind: "review-rounds", used: done, limit: cap, at: frozen.now };
       report({ key: `review-held:${campaign.id}:${review.round}`, tone: "warning", code: "reviewHeld", title: message, figures: { ...figures, rounds: done, limit: cap } });
+      return true;
+    };
+    // A book-level round: every chapter has its targets (or a plateau breaker asked to take the review on) and the book's vote is under the target, so the director is asked for the
+    // corrections of the whole book (the step `book-corrections`), shown to the author first when the review says so, and carried out in the chapters they name.
+    const beginBookRound = (plateau: boolean): CampaignNext => {
+      review.round += 1;
+      review.phase = "book";
+      review.book = { round: review.round, status: "asking", verdict: { score: now.book, points: [...(state.finalReview?.points ?? [])] }, corrections: [], ...(plateau ? { plateau: { consulted: false } } : {}) };
+      if (holdAtCap()) return "wait";
+      const told = bookRoundText(language, "asked", { score: now.book, target });
+      report({ key: `review-book-round:${campaign.id}:${review.round}`, tone: "info", code: "bookRoundAsked", title: told.title, figures: { ...figures, round: review.round } });
       return "wait";
+    };
+    const bookRound = reviewBookRound(state);
+    const rounds = review.history.length;
+    if (now.below === 0 && now.book !== null && now.book >= target) {
+      return finish("target", "ok", "reviewDone", text(language, `The book reached the target: ${vote(now.book)}, every chapter at ${target}/10 or more${gate ? " and with the readers at their targets" : ""} (${rounds === 1 ? "1 round" : `${rounds} rounds`})`, `Il libro ha raggiunto l'obiettivo: ${vote(now.book)}, ogni capitolo a ${target}/10 o più${gate ? " e con i lettori ai loro obiettivi" : ""} (${rounds === 1 ? "1 giro" : `${rounds} giri`})`));
     }
-    return "again";
+    if (now.below === 0 && bookRound === "off") {
+      return finish("chapters", "info", "reviewStopped", text(language, `Every chapter reached ${target}/10${gate ? " with its readers at their targets" : ""}, the book as a whole got ${vote(now.book)}: the review ends here`, `Ogni capitolo ha raggiunto ${target}/10${gate ? " con i suoi lettori ai loro obiettivi" : ""}, il libro nel suo insieme ha ${vote(now.book)}: la revisione finisce qui`), text(language, "What the director asks of the whole book is in its last judgement: the chapters have nothing left under the target to review.", "Ciò che il direttore chiede al libro intero è nel suo ultimo giudizio: nei capitoli non resta nulla sotto l'obiettivo da rivedere."));
+    }
+    if (review.stalled >= 2) {
+      // A plateau breaker (`plateau.ts`) may take the review on when it has a book-level round to feed: the step that asks for the corrections consults it first.
+      if (bookRound !== "off" && plateauBreakers().length > 0 && (review.broken ?? 0) < PLATEAU_BREAKS_MAX) return beginBookRound(true);
+      const readersSaid = gate && now.readers != null ? text(language, ` nor the readers (${vote(now.readers)})`, ` né i lettori (${vote(now.readers)})`) : "";
+      const blockedBy = blockedText();
+      return finish("plateau", "warning", "reviewStopped", text(language, `The review stopped: two rounds in a row raised neither the lowest chapter (${vote(now.lowest)}) nor the book (${vote(now.book)})${readersSaid}`, `La revisione si è fermata: due giri di fila non hanno alzato né il capitolo più basso (${vote(now.lowest)}) né il libro (${vote(now.book)})${readersSaid}`), `${blockedBy ? `${blockedBy.charAt(0).toUpperCase()}${blockedBy.slice(1)}. ` : ""}${text(language, "Another round would spend without getting closer to the target: change the target, the director or the chapters, then review the book again.", "Un altro giro spenderebbe senza avvicinarsi all'obiettivo: cambia l'obiettivo, il direttore o i capitoli, poi rivedi di nuovo il libro.")}`);
+    }
+    if (now.below === 0) return beginBookRound(false);
+    // Another round, with the chapters still under the target.
+    review.round += 1;
+    review.phase = "chapters";
+    campaign.chapters = now.chapters.map((number) => ({ number, mode: "follow" as const, status: "waiting" as const }));
+    return holdAtCap() ? "wait" : "again";
   },
   resume(_state, campaign) {
     // The rounds allowed are counted again from the round in progress.
     if (campaign.review) campaign.review.windowStart = campaign.review.round;
+  },
+  chapterEnded(_state, campaign, item) {
+    // A book-level round: what the director asked of the chapter is carried out (its revision is over), or left out (the chapter is the author's, or is gone).
+    const book = campaign.review?.book;
+    if (book?.status !== "applying") return;
+    for (const correction of book.corrections) {
+      if (correction.chapter !== item.number || correction.status !== "waiting") continue;
+      if (item.status === "done") correction.status = "applied";
+      else {
+        correction.status = "left-out";
+        correction.why = item.why === "author" ? "author" : "gone";
+      }
+    }
   },
   codes: { chapterDone: "reviewChapterDone", skipped: "reviewChapterSkipped" },
   figures(chapter, campaign) {
@@ -426,6 +495,45 @@ const reviewTarget: RevisionReasonHandler = {
   },
 };
 
+/**
+ * A review in a book-level round, asked for after the chapters (`ReviewCampaign.book`): while the director is asked for the corrections or the author decides on them there is nothing
+ * to do (the planner asks the step, or stops for the author); a round that ended with nothing to carry out ends the review, saying why. Mutates `state`.
+ */
+function afterBookPhase(state: AutopilotState, campaign: RevisionCampaign, frozen: PlannerFrozen, report: (note: PlanNote) => void, language: string): CampaignNext {
+  const review = campaign.review!;
+  const book = review.book;
+  if (!book) {
+    // A round that lost its record: the book is judged again, and the round goes on as any other.
+    review.phase = "verdict";
+    state.finalDone = false;
+    delete state.finalReview;
+    return "wait";
+  }
+  if (book.status === "asking" || book.status === "proposed") return "wait";
+  if (book.status === "applying") {
+    review.phase = "chapters";
+    return "again";
+  }
+  const target = review.targetScore;
+  const gate = readerGate(state, frozen.readers);
+  const now = reviewVotes(state, review.scope, target, gate);
+  const figures = { round: review.round, target, ...(now.lowest !== null ? { lowest: now.lowest } : {}), ...(now.book !== null ? { book: now.book } : {}), below: now.below, ...(now.readers != null ? { readers: now.readers } : {}), ...(gate?.average !== undefined ? { readersTarget: gate.average } : {}) };
+  const end = (outcome: ReviewOutcome, tone: PlanNote["tone"], code: AutopilotMessageCode, title: string, detail?: string): CampaignNext => {
+    rememberReview(state, campaign, outcome, frozen.now);
+    report({ key: `review-end:${campaign.id}`, tone, code, title, ...(detail ? { detail } : {}), figures: { ...figures, rounds: review.history.length, outcome } });
+    return "end";
+  };
+  if (book.stop === "plateau") {
+    const readersSaid = gate && now.readers != null ? text(language, ` nor the readers (${vote(now.readers)})`, ` né i lettori (${vote(now.readers)})`) : "";
+    const blockedBy = readersBlockedText(state, review.scope, gate, now.readers, language);
+    return end("plateau", "warning", "reviewStopped",
+      text(language, `The review stopped: two rounds in a row raised neither the lowest chapter (${vote(now.lowest)}) nor the book (${vote(now.book)})${readersSaid}`, `La revisione si è fermata: due giri di fila non hanno alzato né il capitolo più basso (${vote(now.lowest)}) né il libro (${vote(now.book)})${readersSaid}`),
+      `${blockedBy ? `${blockedBy.charAt(0).toUpperCase()}${blockedBy.slice(1)}. ` : ""}${text(language, "Nothing asked to take the plateau on had anything to add: change the target, the director or the chapters, then review the book again.", "Nulla di ciò che era stato chiamato a rompere lo stallo aveva qualcosa da aggiungere: cambia l'obiettivo, il direttore o i capitoli, poi rivedi di nuovo il libro.")}`);
+  }
+  const told = bookRoundText(language, book.status === "declined" ? "declined" : book.stop === "author" ? "none-author" : "none-director", { score: now.book, target });
+  return end("chapters", "info", book.status === "declined" ? "reviewStopped" : book.stop === "author" ? "bookRoundAuthor" : "bookRoundNone", told.title, [told.detail, book.summary].filter(Boolean).join(" ") || undefined);
+}
+
 /** The handlers of the reasons: the extension point of the campaigns. */
 export const REVISION_REASON_HANDLERS: Readonly<Record<RevisionReason, RevisionReasonHandler>> = { "outline-change": outlineChange, "review-target": reviewTarget };
 
@@ -444,6 +552,8 @@ export interface ReviewBookInput {
   readersTarget?: number;
   readerTargets?: Record<string, number>;
   readersExcluded?: string[];
+  /** What this review does when every chapter has its targets and the book does not (`BookRoundMode`): absent, the run's policy (`ReviewPolicy.bookRound`). */
+  bookRound?: BookRoundMode;
   campaignMaxRounds?: number;
   budgetLimit?: number;
   budgetTokens?: number;
@@ -471,7 +581,7 @@ export function createReviewCampaign(input: ReviewBookInput, state: AutopilotSta
   const refuse = (problem: string): never => {
     throw new RevisionCampaignError("invalid_request", problem);
   };
-  if (!input || typeof input !== "object") refuse("A review is { targetScore, maxRounds?, readerRounds?, campaignMaxRounds?, budgetLimit?, budgetTokens?, include?, note? }.");
+  if (!input || typeof input !== "object") refuse("A review is { targetScore, maxRounds?, readerRounds?, bookRound?, campaignMaxRounds?, budgetLimit?, budgetTokens?, include?, note? }.");
   const whole = (value: unknown, min: number, max: number): boolean => typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
   if (typeof input.targetScore !== "number" || !Number.isFinite(input.targetScore) || input.targetScore < 1 || input.targetScore > 10) refuse("The target is a vote from 1 to 10.");
   if (input.maxRounds !== undefined && !whole(input.maxRounds, 1, REVIEW_MAX_ROUNDS)) refuse(`The rounds of a chapter are a whole number from 1 to ${REVIEW_MAX_ROUNDS}.`);
@@ -480,6 +590,7 @@ export function createReviewCampaign(input: ReviewBookInput, state: AutopilotSta
   if (input.readersTarget !== undefined && !isVote(input.readersTarget)) refuse("The readers' target is a vote from 1 to 10.");
   if (input.readerTargets !== undefined && (!input.readerTargets || typeof input.readerTargets !== "object" || Array.isArray(input.readerTargets) || Object.values(input.readerTargets).some((value) => !isVote(value)))) refuse("The target of each reader is a vote from 1 to 10, given by the reader's name.");
   if (input.readersExcluded !== undefined && (!Array.isArray(input.readersExcluded) || input.readersExcluded.some((slug) => typeof slug !== "string"))) refuse("The readers that do not count are a list of the readers' names.");
+  if (input.bookRound !== undefined && !(BOOK_ROUND_MODES as readonly unknown[]).includes(input.bookRound)) refuse(`What the review does for the whole book is one of: ${BOOK_ROUND_MODES.join(", ")}.`);
   if (input.campaignMaxRounds !== undefined && !whole(input.campaignMaxRounds, 0, REVIEW_MAX_CAMPAIGN_ROUNDS)) refuse(`The rounds of the review are a whole number from 0 to ${REVIEW_MAX_CAMPAIGN_ROUNDS}.`);
   if (input.budgetLimit !== undefined && (typeof input.budgetLimit !== "number" || !Number.isFinite(input.budgetLimit) || input.budgetLimit < 0 || input.budgetLimit > 1_000_000)) refuse("The money cap is an amount from 0 (none).");
   if (input.budgetTokens !== undefined && !whole(input.budgetTokens, 0, Number.MAX_SAFE_INTEGER)) refuse("The token cap is a whole number from 0 (none).");
@@ -497,14 +608,21 @@ export function createReviewCampaign(input: ReviewBookInput, state: AutopilotSta
   const readerPolicy = normalizeReviewPolicy({ readersTarget: input.readersTarget, readerTargets: input.readerTargets, readersExcluded: input.readersExcluded });
   const gate = gateFor(state.options, readerPolicy);
   const votes = reviewVotes(state, scope, targetScore, gate);
-  if (!votes.below) throw new RevisionCampaignError("nothing_to_review", gate ? `Every chapter of the review has ${targetScore}/10 already, and the readers' targets are met: there is nothing under a target to review.` : `Every chapter of the review has ${targetScore}/10 already: there is nothing under the target to review.`);
+  // Every chapter has its targets but the book's vote is under the target: with a book-level round the review begins there, with the director's corrections of the whole book.
+  const bookUnder = typeof state.finalReview?.score === "number" && state.finalReview.score < targetScore;
+  const bookRound = input.bookRound ?? state.options.review?.bookRound ?? "off";
+  const atTheBook = !votes.below && bookRound !== "off" && bookUnder;
+  if (!votes.below && !atTheBook) {
+    const hint = bookUnder ? " The book as a whole is under it: turn on the book-level round to have the director correct it." : "";
+    throw new RevisionCampaignError("nothing_to_review", `${gate ? `Every chapter of the review has ${targetScore}/10 already, and the readers' targets are met: there is nothing under a target to review.` : `Every chapter of the review has ${targetScore}/10 already: there is nothing under the target to review.`}${hint}`);
+  }
   const note = input.note?.trim() ? clipText(input.note.trim(), CAMPAIGN_NOTE_CHARACTERS) : undefined;
   return {
     id,
     reason: "review-target",
     createdAt: now.toISOString(),
     ...(note ? { note } : {}),
-    chapters: votes.chapters.map((number) => ({ number, mode: "follow" as const, status: "waiting" as const })),
+    chapters: atTheBook ? [] : votes.chapters.map((number) => ({ number, mode: "follow" as const, status: "waiting" as const })),
     review: {
       targetScore,
       ...(input.maxRounds !== undefined ? { maxRounds: input.maxRounds } : {}),
@@ -512,16 +630,92 @@ export function createReviewCampaign(input: ReviewBookInput, state: AutopilotSta
       ...(readerPolicy?.readersTarget !== undefined ? { readersTarget: readerPolicy.readersTarget } : {}),
       ...(readerPolicy?.readerTargets ? { readerTargets: readerPolicy.readerTargets } : {}),
       ...(readerPolicy?.readersExcluded ? { readersExcluded: readerPolicy.readersExcluded } : {}),
+      ...(input.bookRound !== undefined ? { bookRound: input.bookRound } : {}),
       ...(include.length ? { include } : {}),
       scope,
       round: 1,
       windowStart: 1,
-      phase: "chapters",
+      phase: atTheBook ? "book" : "chapters",
       start: plainVotes(votes),
       history: [],
       stalled: 0,
+      ...(atTheBook ? { book: { round: 1, status: "asking" as const, verdict: { score: state.finalReview!.score, points: [...(state.finalReview?.points ?? [])] }, corrections: [] } } : {}),
     },
   };
+}
+
+/**
+ * Carry out the corrections of the book-level round that are chosen (`chosen`: their numbers in the list, from 1; `null`: every one that does not ask a change of a chapter of the
+ * author's): the others are left out, saying why, the chapters the chosen ones name become the chapters of the round (revised in the order of the book, and reviewed again each), and the round
+ * goes on (`applying`). A correction that asks a change of a chapter of the author's is carried out only when it is chosen, and the chapter is then included in the review. With nothing left
+ * to carry out the round ends (`declined` when the author chose none, `stopped` otherwise). Mutates `state`; answers the chapters of the round.
+ */
+export function acceptBookCorrections(state: AutopilotState, chosen: ReadonlySet<number> | null): number[] {
+  const campaign = state.campaign;
+  const review = campaign?.review;
+  const book = review?.book;
+  if (!campaign || !review || !book) return [];
+  const inPlan = new Set((state.plan?.chapters ?? []).map((chapter) => chapter.number));
+  book.corrections.forEach((correction, index) => {
+    if (correction.status !== "waiting") return;
+    if (!(chosen ? chosen.has(index + 1) : !correction.held)) {
+      correction.status = "left-out";
+      correction.why = correction.held ? "author" : "declined";
+    } else if (!inPlan.has(correction.chapter)) {
+      correction.status = "left-out";
+      correction.why = "gone";
+    }
+  });
+  const waiting = book.corrections.filter((correction) => correction.status === "waiting");
+  const chapters = [...new Set(waiting.map((correction) => correction.chapter))].sort((left, right) => left - right);
+  if (!chapters.length) {
+    book.status = chosen ? "declined" : "stopped";
+    if (!chosen) book.stop = book.corrections.some((correction) => correction.why === "author") ? "author" : "none";
+    return [];
+  }
+  const included = chapters.filter((number) => !review.scope.includes(number));
+  if (included.length) {
+    review.scope = [...review.scope, ...included].sort((left, right) => left - right);
+    review.include = [...new Set([...(review.include ?? []), ...included])].sort((left, right) => left - right);
+  }
+  campaign.chapters = chapters.map((number) => ({ number, mode: "follow" as const, status: "waiting" as const }));
+  review.phase = "chapters";
+  book.status = "applying";
+  return chapters;
+}
+
+/** What the author decides about the corrections of the whole book that wait for them (`AutopilotSession.decideBookCorrections`). */
+export interface BookCorrectionsDecision {
+  /** The round the author looked at (`BookRound.round`): a decision about another round is `stale`. */
+  round: number;
+  /** `apply` the corrections in `chosen`, or `decline` every one. */
+  action: "apply" | "decline";
+  /** The corrections to carry out, by their numbers in the list from 1; absent with `apply`: all of them but those that ask a change of a chapter of the author's. */
+  chosen?: number[];
+}
+
+/**
+ * The state after the author decided about the corrections of the book that waited for them (pure): the ones chosen are carried out by the next run, the others are left out.
+ * Throws a `RevisionCampaignError`: `invalid_request` (not a decision), `no_proposal` (nothing waits for one) or `stale` (the round changed since the author looked at it).
+ */
+export function decideBookCorrections(input: AutopilotState, decision: BookCorrectionsDecision): AutopilotState {
+  if (!decision || typeof decision !== "object") throw new RevisionCampaignError("invalid_request", "A decision about the corrections of the book is { round, action, chosen? }.");
+  if (!Number.isSafeInteger(decision.round) || decision.round < 1) throw new RevisionCampaignError("invalid_request", "The round of a decision is a whole number from 1.");
+  if (decision.action !== "apply" && decision.action !== "decline") throw new RevisionCampaignError("invalid_request", "A decision is to apply the corrections or to decline them.");
+  const book = input.campaign?.review?.book;
+  if (!book || book.status !== "proposed") throw new RevisionCampaignError("no_proposal", "No corrections of the book wait for a decision.");
+  if (book.round !== decision.round) throw new RevisionCampaignError("stale", "The corrections changed since they were looked at: look at them again.");
+  let chosen: Set<number> | null = null;
+  if (decision.action === "decline") chosen = new Set();
+  else if (decision.chosen !== undefined) {
+    if (!Array.isArray(decision.chosen) || decision.chosen.some((number) => !Number.isSafeInteger(number) || number < 1 || number > book.corrections.length)) {
+      throw new RevisionCampaignError("invalid_request", `The corrections chosen are numbers from 1 to ${book.corrections.length}.`);
+    }
+    chosen = new Set(decision.chosen);
+  }
+  const state = structuredClone(input);
+  acceptBookCorrections(state, chosen);
+  return state;
 }
 
 /** A run starts: a campaign held for the author goes on, and what its reason counts since a run began starts again (pure). */
@@ -606,6 +800,7 @@ export function advanceRevisionCampaign(state: AutopilotState, report: (note: Pl
     const chapter = chapterOf(working.number);
     if (chapter && !handler.finished(state, chapter)) return;
     end(working, chapter ? "done" : "skipped", chapter ? undefined : "not-in-plan");
+    handler.chapterEnded?.(state, campaign, working);
     const over = worked().filter((item) => item.status === "done" || item.status === "skipped").length;
     if (chapter) {
       const figures = handler.figures?.(chapter, campaign);
@@ -630,6 +825,7 @@ export function advanceRevisionCampaign(state: AutopilotState, report: (note: Pl
       const chapter = chapterOf(item.number);
       if (!chapter) {
         end(item, "skipped", "not-in-plan");
+        handler.chapterEnded?.(state, campaign, item);
         report({ key: `campaign-skipped:${campaign.id}:${item.number}${roundKey()}`, tone: "info", code: handler.codes?.skipped ?? "campaignSkipped", chapterNumber: item.number, title: handler.texts.skipped(item.number, "not-in-plan", language) });
         continue;
       }
@@ -637,6 +833,7 @@ export function advanceRevisionCampaign(state: AutopilotState, report: (note: Pl
       if (started.outcome === "wait") return false;
       if (started.outcome === "skip") {
         end(item, "skipped", started.why);
+        handler.chapterEnded?.(state, campaign, item);
         report({ key: `campaign-skipped:${campaign.id}:${item.number}${roundKey()}`, tone: "info", code: handler.codes?.skipped ?? "campaignSkipped", chapterNumber: item.number, title: handler.texts.skipped(item.number, started.why, language) });
         continue;
       }
