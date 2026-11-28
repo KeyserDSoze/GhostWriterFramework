@@ -15,7 +15,7 @@
     "test": "npm run test:typecheck && npm run test:unit && npm run test:browser",
     "test:unit": "node --experimental-strip-types --test test/*.test.mjs",
     "test:browser": "vitest run --coverage",
-    "test:typecheck": "tsc -p tsconfig.test.json"
+    "test:typecheck": "NODE_OPTIONS=--max-old-space-size=4096 tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@azure/msal-browser": "^5.11.0",
