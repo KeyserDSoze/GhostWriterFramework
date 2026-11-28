@@ -61,6 +61,7 @@ import { assistantActionToolId, policyTargetEnabled, quickActionToolId } from "@
 import { hasAssistantActionProvenance, isOutlineProposal, isWholeProposal, OUTLINE_FILE, sourceRevisionFromFiles, validateAssistantAction } from "@/assistant/actionValidation";
 import "@/i18n/outlineCopilot";
 import "@/i18n/pageCopilot";
+import "@/i18n/copilotApply";
 import { pageIdForRoute } from "@/assistant/pages/registry";
 import "@/i18n/localFirst";
 import { FrozenProposalNotice } from "@/components/frozen/FrozenProposalNotice";
@@ -74,6 +75,9 @@ import { useBooksStore } from "@/store/booksStore";
 import { useAuthStore } from "@/store/authStore";
 import { useFeedbackRewriteWorkflowStore } from "@/store/feedbackRewriteWorkflowStore";
 import { useToast } from "@/components/ui/use-toast";
+import { ToastAction } from "@/components/ui/toast";
+import { applyFailureText, conflictKindOf, deliveryNotice, withoutUpdate } from "@/assistant/applyDelivery";
+import { useRepositorySyncStore } from "@/store/repositorySyncStore";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
@@ -123,7 +127,7 @@ import { listenToRetries, retryNoticeText } from "@/assistant/retryNotice";
 import { listenToPromptCuts, promptCutNote, type PromptCut } from "@/assistant/promptCut";
 import { currentRequest, untrustedData } from "@/assistant/promptTrust";
 import { FileDiff, PatchDiff } from "@/components/diff/DiffView";
-import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation, sha256Text } from "@/repository/safeRepositoryMutation";
+import { commitAndPushTextFileMutation, RepositoryConflictError, resolveRepositoryHeadForMutation, sha256Text, type MutationDelivery } from "@/repository/safeRepositoryMutation";
 import { applyCanonicalRevisionResults, currentRevisionToken, fileRevisionMatches, fileUpdateCounts, markFileUpdatesApplied, markFileUpdatesFailed, markFileUpdatesUndone, pendingFileUpdates, type AppliedFileUpdateResult } from "@/assistant/multiFileOperation";
 import { buildCanonEntityDocument } from "@/narrarium/canon";
 import { BrowserSpeechFallbackRequired } from "@/assistant/mediaFallback";
@@ -205,6 +209,8 @@ const BrainstormEmpty = lazy(() => brainstormParts().then((module) => ({ default
 const BrainstormProposal = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormProposal })));
 /** The review of a proposal for a page (the readers' batch…), loaded with the first one. */
 const PageChangesReview = lazy(() => import("@/components/assistant/PageChangesReview"));
+/** The choice between the author's version and the proposal's, for a file that changed after the proposal was made. */
+const ApplyConflict = lazy(() => import("@/components/assistant/ApplyConflict"));
 
 /** The conversation the model reads with a request: every message but the request itself, and, for a request sent again, only what came before it. */
 function conversationBefore(messages: readonly AssistantMessage[], requestId: string, again: boolean): AssistantMessage[] {
@@ -2048,6 +2054,7 @@ export function AssistantPanel() {
     if (!book || !token) return makeAssistantReply(t("assistant.rewriteSourceChanged"));
     let persistence: Awaited<ReturnType<typeof persistLiveVoiceRewrite>>;
     let scriptWarnings: string[] = [];
+    let rewriteDelivery: MutationDelivery | undefined;
     try {
       persistence = await persistLiveVoiceRewrite({
         pending,
@@ -2070,15 +2077,16 @@ export function AssistantPanel() {
             const result = await commitCanonicalScriptMutation(mutationInput);
             scriptWarnings = result.checks.filter((check) => check.severity === "warning").map((check) => `${check.path}${check.line ? `:${check.line}` : ""}: ${check.message}`);
           }
-          else await commitAndPushTextFileMutation(mutationInput);
+          else rewriteDelivery = (await commitAndPushTextFileMutation(mutationInput)).delivery;
         },
       });
     } catch (error) {
       if (operation && !ownsMediaOperation(operation.generation, operation.signal)) return null;
-      return makeAssistantReply(error instanceof RepositoryConflictError ? t("assistant.rewriteSourceChanged") : t("assistant.rewriteFailed", { error: String(error) }));
+      return makeAssistantReply(error instanceof RepositoryConflictError ? t("assistant.rewriteSourceChanged") : t("assistant.rewriteFailed", { error: applyFailureText(error, t) }));
     }
     if (persistence.status === "conflict") return makeAssistantReply(t("assistant.rewriteSourceChanged"));
     if (scriptWarnings.length) toast({ title: t("assistant.rewriteApplied"), description: scriptWarnings.join("\n") });
+    else if (rewriteDelivery) toastDelivery("apply", t("assistant.rewriteApplied"), rewriteDelivery, undefined, true);
     const rewriteAppliedMessage = `${t("assistant.rewriteApplied")}${scriptWarnings.length ? `\n\nLedger warnings:\n${scriptWarnings.map((warning) => `- ${warning}`).join("\n")}` : ""}`;
     await refreshBookAfterMutation({ book, token, branch: pending.branch });
     const activeAfterPersistence = activeLiveVoiceRewriteContext({ from: pending.from, to: pending.to });
@@ -2283,7 +2291,34 @@ export function AssistantPanel() {
     }
   }
 
-  async function applySelectedFileUpdates(messageIndex: number, selectedPaths?: string[]) {
+  /** The toast of a change that was applied (or undone): what became of it at GitHub, when the usual title is not all there is to say. */
+  function toastDelivery(kind: "apply" | "undo", baseTitle: string, delivery: MutationDelivery | undefined, extra?: string, onlyWithNotice = false) {
+    const notice = deliveryNotice(delivery, kind, baseTitle, t);
+    if (onlyWithNotice && !notice) return;
+    const conflict = notice?.conflict ? useRepositorySyncStore.getState().conflict : null;
+    toast({
+      title: notice?.title ?? baseTitle,
+      description: [notice?.description, extra].filter(Boolean).join("\n") || undefined,
+      ...(conflict ? { action: <ToastAction altText={t("copilotApply.openConflictLabel")} onClick={() => useRepositorySyncStore.getState().setConflict(conflict)}>{t("copilotApply.openConflict")}</ToastAction> } : {}),
+    });
+  }
+
+  /** The author keeps their version of a file the proposal would have replaced: the file leaves the proposal (a proposal applied whole is set aside). */
+  function keepMineOf(messageIndex: number, path: string) {
+    const message = currentSession?.messages[messageIndex];
+    if (!message?.action || message.action.kind !== "apply-file-updates") return;
+    const action = message.action;
+    const whole = isWholeProposal(action);
+    const remaining = whole ? [] : withoutUpdate(action.updates, path);
+    const note = t(whole ? "copilotApply.conflictChoice.keptWhole" : "copilotApply.conflictChoice.keptOne", { file: path });
+    const text = `${message.text}\n\n${note}`;
+    if (!remaining.some((update) => update.status !== "applied")) {
+      useAssistantStore.getState().updateMessage(message.id, { action: remaining.some((update) => update.status === "applied") ? { ...action, updates: remaining } : undefined, text });
+    } else useAssistantStore.getState().updateMessage(message.id, { action: { ...action, updates: remaining }, text });
+    toast({ title: note });
+  }
+
+  async function applySelectedFileUpdates(messageIndex: number, selectedPaths?: string[], options: { useProposal?: readonly string[] } = {}) {
     const message = currentSession?.messages[messageIndex];
     if (!message?.action || message.action.kind !== "apply-file-updates") return;
     const action = message.action;
@@ -2300,8 +2335,8 @@ export function AssistantPanel() {
     const signal = operation.controller.signal;
     setBusy(true);
     try {
-      // The outline is saved where the Outline page saves it: one local commit in the book's working copy, published with the book. The usual
-      // path refuses while local commits wait to be published (the page's own saves among them) and cannot publish a book kept on this device.
+      // The outline is saved where the Outline page saves it: one local commit in the book's working copy, published with the book (the usual
+      // path saves a local commit too, and sends it at once with the sync when GitHub can be reached).
       const outline = isOutlineProposal(action) ? await outlineWorkingCopy(book, branch, { by: currentSession?.mode === "brainstorming" ? "brainstorming" : "author", language: structures[book.id]?.language }) : null;
       const currentFiles = outline
         ? await outline.read(updates.map((update) => update.path))
@@ -2311,12 +2346,13 @@ export function AssistantPanel() {
       const mutations = await Promise.all(updates.map(async (update, index) => {
         const current = currentFiles[index];
         const currentHash = current ? await sha256Text(current.content) : null;
-        if (!fileRevisionMatches(action.sourceRevisions?.[update.path], current?.sha ?? null, currentHash)) throw new RepositoryConflictError(`Source changed before applying ${update.path}.`, update.path);
+        if (!options.useProposal?.includes(update.path) && !fileRevisionMatches(action.sourceRevisions?.[update.path], current?.sha ?? null, currentHash)) throw new RepositoryConflictError(`Source changed before applying ${update.path}.`, update.path);
         results[update.path] = { previousContent: current?.content ?? null, appliedHash: update.content === null ? null : await sha256Text(update.content) };
         return { path: update.path, content: update.content, expectedCurrentHash: currentHash };
       }));
       const messageText = `Apply ${updates.length} Copilot file update${updates.length === 1 ? "" : "s"}`;
       let scriptResult: Awaited<ReturnType<typeof commitCanonicalScriptMutation>> | null = null;
+      let delivery: MutationDelivery | undefined;
       if (outline) await outline.commit(mutations.map(({ path, content, expectedCurrentHash }) => ({ path, content, expectedHash: expectedCurrentHash })), messageText);
       else {
         const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch, signal });
@@ -2324,7 +2360,7 @@ export function AssistantPanel() {
         scriptResult = mutations.some((mutation) => /^scripts\/.*\.md$/.test(mutation.path))
           ? await commitCanonicalScriptMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal })
           : null;
-        if (!scriptResult) await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal });
+        if (!scriptResult) delivery = (await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal })).delivery;
       }
       if (!ownsConfirmedMutation(operation)) return;
       if (scriptResult) results = applyCanonicalRevisionResults(updates, results, scriptResult);
@@ -2350,19 +2386,22 @@ export function AssistantPanel() {
           generatedAt: new Date().toISOString(),
         },
       });
-      toast({ title: t("assistant.toastFileUpdatesApplied"), description: scriptResult?.warningCount ? scriptResult.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined });
+      toastDelivery("apply", t("assistant.toastFileUpdatesApplied"), delivery, scriptResult?.warningCount ? scriptResult.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined);
       // Reloading the book changes its structure, which ends this operation: the message is updated first, as after a deletion. The write is
       // done by then, so a failed reload is no failure of it (the book's pages load the structure again by themselves).
       await refreshBookAfterMutation({ book, token, branch }).catch(() => undefined);
     } catch (err) {
       if (!ownsConfirmedMutation(operation)) return;
-      const error = err instanceof Error ? err.message : String(err);
+      const error = applyFailureText(err, t);
       const conflictPath = err instanceof RepositoryConflictError ? err.path : undefined;
       const failedPaths = conflictPath ? [conflictPath] : updates.map((update) => update.path);
-      const nextUpdates = markFileUpdatesFailed(action.updates, failedPaths, error);
+      // A file that changed after the proposal was made is not a refusal: the author chooses between their version and the proposal.
+      const conflicts = conflictPath ? { [conflictPath]: await conflictKindOf(book, branch, conflictPath) } : {};
+      if (!ownsConfirmedMutation(operation)) return;
+      const nextUpdates = markFileUpdatesFailed(action.updates, failedPaths, error, conflicts);
       const counts = fileUpdateCounts(nextUpdates);
-      useAssistantStore.getState().updateMessage(message.id, { action: { ...action, updates: nextUpdates }, text: `${message.text}\n\nCompleted: ${counts.applied}; pending: ${counts.pending}; failed: ${counts.failed}.` });
-      toast({ title: t("assistant.toastFileUpdatesFailed"), description: String(err), variant: "destructive" });
+      useAssistantStore.getState().updateMessage(message.id, { action: { ...action, updates: nextUpdates }, text: `${message.text}\n\n${t("copilotApply.completedCounts", counts)}` });
+      toast({ title: t("assistant.toastFileUpdatesFailed"), description: error, variant: "destructive" });
     } finally {
       finishConfirmedMutation(operation);
     }
@@ -2498,14 +2537,14 @@ export function AssistantPanel() {
       if (document.path !== action.destinationPath) throw new Error("The generated entity destination changed before confirmation.");
       const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch, signal });
       if (!ownsConfirmedMutation(operation)) return;
-      await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations: [{ path: document.path, content: document.content, expectedCurrentHash: null }], message: `Add ${action.entityKind} ${action.label} from ${action.researchPath}`, signal });
+      const created = await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations: [{ path: document.path, content: document.content, expectedCurrentHash: null }], message: `Add ${action.entityKind} ${action.label} from ${action.researchPath}`, signal });
       if (!ownsConfirmedMutation(operation)) return;
       useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\n${t("assistant.createFromResearchApplied")}`, mutation: { changedPaths: [document.path], refresh: "book-structure-and-context" } });
       await refreshBookAfterMutation({ book, token, branch });
       if (!ownsConfirmedMutation(operation)) return;
-      toast({ title: t("assistant.toastCreatedFromResearch", { title: action.label }) });
+      toastDelivery("apply", t("assistant.toastCreatedFromResearch", { title: action.label }), created.delivery);
     } catch (err) {
-      if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastCreateFromResearchFailed"), description: String(err), variant: "destructive" });
+      if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastCreateFromResearchFailed"), description: applyFailureText(err, t), variant: "destructive" });
     } finally {
       finishConfirmedMutation(operation);
     }
@@ -2566,11 +2605,12 @@ export function AssistantPanel() {
         const current = currentFiles[index];
         // A file the proposal deleted (an entry of the outline) comes back only if nothing was written there since.
         const deleted = update.content === null && update.appliedHash === null;
-        if (deleted ? current !== null : (!update.appliedHash || !current || await sha256Text(current.content) !== update.appliedHash)) throw new Error(`Source changed before undoing ${update.path}.`);
+        if (deleted ? current !== null : (!update.appliedHash || !current || await sha256Text(current.content) !== update.appliedHash)) throw new RepositoryConflictError(`Source changed before undoing ${update.path}.`, update.path);
         return { path: update.path, content: update.previousContent ?? null, expectedCurrentHash: deleted ? null : update.appliedHash! };
       }));
       const messageText = `Undo ${applied.length} Copilot file update${applied.length === 1 ? "" : "s"}`;
       let scriptResult: Awaited<ReturnType<typeof commitCanonicalScriptMutation>> | null = null;
+      let delivery: MutationDelivery | undefined;
       if (outline) await outline.commit(mutations.map(({ path, content, expectedCurrentHash }) => ({ path, content, expectedHash: expectedCurrentHash })), messageText);
       else {
         const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch, signal });
@@ -2579,18 +2619,18 @@ export function AssistantPanel() {
         scriptResult = mutations.some((mutation) => /^scripts\/.*\.md$/.test(mutation.path))
           ? await commitCanonicalScriptMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, ledgerGeneratedAt, signal })
           : null;
-        if (!scriptResult) await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal });
+        if (!scriptResult) delivery = (await commitAndPushTextFileMutation({ token, book, branch, expectedRemoteHeadSha, mutations, message: messageText, signal })).delivery;
       }
       if (!ownsConfirmedMutation(operation)) return;
       const nextUpdates = markFileUpdatesUndone(action.updates, applied.map((update) => update.path));
       const nextRevisions = { ...action.sourceRevisions };
       await Promise.all(applied.map(async (update) => { nextRevisions[update.path] = scriptResult?.revisions[update.path]?.hash ?? (update.previousContent == null ? null : await sha256Text(update.previousContent)); }));
       useAssistantStore.getState().updateMessage(message.id, { action: { ...action, kind: "apply-file-updates", updates: nextUpdates, sourceRevision: sourceRevisionFromFiles(nextRevisions), sourceRevisions: nextRevisions, generatedAt: new Date().toISOString() }, text: `${message.text}\n\n${t("assistant.undoApplied")}`, mutation: { changedPaths: (scriptResult?.changedPaths ?? applied.map((update) => update.path)).sort(), refresh: "book-structure-and-context" } });
-      toast({ title: t("assistant.toastUndoApplied"), description: scriptResult?.warningCount ? scriptResult.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined });
+      toastDelivery("undo", t("assistant.toastUndoApplied"), delivery, scriptResult?.warningCount ? scriptResult.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") : undefined);
       // As after applying: the message first, then the reload of the book, which ends this operation.
       await refreshBookAfterMutation({ book, token, branch }).catch(() => undefined);
     } catch (err) {
-      if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastUndoFailed"), description: String(err), variant: "destructive" });
+      if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastUndoFailed"), description: err instanceof RepositoryConflictError ? t("copilotApply.failed.undoChanged", { file: err.path ?? "" }) : applyFailureText(err, t), variant: "destructive" });
     } finally {
       finishConfirmedMutation(operation);
     }
@@ -2675,21 +2715,22 @@ export function AssistantPanel() {
       if (!destination && !source) throw new Error(t("assistant.revertFileMissing"));
       const mutation = { path: pending.file.filename, content: source?.content ?? null, expectedCurrentHash: destinationHash };
       const expectedRemoteHeadSha = await resolveRepositoryHeadForMutation({ token, book, branch: pending.destinationBranch, signal });
+      let revertDelivery: MutationDelivery | undefined;
       const mutationInput = { token, book, branch: pending.destinationBranch, expectedRemoteHeadSha, message: `Revert ${pending.file.filename} to ${pending.sourceBranch}`, mutations: [mutation], signal };
       if (/^scripts\/.*\.md$/.test(pending.file.filename)) {
         const result = await commitCanonicalScriptMutation(mutationInput);
         if (result.warningCount) toast({ title: t("assistant.toastReverted", { file: pending.file.filename }), description: result.checks.filter((check) => check.severity === "warning").map((check) => check.message).join("\n") });
       } else {
-        await commitAndPushTextFileMutation(mutationInput);
+        revertDelivery = (await commitAndPushTextFileMutation(mutationInput)).delivery;
       }
       if (!ownsConfirmedMutation(operation)) return;
       setPendingDiffRevert(null);
       await refreshBookAfterMutation({ book, token, branch: pending.destinationBranch });
       if (!ownsConfirmedMutation(operation)) return;
-      toast({ title: t("assistant.toastReverted", { file: pending.file.filename }) });
+      toastDelivery("apply", t("assistant.toastReverted", { file: pending.file.filename }), revertDelivery);
       await loadBranchDiff();
     } catch (err) {
-      if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastRevertFailed"), description: String(err), variant: "destructive" });
+      if (ownsConfirmedMutation(operation)) toast({ title: t("assistant.toastRevertFailed"), description: applyFailureText(err, t), variant: "destructive" });
     } finally {
       finishConfirmedMutation(operation);
     }
@@ -2925,6 +2966,16 @@ export function AssistantPanel() {
                   {message.action.updates.some((update) => update.status === "applied") && <Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy}>{t("assistant.undoChanges")}</Button>}
                 </div>
               </div>
+            )}
+            {message.action?.kind === "apply-file-updates" && message.action.updates.some((update) => update.conflict) && (
+              <Suspense fallback={null}>
+                <ApplyConflict
+                  updates={message.action.updates.filter((update) => update.conflict)}
+                  busy={busy}
+                  onKeepMine={(path) => keepMineOf(index, path)}
+                  onUseProposal={(path) => void applySelectedFileUpdates(index, [path], { useProposal: [path] })}
+                />
+              </Suspense>
             )}
             {message.action?.kind === "undo-file-updates" && !message.action.review && !brainstorming && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{t("assistant.changesApplied")}</Badge><Button size="sm" variant="outline" onClick={() => void undoFileUpdates(index)} disabled={busy || !isAssistantActionEnabled(message.action)}>{t("assistant.undoChanges")}</Button></div>}
             {message.action?.kind === "apply-paragraph-rewrite" && (

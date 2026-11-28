@@ -27,19 +27,19 @@ export function markFileUpdatesApplied(
   results: Record<string, AppliedFileUpdateResult>,
 ): AssistantFileUpdate[] {
   return updates.map((update) => results[update.path]
-    ? { ...update, content: results[update.path].appliedContent ?? update.content, status: "applied", previousContent: results[update.path].previousContent, appliedHash: results[update.path].appliedHash, error: undefined }
+    ? { ...update, content: results[update.path].appliedContent ?? update.content, status: "applied", previousContent: results[update.path].previousContent, appliedHash: results[update.path].appliedHash, error: undefined, conflict: undefined }
     : update);
 }
 
-export function markFileUpdatesFailed(updates: AssistantFileUpdate[], attemptedPaths: string[], error: string): AssistantFileUpdate[] {
+export function markFileUpdatesFailed(updates: AssistantFileUpdate[], attemptedPaths: string[], error: string, conflicts: Record<string, NonNullable<AssistantFileUpdate["conflict"]>> = {}): AssistantFileUpdate[] {
   const attempted = new Set(attemptedPaths);
-  return updates.map((update) => attempted.has(update.path) ? { ...update, status: "failed", error } : update);
+  return updates.map((update) => attempted.has(update.path) ? { ...update, status: "failed", error, conflict: conflicts[update.path] } : update);
 }
 
 export function markFileUpdatesUndone(updates: AssistantFileUpdate[], paths: string[]): AssistantFileUpdate[] {
   const undone = new Set(paths);
   return updates.map((update) => undone.has(update.path)
-    ? { ...update, status: "pending", previousContent: undefined, appliedHash: undefined, error: undefined }
+    ? { ...update, status: "pending", previousContent: undefined, appliedHash: undefined, error: undefined, conflict: undefined }
     : update);
 }
 

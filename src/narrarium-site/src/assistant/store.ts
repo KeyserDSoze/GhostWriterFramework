@@ -29,6 +29,8 @@ export interface AssistantFileUpdate {
   reason?: string;
   previousContent?: string | null;
   status?: "pending" | "applied" | "failed";
+  /** Set when applying stopped on this file because it changed after the proposal was made: the author chooses between their version and the proposal's. */
+  conflict?: "local-edits" | "changed";
   /** The hash of what was written; `null` when the update deleted the file. */
   appliedHash?: string | null;
   error?: string;

@@ -30,7 +30,7 @@ vi.mock("@/outline/outlineSource", async (original) => ({
     readFiles: async () => [],
   }),
 }));
-// The Outline page's own saves wait to be published, so the Copilot's usual path refuses to start (and a book kept on this device has nowhere to publish).
+// The Outline page saves in the working copy and the proposal goes there too, not through the usual path (a book kept on this device has nowhere to publish).
 vi.mock("@/repository/safeRepositoryMutation", async (original) => ({
   ...await original<typeof import("@/repository/safeRepositoryMutation")>(),
   resolveRepositoryHeadForMutation: vi.fn(async () => { throw new Error("Push or discard existing local commits before starting this operation."); }),
