@@ -134,8 +134,9 @@ test("a chapter of the finished book is read in a window: from the table and fro
   await expect(scenes).toHaveCount(7);
   await expect(dialog.getByText("End marker E2.5.")).toHaveCount(1);
   await expect(dialog.getByText("End marker E2.8.")).toHaveCount(0);
-  // The button brings the rest, and the focus goes to the first scene it added.
-  await dialog.getByRole("button", { name: "Show more · 2 scenes left" }).click();
+  // The keyboard reaches the button too, and with it the end of what is drawn comes into range: the browser says so, the rest is drawn at once, and the focus goes to the first scene that was
+  // added. A click is not the way to try it here: scrolling to the button is what brings the rest, and the button is gone before the click lands (the next test clicks it with no observer).
+  await dialog.getByRole("button", { name: "Show more · 2 scenes left" }).focus();
   await expect(scenes).toHaveCount(9);
   await expect(scenes.nth(7).getByRole("heading", { level: 3 })).toBeFocused();
   await expect(dialog.locator("[data-reading-end]")).toHaveText("End of the chapter");
@@ -211,6 +212,39 @@ test("a chapter of the finished book is read in a window: from the table and fro
   expect(github, "no request went to GitHub").toEqual([]);
   expect(openAi).toEqual([]);
   expect(errors).toEqual([]);
+});
+
+test("when the browser never says what is in range, the button brings the scenes of a long chapter a few at a time, with the focus on the first scene it added", async ({ page }) => {
+  // An observer that never reports anything: the button is the only way on, and nothing takes the button away before the click.
+  await page.addInitScript(() => {
+    class SilentObserver { observe() {} unobserve() {} disconnect() {} takeRecords() { return []; } }
+    (window as unknown as { IntersectionObserver: unknown }).IntersectionObserver = SilentObserver;
+  });
+  const { book, slugs, titles } = await finishedBook();
+  await seed(page, settingsOf(ai.url, [book]), [book]);
+  watchGitHub(page);
+  await openApp(page);
+  await page.goto("app/books", { waitUntil: "domcontentloaded" });
+  await waitForAiSettings(page, ai.url);
+  await page.goto(`app/books/${BOOK.id}/autopilot`, { waitUntil: "domcontentloaded" });
+  const result = page.locator("[data-autopilot-result]");
+  await expect(result).toBeVisible({ timeout: 30_000 });
+  const dialog = page.getByRole("dialog");
+  const scenes = dialog.locator("[data-reading-scene]");
+
+  await result.locator(`a[data-chapter-link="${slugs[1]}"]`).first().click();
+  await expect(dialog).toHaveAccessibleName(new RegExp(`^Chapter 2 · «${escaped(titles[1])}»$`));
+  await expect(scenes).toHaveCount(3);
+  await expect(dialog.getByText("End marker E2.5.")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Show more · 6 scenes left" }).click();
+  await expect(scenes).toHaveCount(7);
+  await expect(scenes.nth(3).getByRole("heading", { level: 3 })).toBeFocused();
+  await expect(dialog.getByText("End marker E2.8.")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Show more · 2 scenes left" }).click();
+  await expect(scenes).toHaveCount(9);
+  await expect(scenes.nth(7).getByRole("heading", { level: 3 })).toBeFocused();
+  await expect(dialog.locator("[data-reading-end]")).toHaveText("End of the chapter");
+  await expect(dialog.getByRole("button", { name: /^Show more/ })).toHaveCount(0);
 });
 
 async function setViewport(page: Page, width: number, height: number): Promise<void> {
