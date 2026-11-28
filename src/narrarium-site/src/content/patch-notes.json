@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.137.0",
+    "date": "2026-11-28",
+    "en": {
+      "title": "The Copilot applies its changes even when you have work not yet sent: it is saved and sent together",
+      "summary": "Applying a proposal of the Copilot (a page proposal such as the ghostwriters, an Undo, a diff revert) used to be refused, in English, while your book held a local change or an edit that GitHub did not have yet. It is now applied, saved on top of your work and sent with the book's normal sync.",
+      "changes": [
+        "A change of the Copilot is never refused for work you have not sent: it is saved as a change of the working copy and, when GitHub can be reached, the book's normal sync sends it at once together with your earlier changes and unsaved edits, in order and never forcing. The message says what was sent: «Applied and synchronised: 1 change of yours and 3 earlier ones».",
+        "When GitHub cannot be reached (offline, no valid credential, an unpublished branch) the change is applied all the same and the message says it is saved on this device and goes with the next sync. When the sync stops on a real conflict, the change stays saved, the conflict window opens (with an action to open it again) and nothing is overwritten.",
+        "If a file the proposal touches changed after it was proposed (an edit of yours that is not saved yet, or a saved change), the Copilot shows it and lets you choose, file by file: «Keep mine» or «Use the proposal». The version you do not keep stays available with Undo.",
+        "These messages, and the reasons an apply or an Undo cannot be done, are now in your language (English and Italian): the raw English text of an error no longer reaches you on this path."
+      ]
+    },
+    "it": {
+      "title": "Il Copilot applica le sue modifiche anche quando hai lavoro non ancora inviato: viene salvato e inviato insieme",
+      "summary": "Applicare una proposta del Copilot (una proposta di pagina come quella dei ghostwriter, un Annulla, un ripristino da un confronto) veniva rifiutato, in inglese, mentre il libro aveva una modifica locale o una modifica che GitHub non aveva ancora. Ora viene applicata, salvata sopra il tuo lavoro e inviata con la normale sincronizzazione del libro.",
+      "changes": [
+        "Una modifica del Copilot non viene mai rifiutata per lavoro non ancora inviato: viene salvata come modifica della copia di lavoro e, quando GitHub è raggiungibile, la normale sincronizzazione del libro la invia subito insieme alle tue modifiche precedenti e a quelle non ancora salvate, in ordine e senza mai forzare. Il messaggio dice cosa è stato inviato: «Applicato e sincronizzato: 1 tua modifica e 3 precedenti».",
+        "Quando GitHub non è raggiungibile (offline, credenziale non valida, ramo non pubblicato) la modifica viene applicata lo stesso e il messaggio dice che è salvata su questo dispositivo e parte con la prossima sincronizzazione. Quando la sincronizzazione si ferma su un vero conflitto, la modifica resta salvata, si apre la finestra dei conflitti (con un'azione per riaprirla) e nulla viene sovrascritto.",
+        "Se un file toccato dalla proposta è cambiato dopo che era stata proposta (una tua modifica non ancora salvata, o una modifica salvata), il Copilot lo mostra e ti lascia scegliere, file per file: «Tieni la mia» oppure «Usa la proposta». La versione che non tieni resta disponibile con Annulla.",
+        "Questi messaggi, e i motivi per cui un'applicazione o un Annulla non si può fare, sono ora nella tua lingua (italiano e inglese): il testo inglese grezzo di un errore non ti raggiunge più su questo percorso."
+      ]
+    }
+  },
+  {
     "version": "0.136.0",
     "date": "2026-11-27",
     "en": {
