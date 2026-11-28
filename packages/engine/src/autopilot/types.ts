@@ -6,6 +6,7 @@ import type { AiAttemptThinking, AiThinkingWhy } from "../ai/request.js";
 import type { AiCallDropReason, AiCallStatus } from "./calls/types.js";
 import type { ChapterFreezeAuthor, FrozenChapterChanges } from "../book/freeze.js";
 import type { DesignAlternatives, DesignChapterReview, DesignCoherence, DesignRubrics } from "./design-review-types.js";
+import type { OutlineDesignKey } from "../book/design.js";
 
 /** Lifecycle of the autopilot of one book. */
 export type AutopilotStatus = "idle" | "running" | "paused" | "waiting-author" | "error" | "completed";
@@ -41,6 +42,12 @@ export type AutopilotTaskKind =
   | "book-corrections"
   /** The room of the wildcards consulted on the plan of a design run, before its first review, the director triaging their ideas (`WildcardsPolicy.design`). */
   | "wildcards"
+  /** «Review and complete» (`AutopilotDesign.mode`): the missing design fields, the findings and the canon to create of a batch of the author's chapters, as proposals. */
+  | "design-complete"
+  /** A simulated reader reads the author's chapters with what «Review and complete» proposes for them. */
+  | "design-complete-reader"
+  /** The director reviews the author's chapters with what «Review and complete» proposes for them. */
+  | "design-complete-review"
   /** Freezing, without the model: the chapters an older engine approved (once), and the changes the author marked as reviewed. */
   | "freeze";
 
@@ -1180,6 +1187,109 @@ export interface AutopilotDesign {
   alternatives?: DesignAlternatives;
   /** The findings of the analysis of the whole structure (`DesignCoherence`). */
   coherence?: DesignCoherence;
+  /** «Review and complete» (`DesignMode`): the design run reviews the author's chapters and proposes what they lack. Absent: the design run plans the book. */
+  mode?: "complete";
+  /** What «Review and complete» proposes (`mode: complete`). */
+  completion?: DesignCompletion;
+}
+
+/**
+ * What a design run does (#125): `plan` designs the book, chapter by chapter, around the entries of the author (the design run as it always was); `complete` («Review and
+ * complete») does not plan the book again: it reads every chapter the author wrote in the Synopsis and proposes what is missing (`DesignCompletion`), for the author to apply.
+ */
+export type DesignMode = "plan" | "complete";
+
+/** What became of a proposal of «Review and complete»: it waits for the author, the author applied it, or left it out. */
+export type DesignProposalStatus = "waiting" | "applied" | "skipped";
+
+/** A design field of an author's chapter that «Review and complete» proposes: only a field the entry lacks, and only ever written where it is still missing. */
+export interface DesignFieldProposal {
+  id: string;
+  key: OutlineDesignKey;
+  value: string | string[] | boolean;
+  status: DesignProposalStatus;
+}
+
+/** Who found a finding of «Review and complete»: the architect who proposed the fields, a simulated reader, or the director. */
+export type DesignFindingSource = "architect" | "reader" | "director";
+
+/** How much a finding of «Review and complete» weighs: an inconsistency that breaks the book, a real weakness, a detail. */
+export type DesignFindingSeverity = "critical" | "major" | "minor";
+
+/** An inconsistency or a weak point of an author's chapter. Applied, it is a note for the ghostwriter of the chapter (`design.notes`), after what is there. */
+export interface DesignCompletionFinding {
+  id: string;
+  source: DesignFindingSource;
+  /** The simulated reader who found it (its slug, and its name as the book calls it). */
+  reader?: string;
+  by?: string;
+  severity: DesignFindingSeverity;
+  /** The criterion it is about, in the words of the twelve of a design (originality, engagement, coherence, pace, tension…), when it says one. */
+  criterion?: string;
+  text: string;
+  /** What to do about it, in a line. */
+  suggestion?: string;
+  status: DesignProposalStatus;
+}
+
+/** What «Review and complete» proposes for one chapter of the author. */
+export interface DesignCompletionChapter {
+  number: number;
+  title: string;
+  /** The fingerprint of the entry when its proposals were made (`OutlineChapterEntry.contentDigest`): a field the entry has now is never written. */
+  digest: string;
+  fields: DesignFieldProposal[];
+  findings: DesignCompletionFinding[];
+}
+
+/** A canon entry (of the world, or a secret) that the author's chapters need and the book lacks, proposed: applied, it is created as a draft of the canon. */
+export interface DesignCanonProposal {
+  id: string;
+  kind: "character" | "location" | "faction" | "item" | "secret";
+  name: string;
+  description: string;
+  /** The chapters that need it. */
+  chapters: number[];
+  status: DesignProposalStatus;
+}
+
+/** A chapter the director sent back to be proposed again, with the director's words. */
+export interface DesignCompletionRedo {
+  chapter: number;
+  notes: string[];
+}
+
+/** What a simulated reader made of the chapters and their proposals, in the review it read them for. */
+export interface DesignCompletionReading {
+  slug: string;
+  name: string;
+  /** The review (the director's, from 1) the reading came before. */
+  round: number;
+  /** Its vote, from 0 to 10. */
+  score: number;
+  summary: string;
+}
+
+/**
+ * The proposals of «Review and complete» (`AutopilotDesign.completion`, #125): for every chapter of the author (an entry of the Synopsis with its text), the design fields
+ * it lacks, the inconsistencies and weak points found by the architect, the readers and the director, and the canon entries the chapters need. Nothing of it is written
+ * until the author applies it (`AutopilotSession.applyDesignProposals`): an entry of the author is never overwritten, and what happens in it is never changed.
+ */
+export interface DesignCompletion {
+  /** The chapters it reviews: the author's entries with their text when the run began, in order. */
+  chapters: number[];
+  /** What it proposes for each, by its number. */
+  entries: Record<string, DesignCompletionChapter>;
+  canon: DesignCanonProposal[];
+  /** Chapters the director sent back, to be proposed again before the next review. */
+  redo?: DesignCompletionRedo[];
+  readings: DesignCompletionReading[];
+  /** The readers left out of the reading of this review (their reply stayed incomplete): the review goes on without them. */
+  skippedReaders?: string[];
+  /** The run that made the proposals stops once, there, for the author: the next start goes on past them. */
+  awaitingAuthor?: boolean;
+  /** When the author applied what they chose: how many proposals, and how many they left out. */
+  decided?: { at: string; applied: number; skipped: number };
 }
 
 /** A design run asked with a start (`StartOptions.design`). */
@@ -1195,6 +1305,8 @@ export interface DesignStartInput {
   reviewOnly?: { chapters?: number[] };
   /** What the run does besides the plain design: a value sets it, `null` takes it back (`DesignWorkflow`). */
   workflow?: DesignWorkflow | null;
+  /** `complete`: «Review and complete» the chapters the author wrote (`DesignMode`). Absent or `plan`: the design run as it always was. */
+  mode?: DesignMode;
 }
 
 /** What a summary says of the design run (`AutopilotStateSummary.design`). */
@@ -1213,6 +1325,10 @@ export interface AutopilotDesignSummary {
   outcome?: DesignOutcome;
   /** The run waits for the author to choose the pitch the book is designed from (the design asks for her choice and the director has recommended one): it stops without a question. */
   choosePitch?: boolean;
+  /** «Review and complete»: the run reviews the author's chapters (`DesignMode`). */
+  mode?: "complete";
+  /** «Review and complete»: the proposals that wait for the author, and the chapters they are in. */
+  proposals?: { waiting: number; chapters: number };
 }
 
 export interface AutopilotState {
@@ -1387,7 +1503,8 @@ export type AutopilotMessageCode =
   | "designPitchChoice"
   | "designCoherence"
   | "designProposals"
-  | "designReviewed";
+  | "designReviewed"
+  | "designCompletionReady";
 
 /**
  * Which candidate of the route a call asks now, and how: what the `call-attempt` event says and `AutopilotLive.trying` keeps, so that a client shows it as the request is sent. Only

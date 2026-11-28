@@ -29,6 +29,7 @@ import { applyFrozenDecision, authorHeldChapters, campaignGoesOn, frozenAnswerAc
 import { mergeCampaign, resumeCampaign } from "./campaign.js";
 import { outlinePlanStatus } from "./outline-check.js";
 import { beginDesign, beginDesignReview, designPlaceholderChanges, endDesign, normalizeDesignStart } from "./design.js";
+import { completionChapters, resumeCompletion } from "./design-complete.js";
 import { advanceState, bookChapters, extensionNote, nextStep, phaseOf, type PlanNote, type PlannerContext, type TaskDescriptor } from "./planner.js";
 import { profileProblems, profileProblemsMessage, profileProblemsTitle } from "./profile-check.js";
 import {
@@ -1145,6 +1146,12 @@ export class AutopilotRun {
     return snapshot.outline?.chapters.at(-1)?.number ?? 0;
   }
 
+  /** The chapters the author wrote in the Synopsis, with their text: what «Review and complete» reviews (`completionChapters`). */
+  private async authorChapters(): Promise<number[]> {
+    const snapshot = await loadBookSnapshot(this.store, this.cache);
+    return completionChapters(await OutlineReader.of(this.store, snapshot, this.outlineCache).chapters());
+  }
+
   async execute(start: StartOptions & { afterRestart?: boolean } = {}): Promise<AutopilotState> {
     const { store } = this;
     this.limits = normalizeRunLimits(start.limits) ?? {};
@@ -1157,7 +1164,7 @@ export class AutopilotRun {
     const startedAt = this.now().toISOString();
     // A run that starts is nobody's pause any more: what the server said of its stop goes, and so does the limit that stopped it (one still reached stops it
     // again, before its first step); a campaign held for the author goes on, and the rounds of a review it allows are counted again from here.
-    const { limitReached: _limit, ...fresh } = resumeCampaign(withoutStopCause(state), startedAt);
+    const { limitReached: _limit, ...fresh } = resumeCampaign(resumeCompletion(withoutStopCause(state)), startedAt);
     let next: AutopilotState = {
       ...fresh,
       brief,
@@ -1178,7 +1185,7 @@ export class AutopilotRun {
       next = beginDesignReview(next, design.reviewOnly, { now: startedAt, outlineChapters, language });
     } else if (design) {
       const language = await loadBookSnapshot(store, this.cache).then((snapshot) => languageCode(snapshot.book.language), () => this.language);
-      const begun = beginDesign(next, design, { now: startedAt, outlineChapters, idea: brief.idea, language });
+      const begun = beginDesign(next, design, { now: startedAt, outlineChapters, idea: brief.idea, language, ...(design.mode === "complete" ? { authorChapters: await this.authorChapters() } : {}) });
       next = begun.state;
       designChanges.push(...designPlaceholderChanges(outlineChapters, begun.chapters));
       outlineChapters = Math.max(outlineChapters, begun.chapters);

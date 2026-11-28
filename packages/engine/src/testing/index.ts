@@ -133,6 +133,10 @@ export interface FakeAiOptions {
   pitchRecommend?: (ids: string[]) => string;
   /** The analysis of the structure of a design, by the number of the call (default: no finding). */
   coherence?: (call: number, user: string) => Record<string, unknown>;
+  /** «Review and complete»: what the architect proposes for the chapters asked (default: every missing field of each, a finding each, and one character for the first). */
+  completion?: (chapters: number[], user: string) => Record<string, unknown>;
+  /** «Review and complete»: the director's review, by the number of the review (default: approve at 8, a finding of the first chapter, nothing sent back). */
+  completionReview?: (round: number, user: string) => Record<string, unknown>;
 }
 
 const FAKE_PITCHES: ReadonlyArray<{ title: string; logline: string; premise: string; protagonist: string; stakes: string; twist: string; tone: string }> = [
@@ -158,6 +162,25 @@ export function fakeRubric(scores: number | Record<string, number> = 7.5, option
       proposals: score < 7 ? [`Strengthen the ${criterion}.`] : [],
     };
   });
+}
+
+/** What the fake architect of «Review and complete» proposes: a value for every missing field of each chapter asked, a finding each, and one character. */
+function fakeCompletion(user: string): Record<string, unknown> {
+  const chapters: Array<Record<string, unknown>> = [];
+  const block = /THE CHAPTERS TO COMPLETE \(the author's[^\n]*\n([\s\S]*?)(?:\n\n[A-Z][A-Z ,'()-]{6,}[:(—]|$)/.exec(user)?.[1] ?? "";
+  for (const match of block.matchAll(/Chapter (\d+)[^\n]*:\n[\s\S]*?MISSING FIELDS: ([^\n]*)/g)) {
+    const number = Number(match[1]);
+    const keys = match[2].split(",").map((key) => key.trim()).filter((key) => key && key !== "none");
+    const fields: Record<string, unknown> = {};
+    for (const key of keys) {
+      if (key === "cliffhanger") fields[key] = number % 2 === 1;
+      else if (["pov", "characters", "events", "scenes", "conflicts", "reveals", "withholds", "clues"].includes(key)) fields[key] = [`Proposed ${key} of chapter ${number}`];
+      else fields[key] = `Proposed ${key} of chapter ${number}.`;
+    }
+    chapters.push({ number, fields, findings: [{ severity: "major", criterion: "pace", issue: `Chapter ${number} lingers before its turn.`, suggestion: "Cut the first beat." }] });
+  }
+  const first = chapters[0]?.number as number | undefined;
+  return { chapters, canon: first === 1 ? [{ kind: "character", name: "Tessa Lune", description: "The lighthouse keeper's niece, who saw the crack.", chapters: [1] }] : [] };
 }
 
 function prose(words: number, seed: string): string {
@@ -419,6 +442,16 @@ export function createFakeAutopilotAi(options: FakeAiOptions = {}): AiPort & { c
               : { id, verdict: "rejected", reason: "It breaks the tone the author set." })),
           summary: "One idea adopted, one adapted.",
         };
+      }
+      case "chapter_completion": {
+        const asked = [...(/of chapters? ([\d, ]+) \(THE CHAPTERS TO COMPLETE/.exec(user)?.[1] ?? "").matchAll(/\d+/g)].map((match) => Number(match[0]));
+        return options.completion?.(asked, user) ?? fakeCompletion(user);
+      }
+      case "completion_reading":
+        return { interest: 7, reaction: "I would read it, if the middle moved faster.", findings: [{ chapterNumber: 1, severity: "minor", criterion: "engagement", issue: "The opening image is familiar.", suggestion: "Open on the flood that has not happened yet." }] };
+      case "completion_review": {
+        const round = Number(/\(review (\d+) of at most/.exec(user)?.[1] ?? "1");
+        return options.completionReview?.(round, user) ?? { verdict: "approve", score: 8, summary: "The proposals fit the chapters.", findings: [{ chapterNumber: 1, severity: "critical", criterion: "coherence", issue: "Mira knows about the wall before anyone tells her.", suggestion: "Let her overhear it first." }], redo: [] };
       }
       case "director_opinion":
         return { verdict: "revise", score: 7, summary: "Good, but the middle drags.", answer: user.includes("asks you") ? "Yes, keep it." : undefined, strengths: ["Atmosphere"], concerns: [{ severity: "major", issue: "Pacing", suggestion: "Cut a scene" }], decisions: ["Keep the ending"], nextSteps: ["Tighten chapter 2"], questionsForAuthor: [] };

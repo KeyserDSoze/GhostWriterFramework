@@ -95,7 +95,14 @@ export function estimateTexts(italian: boolean) {
       const lines: string[] = [];
       const factor = formatFactor(facts.tokensPerWord, italian);
       const written = facts.written > 0;
-      if (facts.design) {
+      if (facts.design?.complete !== undefined) {
+        lines.push(italian
+          ? `Rivedi e completa legge ${count(facts.design.complete)} capitoli scritti da te, ${count(facts.design.batch)} per chiamata, e propone ciò che manca al loro progetto: nessun concept, nessun piano, nessuna prosa, e nulla si scrive finché non applichi le proposte.`
+          : `Review and complete reads ${count(facts.design.complete)} chapters you wrote, ${count(facts.design.batch)} a call, and proposes what their design lacks: no concept, no plan, no prose, and nothing is written until you apply the proposals.`);
+        lines.push(italian
+          ? `Il caso migliore approva le proposte alla prima revisione; il peggiore usa tutte le ${count(facts.design.rounds)} revisioni, riproponendo ogni volta tutti i capitoli. ${facts.planReaders > 0 ? `${count(facts.planReaders)} lettori simulati li leggono prima ${facts.design.readerRounds === 1 ? "della prima revisione" : `delle prime ${count(facts.design.readerRounds)} revisioni`}.` : "Nessun lettore simulato li legge."}`
+          : `The best case approves the proposals at the first review; the worst case uses all ${count(facts.design.rounds)} reviews, proposing every chapter again each time. ${facts.planReaders > 0 ? `${count(facts.planReaders)} simulated readers read them before ${facts.design.readerRounds === 1 ? "the first review" : `the first ${count(facts.design.readerRounds)} reviews`}.` : "No simulated reader reads them."}`);
+      } else if (facts.design) {
         lines.push(italian
           ? `Il progetto copre ${count(facts.chapters)} capitoli, ${count(facts.design.batch)} per chiamata, senza prosa: il concept, il progetto di ogni capitolo e il registro dei segreti. Nessuna scena è scritta e il libro non è giudicato.`
           : `The design covers ${count(facts.chapters)} chapters, ${count(facts.design.batch)} a call, with no prose: the concept, the design of every chapter and the ledger of the secrets. No scene is written and the book is not judged.`);
@@ -179,8 +186,8 @@ export function estimateTexts(italian: boolean) {
 
 /** What the assumptions say of the book, so that the words are built in one place. */
 export interface AssumptionFacts {
-  /** A design run: the chapters of a call, its reviews at most and the reviews the readers read before, and what it does besides the plain design (`DesignWorkflow`). */
-  design?: { batch: number; rounds: number; readerRounds: number; workflow?: { rubric: boolean; chapterReview: boolean; coherence: boolean; alternatives: number } };
+  /** A design run: the chapters of a call, its reviews at most and the reviews the readers read before, and what it does besides the plain design (`DesignWorkflow`); `complete`: «Review and complete», the author's chapters it reviews. */
+  design?: { batch: number; rounds: number; readerRounds: number; workflow?: { rubric: boolean; chapterReview: boolean; coherence: boolean; alternatives: number }; complete?: number };
   chapters: number;
   written: number;
   toWrite: number;

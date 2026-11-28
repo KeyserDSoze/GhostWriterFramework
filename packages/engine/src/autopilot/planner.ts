@@ -9,6 +9,7 @@ import { readerGate, reviewMaxRounds, reviewReaderRounds, reviewWildcards, type 
 import { blockersText, readerStanding } from "./review-readers.js";
 import { planBatchChapters } from "./design.js";
 import { nextDesignReview, nextPitchStep } from "./design-flow.js";
+import { completionReadyMessage, describeCompletionTask, nextCompletionStep } from "./design-complete.js";
 import { designActive } from "./state.js";
 import type { AutopilotInsightFigures, AutopilotMessageCode, AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, InsightTone, PlannedChapter, PlannedScene } from "./types.js";
 
@@ -339,6 +340,10 @@ export function describeTask(kind: AutopilotTaskKind, language: string, params: 
         reason: text(language, "Every chapter has its targets and the book does not: the director says which chapters to change, what to change in each and why.", "Ogni capitolo ha i suoi obiettivi e il libro no: il direttore dice quali capitoli cambiare, cosa cambiare in ciascuno e perché."),
         next: text(language, "The corrections are carried out chapter by chapter, then the book is judged again.", "Le correzioni vengono eseguite capitolo per capitolo, poi il libro viene giudicato di nuovo."),
       };
+    case "design-complete":
+    case "design-complete-reader":
+    case "design-complete-review":
+      return describeCompletionTask(kind, language, params)!;
     case "freeze":
       return {
         title: text(language, "Freezing the approved chapters", "Congelamento dei capitoli approvati"),
@@ -960,6 +965,17 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
     return { kind: "stop", status: "paused", message: told.title, code: "bookRoundProposed" };
   }
 
+  // «Review and complete» (#125): the author's chapters are reviewed and what they lack is proposed, and nothing else runs meanwhile; the run stops once when it is over.
+  if (state.design?.mode === "complete") {
+    const completing = nextCompletionStep(state, ctx.readers);
+    if (completing?.kind === "design-complete") {
+      return { kind: "task", task: { ...descriptor("design-complete", "plan", ctx, { from: completing.chapters[0], to: completing.chapters[completing.chapters.length - 1] }), chapterNumber: completing.chapters[0] } };
+    }
+    if (completing?.kind === "design-complete-reader") return { kind: "task", task: descriptor("design-complete-reader", "plan", ctx, { reader: completing.reader, readerName: completing.readerName }) };
+    if (completing) return { kind: "task", task: descriptor("design-complete-review", "plan", ctx) };
+    if (state.design.completion?.awaitingAuthor) return { kind: "stop", status: "paused", message: completionReadyMessage(state.design.completion, ctx.language), code: "designCompletionReady" };
+  }
+
   // A change of the author's being reviewed comes before the plan: its chapter is reviewed (or written again) first.
   const edited = editedChapter(state);
   if (edited) return chapterStep(edited, state, ctx);
@@ -1009,7 +1025,7 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
   if (designing) return { kind: "stop", status: "paused", message: designReadyMessage(state, italian), code: "designReady" };
 
   if (plan.awaitingAuthor) {
-    if (state.design?.endedAt && state.design.outcome !== "author") return { kind: "stop", status: "paused", message: designReadyMessage(state, italian), code: "designReady" };
+    if (state.design?.endedAt && state.design.outcome !== "author" && state.design.mode !== "complete") return { kind: "stop", status: "paused", message: designReadyMessage(state, italian), code: "designReady" };
     return { kind: "stop", status: "paused", message: italian ? "Il piano è pronto: rileggilo e riprendi quando vuoi." : "The plan is ready: read it and resume when you want." };
   }
 

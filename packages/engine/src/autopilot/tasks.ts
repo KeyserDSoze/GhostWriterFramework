@@ -105,6 +105,7 @@ import { rewriteExtras } from "./design-rewrite.js";
 import { DESIGN_RUBRIC_NOTES, DESIGN_RUBRIC_TOKENS, designRubricRule, readDesignRubric, recordRubric, rubricLine, rubricOverall, rubricProposals } from "./design-rubric.js";
 import { designFlow } from "./design-state.js";
 import { outlineDesignGaps } from "./outline-check.js";
+import { runDesignComplete, runDesignCompleteReader, runDesignCompleteReview } from "./design-complete-run.js";
 import {
   CHAPTER_REVIEW_TOOL,
   CHAPTER_SUMMARY_TOOL,
@@ -317,7 +318,7 @@ export function outlineOf(ctx: TaskContext): OutlineReader {
 }
 
 /** What binds the autopilot in the outline: every entry but the autopilot's own untouched ones, and the description the author wrote. */
-interface AuthorOutline {
+export interface AuthorOutline {
   /** The working title and the description of the book, when the author wrote them. */
   book?: string;
   entries: Map<number, OutlineChapterEntry>;
@@ -333,7 +334,7 @@ const OUTLINE_BATCH_CHARS = 24_000;
 const OUTLINE_CONTEXT_CHARS = 12_000;
 const OUTLINE_ENTRY_MIN_CHARS = 400;
 
-async function authorOutline(ctx: TaskContext): Promise<AuthorOutline> {
+export async function authorOutline(ctx: TaskContext): Promise<AuthorOutline> {
   const outline = outlineOf(ctx);
   if (outline.empty) return { entries: new Map(), any: false, lastChapter: 0 };
   const [book, chapters] = await Promise.all([outline.book(), outline.chapters()]);
@@ -363,7 +364,7 @@ const OUTLINE_ENTRIES: ChapterFormat<OutlineChapterEntry> = {
   },
 };
 
-function outlineBookSection(view: AuthorOutline): string {
+export function outlineBookSection(view: AuthorOutline): string {
   return view.book ? `AUTHOR'S OUTLINE, THE BOOK (binding):\n${view.book}` : "";
 }
 
@@ -471,7 +472,7 @@ async function fillOutline(ctx: TaskContext, planned: PlannedChapter[], imported
 }
 
 /** The style a step that judges is given, among the data, and the instruction to judge with it; nothing without a style. */
-function evaluationStyleOf(ctx: TaskContext, kind: Parameters<typeof evaluationStyleInstruction>[0]): { block: string; rule: string } {
+export function evaluationStyleOf(ctx: TaskContext, kind: Parameters<typeof evaluationStyleInstruction>[0]): { block: string; rule: string } {
   const block = evaluationStyleBlock(ctx.evaluationStyle, { criteria: kind !== "plan" });
   return block ? { block, rule: evaluationStyleInstruction(kind) } : { block: "", rule: "" };
 }
@@ -1264,7 +1265,7 @@ export async function readerReply<T>(ctx: TaskContext, reply: Promise<AiResponse
 }
 
 /** The reader is left out and the author is told; the review goes on with the readers who answered. */
-function skipReader(ctx: TaskContext, name: string, error: Error): TaskResult {
+export function skipReader(ctx: TaskContext, name: string, error: Error): TaskResult {
   const italian = isItalian(ctx.language);
   ctx.insight("warning", italian ? `${name} saltato: la risposta è rimasta incompleta anche dopo un nuovo tentativo.` : `${name} skipped: the reply stayed incomplete after a retry.`, error.message);
   return { changes: [], summary: italian ? `${name} saltato (risposta incompleta).` : `${name} skipped (incomplete reply).` };
@@ -2958,5 +2959,8 @@ export const TASK_EXECUTORS: Record<TaskDescriptor["kind"], (ctx: TaskContext) =
   final: runFinal,
   "book-corrections": runBookCorrections,
   wildcards: runDesignWildcards,
+  "design-complete": runDesignComplete,
+  "design-complete-reader": runDesignCompleteReader,
+  "design-complete-review": runDesignCompleteReview,
   freeze: runFreeze,
 };

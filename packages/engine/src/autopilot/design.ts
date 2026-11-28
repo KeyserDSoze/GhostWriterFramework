@@ -12,6 +12,7 @@ import { isItalian } from "../util/text.js";
 import { isPlannedChapterWritten } from "./chapter-state.js";
 import { STALE_SIGNATURE } from "./design-flow.js";
 import { readWorkflowInput } from "./design-state.js";
+import { newCompletion } from "./design-complete.js";
 import { normalizeReviewPolicy } from "./review-policy.js";
 import { MAX_BOOK_CHAPTERS, designActive, designMaxRounds } from "./state.js";
 import { DESIGN_BATCH_CHAPTERS, type AutopilotDesign, type AutopilotState, type DesignOutcome, type DesignPolicy, type DesignStartInput } from "./types.js";
@@ -37,11 +38,14 @@ export type AutopilotDesignErrorCode =
   | "design_no_chapters"
   | "no_findings"
   | "unknown_finding"
-  | "not_fixable";
+  | "not_fixable"
+  | "no_proposals"
+  | "stale";
 
 /**
  * A design run that cannot begin: what was asked is not one (`invalid_request`), the autopilot has already written chapters of the book (`design_written`: a design is
- * for a book whose chapters are not written yet), or the book has no description to design it from (`design_no_description`).
+ * for a book whose chapters are not written yet), the book has no description to design it from (`design_no_description`), or no chapter of the author's to review and
+ * complete (`design_no_chapters`). Applying the proposals of «Review and complete» is refused when none waits (`no_proposals`) or the author looked at another run's (`stale`).
  */
 export class AutopilotDesignError extends Error {
   constructor(readonly code: AutopilotDesignErrorCode, message: string) {
@@ -58,12 +62,18 @@ export function normalizeDesignStart(value: unknown): DesignStartInput | false |
   if (value === undefined || value === null) return undefined;
   if (value === false) return false;
   if (value === true) return {};
-  if (typeof value !== "object" || Array.isArray(value)) throw new AutopilotDesignError("invalid_request", "design must be true, false or { chapters?, review?, workflow?, reviewOnly? }.");
+  if (typeof value !== "object" || Array.isArray(value)) throw new AutopilotDesignError("invalid_request", "design must be true, false or { chapters?, review?, workflow?, reviewOnly?, mode? }.");
   const source = value as Record<string, unknown>;
-  const unknown = Object.keys(source).filter((key) => key !== "chapters" && key !== "review" && key !== "workflow" && key !== "reviewOnly");
-  if (unknown.length) throw new AutopilotDesignError("invalid_request", `design does not take ${unknown.map((key) => `«${key}»`).join(", ")}: it takes chapters, review, workflow and reviewOnly.`);
+  const unknown = Object.keys(source).filter((key) => key !== "chapters" && key !== "review" && key !== "workflow" && key !== "reviewOnly" && key !== "mode");
+  if (unknown.length) throw new AutopilotDesignError("invalid_request", `design does not take ${unknown.map((key) => `«${key}»`).join(", ")}: it takes chapters, review, workflow, reviewOnly and mode.`);
   if (source.reviewOnly !== undefined) return { reviewOnly: readReviewOnly(source) };
   const input: DesignStartInput = {};
+  if (source.mode !== undefined) {
+    if (source.mode !== "plan" && source.mode !== "complete") throw new AutopilotDesignError("invalid_request", "design.mode must be plan or complete.");
+    // «Review and complete» reviews the chapters the Synopsis has: it plans none, so it is asked for no number of chapters.
+    if (source.mode === "complete" && source.chapters !== undefined) throw new AutopilotDesignError("invalid_request", "design.chapters is for a plan: «Review and complete» reviews the chapters the Synopsis has.");
+    if (source.mode === "complete") input.mode = "complete";
+  }
   if (source.chapters !== undefined) {
     const chapters = source.chapters;
     if (typeof chapters !== "number" || !Number.isSafeInteger(chapters) || chapters < 1 || chapters > DESIGN_MAX_CHAPTERS) {
@@ -126,7 +136,7 @@ function policyOf(update: DesignStartInput["review"], base: DesignPolicy | undef
  * is turned on while the design goes on (`AutopilotDesign.pauseAfterPlan` keeps the author's). Throws `AutopilotDesignError` when the autopilot has written chapters
  * of the book, or the book has no description.
  */
-export function beginDesign(state: AutopilotState, input: DesignStartInput, context: { now: string; outlineChapters: number; idea: string; language?: string }): { state: AutopilotState; chapters: number } {
+export function beginDesign(state: AutopilotState, input: DesignStartInput, context: { now: string; outlineChapters: number; idea: string; language?: string; authorChapters?: readonly number[] }): { state: AutopilotState; chapters: number } {
   const italian = isItalian(context.language);
   const written = chaptersWrittenByAutopilot(state);
   if (written.length) {
@@ -134,18 +144,21 @@ export function beginDesign(state: AutopilotState, input: DesignStartInput, cont
       ? `L'autopilot ha già scritto ${written.length === 1 ? "il capitolo" : "i capitoli"} ${written.join(", ")}: la progettazione è per un libro i cui capitoli non sono ancora scritti.`
       : `The autopilot has already written chapter${written.length === 1 ? "" : "s"} ${written.join(", ")}: a design is for a book whose chapters are not written yet.`);
   }
+  if (input.mode === "complete") return { state: beginCompletion(state, input, context), chapters: context.outlineChapters };
   if (!context.idea.trim()) {
     throw new AutopilotDesignError("design_no_description", italian
       ? "Il libro non ha una descrizione: scrivila nella Sinossi, poi progetta il libro."
       : "The book has no description: write it in the Synopsis, then design the book.");
   }
   const previous = state.design;
-  const going = designActive(state) ? previous : undefined;
+  // A «Review and complete» that goes on is not this design: a design of the book begins.
+  const going = designActive(state) && previous?.mode !== "complete" ? previous : undefined;
   const asked = input.chapters ?? going?.chapters ?? (context.outlineChapters || DESIGN_DEFAULT_CHAPTERS);
   const chapters = Math.min(MAX_BOOK_CHAPTERS, Math.max(context.outlineChapters, Math.min(DESIGN_MAX_CHAPTERS, Math.max(1, asked))));
   const review = policyOf(input.review, previous?.review);
   const next: AutopilotState = structuredClone(state);
-  const pauseAfterPlan = going?.pauseAfterPlan ?? state.options.pauseAfterPlan;
+  // The author's own setting, even when the design that went on was another («Review and complete»): it turned the option on.
+  const pauseAfterPlan = (designActive(state) ? previous?.pauseAfterPlan : undefined) ?? state.options.pauseAfterPlan;
   next.options = { ...next.options, pauseAfterPlan: true };
   const workflow = input.workflow === null ? undefined : input.workflow ?? previous?.workflow;
   const design: AutopilotDesign = {
@@ -199,6 +212,41 @@ export function beginDesignReview(state: AutopilotState, input: NonNullable<Desi
     ...(Object.keys(reviewed).length ? { reviewed } : {}),
     ...(coherence ? { coherence: input.chapters ? coherence : { ...coherence, sig: STALE_SIGNATURE } } : {}),
     reviewing: { startedAt: context.now, ...(input.chapters ? { chapters: input.chapters } : {}) },
+  };
+  return next;
+}
+
+/**
+ * The state a start of «Review and complete» makes (`DesignStartInput.mode`): the chapters of the author's it reviews (`authorChapters`, the entries with their text), no
+ * entry added, the plan as it is (nothing is planned again). One that goes on goes on with what it proposed; a new one begins with nothing proposed and its reviews at
+ * zero. A book needs no description for it: its chapters are what is reviewed. Throws `AutopilotDesignError` (`design_no_chapters`) without a chapter of the author's.
+ */
+function beginCompletion(state: AutopilotState, input: DesignStartInput, context: { now: string; outlineChapters: number; language?: string; authorChapters?: readonly number[] }): AutopilotState {
+  const chapters = [...(context.authorChapters ?? [])];
+  if (!chapters.length) {
+    throw new AutopilotDesignError("design_no_chapters", isItalian(context.language)
+      ? "La Sinossi non ha capitoli scritti da te: Rivedi e completa parte dai capitoli che hai scritto. Scrivili nella Sinossi, o progetta il libro."
+      : "The Synopsis has no chapter written by you: Review and complete starts from the chapters you wrote. Write them in the Synopsis, or design the book.");
+  }
+  const previous = state.design;
+  const going = designActive(state) && previous?.mode === "complete" ? previous : undefined;
+  const review = policyOf(input.review, previous?.review);
+  const next: AutopilotState = structuredClone(state);
+  const pauseAfterPlan = (designActive(state) ? previous?.pauseAfterPlan : undefined) ?? state.options.pauseAfterPlan;
+  next.options = { ...next.options, pauseAfterPlan: true };
+  // A chapter that is no longer the author's leaves what goes on; one that has become the author's is reviewed with the others.
+  const completion = going && next.design?.completion ? { ...next.design.completion, chapters } : newCompletion(chapters);
+  for (const key of Object.keys(completion.entries)) if (!chapters.includes(Number(key))) delete completion.entries[key];
+  delete completion.awaitingAuthor;
+  next.design = {
+    startedAt: going?.startedAt ?? context.now,
+    chapters: context.outlineChapters,
+    ...(review ? { review } : {}),
+    rounds: going?.rounds ?? [],
+    pauseAfterPlan,
+    ...(previous?.ledgers ? { ledgers: previous.ledgers } : {}),
+    mode: "complete",
+    completion,
   };
   return next;
 }

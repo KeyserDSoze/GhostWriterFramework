@@ -4,7 +4,7 @@ import type { AiPort } from "../ai/types.js";
 import { FrozenChapterError, freezeChapterChanges, markReviewedChanges, parseChapterFreeze, unfreezeChapterChanges } from "../book/freeze.js";
 import { writeOutlineBrief } from "../book/outline-brief.js";
 import { OutlineCache, OutlineReader } from "../book/outline.js";
-import { AUTOPILOT_ACTIVITY_FILE, AUTOPILOT_PLAN_FILE, AUTOPILOT_STATE_FILE, type EvaluationTarget } from "../book/paths.js";
+import { AUTOPILOT_ACTIVITY_FILE, AUTOPILOT_PLAN_FILE, AUTOPILOT_STATE_FILE, OUTLINE_CHANGES_FILE, type EvaluationTarget } from "../book/paths.js";
 import { SnapshotCache, loadBookSnapshot, type BookSnapshot } from "../book/snapshot.js";
 import { isBookConflictError, type BookFileChange, type BookStore } from "../book/store.js";
 import { askDirector, type AskDirectorResult } from "../director/opinion.js";
@@ -31,6 +31,8 @@ import { readBrief } from "./brief.js";
 import { createAnnotationsCampaign, readAnnotationNotes, type ReviseAnnotationsInput } from "./annotations.js";
 import { chooseDesignPitch, type DesignPitchChoice } from "./design-alternatives.js";
 import { decideFinding, type FindingDecisionInput } from "./design-coherence.js";
+import { AutopilotDesignError } from "./design.js";
+import { designProposalsChanges, type DesignProposalsDecision, type DesignProposalsResult } from "./design-complete-apply.js";
 import { RevisionCampaignError, cancelRevisionCampaign, createReviewCampaign, createRevisionCampaign, decideBookCorrections as decideCorrections, recordRevisionCampaign, type BookCorrectionsDecision, type ReviewBookInput, type ReviseChaptersInput, type RevisionCampaignResult } from "./campaign.js";
 import { createModelMemory, type AiModelMemory } from "../ai/memory.js";
 import { applyLiveAttempt, applyLiveProgress, startLive } from "./live.js";
@@ -899,6 +901,35 @@ export class AutopilotSession {
     if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
     const at = this.now().toISOString();
     return this.mutate("Autopilot: the author decided about a finding of the design", (state) => decideFinding(state, input, at), { create: false });
+  }
+
+  /**
+   * Apply what «Review and complete» proposes (#125): the proposals the author chose are written in one commit (`designProposalsChanges`: a field only where the entry still
+   * lacks it, a finding as a note for the ghostwriter of its chapter, a canon entry as a draft), the others are left out, and the journal of the Synopsis records the entries
+   * written, by the autopilot. Refused while a run goes on (`AutopilotBusyError`), and with an `AutopilotDesignError`: `invalid_request`, `no_proposals`, `stale`. Nothing is started.
+   */
+  async applyDesignProposals(decision: DesignProposalsDecision): Promise<DesignProposalsResult> {
+    if (this.starting) await this.starting.catch(() => undefined);
+    if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
+    const { store } = this.config;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const stored = await readStoredAutopilot(store);
+      assertStoredStateReadable(stored);
+      if (!stored.state) throw new AutopilotDesignError("no_proposals", "No proposal of «Review and complete» waits for a decision.");
+      const snapshot = await loadBookSnapshot(store, this.bookCache);
+      const [entries, journal] = await Promise.all([OutlineReader.of(store, snapshot, this.outlineCache).chapters(), store.read(OUTLINE_CHANGES_FILE)]);
+      const now = this.now();
+      const { state, changes, result } = await designProposalsChanges({ state: stored.state, decision, entries, snapshot, journal, now, language: languageCode(snapshot.book.language) });
+      const next = stampState(state, now);
+      try {
+        await store.commit([...changes, stateChange(next, stored.stateHash)], "Autopilot: the author applied the proposals of «Review and complete»");
+        this.emit({ type: "state", state: this.summarize(next) });
+        return result;
+      } catch (error) {
+        if (!isBookConflictError(error) || attempt === 4) throw error;
+      }
+    }
+    throw new Error("Could not apply the proposals.");
   }
 
   /** Cancel the chapters of the campaign that wait (the one being worked finishes): what the reason does with them is its own (`cancel`). Answers as `reviseChapters`. */

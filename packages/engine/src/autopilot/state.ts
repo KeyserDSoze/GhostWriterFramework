@@ -4,6 +4,7 @@ import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, a
 import { clipText, countWords } from "../util/text.js";
 import { nextPitchStep } from "./design-flow.js";
 import { normalizeDesignReviews } from "./design-state.js";
+import { completionWaiting, newCompletion, normalizeCompletion } from "./design-complete.js";
 import { normalizeErrorDetail, normalizeErrorKind } from "./errors.js";
 import { normalizeReviewPolicy } from "./review-policy.js";
 import { AUTOPILOT_PUBLISH_MODES, BOOK_CORRECTIONS_MAX, BOOK_CORRECTION_CHANGE_CHARACTERS, BOOK_CORRECTION_REASON_CHARACTERS, BOOK_MATERIAL_CHARACTERS, BOOK_POINTS_MAX, BOOK_POINT_CHARACTERS, BOOK_ROUNDS_KEPT, BOOK_ROUND_MODES, DESIGN_DEFAULT_ROUNDS, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, REVISION_CHAPTER_MODES, REVISION_CHAPTER_STATUSES, REVISION_REASONS } from "./types.js";
@@ -1143,7 +1144,14 @@ export function normalizeDesign(value: unknown): AutopilotDesign | undefined {
     ...(typeof source.pauseAfterPlan === "boolean" ? { pauseAfterPlan: source.pauseAfterPlan } : {}),
     ...(Object.keys(ledgers).length ? { ledgers } : {}),
     ...normalizeDesignReviews(source),
+    ...completionOf(source),
   };
+}
+
+/** «Review and complete» as the file says it: its mode and its proposals, or nothing (a design that plans the book). */
+function completionOf(source: Record<string, unknown>): Pick<AutopilotDesign, "mode" | "completion"> {
+  if (source.mode !== "complete") return {};
+  return { mode: "complete", completion: normalizeCompletion(source.completion) ?? newCompletion([]) };
 }
 
 /** Whether a design run goes on: the plan then never goes past its approval, and no prose is written. */
@@ -1169,6 +1177,7 @@ export function summarizeDesign(design: AutopilotDesign | undefined): AutopilotD
     ...(last ? { lastScore: last.score } : {}),
     ...(design.endedAt ? { endedAt: design.endedAt, outcome: design.outcome } : {}),
     ...(!design.endedAt && nextPitchStep({ design }) === "choose" ? { choosePitch: true } : {}),
+    ...(design.mode === "complete" ? { mode: "complete" as const, proposals: completionWaiting(design.completion) } : {}),
   };
 }
 
