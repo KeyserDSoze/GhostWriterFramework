@@ -1,6 +1,7 @@
 import { parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
 import { sha256Hex } from "../util/hash.js";
 import { clipText, isItalian, truncate } from "../util/text.js";
+import type { BibleThread } from "./bible.js";
 import { chapterNumberFromSlug } from "./paths.js";
 
 /**
@@ -500,7 +501,7 @@ export async function secretLedgerDigest(frontmatter: Record<string, unknown>): 
  * and the Synopsis in `outline/`, the story design, the world context, the characters, places, factions, items and secrets): the Bible composes them, and never
  * copies them here.
  *
- * - `bible/themes.md` (`type: bible`, `id: bible:themes`): the themes of the book (`themes`, a list) and its tone (`tone`).
+ * - `bible/themes.md` (`type: bible`, `id: bible:themes`): the themes of the book (`themes`, a list), its tone (`tone`) and its audience (`audience`).
  * - `bible/world.md` (`type: bible`, `id: bible:world`): the rules of the world the story must never break (`rules`, a list).
  *
  * The body of each file is free notes. A design run writes them when they are missing, and never rewrites them: they are the author's from then on.
@@ -512,6 +513,8 @@ export const BIBLE_WORLD_FILE = "bible/world.md";
 export interface BibleThemes {
   themes: string[];
   tone: string;
+  /** Who the book is for: the readers it is written for (their age, what they read, what they expect). */
+  audience: string;
   notes: string;
 }
 
@@ -533,7 +536,7 @@ function text(value: unknown): string {
 /** The themes and the tone of the book from `bible/themes.md` (empty when the file has none). */
 export function readBibleThemes(content: string | null | undefined): BibleThemes {
   const document = parseMarkdown(content ?? "");
-  return { themes: lines(document.frontmatter.themes), tone: text(document.frontmatter.tone), notes: document.body };
+  return { themes: lines(document.frontmatter.themes), tone: text(document.frontmatter.tone), audience: text(document.frontmatter.audience), notes: document.body };
 }
 
 /** The rules of the world from `bible/world.md` (empty when the file has none). */
@@ -547,6 +550,8 @@ export function serializeBibleThemes(value: Partial<BibleThemes>, existing?: str
   const document = parseMarkdown(existing ?? "");
   const themes = lines(value.themes ?? []);
   const tone = (value.tone ?? "").trim();
+  // The audience is kept as it is in the file when the caller does not say it: a caller that knows nothing of it must not take it away.
+  const audience = (value.audience ?? text(document.frontmatter.audience)).trim();
   return renderMarkdown({
     ...document.frontmatter,
     type: "bible",
@@ -554,6 +559,7 @@ export function serializeBibleThemes(value: Partial<BibleThemes>, existing?: str
     title: typeof document.frontmatter.title === "string" && document.frontmatter.title.trim() ? document.frontmatter.title : "Themes and tone",
     themes: themes.length ? themes : undefined,
     tone: tone || undefined,
+    audience: audience || undefined,
   }, (value.notes ?? document.body ?? "").trim());
 }
 
@@ -586,6 +592,10 @@ export function serializeBibleWorld(value: Partial<BibleWorld>, existing?: strin
  * - `knowledge-before-learning`: the point of view of a chapter reveals a secret that character only learns in a later chapter.
  * - `unknown-character`, `unknown-location`: an entry names a character, or a setting, the canon does not have (a new minor character may be fine).
  * - `design-incomplete`: an entry has a design without some of its key fields (`outlineDesignGaps`, in `autopilot/outline-check.ts`).
+ *
+ * The checks that came later (what is told too early, threads without a payoff, who knows what, the timeline, a character in two places, names the canon does not have) are
+ * `./design-checks.ts`'s (`designFindings` runs them all with these, `findingText` tells any finding): the findings are the same kind, and this module stays the small one the
+ * composer of the outline loads. `spoiler-in-prose` is the one that reads written text (`spoilerChecks`, `./spoilers.ts`).
  */
 export type DesignFindingCode =
   | "reveal-missing"
@@ -597,7 +607,18 @@ export type DesignFindingCode =
   | "knowledge-before-learning"
   | "unknown-character"
   | "unknown-location"
-  | "design-incomplete";
+  | "design-incomplete"
+  | "reveal-too-early"
+  | "hint-too-explicit"
+  | "character-acts-on-secret"
+  | "thread-without-payoff"
+  | "thread-payoff-before-setup"
+  | "thread-out-of-range"
+  | "timeline-date-mismatch"
+  | "timeline-order"
+  | "character-in-two-places"
+  | "unknown-secret"
+  | "spoiler-in-prose";
 
 export interface DesignFinding {
   code: DesignFindingCode;
@@ -612,6 +633,16 @@ export interface DesignFinding {
   other?: number;
   /** The key fields a design lacks (`design-incomplete`). */
   fields?: OutlineDesignKey[];
+  /** The line of the design, the clue or the text that the finding is about, cut short. */
+  excerpt?: string;
+  /** The field of the design it is about (`hint-too-explicit`). */
+  field?: OutlineDesignKey;
+  /** The thread of `bible/threads.md` it is about. */
+  thread?: { id: string; title: string };
+  /** The timeline event it is about. */
+  event?: { slug: string; title: string };
+  /** The two places a character is in at once (`character-in-two-places`). */
+  places?: [string, string];
 }
 
 export interface DesignCheckSecret {
@@ -632,8 +663,21 @@ export interface DesignCheckCanon {
   aliases?: readonly string[];
 }
 
+/** A timeline event as the checks read it: its date as the file says it, the characters in it, and the chapter it is anchored to (`reveal_in`, else `known_from`). */
+export interface DesignCheckTimelineEvent {
+  slug: string;
+  title: string;
+  date?: string;
+  participants: readonly string[];
+  chapter?: number;
+}
+
 export interface DesignCheckInput {
   chapters: ReadonlyArray<{ number: number; title?: string; design?: OutlineChapterDesign }>;
+  /** The events of the timeline (`timelines/events/`): absent, the checks that need them say nothing. */
+  timeline?: readonly DesignCheckTimelineEvent[];
+  /** The threads of `bible/threads.md`: absent, the checks of the threads say nothing. */
+  threads?: readonly BibleThread[];
   secrets: readonly DesignCheckSecret[];
   characters: readonly DesignCheckCanon[];
   locations: readonly DesignCheckCanon[];
@@ -778,6 +822,8 @@ export function designFindingText(finding: DesignFinding, language: string): str
     case "knowledge-before-learning":
       return it ? `Nel capitolo ${chapter} il punto di vista di ${finding.name} rivela il segreto ${secret}, che ${finding.name} scopre solo nel capitolo ${other}.` : `In chapter ${chapter} the point of view of ${finding.name} reveals the secret ${secret}, which ${finding.name} only learns in chapter ${other}.`;
     case "unknown-character":
+      if (finding.secret) return it ? `Il segreto ${secret} nomina «${finding.name}», che non è tra i personaggi del canone.` : `The secret ${secret} names «${finding.name}», who is not among the characters of the canon.`;
+      if (finding.event) return it ? `L'evento «${finding.event.title}» della cronologia nomina «${finding.name}», che non è tra i personaggi del canone.` : `The timeline event «${finding.event.title}» names «${finding.name}», who is not among the characters of the canon.`;
       return it ? `Il capitolo ${chapter} nomina «${finding.name}», che non è tra i personaggi del canone.` : `Chapter ${chapter} names «${finding.name}», who is not among the characters of the canon.`;
     case "unknown-location":
       return it ? `L'ambientazione del capitolo ${chapter} («${finding.name}») non nomina un luogo del canone.` : `The setting of chapter ${chapter} («${finding.name}») names no place of the canon.`;
@@ -785,5 +831,8 @@ export function designFindingText(finding: DesignFinding, language: string): str
       const fields = (finding.fields ?? []).map((field) => FIELD_WORDS[field][it ? 1 : 0]).join(", ");
       return it ? `Il progetto del capitolo ${chapter} non dice: ${fields}.` : `The design of chapter ${chapter} does not say: ${fields}.`;
     }
+    default:
+      // The findings of `./design-checks.ts` are told there (`findingText`): that module is the one a page that shows findings loads.
+      return finding.code;
   }
 }

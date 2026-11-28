@@ -14,6 +14,10 @@ export * from "./book/freeze.js";
 export * from "./book/context.js";
 export * from "./book/outline.js";
 export * from "./book/design.js";
+export * from "./book/bible.js";
+export * from "./book/design-checks.js";
+export * from "./book/spoilers.js";
+export * from "./book/design-load.js";
 export * from "./book/outline-brief.js";
 export * from "./book/outline-journal.js";
 
@@ -47,6 +51,7 @@ export * from "./director/opinion.js";
 export * from "./autopilot/types.js";
 export * from "./autopilot/state.js";
 export * from "./autopilot/errors.js";
+export * from "./autopilot/decisions-guard.js";
 export * from "./autopilot/planner.js";
 export * from "./autopilot/outline.js";
 export * from "./autopilot/outline-check.js";

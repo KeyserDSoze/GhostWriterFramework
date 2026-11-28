@@ -109,9 +109,12 @@ test("a point of view cannot reveal what that character learns later; a characte
 test("the bible files: themes and tone, rules of the world, read softly and written with the keys they had", () => {
   const themes = serializeBibleThemes({ themes: ["truth", " inheritance "], tone: "Melancholic" });
   assert.match(themes, /^---\ntype: bible\nid: bible:themes\ntitle: Themes and tone\nthemes:\n  - truth\n  - inheritance\ntone: Melancholic\n---/);
-  assert.deepEqual(readBibleThemes(themes), { themes: ["truth", "inheritance"], tone: "Melancholic", notes: "" });
+  assert.deepEqual(readBibleThemes(themes), { themes: ["truth", "inheritance"], tone: "Melancholic", audience: "", notes: "" });
   const custom = serializeBibleThemes({ themes: ["grief"] }, "---\ntype: bible\nid: bible:themes\ntitle: Temi\nowner: me\n---\n\nMy notes.");
-  assert.deepEqual(readBibleThemes(custom), { themes: ["grief"], tone: "", notes: "My notes." });
+  assert.deepEqual(readBibleThemes(custom), { themes: ["grief"], tone: "", audience: "", notes: "My notes." });
+  const audience = serializeBibleThemes({ themes: ["grief"], audience: "Adults who read slow mysteries" }, custom);
+  assert.equal(readBibleThemes(audience).audience, "Adults who read slow mysteries");
+  assert.equal(readBibleThemes(serializeBibleThemes({ themes: ["grief"] }, audience)).audience, "Adults who read slow mysteries", "a caller that does not say the audience keeps it");
   assert.match(custom, /owner: me/);
   assert.match(custom, /title: Temi/);
   const world = serializeBibleWorld({ rules: ["Glass remembers", ""] });

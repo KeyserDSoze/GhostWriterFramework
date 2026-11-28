@@ -1,7 +1,9 @@
 import { referencedChapterNumber } from "../book/context.js";
 import { outlineChapterPath } from "../book/paths.js";
 import { serializeOutlineChapter, type OutlineReader } from "../book/outline.js";
-import { designFindingText, readSecretLedger, type DesignCheckInput, type DesignFinding } from "../book/design.js";
+import { readSecretLedger, type DesignCheckInput, type DesignFinding } from "../book/design.js";
+import { findingText } from "../book/design-checks.js";
+import { loadThreads, loadTimelineEvents } from "../book/design-load.js";
 import type { BookSnapshot } from "../book/snapshot.js";
 import type { BookFileChange, BookStore } from "../book/store.js";
 import { parseMarkdown } from "../markdown/frontmatter.js";
@@ -207,11 +209,14 @@ export async function loadDesignCheckInput(store: BookStore, snapshot: BookSnaps
   }));
   const canonOf = (kind: "character" | "location") => snapshot.canon.filter((entry) => entry.kind === kind).map((entry) => ({ slug: entry.slug, name: entry.name, aliases: entry.aliases }));
   const lastPlanned = (state.plan?.chapters ?? []).reduce((highest, chapter) => Math.max(highest, chapter.number), 0);
+  const [timeline, threads] = await Promise.all([loadTimelineEvents(store, snapshot), loadThreads(store)]);
   return {
     chapters: entries.map((entry) => ({ number: entry.number, title: entry.title, ...(entry.design ? { design: entry.design } : {}) })),
     secrets,
     characters: canonOf("character"),
     locations: canonOf("location"),
+    timeline,
+    threads,
     lastChapter: Math.max(outline.last, lastPlanned),
   };
 }
@@ -225,7 +230,7 @@ export function designFindingsInsight(findings: readonly DesignFinding[], langua
   const italian = isItalian(language);
   const ordered = [...findings].sort((left, right) => (left.severity === right.severity ? 0 : left.severity === "warning" ? -1 : 1));
   const warnings = findings.filter((finding) => finding.severity === "warning").length;
-  const shown = ordered.slice(0, FINDINGS_IN_INSIGHT).map((finding) => `- ${designFindingText(finding, language)}`);
+  const shown = ordered.slice(0, FINDINGS_IN_INSIGHT).map((finding) => `- ${findingText(finding, language)}`);
   const more = findings.length - shown.length;
   return {
     tone: warnings ? "warning" : "info",

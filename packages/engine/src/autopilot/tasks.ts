@@ -42,14 +42,15 @@ import {
   type CanonKind,
 } from "../book/paths.js";
 import { chapterFreezeRecord, freezeChapterChanges, frozenChanges, markReviewedChanges, type ChapterFreeze } from "../book/freeze.js";
+import { decisionsBlock, type BibleDecisions } from "../book/bible.js";
+import { designFindings, findingText } from "../book/design-checks.js";
+import { spoilerFindingsOfChapter } from "../book/design-load.js";
 import type { BookSnapshot, ChapterInfo } from "../book/snapshot.js";
 import type { BookFileChange, BookStore } from "../book/store.js";
 import { OUTLINE_TITLE_MAX_CHARS, OutlineReader, outlineBookDigest, outlineDesignOf, outlineEntryDigest, serializeOutlineBook, serializeOutlineChapter, wholeDesignPatch, type OutlineChapterEntry } from "../book/outline.js";
 import {
   BIBLE_THEMES_FILE,
   BIBLE_WORLD_FILE,
-  designChecks,
-  designFindingText,
   designText,
   mergeSecretLedger,
   normalizeDesignPatch,
@@ -159,6 +160,8 @@ export interface TaskContext {
   evaluationStyle?: EvaluationStyle | null;
   /** The book's outline, read through the run's cache. Absent: it is read from the snapshot. */
   outline?: OutlineReader;
+  /** The decisions and the open questions of the book (`bible/decisions.md`): the locked ones bind every step (`authorRules`). Absent: the book has none. */
+  decisions?: BibleDecisions;
 }
 
 export interface TaskResult {
@@ -192,6 +195,8 @@ function authorRules(ctx: TaskContext, includeNotes = true): string {
   const blocks: string[] = [];
   if (ctx.state.constraints.length) blocks.push(`Binding author rules:\n${bulletList(ctx.state.constraints)}`);
   if (includeNotes && ctx.notes.length) blocks.push(`Author notes for this step (they override your own choices):\n${bulletList(ctx.notes.map((note) => note.text))}`);
+  const decisions = ctx.decisions ? decisionsBlock(ctx.decisions, undefined, { skipMirrored: true }) : "";
+  if (decisions) blocks.push(decisions);
   return blocks.join("\n\n");
 }
 
@@ -1432,7 +1437,7 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
     designContext(ctx),
     designedEntriesSection(ctx, undefined, undefined, "THE DESIGN OF EVERY CHAPTER"),
   ]);
-  const findings: DesignFinding[] = [...designChecks(checkInput), ...outlineDesignGaps(checkInput.chapters)];
+  const findings: DesignFinding[] = [...designFindings(checkInput), ...outlineDesignGaps(checkInput.chapters)];
   const told = designFindingsInsight(findings, ctx.language);
   if (told) ctx.insight(told.tone, told.title, told.detail, { code: "designChecks" });
   const style = evaluationStyleOf(ctx, "plan");
@@ -1456,7 +1461,7 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
       ...designData.sections,
       listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
       entriesSection,
-      findings.length ? `DESIGN CHECKS (found without a model):\n${findings.slice(0, 30).map((finding) => `- ${designFindingText(finding, "en")}`).join("\n")}${findings.length > 30 ? `\n- … and ${findings.length - 30} more` : ""}` : "DESIGN CHECKS (found without a model): nothing.",
+      findings.length ? `DESIGN CHECKS (found without a model):\n${findings.slice(0, 30).map((finding) => `- ${findingText(finding, "en")}`).join("\n")}${findings.length > 30 ? `\n- … and ${findings.length - 30} more` : ""}` : "DESIGN CHECKS (found without a model): nothing.",
       plan.readerReactions.length
         ? `SIMULATED READERS:\n${plan.readerReactions.map((reaction) => `- ${reaction.name} (weight ${ctx.director.readerWeights[reaction.slug] ?? 1}): ${reaction.interest}/10 — ${reaction.reaction}${reaction.concerns.length ? ` Concerns: ${reaction.concerns.join("; ")}.` : ""}${reaction.wishes.length ? ` Wishes: ${reaction.wishes.join("; ")}.` : ""}`).join("\n")}`
         : "",
@@ -2138,6 +2143,7 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   const perScene = sceneLimit(ctx, Math.max(3000, Math.floor(60000 / Math.max(1, source.paragraphs.length))));
   const style = evaluationStyleOf(ctx, "chapter");
   const authorNote = review.authorEdit ? startedReview(ctx.state)?.note : undefined;
+  const spoilers = (await spoilerFindingsOfChapter(ctx.store, ctx.snapshot, { number: chapter.number, text: source.readerText }, new Map(ctx.state.concept.secrets.map((secret) => [secret.slug, secret.revealChapter])))).map((finding) => `- ${findingText(finding, "en")}`).join("\n");
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.director,
     label: `autopilot:director-review:${chapter.number}`,
@@ -2151,6 +2157,7 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
       `SCENE PLANS:\n${chapter.scenes.map((scene) => `- Scene ${scene.number} «${scene.title}»: ${scene.goal}`).join("\n")}`,
       resume ? `STORY SO FAR (before this chapter):\n${resume}` : "",
       secrets ? `SECRETS AND REVEAL RULES:\n${secrets}` : "",
+      spoilers ? `SPOILER CHECKS (found without a model: a sentence of this chapter states a secret before its reveal; judge each, they are evidence, not verdicts):\n${spoilers}` : "",
       review.readerScores.length
         ? `SIMULATED READERS:\n${review.readerScores.map((score) => `- ${score.name} (weight ${ctx.director.readerWeights[score.slug] ?? 1}): ${score.score}/10. Main problem: ${score.mainProblem}. Priority: ${score.prioritySuggestion}`).join("\n")}`
         : "",

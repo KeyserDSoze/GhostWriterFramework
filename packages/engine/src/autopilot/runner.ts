@@ -11,6 +11,9 @@ import type { ReaderPersonaProfile } from "../profiles/readers.js";
 import { abortError, isAbortError, sleep } from "../util/abort.js";
 import { randomId } from "../util/hash.js";
 import { StructuredReplyError } from "../util/json.js";
+import type { BibleDecisions } from "../book/bible.js";
+import { loadDecisions } from "../book/design-load.js";
+import { guardLockedDecisions, syncDirectorQuestions } from "./decisions-guard.js";
 import { currentRequest, unescapePromptDataDeep } from "../prompt/trust.js";
 import { isItalian, languageCode, tail, truncate } from "../util/text.js";
 import { RunCalls, schemaHashOf, statusOf, type CallEndInfo } from "./calls/run-calls.js";
@@ -726,6 +729,8 @@ function resumedAfterRestartTitle(italian: boolean): string {
 }
 
 interface StepContext {
+  /** The decisions and the open questions of the book (`bible/decisions.md`). */
+  decisions: BibleDecisions;
   planner: PlannerContext;
   director: DirectorProfile;
   panel: ReaderPersonaProfile[];
@@ -1004,16 +1009,18 @@ export class AutopilotRun {
     const language = languageCode(snapshot.book.language);
     this.language = language;
     const outline = OutlineReader.of(this.store, snapshot, this.outlineCache);
-    const [director, panel, design, evaluationStyle, lastChapter] = await Promise.all([
+    const [director, panel, design, evaluationStyle, lastChapter, decisions] = await Promise.all([
       loadDirectorProfile(this.store, language),
       loadReaderPanel(this.store, snapshot),
       readBody(this.store, STORY_DESIGN_FILE, 20000),
       loadEvaluationStyle(this.store),
       // The chapters of the book are the outline's: the last entry's number (read from the index, without reading an entry).
       outline.last,
+      loadDecisions(this.store),
     ]);
     const readers = activeReaders(panel, director, state.options.maxReaders).map((reader) => ({ slug: reader.slug, name: reader.name }));
     return {
+      decisions,
       planner: { snapshot, director, readers, language, storyDesignThin: isThinDocument(design), report: (note) => this.announce(note), outline: { lastChapter } },
       director,
       panel,
@@ -1493,11 +1500,16 @@ export class AutopilotRun {
           }),
           evaluationStyle: context.evaluationStyle,
           outline: context.outline,
+          decisions: context.decisions,
         };
         const result = await TASK_EXECUTORS[task.kind](taskContext);
+        // A locked decision of the author binds the step: a change that contradicts one is not committed (the step is repeated once with the reason).
+        await guardLockedDecisions(this.store, context.decisions, result.changes);
         const finishedAt = this.now();
         const applied = new Set(notes.map((note) => note.id));
-        const changes = normalizeChanges(result.changes);
+        // The director's question about the story is an open question of the book too (`bible/decisions.md`), and closed there when the author has answered.
+        const questionChange = await syncDirectorQuestions(this.store, working, finishedAt);
+        const changes = normalizeChanges(questionChange ? [...result.changes, questionChange] : result.changes);
         const done: AutopilotActivity = {
           ...activity,
           status: "succeeded",
