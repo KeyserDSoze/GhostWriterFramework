@@ -135,7 +135,7 @@ export function AnnotationFixDialog({ bookId, request, catalog, sceneNumber, onC
               <Button type="button" variant="outline" disabled={busy || !annotation} onClick={() => annotation && void fix.ask(annotation, instruction)} className="[@media(pointer:coarse)]:h-11">
                 <Sparkles aria-hidden="true" />{state.proposal !== undefined ? t("annotationsPage.fix.retry") : t("annotationsPage.fix.ask")}
               </Button>
-              <Button type="button" disabled={busy || state.phase !== "proposed" || final === original || !final.trim()} onClick={() => void apply()} className="[@media(pointer:coarse)]:h-11">{t("annotationsPage.fix.apply")}</Button>
+              {state.proposal !== undefined && <Button type="button" disabled={busy || state.phase !== "proposed" || final === original || !final.trim()} onClick={() => void apply()} className="[@media(pointer:coarse)]:h-11">{t("annotationsPage.fix.apply")}</Button>}
             </>
           )}
         </div>
