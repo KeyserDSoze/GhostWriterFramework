@@ -31,7 +31,7 @@ export const DAILY_MONTHS = 3;
  * Where a call came from, for the totals of the person: the autopilot (every call of a run, whatever its capability), the Copilot, the actions of the
  * editor, the audit, the readers' evaluations, research, images and voice, and anything else. Decided once, by `usageSource`.
  */
-export const USAGE_SOURCES = ["autopilot", "copilot", "editor-actions", "audit", "reader-evaluation", "research", "media", "other"] as const;
+export const USAGE_SOURCES = ["autopilot", "copilot", "editor-actions", "audit", "reader-evaluation", "ideas", "research", "media", "other"] as const;
 export type UsageSource = (typeof USAGE_SOURCES)[number];
 
 /** The numbers of a row. Every one only ever grows. */

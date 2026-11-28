@@ -1,5 +1,5 @@
 import type { UsageSource } from "@/costs/ledger";
-import { BRAINSTORMING_CAPABILITY } from "@/types/settings";
+import { BRAINSTORMING_CAPABILITY, WILDCARDS_CAPABILITY } from "@/types/settings";
 
 /** What says where a call came from: who made it (`origin`: an autopilot run, a turn of the Copilot), the capability it was routed for, and its label. */
 export interface UsageOrigin {
@@ -64,17 +64,26 @@ const BY_LABEL: Readonly<Record<string, UsageSource>> = {
 /** The capabilities that many features share: the label of a request tells which feature asked. */
 const GENERAL_CAPABILITIES: ReadonlySet<string> = new Set(["default", "simple-tasks", "review"]);
 
+/** The first word of a label (`wildcards:poet` → `wildcards`), lower case. */
+function labelWord(label: string | undefined): string {
+  return (typeof label === "string" ? label : "").trim().toLowerCase().split(/[:\s(]/, 1)[0];
+}
+
 /**
- * The source of a call, decided here and nowhere else: a call of the autopilot is the autopilot's whatever it asks, and a call of a turn of the Copilot is the
- * Copilot's, the tools it runs included; a capability that one feature owns says the feature; a general capability is told by the label; anything else is `other`.
+ * The source of a call, decided here and nowhere else: a call of the autopilot is the autopilot's whatever it asks (its consultations of the wildcards
+ * included: the run's budget counts them); the room of the wildcards has a line of its own wherever the author asks it (the right click, Brainstorming, the
+ * Copilot), its voices, the Director's triage and the rewrite with the accepted ideas (labels `wildcards:…`) included; any other call of a turn of the Copilot
+ * is the Copilot's, the tools it runs included; a capability that one feature owns says the feature; a general capability is told by the label; anything else
+ * is `other`.
  */
 export function usageSource({ origin, capability, label }: UsageOrigin): UsageSource {
   if (origin === "autopilot") return "autopilot";
+  if (capability === WILDCARDS_CAPABILITY || labelWord(label) === "wildcards") return "ideas";
   if (origin === "copilot") return "copilot";
   const owned = Object.prototype.hasOwnProperty.call(BY_CAPABILITY, capability) ? BY_CAPABILITY[capability] : undefined;
   if (owned) return owned;
   // A capability that is neither one feature's nor a general one (one that a later version adds) is `other`, whatever its label says; it never throws.
   if (typeof capability !== "string" || !GENERAL_CAPABILITIES.has(capability)) return "other";
-  const word = (typeof label === "string" ? label : "").trim().toLowerCase().split(/[:\s(]/, 1)[0];
+  const word = labelWord(label);
   return Object.prototype.hasOwnProperty.call(BY_LABEL, word) ? BY_LABEL[word] : "other";
 }

@@ -37,6 +37,7 @@ const aiRouterEn = {
       brainstorming: "Brainstorming of the Synopsis: it reasons on the big design of the book; without a route of its own it follows the Copilot, then Default.",
       "simple-tasks": "Summaries and quick decisions, such as confirmations.",
       review: "Specialists and evaluations of chapters and paragraphs.",
+      wildcards: "The wildcards' room: provocateurs and sentinels who give ideas and findings, never a score; without a route of its own it follows Review, then Default.",
       "chat-resume": "Resumes and summaries of chats, chapters and criteria.",
       "reader-evaluation": "Simulated readers: each one reads and scores.",
       "reader-evaluation-summary": "Merges the readers' opinions into one verdict.",

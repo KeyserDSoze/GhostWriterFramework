@@ -16,6 +16,7 @@ export default {
       "editor-actions": "Editor actions",
       audit: "Audit",
       "reader-evaluation": "Reader evaluations",
+      ideas: "Wildcards' ideas",
       research: "Research",
       media: "Images and voice",
       other: "Other uses",

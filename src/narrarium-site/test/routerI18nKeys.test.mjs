@@ -44,7 +44,7 @@ async function sources() {
   return found;
 }
 
-const CHAT = ["default", "editor-actions", "copilot", "brainstorming", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director"];
+const CHAT = ["default", "editor-actions", "copilot", "brainstorming", "simple-tasks", "review", "wildcards", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director"];
 
 test("the router sources exist, so that this check cannot pass by looking at nothing", async () => {
   const files = await sources();

@@ -57,6 +57,17 @@ describe("where a call came from: one rule", () => {
     for (const [capability, label, source] of cases) expect(usageSource({ capability, label }), `${capability} · ${label}`).toBe(source);
   });
 
+  it("gives the wildcards' room a line of its own wherever the author asks it, and leaves the autopilot's consultations to the autopilot", () => {
+    expect(usageSource({ capability: "wildcards", label: "wildcards:poet" })).toBe("ideas");
+    expect(usageSource({ origin: "copilot", capability: "wildcards", label: "wildcards:subversive" })).toBe("ideas");
+    // The Director's triage and the rewrite with the accepted ideas, asked by the author: their labels say the room.
+    expect(usageSource({ capability: "director", label: "wildcards:triage" })).toBe("ideas");
+    expect(usageSource({ origin: "copilot", capability: "editor-actions", label: "wildcards:apply" })).toBe("ideas");
+    expect(usageSource({ origin: "autopilot", capability: "wildcards", label: "wildcards:poet" })).toBe("autopilot");
+    expect(usageSource({ origin: "copilot", capability: "copilot", label: "copilot:turn" })).toBe("copilot");
+    expect(USAGE_SOURCES.indexOf("ideas")).toBe(USAGE_SOURCES.indexOf("reader-evaluation") + 1);
+  });
+
   it("calls a capability nobody knows «other», and always answers one of the sources", () => {
     expect(usageSource({ capability: "a-capability-of-tomorrow" })).toBe("other");
     for (const capability of ROUTING_TASKS) expect(USAGE_SOURCES).toContain(usageSource({ capability }));

@@ -21,10 +21,11 @@ export type AIProviderType = "azure_openai" | "openai" | "m365_copilot" | "githu
  * - brainstorming: Brainstorming, the Copilot's mode on the Synopsis page (it follows the Copilot while it has no route of its own)
  * - simple-tasks: cheap micro-decisions (yes/no confirmation, tiny classifications)
  * - review: evaluations and editorial scoring
+ * - wildcards: the room of the wildcards («Fuori dal coro»), who propose and check (it follows the review while it has no route of its own)
  */
-export type ChatCapability = "default" | "editor-actions" | "copilot" | "brainstorming" | "simple-tasks" | "review" | "chat-resume" | "reader-evaluation" | "reader-evaluation-summary" | "rewrite-from-reader-feedback" | "deep-research" | "create-from-research" | "audit" | "autopilot" | "director";
+export type ChatCapability = "default" | "editor-actions" | "copilot" | "brainstorming" | "simple-tasks" | "review" | "wildcards" | "chat-resume" | "reader-evaluation" | "reader-evaluation-summary" | "rewrite-from-reader-feedback" | "deep-research" | "create-from-research" | "audit" | "autopilot" | "director";
 
-export const CHAT_CAPABILITIES: ChatCapability[] = ["default", "editor-actions", "copilot", "brainstorming", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director"];
+export const CHAT_CAPABILITIES: ChatCapability[] = ["default", "editor-actions", "copilot", "brainstorming", "simple-tasks", "review", "wildcards", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director"];
 
 /**
  * The router's task of Brainstorming: the engine's `BRAINSTORMING_CAPABILITY` (a test compares the two). Its name is stable, for whatever classifies a call by its
@@ -32,17 +33,20 @@ export const CHAT_CAPABILITIES: ChatCapability[] = ["default", "editor-actions",
  */
 export const BRAINSTORMING_CAPABILITY: ChatCapability & "brainstorming" = "brainstorming";
 
+/** The router's task of the wildcards' room: the engine's `WILDCARDS_CAPABILITY` (a test compares the two). Its calls have a line of their own in the costs. */
+export const WILDCARDS_CAPABILITY: ChatCapability & "wildcards" = "wildcards";
+
 /**
  * The task a task follows while it has no route of its own: the engine's `AI_CAPABILITY_FOLLOWS` (a test compares the two). Brainstorming follows the Copilot's route;
  * without that it goes where the Copilot goes (the models tagged for it, then those tagged for the Copilot, then the Default route's endpoint); and a model allowed the
- * Copilot is allowed Brainstorming too, not the other way round.
+ * Copilot is allowed Brainstorming too, not the other way round. The wildcards follow the review in the same way.
  */
-export const CAPABILITY_FOLLOWS: Readonly<Partial<Record<ChatCapability, ChatCapability>>> = { brainstorming: "copilot" };
+export const CAPABILITY_FOLLOWS: Readonly<Partial<Record<ChatCapability, ChatCapability>>> = { brainstorming: "copilot", wildcards: "review" };
 
 /** Task kinds the configurable router can target: the 4 chat capabilities plus media tasks. */
 export type RoutingTaskKind = ChatCapability | "tts" | "stt" | "image";
 
-export const ROUTING_TASKS: RoutingTaskKind[] = ["default", "editor-actions", "copilot", "brainstorming", "simple-tasks", "review", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director", "tts", "stt", "image"];
+export const ROUTING_TASKS: RoutingTaskKind[] = ["default", "editor-actions", "copilot", "brainstorming", "simple-tasks", "review", "wildcards", "chat-resume", "reader-evaluation", "reader-evaluation-summary", "rewrite-from-reader-feedback", "deep-research", "create-from-research", "audit", "autopilot", "director", "tts", "stt", "image"];
 
 /**
  * How much a chat model is asked to think before it answers (by default the provider's `reasoning_effort`; see `ReasoningParameter`).

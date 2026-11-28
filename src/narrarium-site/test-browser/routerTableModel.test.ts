@@ -71,8 +71,8 @@ describe("the four sections and the groups of the text table", () => {
     expect([...all].sort()).toEqual([...ROUTING_TASKS].sort());
   });
 
-  it("lists the 15 chat tasks in the text section, the default route first, with no media task among them", () => {
-    expect(TEXT).toHaveLength(15);
+  it("lists the 16 chat tasks in the text section, the default route first, with no media task among them", () => {
+    expect(TEXT).toHaveLength(16);
     expect(TEXT[0]).toBe("default");
     expect([...TEXT].sort()).toEqual([...CHAT_CAPABILITIES].sort());
     expect(TEXT).toEqual(TEXT_TASK_ORDER);
@@ -86,8 +86,8 @@ describe("the four sections and the groups of the text table", () => {
       autopilot: ["autopilot", "director", "reader-evaluation", "reader-evaluation-summary", "review", "simple-tasks"],
       // The interactive side: the Copilot, Brainstorming (its mode on the Synopsis page), what it writes with the default model, the editor actions, quick decisions and the resume of chats.
       copilot: ["default", "copilot", "brainstorming", "editor-actions", "simple-tasks", "chat-resume"],
-      // The judging side: chapter and paragraph evaluations, the readers, the audit and the rewrite from the readers' feedback.
-      review: ["review", "reader-evaluation", "reader-evaluation-summary", "audit", "rewrite-from-reader-feedback"],
+      // The judging side: chapter and paragraph evaluations, the wildcards' room (which follows the review), the readers, the audit and the rewrite from the readers' feedback.
+      review: ["review", "wildcards", "reader-evaluation", "reader-evaluation-summary", "audit", "rewrite-from-reader-feedback"],
       research: ["deep-research", "create-from-research"],
     });
   });
@@ -433,7 +433,7 @@ describe("changing the target of rows, all together", () => {
     // every row changed: even the one that already pointed at gh/mini gains the thinking
     expect(outcome.changed).toEqual([...TEXT]);
     expect(outcome.created).toEqual(TEXT.filter((task) => !rows[task]));
-    expect(outcome.created).toHaveLength(11);
+    expect(outcome.created).toHaveLength(12);
     expect(outcome.skipped).toEqual([]);
   });
 

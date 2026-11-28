@@ -37,6 +37,7 @@ const aiRouterIt = {
       brainstorming: "Brainstorming della Sinossi: ragiona sul grande disegno del libro; senza una rotta propria segue il Copilot, poi Predefinito.",
       "simple-tasks": "Riassunti e piccole decisioni, come le conferme.",
       review: "Specialisti e valutazioni di capitoli e paragrafi.",
+      wildcards: "La stanza dei Fuori dal coro: provocatori e sentinelle che danno idee e rilievi, mai un voto; senza una rotta propria segue Revisione, poi Predefinito.",
       "chat-resume": "Resume e riassunti di chat, capitoli e criteri.",
       "reader-evaluation": "Lettori simulati: ognuno legge e valuta.",
       "reader-evaluation-summary": "Riunisce le opinioni dei lettori in un solo giudizio.",

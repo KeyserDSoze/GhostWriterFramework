@@ -141,10 +141,10 @@ describe("R1 — the page: the options, then one table per kind of task", () => 
 });
 
 describe("R2 — the table of the text tasks", () => {
-  it.each(LANGUAGES)("lists the default first and then the 14 other tasks, each with its name and why it is used (%s)", async (language) => {
+  it.each(LANGUAGES)("lists the default first and then the 15 other tasks, each with its name and why it is used (%s)", async (language) => {
     await show(language);
     const rows = within(section().getByRole("table")).getAllByRole("row").slice(1);
-    expect(rows).toHaveLength(15);
+    expect(rows).toHaveLength(16);
     expect(within(rows[0]).getByRole("rowheader")).toHaveTextContent(t("routing.table.defaultRow"));
     expect(within(rows[0]).getByRole("rowheader")).toHaveTextContent(t("routing.taskHelp.default"));
     const order = rows.map((row) => within(row).getByRole("checkbox").getAttribute("aria-label"));
@@ -262,7 +262,7 @@ describe("R2 — filters", () => {
   it.each(LANGUAGES)("filters by group, by text and by customized rows, and counts what is shown (%s)", async (language) => {
     await show(language);
     const rowCount = () => within(section().getByRole("table")).queryAllByRole("rowheader").length;
-    expect(section().getByText(t("routing.filters.count", { visible: 15, count: 15 }))).toBeInTheDocument();
+    expect(section().getByText(t("routing.filters.count", { visible: 16, count: 16 }))).toBeInTheDocument();
     const chips = section().getByRole("group", { name: t("routing.groups.label") });
     expect(within(chips).getAllByRole("button").map((chip) => chip.textContent)).toEqual(["all", "autopilot", "copilot", "review", "research"].map((id) => t(`routing.groups.${id}`)));
     expect(within(chips).getByRole("button", { name: t("routing.groups.all") })).toHaveAttribute("aria-pressed", "true");
@@ -271,7 +271,7 @@ describe("R2 — filters", () => {
     expect(within(chips).getByRole("button", { name: t("routing.groups.review") })).toHaveAttribute("aria-pressed", "true");
     expect(within(chips).getByRole("button", { name: t("routing.groups.all") })).toHaveAttribute("aria-pressed", "false");
     expect(rowCount()).toBe(TEXT_GROUPS.review.length);
-    expect(section().getByText(t("routing.filters.count", { visible: 5, count: 15 }))).toBeInTheDocument();
+    expect(section().getByText(t("routing.filters.count", { visible: 6, count: 16 }))).toBeInTheDocument();
 
     fireEvent.click(section().getByRole("checkbox", { name: t("routing.filters.onlyCustom") }));
     expect(rowCount()).toBe(2);
@@ -282,7 +282,7 @@ describe("R2 — filters", () => {
     expect(section().getByText(t("routing.table.empty"))).toBeInTheDocument();
     fireEvent.click(within(chips).getByRole("button", { name: t("routing.groups.autopilot") }));
     expect(rowCount()).toBe(1);
-    expect(section().getByText(t("routing.filters.count", { visible: 1, count: 15 }))).toBeInTheDocument();
+    expect(section().getByText(t("routing.filters.count", { visible: 1, count: 16 }))).toBeInTheDocument();
   });
 
   it("shows the customized rows of the tab on show, and the media sections have no filters at all", async () => {
@@ -478,7 +478,7 @@ describe("R3 — swapping tabs", () => {
     await show();
     const trigger = () => section().getByRole("button", { name: t("routing.tabs.swapFor", { section: sectionTitle("text") }) });
     let menu = openMenu(trigger());
-    expect(within(menu).getByText(t("routing.tabs.scopeAll", { count: 15 }))).toBeInTheDocument();
+    expect(within(menu).getByText(t("routing.tabs.scopeAll", { count: 16 }))).toBeInTheDocument();
     fireEvent.keyDown(menu, { key: "Escape" });
     select("director", "review");
     menu = openMenu(trigger());
@@ -600,17 +600,17 @@ describe("R4 — editing the selected rows all together", () => {
     await show();
     fireEvent.click(screen.getByRole("checkbox", { name: t("routing.filters.selectAll") }));
     expect(rowCheckbox("audit")).toBeChecked();
-    expect(screen.getByText(t("routing.bulk.title", { count: 15 }))).toBeInTheDocument();
+    expect(screen.getByText(t("routing.bulk.title", { count: 16 }))).toBeInTheDocument();
     chooseOption(screen.getByRole("combobox", { name: t("routing.bulk.endpointLabel") }), "GitHub Models");
     chooseOption(screen.getByRole("combobox", { name: t("routing.bulk.modelLabel") }), "mini");
     chooseOption(screen.getByRole("combobox", { name: t("routing.bulk.thinkingLabel") }), t("routing.thinking.xhigh"));
-    fireEvent.click(screen.getByRole("button", { name: t("routing.bulk.apply", { count: 15 }) }));
+    fireEvent.click(screen.getByRole("button", { name: t("routing.bulk.apply", { count: 16 }) }));
     // The Default row has no thinking of its own (it is the endpoint's): it takes the endpoint and the model, and not the level.
     for (const task of CHAT_CAPABILITIES.filter((entry) => entry !== "default")) expect(routing()[task]?.primary, task).toEqual(to("gh", "mini", "xhigh"));
     expect(routing().default?.primary).toEqual(to("gh", "mini"));
     expect(routing().director?.fallbacks).toEqual(ROUTING().director?.fallbacks);
-    expect(status()).toHaveTextContent(t("routing.result.applied", { count: 15 }));
-    expect(status()).toHaveTextContent(t("routing.result.created", { count: 9 }));
+    expect(status()).toHaveTextContent(t("routing.result.applied", { count: 16 }));
+    expect(status()).toHaveTextContent(t("routing.result.created", { count: 10 }));
   });
 
   it.each(LANGUAGES)("leaves the thinking of the Default row alone and says why, when it is among the selected rows (%s)", async (language) => {
@@ -678,12 +678,12 @@ describe("R4 — editing the selected rows all together", () => {
     await goToTab(tabName(1));
     fireEvent.click(screen.getByRole("checkbox", { name: t("routing.filters.selectAll") }));
     chooseOption(screen.getByRole("combobox", { name: t("routing.bulk.endpointLabel") }), "LlmProxy");
-    fireEvent.click(screen.getByRole("button", { name: t("routing.bulk.apply", { count: 15 }) }));
+    fireEvent.click(screen.getByRole("button", { name: t("routing.bulk.apply", { count: 16 }) }));
     // rows with a primary get a fallback or have theirs replaced; rows without a primary are left as they were
     expect(routing().copilot).toEqual(route(to("az", "gpt-4o", "automatic"), to("llm", "muse-big")));
     expect(routing().director?.fallbacks[0]).toEqual(to("llm", "muse-big", "xhigh"));
     expect(routing().audit).toBeUndefined();
-    expect(status()).toHaveTextContent(t("routing.result.skipped", { reasons: t("routing.result.reason.noPrimary", { count: 9 }) }));
+    expect(status()).toHaveTextContent(t("routing.result.skipped", { reasons: t("routing.result.reason.noPrimary", { count: 10 }) }));
     fireEvent.click(within(status().parentElement as HTMLElement).getByRole("button", { name: t("routing.undo") }));
     expect(routing()).toEqual(ROUTING());
   });

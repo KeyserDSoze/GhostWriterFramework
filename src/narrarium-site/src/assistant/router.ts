@@ -296,16 +296,17 @@ function legacyChatCandidates(settings: AppSettings, capability: ChatCapability)
   };
   // Review precedence: explicit route (handled by the caller) → default review integration
   // → capability tags → default writing integration → any remaining integration.
-  if (capability === "review") {
-    const review = resolveReviewIntegration(settings);
-    if (review) {
-      const models = integrationChatModels(review);
-      const picked = models.find((m) => m.capabilities?.includes("review")) ?? models.find((m) => m.capabilities?.includes("default"));
-      if (picked) push(review, picked.name, picked.pricing ?? review.pricing);
-    }
-  }
-  // Exact capability match anywhere: the models tagged for the task, then those tagged for the task it follows.
+  // Exact capability match anywhere: the models tagged for the task, then those tagged for the task it follows. The review's default integration comes first among
+  // the review's models (for the wildcards, which follow the review, after their own), as in the engine.
   for (const tag of followOrder(capability)) {
+    if (tag === "review") {
+      const review = resolveReviewIntegration(settings);
+      if (review) {
+        const models = integrationChatModels(review);
+        const picked = models.find((m) => m.capabilities?.includes("review")) ?? models.find((m) => m.capabilities?.includes("default"));
+        if (picked) push(review, picked.name, picked.pricing ?? review.pricing);
+      }
+    }
     for (const integration of integrations) {
       const exact = integrationChatModels(integration).find((m) => m.capabilities?.includes(tag));
       if (exact) push(integration, exact.name, exact.pricing ?? integration.pricing);

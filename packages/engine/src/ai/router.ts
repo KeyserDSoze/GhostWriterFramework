@@ -161,12 +161,13 @@ export function describeAiRoute(config: AiRuntimeConfig, capability: string): Ai
     if (chosen.some((other) => other.integration.id === entry.integration.id && other.model === entry.model)) return;
     chosen.push(entry);
   };
-  if (capability === "review") {
-    const review = config.aiIntegrations.find((entry) => entry.id === config.defaultReviewIntegrationId);
-    const model = review ? pick(review, "review") : undefined;
-    if (review && model) add(candidate(review, model));
-  }
   for (const tag of followOrder(capability)) {
+    // The review's integration of a setup older than the router comes first among the review's models (for a task that follows the review too, after its own).
+    if (tag === "review") {
+      const review = config.aiIntegrations.find((entry) => entry.id === config.defaultReviewIntegrationId);
+      const model = review ? pick(review, "review") : undefined;
+      if (review && model) add(candidate(review, model));
+    }
     for (const integration of config.aiIntegrations) {
       const exact = integrationChatModels(integration).find((model) => model.capabilities.includes(tag));
       if (exact) add(candidate(integration, exact));

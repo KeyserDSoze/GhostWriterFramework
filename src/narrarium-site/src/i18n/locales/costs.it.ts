@@ -16,6 +16,7 @@ export default {
       "editor-actions": "Azioni dell'editor",
       audit: "Audit",
       "reader-evaluation": "Valutazioni dei lettori",
+      ideas: "Idee dei Fuori dal coro",
       research: "Ricerca",
       media: "Immagini e voce",
       other: "Altri usi",

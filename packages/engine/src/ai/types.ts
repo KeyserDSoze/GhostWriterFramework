@@ -445,15 +445,20 @@ export const COPILOT_CAPABILITY = "copilot";
  * (`AI_CAPABILITY_FOLLOWS`).
  */
 export const BRAINSTORMING_CAPABILITY = "brainstorming";
-/** The router's task of the wildcards («Fuori dal coro»): the voices of the room, asked by the author, the Copilot, Brainstorming or the autopilot. */
+/** The router's task of the review (the specialists of the editor and of the autopilot). */
+export const REVIEW_CAPABILITY = "review";
+/**
+ * The router's task of the wildcards («Fuori dal coro»): the voices of the room, asked by the author, the Copilot, Brainstorming or the autopilot. While it
+ * has no route of its own it follows the review's (`AI_CAPABILITY_FOLLOWS`).
+ */
 export const WILDCARDS_CAPABILITY = "wildcards";
 /**
  * The task a task follows while it has no route of its own: its route is the followed task's, and a model the author allows the followed task is allowed
  * it too (not the other way round). Without that route either, it is resolved as the followed task is, with its own tags first: the models tagged for it,
- * then those tagged for the followed task, then the default writing integration and the `default` models. Brainstorming follows the Copilot, so nobody
- * has to route it, and a setup made before it existed keeps working as it was.
+ * then those tagged for the followed task, then the default writing integration and the `default` models. Brainstorming follows the Copilot and the
+ * wildcards the review, so nobody has to route them, and a setup made before they existed keeps working as it was.
  */
-export const AI_CAPABILITY_FOLLOWS: Readonly<Record<string, string>> = Object.freeze({ [BRAINSTORMING_CAPABILITY]: COPILOT_CAPABILITY });
+export const AI_CAPABILITY_FOLLOWS: Readonly<Record<string, string>> = Object.freeze({ [BRAINSTORMING_CAPABILITY]: COPILOT_CAPABILITY, [WILDCARDS_CAPABILITY]: REVIEW_CAPABILITY });
 
 /** Router capabilities used by the autopilot and the director. Missing routes fall back to `default` models. */
 export const AI_CAPABILITIES = {

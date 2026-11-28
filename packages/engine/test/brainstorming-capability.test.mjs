@@ -21,7 +21,7 @@ const INTEGRATIONS = [
 test("the task has a stable name, and follows the Copilot's", () => {
   assert.equal(BRAINSTORMING_CAPABILITY, "brainstorming");
   assert.equal(COPILOT_CAPABILITY, "copilot");
-  assert.deepEqual({ ...AI_CAPABILITY_FOLLOWS }, { brainstorming: "copilot" });
+  assert.deepEqual({ ...AI_CAPABILITY_FOLLOWS }, { brainstorming: "copilot", wildcards: "review" });
   assert.ok(Object.isFrozen(AI_CAPABILITY_FOLLOWS));
 });
 

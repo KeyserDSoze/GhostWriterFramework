@@ -131,7 +131,8 @@ entries:
 
 ## Calls, cache and costs
 
-- The room's calls are made with the task `wildcards` of the AI router.
+- The room has its own task in the AI router, **Wildcards** (`wildcards`), which follows the review's while it has no route of its own (its own tags first, then what the review would be given), so a setup that never routed it keeps working.
+- On the Costs page the room is a use of its own, **Wildcards' ideas** (`ideas`), wherever the author consults it (its voices, the Director's triage and the rewrite with the accepted ideas, all labelled `wildcards:…`); the consultations of the autopilot are the autopilot's, so that its budget counts them.
 - The voices are asked in parallel (4 at once at most), each with the forced function. A reply that cannot be read is asked again once with what was wrong; a voice that fails says why and the others go on. A money cap stops starting voices once the answers cost that much.
 - Every voice's prompt starts the same way (the instructions of the room, the book and the material) and says who the voice is, what it may know of the secrets and the ideas rejected before only after that: a provider that caches the start of a prompt serves the shared part to every voice after the first.
 - The material is sized for the context window of the model the room is routed to.

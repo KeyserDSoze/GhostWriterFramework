@@ -29,13 +29,14 @@ export type GroupFilter = "all" | TextGroupId;
  *   their summary, the specialists (review) and the summaries (simple-tasks);
  * - copilot: the interactive side: the Copilot and Brainstorming (its mode on the Synopsis page, which follows the Copilot's route while it has none), what it writes
  *   with the default model, the editor actions, quick decisions, chat resumes;
- * - review: the judging side: evaluations of chapters and paragraphs, the readers, the audit, the rewrite from the readers' feedback;
+ * - review: the judging side: evaluations of chapters and paragraphs, the readers, the wildcards' room (which follows the review's route while it has none), the
+ *   audit, the rewrite from the readers' feedback;
  * - research: deep research and what is created from it.
  */
 export const TEXT_GROUPS: Readonly<Record<TextGroupId, readonly ChatCapability[]>> = {
   autopilot: AUTOPILOT_TASKS,
   copilot: ["default", "copilot", "brainstorming", "editor-actions", "simple-tasks", "chat-resume"],
-  review: ["review", "reader-evaluation", "reader-evaluation-summary", "audit", "rewrite-from-reader-feedback"],
+  review: ["review", "wildcards", "reader-evaluation", "reader-evaluation-summary", "audit", "rewrite-from-reader-feedback"],
   research: ["deep-research", "create-from-research"],
 };
 
