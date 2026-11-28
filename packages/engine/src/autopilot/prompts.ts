@@ -472,14 +472,41 @@ function withRequired(tool: AiJsonSchema, properties: Record<string, unknown>): 
   };
 }
 
+/** What the director decides about a finding: confirm it, or dismiss it with the reason. */
+export const FINDING_DECISIONS_PROPERTY = {
+  type: "array",
+  description: "Your decision about every coherence finding you disagree with or want to confirm, by its id. A critical finding you do not dismiss blocks the approval of the design.",
+  items: {
+    type: "object",
+    properties: {
+      id: { type: "string", description: "The id of the finding." },
+      decision: { type: "string", enum: ["confirm", "dismiss"], description: "dismiss: it is not a problem, or the design already answers it." },
+      reason: { type: "string", description: "Why. Required to dismiss." },
+    },
+    required: ["id", "decision", "reason"],
+  },
+} as const;
+
+/** What the director is told about the findings of the analysis of the structure. */
+export const DESIGN_FINDING_RULES = [
+  "Decide about the COHERENCE FINDINGS (findingDecisions, by id): dismiss, with the reason, what is not a problem or what the design already answers; confirm the rest.",
+  "A critical finding that you do not dismiss blocks the approval of the design: it becomes a change, chapter by chapter, and is fixed or asked to the author. Never dismiss a finding to get the design approved.",
+];
+
 /** The reader's reaction to a design, with the rubric of the twelve criteria when the design asks for it. */
 export function designReactionTool(rubric: boolean): AiJsonSchema {
   return rubric ? withRequired(DESIGN_REACTION_TOOL, { rubric: designRubricProperty("all") }) : DESIGN_REACTION_TOOL;
 }
 
-/** The director's review of a design, with the rubric of the twelve criteria when the design asks for it. */
-export function designReviewTool(rubric: boolean): AiJsonSchema {
-  return rubric ? withRequired(DESIGN_REVIEW_TOOL, { rubric: designRubricProperty("all") }) : DESIGN_REVIEW_TOOL;
+/**
+ * The director's review of a design: with the rubric of the twelve criteria when the design asks for it, and with its decisions about the findings of the analysis of
+ * the structure (`decisions`) when there are findings to decide about.
+ */
+export function designReviewTool(options: { rubric?: boolean; decisions?: boolean } = {}): AiJsonSchema {
+  const extra: Record<string, unknown> = {};
+  if (options.rubric) extra.rubric = designRubricProperty("all");
+  if (options.decisions) extra.findingDecisions = FINDING_DECISIONS_PROPERTY;
+  return Object.keys(extra).length ? withRequired(DESIGN_REVIEW_TOOL, extra) : DESIGN_REVIEW_TOOL;
 }
 
 /** The role of the architect in a design run: the Brainstormer of the writers' room. */

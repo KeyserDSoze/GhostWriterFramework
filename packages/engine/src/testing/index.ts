@@ -131,6 +131,8 @@ export interface FakeAiOptions {
   pitchRubric?: (id: string, by: string) => number | Record<string, number>;
   /** The pitch the director recommends, among the ids (default: the one with the highest mean of the director's scores, the last of equals). */
   pitchRecommend?: (ids: string[]) => string;
+  /** The analysis of the structure of a design, by the number of the call (default: no finding). */
+  coherence?: (call: number, user: string) => Record<string, unknown>;
 }
 
 const FAKE_PITCHES: ReadonlyArray<{ title: string; logline: string; premise: string; protagonist: string; stakes: string; twist: string; tone: string }> = [
@@ -183,17 +185,21 @@ function firstQuote(user: string): string {
 /** Deterministic AI answering every autopilot and director schema, for tests and demos. */
 export function createFakeAutopilotAi(options: FakeAiOptions = {}): AiPort & { calls: AiRequest[] } {
   const calls: AiRequest[] = [];
+  let coherenceCalls = 0;
   const respond = (request: AiRequest): unknown => {
     const custom = options.answer?.(request);
     const reply = custom !== undefined ? custom : answerOf(request);
+    if (!reply || typeof reply !== "object" || Array.isArray(reply)) return reply;
+    // What the schema asks for and the reply does not have is added: no decision about the findings, and the rubric of the twelve criteria.
     const properties = (request.json?.parameters?.properties ?? {}) as Record<string, unknown>;
-    if (reply && typeof reply === "object" && !Array.isArray(reply) && "rubric" in properties && !("rubric" in reply)) {
+    const filled: Record<string, unknown> = { ...reply };
+    if ("findingDecisions" in properties && !("findingDecisions" in filled)) filled.findingDecisions = [];
+    if ("rubric" in properties && !("rubric" in filled)) {
       const slug = /^autopilot:plan-reader:(.+)$/.exec(request.label)?.[1];
       const round = Number(/review (\d+) of at most/.exec(request.user)?.[1] ?? "1");
-      const asked = options.designRubric?.(slug ? `reader:${slug}` : "design", round) ?? 7.5;
-      return { ...reply, rubric: fakeRubric(asked) };
+      filled.rubric = fakeRubric(options.designRubric?.(slug ? `reader:${slug}` : "design", round) ?? 7.5);
     }
-    return reply;
+    return filled;
   };
   const answerOf = (request: AiRequest): unknown => {
     const user = request.user;
@@ -293,6 +299,10 @@ export function createFakeAutopilotAi(options: FakeAiOptions = {}): AiPort & { c
             }]
             : [],
         };
+      }
+      case "design_coherence": {
+        coherenceCalls += 1;
+        return options.coherence?.(coherenceCalls, user) ?? { findings: [], summary: "The structure holds together." };
       }
       case "design_pitches": {
         const count = Number(/exactly (\d+) alternative pitches/.exec(user)?.[1] ?? "3");

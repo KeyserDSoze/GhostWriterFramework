@@ -1,5 +1,11 @@
 import { asArray, asInteger, asRecord } from "../util/json.js";
 import {
+  COHERENCE_FINDINGS_KEPT,
+  COHERENCE_KINDS,
+  COHERENCE_PROPOSAL_CHARACTERS,
+  COHERENCE_SEVERITIES,
+  COHERENCE_STATUSES,
+  COHERENCE_TEXT_CHARACTERS,
   DESIGN_ALTERNATIVES_MAX,
   DESIGN_ALTERNATIVES_MIN,
   DESIGN_CRITERIA,
@@ -7,8 +13,10 @@ import {
   DESIGN_PITCH_LOGLINE_CHARACTERS,
   DESIGN_PITCH_PREMISE_CHARACTERS,
   DESIGN_SUMMARY_CHARACTERS,
+  type CoherenceFinding,
   type DesignAlternatives,
   type DesignChapterReview,
+  type DesignCoherence,
   type DesignPitch,
   type DesignPitchEvaluation,
 } from "./design-review-types.js";
@@ -21,7 +29,7 @@ import type { AutopilotDesign, DesignWorkflow } from "./types.js";
  */
 
 /** The parts of the workflow that are a switch. */
-const SWITCHES = ["rubric", "chapterReview"] as const;
+const SWITCHES = ["rubric", "chapterReview", "coherence"] as const;
 const WORKFLOW_KEYS = [...SWITCHES, "alternatives", "pitchChoice"] as const;
 
 /** The workflow as a file says it: a part that is on is kept, the rest is dropped; `undefined` when nothing is on. */
@@ -149,6 +157,45 @@ export function normalizeAlternatives(value: unknown): DesignAlternatives | unde
   };
 }
 
+function chapterNumbers(value: unknown): number[] {
+  return [...new Set(asArray(value).filter((number): number is number => typeof number === "number" && Number.isInteger(number) && number >= 1 && number <= 1_000_000))].sort((left, right) => left - right).slice(0, 24);
+}
+
+function normalizeFinding(raw: unknown): CoherenceFinding | null {
+  const item = asRecord(raw);
+  const severity = COHERENCE_SEVERITIES.find((entry) => entry === item.severity);
+  const body = text(item.text, COHERENCE_TEXT_CHARACTERS);
+  if (typeof item.id !== "string" || !/^[ac]-[0-9a-f]{8}$/.test(item.id) || !severity || !body || (item.source !== "check" && item.source !== "ai")) return null;
+  const decision = asRecord(item.decision);
+  const decidedAt = moment(decision.at);
+  const proposal = text(item.proposal, COHERENCE_PROPOSAL_CHARACTERS);
+  const reason = text(decision.reason, 600);
+  return {
+    id: item.id,
+    source: item.source,
+    kind: COHERENCE_KINDS.find((entry) => entry === item.kind) ?? "other",
+    severity,
+    chapters: chapterNumbers(item.chapters),
+    requires: chapterNumbers(item.requires),
+    text: body,
+    ...(proposal ? { proposal } : {}),
+    owner: item.owner === "author" || item.owner === "both" ? item.owner : "autopilot",
+    status: COHERENCE_STATUSES.find((entry) => entry === item.status) ?? "open",
+    ...(decidedAt && (decision.by === "author" || decision.by === "director") ? { decision: { by: decision.by, ...(reason ? { reason } : {}), at: decidedAt } } : {}),
+    round: asInteger(item.round, 1, 1, 1000),
+    seen: asInteger(item.seen, 1, 1, 1000),
+  };
+}
+
+/** The analysis of the structure as a file says it: the findings that are whole, and what it was made of; nothing when it says no signature or moment. */
+export function normalizeCoherence(value: unknown): DesignCoherence | undefined {
+  const source = asRecord(value);
+  const at = moment(source.at);
+  if (typeof source.sig !== "string" || !/^[0-9a-f]{8}$/.test(source.sig) || !at) return undefined;
+  const findings = asArray(source.findings).slice(0, COHERENCE_FINDINGS_KEPT).map(normalizeFinding).filter((finding): finding is CoherenceFinding => finding !== null);
+  return { sig: source.sig, round: asInteger(source.round, 1, 1, 1000), at, findings, summary: text(source.summary, 800) };
+}
+
 /** The parts of a design that its reviews wrote, from a file: what `normalizeDesign` adds to the design of every engine before. */
 export function normalizeDesignReviews(source: Record<string, unknown>): Partial<AutopilotDesign> {
   const workflow = normalizeWorkflow(source.workflow);
@@ -156,13 +203,16 @@ export function normalizeDesignReviews(source: Record<string, unknown>): Partial
   const reviewed = normalizeReviewed(source.reviewed);
   const reviewing = normalizeReviewing(source.reviewing);
   const alternatives = normalizeAlternatives(source.alternatives);
-  return { ...(workflow ? { workflow } : {}), ...(rubric ? { rubric } : {}), ...(reviewed ? { reviewed } : {}), ...(reviewing ? { reviewing } : {}), ...(alternatives ? { alternatives } : {}) };
+  const coherence = normalizeCoherence(source.coherence);
+  return { ...(workflow ? { workflow } : {}), ...(rubric ? { rubric } : {}), ...(reviewed ? { reviewed } : {}), ...(reviewing ? { reviewing } : {}), ...(alternatives ? { alternatives } : {}), ...(coherence ? { coherence } : {}) };
 }
 
 /** What a design does besides the plain design, every part resolved: off while the design says nothing of it. */
 export interface DesignFlow {
   rubric: boolean;
   chapterReview: boolean;
+  /** The whole structure is analysed for what does not hold together. */
+  coherence: boolean;
   /** The pitches proposed before the design: how many (0: none), and who chooses. */
   alternatives: number;
   pitchChoice: "director" | "author";
@@ -170,8 +220,8 @@ export interface DesignFlow {
 
 export function designFlow(design: Pick<AutopilotDesign, "workflow" | "reviewing"> | null | undefined): DesignFlow {
   // A review on request is a review: every part that judges is on, whatever the workflow of the design says, and nothing is proposed.
-  if (design?.reviewing && !design.reviewing.done) return { rubric: true, chapterReview: true, alternatives: 0, pitchChoice: "director" };
+  if (design?.reviewing && !design.reviewing.done) return { rubric: true, chapterReview: true, coherence: !design.reviewing.chapters, alternatives: 0, pitchChoice: "director" };
   const on = (key: (typeof SWITCHES)[number]) => design?.workflow?.[key] === true;
   const alternatives = design?.workflow?.alternatives ?? 0;
-  return { rubric: on("rubric"), chapterReview: on("chapterReview"), alternatives, pitchChoice: alternatives && design?.workflow?.pitchChoice === "author" ? "author" : "director" };
+  return { rubric: on("rubric"), chapterReview: on("chapterReview"), coherence: on("coherence"), alternatives, pitchChoice: alternatives && design?.workflow?.pitchChoice === "author" ? "author" : "director" };
 }

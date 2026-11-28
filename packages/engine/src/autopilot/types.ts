@@ -5,7 +5,7 @@ import type { AiErrorBody } from "../ai/provider-error.js";
 import type { AiAttemptThinking, AiThinkingWhy } from "../ai/request.js";
 import type { AiCallDropReason, AiCallStatus } from "./calls/types.js";
 import type { ChapterFreezeAuthor, FrozenChapterChanges } from "../book/freeze.js";
-import type { DesignAlternatives, DesignChapterReview, DesignRubrics } from "./design-review-types.js";
+import type { DesignAlternatives, DesignChapterReview, DesignCoherence, DesignRubrics } from "./design-review-types.js";
 
 /** Lifecycle of the autopilot of one book. */
 export type AutopilotStatus = "idle" | "running" | "paused" | "waiting-author" | "error" | "completed";
@@ -24,6 +24,7 @@ export type AutopilotTaskKind =
   | "design-chapter-review"
   | "design-pitches"
   | "design-pitch-review"
+  | "design-coherence"
   | "replan"
   | "scenes"
   | "write"
@@ -1126,6 +1127,11 @@ export interface DesignWorkflow {
   alternatives?: number;
   /** Who chooses among the alternatives: the director (absent) or the author, who is asked and the run waits. */
   pitchChoice?: "author";
+  /**
+   * The whole structure of the design is analysed for what does not hold together (`design-coherence`): contradictions, plot holes, timeline incongruences, characters
+   * who act against themselves, repeated events, abandoned subplots, what is revealed too early. A critical finding blocks the approval of the design.
+   */
+  coherence?: boolean;
 }
 
 /** The reviews of a design when the policy says nothing: the director looks at it up to three times, as at a plan. */
@@ -1169,6 +1175,8 @@ export interface AutopilotDesign {
   reviewing?: { chapters?: number[]; startedAt: string; done?: boolean };
   /** The alternative pitches of the design, and the choice (`DesignAlternatives`). */
   alternatives?: DesignAlternatives;
+  /** The findings of the analysis of the whole structure (`DesignCoherence`). */
+  coherence?: DesignCoherence;
 }
 
 /** A design run asked with a start (`StartOptions.design`). */
@@ -1368,7 +1376,8 @@ export type AutopilotMessageCode =
   | "designChapterReview"
   | "designPitches"
   | "designPitchChosen"
-  | "designPitchChoice";
+  | "designPitchChoice"
+  | "designCoherence";
 
 /**
  * Which candidate of the route a call asks now, and how: what the `call-attempt` event says and `AutopilotLive.trying` keeps, so that a client shows it as the request is sent. Only

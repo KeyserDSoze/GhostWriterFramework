@@ -54,9 +54,13 @@ test("the workflow asks for none, or from two to six alternatives, and says who 
   assert.deepEqual(normalizeWorkflow({ alternatives: 3, pitchChoice: "author" }), { alternatives: 3, pitchChoice: "author" });
   assert.deepEqual(normalizeWorkflow({ alternatives: 1, pitchChoice: "author" }), undefined, "a file with a number that is not one is read as none");
   assert.deepEqual(normalizeWorkflow({ pitchChoice: "author" }), undefined, "the choice means something only with pitches");
-  assert.deepEqual(designFlow({ workflow: { alternatives: 3, pitchChoice: "author" } }), { rubric: false, chapterReview: false, alternatives: 3, pitchChoice: "author" });
-  assert.deepEqual(designFlow({ workflow: { alternatives: 3 } }), { rubric: false, chapterReview: false, alternatives: 3, pitchChoice: "director" });
-  assert.deepEqual(designFlow({ workflow: { alternatives: 3 }, reviewing: { startedAt: "x" } }), { rubric: true, chapterReview: true, alternatives: 0, pitchChoice: "director" }, "a review on request proposes nothing");
+  const proposed = (design) => {
+    const { alternatives, pitchChoice } = designFlow(design);
+    return { alternatives, pitchChoice };
+  };
+  assert.deepEqual(proposed({ workflow: { alternatives: 3, pitchChoice: "author" } }), { alternatives: 3, pitchChoice: "author" });
+  assert.deepEqual(proposed({ workflow: { alternatives: 3 } }), { alternatives: 3, pitchChoice: "director" });
+  assert.deepEqual(proposed({ workflow: { alternatives: 3 }, reviewing: { startedAt: "x" } }), { alternatives: 0, pitchChoice: "director" }, "a review on request proposes nothing");
 });
 
 test("the pitches of a reply are exactly as many as asked, whole, within their limits, and no two the same book; the rest is rejected with the reason", () => {

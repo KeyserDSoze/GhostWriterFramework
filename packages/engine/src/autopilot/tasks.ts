@@ -100,6 +100,7 @@ import { PLAN_BATCH_CHAPTERS, SCENES_PER_CHAPTER, batchesNamed, firstMissingChap
 import { designFindingsInsight, designLastRound, designPlateau, designReaderRounds, designTarget, endDesign, loadDesignCheckInput, planBatchChapters } from "./design.js";
 import { runDesignPitchReview, runDesignPitches, chosenPitchBlock } from "./design-alternatives.js";
 import { chapterReviewsSection, runDesignChapterReview } from "./design-chapter-review.js";
+import { applyFindingDecisions, blockingFindings, coherenceSection, findingNote, readFindingDecisions, runDesignCoherence } from "./design-coherence.js";
 import { DESIGN_RUBRIC_NOTES, DESIGN_RUBRIC_TOKENS, designRubricRule, readDesignRubric, recordRubric, rubricLine, rubricOverall, rubricProposals } from "./design-rubric.js";
 import { designFlow } from "./design-state.js";
 import { outlineDesignGaps } from "./outline-check.js";
@@ -111,6 +112,7 @@ import {
   DESIGN_CHAPTER_RULE,
   DESIGN_CONCEPT_TOOL,
   DESIGN_DIRECTOR_RULES,
+  DESIGN_FINDING_RULES,
   DESIGN_LEDGER_RULE,
   DESIGN_PLAN_TOOL,
   DESIGN_READER_ROLE,
@@ -1449,6 +1451,8 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
   const italian = isItalian(ctx.language);
   await assertRewritable(ctx, await secretsToPlace(ctx, plan));
   const outline = outlineOf(ctx);
+  // The director decides about the findings of the analysis of the structure that are open (the author's own are the author's).
+  const decidable = flow.coherence && (design.coherence?.findings ?? []).some((finding) => finding.status === "open");
   const [storyDesign, view, checkInput, designData, entriesSection, chapterReviews] = await Promise.all([
     readBody(ctx.store, STORY_DESIGN_FILE, 5000),
     authorOutline(ctx),
@@ -1485,6 +1489,7 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
       listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
       entriesSection,
       chapterReviews,
+      flow.coherence ? coherenceSection(design.coherence?.findings ?? []) : "",
       findings.length ? `DESIGN CHECKS (found without a model):\n${findings.slice(0, 30).map((finding) => `- ${findingText(finding, "en")}`).join("\n")}${findings.length > 30 ? `\n- … and ${findings.length - 30} more` : ""}` : "DESIGN CHECKS (found without a model): nothing.",
       plan.readerReactions.length
         ? `SIMULATED READERS:\n${plan.readerReactions.map((reaction) => `- ${reaction.name} (weight ${ctx.director.readerWeights[reaction.slug] ?? 1}): ${reaction.interest}/10 — ${reaction.reaction}${reaction.concerns.length ? ` Concerns: ${reaction.concerns.join("; ")}.` : ""}${reaction.wishes.length ? ` Wishes: ${reaction.wishes.join("; ")}.` : ""}${flow.rubric && design.rubric?.[`reader:${reaction.slug}`] ? ` Rubric: ${rubricLine(design.rubric[`reader:${reaction.slug}`].latest)}.` : ""}`).join("\n")}`
@@ -1496,14 +1501,15 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
       `Approve when the design delivers the brief and the vision with a satisfying shape and deserves ${target}/10 or more; otherwise list precise changes chapter by chapter. Weigh the simulated readers by their weights: do not chase every opinion.`,
       ...DESIGN_DIRECTOR_RULES,
       ...(flow.rubric ? designRubricRule("all") : []),
+      ...(decidable ? DESIGN_FINDING_RULES : []),
       view.any ? "The author's outline (AUTHOR'S OUTLINE, in the data) binds the design: never ask to change its chapters, their order, their titles or their events; ask only for what enriches them." : "",
       style.rule,
       lastRound ? "This is the final review of the design: approve it unless a critical inconsistency is left, and turn anything still imperfect into standing guidance." : "",
       ctx.director.autonomy === "full" ? "Never ask the author a question of taste: decide." : "Ask the author (questionForAuthor) only for a critical choice you cannot settle from the vision and the author's rules.",
       authorRules(ctx, false),
     ])),
-    json: designReviewTool(flow.rubric),
-    maxOutputTokens: outputLimit(ctx, 5000 + (flow.rubric ? DESIGN_RUBRIC_TOKENS : 0)),
+    json: designReviewTool({ rubric: flow.rubric, decisions: decidable }),
+    maxOutputTokens: outputLimit(ctx, 5000 + (flow.rubric ? DESIGN_RUBRIC_TOKENS : 0) + (decidable ? 700 : 0)),
   });
   // Without a verdict and a score the design is never approved by default.
   const output = requireStructuredFields(response.json, { verdict: "text", score: "score" }, "The director's review of the design");
@@ -1515,9 +1521,17 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
   const requested = asArray(output.changes).map(asRecord)
     .map((change) => ({ instruction: asString(change.instruction), chapterNumber: asInteger(change.chapterNumber, 0, 0, MAX_BOOK_CHAPTERS) }))
     .filter((change) => change.instruction);
-  const critical = asArray(output.critical).map(asRecord)
+  const directorCritical = asArray(output.critical).map(asRecord)
     .map((item) => ({ instruction: asString(item.issue), chapterNumber: asInteger(item.chapterNumber, 0, 0, MAX_BOOK_CHAPTERS) }))
     .filter((item) => item.instruction);
+  // What the analysis of the structure found that nobody dismissed blocks the approval like what the director found: a finding is critical (or the author asked for it to be fixed) until it is not.
+  const decisions = decidable ? readFindingDecisions(output.findingDecisions, design.coherence!.findings, "The director's review of the design") : [];
+  if (design.coherence && decisions.length) design.coherence = { ...design.coherence, findings: applyFindingDecisions(design.coherence.findings, decisions, ctx.now().toISOString()) };
+  const blocking = blockingFindings(design.coherence?.findings ?? []).map((finding) => ({
+    instruction: findingNote(finding),
+    chapterNumber: finding.requires.find((number) => !view.entries.has(number)) ?? finding.requires[0] ?? finding.chapters[0] ?? 0,
+  }));
+  const critical = [...directorCritical, ...blocking];
   const noteOf = (change: { instruction: string; chapterNumber: number }) => `${change.chapterNumber ? `Chapter ${change.chapterNumber}: ` : ""}${change.instruction}`;
   const changesRequested = requested.map(noteOf);
   const criticalNotes = critical.map((item) => `Critical — ${noteOf(item)}`);
@@ -2911,6 +2925,7 @@ export const TASK_EXECUTORS: Record<TaskDescriptor["kind"], (ctx: TaskContext) =
   "design-chapter-review": runDesignChapterReview,
   "design-pitches": runDesignPitches,
   "design-pitch-review": runDesignPitchReview,
+  "design-coherence": runDesignCoherence,
   replan: runReplan,
   scenes: runScenes,
   write: runWrite,

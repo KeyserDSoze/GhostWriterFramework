@@ -118,6 +118,63 @@ export interface DesignAlternatives {
   selected?: { id: string; by: "director" | "author"; reason: string; at: string };
 }
 
+/** What kind of trouble a finding of the coherence analysis is. */
+export const COHERENCE_KINDS = ["contradiction", "plot-hole", "timeline", "character", "repetition", "subplot", "early-reveal", "knowledge", "secret", "structure", "other"] as const;
+export type CoherenceKind = (typeof COHERENCE_KINDS)[number];
+
+/** How much a finding matters: `critical` stops the design from being approved until it is fixed, `major` is what a reader will notice, `minor` a polish. */
+export const COHERENCE_SEVERITIES = ["critical", "major", "minor"] as const;
+export type CoherenceSeverity = (typeof COHERENCE_SEVERITIES)[number];
+
+/** What became of a finding: `open`; `fixing` (the author asked the autopilot to fix it); `fixed` (a later analysis no longer finds it); `dismissed` (it is not a problem: the director or the author said so); `mine` (the author will handle it). */
+export const COHERENCE_STATUSES = ["open", "fixing", "fixed", "dismissed", "mine"] as const;
+export type CoherenceStatus = (typeof COHERENCE_STATUSES)[number];
+
+/**
+ * One thing the analysis of the whole structure of the design found wrong: by a check that needs no model (`check`: a secret revealed before its clues, an entry with no
+ * goal) or by the model that read all the chapters together (`ai`). It says where it is, which chapters must be revised to fix it, and what to do.
+ */
+export interface CoherenceFinding {
+  /** The same for the same finding, whichever analysis finds it: what a decision about it is kept by. */
+  id: string;
+  source: "check" | "ai";
+  kind: CoherenceKind;
+  severity: CoherenceSeverity;
+  /** The chapters it is about: where it is. None for what concerns the whole book. */
+  chapters: number[];
+  /** The chapters whose design must be revised to fix it. */
+  requires: number[];
+  text: string;
+  proposal?: string;
+  /** Whose entries the fix changes: the autopilot's, the author's (which the autopilot never rewrites: it proposes), or both. */
+  owner: "autopilot" | "author" | "both";
+  status: CoherenceStatus;
+  /** Who dismissed it, or took it, and why. */
+  decision?: { by: "author" | "director"; reason?: string; at: string };
+  /** The review that found it, and the last that still did. */
+  round: number;
+  seen: number;
+}
+
+/** What the analysis of the structure of the design found, and what it was made of (`coherenceSignature`): the analysis is made again when the design changed. */
+export interface DesignCoherence {
+  sig: string;
+  round: number;
+  at: string;
+  findings: CoherenceFinding[];
+  /** What the analysis thinks of the structure as a whole, a few sentences. */
+  summary: string;
+}
+
+/** The limits of the texts of a finding, and of the findings: a reply over them is rejected, never cut. */
+export const COHERENCE_TEXT_CHARACTERS = 500;
+export const COHERENCE_PROPOSAL_CHARACTERS = 350;
+export const COHERENCE_FINDINGS_PER_CALL = 25;
+/** The findings a design keeps, and the chapters one call of the analysis reads (the next window begins `COHERENCE_OVERLAP` chapters before the end of this one). */
+export const COHERENCE_FINDINGS_KEPT = 80;
+export const COHERENCE_WINDOW = 40;
+export const COHERENCE_OVERLAP = 6;
+
 /** The score under which a criterion is a weak point of what is judged: it is told, and a rewrite starts from it. */
 export const DESIGN_WEAK_SCORE = 7;
 

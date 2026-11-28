@@ -133,6 +133,7 @@ export function beginDesign(state: AutopilotState, input: DesignStartInput, cont
     ...(previous?.rubric ? { rubric: previous.rubric } : {}),
     ...(previous?.reviewed ? { reviewed: previous.reviewed } : {}),
     ...(previous?.alternatives ? { alternatives: previous.alternatives } : {}),
+    ...(previous?.coherence ? { coherence: previous.coherence } : {}),
   };
   next.design = design;
   if (!going && next.plan) {

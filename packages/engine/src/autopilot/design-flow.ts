@@ -1,3 +1,4 @@
+import { BIBLE_THEMES_FILE, BIBLE_WORLD_FILE } from "../book/design.js";
 import { outlineChapterPath } from "../book/paths.js";
 import type { BookSnapshot } from "../book/snapshot.js";
 import { DESIGN_REVIEW_BATCH_CHAPTERS } from "./design-review-types.js";
@@ -40,6 +41,17 @@ export function chapterReviewSignature(snapshot: BookSnapshot, number: number): 
 }
 
 /**
+ * What an analysis of the whole structure is made of: the entries of the Synopsis, the secrets with their ledgers, the world and the themes. The same files give the same
+ * signature, so that the analysis is made again only when the design changed.
+ */
+export function coherenceSignature(snapshot: BookSnapshot): string {
+  const chapters = reviewableChapters(snapshot).map((number) => `${number}:${entryHash(snapshot, number)}`);
+  const secrets = snapshot.canon.filter((entry) => entry.kind === "secret").map((entry) => `${entry.path}:${entry.hash}`);
+  const bible = [BIBLE_WORLD_FILE, BIBLE_THEMES_FILE].map((path) => `${path}:${snapshot.files.get(path) ?? "-"}`);
+  return shortHash([...chapters, ...secrets, ...bible].join("|"));
+}
+
+/**
  * The next chapters to review: the first that was not reviewed as it is now, and the stale ones that follow it, at most `DESIGN_REVIEW_BATCH_CHAPTERS` and in a row. When a
  * review of chosen chapters goes on (`AutopilotDesign.reviewing`), only those. `from` starts the search at a chapter. `null` when none is left to review.
  */
@@ -68,11 +80,13 @@ export function nextPitchStep(state: Pick<AutopilotState, "design">): "pitches" 
 }
 
 /** The review the planner asks next in a design run, before the director's: `null` when the workflow asks for none or every part is up to date. */
-export function nextDesignReview(state: Pick<AutopilotState, "design">, snapshot: BookSnapshot): { kind: "design-chapter-review"; from: number; to: number } | null {
+export function nextDesignReview(state: Pick<AutopilotState, "design">, snapshot: BookSnapshot): { kind: "design-chapter-review"; from: number; to: number } | { kind: "design-coherence" } | null {
   const flow = designFlow(state.design);
   if (flow.chapterReview) {
     const batch = nextChapterReview(state, snapshot);
     if (batch) return { kind: "design-chapter-review", ...batch };
   }
+  // The analysis of the whole structure, once the chapters are judged: again whenever the design changed.
+  if (flow.coherence && reviewableChapters(snapshot).length && state.design?.coherence?.sig !== coherenceSignature(snapshot)) return { kind: "design-coherence" };
   return null;
 }

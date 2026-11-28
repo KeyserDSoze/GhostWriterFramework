@@ -224,6 +224,12 @@ export function describeTask(kind: AutopilotTaskKind, language: string, params: 
         reason: text(language, "Every pitch is scored on the twelve criteria, and one is chosen with its reason.", "Ogni pitch è valutato sui dodici criteri, e uno viene scelto con la sua motivazione."),
         next: text(language, "Design the book from the chosen pitch.", "Progettare il libro dal pitch scelto."),
       };
+    case "design-coherence":
+      return {
+        title: text(language, "Analysing the whole structure of the design", "Analisi dell'intera struttura del progetto"),
+        reason: text(language, "A story editor reads every chapter together for contradictions, plot holes, timeline problems, characters who act against themselves, repeated events, abandoned subplots and what is revealed too early.", "Un editor legge tutti i capitoli insieme per trovare contraddizioni, buchi di trama, problemi di cronologia, personaggi che agiscono contro se stessi, eventi ripetuti, sottotrame abbandonate e rivelazioni troppo presto."),
+        next: text(language, "The director reviews the whole design.", "Il direttore valuta l'intero progetto."),
+      };
     case "replan":
       return params.outline === "removed"
         ? {
@@ -972,6 +978,7 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
     if (designing && !plan.wildcardsDone && reviewWildcards(state).design) return { kind: "task", task: descriptor("wildcards", "plan", ctx, { design: true }) };
     // The chapters of a design that changed since they were reviewed are reviewed, before the director looks at the whole.
     const review = designing ? nextDesignReview(state, ctx.snapshot) : null;
+    if (review?.kind === "design-coherence") return { kind: "task", task: descriptor(review.kind, "plan", ctx) };
     if (review) return { kind: "task", task: { ...descriptor(review.kind, "plan", ctx, { from: review.from, to: review.to }), chapterNumber: review.from } };
     return { kind: "task", task: descriptor("plan-review", "plan", ctx, { design: designing }) };
   }
