@@ -1,5 +1,6 @@
 import { expect, test, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import { engineModule, openApp, seed, settingsOf, startProvider, waitForAiSettings, type SeedBook, type StubProvider } from "./helpers/autopilot";
+import { expectNewTab } from "./helpers/new-tab";
 import { capture, contrast, horizontalOverflow, overflowing, setTheme } from "./helpers/review-view";
 
 // A chapter of a finished book read in a window over «How the book turned out», on a book kept on this device with GitHub out of reach. The chapter links of the table of scores and of «Read
@@ -184,10 +185,7 @@ test("a chapter of the finished book is read in a window: from the table and fro
 
   // Ctrl and the middle button open the page of the chapter in another tab, as a link does, and no window opens over this one.
   for (const how of [{ modifiers: ["Control"] as Array<"Control"> }, { button: "middle" as const }]) {
-    const [tab] = await Promise.all([context.waitForEvent("page"), tableLink(3).click(how)]);
-    await tab.waitForLoadState("domcontentloaded");
-    expect(tab.url(), JSON.stringify(how)).toMatch(new RegExp(`/app/books/${BOOK.id}/chapters/${slugs[2]}$`));
-    await tab.close();
+    await expectNewTab(context, new RegExp(`/app/books/${BOOK.id}/chapters/${slugs[2]}$`), () => tableLink(3).click(how), JSON.stringify(how));
     await expect(dialog).toBeHidden();
   }
 
