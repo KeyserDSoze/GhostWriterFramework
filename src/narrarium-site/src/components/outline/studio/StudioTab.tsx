@@ -2,7 +2,7 @@ import { Suspense, lazy, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { BookMarked, CheckCircle2, ClipboardCheck, Compass, ListTree, Loader2, Pause, Play, PenLine, Sparkles } from "lucide-react";
-import { OUTLINE_BOOK_FILE, designModeChoice, lockedDecisions, openQuestions, serverSupportsDesign, summarizeDesign, type AutopilotState, type OutlineChapterEntry } from "narrarium-engine";
+import { OUTLINE_BOOK_FILE, designModeChoice, designSnapshotChange, lockedDecisions, openQuestions, serverSupportsDesign, summarizeDesign, type AutopilotState, type OutlineChapterEntry } from "narrarium-engine";
 import "@/i18n/design";
 import "@/i18n/bibleStudio";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -28,6 +28,7 @@ const DesignDialog = lazy(() => import("@/components/outline/studio/DesignDialog
 const StudioReviews = lazy(() => import("@/components/outline/studio/StudioReviews"));
 const DesignProposals = lazy(() => import("@/components/outline/studio/DesignProposals"));
 const DesignRounds = lazy(() => import("@/components/outline/studio/DesignRounds"));
+const DesignHistory = lazy(() => import("@/components/outline/studio/DesignHistory"));
 
 export interface StudioTabProps {
   book: BookEntry;
@@ -97,7 +98,13 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
     setApproving(true);
     setApproveFailed(false);
     try {
-      await source.commit([approveDesignChange(bookFile ? { content: bookFile.content, hash: bookFile.hash } : undefined, status.startedAt, new Date())], "Synopsis: approve the design");
+      const now = new Date();
+      const approval = approveDesignChange(bookFile ? { content: bookFile.content, hash: bookFile.hash } : undefined, status.startedAt, now);
+      // The design as the author approved it is a version of the Synopsis and the Bible, kept in the same commit (Phase 4 of #108).
+      const [outline, bibleFiles] = await Promise.all([source.files(), source.readFolder ? source.readFolder("bible/") : Promise.resolve([])]);
+      const approved = [...outline.filter((file) => file.path !== approval.path), { path: approval.path, content: approval.content ?? "" }, ...bibleFiles];
+      const version = designSnapshotChange(approved, { at: now.toISOString(), reason: "approved", run: status.startedAt });
+      await source.commit([approval, ...(version ? [version] : [])], "Synopsis: approve the design");
       await refresh();
     } catch {
       setApproveFailed(true);
@@ -197,6 +204,8 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
           <Suspense fallback={null}><DesignRounds rounds={status.rounds} target={status.target} /></Suspense>
         </section>
       )}
+
+      <Suspense fallback={null}><DesignHistory source={source} refresh={refresh} refreshKey={refreshKey} language={structure?.language} /></Suspense>
 
       {agreed && (
         <section aria-labelledby="studio-agreed-title" data-studio-agreed className="space-y-2 rounded-2xl border border-layer bg-card p-4 shadow-sm">
