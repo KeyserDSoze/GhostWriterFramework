@@ -1,5 +1,5 @@
 import type { TFunction } from "i18next";
-import type { AiCallAttempt, AiCallRecord } from "narrarium-engine";
+import type { AiCallAttempt, AiCallRecord, AiCallWindow } from "narrarium-engine";
 import { formatBytes, formatCost, formatCount, formatDuration } from "@/autopilot/format";
 
 /** What a call used, all its provider attempts together: the tokens the providers reported, and what is known of the cost. */
@@ -32,14 +32,19 @@ export const askedAttempts = (record: Pick<AiCallRecord, "attempts">): AiCallAtt
 /** The candidates of the route that the call left out, each with why (`skip`), in the order of the route. */
 export const leftOutAttempts = (record: Pick<AiCallRecord, "attempts">): AiCallAttempt[] => record.attempts.filter((attempt) => attempt.outcome === "skipped");
 
-/** The model of a call: the one of its last attempt that was asked and says one, with its provider and its integration. */
-export function modelOf(record: Pick<AiCallRecord, "attempts">): { model: string | null; provider: string | null; integrationId: string | null } {
+/** The model of a call: the one of its last attempt that was asked and says one, with its provider, its integration and the context window it was judged by (absent from a record that did not say). */
+export function modelOf(record: Pick<AiCallRecord, "attempts">): { model: string | null; provider: string | null; integrationId: string | null; window: AiCallWindow | null } {
   const asked = askedAttempts(record);
   for (let index = asked.length - 1; index >= 0; index -= 1) {
     const attempt = asked[index];
-    if (attempt.model) return { model: attempt.model, provider: attempt.provider, integrationId: attempt.integrationId };
+    if (attempt.model) return { model: attempt.model, provider: attempt.provider, integrationId: attempt.integrationId, window: attempt.window ?? null };
   }
-  return { model: null, provider: null, integrationId: null };
+  return { model: null, provider: null, integrationId: null, window: null };
+}
+
+/** The window of a model in words: its figure, and whether it is the model's own or the default that was assumed. */
+export function windowWords(t: TFunction, window: AiCallWindow): string {
+  return t(window.source === "default" ? "autopilot.calls.call.windowDefault" : "autopilot.calls.call.windowConfigured", { tokens: formatCount(window.tokens) });
 }
 
 const time = (iso: string | null | undefined) => {

@@ -75,7 +75,7 @@ function RestProblems({ problems, host, ai }: { problems: readonly RestProblem[]
   const sentence = (problem: RestProblem): string => {
     switch (problem.code) {
       case "noModel": return t(host === "server" ? "autopilot.estimate.warning.noModelServer" : "autopilot.estimate.warning.noModel", { roles: roleNames(problem.capabilities) });
-      case "smallWindow": return t(problem.severity === "error" ? "autopilot.approval.rest.smallWindow" : "autopilot.approval.rest.tightWindow", { model: isolate(problem.model), window: whole(problem.window), roles: roleNames(problem.capabilities), prompt: about(problem.prompt) });
+      case "smallWindow": return t(`autopilot.approval.rest.${problem.severity === "error" ? "smallWindow" : "tightWindow"}${problem.windowDefault ? "Default" : ""}`, { model: isolate(problem.model), window: whole(problem.window), roles: roleNames(problem.capabilities), prompt: about(problem.prompt) });
       case "smallOutput": return t("autopilot.approval.rest.smallOutput", { model: isolate(problem.model), limit: whole(problem.limit), roles: roleNames(problem.capabilities), reply: about(problem.reply) });
     }
   };

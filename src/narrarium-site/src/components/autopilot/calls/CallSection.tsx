@@ -8,7 +8,7 @@ import { useNow } from "@/autopilot/hooks";
 import { PHONE_SCREENS } from "@/autopilot/liveText";
 import { callElementId } from "@/components/autopilot/calls/anchors";
 import { useCallsView } from "@/components/autopilot/calls/callsView";
-import { askedAttempts, costWords, errorWords, failedAttempts, leftOutAttempts, modelOf, timesOf, transportFacts, useOf } from "@/components/autopilot/calls/callFacts";
+import { askedAttempts, costWords, errorWords, failedAttempts, leftOutAttempts, modelOf, timesOf, transportFacts, useOf, windowWords } from "@/components/autopilot/calls/callFacts";
 import { useMoney } from "@/costs/useMoney";
 import { leftOutReason } from "@/autopilot/routeWords";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -52,7 +52,7 @@ function CallFacts({ record, now }: { record: AiCallRecord; now: number }) {
   // The cost of the call follows the currency and the rates of the settings as they are now.
   useMoney();
   const integrationName = useIntegrationName();
-  const { model, provider, integrationId } = modelOf(record);
+  const { model, provider, integrationId, window } = modelOf(record);
   const where = integrationName(integrationId) ?? provider;
   const use = useOf(record);
   const { tookMs, firstWordsMs } = timesOf(record, now);
@@ -64,6 +64,7 @@ function CallFacts({ record, now }: { record: AiCallRecord; now: number }) {
       <Fact term={t("autopilot.calls.call.asked")}>{record.label || taskLabel(t, record.task, record.chapter ?? undefined)}</Fact>
       {record.capability && <Fact term={t("autopilot.calls.call.for")}>{t(`settings.capability.${record.capability}`, { defaultValue: record.capability })}</Fact>}
       {model && <Fact term={t("autopilot.calls.call.model")}>{where ? `${model} (${where})` : model}</Fact>}
+      {model && window && <Fact term={t("autopilot.calls.call.window")}><span data-call-window={window.source}>{windowWords(t, window)}</span></Fact>}
       <Fact term={t("autopilot.calls.call.status")}>{t(`autopilot.calls.status.${record.status}`)}{record.response.partial ? ` · ${t("autopilot.calls.call.partial")}` : ""}</Fact>
       <Fact term={t("autopilot.calls.call.started")}>{formatDateTime(record.timing.startedAt)}</Fact>
       {tookMs !== null && <Fact term={t("autopilot.calls.call.took")}>{formatDuration(tookMs)}</Fact>}
@@ -121,7 +122,7 @@ function LeftOut({ record }: { record: AiCallRecord }) {
           <li key={attempt.index} className="rounded-md border-l-2 border-amber-500/60 bg-amber-500/5 px-2 py-1.5 text-xs">
             <span className="font-medium">{t("autopilot.route.target", { integration: integrationName(attempt.integrationId) ?? attempt.provider ?? attempt.integrationId ?? "?", model: attempt.model ?? "?" })}</span>
             {" — "}
-            {t("autopilot.route.leftOut", { reason: leftOutReason(t, { reason: attempt.skip?.reason, why: attempt.skip?.why, promptTokens: attempt.skip?.promptTokens, windowTokens: attempt.skip?.windowTokens }) })}
+            {t("autopilot.route.leftOut", { reason: leftOutReason(t, { reason: attempt.skip?.reason, why: attempt.skip?.why, promptTokens: attempt.skip?.promptTokens, windowTokens: attempt.skip?.windowTokens, windowDefault: attempt.skip?.windowDefault }) })}
           </li>
         ))}
       </ul>

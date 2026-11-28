@@ -2,6 +2,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { AiCallAttempt } from "narrarium-engine";
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import TaskCalls from "@/components/autopilot/calls/TaskCalls";
@@ -90,6 +91,37 @@ describe("a call that left a candidate out", () => {
     expect(callOf(1).querySelector("[data-left-out]")).toBeNull();
     const facts = Object.fromEntries([...callOf(1).querySelectorAll("dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]));
     expect(facts.Model).toBe("gpt-5 (openai)");
+  });
+
+  it("says that the window a candidate was left out for is the default one, when the model's own is not set", async () => {
+    const { store } = storeAsSource();
+    await recordCall(store, STEP, { texts: ["Whole."], attempts: [skipped(1, { skip: { reason: "context-window", promptTokens: 150_000, windowTokens: 118_000, windowDefault: true } }), attemptOf(2, { textAttempt: 1 })] });
+    render(<View />);
+    await screen.findByText("Whole.");
+    expect(callOf(1).querySelector("[data-left-out] li")).toHaveTextContent(t("autopilot.route.leftOut", { reason: t("autopilot.route.reason.context-window-default", { prompt: "150K", window: "118K", assumed: "128K" }) }));
+  });
+
+  it("says in the details of a call the window its model was judged by, and whether it is the model's own or the default", async () => {
+    const cases: Array<[AiCallAttempt["window"], string | null, string | null]> = [
+      [{ tokens: 128_000, source: "default" }, "default", "128K tokens, the default: this model's window is not set in AI Integrations"],
+      [{ tokens: 32_000, source: "configured" }, "configured", "32,000 tokens, set in AI Integrations"],
+      [undefined, null, null],
+    ];
+    for (const [window, source, words] of cases) {
+      const { store } = storeAsSource();
+      await recordCall(store, STEP, { texts: ["Whole."], attempts: [attemptOf(1, window ? { window } : {})] });
+      const { unmount } = render(<View />);
+      await screen.findByText("Whole.");
+      const shown = callOf(1).querySelector<HTMLElement>("[data-call-window]");
+      if (source === null) expect(shown, "a record of an older engine says nothing of it").toBeNull();
+      else {
+        expect(shown).toHaveAttribute("data-call-window", source);
+        expect(shown?.textContent).toBe(words);
+        expect(shown?.parentElement?.previousElementSibling).toHaveTextContent("Context window");
+      }
+      unmount();
+      provideCallsSources(null);
+    }
   });
 
   it("says why in Italian too", async () => {

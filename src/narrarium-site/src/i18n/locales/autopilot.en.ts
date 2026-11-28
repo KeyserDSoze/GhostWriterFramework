@@ -1522,6 +1522,8 @@ const autopilotEn = {
         router: "Open the AI Router",
         smallWindow: "The window of {{model}} ({{window}} tokens) is too small for the prompts of {{roles}}: the largest is about {{prompt}} tokens.",
         tightWindow: "The window of {{model}} ({{window}} tokens) leaves little room for the prompts of {{roles}}: the largest is about {{prompt}} tokens.",
+        smallWindowDefault: "The window of {{model}} ({{window}} tokens, the default: this model declares none) is too small for the prompts of {{roles}}: the largest is about {{prompt}} tokens.",
+        tightWindowDefault: "The window of {{model}} ({{window}} tokens, the default: this model declares none) leaves little room for the prompts of {{roles}}: the largest is about {{prompt}} tokens.",
         smallOutput: "{{model}} cannot answer with more than {{limit}} tokens, and a typical reply of {{roles}} is longer, up to about {{reply}}: it would be cut.",
       },
     },

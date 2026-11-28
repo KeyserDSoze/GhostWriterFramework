@@ -1522,6 +1522,8 @@ const autopilotIt = {
         router: "Apri il Router AI",
         smallWindow: "La finestra di {{model}} ({{window}} token) è troppo piccola per i prompt di {{roles}}: il più grande è di circa {{prompt}} token.",
         tightWindow: "La finestra di {{model}} ({{window}} token) lascia poco margine ai prompt di {{roles}}: il più grande è di circa {{prompt}} token.",
+        smallWindowDefault: "La finestra di {{model}} ({{window}} token, quella predefinita: il modello non ne dichiara una) è troppo piccola per i prompt di {{roles}}: il più grande è di circa {{prompt}} token.",
+        tightWindowDefault: "La finestra di {{model}} ({{window}} token, quella predefinita: il modello non ne dichiara una) lascia poco margine ai prompt di {{roles}}: il più grande è di circa {{prompt}} token.",
         smallOutput: "{{model}} non può rispondere con più di {{limit}} token, e una risposta tipica di {{roles}} è più lunga, fino a circa {{reply}}: verrebbe tagliata.",
       },
     },

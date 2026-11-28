@@ -101,7 +101,7 @@ test("the title of the preview is the one the owner asked for, in both languages
 });
 
 test("what the rest will cost, at the end of the plan, has its texts in the catalogue loaded with the pages of the autopilot, in both languages, and nowhere else", () => {
-  assert.deepEqual([...REST].sort(), ["autopilot.approval.rest.again", "autopilot.approval.rest.full", "autopilot.approval.rest.intro", "autopilot.approval.rest.router", "autopilot.approval.rest.smallOutput", "autopilot.approval.rest.smallWindow", "autopilot.approval.rest.tightWindow", "autopilot.approval.rest.title", "autopilot.approval.rest.tokens", "autopilot.approval.rest.working"]);
+  assert.deepEqual([...REST].sort(), ["autopilot.approval.rest.again", "autopilot.approval.rest.full", "autopilot.approval.rest.intro", "autopilot.approval.rest.router", "autopilot.approval.rest.smallOutput", "autopilot.approval.rest.smallWindow", "autopilot.approval.rest.smallWindowDefault", "autopilot.approval.rest.tightWindow", "autopilot.approval.rest.tightWindowDefault", "autopilot.approval.rest.title", "autopilot.approval.rest.tokens", "autopilot.approval.rest.working"]);
   assert.deepEqual(keys(autopilotIt.autopilot.approval.rest, "autopilot.approval.rest.").sort(), [...REST].sort());
   for (const key of REST) {
     for (const [language, locale] of [["en", autopilotEn], ["it", autopilotIt]]) assert.ok(String(get(locale, key) ?? "").trim().length > 3, `${language}: ${key}`);

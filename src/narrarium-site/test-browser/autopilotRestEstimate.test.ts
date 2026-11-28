@@ -303,6 +303,19 @@ describe("the problems that matter when a plan waits for the author", () => {
     expect(error?.severity).toBe("error");
   });
 
+  it("judge a model that declares no window by the default one, and say that it is the default", () => {
+    const base = sourcesOf();
+    const huge = { ...base, book: { ...base.book, context: { directorWords: 120_000 } } };
+    const undeclared = withModel({ name: "no-window", maxOutputTokens: 16_000, pricing: { inputPerMTok: 1, outputPerMTok: 2 } });
+    const found = restProblems(estimateRest({ ...huge, ai: undeclared }, stateOf(chaptersOf(12))).estimate.warnings).filter((problem) => problem.code === "smallWindow");
+    expect(found.length).toBeGreaterThan(0);
+    expect(found[0]).toMatchObject({ severity: "error", model: "no-window", window: 128_000, windowDefault: true });
+    const declared = withModel({ name: "no-window", maxInputTokens: 128_000, maxOutputTokens: 16_000, pricing: { inputPerMTok: 1, outputPerMTok: 2 } });
+    const same = restProblems(estimateRest({ ...huge, ai: declared }, stateOf(chaptersOf(12))).estimate.warnings).filter((problem) => problem.code === "smallWindow");
+    expect(same[0]).toMatchObject({ window: 128_000, windowDefault: false });
+    expect(restProblems(warningsOf(undeclared)), "a prompt that fits the default window says nothing").toEqual([]);
+  });
+
   it("are a problem for every role when the browser has no model, said once, with the errors first", () => {
     const kept = restProblems(warningsOf(null));
     expect(kept).toHaveLength(1);

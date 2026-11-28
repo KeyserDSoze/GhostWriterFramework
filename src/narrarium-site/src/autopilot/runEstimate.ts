@@ -267,7 +267,7 @@ export const REST_WARNING_CODES = ["noModel", "smallWindow", "smallOutput"] as c
  */
 export type RestProblem =
   | { code: "noModel"; severity: "error"; capabilities: EstimateCapability[] }
-  | { code: "smallWindow"; severity: "error" | "warning"; model: string; window: number; prompt: number; capabilities: EstimateCapability[] }
+  | { code: "smallWindow"; severity: "error" | "warning"; model: string; window: number; /** The model declares no window: it is the default one (`modelWindow`). */ windowDefault: boolean; prompt: number; capabilities: EstimateCapability[] }
   | { code: "smallOutput"; severity: "warning"; model: string; limit: number; reply: number; capabilities: EstimateCapability[] };
 
 const RANK: Record<EstimateWarning["severity"], number> = { error: 0, warning: 1, info: 2 };
@@ -286,14 +286,14 @@ export function restProblems(warnings: readonly EstimateWarning[]): RestProblem[
         found.push(problem);
       }
     } else if (warning.code === "smallWindow") {
-      const key = `smallWindow\n${warning.model}\n${warning.window}`;
+      const key = `smallWindow\n${warning.model}\n${warning.window}\n${warning.windowDefault === true}`;
       const same = known.get(key);
       if (same?.code === "smallWindow") {
         same.capabilities.push(warning.capability);
         same.prompt = Math.max(same.prompt, warning.typicalPrompt);
         if (warning.severity === "error") same.severity = "error";
       } else {
-        const problem: RestProblem = { code: "smallWindow", severity: warning.severity === "error" ? "error" : "warning", model: warning.model, window: warning.window, prompt: warning.typicalPrompt, capabilities: [warning.capability] };
+        const problem: RestProblem = { code: "smallWindow", severity: warning.severity === "error" ? "error" : "warning", model: warning.model, window: warning.window, windowDefault: warning.windowDefault === true, prompt: warning.typicalPrompt, capabilities: [warning.capability] };
         known.set(key, problem);
         found.push(problem);
       }
