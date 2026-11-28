@@ -8,11 +8,11 @@ const LEGACY_UNSAFE_CACHE_PREFIX = "narrarium-settings-cache-v1:";
 
 export const SAFE_SETTINGS_KEYS = [
   "azureOpenAI", "aiIntegrations", "defaultWritingIntegrationId", "defaultReviewIntegrationId", "taskRouting", "fallbackDisclosure",
-  "routingExecution", "aiToolsOnly", "costCurrency", "costRates", "costRelabels", "costBudgets", "ui", "speech", "repository", "deepSearch", "copilotTools", "reader", "customActionsSchemaVersion",
+  "routingExecution", "aiToolsOnly", "costCurrency", "costRates", "costRelabels", "costBudgets", "ui", "speech", "repository", "deepSearch", "copilotTools", "contextCompaction", "reader", "customActionsSchemaVersion",
   "customActions", "books", "branchMemory", "annotations",
 ] as const;
 
-export const OFFLINE_EDITABLE_SETTINGS_KEYS = ["costCurrency", "costRates", "costRelabels", "costBudgets", "ui", "repository", "reader", "customActions", "copilotTools", "speech", "books", "branchMemory", "annotations"] as const;
+export const OFFLINE_EDITABLE_SETTINGS_KEYS = ["costCurrency", "costRates", "costRelabels", "costBudgets", "ui", "repository", "reader", "customActions", "copilotTools", "contextCompaction", "speech", "books", "branchMemory", "annotations"] as const;
 export type OfflineEditableSettingsKey = typeof OFFLINE_EDITABLE_SETTINGS_KEYS[number];
 
 export type SafeSettingsKey = typeof SAFE_SETTINGS_KEYS[number];

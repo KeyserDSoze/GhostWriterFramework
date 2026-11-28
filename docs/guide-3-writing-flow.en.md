@@ -40,5 +40,6 @@ The menu is available **everywhere on the site**:
 ## Copilot and voice
 
 - The **Copilot** is the assistant: it knows the page context (book/chapter/paragraph) and can create, edit, summarize, search, handle branches, etc. It replies in the app's language.
+- **How full a chat is**: next to Send, a ring shows how much of the model's context window the next message takes (hover or focus it for the numbers; press it to see what the message carries part by part, the share a provider may serve from its cache, and what it costs). When the next message would reach 90% of the window the chat compacts by itself: the older part of the conversation is summarised and the requests carry the summary and the recent messages, while every message stays in the chat. A marker says how many messages were summarised, shows the summary and lets you undo it for the next message. Type `/compact` to compact now and `/context` to print what the next message carries; the threshold and the switch are in Settings › Tools for Copilot › Context of the chats.
 - The **ghost** opens **live voice** mode: you talk and it replies by voice. You can also say "read me chapter 1" and it reads the text.
 - Text-to-speech uses the voice set in Settings; when reading the book it reads only the body (not the metadata), unless you ask for the metadata.

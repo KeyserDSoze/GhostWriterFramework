@@ -706,6 +706,21 @@ export interface CopilotToolSettings {
   toolOverrides: Record<string, CopilotToolOverride>;
 }
 
+/**
+ * The compaction of the context of a chat of the Copilot and of Brainstorming (#122): when the next request would reach `threshold`% of its model's window (or the room the window
+ * leaves for a request, if that comes first), the older part of the conversation is summarised, and the requests carry the summary and the recent messages. Every message stays
+ * in the chat. `auto: false` leaves it to the author (`/compact`, «Compact now»).
+ */
+export interface ContextCompactionSettings {
+  auto: boolean;
+  /** In % of the window, from `CONTEXT_THRESHOLD_MIN` to `CONTEXT_THRESHOLD_MAX`. */
+  threshold: number;
+}
+
+export const CONTEXT_THRESHOLD_MIN = 50;
+export const CONTEXT_THRESHOLD_MAX = 95;
+export const DEFAULT_CONTEXT_COMPACTION: ContextCompactionSettings = { auto: true, threshold: 90 };
+
 /** Connection to a personal Narrarium server started with `npx narrarium-server`. */
 export interface PersonalServerSettings {
   /** Server address, e.g. http://127.0.0.1:24242 or the server's public HTTPS address. */
@@ -781,6 +796,8 @@ export interface AppSettings {
   repository: RepositorySettings;
   deepSearch: DeepSearchProviderSettings;
   copilotTools: CopilotToolSettings;
+  /** Absent in settings saved before it: the defaults (`DEFAULT_CONTEXT_COMPACTION`). */
+  contextCompaction?: ContextCompactionSettings;
   reader: ReaderSettings;
   customActionsSchemaVersion: 1;
   customActions: CustomAction[];
@@ -844,6 +861,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     schemaVersion: 1,
     toolOverrides: {},
   },
+  contextCompaction: { ...DEFAULT_CONTEXT_COMPACTION },
   reader: {
     showImages: true,
     showFrontmatter: false,

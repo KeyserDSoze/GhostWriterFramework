@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MAX_PERSISTED_CHAT_BYTES } from "../src/assistant/chatCloud.ts";
-import { serializeAssistantSession } from "../src/assistant/sessionSchema.ts";
+import { MAX_ASSISTANT_LOSSLESS_SEGMENT_BYTES, MAX_ASSISTANT_SESSION_BYTES, parseAssistantSession, serializeAssistantSession } from "../src/assistant/sessionSchema.ts";
 import {
-  assistantSessionCompactionTarget,
   appendAssistantArchiveRecords,
   archiveAction,
-  compactionText,
+  archiveForStorage,
   MAX_ARCHIVE_RECORD_BYTES,
-  MAX_COMPACTION_INPUT_CHARS,
   mergeAssistantSessionCompaction,
+  STORAGE_ARCHIVE_BYTES,
+  STORAGE_TARGET_BYTES,
+  storageArchiveCount,
 } from "../src/assistant/sessionCompaction.ts";
 
 /** @param {number} count @returns {import("../src/assistant/store.ts").AssistantMessage[]} */
@@ -37,16 +38,65 @@ function session(overrides = {}) {
   };
 }
 
-test("compaction starts only when a new prefix exceeds the threshold", () => {
-  assert.equal(assistantSessionCompactionTarget(session({ messages: messages(12) })), null);
-  assert.equal(assistantSessionCompactionTarget(session()), 7);
-  assert.equal(assistantSessionCompactionTarget(session({ messages: messages(6), compactedMessageCount: 7 })), null);
-  assert.equal(assistantSessionCompactionTarget(session({ messages: messages(15), compactedMessageCount: 7 })), 9);
+/** A chat of `count` long messages (`size` characters each), compacted through `through` (#122). @param {number} count @param {number} size @param {number} [through] */
+function bigChat(count, size, through) {
+  /** @type {import("../src/assistant/store.ts").AssistantMessage[]} */
+  const list = Array.from({ length: count }, (_, index) => ({ id: `message-${index}`, role: index % 2 ? "assistant" : "user", text: `${index}: ${"x".repeat(size)}` }));
+  /** @type {import("../src/assistant/store.ts").ContextCompaction | undefined} */
+  const compaction = through === undefined ? undefined : { id: "compaction-1", throughMessageId: list[through].id, messageCount: through + 1, coveredCount: through + 1, summary: "What was said", source: "model", trigger: "auto", at: "2026-11-27T10:00:00.000Z", beforeTokens: 900_000, afterTokens: 80_000 };
+  return session({ messages: list, ...(compaction ? { contextCompactions: [compaction] } : {}) });
+}
+
+test("a chat keeps every message until it is too large to keep, and then archives only what its compaction already summarised", () => {
+  // Thirteen short messages, compacted or not: nothing moves (the old count of twelve messages no longer moves anything out of the chat).
+  assert.equal(storageArchiveCount(session()), 0);
+  assert.equal(storageArchiveCount(bigChat(40, 1_000, 30)), 0);
+  // Past 4 MB with nothing summarised yet: nothing moves either (the compaction comes first).
+  assert.equal(storageArchiveCount(bigChat(30, 200_000)), 0);
+  // Past 4 MB, compacted through message 19: the first messages move, the fewest that bring the chat under 3 MB, and never one after the compaction's point.
+  const chat = bigChat(30, 200_000, 19);
+  const bytes = (value) => new TextEncoder().encode(JSON.stringify(value)).length;
+  assert.ok(bytes({ messages: chat.messages, attachments: [] }) > STORAGE_ARCHIVE_BYTES);
+  const count = storageArchiveCount(chat);
+  assert.ok(count > 0 && count <= 20, `count ${count}`);
+  assert.ok(bytes({ messages: chat.messages.slice(count), attachments: [] }) <= STORAGE_TARGET_BYTES);
+  assert.ok(bytes({ messages: chat.messages.slice(count - 1), attachments: [] }) > STORAGE_TARGET_BYTES);
+  // Compacted only through message 2: at most three move, even if the chat stays above 3 MB.
+  assert.equal(storageArchiveCount(bigChat(30, 200_000, 2)), 3);
+  // Short messages, but past 2,000 of them: back to 1,500, within what the compaction covers.
+  const many = bigChat(2_400, 10, 2_000);
+  assert.equal(storageArchiveCount(many), 900);
+  assert.equal(storageArchiveCount(bigChat(1_900, 10, 1_500)), 0);
 });
 
-test("size pressure compacts huge active content and attachment-only sessions", () => {
-  assert.equal(assistantSessionCompactionTarget(session({ messages: [{ id: "huge", role: "user", text: "x".repeat(400_000) }] })), 1);
-  assert.equal(assistantSessionCompactionTarget(session({ messages: [], attachments: [{ id: "image", name: "map.png", mimeType: "image/png", kind: "image", sizeBytes: 500_000, imageDataUrl: "x".repeat(500_000) }] })), 0);
+test("what a chat too large to keep archives is lossless: whole messages in segments within their size, a manifest that says them, a chat that saves again", async () => {
+  const chat = bigChat(30, 200_000, 19);
+  const count = storageArchiveCount(chat);
+  const archived = await archiveForStorage(chat, count);
+  assert.deepEqual(archived.messages.map((message) => message.id), chat.messages.slice(count).map((message) => message.id));
+  const kept = archived.losslessSegments.flatMap((segment) => segment.messages);
+  assert.deepEqual(kept, chat.messages.slice(0, count));
+  for (const segment of archived.losslessSegments) assert.ok(new TextEncoder().encode(JSON.stringify(segment)).length <= MAX_ASSISTANT_LOSSLESS_SEGMENT_BYTES);
+  assert.equal(archived.losslessArchive.segmentCount, archived.losslessSegments.length);
+  assert.equal(archived.losslessArchive.messageCount, count);
+  const segments = archived.losslessSegments;
+  assert.ok(segments.length > 1);
+  assert.equal(archived.losslessArchive.head.id, segments[segments.length - 1].id);
+  assert.equal(segments[segments.length - 1].previous?.id, segments[segments.length - 2].id);
+  assert.equal(archived.compactedMessageCount, count);
+  // The summary of the compaction is still the one in force; the attachments stay in the chat.
+  assert.deepEqual(archived.contextCompactions, chat.contextCompactions);
+  const saved = serializeAssistantSession(archived);
+  assert.ok(new TextEncoder().encode(saved).length <= MAX_ASSISTANT_SESSION_BYTES);
+  assert.equal(parseAssistantSession({ ...JSON.parse(saved), losslessSegments: archived.losslessSegments }).losslessSegments.length, archived.losslessSegments.length);
+  // Merged into the chat as it is now (a message arrived in the meantime): the manifest goes with its segments.
+  /** @type {import("../src/assistant/store.ts").AssistantMessage} */
+  const arrived = { id: "message-new", role: "user", text: "And now?" };
+  const now = { ...chat, messages: [...chat.messages, arrived] };
+  const merged = mergeAssistantSessionCompaction(now, chat.id, archived);
+  assert.equal(merged.messages[merged.messages.length - 1].id, "message-new");
+  assert.equal(merged.messages.length, 31 - count);
+  assert.deepEqual(merged.losslessArchive, archived.losslessArchive);
 });
 
 test("compaction merge preserves newer session data", () => {
@@ -82,18 +132,6 @@ test("compaction archives source attachments but preserves concurrently added on
   const merged = mergeAssistantSessionCompaction(current, "session-1", compacted);
   assert.deepEqual(merged.attachments.map((attachment) => attachment.id), ["new"]);
   assert.deepEqual(merged.archive.attachments.map((attachment) => attachment.id), ["old"]);
-});
-
-test("compaction input is incremental and bounded for huge messages", () => {
-  const value = session({
-    messages: [{ id: "huge", role: "user", text: "x".repeat(MAX_COMPACTION_INPUT_CHARS * 2) }, ...messages(12)],
-    archive: { summary: "Earlier decisions", messageCount: 20, actions: [], attachments: [] },
-  });
-  const text = compactionText(value, 7);
-  assert.ok(text.length <= MAX_COMPACTION_INPUT_CHARS);
-  assert.match(text, /PREVIOUS ARCHIVE SUMMARY/);
-  assert.match(text, /content truncated/);
-  assert.match(text, /Message 5/);
 });
 
 test("archived actions retain provenance without full mutation snapshots", () => {

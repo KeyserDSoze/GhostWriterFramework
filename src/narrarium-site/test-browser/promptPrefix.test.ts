@@ -175,4 +175,18 @@ describe("Brainstorming, turn after turn about one book", () => {
       expect(parts[0].text.endsWith("</repository_content>\n\n")).toBe(true);
     }
   });
+
+  it("carries a compacted conversation as its summary, right after the book in the start that stays the same, and every message after it as it is (#122: no cap of twelve turns)", async () => {
+    captured.brainstorm.length = 0;
+    captured.store = new MemoryBookStore({ ...seedBookFiles({ chapters: 0 }), "outline/book.md": serializeOutlineBook({ body: "A glassmaker's daughter." }) });
+    const structure = { title: "The Glass Harbor", language: "en", chapters: [], characters: [], locations: [], factions: [], items: [], timelines: [], ghostwriters: [], readerPersonas: [] } as never;
+    const history = Array.from({ length: 30 }, (_, index) => ({ id: `h${index}`, role: index % 2 ? "assistant" : "user", text: `Turn ${index} ${words(80, index)}` }) as AssistantMessage);
+    await runBrainstormPrompt({ prompt: "And the ending?", settings: brainstormSettings, book: glass, branch: "main", structure, history, summary: "- The author moved the reveal to chapter 5.", accountScope: null });
+    const parts = captured.brainstorm[0][1].content as Array<{ text: string; cacheBreak?: boolean }>;
+    expect(parts[0].cacheBreak).toBe(true);
+    expect(parts[0].text.indexOf("<compaction_summary")).toBeGreaterThan(parts[0].text.indexOf("</repository_content>"));
+    expect(parts[0].text).toContain("- The author moved the reveal to chapter 5.");
+    expect(parts[0].text.endsWith("</compaction_summary>\n\n")).toBe(true);
+    for (const turn of [0, 1, 17, 29]) expect(parts[1].text).toContain(`${turn % 2 ? "ASSISTANT" : "USER"}: Turn ${turn} `);
+  });
 });

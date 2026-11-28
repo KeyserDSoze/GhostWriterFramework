@@ -78,14 +78,15 @@ describe("assistant prompt trust boundaries", () => {
     expect(lines(prompt)).toEqual(lines(`${userContextBundle(value as never)}\n\n${request}`));
   });
 
-  it("says where the start that stays the same ends: after the text and the files, before the conversation; and nothing when there is no such start", () => {
+  it("says where the start that stays the same ends: after the text, the files and the summary of the compacted conversation (#122: it changes only with the next compaction), before the conversation; and nothing when there is no such start", () => {
     const value = input();
     const target = untrustedBlock("repository_content", "Repository text.", "The text of the chapter.");
     const { text, stableChars } = boundedUserParts(value as never, `${currentRequest(value.prompt)}\n\n${target}`);
     expect(text.slice(0, stableChars).endsWith("\n\n")).toBe(true);
     expect(text.slice(0, stableChars)).toContain("The text of the chapter.");
     expect(text.slice(0, stableChars)).toContain("LOADED FILE: chapter.md");
-    expect(text.slice(stableChars).startsWith("<compaction_summary")).toBe(true);
+    expect(text.slice(0, stableChars)).toContain("<compaction_summary");
+    expect(text.slice(stableChars).startsWith("<prior_transcript")).toBe(true);
     // A request that is not framed is all request, after the context, as it always was.
     const plain = boundedUserParts(value as never, `User request: ${value.prompt}`);
     expect(plain.text.endsWith(`User request: ${value.prompt}`)).toBe(true);
@@ -112,14 +113,14 @@ describe("assistant prompt trust boundaries", () => {
     expect(prompt).toContain("USER: prior user");
   });
 
-  it("puts what the page shows in the user message, after what stays the same and before the conversation, and not in the system message: a page that changes does not make the whole prompt read again", () => {
+  it("puts what the page shows in the user message, after what stays the same (the summary of a compacted conversation included) and before the conversation, and not in the system message: a page that changes does not make the whole prompt read again", () => {
     const value = { ...input(), page: { state: "Simulated readers: 29 (28 built-in, 1 custom); 8 on." } };
     expect(systemContextBundle(value as never)).not.toContain("page_state");
     expect(pageStateBlock(value as never)).toContain('<page_state trust="untrusted-data">');
     expect(pageStateBlock(input() as never), "a page that shows nothing says nothing").toBe("");
     const prompt = boundedUserPrompt(value as never, currentRequest(value.prompt));
     expect(prompt.indexOf("LOADED FILE: chapter.md")).toBeLessThan(prompt.indexOf("<page_state"));
-    expect(prompt.indexOf("<page_state")).toBeLessThan(prompt.indexOf("<compaction_summary"));
+    expect(prompt.indexOf("<compaction_summary")).toBeLessThan(prompt.indexOf("<page_state"));
     expect(prompt.indexOf("<page_state")).toBeLessThan(prompt.indexOf("<prior_transcript"));
     expect(prompt.endsWith("</current_request>")).toBe(true);
     // The stable start of the user message is the one that ends with the page's state.

@@ -1,4 +1,4 @@
-import { CHAT_CAPABILITIES, DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel, type CustomAction, type RoutingTarget } from "@/types/settings";
+import { CHAT_CAPABILITIES, CONTEXT_THRESHOLD_MAX, CONTEXT_THRESHOLD_MIN, DEFAULT_CONTEXT_COMPACTION, DEFAULT_SETTINGS, type AIIntegration, type AppSettings, type ChatCapability, type ChatModel, type ContextCompactionSettings, type CustomAction, type RoutingTarget } from "@/types/settings";
 import type { AuthProvider } from "@/store/authStore";
 import { BROWSER_ROUTING_ID, sanitizeTaskRouting } from "@/assistant/router";
 import { normalizeThinking } from "@/router/thinking";
@@ -398,6 +398,7 @@ export function migrateSettingsWithDiagnostics(raw: unknown): { settings: AppSet
       bookmarks: Array.isArray((sourceReader as Partial<AppSettings["reader"]>).bookmarks) ? (sourceReader as Partial<AppSettings["reader"]>).bookmarks! : [],
     },
     copilotTools: normalizeCopilotTools(source.copilotTools, diagnostics),
+    contextCompaction: normalizeContextCompaction(source.contextCompaction),
     customActionsSchemaVersion: 1,
     customActions,
     books: Array.isArray(source.books) ? source.books : [],
@@ -420,6 +421,15 @@ export function migrateSettingsWithDiagnostics(raw: unknown): { settings: AppSet
   if (costRelabels.length) settings.costRelabels = costRelabels;
   else delete settings.costRelabels;
   return { settings, diagnostics };
+}
+
+/** The compaction of a chat's context: a switch and a threshold within its range, else the defaults. */
+export function normalizeContextCompaction(raw: unknown): ContextCompactionSettings {
+  const source = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+  const threshold = typeof source.threshold === "number" && Number.isFinite(source.threshold)
+    ? Math.min(CONTEXT_THRESHOLD_MAX, Math.max(CONTEXT_THRESHOLD_MIN, Math.round(source.threshold)))
+    : DEFAULT_CONTEXT_COMPACTION.threshold;
+  return { auto: typeof source.auto === "boolean" ? source.auto : DEFAULT_CONTEXT_COMPACTION.auto, threshold };
 }
 
 function normalizePersonalServer(raw: unknown): AppSettings["personalServer"] {

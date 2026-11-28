@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, lazy, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { chooseBranch } from "@/branches/memoryEdits";
 import { useTranslation } from "react-i18next";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -42,8 +42,9 @@ import {
   type AssistantMessage,
   type AssistantSession,
   type AssistantSessionMeta,
+  type ContextCompaction,
 } from "@/assistant/store";
-import { appendAssistantNote, applyParagraphRewrite, compactAssistantSession, runAssistantPrompt } from "@/assistant/service";
+import { appendAssistantNote, applyParagraphRewrite, runAssistantPrompt } from "@/assistant/service";
 import { attachedMaterial, attachmentTextCut } from "@/assistant/attachmentText";
 import { MATERIAL_CHARS, splitPrompt } from "@/assistant/promptMaterial";
 import { assistantMarkdownToRichPlainText, buildAssistantSessionMarkdown, buildAssistantSessionPdfBlob, hasAssistantSessionArchiveContent, renderAssistantMarkdownHtml } from "@/assistant/chatArtifacts";
@@ -53,7 +54,12 @@ import { bindReadAloudActionProvenance, readAloudReplaySource, resolveNavigateAc
 import { hydrateAssistantSessionArchive } from "@/assistant/chatCloud";
 import { refreshAssistantSessionIndex } from "@/assistant/sessionIndex";
 import { assistantSessionSaveQueue, assistantSessionSaveFingerprint, assistantSessionSaveRetryPlan, clearFailedAssistantSessionSaveFingerprint, upsertAssistantSessionMeta } from "@/assistant/sessionAutosave";
-import { assistantSessionCompactionTarget, mergeAssistantSessionCompaction } from "@/assistant/sessionCompaction";
+import { archiveForStorage, mergeAssistantSessionCompaction, storageArchiveCount } from "@/assistant/sessionCompaction";
+import { activeCompaction, canUndoCompaction, chatCapability, chooseKeep, compactionCover, conversationToSend, KEEP_RECENT, summarizeConversation, summaryInForce, withCompaction, withNextUncompacted } from "@/assistant/contextCompaction";
+import { attachmentsKey, chatContextOf, doesNotFit, estimateWithKept, summaryInputChars, summaryKey, wantsCompaction } from "@/assistant/chatContext";
+import { listenToTurn, type TurnRequest, type TurnUsage } from "@/assistant/turnContext";
+import { ContextRing, SlashMenu, slashCommandOf, useSlashMenu, type SlashCommandName } from "@/components/assistant/context/ContextRing";
+import type { TooLargeNoticeData } from "@/components/assistant/context/ContextParts";
 import { isAssistantRequestOwned, isConfirmedMutationOwned, type AssistantRequestOwner } from "@/assistant/sessionOwnership";
 import { resolveChatNoteDestination, reusableChatNoteOperation, type ChatNoteDestination } from "@/assistant/chatNoteSave";
 import { isMediaOperationOwned, stopMediaStreamTracks } from "@/assistant/mediaOwnership";
@@ -211,6 +217,31 @@ const BrainstormProposal = lazy(() => brainstormParts().then((module) => ({ defa
 const PageChangesReview = lazy(() => import("@/components/assistant/PageChangesReview"));
 /** The choice between the author's version and the proposal's, for a file that changed after the proposal was made. */
 const ApplyConflict = lazy(() => import("@/components/assistant/ApplyConflict"));
+// The parts of the context of a chat shown only when there is something to show (#122): the marker of a compaction, a message that does not fit, the archived messages.
+const contextParts = () => import("@/components/assistant/context/ContextParts");
+const CompactionMarker = lazy(() => contextParts().then((module) => ({ default: module.CompactionMarker })));
+const TooLargeNotice = lazy(() => contextParts().then((module) => ({ default: module.TooLargeNotice })));
+const ArchivedMessages = lazy(() => contextParts().then((module) => ({ default: module.ArchivedMessages })));
+
+/** The chat the ring measures before there is one: empty, in the mode of the panel. */
+function emptyChat(brainstorming: boolean): Pick<AssistantSession, "mode" | "messages" | "attachments" | "archive" | "compactSummary"> {
+  return { ...(brainstorming ? { mode: "brainstorming" as const } : {}), messages: [], attachments: [], compactSummary: "" };
+}
+
+/** What a turn told of its requests (`turnContext.ts`): the first request of the chat's own task, the provider's count of it, and of the whole turn. */
+interface TurnRecord {
+  request?: TurnRequest;
+  usage?: TurnUsage;
+  total: { inputTokens: number; cachedInputTokens: number; outputTokens: number };
+}
+
+/** What the request of a turn carried that tells whether the next one starts the same way (the cached share, `chatContext.ts`), and whether it set the last compaction aside. */
+interface SentKeys {
+  attachmentsKey: string;
+  summaryKey: string;
+  pasted: boolean;
+  undone: boolean;
+}
 
 /** The conversation the model reads with a request: every message but the request itself, and, for a request sent again, only what came before it. */
 function conversationBefore(messages: readonly AssistantMessage[], requestId: string, again: boolean): AssistantMessage[] {
@@ -292,6 +323,13 @@ export function AssistantPanel() {
   const [autosaveRetry, setAutosaveRetry] = useState(0);
   const [autosaveStatus, setAutosaveStatus] = useState<{ sessionId: string; kind: "retrying" | "stopped"; attempt?: number; message: string; retryable?: boolean } | null>(null);
   const compactionRunRef = useRef(0);
+  // The compaction of the context (#122): one at a time, stopped with the panel; an automatic one once for each new message of a chat.
+  const [compacting, setCompacting] = useState(false);
+  const compactingRef = useRef(false);
+  const compactionAbortRef = useRef<AbortController | null>(null);
+  const compactionRunningRef = useRef<Promise<boolean> | null>(null);
+  const autoCompactedRef = useRef<{ sessionId: string; messages: number } | null>(null);
+  const [tooLarge, setTooLarge] = useState<TooLargeNoticeData | null>(null);
   const activePromptRef = useRef<(AssistantRequestOwner & { controller: AbortController }) | null>(null);
   const confirmedMutationRef = useRef<ConfirmedMutationOperation | null>(null);
   const attachmentRunRef = useRef(0);
@@ -322,6 +360,14 @@ export function AssistantPanel() {
   settingsRef.current = settings;
 
   const [draft, setDraft] = useState("");
+  // How full the context of the chat is with what the author is writing (#122): the ring next to Send. Measured on the draft a moment behind the keys, never in their way.
+  const deferredDraft = useDeferredValue(draft);
+  const ringSession = currentSession ?? emptyChat(Boolean(brainstorming));
+  const chatContext = useMemo(() => chatContextOf({ session: ringSession, settings, draft: deferredDraft, compacting }), [ringSession, settings, deferredDraft, compacting]);
+  const canCompactNow = Boolean(currentSession && !busy && !compacting && compactionCover(currentSession, 1));
+  const slashMenu = useSlashMenu(draft, (command) => void runSlashCommand(command), (command) => setDraft(command));
+  // The notice of a message that did not fit is about the chat it was written in.
+  useEffect(() => setTooLarge(null), [currentSession?.id]);
   const [contextLabel, setContextLabel] = useState("Narrarium");
   const [contextSummary, setContextSummary] = useState("");
   const [contextFiles, setContextFiles] = useState<string[]>([]);
@@ -546,30 +592,47 @@ export function AssistantPanel() {
     return () => { active = false; };
   }, [brainstormingBookId, needsBrainstormChat]);
 
+  // A chat keeps every message (#122): only one too large to keep moves to its lossless archive what its compaction in force already summarised (`storageArchiveCount`).
   useEffect(() => {
-    if (!currentSession || busy || assistantSessionCompactionTarget(currentSession) === null) return;
+    if (!currentSession || busy || compacting) return;
+    const count = storageArchiveCount(currentSession);
+    if (!count) return;
     const sourceSession = currentSession;
-    const controller = new AbortController();
     const runId = ++compactionRunRef.current;
-    void compactAssistantSession({ session: sourceSession, settings, accountScope: localWorkspaceScope(), signal: controller.signal })
-      .then((compacted) => {
-        if (controller.signal.aborted || compactionRunRef.current !== runId) return;
+    let cancelled = false;
+    void archiveForStorage(sourceSession, count)
+      .then((archived) => {
+        if (cancelled || compactionRunRef.current !== runId) return;
         const state = useAssistantStore.getState();
-        const merged = mergeAssistantSessionCompaction(state.currentSession, sourceSession.id, compacted);
-        if (merged !== state.currentSession) state.setCurrentSession(merged);
+        const merged = mergeAssistantSessionCompaction(state.currentSession, sourceSession.id, archived);
+        if (merged && merged !== state.currentSession) state.setCurrentSession(merged);
       })
       .catch((err) => {
-        if (!controller.signal.aborted && compactionRunRef.current === runId) {
-          toast({ title: t("assistant.toastCompactionFailed"), description: String(err), variant: "destructive" });
-        }
+        if (!cancelled && compactionRunRef.current === runId) toast({ title: t("assistant.toastCompactionFailed"), description: String(err), variant: "destructive" });
       });
-    return () => controller.abort();
-  }, [currentSession?.id, currentSession?.messages.length, currentSession?.attachments.length, currentSession?.compactedMessageCount, settings, busy, toast]);
+    return () => { cancelled = true; };
+  }, [currentSession?.id, currentSession?.messages.length, currentSession?.contextCompactions?.length, busy, compacting, toast]);
+
+  // After a turn, the chat compacts by itself when its next request would reach the threshold of the window (once for each new message: a chat that stays full after a
+  // compaction is not compacted again until it has a new message).
+  useEffect(() => {
+    if (!currentSession || busy || compacting) return;
+    // The author undid the last compaction for the next message: that message goes as they asked.
+    if (activeCompaction(currentSession)?.skipNext && canUndoCompaction(currentSession)) return;
+    if (!wantsCompaction(chatContextOf({ session: currentSession, settings, draft: "" }))) return;
+    const last = autoCompactedRef.current;
+    if (last && last.sessionId === currentSession.id && last.messages === currentSession.messages.length) return;
+    autoCompactedRef.current = { sessionId: currentSession.id, messages: currentSession.messages.length };
+    void compactContext("auto");
+    // The panel's render of the moment compacts, with its settings: `compactContext` reads the chat from the store.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSession?.id, currentSession?.messages.length, currentSession?.contextLast?.at, settings, busy, compacting]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      compactionAbortRef.current?.abort();
       attachmentAbortRef.current?.abort(new DOMException("Attachment extraction cancelled.", "AbortError"));
       cancelMediaOperations({ disableVoice: true, updateUi: false });
     };
@@ -1497,12 +1560,158 @@ export function AssistantPanel() {
   }, [consumeLaunchMode, launchMode]);
 
   /**
+   * Compacts the context of the chat (#122): the older part of its conversation summarised (by the `chat-resume` route, else without a model), every message kept. Automatic
+   * (`auto`: as many of the last messages kept as leave the next request under the threshold) or asked for (`manual`: the last ones kept as they are). `exclude` is a request on
+   * its way, never summarised; `draft` the text it adds. Whether a compaction was made.
+   */
+  function compactContext(trigger: ContextCompaction["trigger"], options: { draft?: string; exclude?: string; signal?: AbortSignal } = {}): Promise<boolean> {
+    if (compactingRef.current) return Promise.resolve(false);
+    const running = runCompaction(trigger, options);
+    compactionRunningRef.current = running;
+    void running.finally(() => { if (compactionRunningRef.current === running) compactionRunningRef.current = null; });
+    return running;
+  }
+
+  async function runCompaction(trigger: ContextCompaction["trigger"], options: { draft?: string; exclude?: string; signal?: AbortSignal }): Promise<boolean> {
+    const session = useAssistantStore.getState().currentSession;
+    if (!session || compactingRef.current || options.signal?.aborted) return false;
+    const view = (source: AssistantSession): AssistantSession => (options.exclude ? { ...source, messages: source.messages.filter((message) => message.id !== options.exclude) } : source);
+    const base = view(session);
+    const before = chatContextOf({ session: base, settings, draft: options.draft ?? "" });
+    const keep = trigger === "manual"
+      ? [KEEP_RECENT, 2, 1].find((value) => compactionCover(base, value)) ?? -1
+      : chooseKeep(base, (kept) => estimateWithKept(before, kept) < before.estimate.compactAt);
+    const cover = keep < 0 ? null : compactionCover(base, keep);
+    if (!cover) return false;
+    const inForce = activeCompaction(session)?.id;
+    compactingRef.current = true;
+    setCompacting(true);
+    const controller = new AbortController();
+    compactionAbortRef.current = controller;
+    const abort = () => controller.abort();
+    options.signal?.addEventListener("abort", abort, { once: true });
+    setRequestStatus(t("pageCopilot.context.status.compacting"));
+    try {
+      const result = await summarizeConversation({ settings, accountScope: localWorkspaceScope(), signal: controller.signal, previous: summaryInForce(base), covered: cover.covered, italian: settings.ui.language === "it", maxChars: summaryInputChars(settings) });
+      const latest = useAssistantStore.getState().currentSession;
+      const stillThere = (current: AssistantSession) => current.messages.some((message) => message.id === cover.through.id) && activeCompaction(current)?.id === inForce;
+      if (controller.signal.aborted || !latest || latest.id !== session.id || !stillThere(latest)) return false;
+      const record: ContextCompaction = { id: crypto.randomUUID(), throughMessageId: cover.through.id, messageCount: cover.messageCount, coveredCount: cover.covered.length, summary: result.summary, source: result.source, trigger, at: new Date().toISOString(), beforeTokens: before.estimate.total, afterTokens: 0 };
+      const after = chatContextOf({ session: view(withCompaction(latest, record)), settings, draft: options.draft ?? "" });
+      const compaction = { ...record, afterTokens: after.estimate.total };
+      useAssistantStore.getState().updateSession(session.id, (current) => (stillThere(current) ? withCompaction(current, compaction) : current));
+      setRequestStatus(t("pageCopilot.context.status.compacted", { count: cover.covered.length }));
+      return true;
+    } catch {
+      // Only a stop ends a compaction without a summary (`summarizeConversation` makes one without a model otherwise).
+      return false;
+    } finally {
+      options.signal?.removeEventListener("abort", abort);
+      if (compactionAbortRef.current === controller) compactionAbortRef.current = null;
+      compactingRef.current = false;
+      setCompacting(false);
+    }
+  }
+
+  /**
+   * Before a request goes (#122): the chat compacts when the request would reach the threshold, and a request that would not fit the window even then is not sent: the chat says
+   * so with the numbers, and what the author can do. Whether the request may go.
+   */
+  async function prepareContext(requestId: string, text: string, signal: AbortSignal): Promise<boolean> {
+    const view = (source: AssistantSession): AssistantSession => ({ ...source, messages: source.messages.filter((message) => message.id !== requestId) });
+    // A compaction on its way (the one after the last turn) is waited for: the request goes with what it leaves.
+    if (compactionRunningRef.current) await compactionRunningRef.current.catch(() => false);
+    if (signal.aborted) return true;
+    let session = useAssistantStore.getState().currentSession;
+    if (!session) return true;
+    let context = chatContextOf({ session: view(session), settings, draft: text });
+    // «Undo for the next message»: this request carries what the last compaction summarised, as it is; it is not compacted again on the way.
+    const undone = Boolean(activeCompaction(session)?.skipNext && canUndoCompaction(session));
+    if (!undone && wantsCompaction(context)) {
+      await compactContext("auto", { draft: text, exclude: requestId, signal });
+      session = useAssistantStore.getState().currentSession;
+      if (!session || signal.aborted) return true;
+      context = chatContextOf({ session: view(session), settings, draft: text });
+    }
+    if (!doesNotFit(context.estimate)) return true;
+    setTooLarge({
+      total: context.estimate.total,
+      budget: context.estimate.inputBudget,
+      window: context.estimate.window.tokens,
+      source: context.estimate.window.source,
+      model: context.model?.model ?? t("pageCopilot.context.tooLarge.anyModel"),
+      message: context.estimate.parts.request,
+      compacted: Boolean(context.conversation.compaction),
+      undone,
+      canCompact: Boolean(compactionCover(view(session), 1)),
+    });
+    return false;
+  }
+
+  /** What a turn's first request carried and what its provider counted, kept with the chat: what the ring measures the next message against. The last compaction is back in force after a message that set it aside. */
+  function recordTurn(sessionId: string, turn: TurnRecord, sent: SentKeys | null) {
+    const request = turn.request;
+    if (!sent) return;
+    useAssistantStore.getState().updateSession(sessionId, (current) => {
+      if (!request) return sent.undone ? withNextUncompacted(current, false) : current;
+      const next: AssistantSession = {
+        ...current,
+        contextLast: {
+          integrationId: request.integrationId,
+          model: request.model,
+          shape: request.shape,
+          ...(turn.usage ? { usage: { inputTokens: turn.usage.inputTokens, cachedInputTokens: turn.usage.cachedInputTokens, outputTokens: turn.usage.outputTokens } } : {}),
+          ...(turn.total.inputTokens > 0 ? { turn: { ...turn.total } } : {}),
+          attachmentsKey: sent.attachmentsKey,
+          summaryKey: sent.summaryKey,
+          ...(sent.pasted ? { pasted: true } : {}),
+          at: new Date().toISOString(),
+        },
+      };
+      return sent.undone ? withNextUncompacted(next, false) : next;
+    });
+  }
+
+  /** The keys of what a request carries (see `SentKeys`), taken when it goes. */
+  function sentKeysOf(session: AssistantSession, prompt: string): SentKeys {
+    const conversation = conversationToSend(session);
+    const last = activeCompaction(session);
+    return { attachmentsKey: attachmentsKey(session.attachments), summaryKey: summaryKey(conversation), pasted: Boolean(splitPrompt(prompt).material), undone: Boolean(last?.skipNext && conversation.compaction?.id !== last.id) };
+  }
+
+  /** The slash commands of the chat (#122): `/compact` compacts now, `/context` prints in the chat what the next message carries (a note of the chat, never sent). */
+  async function runSlashCommand(command: SlashCommandName) {
+    setDraft("");
+    if (command === "/compact") {
+      if (useAssistantStore.getState().busy || compactingRef.current) return;
+      if (!(await compactContext("manual"))) {
+        setRequestStatus(t("pageCopilot.context.status.nothing"));
+        toast({ title: t("pageCopilot.context.status.nothing") });
+      }
+      composerRef.current?.focus();
+      return;
+    }
+    const session = ensureSession();
+    const latest = useAssistantStore.getState().currentSession ?? session;
+    const context = chatContextOf({ session: latest, settings, draft: "" });
+    const { contextReport } = await contextParts();
+    const note: AssistantMessage = { id: crypto.randomUUID(), role: "system", text: contextReport(t, context, settings.costCurrency || "USD") };
+    useAssistantStore.getState().updateSession(latest.id, (current) => ({ ...current, messages: [...current.messages, note] }));
+    composerRef.current?.focus();
+  }
+
+  /**
    * Sends a request. `again` sends once more the author's message `again` (a request a routing limit refused, after the limit was raised): it is not added to the chat a second
    * time, and the model reads the conversation as it was before it.
    */
   async function sendPrompt(prompt: string, options?: { spokenMode?: boolean; signal?: AbortSignal; attachmentTarget?: AttachmentImportTarget; again?: string }): Promise<AssistantMessage | null> {
     const accountScope = localWorkspaceScope();
     const trimmed = prompt.trim();
+    const command = options?.spokenMode || options?.again ? null : slashCommandOf(trimmed);
+    if (command) {
+      await runSlashCommand(command);
+      return null;
+    }
     if (!trimmed || useAssistantStore.getState().busy) return null;
     const session = ensureSession();
     const requestId = crypto.randomUUID();
@@ -1551,6 +1760,22 @@ export function AssistantPanel() {
     // What the router cut from this request to fit a model's window: the reply says it, with how much (`promptCut.ts`).
     const cuts: PromptCut[] = [];
     const stopListeningToCuts = listenToPromptCuts(controller.signal, (cut) => cuts.push(cut));
+    // What the requests of this turn carried and what the provider counted (#122): the first request of the chat's own task is what its ring measures the next message against.
+    const capability = chatCapability(session.mode);
+    const turn: TurnRecord = { total: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 } };
+    let sentKeys: SentKeys | null = null;
+    const stopListeningToTurn = listenToTurn(controller.signal, {
+      request: (request) => {
+        if (request.capability === capability && !turn.request) turn.request = request;
+      },
+      usage: (usage) => {
+        if (usage.capability !== capability) return;
+        turn.usage ??= usage;
+        turn.total.inputTokens += usage.inputTokens;
+        turn.total.cachedInputTokens += usage.cachedInputTokens;
+        turn.total.outputTokens += usage.outputTokens;
+      },
+    });
     // The text of the attached files that the limits of the attachments left out, said the same way (the Copilot's turn only: Brainstorming reads no files).
     let filesCut: { sent: number; total: number } | null = null;
     const withCuts = (text: string) => {
@@ -1574,7 +1799,7 @@ export function AssistantPanel() {
       }
     };
     try {
-      if (session.mode === "brainstorming") return await askBrainstorming(trimmed, session, controller.signal, ownsRequest, accountScope, { onText: updateStreamedReply, streamedId: () => streamedMessageId, finish: withCuts }, options?.again);
+      if (session.mode === "brainstorming") return await askBrainstorming(trimmed, session, controller.signal, ownsRequest, accountScope, { onText: updateStreamedReply, streamedId: () => streamedMessageId, finish: withCuts, sent: (keys) => { sentKeys = keys; } }, options?.again);
       const booksState = useBooksStore.getState();
       const routeContext = await loadWriterContext(location.pathname, settings, settings.books, booksState.structures, booksState.workingBranches, branch);
       if (!ownsRequest()) return null;
@@ -1602,9 +1827,22 @@ export function AssistantPanel() {
         setRequestStatus("");
         return ownedReply;
       }
+      // The chat compacts first when the request would reach the threshold of the window, and a request that would not fit even then is not sent (#122).
+      if (!(await prepareContext(userMessage.id, trimmed, controller.signal))) {
+        if (!ownsRequest()) return null;
+        if (!options?.again) useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, messages: current.messages.filter((message) => message.id !== userMessage.id) }));
+        setDraft(trimmed);
+        setRequestStatus(t("pageCopilot.context.tooLarge.title"));
+        return null;
+      }
+      if (!ownsRequest()) return null;
+      setTooLarge(null);
       const latestSession = useAssistantStore.getState().currentSession;
       if (!latestSession || latestSession.id !== session.id) return null;
       filesCut = attachmentTextCut(settings, latestSession.attachments);
+      // What the request carries of the conversation: the summary in force and every message after it (#122).
+      const toSend = conversationToSend(latestSession);
+      sentKeys = sentKeysOf(latestSession, trimmed);
       const reply = await runPromptWithMutationRefresh(() => runAssistantPrompt({
         prompt: trimmed,
         context: routeContext,
@@ -1612,8 +1850,8 @@ export function AssistantPanel() {
         book,
         branch,
         token,
-        history: conversationBefore(latestSession.messages, userMessage.id, Boolean(options?.again)),
-        compactSummary: latestSession.archive?.summary ?? latestSession.compactSummary,
+        history: conversationBefore(toSend.messages, userMessage.id, Boolean(options?.again)),
+        compactSummary: toSend.summary,
         compactedMessageCount: latestSession.compactedMessageCount,
         attachments: latestSession.attachments,
         attachmentTarget: options?.attachmentTarget,
@@ -1659,6 +1897,8 @@ export function AssistantPanel() {
       options?.signal?.removeEventListener("abort", abortFromCaller);
       stopListeningToRetries();
       stopListeningToCuts();
+      stopListeningToTurn();
+      recordTurn(session.id, turn, sentKeys);
       if (refreshedOwnBook) ownRefreshRef.current -= 1;
       endUsageTask();
       setRetryNotice(null);
@@ -1727,21 +1967,33 @@ export function AssistantPanel() {
    * A request to Brainstorming: its own runner (loaded with its first request), with only its own tools and the Synopsis of its book as its context.
    * None of the Copilot's tools, local commands or voice commands is reached from here.
    */
-  async function askBrainstorming(prompt: string, session: AssistantSession, signal: AbortSignal, ownsRequest: () => boolean, accountScope: string | null, stream: { onText: (text: string) => void; streamedId: () => string | null; finish: (text: string) => string }, again?: string): Promise<AssistantMessage | null> {
+  async function askBrainstorming(prompt: string, session: AssistantSession, signal: AbortSignal, ownsRequest: () => boolean, accountScope: string | null, stream: { onText: (text: string) => void; streamedId: () => string | null; finish: (text: string) => string; sent: (keys: SentKeys) => void }, again?: string): Promise<AssistantMessage | null> {
     const book = session.bookId ? settings.books.find((entry) => entry.id === session.bookId) ?? null : null;
     const userMessage: AssistantMessage = { id: again ?? crypto.randomUUID(), role: "user", text: prompt };
     if (!again) useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, updatedAt: new Date().toISOString(), messages: [...current.messages, userMessage] }));
     setDraft("");
+    // As the Copilot: compacted first when the request would reach the threshold, and not sent when it would not fit even then (#122).
+    if (!(await prepareContext(userMessage.id, prompt, signal))) {
+      if (!ownsRequest()) return null;
+      if (!again) useAssistantStore.getState().updateSession(session.id, (current) => ({ ...current, messages: current.messages.filter((message) => message.id !== userMessage.id) }));
+      setDraft(prompt);
+      setRequestStatus(t("pageCopilot.context.tooLarge.title"));
+      return null;
+    }
+    setTooLarge(null);
     const { runBrainstormPrompt } = await import("@/assistant/brainstorm/runner");
     const latest = useAssistantStore.getState().currentSession;
     if (!ownsRequest() || !latest || latest.id !== session.id) return null;
+    const toSend = conversationToSend(latest);
+    stream.sent(sentKeysOf(latest, prompt));
     const reply = await runBrainstormPrompt({
       prompt,
       settings,
       book,
       branch,
       structure: book ? useBooksStore.getState().structures[book.id] : undefined,
-      history: conversationBefore(latest.messages, userMessage.id, Boolean(again)),
+      history: conversationBefore(toSend.messages, userMessage.id, Boolean(again)),
+      ...(toSend.summary ? { summary: toSend.summary } : {}),
       signal,
       accountScope,
       onText: stream.onText,
@@ -2869,17 +3121,41 @@ export function AssistantPanel() {
     </div>
   );
 
+  // The markers of the compactions of the chat, each after the last message it summarised (before the first message, for one whose messages were archived).
+  const compactions = currentSession?.contextCompactions ?? [];
+  const inForce = compactions.length ? compactions[compactions.length - 1] : null;
+  const messageIds = new Set((currentSession?.messages ?? []).map((message) => message.id));
+  const markersAfter = new Map<string, ContextCompaction[]>();
+  for (const compaction of compactions) if (messageIds.has(compaction.throughMessageId)) markersAfter.set(compaction.throughMessageId, [...(markersAfter.get(compaction.throughMessageId) ?? []), compaction]);
+  const orphanMarkers = compactions.filter((compaction) => !messageIds.has(compaction.throughMessageId));
+  const undoable = currentSession ? canUndoCompaction(currentSession) : false;
+  // The messages a chat too large to keep moved to its archive (and those of an older chat's compaction): still in the chat, read-only.
+  const archivedMessages = useMemo(() => (currentSession?.losslessSegments ?? []).flatMap((segment) => segment.messages), [currentSession?.losslessSegments]);
+  const renderMarker = (compaction: ContextCompaction) => (
+    <Suspense key={`marker-${compaction.id}`} fallback={null}>
+      <CompactionMarker compaction={compaction} active={compaction.id === inForce?.id} canUndo={undoable} onUndo={(undo) => { if (currentSession) useAssistantStore.getState().updateSession(currentSession.id, (current) => withNextUncompacted(current, undo)); }} />
+    </Suspense>
+  );
+
   const messagesView = (
     <div className="space-y-4" role="log" aria-live="polite" aria-relevant="additions" aria-busy={busy} aria-label={t("assistant.chatLog")}>
       {!busy && currentSession?.messages.length ? <span className="sr-only" key={`message-announcement-${currentSession.messages[currentSession.messages.length - 1]?.id}`}>{currentSession.messages[currentSession.messages.length - 1]?.text}</span> : null}
       {currentSession?.messages.length ? null : brainstorming ? <Suspense fallback={null}><BrainstormEmpty onPick={(prompt) => { setDraft(prompt); composerRef.current?.focus(); }} /></Suspense> : (
         <div className="rounded-2xl border border-dashed p-5 text-sm text-muted-foreground">{t("assistant.empty")}</div>
       )}
+      {orphanMarkers.map(renderMarker)}
       {(currentSession?.messages ?? []).map((message, index) => (
-        <div key={message.id} className={message.role === "user" ? "flex justify-end" : "group flex justify-start"}>
+        <Fragment key={message.id}>
+        <div className={message.role === "user" ? "flex justify-end" : "group flex justify-start"}>
           <div className={message.role === "user" ? "max-w-[85%]" : "w-full max-w-[92%]"}>
             {message.role === "user" ? (
               <div className="rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm leading-6 text-primary-foreground shadow-sm whitespace-pre-wrap">{message.text}</div>
+            ) : message.role === "system" ? (
+              // A note of the chat itself (what `/context` printed…): it stays in the chat and is never sent to the model.
+              <div data-local-note="" className="rounded-xl border border-dashed bg-muted/30 px-3 py-2">
+                <p className="mb-1 text-xs font-medium text-muted-foreground">{t("pageCopilot.context.localNote")}</p>
+                <div className="doc-prose max-w-none text-xs leading-6" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(message.text) }} />
+              </div>
             ) : (
               <div className={brainstorming ? "rounded-2xl rounded-bl-sm border border-primary/50 bg-background px-4 py-3 shadow-sm" : "rounded-2xl rounded-bl-sm border bg-background px-4 py-3 shadow-sm"}>
                 <div className="doc-prose max-w-none text-sm leading-7" dangerouslySetInnerHTML={{ __html: renderAssistantMarkdownHtml(message.text) }} />
@@ -3005,6 +3281,8 @@ export function AssistantPanel() {
             {message.action?.kind === "confirm-create-pull-request" && <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">Pull request proposal</Badge><Button size="sm" onClick={() => void confirmCreatePullRequest(index)} disabled={busy || !isAssistantActionEnabled(message.action)}><GitBranch className="mr-1.5 h-3.5 w-3.5" />Confirm and create</Button><Button size="sm" variant="outline" onClick={() => useAssistantStore.getState().updateMessage(message.id, { action: undefined, text: `${message.text}\n\nPull request creation cancelled.` })} disabled={busy}>{t("assistant.cancel")}</Button></div>}
           </div>
         </div>
+        {(markersAfter.get(message.id) ?? []).map(renderMarker)}
+        </Fragment>
       ))}
       {busy && <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{retryNotice ?? t("assistant.thinking")}</div>}
       <div ref={messagesEndRef} />
@@ -3172,7 +3450,7 @@ export function AssistantPanel() {
 
             <ScrollArea className="min-h-0 flex-1 px-3 py-4">
               {autosaveStatus && autosaveStatus.sessionId === currentSession?.id && <div role="status" className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-900 dark:text-amber-100"><p className="font-medium">{autosaveStatus.kind === "retrying" ? t("assistant.autosaveRetrying", { attempt: autosaveStatus.attempt }) : t("assistant.autosaveStopped")}</p><p className="mt-1 break-words opacity-80">{autosaveStatus.message}</p>{autosaveStatus.kind === "stopped" && autosaveStatus.retryable && <Button type="button" variant="outline" size="sm" className="mt-2" onClick={retryStoppedAutosave}>{t("assistant.autosaveRetry")}</Button>}</div>}
-              {currentSession && hasAssistantSessionArchiveContent(currentSession) && <div className="mb-3 rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground whitespace-pre-wrap"><p className="mb-1 font-medium text-foreground">{t("assistant.compactionSummary", { count: currentSession.archive?.messageCount ?? currentSession.compactedMessageCount })}</p>{currentSession.compactSummary}<AssistantArchiveProvenance session={currentSession} />{currentSession.archive?.attachments.map((attachment) => <div key={attachment.id} className="mt-1 font-mono">{attachment.name}</div>)}</div>}
+              {currentSession && (hasAssistantSessionArchiveContent(currentSession) || archivedMessages.length > 0) && <div className="mb-3 rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground whitespace-pre-wrap"><p className="mb-1 font-medium text-foreground">{t("assistant.compactionSummary", { count: currentSession.archive?.messageCount ?? currentSession.compactedMessageCount })}</p>{currentSession.compactSummary}<AssistantArchiveProvenance session={currentSession} />{currentSession.archive?.attachments.map((attachment) => <div key={attachment.id} className="mt-1 font-mono">{attachment.name}</div>)}{archivedMessages.length > 0 && <Suspense fallback={null}><ArchivedMessages messages={archivedMessages} /></Suspense>}</div>}
               {messagesView}
             </ScrollArea>
 
@@ -3187,12 +3465,28 @@ export function AssistantPanel() {
                     <span id={workingOnId} hidden>{`${t("pageCopilot.workingOn", { page: workingOn.label })}. ${t("pageCopilot.workingOnHint")}`}</span>
                   </p>
                 )}
+                {tooLarge && (
+                  <Suspense fallback={null}>
+                    <TooLargeNotice
+                      notice={tooLarge}
+                      onCompact={() => { setTooLarge(null); void compactContext("manual"); }}
+                      onKeepCompacted={() => { setTooLarge(null); if (currentSession) useAssistantStore.getState().updateSession(currentSession.id, (current) => withNextUncompacted(current, false)); composerRef.current?.focus(); }}
+                      onMaterial={() => { setTooLarge(null); takeDraftAsMaterial(); }}
+                      onShorten={() => { setTooLarge(null); const field = composerRef.current; field?.focus(); field?.setSelectionRange(field.value.length, field.value.length); }}
+                      onDismiss={() => { setTooLarge(null); composerRef.current?.focus(); }}
+                    />
+                  </Suspense>
+                )}
+                <div className="relative">
+                <SlashMenu menu={slashMenu} onRun={(command) => void runSlashCommand(command)} />
                 <Textarea
                   ref={composerRef}
                   aria-describedby={!brainstorming && workingOn ? workingOnId : undefined}
+                  {...slashMenu.fieldProps}
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
                   onKeyDown={(event) => {
+                    if (slashMenu.onKeyDown(event)) return;
                     if (event.key === "Enter" && event.shiftKey && !event.nativeEvent.isComposing) {
                       event.preventDefault();
                       void sendPrompt(draft);
@@ -3201,6 +3495,7 @@ export function AssistantPanel() {
                   placeholder={brainstorming ? t("brainstorm.placeholder") : t("assistant.placeholder")}
                   className="min-h-[76px] resize-none"
                 />
+                </div>
                 {draft.trim().length > MATERIAL_CHARS && (
                   <div data-material-offer className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                     <Button type="button" size="sm" variant="outline" className="h-8" onClick={takeDraftAsMaterial} disabled={busy}>
@@ -3209,7 +3504,7 @@ export function AssistantPanel() {
                     <span className="min-w-0">{t("pageCopilot.material.hint", { characters: formatWhole(draft.trim().length) })}</span>
                   </div>
                 )}
-                <div className="flex items-center gap-1.5">
+                <div className="relative flex items-center gap-1.5">
                   {!brainstorming && <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0" title={t("assistant.attachFiles")} onClick={() => fileInputRef.current?.click()}><Paperclip className="h-4 w-4" /></Button>}
                   <Button type="button" variant={listening ? "default" : "ghost"} size="icon" className="h-9 w-9 shrink-0" title={listening ? t("assistant.stopMic") : t("assistant.microphone")} onClick={() => void startSpeechToText()} disabled={busy || voiceMode}>
                     {listening ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
@@ -3236,7 +3531,8 @@ export function AssistantPanel() {
                     </DropdownMenuContent>
                   </DropdownMenu>
                   )}
-                  <div className="ml-auto flex items-center gap-1.5">
+                  <div className="ml-auto flex min-w-0 items-center gap-1.5">
+                    <ContextRing context={chatContext} canCompact={canCompactNow} onCompact={() => void compactContext("manual")} currency={settings.costCurrency || "USD"} />
                     {draft.trim() && <Button type="button" variant="ghost" size="sm" className="h-9" onClick={() => setDraft("")}>{t("assistant.clear")}</Button>}
                     <Button type="submit" size="sm" className="h-9" aria-label={t("assistant.send")} disabled={!draft.trim() || busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}<span className="ml-1.5 hidden sm:inline">{t("assistant.send")}</span></Button>
                   </div>

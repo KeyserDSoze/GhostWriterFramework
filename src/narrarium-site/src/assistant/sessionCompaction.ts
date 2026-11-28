@@ -1,19 +1,83 @@
-import { emptyAssistantArchiveRollup, type AssistantAction, type AssistantArchivedAction, type AssistantArchivedAttachment, type AssistantAttachment, type AssistantSession, type AssistantSessionArchive } from "./store.ts";
+import { assistantSegmentSha256 } from "./chatSegments.ts";
+import { emptyAssistantArchiveRollup, type AssistantAction, type AssistantArchivedAction, type AssistantArchivedAttachment, type AssistantAttachment, type AssistantLosslessSegment, type AssistantMessage, type AssistantSession, type AssistantSessionArchive } from "./store.ts";
 
-export const ACTIVE_MESSAGE_LIMIT = 6;
-export const COMPACTION_MESSAGE_THRESHOLD = 12;
-export const COMPACTION_SIZE_THRESHOLD_BYTES = 384 * 1024;
-export const MAX_COMPACTION_INPUT_CHARS = 80_000;
 export const MAX_ARCHIVE_SUMMARY_CHARS = 20_000;
 export const MAX_ARCHIVE_RECORD_BYTES = 512 * 1024;
+/**
+ * The size past which a chat moves messages to its lossless archive (#122): a chat keeps every message (its context is compacted, not its messages), and is saved as one file of
+ * at most 8 MB (`MAX_ASSISTANT_SESSION_BYTES`). Past 4 MB of messages and attachments, the oldest messages that the compaction in force already summarised go to archive segments
+ * (kept whole, apart, shown read-only in the chat) until the chat is back under 3 MB.
+ */
+export const STORAGE_ARCHIVE_BYTES = 4 * 1024 * 1024;
+export const STORAGE_TARGET_BYTES = 3 * 1024 * 1024;
+/** The same past 2,000 messages, back to 1,500 (a chat file holds at most 10,000). */
+export const STORAGE_ARCHIVE_MESSAGES = 2_000;
+export const STORAGE_TARGET_MESSAGES = 1_500;
+/** A segment of the archive stays under its limit (`MAX_ASSISTANT_LOSSLESS_SEGMENT_BYTES`, 2 MB). */
+const STORAGE_SEGMENT_BYTES = 1536 * 1024;
 
 const encoder = new TextEncoder();
+const bytesOf = (value: unknown) => encoder.encode(JSON.stringify(value)).length;
 
-export function assistantSessionCompactionTarget(session: AssistantSession): number | null {
-  const oversized = encoder.encode(JSON.stringify({ messages: session.messages, attachments: session.attachments })).length > COMPACTION_SIZE_THRESHOLD_BYTES;
-  if (session.messages.length <= COMPACTION_MESSAGE_THRESHOLD && !oversized) return null;
-  if (!session.messages.length) return 0;
-  return Math.max(oversized ? 1 : 0, session.messages.length - ACTIVE_MESSAGE_LIMIT);
+/**
+ * How many of the first messages a chat too large to keep moves to its archive: only messages that the compaction in force covers (its summary already says them), the fewest
+ * that bring the chat back under `STORAGE_TARGET_BYTES` and `STORAGE_TARGET_MESSAGES`. 0 when the chat is within `STORAGE_ARCHIVE_BYTES` and `STORAGE_ARCHIVE_MESSAGES`, or
+ * when its compaction covers nothing yet.
+ */
+export function storageArchiveCount(session: Pick<AssistantSession, "messages" | "attachments" | "contextCompactions">): number {
+  const tooMany = session.messages.length > STORAGE_ARCHIVE_MESSAGES;
+  const size = bytesOf({ messages: session.messages, attachments: session.attachments });
+  if (size <= STORAGE_ARCHIVE_BYTES && !tooMany) return 0;
+  const compaction = session.contextCompactions?.[session.contextCompactions.length - 1];
+  const point = compaction ? session.messages.findIndex((message) => message.id === compaction.throughMessageId) : -1;
+  let remaining = size;
+  let count = 0;
+  while (count <= point && (remaining > STORAGE_TARGET_BYTES || session.messages.length - count > STORAGE_TARGET_MESSAGES)) {
+    remaining -= bytesOf(session.messages[count]) + 1;
+    count += 1;
+  }
+  return count;
+}
+
+/** The first `count` messages of a chat moved to new segments of its lossless archive, each within its size; the attachments stay where they are, in the chat. */
+export async function archiveForStorage(session: AssistantSession, count: number): Promise<AssistantSession> {
+  if (count <= 0) return session;
+  const removed = session.messages.slice(0, count);
+  const groups: AssistantMessage[][] = [];
+  let group: AssistantMessage[] = [];
+  let groupBytes = 0;
+  for (const message of removed) {
+    const size = bytesOf(message) + 1;
+    if (group.length && groupBytes + size > STORAGE_SEGMENT_BYTES) {
+      groups.push(group);
+      group = [];
+      groupBytes = 0;
+    }
+    group.push(message);
+    groupBytes += size;
+  }
+  if (group.length) groups.push(group);
+  const priorManifest = session.losslessArchive ?? { version: 1 as const, segmentCount: 0, messageCount: 0, attachmentCount: 0, actionCount: 0, complete: session.compactedMessageCount === 0, missingRanges: session.compactedMessageCount ? [{ from: 0, to: session.compactedMessageCount - 1, reason: "Legacy compaction did not preserve original records." }] : [] };
+  let manifest = priorManifest;
+  const segments: AssistantLosslessSegment[] = [...(session.losslessSegments ?? [])];
+  for (const messages of groups) {
+    const segment: AssistantLosslessSegment = { format: "narrarium-assistant-chat-segment", version: 1, id: crypto.randomUUID(), createdAt: new Date().toISOString(), ...(manifest.head ? { previous: manifest.head } : {}), messages, attachments: [] };
+    const head = { id: segment.id, sha256: await assistantSegmentSha256(segment) };
+    segments.push(segment);
+    manifest = { ...manifest, head, segmentCount: manifest.segmentCount + 1, messageCount: manifest.messageCount + messages.length, actionCount: manifest.actionCount + messages.filter((message) => Boolean(message.action)).length };
+  }
+  const previousArchive = session.archive ?? { summary: session.compactSummary, messageCount: session.compactedMessageCount, actions: [], attachments: [] };
+  const records = await appendAssistantArchiveRecords(previousArchive, removed.flatMap((message) => (message.action ? [archiveAction(message.id, message.action)] : [])), []);
+  const archive = { summary: previousArchive.summary, messageCount: previousArchive.messageCount + count, ...records };
+  return {
+    ...session,
+    messages: session.messages.slice(count),
+    losslessSegments: segments,
+    losslessArchive: manifest,
+    archive,
+    compactSummary: archive.summary,
+    compactedMessageCount: archive.messageCount,
+  };
 }
 
 export function mergeAssistantSessionCompaction(
@@ -40,16 +104,12 @@ export function mergeAssistantSessionCompaction(
     messages: currentSession.messages.slice(removedCount),
     attachments: currentSession.attachments.filter((attachment) => !archivedAttachmentIds.has(attachment.id)),
     losslessSegments: compactedSession.losslessSegments ?? currentSession.losslessSegments ?? [],
+    // The manifest says which segments the archive has: it goes with them, or a chat saved to the cloud would not find its newest segment again.
+    ...(compactedSession.losslessArchive ? { losslessArchive: compactedSession.losslessArchive } : {}),
     archive,
     compactSummary: compactedSession.compactSummary,
     compactedMessageCount: compactedSession.compactedMessageCount,
   };
-}
-
-export function compactionText(session: AssistantSession, removeCount: number): string {
-  const previous = session.archive?.summary || session.compactSummary;
-  const next = session.messages.slice(0, removeCount).map((message) => `${message.role.toUpperCase()}: ${message.text}`).join("\n\n");
-  return truncateText([previous ? `PREVIOUS ARCHIVE SUMMARY:\n${previous}` : "", next ? `NEW MESSAGES TO ARCHIVE:\n${next}` : ""].filter(Boolean).join("\n\n"), MAX_COMPACTION_INPUT_CHARS);
 }
 
 export function archiveAction(messageId: string, action: AssistantAction): AssistantArchivedAction {

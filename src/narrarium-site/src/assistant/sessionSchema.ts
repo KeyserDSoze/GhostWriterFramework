@@ -1,4 +1,4 @@
-import type { AssistantAction, AssistantFileUpdate, PageChangesReview, AssistantAttachment, AssistantLosslessArchiveManifest, AssistantLosslessSegment, AssistantLosslessSegmentRef, AssistantMessage, AssistantNoteSaveOperation, AssistantQuarantinedAction, AssistantSession, AssistantSessionArchive, AssistantSessionProvenance } from "./store.ts";
+import type { AssistantAction, AssistantFileUpdate, ContextCompaction, ContextLastRequest, PageChangesReview, AssistantAttachment, AssistantLosslessArchiveManifest, AssistantLosslessSegment, AssistantLosslessSegmentRef, AssistantMessage, AssistantNoteSaveOperation, AssistantQuarantinedAction, AssistantSession, AssistantSessionArchive, AssistantSessionProvenance } from "./store.ts";
 import { emptyAssistantArchiveRollup, emptyAssistantSessionArchive, normalizeAssistantSession } from "./store.ts";
 import { hasAssistantActionProvenance, OUTLINE_FILE, PERSONA_FILE } from "./actionValidation.ts";
 
@@ -311,7 +311,65 @@ export function parseAssistantSession(value: unknown, byteLength?: number): Assi
   const sensitiveSecretPaths = raw.sensitiveSecretPaths === undefined ? [] : Array.isArray(raw.sensitiveSecretPaths) && raw.sensitiveSecretPaths.length <= 32
     ? raw.sensitiveSecretPaths.map((item, index) => repositoryPath(item, `sensitiveSecretPaths[${index}]`)).filter((path) => path.startsWith("secrets/"))
     : (() => { throw new AssistantSessionValidationError("sensitiveSecretPaths is invalid."); })();
-  return normalizeAssistantSession({ schemaVersion: 1, id: identifier(raw.id, "session.id"), title: text(raw.title, "session.title", 500), contextTitle: text(raw.contextTitle, "session.contextTitle", 500), updatedAt: timestamp(raw.updatedAt, "session.updatedAt"), contentRevision: contentRevision as number, ...sessionMode(raw), messages: parsedMessages, attachments: parsedAttachments, losslessSegments: segments, losslessArchive: manifest, ...(raw.archive === undefined ? {} : { archive: parsedArchive }), compactSummary: raw.compactSummary === undefined ? parsedArchive.summary : text(raw.compactSummary, "session.compactSummary"), compactedMessageCount: legacyCount as number, ...(raw.provenance === undefined ? {} : { provenance: provenance(raw.provenance, "provenance") }), ...(raw.noteSaveOperation === undefined ? {} : { noteSaveOperation: operation(raw.noteSaveOperation) }), quarantinedActions, sensitiveSecretPaths });
+  return normalizeAssistantSession({ schemaVersion: 1, id: identifier(raw.id, "session.id"), title: text(raw.title, "session.title", 500), contextTitle: text(raw.contextTitle, "session.contextTitle", 500), updatedAt: timestamp(raw.updatedAt, "session.updatedAt"), contentRevision: contentRevision as number, ...sessionMode(raw), messages: parsedMessages, attachments: parsedAttachments, losslessSegments: segments, losslessArchive: manifest, ...(raw.archive === undefined ? {} : { archive: parsedArchive }), compactSummary: raw.compactSummary === undefined ? parsedArchive.summary : text(raw.compactSummary, "session.compactSummary"), compactedMessageCount: legacyCount as number, ...(raw.provenance === undefined ? {} : { provenance: provenance(raw.provenance, "provenance") }), ...(raw.noteSaveOperation === undefined ? {} : { noteSaveOperation: operation(raw.noteSaveOperation) }), quarantinedActions, sensitiveSecretPaths, ...contextFields(raw) });
+}
+
+/**
+ * The context of a chat (#122): its compactions and the shape of its last request. What does not read as one is dropped, never the chat: the messages are what the chat is, and
+ * the ring measures again from the next request.
+ */
+function contextFields(raw: Record<string, unknown>): Pick<AssistantSession, "contextCompactions" | "contextLast"> {
+  const count = (value: unknown, max = 100_000_000) => (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= max ? value : null);
+  const compactions = Array.isArray(raw.contextCompactions) ? raw.contextCompactions.slice(-50).flatMap((item): ContextCompaction[] => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const entry = item as Record<string, unknown>;
+    try {
+      const messageCount = count(entry.messageCount, 10_000);
+      const coveredCount = count(entry.coveredCount, 10_000);
+      const beforeTokens = count(entry.beforeTokens);
+      const afterTokens = count(entry.afterTokens);
+      if (messageCount === null || coveredCount === null || beforeTokens === null || afterTokens === null) return [];
+      if (entry.source !== "model" && entry.source !== "fallback") return [];
+      if (entry.trigger !== "auto" && entry.trigger !== "manual") return [];
+      return [{ id: identifier(entry.id, "contextCompactions.id"), throughMessageId: identifier(entry.throughMessageId, "contextCompactions.throughMessageId"), messageCount, coveredCount, summary: text(entry.summary, "contextCompactions.summary", 64_000), source: entry.source, trigger: entry.trigger, at: timestamp(entry.at, "contextCompactions.at"), beforeTokens, afterTokens, ...(entry.skipNext === true ? { skipNext: true } : {}) }];
+    } catch {
+      return [];
+    }
+  }) : [];
+  let contextLast: ContextLastRequest | undefined;
+  if (raw.contextLast && typeof raw.contextLast === "object" && !Array.isArray(raw.contextLast)) {
+    const entry = raw.contextLast as Record<string, unknown>;
+    try {
+      const shapeSource = object(entry.shape, "contextLast.shape");
+      const keys = ["system", "tools", "files", "pageState", "attachments", "summary", "conversation", "request", "results", "other"] as const;
+      const shape = Object.fromEntries(keys.map((key) => [key, count(shapeSource[key]) ?? 0])) as ContextLastRequest["shape"];
+      const usageOf = (value: unknown) => {
+        if (!value || typeof value !== "object") return undefined;
+        const usage = value as Record<string, unknown>;
+        const inputTokens = count(usage.inputTokens);
+        const cachedInputTokens = count(usage.cachedInputTokens);
+        const outputTokens = count(usage.outputTokens);
+        return inputTokens === null || cachedInputTokens === null || outputTokens === null ? undefined : { inputTokens, cachedInputTokens, outputTokens };
+      };
+      const usage = usageOf(entry.usage);
+      const turn = usageOf(entry.turn);
+      const key = (value: unknown, label: string) => (typeof value === "string" ? { [label]: text(value, `contextLast.${label}`, 20_000) } : {});
+      contextLast = {
+        integrationId: text(entry.integrationId, "contextLast.integrationId", 255),
+        model: text(entry.model, "contextLast.model", 500),
+        shape,
+        ...(usage ? { usage } : {}),
+        ...(turn ? { turn } : {}),
+        ...key(entry.attachmentsKey, "attachmentsKey"),
+        ...key(entry.summaryKey, "summaryKey"),
+        ...(entry.pasted === true ? { pasted: true } : {}),
+        at: timestamp(entry.at, "contextLast.at"),
+      };
+    } catch {
+      contextLast = undefined;
+    }
+  }
+  return { ...(compactions.length ? { contextCompactions: compactions } : {}), ...(contextLast ? { contextLast } : {}) };
 }
 
 /** A chat of Brainstorming keeps its mode and its book; a mode this version does not know is a chat of the Copilot. */

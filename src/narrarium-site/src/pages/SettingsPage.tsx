@@ -5,7 +5,7 @@ import { formatDateTime, formatWhole } from "@/autopilot/format";
 import { DEFAULT_MAX_INPUT_TOKENS } from "@/assistant/promptBudget";
 import { formatMoney } from "@/costs/money";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, Bot, ChevronRight, Cloud, CloudOff, Coins, Download, Github, Highlighter, Loader2, Mic, Plug, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
+import { ArrowRight, Bot, ChevronRight, Cloud, CloudOff, Coins, Download, Gauge, Github, Highlighter, Loader2, Mic, Plug, Plus, Route, Search, Server, Trash2, Volume2, Wand2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,7 @@ import "@/i18n/branches";
 import { reconcileTaskRouting, routingIssues } from "@/assistant/router";
 import { DeepSearchSettingsBody } from "@/components/settings/DeepSearchSettingsBody";
 import { CopilotToolsSettingsBody } from "@/components/settings/CopilotToolsSettingsBody";
+import { ContextCompactionSettingsBody } from "@/components/settings/ContextCompactionSettings";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 import { clearFallbackAcknowledgements } from "@/assistant/fallbackDisclosure";
 import { RouterRunNote } from "@/components/settings/router/RouterRunNote";
@@ -309,9 +310,15 @@ export function SettingsPage() {
           <fieldset aria-describedby={offline ? "offline-settings-explanation" : undefined}><DeepSearchSettingsBody settings={settings} patchSettings={patchSettings} credentialsDisabled={false} /></fieldset>
         </Section>
       ) : section === "tools" ? (
-        <Section title={t("settingsSection.copilotToolsTitle")} description={t("settingsSection.copilotToolsDescription")} icon={<Wand2 className="h-4 w-4 shrink-0" />} defaultOpen>
-          <CopilotToolsSettingsBody settings={settings} patchSettings={patchSettings} />
-        </Section>
+        <div className="space-y-4">
+          <Section title={t("settingsSection.copilotToolsTitle")} description={t("settingsSection.copilotToolsDescription")} icon={<Wand2 className="h-4 w-4 shrink-0" />} defaultOpen>
+            <CopilotToolsSettingsBody settings={settings} patchSettings={patchSettings} />
+          </Section>
+          {/* How full the chats of the Copilot and of Brainstorming may get before they are compacted (#122). */}
+          <Section title={t("pageCopilot.context.settings.title")} description={t("pageCopilot.context.settings.description")} icon={<Gauge className="h-4 w-4 shrink-0" />} defaultOpen>
+            <ContextCompactionSettingsBody settings={settings} patchSettings={patchSettings} />
+          </Section>
+        </div>
       ) : section === "github" ? (
         <Section title={t("settings.github")} description={t("settings.githubDescription")} icon={<Github className="h-4 w-4 shrink-0" />} defaultOpen>
           <fieldset className="space-y-4">

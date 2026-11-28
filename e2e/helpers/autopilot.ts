@@ -94,7 +94,10 @@ async function answerResponses(response: import("node:http").ServerResponse, rep
  * for the first pieces of a reply (so that a page can be seen to read it as it comes), and as one JSON body when it does not. A model that refuses thinking with tools refuses it
  * on Chat Completions only, as the providers of those models do.
  */
-export async function startProvider(options: { delayMs?: number; chapters?: number; scenes?: number; words?: number; name?: string; timeline?: StubCall[]; behavior?: StubBehavior; pieceGapMs?: number; answers?: Partial<Record<string, (user: string, system: string) => unknown>> } = {}): Promise<StubProvider> {
+/** What a stub provider reports of a chat completion it answered (`usage`): by default 100 input tokens and 50 of output, whatever was asked. */
+export interface StubUsage { prompt_tokens: number; completion_tokens?: number; cached_tokens?: number }
+
+export async function startProvider(options: { delayMs?: number; chapters?: number; scenes?: number; words?: number; name?: string; timeline?: StubCall[]; behavior?: StubBehavior; pieceGapMs?: number; answers?: Partial<Record<string, (user: string, system: string) => unknown>>; prose?: (user: string, system: string) => string | undefined; usage?: (request: { system: string; user: string; tool?: string; raw: string }) => StubUsage } = {}): Promise<StubProvider> {
   const { createFakeAutopilotAi } = await engineModule("testing/index.js");
   const fake = createFakeAutopilotAi({ reviewVerdict: () => "approve", scenes: options.scenes ?? 1, words: options.words ?? 120, chapters: options.chapters ?? 1 });
   const asked: string[] = [];
@@ -150,14 +153,19 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
     // A spec may answer a schema itself (`answers`, by the name of the function), from the request; the engine's fake answers the others.
     const own = tool ? options.answers?.[tool.name]?.(user, system) : undefined;
-    const answer = own !== undefined ? { text: JSON.stringify(own), json: own } : await fake.complete({ system, user, label: "e2e", ...(tool ? { json: { name: tool.name } } : {}) } as never);
+    const ownProse = tool ? undefined : options.prose?.(user, system);
+    const answer = own !== undefined ? { text: JSON.stringify(own), json: own } : ownProse !== undefined ? { text: ownProse, json: undefined } : await fake.complete({ system, user, label: "e2e", ...(tool ? { json: { name: tool.name } } : {}) } as never);
     if (response.destroyed) return;
     if (responses) {
       await answerResponses(response, { stream: body.stream === true, tool: tool?.name, answer, gapMs: options.pieceGapMs ?? 0 });
       return;
     }
+    const counted = options.usage?.({ system, user, ...(tool ? { tool: tool.name } : {}), raw });
+    const usage = counted
+      ? { prompt_tokens: counted.prompt_tokens, completion_tokens: counted.completion_tokens ?? 50, total_tokens: counted.prompt_tokens + (counted.completion_tokens ?? 50), ...(counted.cached_tokens ? { prompt_tokens_details: { cached_tokens: counted.cached_tokens } } : {}) }
+      : { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 };
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ id: "cmpl-1", object: "chat.completion", model: "fake-model", usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 }, choices: [{ index: 0, finish_reason: tool ? "tool_calls" : "stop", message: tool ? { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: tool.name, arguments: JSON.stringify(answer.json) } }] } : { role: "assistant", content: answer.text } }] }));
+    response.end(JSON.stringify({ id: "cmpl-1", object: "chat.completion", model: "fake-model", usage, choices: [{ index: 0, finish_reason: tool ? "tool_calls" : "stop", message: tool ? { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: tool.name, arguments: JSON.stringify(answer.json) } }] } : { role: "assistant", content: answer.text } }] }));
   });
   await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening));
   return {

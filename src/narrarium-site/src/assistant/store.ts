@@ -302,10 +302,56 @@ export interface AssistantQuarantinedAction {
   action: unknown;
 }
 
+/**
+ * A compaction of the context of a chat (#122): the older part of the conversation summarised, so that the next requests carry the summary and the messages after it. The
+ * messages themselves stay in the chat; the marker of the compaction says what was summarised.
+ */
+export interface ContextCompaction {
+  id: string;
+  /** The last message the summary covers: the next requests carry the summary and the messages after it. */
+  throughMessageId: string;
+  /** How many messages of the chat the summary covers, from its start. */
+  messageCount: number;
+  /** How many messages this compaction added to the summary: what its marker says. */
+  coveredCount: number;
+  summary: string;
+  /** Written by a model (`chat-resume`), or made from the messages when the model did not answer. */
+  source: "model" | "fallback";
+  /** At about 90% of the window (`auto`), or asked for (`/compact`, «Compact now»). */
+  trigger: "auto" | "manual";
+  at: string;
+  /** The tokens of the next request before the compaction and after it, as estimated. */
+  beforeTokens: number;
+  afterTokens: number;
+  /** «Undo for the next message»: the next request carries the whole conversation, once. */
+  skipNext?: boolean;
+}
+
+/** The first request of the last turn of a chat, part by part, and what its provider counted: what the context ring measures the next message against. */
+export interface ContextLastRequest {
+  integrationId: string;
+  model: string;
+  /** In likely tokens (see `contextBudget.ts`). */
+  shape: { system: number; tools: number; files: number; pageState: number; attachments: number; summary: number; conversation: number; request: number; results: number; other: number };
+  /** What the provider reported for it, when it did. */
+  usage?: { inputTokens: number; cachedInputTokens: number; outputTokens: number };
+  /** What the provider reported for the whole turn, every round of a tool loop included. */
+  turn?: { inputTokens: number; cachedInputTokens: number; outputTokens: number };
+  /** The attachments it carried (`attachmentsKey`) and its summary (`summaryKey`): the next request starts the same way while they are the same. */
+  attachmentsKey?: string;
+  summaryKey?: string;
+  /** Its message had text pasted with it (material of that request only). */
+  pasted?: boolean;
+  at: string;
+}
+
 export interface AssistantSession extends AssistantSessionMeta {
   schemaVersion?: 1;
   messages: AssistantMessage[];
   attachments: AssistantAttachment[];
+  /** The compactions of the context, in order: the last one is in force (see `contextCompaction.ts`). */
+  contextCompactions?: ContextCompaction[];
+  contextLast?: ContextLastRequest;
   archive?: AssistantSessionArchive;
   /** Immutable, lossless source records removed from the active context by compaction. */
   losslessSegments?: AssistantLosslessSegment[];
