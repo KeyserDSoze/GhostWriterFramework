@@ -25,7 +25,7 @@ import {
  */
 
 /** The release of the personal server that has the reviews of a design (`autopilot-design-review`). */
-export const DESIGN_REVIEW_SERVER_VERSION = "0.1.26";
+export const DESIGN_REVIEW_SERVER_VERSION = "0.1.28";
 
 /** Whether the personal server announces the reviews of a design. A browser run has them always. */
 export function serverHasDesignReview(info: Pick<ServerInfo, "features"> | null | undefined): boolean {
