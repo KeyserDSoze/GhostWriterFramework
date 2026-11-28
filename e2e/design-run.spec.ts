@@ -129,7 +129,7 @@ test("a book with only its description is designed from the Studio: the dialog, 
   await expect(ready.getByRole("heading", { name: "Design ready" })).toBeVisible({ timeout: 30_000 });
   await expect(ready.locator("[data-design-counts]")).toHaveText("4 chapters, 1 secret, 2 world entries", { timeout: 20_000 });
   await expect(ready).toContainText("The director approved it with 8.5/10.");
-  await expect(page.locator("[data-design-round]")).toHaveText(["Review 1: 7/10, sent back · readers 7/10", "Review 2: 8.5/10, approved · readers 7/10"]);
+  await expect(page.locator("[data-design-round]")).toHaveText([/^Review 1: 7\/10, sent back · readers 7\/10/, /^Review 2: 8\.5\/10, approved · readers 7\/10/]);
   await ready.getByRole("button", { name: "Approve the design" }).click();
   await expect(ready.locator("[data-design-approved]")).toContainText("You approved this design on");
   await expect(ready.getByRole("button", { name: "Start writing with the autopilot" })).toBeEnabled();

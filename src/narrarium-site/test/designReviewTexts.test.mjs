@@ -74,7 +74,7 @@ test("every text the Studio asks of the reviews is in the catalogue, in every fo
   };
   for (const [prefix, values] of Object.entries(dynamic)) for (const value of values) assert.ok(catalogue.has(`${prefix}.${value}`), `${prefix}.${value}`);
   for (const key of ["chapterReview", "coherence", "rubric"]) for (const part of ["label", "hint"]) assert.ok(catalogue.has(`designReview.dialog.${key}.${part}`), `${key}.${part}`);
-  // Every refusal the site tells apart has a text, and the engine gives no other for the choices and the decisions: the codes of the engine's error are the ones the site names, bar the ones the design had before.
+  // Every refusal the site tells apart has a text, and the engine gives no other for the choices and the decisions: the codes of the engine's error are the ones the site names, bar the ones the design had before and the two of «Review and complete» (its proposals that none waits for, or that are another run's), which that page tells in its own words.
   const refusals = /DESIGN_REVIEW_ERROR_CODES = \[([^\]]+)\]/.exec(source("autopilot/designReview.ts"));
   assert.ok(refusals, "the site declares the refusals of the reviews");
   const codes = [...refusals[1].matchAll(/"(\w+)"/g)].map((match) => match[1]);
@@ -83,7 +83,7 @@ test("every text the Studio asks of the reviews is in the catalogue, in every fo
   const engineCodes = /AutopilotDesignErrorCode =((?:\s*\|?\s*"\w+")+)/.exec(engineSource("design.ts"));
   assert.ok(engineCodes, "the engine declares the codes of its design errors");
   const given = [...engineCodes[1].matchAll(/"(\w+)"/g)].map((match) => match[1]);
-  assert.deepEqual(given.filter((code) => !codes.includes(code)).sort(), ["design_no_description", "design_written"]);
+  assert.deepEqual(given.filter((code) => !codes.includes(code)).sort(), ["design_no_description", "design_written", "no_proposals", "stale"]);
 });
 
 test("the texts of the reviews and of the Brainstormer come with their chunks, never with the app", () => {
