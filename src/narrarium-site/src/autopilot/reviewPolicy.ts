@@ -31,7 +31,7 @@ export function serverHasReviewBookRound(info: Pick<ServerInfo, "features"> | nu
 }
 
 /** The release of the personal server that consults the room of the wildcards in the autopilot (`autopilot-wildcards`): before the review of a design, and at a plateau. */
-export const WILDCARDS_SERVER_VERSION = "0.1.26";
+export const WILDCARDS_SERVER_VERSION = "0.1.27";
 
 /** Whether the personal server consults the room of the wildcards. An older one drops `review.wildcards` without a word, and the engine's client refuses to send it there. */
 export function serverHasWildcards(info: Pick<ServerInfo, "features"> | null | undefined): boolean {
