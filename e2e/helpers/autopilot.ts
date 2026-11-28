@@ -197,8 +197,11 @@ export interface SeedBook {
   repo: string;
   name: string;
   files: Record<string, string>;
-  /** A book on GitHub with its complete working copy on this device (a clone at `head-base`), instead of a book kept on this device. */
-  github?: { owner: string; repo: string; branch: string; token: string };
+  /**
+   * A book on GitHub with its complete working copy on this device (a clone at `head-base`), instead of a book kept on this device. `token` is the default GitHub token of
+   * the settings; without one the book has none of its own, and uses the GitHub connection of the device when `seed` is given one (`githubApp`).
+   */
+  github?: { owner: string; repo: string; branch: string; token?: string };
 }
 
 /** The tasks of the text router: what a model has to be tagged with to be asked for one, and the rows of its table. */
@@ -265,7 +268,7 @@ export function routedSettingsOf(first: RoutedIntegration, second: RoutedIntegra
  * The signed-in local workspace, its settings, and the books of this browser in their local repositories, before the app starts; the Google reads
  * the settings load with. A request to the real OpenAI (the integration without its endpoint) fails the spec where it happens, with that reason.
  */
-export async function seed(target: Page | BrowserContext, settings: ReturnType<typeof settingsOf> | ReturnType<typeof routedSettingsOf>, books: readonly SeedBook[], options: { recordingOff?: string[]; marker?: string } = {}): Promise<{ openAi: string[] }> {
+export async function seed(target: Page | BrowserContext, settings: ReturnType<typeof settingsOf> | ReturnType<typeof routedSettingsOf>, books: readonly SeedBook[], options: { recordingOff?: string[]; marker?: string; githubApp?: { token: string; login: string } } = {}): Promise<{ openAi: string[] }> {
   const openAi: string[] = [];
   await target.route("https://api.openai.com/**", (route) => { openAi.push(route.request().url()); return route.fulfill({ status: 599, json: { error: { message: "The spec's integration has no endpoint: the request went to api.openai.com." } } }); });
   await target.route("https://www.googleapis.com/**", async (route) => {
@@ -284,7 +287,7 @@ export async function seed(target: Page | BrowserContext, settings: ReturnType<t
     if (url.pathname === "/drive/v3/files" && q.includes("'e2e-folder' in parents")) return json({ files: [], nextPageToken: null });
     return route.fulfill({ status: 500, json: { error: `Unexpected Google request in the autopilot specs: ${url.pathname}` } });
   });
-  await target.addInitScript(({ settings, books, accountIdentity, workspaceId, recordingOff, marker }) => {
+  await target.addInitScript(({ settings, books, accountIdentity, workspaceId, recordingOff, marker, githubApp }) => {
     const target = window as unknown as { __seedReady?: Promise<void> };
     if (window.localStorage.getItem(marker)) { target.__seedReady = Promise.resolve(); return; }
     const now = Date.now();
@@ -351,8 +354,30 @@ export async function seed(target: Page | BrowserContext, settings: ReturnType<t
         transaction.onabort = () => reject(transaction.error ?? new Error("E2E IndexedDB seed aborted"));
       });
       db.close();
+      // The GitHub App's connection of this device: its token is the one a book without a token of its own uses.
+      if (githubApp) {
+        const account = await new Promise<IDBDatabase>((resolveOpen, reject) => {
+          const request = indexedDB.open("narrarium-local-account", 1);
+          request.onupgradeneeded = () => {
+            const accountDb = request.result;
+            for (const name of ["meta", "core", "deviceConfiguration"]) if (!accountDb.objectStoreNames.contains(name)) accountDb.createObjectStore(name, { keyPath: "key" });
+            if (!accountDb.objectStoreNames.contains("chats")) accountDb.createObjectStore("chats", { keyPath: "id" });
+            if (!accountDb.objectStoreNames.contains("segments")) accountDb.createObjectStore("segments", { keyPath: "key" }).createIndex("sessionId", "sessionId", { unique: false });
+            if (!accountDb.objectStoreNames.contains("recoveries")) accountDb.createObjectStore("recoveries", { keyPath: "id" }).createIndex("createdAtUtc", "createdAtUtc", { unique: false });
+          };
+          request.onsuccess = () => resolveOpen(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        await new Promise<void>((done, reject) => {
+          const transaction = account.transaction("deviceConfiguration", "readwrite");
+          transaction.objectStore("deviceConfiguration").put({ key: "current", value: { github: { backend: "github", method: "github-app", credentialKind: "app", identity: { provider: "github", providerAccountId: "e2e-github-user", displayName: githubApp.login, username: githubApp.login }, token: githubApp.token, accessTokenExpiry: now + 7 * 3_600_000, rememberMe: true, accountSyncEnabled: false, repositoryName: "narrarium.settings", replica: { enabled: false, status: "disabled" } } } });
+          transaction.oncomplete = () => done();
+          transaction.onerror = () => reject(transaction.error);
+        });
+        account.close();
+      }
     })();
-  }, { settings, books, accountIdentity: ACCOUNT_IDENTITY, workspaceId: WORKSPACE_ID, recordingOff: options.recordingOff ?? [], marker: options.marker ?? "narrarium-e2e-autopilot-seeded-v1" });
+  }, { settings, books, accountIdentity: ACCOUNT_IDENTITY, workspaceId: WORKSPACE_ID, recordingOff: options.recordingOff ?? [], marker: options.marker ?? "narrarium-e2e-autopilot-seeded-v1", githubApp: options.githubApp ?? null });
   return { openAi };
 }
 
@@ -387,7 +412,7 @@ export const autopilotFacts = (page: Page, repo: string) => page.evaluate((repo)
     const db = open.result;
     const all = db.transaction("files", "readonly").objectStore("files").getAll();
     all.onsuccess = () => {
-      const files = (all.result as Array<{ repoId: string; path: string; text: string }>).filter((entry) => entry.repoId.endsWith(`::local:${repo}`));
+      const files = (all.result as Array<{ repoId: string; path: string; text: string }>).filter((entry) => (entry.repoId.endsWith(`::local:${repo}`) || entry.repoId.endsWith(`::${repo}`)));
       db.close();
       try {
         const state = JSON.parse(files.find((entry) => entry.path === "autopilot/state.json")?.text ?? "null") as { status: string; phase: string; lastError?: unknown; stats?: { aiCalls: number; inputTokens: number; outputTokens: number; cost: number; usageUnknownCalls?: number; costUnknownCalls?: number }; options?: { budgetLimit?: number; review?: Record<string, unknown> }; limitReached?: { kind: string; used: number; limit: number }; plan?: { chapters?: Array<{ number: number; rounds?: Array<Record<string, unknown>> }> } } | null;
@@ -419,7 +444,7 @@ export const filesUnder = (page: Page, repo: string, prefix: string) => page.eva
     const all = db.transaction("files", "readonly").objectStore("files").getAll();
     all.onsuccess = () => {
       db.close();
-      resolveFiles((all.result as Array<{ repoId: string; path: string; text: string; status?: string }>).filter((entry) => entry.repoId.endsWith(`::local:${repo}`) && entry.path.startsWith(prefix) && entry.status !== "deleted").map((entry) => ({ path: entry.path, text: entry.text })));
+      resolveFiles((all.result as Array<{ repoId: string; path: string; text: string; status?: string }>).filter((entry) => (entry.repoId.endsWith(`::local:${repo}`) || entry.repoId.endsWith(`::${repo}`)) && entry.path.startsWith(prefix) && entry.status !== "deleted").map((entry) => ({ path: entry.path, text: entry.text })));
     };
   };
 }), { repo, prefix });
