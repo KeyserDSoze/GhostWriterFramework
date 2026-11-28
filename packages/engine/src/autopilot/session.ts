@@ -33,6 +33,9 @@ import { chooseDesignPitch, type DesignPitchChoice } from "./design-alternatives
 import { decideFinding, type FindingDecisionInput } from "./design-coherence.js";
 import { AutopilotDesignError } from "./design.js";
 import { designProposalsChanges, type DesignProposalsDecision, type DesignProposalsResult } from "./design-complete-apply.js";
+import { lockedDecisionConflicts } from "./decisions-guard.js";
+import { decisionConflictText } from "../book/bible.js";
+import { loadDecisions } from "../book/design-load.js";
 import { RevisionCampaignError, cancelRevisionCampaign, createReviewCampaign, createRevisionCampaign, decideBookCorrections as decideCorrections, recordRevisionCampaign, type BookCorrectionsDecision, type ReviewBookInput, type ReviseChaptersInput, type RevisionCampaignResult } from "./campaign.js";
 import { createModelMemory, type AiModelMemory } from "../ai/memory.js";
 import { applyLiveAttempt, applyLiveProgress, startLive } from "./live.js";
@@ -917,9 +920,19 @@ export class AutopilotSession {
       assertStoredStateReadable(stored);
       if (!stored.state) throw new AutopilotDesignError("no_proposals", "No proposal of «Review and complete» waits for a decision.");
       const snapshot = await loadBookSnapshot(store, this.bookCache);
-      const [entries, journal] = await Promise.all([OutlineReader.of(store, snapshot, this.outlineCache).chapters(), store.read(OUTLINE_CHANGES_FILE)]);
+      const [entries, journal, decisions] = await Promise.all([OutlineReader.of(store, snapshot, this.outlineCache).chapters(), store.read(OUTLINE_CHANGES_FILE), loadDecisions(store)]);
       const now = this.now();
-      const { state, changes, result } = await designProposalsChanges({ state: stored.state, decision, entries, snapshot, journal, now, language: languageCode(snapshot.book.language) });
+      const language = languageCode(snapshot.book.language);
+      const input = { state: stored.state, decision, entries, snapshot, journal, now, language };
+      let applied = await designProposalsChanges(input);
+      // A locked decision of the author holds what it covers, as in every step of the autopilot: those proposals are left out, and the author is told which and why.
+      const conflicts = await lockedDecisionConflicts(store, decisions, applied.changes);
+      if (conflicts.length) {
+        const held = new Map<string, string>();
+        for (const conflict of conflicts) if (!held.has(conflict.path)) held.set(conflict.path, decisionConflictText(conflict, language));
+        applied = await designProposalsChanges({ ...input, held });
+      }
+      const { state, changes, result } = applied;
       const next = stampState(state, now);
       try {
         await store.commit([...changes, stateChange(next, stored.stateHash)], "Autopilot: the author applied the proposals of «Review and complete»");

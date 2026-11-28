@@ -199,7 +199,7 @@ export function chapterSpoilerGuards(ledgers: readonly BookSecretLedger[], numbe
 /** The rules of the world and the themes, the tone and the audience of `bible/`, as the constraints of every step that writes or judges prose. Empty without them. */
 export async function bibleConstraints(store: BookStore, maxChars = WRITING_BIBLE_CHARS): Promise<string> {
   const [themesFile, worldFile] = await Promise.all([store.read(BIBLE_THEMES_FILE).catch(() => null), store.read(BIBLE_WORLD_FILE).catch(() => null)]);
-  const themes = readBibleThemes(themesFile?.content) as ReturnType<typeof readBibleThemes> & { audience?: string };
+  const themes = readBibleThemes(themesFile?.content);
   const world = readBibleWorld(worldFile?.content);
   const parts = [
     world.rules.length ? `RULES OF THE WORLD (never break them):\n${world.rules.map((rule) => `- ${rule}`).join("\n")}` : "",

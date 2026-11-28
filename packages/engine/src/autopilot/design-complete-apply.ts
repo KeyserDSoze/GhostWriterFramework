@@ -36,6 +36,8 @@ export interface DesignProposalsResult {
   /** The chapters whose entry was written, and the canon files created. */
   chapters: number[];
   created: string[];
+  /** What a locked decision of the author held (`bible/decisions.md`): its proposals are left out, and said here, a line each in the language of the book. */
+  held: string[];
 }
 
 /** A finding as a note for the ghostwriter of its chapter. */
@@ -77,6 +79,8 @@ export async function designProposalsChanges(input: {
   journal: { content: string; hash: string } | null;
   now: Date;
   language: string;
+  /** The files a locked decision holds (`lockedDecisionConflicts` of the changes without it), and what it says of each: what would change there is not written. */
+  held?: ReadonlyMap<string, string>;
 }): Promise<{ state: AutopilotState; changes: BookFileChange[]; result: DesignProposalsResult }> {
   const chosen = checkDecision(input.state, input.decision);
   const state = structuredClone(input.state);
@@ -86,7 +90,8 @@ export async function designProposalsChanges(input: {
   const changes: BookFileChange[] = [];
   const was = new Map<number, OutlineJournalSeen>();
   const now = new Map<number, OutlineJournalSeen>();
-  const result: DesignProposalsResult = { applied: 0, skipped: 0, outdated: 0, chapters: [], created: [] };
+  const result: DesignProposalsResult = { applied: 0, skipped: 0, outdated: 0, chapters: [], created: [], held: [...new Set(input.held?.values() ?? [])] };
+  const held = (path: string) => input.held?.has(path) === true;
   const decide = <T extends { id: string; status: string }>(item: T, writable: boolean): boolean => {
     if (item.status !== "waiting") return false;
     if (!chosen.has(item.id)) {
@@ -108,7 +113,7 @@ export async function designProposalsChanges(input: {
   for (const proposals of Object.values(completion.entries).sort((left, right) => left.number - right.number)) {
     const entry = byNumber.get(proposals.number);
     // Only an entry of the author's that can be read is written: one the autopilot owns now, or one gone, keeps the proposals as they were left.
-    const usable = entry && !entry.intact && !entry.unreadable ? entry : undefined;
+    const usable = entry && !entry.intact && !entry.unreadable && !held(entry.path) ? entry : undefined;
     const missing = new Set(usable ? missingDesignKeys(usable.design) : []);
     const patch: OutlineDesignPatch = {};
     for (const field of proposals.fields) {
@@ -134,11 +139,11 @@ export async function designProposalsChanges(input: {
   const known = input.snapshot.canon.map((entry) => ({ kind: entry.kind, names: [entry.name, ...entry.aliases] }));
   for (const proposal of completion.canon) {
     const exists = known.some((entry) => entry.kind === proposal.kind && sameCanonEntity(proposal.kind, proposal.name, entry.names));
-    if (!decide(proposal, !exists)) continue;
     const base = canonSlug(proposal.kind, proposal.name);
     let slug = base;
     for (let number = 2; taken.has(canonPath(proposal.kind, slug).toLowerCase()); number += 1) slug = `${base}-${number}`;
     const path = canonPath(proposal.kind, slug);
+    if (!decide(proposal, !exists && !held(path))) continue;
     taken.add(path.toLowerCase());
     known.push({ kind: proposal.kind, names: [proposal.name] });
     const label = proposal.kind === "secret" ? { title: proposal.name } : { name: proposal.name };

@@ -1,7 +1,8 @@
 import { normalizeScore, requireStructuredFields } from "../ai/structured.js";
 import { AI_CAPABILITIES, AiReplyRejectedError, type AiJsonSchema } from "../ai/types.js";
 import { canonManifest, readBody } from "../book/context.js";
-import { OUTLINE_DESIGN_FIELDS, OUTLINE_DESIGN_LABELS, designChecks, designFindingText, designText, type OutlineChapterDesign, type OutlineDesignKey } from "../book/design.js";
+import { OUTLINE_DESIGN_FIELDS, OUTLINE_DESIGN_LABELS, designText, type OutlineChapterDesign, type OutlineDesignKey } from "../book/design.js";
+import { designFindings, findingText } from "../book/design-checks.js";
 import type { OutlineChapterEntry } from "../book/outline.js";
 import { STORY_DESIGN_FILE } from "../book/paths.js";
 import { directorSystemPrompt, parseDirectorVerdict } from "../director/opinion.js";
@@ -394,7 +395,7 @@ export async function runDesignCompleteReview(ctx: TaskContext): Promise<TaskRes
     const design = entry ? proposedDesign(entry, completion.entries[String(chapter.number)]) : chapter.design;
     return { ...chapter, ...(design ? { design } : {}) };
   }) };
-  const checks = [...designChecks(checked), ...outlineDesignGaps(checked.chapters.filter((chapter) => completion.chapters.includes(chapter.number)))];
+  const checks = [...designFindings(checked), ...outlineDesignGaps(checked.chapters.filter((chapter) => completion.chapters.includes(chapter.number)))];
   const style = evaluationStyleOf(ctx, "plan");
   const target = designTarget(ctx.state, ctx.director);
   const maxRounds = designMaxRounds(design);
@@ -415,7 +416,7 @@ export async function runDesignCompleteReview(ctx: TaskContext): Promise<TaskRes
     ], [
       `THE AUTHOR'S CHAPTERS, WITH WHAT IS PROPOSED FOR THEM (the chapters bind; the proposals are yours to judge):\n${chaptersWithProposals(entries, completion, { chapters: CHAPTERS_CHARS.director, proposals: PROPOSALS_CHARS.director }, true)}`,
       completion.canon.length ? `CANON PROPOSED:\n${completion.canon.map((entry) => `- ${entry.kind} «${entry.name}» (chapters ${entry.chapters.join(", ") || "-"}): ${truncate(entry.description, 240)}`).join("\n")}` : "",
-      checks.length ? `DESIGN CHECKS (found without a model):\n${checks.slice(0, 30).map((finding) => `- ${designFindingText(finding, "en")}`).join("\n")}${checks.length > 30 ? `\n- … and ${checks.length - 30} more` : ""}` : "DESIGN CHECKS (found without a model): nothing.",
+      checks.length ? `DESIGN CHECKS (found without a model):\n${checks.slice(0, 30).map((finding) => `- ${findingText(finding, "en")}`).join("\n")}${checks.length > 30 ? `\n- … and ${checks.length - 30} more` : ""}` : "DESIGN CHECKS (found without a model): nothing.",
       readings.length ? `SIMULATED READERS:\n${readings.map((reading) => `- ${reading.name} (weight ${ctx.director.readerWeights[reading.slug] ?? 1}): ${reading.score}/10 — ${reading.summary}`).join("\n")}` : "",
     ], request([
       `Review the chapters the author wrote and what is proposed to complete their design (review ${round} of at most ${Math.max(maxRounds, round)}).`,

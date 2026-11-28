@@ -296,3 +296,18 @@ test("«Review and complete» goes only to a personal server that announces auto
   assert.equal(applied.applied, 1);
   assert.deepEqual(current.log.at(-1), { method: "POST", path: "/api/v1/books/b/autopilot/design/proposals", body: { run: "r", apply: ["f1-goal"] } });
 });
+
+test("a locked decision of the author holds what it covers when the proposals are applied: those are left out and said, the others are written, and every step is told the decision", async () => {
+  const locked = engine.setDecisionStatus(engine.captureDecision(null, { decision: "Chapter 2 stays as it is.", reason: "The author's choice.", chapters: [2] }, clock()).content, "d-001", "locked");
+  const store = await writtenBook(2, { [engine.BIBLE_DECISIONS_FILE]: locked });
+  const ai = createFakeAutopilotAi();
+  const { session: author, state } = await run(store, ai, { ...START, options: { ...START.options, readersOnPlan: false } });
+  for (const call of ai.calls) assert.match(call.user + call.system, /LOCKED DECISIONS[\s\S]*d-001: Chapter 2 stays as it is\./, call.label);
+  const before = store.files.get(entryPath(2));
+  const result = await author.applyDesignProposals({ run: state.design.startedAt, apply: ["f1-setting", "f2-goal"] });
+  assert.deepEqual({ applied: result.applied, outdated: result.outdated, chapters: result.chapters }, { applied: 1, outdated: 1, chapters: [1] });
+  assert.equal(result.held.length, 1);
+  assert.match(result.held[0], /Chapter 2 stays as it is/);
+  assert.equal(store.files.get(entryPath(2)), before, "the entry the decision covers is not written");
+  assert.equal((await readOutlineChapter(entryPath(1), 1, store.files.get(entryPath(1)))).entry.design.setting, "Proposed setting of chapter 1.");
+});
