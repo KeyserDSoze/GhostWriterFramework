@@ -8,20 +8,26 @@ import { AI_CAPABILITIES } from "../ai/types.js";
 import type { AiJsonSchema } from "../ai/types.js";
 import { DIRECTOR_OPINION_TOOL, directorSystemPrompt } from "../director/opinion.js";
 import { currentRequest, untrustedData } from "../prompt/trust.js";
+import { brainstormerPrompt, defaultBrainstormer } from "../profiles/brainstormer.js";
 import { defaultDirector, directorPrompt } from "../profiles/director.js";
 import { builtinReaderPersonas, readerPersonaSystemPrompt } from "../profiles/readers.js";
 import { READER_EVALUATION_TOOL, READER_SUMMARY_TOOL } from "../readers/evaluation.js";
 import { asInteger, asNumber, asRecord } from "../util/json.js";
 import { OUTPUT_TOKENS_CEILING, countWords, isItalian, languageCode, scaleOutputTokens, tokensPerWord } from "../util/text.js";
+import { coherenceWindows } from "./design-coherence.js";
+import { COHERENCE_WINDOW, DESIGN_REVIEW_BATCH_CHAPTERS } from "./design-review-types.js";
+import { designRubricRule } from "./design-rubric.js";
+import { designFlow, normalizeWorkflow, type DesignFlow } from "./design-state.js";
 import { sumCappedRamp, sumWindowedList, windowedList } from "./estimate-math.js";
 import { estimateTexts } from "./estimate-texts.js";
 import { PLAN_BATCH_CHAPTERS, SCENES_PER_CHAPTER, bookChapters } from "./planner.js";
 import {
-  CHAPTER_REVIEW_TOOL, CHAPTER_SUMMARY_TOOL, CONCEPT_TOOL, CONSOLIDATION_TOOL, DESIGN_CONCEPT_TOOL, DESIGN_PLAN_TOOL, DESIGN_REACTION_TOOL, DESIGN_REVIEW_TOOL, FINDINGS_TOOL, PLAN_REACTION_TOOL, PLAN_REVIEW_TOOL, PLAN_TOOL, SCENES_TOOL, SCENE_SUMMARY_TOOL,
-  architectSystemPrompt, continuitySystemPrompt, specialistsSystemPrompt, writerSystemPrompt,
+  CHAPTER_REVIEW_TOOL, CHAPTER_SUMMARY_TOOL, CONCEPT_TOOL, CONSOLIDATION_TOOL, DESIGN_CHAPTER_REVIEW_TOOL, DESIGN_COHERENCE_TOOL, DESIGN_CONCEPT_TOOL, DESIGN_PITCHES_TOOL, DESIGN_PLAN_TOOL, DESIGN_REACTION_TOOL, DESIGN_REVIEW_TOOL, FINDINGS_TOOL, PLAN_REACTION_TOOL, PLAN_REVIEW_TOOL, PLAN_TOOL, SCENES_TOOL, SCENE_SUMMARY_TOOL,
+  DESIGN_COHERENCE_ROLE, DESIGN_PANEL_ROLE, DESIGN_PITCHES_ROLE, PITCH_READER_ROLE,
+  architectSystemPrompt, continuitySystemPrompt, designArchitectSystem, designPitchEvaluationTool, designReactionTool, designReviewTool, specialistsSystemPrompt, writerSystemPrompt,
 } from "./prompts.js";
 import { MAX_BOOK_CHAPTERS, MAX_DIRECTOR_NOTES, normalizeBrief, normalizeOptions } from "./state.js";
-import { DESIGN_BATCH_CHAPTERS, DESIGN_DEFAULT_ROUNDS, REVIEW_MAX_ROUNDS, type AutopilotBrief, type AutopilotOptions, type AutopilotState } from "./types.js";
+import { DESIGN_BATCH_CHAPTERS, DESIGN_DEFAULT_ROUNDS, REVIEW_MAX_ROUNDS, type AutopilotBrief, type AutopilotOptions, type AutopilotState, type DesignWorkflow } from "./types.js";
 
 // What a run will cost before it starts. The estimate is arithmetic over the pipeline: it counts the calls the steps of the autopilot make (the formulas
 // are written next to the step of `tasks.ts` and `planner.ts` they come from), weighs each call as the engine's router would weigh its prompt and as
@@ -46,10 +52,15 @@ export type EstimateCapability = (typeof ESTIMATE_CAPABILITIES)[number];
  * `scene-summary` is asked by `write` and `repair`, after the scene.
  */
 export const ESTIMATE_CALL_KINDS = Object.freeze([
+  "design-pitches",
+  "design-pitch-reader",
+  "design-pitch-review",
   "concept",
   "summarize-imported",
   "plan",
   "plan-reader",
+  "design-chapter-review",
+  "design-coherence",
   "plan-review",
   "scenes",
   "write",
@@ -66,10 +77,15 @@ export const ESTIMATE_CALL_KINDS = Object.freeze([
 export type EstimateCallKind = (typeof ESTIMATE_CALL_KINDS)[number];
 
 const CAPABILITY_OF: Record<EstimateCallKind, EstimateCapability> = {
+  "design-pitches": AI_CAPABILITIES.writer,
+  "design-pitch-reader": AI_CAPABILITIES.reader,
+  "design-pitch-review": AI_CAPABILITIES.director,
   concept: AI_CAPABILITIES.writer,
   "summarize-imported": AI_CAPABILITIES.summary,
   plan: AI_CAPABILITIES.writer,
   "plan-reader": AI_CAPABILITIES.reader,
+  "design-chapter-review": AI_CAPABILITIES.director,
+  "design-coherence": AI_CAPABILITIES.specialist,
   "plan-review": AI_CAPABILITIES.director,
   scenes: AI_CAPABILITIES.writer,
   write: AI_CAPABILITIES.writer,
@@ -171,6 +187,16 @@ export const ESTIMATE_TYPICAL = Object.freeze({
   designSecrets: 3,
   designReactionWords: 260,
   designReviewWords: 520,
+  /**
+   * The reviews of a design (`EstimateDesign.workflow`): a pitch, the judgement of a pitch (a note and its rubric), the rubric of one subject (twelve criteria with their reasons,
+   * issues and proposals), the review of a chapter with its rubric, the findings of one call of the analysis of the structure, and what the director decides about them.
+   */
+  designPitchWords: 150,
+  designPitchJudgementWords: 330,
+  designRubricWords: 560,
+  designChapterReviewWords: 420,
+  designCoherenceWords: 650,
+  designDecisionWords: 60,
 });
 
 /** The sizes of the files of the book, in words, when the host has measured them (each defaults to `ESTIMATE_TYPICAL`). */
@@ -273,6 +299,8 @@ export interface EstimateDesign {
   maxRounds?: number;
   /** In how many of the first reviews the readers read it (its policy's `readerRounds`; 1 when it says nothing). */
   readerRounds?: number;
+  /** What the run does besides the plain design (`DesignWorkflow`): the rubric, the alternatives, the review of every chapter, the analysis of the structure. */
+  workflow?: DesignWorkflow;
 }
 
 export interface EstimateInput {
@@ -405,6 +433,11 @@ const DEFAULT_PANEL_SIZE_FALLBACK = 8;
  * text around it (the lines of the request and the titles of the sections, `SECTION_LABEL_CHARS` each).
  */
 const REQUEST: Record<EstimateCallKind, { chars: number; sections: number }> = {
+  "design-pitches": { chars: 184, sections: 4 },
+  "design-pitch-reader": { chars: 1741, sections: 3 },
+  "design-pitch-review": { chars: 2089, sections: 4 },
+  "design-chapter-review": { chars: 1931, sections: 10 },
+  "design-coherence": { chars: 179, sections: 9 },
   concept: { chars: 341, sections: 11 },
   "summarize-imported": { chars: 230, sections: 2 },
   plan: { chars: 191, sections: 12 },
@@ -443,6 +476,11 @@ const REPLY_LIMIT: Partial<Record<EstimateCallKind, number>> = {
 const PROSE_KINDS: ReadonlySet<EstimateCallKind> = new Set<EstimateCallKind>(["write", "repair"]);
 
 const TOOL_OF: Partial<Record<EstimateCallKind, AiJsonSchema>> = {
+  "design-pitches": DESIGN_PITCHES_TOOL,
+  "design-pitch-reader": designPitchEvaluationTool("reader"),
+  "design-pitch-review": designPitchEvaluationTool("director"),
+  "design-chapter-review": DESIGN_CHAPTER_REVIEW_TOOL,
+  "design-coherence": DESIGN_COHERENCE_TOOL,
   concept: CONCEPT_TOOL,
   "summarize-imported": CHAPTER_SUMMARY_TOOL,
   plan: PLAN_TOOL,
@@ -460,6 +498,11 @@ const TOOL_OF: Partial<Record<EstimateCallKind, AiJsonSchema>> = {
 
 /** The limits of the replies of a design run that are not a plan's (`runConcept`, `runPlan`, `runPlanReader`, `runDesignReview` ask for more). */
 const DESIGN_REPLY_LIMIT: Partial<Record<EstimateCallKind, number>> = {
+  "design-pitches": 2600,
+  "design-pitch-reader": 3700,
+  "design-pitch-review": 4200,
+  "design-chapter-review": 7440,
+  "design-coherence": 11_850,
   concept: 12000,
   plan: 4000 + 1500 * DESIGN_BATCH_CHAPTERS,
   "plan-reader": 2500,
@@ -470,17 +513,22 @@ function replyLimitOf(kind: EstimateCallKind, designing: boolean): number | unde
   return (designing ? DESIGN_REPLY_LIMIT[kind] : undefined) ?? REPLY_LIMIT[kind];
 }
 
-let designTools: Partial<Record<EstimateCallKind, number>> | null = null;
+const designTools = new Map<string, Partial<Record<EstimateCallKind, number>>>();
 
-/** The tokens of the functions of a design run, for the steps that ask with them. */
-function designToolTokens(): Partial<Record<EstimateCallKind, number>> {
-  designTools ??= {
-    concept: functionTokens(DESIGN_CONCEPT_TOOL),
-    plan: functionTokens(DESIGN_PLAN_TOOL),
-    "plan-reader": functionTokens(DESIGN_REACTION_TOOL),
-    "plan-review": functionTokens(DESIGN_REVIEW_TOOL),
-  };
-  return designTools;
+/** The tokens of the functions of a design run, for the steps that ask with them: the reader's and the director's carry the rubric, and the director's the decisions about findings, when the workflow asks. */
+function designToolTokens(flow: Pick<DesignFlow, "rubric" | "coherence">): Partial<Record<EstimateCallKind, number>> {
+  const key = `${flow.rubric}:${flow.coherence}`;
+  let tokens = designTools.get(key);
+  if (!tokens) {
+    tokens = {
+      concept: functionTokens(DESIGN_CONCEPT_TOOL),
+      plan: functionTokens(DESIGN_PLAN_TOOL),
+      "plan-reader": functionTokens(designReactionTool(flow.rubric)),
+      "plan-review": functionTokens(designReviewTool({ rubric: flow.rubric, decisions: flow.coherence })),
+    };
+    designTools.set(key, tokens);
+  }
+  return tokens;
 }
 
 // ─── Sums over the chapters of a book ───────────────────────────────────────
@@ -540,6 +588,8 @@ interface Statics {
   tasteTokens: number;
   tasteShare: number;
   readersEnabled: number;
+  /** The system message of the architect in a design run: the architect's, the brainstormer's role and the default Brainstormer profile. */
+  designArchitect: number;
 }
 
 const messageTokens = (text: string): number => Math.ceil(text.length / 4) + MESSAGE_TOKENS;
@@ -569,7 +619,13 @@ function staticsFor(language: string): Statics {
     return Math.ceil(total / personas.length / 4) + MESSAGE_TOKENS;
   };
   const planReaderLine = "\n\nYou are reading the pitch and the chapter plan of a novel that is not written yet. React honestly as this reader would.";
+  const brainstormer = brainstormerPrompt(defaultBrainstormer(key));
   const systems: Record<EstimateCallKind, number> = {
+    "design-pitches": messageTokens(`${designArchitectSystem(key, brainstormer)}\n\n${DESIGN_PITCHES_ROLE}`),
+    "design-pitch-reader": personaSystem("brief", `\n\n${PITCH_READER_ROLE}`),
+    "design-pitch-review": messageTokens(directorSystem),
+    "design-chapter-review": messageTokens(`${directorSystem}\n\n${DESIGN_PANEL_ROLE}`),
+    "design-coherence": messageTokens(`${specialistsSystemPrompt(key)}\n\n${DESIGN_COHERENCE_ROLE}`),
     concept: messageTokens(architectSystemPrompt(key)),
     "summarize-imported": messageTokens(continuitySystemPrompt(key)),
     plan: messageTokens(architectSystemPrompt(key)),
@@ -595,6 +651,7 @@ function staticsFor(language: string): Statics {
     directorProfileTokens: Math.ceil(profile.length / 4),
     tasteTokens: Math.ceil(taste.length / 4),
     tasteShare: profile.length ? taste.length / profile.length : 0,
+    designArchitect: messageTokens(designArchitectSystem(key, brainstormer)),
     readersEnabled: builtinReaderPersonas(key).filter((persona) => persona.enabled).length || DEFAULT_PANEL_SIZE_FALLBACK,
   };
   staticCache.set(key, statics);
@@ -728,6 +785,8 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   const designInput = asRecord(source.design);
   const designRounds = whole(designInput.maxRounds, DESIGN_DEFAULT_ROUNDS, 1, MAX_ROUNDS);
   const designReaderRounds = whole(designInput.readerRounds, 1, 1, MAX_ROUNDS);
+  // What the run does besides the plain design: read as the engine reads it from a state, so that a workflow the engine would refuse is not estimated.
+  const flow: DesignFlow = designing ? designFlow({ workflow: normalizeWorkflow(designInput.workflow) }) : { rubric: false, chapterReview: false, coherence: false, alternatives: 0, pitchChoice: "director" };
   const batchSize = designing ? DESIGN_BATCH_CHAPTERS : PLAN_BATCH_CHAPTERS;
 
   // The tokens a word costs, in the book's language: the engine's factor, or the host's own.
@@ -803,13 +862,13 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
 
   /** The system message of a kind, with the director's profile as the author wrote it when it is not the default one. */
   const system = (kind: EstimateCallKind): number => {
-    const base = statics.system[kind];
+    const base = designing && (kind === "concept" || kind === "plan") ? statics.designArchitect : statics.system[kind];
     if (!customDirector || (kind !== "plan-review" && kind !== "director-review" && kind !== "final")) return base;
     return base - statics.directorProfileTokens + w(directorWords);
   };
   /** The block of the director's taste that the writer's prompts carry. */
   const taste = customDirector ? w(Math.min(directorWords * statics.tasteShare, MAX_TASTE_WORDS)) : statics.tasteTokens;
-  const tool = (kind: EstimateCallKind): number => (designing ? designToolTokens()[kind] ?? statics.tool[kind] : statics.tool[kind]);
+  const tool = (kind: EstimateCallKind): number => (designing ? designToolTokens(flow)[kind] ?? statics.tool[kind] : statics.tool[kind]);
   /** The fixed part of the tokens of a call of this kind: the system message, the function, the envelope of the request and its text, the labels of the sections. */
   const scaffold = (kind: EstimateCallKind): number => {
     const request = REQUEST[kind];
@@ -836,6 +895,14 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   // A design: the designs of the chapters a reader and the director read (16 000 characters at most), and the ledger of the secrets with the world.
   const designEntries = Math.min(chapters * T.designEntryWords, 16_000 / CHARS_PER_WORD);
   const designLedgerContext = T.designSecrets * (T.designLedgerWords + 50) + Math.min(world, 2500 / CHARS_PER_WORD) / 2;
+  // The reviews of a design: the alternatives, the rubric that a request carries, a line for each chapter reviewed and for each finding that the director is told, the chapters one call of the analysis reads.
+  const pitches = flow.alternatives;
+  const rubricRequest = Math.ceil(designRubricRule("all").join("\n\n").length / 4);
+  const chapterReviewLines = flow.chapterReview ? Math.min(chapters, 40) * 38 : 0;
+  const findingLines = flow.coherence ? 12 * 45 : 0;
+  const coherenceChapters = Math.min(toWrite, COHERENCE_WINDOW) * T.designEntryWords;
+  const coherenceCalls = flow.coherence && toWrite > 0 ? coherenceWindows(Array.from({ length: toWrite }, (_, index) => index + 1)).length : 0;
+  const chapterReviewBatches = flow.chapterReview && toWrite > 0 ? Math.ceil(toWrite / DESIGN_REVIEW_BATCH_CHAPTERS) : 0;
 
   // The outline, in the prompts that carry it: the description and the entries (12 000 characters at most), and the entries of a batch (24 000).
   const outlineWordsCapped = (cap: number): number => (outlineEntries > 0 ? w(Math.min(outlineWords, cap / CHARS_PER_WORD)) : 0);
@@ -847,10 +914,24 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
         return prompt(scaffold(kind) + w(ideaWords + synopsisWords + T.freshBookWords + rules) + taste + outlineWordsCapped(12_000));
       case "summarize-imported":
         return prompt(scaffold(kind) + w(Math.min(importedChapterWords, 60_000 / CHARS_PER_WORD)) + scenes * SCENE_MARKER_TOKENS);
+      case "design-pitches":
+        return prompt(scaffold(kind) + w(ideaWords + synopsisWords + canon + rules));
+      case "design-pitch-reader":
+        return prompt(scaffold(kind) + w(ideaWords + pitches * (T.designPitchWords + 40)));
+      case "design-pitch-review":
+        return prompt(scaffold(kind) + w(ideaWords + synopsisWords + rules + pitches * (T.designPitchWords + 40) + planReaders * pitches * (T.designPitchJudgementWords / 4 + 14)) + taste);
+      case "design-chapter-review": {
+        // The chapters under review in full, the chapters beside them, the structure of the book in a line each, and what the panel knows of the book.
+        const batch = Math.min(DESIGN_REVIEW_BATCH_CHAPTERS, Math.max(1, toWrite));
+        return prompt(scaffold(kind) + w(ideaWords + synopsisWords + Math.min(design, 3000 / CHARS_PER_WORD) + canon + rules + (batch + 2) * T.designEntryWords + ghostwriter / 2 + designLedgerContext) + taste + list(chapters));
+      }
+      case "design-coherence":
+        // Every chapter of a window of the structure, the secrets with their ledger, and the world.
+        return prompt(scaffold(kind) + w(ideaWords + synopsisWords + Math.min(design, 3000 / CHARS_PER_WORD) + canon + rules + Math.min(coherenceChapters, 36_000 / CHARS_PER_WORD / 1.6) + designLedgerContext));
       case "plan-reader":
-        return prompt(scaffold(kind) + w(ideaWords + Math.min(design, 2500 / CHARS_PER_WORD) + (designing ? designEntries + designLedgerContext : 0)) + list(chapters));
+        return prompt(scaffold(kind) + w(ideaWords + Math.min(design, 2500 / CHARS_PER_WORD) + (designing ? designEntries + designLedgerContext : 0)) + list(chapters) + (designing && flow.rubric ? rubricRequest : 0));
       case "plan-review":
-        return prompt(scaffold(kind) + w(ideaWords + synopsisWords + Math.min(design, 5000 / CHARS_PER_WORD) + canon + T.secretLineWords + style / 2 + rules + planReaders * ((designing ? T.designReactionWords : T.planReactionWords) + 14) + (designing ? designEntries + designLedgerContext + 250 : 0)) + list(chapters) + outlineWordsCapped(12_000));
+        return prompt(scaffold(kind) + w(ideaWords + synopsisWords + Math.min(design, 5000 / CHARS_PER_WORD) + canon + T.secretLineWords + style / 2 + rules + planReaders * ((designing ? T.designReactionWords + (flow.rubric ? T.designRubricWords : 0) : T.planReactionWords) + 14) + (designing ? designEntries + designLedgerContext + 250 + chapterReviewLines + findingLines : 0)) + list(chapters) + outlineWordsCapped(12_000) + (designing && flow.rubric ? rubricRequest : 0));
       case "scenes":
         // The chapter before and the chapter after, one line each; the last chapter of the book has no next one.
         return prompt(scaffold(kind) + w(notes + T.chapterWords + canon + secrets + rules + Math.min(design, 2500 / CHARS_PER_WORD)) + line, [story(5000), { slope: closedLine, cap: closedLine }, notesRamp], -line);
@@ -948,16 +1029,29 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
       point.output += output;
       point.prefix += servedFromCache(prefix(kind)) * calls;
     };
+    // The alternatives of a design, before it is made: the pitches, what each reader thinks of them, and the director's choice.
+    if (designing && pitches > 0 && !conceptDone) {
+      add("design-pitches", 1, promptOf("design-pitches").base, reply("design-pitches", pitches * T.designPitchWords + 10));
+      if (planReaders > 0) add("design-pitch-reader", planReaders, planReaders * promptOf("design-pitch-reader").base, planReaders * reply("design-pitch-reader", pitches * T.designPitchJudgementWords + 10));
+      add("design-pitch-review", 1, promptOf("design-pitch-review").base, reply("design-pitch-review", pitches * T.designPitchJudgementWords + 60));
+    }
     if (!conceptDone) add("concept", 1, promptOf("concept").base, reply("concept", designing ? T.designConceptWords : T.conceptWords));
     if (withoutSummary > 0) add("summarize-imported", withoutSummary, withoutSummary * promptOf("summarize-imported").base, withoutSummary * reply("summarize-imported", T.importedSummaryWords));
 
     if (planBatches > 0) {
       add("plan", planBatches * (1 + v), planCalls.fresh + v * planCalls.revised, planCalls.output * (1 + v));
-      add("plan-review", 1 + v, (1 + v) * promptOf("plan-review").base, (1 + v) * reply("plan-review", designing ? T.designReviewWords : T.planReviewWords));
+      // The director's review of a design answers with the twelve criteria when the workflow asks, and with its decisions about the findings of the analysis.
+      const reviewWords = designing ? T.designReviewWords + (flow.rubric ? T.designRubricWords : 0) + (flow.coherence ? T.designDecisionWords : 0) : T.planReviewWords;
+      add("plan-review", 1 + v, (1 + v) * promptOf("plan-review").base, (1 + v) * reply("plan-review", reviewWords));
+      // The chapters of a design are judged one batch after another; each revision judges them again, all of them at the most; the structure is analysed again after each.
+      if (designing && chapterReviewBatches > 0) {
+        add("design-chapter-review", chapterReviewBatches * (1 + v), chapterReviewBatches * (1 + v) * promptOf("design-chapter-review").base, chapterReviewBatches * (1 + v) * reply("design-chapter-review", (toWrite / chapterReviewBatches) * T.designChapterReviewWords + 10));
+      }
+      if (designing && coherenceCalls > 0) add("design-coherence", coherenceCalls * (1 + v), coherenceCalls * (1 + v) * promptOf("design-coherence").base, coherenceCalls * (1 + v) * reply("design-coherence", T.designCoherenceWords));
     }
     // The readers of a design read it before its first reviews, as many as its policy says.
     const readings = designing ? Math.min(designReaderRounds, 1 + v) : 1;
-    if (freshPlan && planReaders > 0) add("plan-reader", planReaders * readings, planReaders * readings * promptOf("plan-reader").base, planReaders * readings * reply("plan-reader", designing ? T.designReactionWords : T.planReactionWords));
+    if (freshPlan && planReaders > 0) add("plan-reader", planReaders * readings, planReaders * readings * promptOf("plan-reader").base, planReaders * readings * reply("plan-reader", designing ? T.designReactionWords + (flow.rubric ? T.designRubricWords : 0) : T.planReactionWords));
 
     // A design writes no chapter, and nobody judges a book that is not written.
     if (designing) return points;
@@ -1159,7 +1253,7 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   const currency = typeof source.currency === "string" && source.currency.trim() ? source.currency.trim() : undefined;
   const label = (range: EstimateRange): string => `${range.min}-${range.max}`;
   const assumptions = text.assumptions({
-    ...(designing ? { design: { batch: batchSize, rounds: designRounds, readerRounds: designReaderRounds } } : {}),
+    ...(designing ? { design: { batch: batchSize, rounds: designRounds, readerRounds: designReaderRounds, workflow: { rubric: flow.rubric, chapterReview: flow.chapterReview, coherence: flow.coherence, alternatives: flow.alternatives } } } : {}),
     chapters,
     written: Math.min(written, chapters),
     toWrite,

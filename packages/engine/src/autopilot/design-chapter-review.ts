@@ -1,4 +1,4 @@
-import { AI_CAPABILITIES, AiReplyRejectedError, type AiJsonSchema } from "../ai/types.js";
+import { AI_CAPABILITIES, AiReplyRejectedError } from "../ai/types.js";
 import { requireStructuredFields } from "../ai/structured.js";
 import { canonManifest, readBody } from "../book/context.js";
 import { designText } from "../book/design.js";
@@ -9,7 +9,8 @@ import { asArray, asInteger, asRecord } from "../util/json.js";
 import { isItalian, truncate } from "../util/text.js";
 import { chapterReviewSignature, nextChapterReview } from "./design-flow.js";
 import { DESIGN_SUMMARY_CHARACTERS, DESIGN_WEAK_SCORE, type DesignCriterionScore } from "./design-review-types.js";
-import { DESIGN_RUBRIC_TOKENS, designRubricProperty, designRubricRule, readDesignRubric, recordRubric, rubricOverall, rubricLine, weakCriteria } from "./design-rubric.js";
+import { DESIGN_RUBRIC_TOKENS, designRubricRule, readDesignRubric, recordRubric, rubricOverall, rubricLine, weakCriteria } from "./design-rubric.js";
+import { DESIGN_CHAPTER_REVIEW_TOOL, DESIGN_PANEL_ROLE } from "./prompts.js";
 import { authorRules, bookHeader, briefBlock, data, designContext, directorGuidance, directorTaste, outlineOf, outputLimit, request, stableFirst, type TaskContext, type TaskResult } from "./tasks.js";
 
 /**
@@ -19,38 +20,7 @@ import { authorRules, bookHeader, briefBlock, data, designContext, directorGuida
  * judged as they are, so that only the ones that changed are judged again, and a run that stopped goes on where it was.
  */
 
-export const DESIGN_CHAPTER_REVIEW_TOOL: AiJsonSchema = {
-  name: "design_chapter_review",
-  description: "Review the design of some chapters of a novel that is not written yet, each with the chapters beside it.",
-  parameters: {
-    type: "object",
-    properties: {
-      chapters: {
-        type: "array",
-        description: "One review for each chapter asked, by its number.",
-        items: {
-          type: "object",
-          properties: {
-            chapterNumber: { type: "number" },
-            verdict: { type: "string", enum: ["ok", "revise"], description: "ok: it can be written as it is. revise: a criterion falls short and the design of the chapter should change." },
-            summary: { type: "string", description: `What works and what to change, under ${DESIGN_SUMMARY_CHARACTERS - 50} characters.` },
-            rubric: designRubricProperty("applicable"),
-          },
-          required: ["chapterNumber", "verdict", "summary", "rubric"],
-        },
-      },
-    },
-    required: ["chapters"],
-  },
-};
-
-/** The role of the panel that reviews the chapters of a design. */
-export const DESIGN_PANEL_ROLE = [
-  "You are reviewing the design of some chapters of a novel that is not written yet, each with the chapters beside it, as three voices at once.",
-  "As the director, judge the chapter against the author's vision, taste and red lines. As the ghostwriter who will write it, say whether there is enough to write it well: a goal, a conflict, scenes with a turn, an ending. As the simulated readers of the panel, say whether you would turn the page.",
-  "Judge a chapter in its place: what it takes from the chapter before, what it leaves to the one after. A chapter that repeats the shape of the ones beside it, changes nothing, or drops what the chapter before set up is weak.",
-  "Do not rewrite the chapter: say what is wrong and what you would do instead. An entry that the author wrote binds: propose for it, and the autopilot will not rewrite it.",
-].join("\n");
+export { DESIGN_CHAPTER_REVIEW_TOOL } from "./prompts.js";
 
 /** Characters of the design of a chapter that a prompt of this review keeps: the chapters under review, whole enough to judge. */
 const REVIEWED_CHARACTERS = 2600;

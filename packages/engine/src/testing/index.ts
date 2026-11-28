@@ -261,13 +261,15 @@ export function createFakeAutopilotAi(options: FakeAiOptions = {}): AiPort & { c
         const count = options.chapters ?? (range ? range[1] - range[0] + 1 : 2);
         const start = range ? range[0] : 1;
         const numbers = Array.from({ length: count }, (_, index) => start + index);
-        // A design asked to be revised comes back with a changed summary, so that the chapters it rewrote are not the ones it left.
-        const revised = /Revise the design of chapters/.test(user);
+        // A design asked to be revised comes back with a changed summary (marked by what it was asked), so that the chapters it rewrote are not the ones it left, and a second revision is not the first.
+        const asked = /Revise the design of chapters[^\n]*applying the director's changes:\n([\s\S]*?)(?:\n\n|$)/.exec(user)?.[1];
+        const revised = asked !== undefined;
+        const mark = asked === undefined ? 0 : [...asked].reduce((sum, character) => (sum * 31 + character.charCodeAt(0)) % 9973, 7);
         return {
           chapters: numbers.map((number) => ({
             number,
             title: `Chapter Title ${number}`,
-            summary: `Summary of chapter ${number}.${revised ? " Revised." : ""}`,
+            summary: `Summary of chapter ${number}.${revised ? ` Revised ${mark}.` : ""}`,
             design: {
               goal: `Goal of chapter ${number}.`,
               pov: ["Mira Vale"],

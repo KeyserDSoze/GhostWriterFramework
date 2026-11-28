@@ -7,7 +7,7 @@ import { MemoryBookStore, createFakeAutopilotAi, outlineEntryFiles, seedBookFile
 
 export const CAPABILITIES = ["autopilot", "director", "reader-evaluation", "reader-evaluation-summary", "review", "simple-tasks"];
 
-export const KINDS = ["concept", "summarize-imported", "plan", "plan-reader", "plan-review", "scenes", "write", "scene-summary", "reader", "readers-summary", "specialists", "director-review", "repair", "consolidate", "final"];
+export const KINDS = ["design-pitches", "design-pitch-reader", "design-pitch-review", "concept", "summarize-imported", "plan", "plan-reader", "design-chapter-review", "design-coherence", "plan-review", "scenes", "write", "scene-summary", "reader", "readers-summary", "specialists", "director-review", "repair", "consolidate", "final"];
 
 /** A model that is read, priced and measured: nothing to warn about. */
 export const MODEL = { model: "writer-model", maxInputTokens: 128_000, maxOutputTokens: 16_000, pricing: { inputPerMTok: 2, outputPerMTok: 10 }, tokensPerSecond: 20 };
@@ -21,6 +21,9 @@ export function kindOfLabel(label) {
   if (label.startsWith("reader-evaluation:")) return "reader";
   if (label.startsWith("director:")) return "final";
   if (label.startsWith("autopilot:plan-reader:")) return "plan-reader";
+  if (label.startsWith("autopilot:design-pitch-reader:")) return "design-pitch-reader";
+  const designed = /^autopilot:(design-pitches|design-pitch-review|design-chapter-review|design-coherence)$/.exec(label);
+  if (designed) return designed[1];
   if (label.startsWith("autopilot:plan-review")) return "plan-review";
   if (label === "autopilot:plan") return "plan";
   if (label.startsWith("autopilot:scene-summary:")) return "scene-summary";

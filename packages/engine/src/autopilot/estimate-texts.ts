@@ -8,10 +8,15 @@ const CAPABILITY_LABEL: Record<"en" | "it", Record<EstimateCapability, string>> 
 
 const STEP_LABEL: Record<"en" | "it", Record<EstimateCallKind, string>> = {
   en: {
+    "design-pitches": "alternative pitches",
+    "design-pitch-reader": "reader's reaction to the pitches",
+    "design-pitch-review": "director's judgement of the pitches",
     concept: "concept",
     "summarize-imported": "summary of a chapter the author wrote",
     plan: "chapter plan",
     "plan-reader": "reader's reaction to the plan",
+    "design-chapter-review": "review of the chapters of the design",
+    "design-coherence": "analysis of the structure of the design",
     "plan-review": "review of the plan",
     scenes: "plan of the scenes",
     write: "writing a scene",
@@ -25,10 +30,15 @@ const STEP_LABEL: Record<"en" | "it", Record<EstimateCallKind, string>> = {
     final: "director's final review of the book",
   },
   it: {
+    "design-pitches": "pitch alternativi",
+    "design-pitch-reader": "reazione di un lettore ai pitch",
+    "design-pitch-review": "giudizio del direttore sui pitch",
     concept: "concept",
     "summarize-imported": "riassunto di un capitolo dell'autore",
     plan: "piano dei capitoli",
     "plan-reader": "reazione di un lettore al piano",
+    "design-chapter-review": "revisione dei capitoli del progetto",
+    "design-coherence": "analisi della struttura del progetto",
     "plan-review": "revisione del piano",
     scenes: "piano delle scene",
     write: "scrittura di una scena",
@@ -93,6 +103,27 @@ export function estimateTexts(italian: boolean) {
           ? `Il caso migliore approva il progetto alla prima revisione; il peggiore usa tutte le ${count(facts.design.rounds)} revisioni, riprogettando ogni volta tutti i capitoli. ${facts.planReaders > 0 ? `${count(facts.planReaders)} lettori simulati lo leggono prima ${facts.design.readerRounds === 1 ? "della prima revisione" : `delle prime ${count(facts.design.readerRounds)} revisioni`}.` : "Nessun lettore simulato lo legge."}`
           : `The best case approves the design at its first review; the worst case uses all its ${count(facts.design.rounds)} reviews, designing every chapter again each time. ${facts.planReaders > 0 ? `${count(facts.planReaders)} simulated readers read it before ${facts.design.readerRounds === 1 ? "the first review" : `the first ${count(facts.design.readerRounds)} reviews`}.` : "No simulated reader reads it."}`);
       }
+      const flow = facts.design?.workflow;
+      if (flow && (flow.rubric || flow.chapterReview || flow.coherence || flow.alternatives > 0)) {
+        const parts = italian
+          ? [
+            flow.alternatives > 0 ? `propone ${count(flow.alternatives)} pitch alternativi giudicati dal direttore${facts.planReaders > 0 ? " e dai lettori" : ""}` : "",
+            flow.chapterReview ? "rivede ogni capitolo insieme a quelli accanto, quattro per chiamata" : "",
+            flow.coherence ? "analizza l'intera struttura per contraddizioni e buchi di trama" : "",
+            flow.rubric ? "chiede al direttore e ai lettori i dodici criteri della valutazione" : "",
+          ]
+          : [
+            flow.alternatives > 0 ? `proposes ${count(flow.alternatives)} alternative pitches judged by the director${facts.planReaders > 0 ? " and the readers" : ""}` : "",
+            flow.chapterReview ? "reviews every chapter with the chapters beside it, four a call" : "",
+            flow.coherence ? "analyses the whole structure for contradictions and plot holes" : "",
+            flow.rubric ? "asks the director and the readers for the twelve criteria of the rubric" : "",
+          ];
+        const said = parts.filter(Boolean);
+        const joined = said.length > 1 ? `${said.slice(0, -1).join(", ")}${italian ? " e " : " and "}${said[said.length - 1]}` : said[0];
+        lines.push(italian
+          ? `Il progetto ${joined}. Ogni revisione riprogettata fa rivedere di nuovo i capitoli che cambiano e rianalizzare la struttura: il caso peggiore le ripete tutte.`
+          : `The design also ${joined}. Each round that designs again has the chapters that change reviewed again and the structure analysed again: the worst case repeats them all.`);
+      }
       if (!facts.design) lines.push(italian
         ? `Il libro ha ${count(facts.chapters)} capitoli di ${count(facts.scenes)} scene di circa ${count(facts.wordsPerScene)} parole${written ? `; ${count(facts.written)} sono già scritti e restano ${count(facts.toWrite)} da scrivere` : ""} (${count(facts.words)} parole da scrivere). Un capitolo scritto a metà conta per intero.`
         : `The book has ${count(facts.chapters)} chapters of ${count(facts.scenes)} scenes of about ${count(facts.wordsPerScene)} words${written ? `; ${count(facts.written)} are already written and ${count(facts.toWrite)} are left` : ""} (${count(facts.words)} words to write). A chapter written halfway counts as a whole one.`);
@@ -148,8 +179,8 @@ export function estimateTexts(italian: boolean) {
 
 /** What the assumptions say of the book, so that the words are built in one place. */
 export interface AssumptionFacts {
-  /** A design run: the chapters of a call, its reviews at most and the reviews the readers read before. */
-  design?: { batch: number; rounds: number; readerRounds: number };
+  /** A design run: the chapters of a call, its reviews at most and the reviews the readers read before, and what it does besides the plain design (`DesignWorkflow`). */
+  design?: { batch: number; rounds: number; readerRounds: number; workflow?: { rubric: boolean; chapterReview: boolean; coherence: boolean; alternatives: number } };
   chapters: number;
   written: number;
   toWrite: number;
