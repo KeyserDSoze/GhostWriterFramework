@@ -5,7 +5,7 @@ import { countWords, isItalian } from "../util/text.js";
 import { advancePendingReviews, frozenQuestionMessage, inRevision, isFrozenQuestion, needsFreezeStep, noteOutlineRewrite, startedReview, type PlannerFrozen } from "./frozen.js";
 import { bookRoundText } from "./book-round.js";
 import { advanceRevisionCampaign, campaignChapter, chapterVote } from "./campaign.js";
-import { readerGate, reviewMaxRounds, reviewReaderRounds, type ReaderTargets } from "./review-policy.js";
+import { readerGate, reviewMaxRounds, reviewReaderRounds, reviewWildcards, type ReaderTargets } from "./review-policy.js";
 import { blockersText, readerStanding } from "./review-readers.js";
 import { planBatchChapters } from "./design.js";
 import { designActive } from "./state.js";
@@ -296,6 +296,12 @@ export function describeTask(kind: AutopilotTaskKind, language: string, params: 
         title: text(language, "The director reviews the whole book", "Il direttore valuta l'intero libro"),
         reason: text(language, "Arcs, promises and open threads are checked once every chapter is approved.", "Archi, promesse e fili aperti si verificano quando tutti i capitoli sono approvati."),
         next: text(language, "The autopilot is complete.", "L'autopilot è completato."),
+      };
+    case "wildcards":
+      return {
+        title: text(language, "The wildcards look at the design", "I Fuori dal coro guardano il progetto"),
+        reason: text(language, "Before the director's review, a few voices from outside the choir say why the book could fail and what would make it better; the director triages their ideas, and only the accepted ones go on, into the review.", "Prima della valutazione del direttore, alcune voci fuori dal coro dicono perché il libro potrebbe fallire e cosa lo renderebbe migliore; il direttore vaglia le loro idee, e solo quelle accolte proseguono, nella valutazione."),
+        next: text(language, "The director reviews the design.", "Il direttore valuta il progetto."),
       };
     case "book-corrections":
       return {
@@ -931,6 +937,8 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
       const reader = ctx.readers.find((entry) => !plan.readerReactions.some((reaction) => reaction.slug === entry.slug) && !plan.skippedReaders?.includes(entry.slug));
       if (reader) return { kind: "task", task: descriptor("plan-reader", "plan", ctx, { reader: reader.slug, readerName: reader.name, design: designing }) };
     }
+    // A design run asks the room of the wildcards once, before the review of its plan, when the review policy turns it on: the director triages what it gives.
+    if (designing && !plan.wildcardsDone && reviewWildcards(state).design) return { kind: "task", task: descriptor("wildcards", "plan", ctx, { design: true }) };
     return { kind: "task", task: descriptor("plan-review", "plan", ctx, { design: designing }) };
   }
 

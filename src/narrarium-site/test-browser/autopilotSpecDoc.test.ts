@@ -65,6 +65,12 @@ describe("the doc of the autopilot says what the page does with what the engine 
     for (const word of ["result/BookRound.tsx", "BookRoundField.tsx", "BookRoundSlot.tsx", "REVIEW_BOOK_ROUND_SERVER_VERSION", "decideBookCorrections", "CampaignChip", "AutopilotReviewBookRoundUnsupportedError"]) expect(result, word).toContain(word);
   });
 
+  it("says how the room of the wildcards takes on a plateau (which books, what it may write), what turns it on, and where the author chooses it", () => {
+    const round = section("The book-level round of a review");
+    for (const word of ["registerWildcardsPlateauBreaker", "applies", "plateauBreakersFor", "`changes`", "ReviewPolicy.wildcards.plateau", "wildcards.rounds", "wildcards.design", "bible/ideas.yml", "autopilot-wildcards", "wildcards-spec.md"]) expect(round, word).toContain(word);
+    for (const word of ["review/WildcardsField.tsx", "autopilot/wildcardsEstimate.ts", "WILDCARDS_SERVER_VERSION"]) expect(doc, word).toContain(word);
+  });
+
   // Changed on purpose (engine 0.1.15): the reply of a structured step is shown as it streams; «answering» only says how much has arrived until then.
   it("says that a step which answers with a value shows its reply as it streams, how much has arrived until then, and that every host follows one rule", () => {
     for (const word of ["task-progress", "The model is answering", "shows the JSON of its reply as it streams", "applyLiveProgress", "callSeq"]) expect(doc, word).toContain(word);

@@ -49,8 +49,10 @@ export interface WildcardTriageInput {
   target: WildcardTarget;
   /** What the Director knows of what the room read: the same material, or a shorter account of it. */
   material: string;
-  /** What else the Director weighs: the canon with its secrets, the standing rules of the author. */
+  /** What else the Director weighs: the canon with its secrets. */
   context?: string;
+  /** The author's binding rules and the locked decisions of the book (`decisionsBlock`): instructions, never data; an idea against them is never accepted. */
+  rules?: string;
   /** Ideas it may accept at most (default `WILDCARD_TRIAGE_MAX_ADOPTED`). */
   maxAdopted?: number;
   cacheKey?: string;
@@ -131,7 +133,8 @@ export async function triageWildcardIdeas(input: WildcardTriageInput): Promise<W
     "The wildcards of the writers' room (Fuori dal coro) gave the ideas and findings above. They are advisory: nothing of them is applied unless you choose it.",
     "For EVERY idea, by its id, decide: adopted (use it as it is), adapted (use a version of it: write that version in adaptation), or rejected; always give the reason.",
     `Accept (adopt or adapt) at most ${max}, the ones that serve the book most. Never accept an idea that breaks the canon, the author's rules or the reveal threshold of a secret, unless it is exactly about changing them and you are sure the book gains.`,
-  ].join("\n"));
+    input.rules?.trim() ? `The author's rules, which bind you: never accept an idea against them, whatever it would give the book.\n${input.rules.trim()}` : "",
+  ].filter(Boolean).join("\n"));
   const user = `${stable}\n\n${ideas}\n\n${asked}`;
   const call = (repair?: string) => input.ai.complete({
     capability: AI_CAPABILITIES.director,

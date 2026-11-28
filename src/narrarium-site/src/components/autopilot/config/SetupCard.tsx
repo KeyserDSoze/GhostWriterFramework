@@ -19,7 +19,7 @@ import { bookStorageMode, type BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
 import { OUTLINE_BRIEF_NOTICE_ID } from "@/autopilot/outlineBrief";
 import { autoResumeOn, setAutoResume } from "@/autopilot/resume";
-import { policyUpdate, policyWithoutBookRound, policyWithoutReaderTargets, readReviewForm, reviewFormOf, samePolicy, type ReviewForm } from "@/autopilot/reviewPolicy";
+import { policyUpdate, policyWithoutBookRound, policyWithoutReaderTargets, policyWithoutWildcards, readReviewForm, reviewFormOf, samePolicy, type ReviewForm } from "@/autopilot/reviewPolicy";
 import type { ReviewCardHandle } from "@/components/autopilot/config/ReviewCard";
 import "@/i18n/autopilotCallsSettings";
 
@@ -72,6 +72,8 @@ export interface SetupCardProps {
   reviewTargetsUnsupported?: boolean;
   /** The personal server has the review policy but predates the book-level round of a review: it is not offered, and never sent. */
   reviewBookRoundUnsupported?: boolean;
+  /** The personal server has the review policy but predates the room of the wildcards in the autopilot: it is not offered, and never sent. */
+  reviewWildcardsUnsupported?: boolean;
   /** The run waits for a restart of «Retry later» now: turning it off would stop it, and the card says so beforehand. */
   waitingLong?: boolean;
   run: RunAction;
@@ -101,7 +103,7 @@ export interface SetupCardProps {
  * The start button at the bottom starts the autopilot with the brief of the Scaletta (for a book that never started) or resumes it, and `onStarted`
  * takes the author to the live page. Values of «Retry later» the server would refuse are never sent: the card says what is wrong instead.
  */
-export function SetupCard({ book, state, running, busy, disabled, asking = false, liveUnsupported = false, frozenUnsupported = false, retryUnsupported = false, autoResume = false, outlineBriefUnsupported = false, reviewPolicyUnsupported = false, reviewTargetsUnsupported = false, reviewBookRoundUnsupported = false, waitingLong = false, run, onStarted, outline, tab, onTab, onReset, rules, profiles, danger, branch, structure }: SetupCardProps) {
+export function SetupCard({ book, state, running, busy, disabled, asking = false, liveUnsupported = false, frozenUnsupported = false, retryUnsupported = false, autoResume = false, outlineBriefUnsupported = false, reviewPolicyUnsupported = false, reviewTargetsUnsupported = false, reviewBookRoundUnsupported = false, reviewWildcardsUnsupported = false, waitingLong = false, run, onStarted, outline, tab, onTab, onReset, rules, profiles, danger, branch, structure }: SetupCardProps) {
   const { t } = useTranslation();
   const github = bookStorageMode(book) === "github";
   const host = book.autopilotHost === "server" ? "server" : "browser";
@@ -153,7 +155,8 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
   // What a server that predates a part of the policy is compared with and sent: the policy without that part.
   const keepTargets = (policy: typeof initial.review) => {
     const kept = reviewTargetsUnsupported ? policyWithoutReaderTargets(policy) : policy;
-    return reviewBookRoundUnsupported ? policyWithoutBookRound(kept) : kept;
+    const rounds = reviewBookRoundUnsupported ? policyWithoutBookRound(kept) : kept;
+    return reviewWildcardsUnsupported ? policyWithoutWildcards(rounds) : rounds;
   };
   const policyChanged = !reviewPolicyUnsupported && !samePolicy(keepTargets(reviewReading.policy), keepTargets(initial.review));
   const reviewChanged = policyChanged || reviewReading.budgetLimit !== initial.budgetLimit || reviewReading.budgetTokens !== (initial.budgetTokens ?? 0);
@@ -312,6 +315,7 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
               policyUnsupported={reviewPolicyUnsupported}
               targetsUnsupported={reviewTargetsUnsupported}
               bookRoundUnsupported={reviewBookRoundUnsupported}
+              wildcardsUnsupported={reviewWildcardsUnsupported}
               readers={options.readers}
               spent={state?.stats?.cost ?? 0}
               spentCurrency={state?.stats?.currency}

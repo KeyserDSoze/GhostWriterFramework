@@ -1,4 +1,4 @@
-import { REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, serverSupportsReviewBook, serverSupportsReviewBookRound, serverSupportsReviewPolicy, serverSupportsReviewTargets, type AutopilotOptions, type BookRoundMode, type ReviewPolicy, type ReviewPolicyUpdate, type ServerInfo } from "narrarium-engine";
+import { PLATEAU_BREAKS_MAX, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, WILDCARD_MAX_VOICES, serverSupportsReviewBook, serverSupportsReviewBookRound, serverSupportsReviewPolicy, serverSupportsReviewTargets, serverSupportsWildcards, type AutopilotOptions, type BookRoundMode, type ReviewPolicy, type ReviewPolicyUpdate, type ServerInfo, type WildcardsPolicy } from "narrarium-engine";
 
 /**
  * The review policy of a run (`options.review`) and the caps of the book (`options.budgetLimit`, `options.budgetTokens`) as the configuration edits them: one form of
@@ -28,6 +28,14 @@ export const REVIEW_BOOK_ROUND_SERVER_VERSION = "0.1.23";
 /** Whether the personal server takes the book-level round. An older one drops it without a word, and the engine's client refuses to send it there. */
 export function serverHasReviewBookRound(info: Pick<ServerInfo, "features"> | null | undefined): boolean {
   return serverSupportsReviewBookRound(info);
+}
+
+/** The release of the personal server that consults the room of the wildcards in the autopilot (`autopilot-wildcards`): before the review of a design, and at a plateau. */
+export const WILDCARDS_SERVER_VERSION = "0.1.26";
+
+/** Whether the personal server consults the room of the wildcards. An older one drops `review.wildcards` without a word, and the engine's client refuses to send it there. */
+export function serverHasWildcards(info: Pick<ServerInfo, "features"> | null | undefined): boolean {
+  return serverSupportsWildcards(info);
 }
 
 /** Whether the personal server reviews a finished book again. An older one answers 404 to `POST …/autopilot/review`. */
@@ -64,10 +72,19 @@ export interface ReviewForm {
   readersExcluded?: readonly string[];
   /** What the review does when every chapter has its targets and the book does not (absent: `off`). */
   bookRound?: BookRoundMode;
+  /**
+   * The room of the wildcards (`ReviewPolicy.wildcards`): consulted before the review of a design, at a plateau of a review of the book; the voices of a consultation (blank: 4), the
+   * consultations at a plateau of one review (blank: 1) and the money cap of one consultation (blank: none). Off unless a switch is on.
+   */
+  wildcardsDesign?: boolean;
+  wildcardsPlateau?: boolean;
+  wildcardsVoices?: string;
+  wildcardsRounds?: string;
+  wildcardsMoney?: string;
 }
 
 /** The fields that are one text each. */
-export type ReviewField = "target" | "rounds" | "readerRounds" | "campaignRounds" | "money" | "tokens" | "readersTarget";
+export type ReviewField = "target" | "rounds" | "readerRounds" | "campaignRounds" | "money" | "tokens" | "readersTarget" | "wildcardsVoices" | "wildcardsRounds" | "wildcardsMoney";
 /** What is wrong with a field: not a number, out of its range, a target that is not on a half point, or a vote with more than one decimal. */
 export type ReviewProblem = "number" | "range" | "step" | "tenth";
 
@@ -99,6 +116,11 @@ export function reviewFormOf(options: Pick<AutopilotOptions, "review" | "budgetL
     readerTargets: Object.fromEntries(Object.entries(policy.readerTargets ?? {}).map(([slug, vote]) => [slug, String(vote)])),
     readersExcluded: [...(policy.readersExcluded ?? [])],
     bookRound: policy.bookRound ?? "off",
+    wildcardsDesign: policy.wildcards?.design === true,
+    wildcardsPlateau: policy.wildcards?.plateau === true,
+    wildcardsVoices: text(policy.wildcards?.voices),
+    wildcardsRounds: text(policy.wildcards?.rounds),
+    wildcardsMoney: text(policy.wildcards?.moneyCap),
   };
 }
 
@@ -142,6 +164,18 @@ export function readReviewForm(form: ReviewForm): ReviewReading {
   const money = read("money", 0, MAX_MONEY_CAP, false);
   const tokens = read("tokens", 0, MAX_TOKEN_CAP, true);
   const readersTarget = readVote("readersTarget");
+  // The room of the wildcards: its numbers are read only when a switch turns it on (with both off there is no room, and nothing to be wrong).
+  const room = form.wildcardsDesign === true || form.wildcardsPlateau === true;
+  const wildcardsVoices = room ? read("wildcardsVoices", 1, WILDCARD_MAX_VOICES, true) : undefined;
+  const wildcardsRounds = room && form.wildcardsPlateau === true ? read("wildcardsRounds", 1, PLATEAU_BREAKS_MAX, true) : undefined;
+  const wildcardsMoney = room ? read("wildcardsMoney", 0, MAX_MONEY_CAP, false) : undefined;
+  const wildcards: WildcardsPolicy | undefined = room ? {
+    ...(form.wildcardsDesign ? { design: true } : {}),
+    ...(form.wildcardsPlateau ? { plateau: true } : {}),
+    ...(wildcardsVoices !== undefined ? { voices: wildcardsVoices } : {}),
+    ...(wildcardsRounds !== undefined ? { rounds: wildcardsRounds } : {}),
+    ...(wildcardsMoney ? { moneyCap: wildcardsMoney } : {}),
+  } : undefined;
   // The target of each reader: a vote from 1 to 10, to a tenth; a blank one is none.
   const readerProblems: ReviewReading["readerProblems"] = {};
   const readerTargets: Record<string, number> = {};
@@ -162,6 +196,7 @@ export function readReviewForm(form: ReviewForm): ReviewReading {
     ...(Object.keys(readerTargets).length ? { readerTargets } : {}),
     ...(excluded.length ? { readersExcluded: excluded } : {}),
     ...(form.bookRound === "apply" || form.bookRound === "ask" ? { bookRound: form.bookRound } : {}),
+    ...(wildcards ? { wildcards } : {}),
   };
   return { policy, budgetLimit: money ?? 0, budgetTokens: tokens ?? 0, problems, readerProblems, valid: Object.keys(problems).length === 0 && Object.keys(readerProblems).length === 0 };
 }
@@ -182,7 +217,22 @@ export function policyUpdate(policy: ReviewPolicy, previous?: ReviewPolicy): Rev
     ...(policy.readersExcluded || had("readersExcluded") ? { readersExcluded: policy.readersExcluded ?? null } : {}),
     // The book-level round only when there is one, or the book had one to take back (a server that predates it is never sent a field it has nothing of).
     ...(policy.bookRound !== undefined || previous?.bookRound !== undefined ? { bookRound: policy.bookRound ?? null } : {}),
+    // The room of the wildcards, given whole, only when there is one or the book had one to take back.
+    ...(policy.wildcards !== undefined || previous?.wildcards !== undefined ? { wildcards: policy.wildcards ?? null } : {}),
   };
+}
+
+/** The policy without the room of the wildcards: what a server that predates it is sent (and what it is compared with). */
+export function policyWithoutWildcards(policy: ReviewPolicy | undefined): ReviewPolicy | undefined {
+  if (!policy) return policy;
+  const { wildcards: _room, ...rest } = policy;
+  return rest;
+}
+
+/** The room of a policy as one text, to compare: its switches and numbers in a fixed order. */
+function roomKey(policy: ReviewPolicy | undefined): string {
+  const room = policy?.wildcards;
+  return room ? JSON.stringify([room.design === true, room.plateau === true, room.voices ?? null, room.rounds ?? null, room.moneyCap ?? null]) : "";
 }
 
 /** The policy without the book-level round: what a server that predates it is sent (and what it is compared with). */
@@ -209,5 +259,5 @@ export function samePolicy(left: ReviewPolicy | undefined, right: ReviewPolicy |
   const keys: Array<"targetScore" | "maxRounds" | "readerRounds" | "campaignMaxRounds" | "readersTarget"> = ["targetScore", "maxRounds", "readerRounds", "campaignMaxRounds", "readersTarget"];
   const targets = (policy: ReviewPolicy | undefined) => JSON.stringify(Object.entries(policy?.readerTargets ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
   const excluded = (policy: ReviewPolicy | undefined) => JSON.stringify([...(policy?.readersExcluded ?? [])].sort());
-  return keys.every((key) => (left?.[key] ?? undefined) === (right?.[key] ?? undefined)) && targets(left) === targets(right) && excluded(left) === excluded(right) && (left?.bookRound ?? undefined) === (right?.bookRound ?? undefined);
+  return keys.every((key) => (left?.[key] ?? undefined) === (right?.[key] ?? undefined)) && targets(left) === targets(right) && excluded(left) === excluded(right) && (left?.bookRound ?? undefined) === (right?.bookRound ?? undefined) && roomKey(left) === roomKey(right);
 }

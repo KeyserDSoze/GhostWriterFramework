@@ -90,12 +90,16 @@ function chapterOf(snapshot: BookSnapshot, number: number | undefined): ChapterI
   return number === undefined ? undefined : snapshot.chapters.find((entry) => entry.number === number);
 }
 
-/** The material of a target, read from the book: the selection with its scene around it, the scene, the chapter scene by scene, the book chapter by chapter. */
+/**
+ * The material of a target, read from the book: the selection with its scene around it, the scene, the chapter scene by scene, the book chapter by chapter (then
+ * what the host adds about it: the director's judgement of a review that stalled).
+ */
 export async function wildcardMaterial(store: BookStore, snapshot: BookSnapshot, target: WildcardTarget, given?: string): Promise<string> {
   const chapter = chapterOf(snapshot, target.chapter);
   if (target.kind === "plan" || target.kind === "conversation") return given?.trim() ?? "";
   if (target.kind === "book") {
-    return snapshot.chapters.map((entry) => `${entry.number}. ${entry.title}${entry.summary ? ` — ${truncate(entry.summary.replace(/\s+/g, " "), 600)}` : ""}${entry.paragraphs.length ? "" : " (not written yet)"}`).join("\n");
+    const chapters = snapshot.chapters.map((entry) => `${entry.number}. ${entry.title}${entry.summary ? ` — ${truncate(entry.summary.replace(/\s+/g, " "), 600)}` : ""}${entry.paragraphs.length ? "" : " (not written yet)"}`).join("\n");
+    return [chapters, given?.trim() ?? ""].filter(Boolean).join("\n\n");
   }
   if (!chapter) return given?.trim() ?? "";
   const paragraphs = await loadChapterParagraphs(store, chapter);
@@ -153,13 +157,13 @@ export async function loadIdeasJournal(store: BookStore): Promise<IdeasJournal> 
   return parseIdeasJournal((await store.read(IDEAS_JOURNAL_FILE))?.content);
 }
 
-export interface WildcardConsultInput extends Pick<WildcardRoomInput, "question" | "maxIdeas" | "parallel" | "moneyCap" | "windowTokens" | "outputTokens" | "signal"> {
+export interface WildcardConsultInput extends Pick<WildcardRoomInput, "question" | "asker" | "maxIdeas" | "parallel" | "moneyCap" | "windowTokens" | "outputTokens" | "signal"> {
   store: BookStore;
   ai: AiPort;
   snapshot?: BookSnapshot;
   /** What the room reads; its `label` is made from the book when it is empty. */
   target: Omit<WildcardTarget, "label"> & { label?: string };
-  /** The selected text (a selection), or the material the host made itself (a plan, a conversation). */
+  /** The selected text (a selection), the material the host made itself (a plan, a conversation), or what it adds to the chapters of the book. */
   material?: string;
   /** The voices: these slugs (or ids), else a preset's, else the first enabled ones of `group` (provocateurs by default). */
   voices?: readonly string[];
@@ -213,6 +217,7 @@ export async function consultWildcards(input: WildcardConsultInput): Promise<Wil
       secrets,
       rejected: rejectedIdeas(journal),
       ...(input.question ? { question: input.question } : {}),
+      ...(input.asker ? { asker: input.asker } : {}),
       ...(input.maxIdeas ? { maxIdeas: input.maxIdeas } : {}),
       ...(input.parallel ? { parallel: input.parallel } : {}),
       ...(input.moneyCap ? { moneyCap: input.moneyCap } : {}),

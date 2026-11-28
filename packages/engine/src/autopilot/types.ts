@@ -34,6 +34,8 @@ export type AutopilotTaskKind =
   | "final"
   /** The director's corrections of the whole book, asked when every chapter of a review has its targets and the book has not (`BookRound`). */
   | "book-corrections"
+  /** The room of the wildcards consulted on the plan of a design run, before its first review, the director triaging their ideas (`WildcardsPolicy.design`). */
+  | "wildcards"
   /** Freezing, without the model: the chapters an older engine approved (once), and the changes the author marked as reviewed. */
   | "freeze";
 
@@ -493,6 +495,28 @@ export interface ReviewPolicy {
    * looks at them first. A review of the book launched later can say otherwise for itself.
    */
   bookRound?: BookRoundMode;
+  /**
+   * The room of the wildcards («Fuori dal coro») in the autopilot (`WildcardsPolicy`): consulted before the review of a design, and when a review of the book stalls (with a
+   * book-level round), the director triaging what it gives. Absent: never.
+   */
+  wildcards?: WildcardsPolicy;
+}
+
+/**
+ * When the autopilot consults the room of the wildcards, and how much: never a score, never a gate. The director triages their ideas (adopted, adapted or rejected, with the
+ * reason, in the journal of the room) and only the accepted ones go on, as material for the review of the design or for the corrections of the book.
+ */
+export interface WildcardsPolicy {
+  /** Before the first review of the plan of a design run (the pre-mortem: why the book would fail). */
+  design?: boolean;
+  /** When a review of the book stalls and it has a book-level round: the creative room instead of another identical round. */
+  plateau?: boolean;
+  /** Voices of a consultation: 1 to 8 (absent: 4). */
+  voices?: number;
+  /** Consultations at a plateau in one review of the book: 1 to `PLATEAU_BREAKS_MAX` (absent: 1). */
+  rounds?: number;
+  /** The money one consultation may spend, in the currency of the prices (absent or 0: no cap of its own; the run's caps still hold). */
+  moneyCap?: number;
 }
 
 /** The most rounds of review of a chapter, of the readers' and of a review of the book that the policy accepts. */
@@ -513,6 +537,8 @@ export interface ReviewPolicyUpdate {
   readersTarget?: number | null;
   readerTargets?: Record<string, number> | null;
   readersExcluded?: string[] | null;
+  /** Given whole: it replaces what the policy had; `null` takes it back. */
+  wildcards?: WildcardsPolicy | null;
 }
 
 /** The longest wait of «Retry later», in minutes (a week), and the most cycles that are not "unlimited". */
@@ -691,6 +717,10 @@ export interface AutopilotPlan {
    * chapters keep their numbers, and these count among the chapters of the book, so that it is not extended to replace them.
    */
   removedChapters?: number[];
+  /** The room of the wildcards was consulted on this design (`WildcardsPolicy.design`): once before its first review. */
+  wildcardsDone?: boolean;
+  /** The ideas of the room the director accepted (`wildcardIdeasMaterial`), read with the review of the design. */
+  wildcardsMaterial?: string;
 }
 
 export interface ReviewFinding {
@@ -1294,7 +1324,9 @@ export type AutopilotMessageCode =
   | "designRound"
   | "designChecks"
   | "designAuthorEntries"
-  | "designEscalated";
+  | "designEscalated"
+  | "wildcardsTriaged"
+  | "wildcardsNone";
 
 /**
  * Which candidate of the route a call asks now, and how: what the `call-attempt` event says and `AutopilotLive.trying` keeps, so that a client shows it as the request is sent. Only
@@ -1488,6 +1520,10 @@ export interface AutopilotInsightFigures {
   chapters?: number;
   /** A book-level round of a review: how many corrections the director asked for. */
   corrections?: number;
+  /** A consultation of the room of the wildcards: the voices that answered, the ideas they gave, the ones the director accepted. */
+  voices?: number;
+  ideas?: number;
+  accepted?: number;
 }
 
 /** A campaign as a summary says it: the chapters it works (`follow`), how many are over, the one being worked, and the ones that wait. */

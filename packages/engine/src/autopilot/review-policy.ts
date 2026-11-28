@@ -1,6 +1,7 @@
 import type { DirectorProfile } from "../profiles/director.js";
+import { WILDCARD_DEFAULT_VOICES, WILDCARD_MAX_VOICES } from "../profiles/wildcards.js";
 import { clampNumber, numericValue } from "../profiles/read.js";
-import { REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, type AutopilotState, type BookRoundMode, type ReviewPolicy } from "./types.js";
+import { PLATEAU_BREAKS_MAX, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, type AutopilotState, type BookRoundMode, type ReviewPolicy, type WildcardsPolicy } from "./types.js";
 
 /**
  * How the chapters and the book are reviewed (`ReviewPolicy`): the vote they must reach, the rounds of review of a chapter, the rounds the simulated readers
@@ -51,6 +52,32 @@ function bookRoundOf(value: unknown, base: ReviewPolicy["bookRound"]): Exclude<B
 }
 
 /**
+ * The room of the wildcards as the policy keeps it (`WildcardsPolicy`): given whole, it replaces what there was; `null` takes it back; a value that is not a mapping leaves
+ * what there was. Each number in its range, a switch only when it is on; nothing usable is no room.
+ */
+function wildcardsOf(value: unknown, base: ReviewPolicy["wildcards"]): WildcardsPolicy | undefined {
+  if (value === null) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return base;
+  const source = value as Record<string, unknown>;
+  const policy: WildcardsPolicy = {};
+  if (source.design === true) policy.design = true;
+  if (source.plateau === true) policy.plateau = true;
+  const voices = numericValue(source.voices);
+  if (voices !== undefined) policy.voices = clampNumber(voices, 1, WILDCARD_MAX_VOICES, 0);
+  const rounds = numericValue(source.rounds);
+  if (rounds !== undefined) policy.rounds = clampNumber(rounds, 1, PLATEAU_BREAKS_MAX, 0);
+  const moneyCap = numericValue(source.moneyCap);
+  if (moneyCap !== undefined && moneyCap > 0) policy.moneyCap = clampNumber(moneyCap, 0, 1_000_000, 4);
+  return Object.keys(policy).length ? policy : undefined;
+}
+
+/** The room of the wildcards of a run as the planner and the tasks read it: off unless the policy turns it on, 4 voices, 1 consultation at a plateau, no cap of its own. */
+export function reviewWildcards(state: Pick<AutopilotState, "options">): { design: boolean; plateau: boolean; voices: number; rounds: number; moneyCap: number } {
+  const policy = state.options.review?.wildcards;
+  return { design: policy?.design === true, plateau: policy?.plateau === true, voices: policy?.voices ?? WILDCARD_DEFAULT_VOICES, rounds: policy?.rounds ?? 1, moneyCap: policy?.moneyCap ?? 0 };
+}
+
+/**
  * The policy as the options keep it: each value in its range, a value that is not a number left out; `null` (or nothing usable) is no policy. The targets of the readers
  * are read softly, as the rest: a vote out of range is brought into it, a reader or a vote that cannot be read is left out, and nothing makes the whole policy fail.
  */
@@ -72,6 +99,7 @@ export function normalizeReviewPolicy(value: unknown, base?: ReviewPolicy): Revi
   const readerTargets = readerTargetsOf(source.readerTargets, base?.readerTargets);
   const readersExcluded = readersExcludedOf(source.readersExcluded, base?.readersExcluded);
   const bookRound = bookRoundOf(source.bookRound, base?.bookRound);
+  const wildcards = wildcardsOf(source.wildcards, base?.wildcards);
   if (targetScore !== undefined) policy.targetScore = targetScore;
   if (maxRounds !== undefined) policy.maxRounds = maxRounds;
   if (readerRounds !== undefined) policy.readerRounds = readerRounds;
@@ -80,6 +108,7 @@ export function normalizeReviewPolicy(value: unknown, base?: ReviewPolicy): Revi
   if (readerTargets) policy.readerTargets = readerTargets;
   if (readersExcluded) policy.readersExcluded = readersExcluded;
   if (bookRound) policy.bookRound = bookRound;
+  if (wildcards) policy.wildcards = wildcards;
   return Object.keys(policy).length ? policy : undefined;
 }
 

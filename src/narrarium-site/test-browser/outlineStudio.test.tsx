@@ -181,6 +181,46 @@ describe("the Studio", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
+  it("asks the wildcards first when the author ticks it: the run's policy gets the room before the review of the design, and the dialog says what a consultation adds", async () => {
+    await open({ [OUTLINE_BOOK_FILE]: serializeOutlineBook({ body: IDEA, origin: "author" }) }, "/app/books/book-1/outline?tab=studio");
+    fireEvent.click(await screen.findByRole("button", { name: t("design.studio.start") }));
+    const dialog = await screen.findByRole("dialog", { name: t("design.dialog.title") });
+    const room = within(dialog).getByRole("checkbox", { name: t("design.dialog.wildcards.label") });
+    expect(room).not.toBeChecked();
+    expect(room).toHaveAccessibleDescription(t("design.dialog.wildcards.hint"));
+    fireEvent.click(room);
+    expect(room).toBeChecked();
+    expect(dialog.querySelector("[data-design-wildcards-estimate]")).toHaveTextContent(t("autopilot.review.wildcards.estimateNoPrice", { voices: 4, calls: "5–10" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: t("design.dialog.submit", { count: 12 }) }));
+    await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledTimes(1));
+    expect(mocks.runtime.start).toHaveBeenCalledWith("book-1", { design: { chapters: 12, review: null }, options: { readersOnPlan: true, budgetLimit: 0, review: { wildcards: { design: true } } } });
+  });
+
+  it("keeps the room the run has at a stall when the author leaves the design without it, and offers nothing of it to a personal server that predates it", async () => {
+    const state = createAutopilotState(new Date(at), { idea: IDEA });
+    state.options = { ...state.options, review: { wildcards: { design: true, plateau: true, voices: 3 } } };
+    await open({ [OUTLINE_BOOK_FILE]: serializeOutlineBook({ body: IDEA, origin: "author" }), "autopilot/state.json": JSON.stringify(state) }, "/app/books/book-1/outline?tab=studio");
+    fireEvent.click(await screen.findByRole("button", { name: t("design.studio.start") }));
+    const dialog = await screen.findByRole("dialog", { name: t("design.dialog.title") });
+    const room = within(dialog).getByRole("checkbox", { name: t("design.dialog.wildcards.label") });
+    await waitFor(() => expect(room).toBeChecked());
+    fireEvent.click(room);
+    fireEvent.click(within(dialog).getByRole("button", { name: t("design.dialog.submit", { count: 12 }) }));
+    await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledTimes(1));
+    expect((mocks.runtime.start.mock.calls[0] as unknown as [string, { options: { review?: unknown } }])[1].options.review).toEqual({ wildcards: { plateau: true, voices: 3, design: false } });
+    cleanup();
+
+    mocks.book = { ...BOOK, autopilotHost: "server" };
+    useAutopilotStore.setState((current) => ({ server: { ...current.server, info: { serverId: "s", name: "Home", version: "0.1.23", protocol: 1, features: ["autopilot", "autopilot-review-policy", "autopilot-design", "autopilot-outline-brief"] } as never } }));
+    mocks.runtime.start.mockClear();
+    await open({ [OUTLINE_BOOK_FILE]: serializeOutlineBook({ body: IDEA, origin: "author" }) }, "/app/books/book-1/outline?tab=studio");
+    fireEvent.click(await screen.findByRole("button", { name: t("design.studio.start") }));
+    const old = await screen.findByRole("dialog", { name: t("design.dialog.title") });
+    const off = within(old).getByRole("checkbox", { name: t("design.dialog.wildcards.label") });
+    expect(off).toBeDisabled();
+    expect(off).toHaveAccessibleDescription(t("design.dialog.wildcards.oldServer", { version: "0.1.26" }));
+  });
+
   it("follows a design that goes on: its reviews, its last vote, and the way to go on with it", async () => {
     const state = readyState();
     delete state.design!.endedAt;

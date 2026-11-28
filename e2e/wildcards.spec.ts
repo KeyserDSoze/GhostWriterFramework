@@ -1,8 +1,8 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test, type Page } from "@playwright/test";
-import { engineModule, filesUnder, openApp, seed, settingsOf, startProvider, waitForAiSettings, type SeedBook, type StubProvider } from "./helpers/autopilot";
-import { overflowing } from "./helpers/review-view";
+import { autopilotFacts, engineModule, filesUnder, openApp, seed, settingsOf, startProvider, waitForAiSettings, waitForAutopilot, type SeedBook, type StubProvider } from "./helpers/autopilot";
+import { capture, contrast, horizontalOverflow, overflowing, setTheme } from "./helpers/review-view";
 
 // The wildcards («Fuori dal coro») in a real browser, on a book kept on this device with GitHub out of reach and a stub provider: the page lists the fourteen
 // built-in voices, turns one off in the book, keeps a wildcard of the author's own in the account, and the page-aware Copilot creates «a provocateur who
@@ -365,4 +365,217 @@ test("the Copilot asks the provocateurs about the chapter it is on: the voices a
   } finally {
     await stub.close();
   }
+});
+
+// ─── The autopilot ─────────────────────────────────────────────────────────────────────────────────────
+
+const DESIGN = { id: "book-wildcards-design", repo: "e2e-local-wildcards-design", name: "The Glass Harbor" };
+const REVIEW = { id: "book-wildcards-review", repo: "e2e-local-wildcards-review", name: "The Glass Harbor" };
+const IDEA = "A harbor town built on glass hides a lie that the tide will tell.";
+
+/** A book with nothing but its description and its brief. */
+async function describedBook(): Promise<SeedBook> {
+  const { writeOutlineBrief } = await engineModule("index.js");
+  const { MemoryBookStore, seedBookFiles } = await engineModule("testing/index.js");
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 0, title: DESIGN.name }));
+  await writeOutlineBrief(store, { idea: IDEA, genre: "mystery", audience: "adults", wordsPerScene: 200 });
+  return { ...DESIGN, files: store.toObject() };
+}
+
+/** A finished book, made in Node by the engine: one chapter closed at 8, the book judged 7.4 with two points, reviewed to 8. */
+async function reviewedBook(): Promise<SeedBook> {
+  const { AutopilotSession, writeOutlineBrief } = await engineModule("index.js");
+  const { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } = await engineModule("testing/index.js");
+  const store = new MemoryBookStore(seedBookFiles({ chapters: 1, title: REVIEW.name }));
+  await writeOutlineBrief(store, { idea: IDEA, genre: "mystery", audience: "adults", wordsPerScene: 200 });
+  const fake = createFakeAutopilotAi({ scenes: 1, words: 120, reviewVerdict: () => "approve" });
+  const reply = (json: unknown) => ({ text: JSON.stringify(json), json, usage: { inputTokens: 100, outputTokens: 50, cachedInputTokens: 0 }, model: "fake-model", provider: "fake" });
+  const ai = {
+    calls: fake.calls,
+    async complete(request: { label: string; user: string; system: string; json?: { name?: string } }) {
+      if (request.label === "director:book") return reply(bookJudgement());
+      return fake.complete(request);
+    },
+  };
+  const session = new AutopilotSession({ bookId: REVIEW.id, store, ai, host: "browser", hostLabel: "seed", retryDelayMs: 0 });
+  await session.start({ options: { readers: false, specialists: false, readersOnPlan: false, pauseAfterPlan: false, review: { targetScore: 8 } } });
+  await session.waitForIdle();
+  const done = await session.snapshot();
+  if (done.state?.status !== "completed" || done.state.finalReview?.score !== 7.4) throw new Error(`The seed did not finish as it should: ${done.state?.status} ${done.state?.finalReview?.score} ${done.state?.lastError?.message ?? ""}`);
+  return { ...REVIEW, files: store.toObject() };
+}
+
+/** The director's judgement of the whole book: 7.4, always, with the two points the corrections cite. */
+const bookJudgement = () => ({
+  verdict: "revise",
+  score: 7.4,
+  summary: "The book as a whole.",
+  strengths: ["Atmosphere"],
+  concerns: [{ severity: "major", issue: "The ending is not earned", suggestion: "Plant its setup earlier" }],
+  decisions: [],
+  nextSteps: ["Tighten the middle chapters"],
+  questionsForAuthor: [],
+});
+
+/** Opens a group of the timeline of the Autopilot page (in its tab, when the page is too narrow for two columns). */
+const openGroup = async (page: Page, key: string) => {
+  const tab = page.getByRole("tab", { name: "Timeline", exact: true });
+  const group = page.locator(`[data-timeline-group='${key}']`);
+  await expect(tab.or(group).first()).toBeVisible({ timeout: 30_000 });
+  if (await tab.count()) await tab.click();
+  const toggle = group.locator("h3 button");
+  await expect(toggle).toBeVisible({ timeout: 30_000 });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  return group;
+};
+
+/** Opens the step of a group whose line says `text`, and gives it. */
+const openStep = async (group: ReturnType<Page["locator"]>, text: string) => {
+  const step = group.locator("[data-timeline-row='step']").filter({ hasText: text }).first();
+  await step.locator("summary").click();
+  return step;
+};
+
+test("the design dialog asks the wildcards first: they read the plan before the director's review, the director triages, and the journal keeps it", async ({ page }) => {
+  test.setTimeout(240_000);
+  const github = watchGitHub(page);
+  const seeded = await describedBook();
+  const { openAi } = await seed(page, settingsOf(ai.url, [seeded]), [seeded]);
+  await openApp(page);
+  await page.goto("app/books", { waitUntil: "domcontentloaded" });
+  await waitForAiSettings(page, ai.url);
+
+  // «Design the book»: the room is off until the author asks for it; asked, the dialog says what a consultation adds.
+  const mark = ai.calls.length;
+  await page.goto(`app/books/${DESIGN.id}/outline?tab=studio`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Design the book with the autopilot", exact: true }).click({ timeout: 30_000 });
+  const dialog = page.getByRole("dialog", { name: "Design the book" });
+  await dialog.getByLabel("Chapters", { exact: true }).fill("1");
+  const room = dialog.getByRole("checkbox", { name: "The wildcards read the design first", exact: true });
+  await expect(room).not.toBeChecked();
+  await expect(dialog.locator("[data-design-wildcards-estimate]")).toHaveCount(0);
+  await room.check();
+  await expect(room).toHaveAccessibleDescription(/A pre-mortem before the director's first review[\s\S]*One consultation \(4 voices and the director's triage\): 5–10 AI calls/);
+  // On a phone, and at 320 px, the dialog has no sideways scroll; its new words are readable in both themes (WCAG 2.2 AA: 4.5).
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await overflowing(dialog), `what is wider than the dialog at ${width} px`).toEqual([]);
+    expect(await horizontalOverflow(dialog), `the dialog at ${width} px`).toBeLessThanOrEqual(0);
+  }
+  await page.setViewportSize({ width: 1280, height: 720 });
+  for (const theme of ["light", "dark"] as const) {
+    await setTheme(page, theme);
+    expect(await contrast(dialog.locator("[data-design-wildcards-estimate]")), `the estimate in the ${theme} theme`).toBeGreaterThanOrEqual(4.5);
+    expect(await contrast(dialog.getByText("The wildcards read the design first", { exact: true })), `the label in the ${theme} theme`).toBeGreaterThanOrEqual(4.5);
+  }
+  await setTheme(page, "light");
+  await capture(page, "wildcards-design-dialog", { prepare: async () => { await room.scrollIntoViewIfNeeded(); } });
+  await dialog.getByRole("button", { name: "Design 1 chapter", exact: true }).click();
+  await expect(dialog).toBeHidden({ timeout: 20_000 });
+
+  // The design run: the room between the plan (and its readers) and the director's first review, once.
+  const facts = await waitForAutopilot(page, DESIGN.repo, ["paused"], 180_000);
+  expect(facts.review, "the run's policy").toEqual({ wildcards: { design: true } });
+  const kinds = facts.done.map((step) => step.split(":")[0]);
+  expect(kinds.filter((kind) => kind === "wildcards"), facts.done.join(", ")).toHaveLength(1);
+  expect(kinds.indexOf("wildcards"), facts.done.join(", ")).toBeGreaterThan(kinds.lastIndexOf("plan"));
+  expect(kinds.indexOf("wildcards"), "right before the director's first review").toBe(kinds.indexOf("plan-review") - 1);
+  const tools = ai.calls.slice(mark).map((call) => call.tool);
+  expect(tools.filter((tool) => tool === "wildcard_ideas"), tools.join(", ")).toHaveLength(4);
+  expect(tools.filter((tool) => tool === "wildcard_triage")).toHaveLength(1);
+  expect(tools.indexOf("wildcard_triage")).toBeLessThan(tools.indexOf("design_review"));
+
+  // The journal of the room: the consultation, by the autopilot, about the plan, every idea decided by the director with its reason. No prose.
+  const [journal] = await filesUnder(page, DESIGN.repo, "bible/ideas.yml");
+  expect(journal?.text).toMatch(/by: autopilot\n\s+target:\n\s+kind: plan/);
+  expect(journal?.text).toContain("preset: pre-mortem");
+  expect(journal?.text).toMatch(/verdict: adopted[\s\S]*by: director/);
+  expect((await filesUnder(page, DESIGN.repo, "chapters/")).map((file) => file.path).filter((path) => !path.endsWith("/chapter.md")), "no prose").toEqual([]);
+
+  // The timeline, reached through the menu (the page keeps what the run said while it followed it): the step is the director's, in the group of the plan.
+  await page.locator(`a[href$="/app/books/${DESIGN.id}/autopilot"]`).first().click();
+  const plan = await openGroup(page, "plan");
+  await expect(plan).toContainText("The wildcards look at the design");
+  const step = await openStep(plan, "The wildcards look at the design");
+  await expect(step).toContainText("Wildcards (Fuori dal coro) · voices: 4 · ideas: 8 · accepted by the director: 2");
+  await capture(page, "wildcards-design-timeline", { prepare: async () => { await step.getByText(/^Wildcards \(Fuori dal coro\) · voices/).evaluate((element) => element.scrollIntoView({ block: "center" })); } });
+
+  expect(github, "no request went to GitHub").toEqual([]);
+  expect(openAi).toEqual([]);
+});
+
+test("a review of the book that stalls asks the room in the browser: two voices and the director's triage at the stall, the journal of the room, and what the run says of it", async ({ page }) => {
+  test.setTimeout(240_000);
+  const github = watchGitHub(page);
+  const seeded = await reviewedBook();
+  const { openAi } = await seed(page, settingsOf(ai.url, [seeded]), [seeded]);
+  await openApp(page);
+  await page.goto("app/books", { waitUntil: "domcontentloaded" });
+  await waitForAiSettings(page, ai.url);
+
+  // The Review tab: the room at a stall, with two voices; it says that the stall needs a round for the whole book while that is off in the settings.
+  await page.goto(`app/books/${REVIEW.id}/autopilot/settings#autopilot-review`, { waitUntil: "domcontentloaded" });
+  const part = page.locator("[data-wildcards-field]");
+  await expect(part.getByRole("heading", { name: "Wildcards (Fuori dal coro)", exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(part.getByLabel("Voices in a consultation", { exact: true })).toBeDisabled();
+  await part.getByRole("checkbox", { name: "When a review of the book stalls", exact: true }).check();
+  await expect(part.locator("[data-wildcards-needs-book-round]")).toContainText("It works with a round for the book as a whole");
+  await part.getByLabel("Voices in a consultation", { exact: true }).fill("2");
+  await expect(part.locator("[data-wildcards-estimate]")).toContainText("One consultation (2 voices and the director's triage): 3–6 AI calls");
+  // The part fits a phone and a screen 320 px wide, and its words are readable in both themes (WCAG 2.2 AA: 4.5 for text of normal size).
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await overflowing(part), `what is wider than the part at ${width} px`).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), `the page at ${width} px`).toBeLessThanOrEqual(0);
+  }
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const readable: Array<[string, ReturnType<Page["locator"]>]> = [
+    ["the intro", part.locator("p").first()],
+    ["a hint", part.locator(`[id$='-wildcards-plateau-hint']`)],
+    ["the note on the round for the whole book", part.locator("[data-wildcards-needs-book-round]")],
+    ["the estimate", part.locator("[data-wildcards-estimate]")],
+  ];
+  for (const theme of ["light", "dark"] as const) {
+    await setTheme(page, theme);
+    for (const [name, locator] of readable) expect(await contrast(locator), `${name} in the ${theme} theme`).toBeGreaterThanOrEqual(4.5);
+  }
+  await setTheme(page, "light");
+  await capture(page, "wildcards-review-tab", { prepare: async () => { await part.evaluate((element) => element.scrollIntoView({ block: "center" })); } });
+  await page.getByRole("button", { name: "Save", exact: true }).first().click();
+  await expect.poll(async () => (await autopilotFacts(page, REVIEW.repo))?.review, { timeout: 20_000 }).toEqual({ targetScore: 8, wildcards: { plateau: true, voices: 2 } });
+
+  // The book is under its target and every chapter has its own: the author reviews the book as a whole, the corrections carried out as the director asks them. The run goes on
+  // in this browser, which registered the room's plateau breaker when its autopilot started; the director judges the book 7 every time, so the review stalls.
+  await page.goto(`app/books/${REVIEW.id}/autopilot`, { waitUntil: "domcontentloaded" });
+  const block = page.locator("[data-autopilot-result] [data-result-book-round]");
+  await block.getByRole("button", { name: "Review the book as a whole", exact: true }).click({ timeout: 30_000 });
+  const dialog = page.getByRole("dialog", { name: "Review the book again" });
+  await dialog.getByLabel("Score to reach", { exact: true }).fill("8");
+  await dialog.getByRole("radio", { name: "Correct the book", exact: true }).check();
+  const mark = ai.calls.length;
+  await dialog.getByRole("button", { name: "Ask for the corrections of the book", exact: true }).click();
+  await expect(dialog).toBeHidden({ timeout: 20_000 });
+  const facts = await waitForAutopilot(page, REVIEW.repo, ["completed"], 200_000);
+  const tools = ai.calls.slice(mark).map((call) => call.tool);
+  expect(tools.filter((tool) => tool === "wildcard_ideas"), tools.join(", ")).toHaveLength(2);
+  expect(tools.filter((tool) => tool === "wildcard_triage")).toHaveLength(1);
+  const corrections = facts.done.filter((step) => step === "book-corrections::").length;
+  expect(corrections, facts.done.join(", ")).toBeGreaterThanOrEqual(3);
+  expect(facts.review, "the review's own choices did not change the settings of the book").toEqual({ targetScore: 8, wildcards: { plateau: true, voices: 2 } });
+
+  const [journal] = await filesUnder(page, REVIEW.repo, "bible/ideas.yml");
+  expect(journal?.text).toMatch(/by: autopilot\n\s+target:\n\s+kind: book/);
+  expect(journal?.text).toContain("preset: creative-room");
+
+  // What the run said, in the timeline of the page it followed it on: the room's consultation and the stall it took on.
+  const final = await openGroup(page, "final");
+  // The step that took the stall on: the two voices, the director's triage and the corrections, four calls.
+  const step = await openStep(final, "4 calls");
+  await expect(step).toContainText("The director lists the corrections of the whole book");
+  await expect(step).toContainText("Wildcards (Fuori dal coro) · voices: 2 · ideas: 4 · accepted by the director: 2", { timeout: 30_000 });
+  await expect(step).toContainText("The review had stopped getting better");
+  await capture(page, "wildcards-plateau-timeline", { prepare: async () => { await step.getByText(/^Wildcards \(Fuori dal coro\) · voices/).evaluate((element) => element.scrollIntoView({ block: "center" })); } });
+
+  expect(github, "no request went to GitHub").toEqual([]);
+  expect(openAi).toEqual([]);
 });

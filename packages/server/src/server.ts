@@ -87,6 +87,7 @@ import { REVISION_CHAPTER_MODES, REVISION_REASONS, RevisionCampaignError, SERVER
 import { SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, type ReviseAnnotationsInput } from "narrarium-engine";
 import { BOOK_ROUND_MODES, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, type BookCorrectionsDecision, type ReviewBookInput } from "narrarium-engine";
 import { AutopilotDesignError, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_BIBLE_DECISIONS, normalizeDesignStart } from "narrarium-engine";
+import { SERVER_FEATURE_AUTOPILOT_WILDCARDS, registerWildcardsPlateauBreaker } from "narrarium-engine";
 
 /** Tuning of the server's own limits (the defaults are the ones to run with; tests shorten them). */
 export interface ServerLimits {
@@ -773,6 +774,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     // Nothing below the highest version ever installed here is offered (the supervisor refuses it as well).
     const checkRelease = options.checkRelease ?? ((version: string) => checkNpmServerRelease(version, undefined, { highestInstalled: () => installer.highestVersion() }));
     const gitAvailable = Boolean(await gitVersion());
+    // The room of the wildcards takes on the plateaus of the reviews whose policy turns it on (`autopilot-wildcards`); the others end as they always did.
+    closers.push(registerWildcardsPlateauBreaker());
 
     const bodyIdleMs = typeof options.limits?.bodyIdleMs === "number" && options.limits.bodyIdleMs > 0 ? options.limits.bodyIdleMs : BODY_IDLE_MS;
     const readBody = (request: IncomingMessage, limit: number) => readJsonBody(request, limit, bodyIdleMs);
@@ -958,7 +961,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_BIBLE_DECISIONS, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", SERVER_FEATURE_GITHUB_CONNECTION, ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_WILDCARDS, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_BIBLE_DECISIONS, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", SERVER_FEATURE_GITHUB_CONNECTION, ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,

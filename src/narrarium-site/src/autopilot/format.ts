@@ -280,8 +280,16 @@ function reviewText(t: TFunction, event: Extract<Notice, { type: "insight" }>): 
   }
 }
 
+/** A consultation of the room of the wildcards in the autopilot: the voices that answered, their ideas and the ones the director accepted (an older engine's words stay without them). */
+function wildcardsText(t: TFunction, event: Extract<Notice, { type: "insight" }>): string {
+  const figures = event.figures;
+  if (typeof figures?.voices !== "number" || typeof figures.ideas !== "number" || typeof figures.accepted !== "number") return event.title;
+  return t("autopilot.insight.wildcardsTriaged", { voices: formatCount(figures.voices), ideas: formatCount(figures.ideas), accepted: formatCount(figures.accepted), defaultValue: event.title });
+}
+
 function noticeText(t: TFunction, event: Notice): string {
   if (!event.code) return event.title;
+  if (event.type === "insight" && event.code === "wildcardsTriaged") return wildcardsText(t, event);
   if (REVIEW_CODES.has(event.code)) return event.type === "insight" ? reviewText(t, event) : event.title;
   if (event.type === "insight" && event.code === "resumedAfterRestart") return resumedText(t, event);
   if (event.type === "insight" && event.code === "failureRetry") return retryText(t, event);

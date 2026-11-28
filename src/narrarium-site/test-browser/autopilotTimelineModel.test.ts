@@ -33,7 +33,7 @@ const titles = (target: TimelineGroup) => target.rows.map((row) => (row.kind ===
 
 describe("what a step is about", () => {
   it.each([
-    ["director-review", "director"], ["plan-review", "director"], ["final", "director"], ["book-corrections", "director"], ["impact", "director"],
+    ["director-review", "director"], ["plan-review", "director"], ["final", "director"], ["book-corrections", "director"], ["wildcards", "director"], ["impact", "director"],
     ["reader", "readers"], ["readers-summary", "readers"], ["plan-reader", "readers"],
     ["specialists", "specialists"],
     ["concept", "writing"], ["plan", "writing"], ["scenes", "writing"], ["write", "writing"], ["repair", "writing"], ["revise", "writing"], ["consolidate", "writing"], ["summarize-imported", "writing"],
@@ -154,6 +154,7 @@ describe("the groups: a chapter, and in it a round of the review", () => {
       stepOf("concept", { from: 0 }),
       stepOf("plan", { from: 40 }),
       stepOf("plan-reader", { from: 80, reader: "ada" }),
+      stepOf("wildcards", { from: 100, length: 10 }),
       stepOf("plan-review", { from: 120 }),
       ...flow(1, { from: 200, rounds: 1 }).activities,
       stepOf("impact", { from: 900 }),
@@ -161,7 +162,7 @@ describe("the groups: a chapter, and in it a round of the review", () => {
     ];
     const timeline = buildTimeline({ activities: list, events: [] });
     expect(timeline.groups.map((candidate) => candidate.key)).toEqual(["final", "other", "chapter:1:1", "plan"]);
-    expect(group(timeline, "plan").steps).toBe(4);
+    expect(group(timeline, "plan").steps, "the wildcards before the review of a design are part of the plan").toBe(5);
     expect(group(timeline, "other").kind).toBe("other");
     expect(group(timeline, "final").kind).toBe("final");
   });

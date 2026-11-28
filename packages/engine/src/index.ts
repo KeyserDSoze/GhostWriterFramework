@@ -35,6 +35,7 @@ export * from "./wildcards/ideas.js";
 export * from "./wildcards/journal.js";
 export * from "./wildcards/room.js";
 export * from "./wildcards/triage.js";
+export * from "./wildcards/autopilot.js";
 
 export * from "./ai/types.js";
 export * from "./ai/config.js";

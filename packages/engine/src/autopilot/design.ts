@@ -126,6 +126,9 @@ export function beginDesign(state: AutopilotState, input: DesignStartInput, cont
     const { revisionBatches: _batches, ...plan } = next.plan;
     next.plan = { ...plan, approved: false, awaitingAuthor: false, rounds: 0, readersDone: false, readerReactions: [], revisionNotes: plan.approved ? [] : plan.revisionNotes };
     delete next.plan.skippedReaders;
+    // The room of the wildcards looks at a new design again, before its first review.
+    delete next.plan.wildcardsDone;
+    delete next.plan.wildcardsMaterial;
   }
   return { state: next, chapters };
 }

@@ -170,6 +170,11 @@ const designEn = {
       target: { hint: "The vote the design must reach. A score alone never approves it: a critical inconsistency sends it back." },
       rounds: { label: "Reviews of the design", hint: "The director reviews it at most this many times; two reviews in a row that do not raise its vote end it." },
       readerRounds: { label: "Readings of the readers", hint: "Before how many of the first reviews the readers read it again." },
+      wildcards: {
+        label: "The wildcards read the design first",
+        hint: "A pre-mortem before the director's first review: a few voices from outside the choir say why the book would fail and what would make it better. The director triages their ideas, and only the accepted ones go on; never a score.",
+        oldServer: "Your personal server is older than {{version}}: it does not consult the wildcards. Update it to ask them.",
+      },
       estimate: "Estimate of the design",
       submit_one: "Design {{count}} chapter",
       submit_other: "Design {{count}} chapters",

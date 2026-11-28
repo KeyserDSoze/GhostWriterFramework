@@ -135,6 +135,8 @@ Una revisione di un libro finito porta ogni capitolo al suo obiettivo, poi il di
 
 La revisione si ferma comunque sull'obiettivo, dopo due giri di fila che non alzano né il capitolo più basso né il libro, dopo i giri che concedi (un giro per il libro intero conta come uno di essi) o al tetto di spesa del libro: quanto costa dipende da quanti capitoli nomina il direttore (al massimo 12), quindi il tetto è il modo di tenerlo sotto controllo. La fascia dice a che punto è (*il direttore elenca le correzioni del libro*, *correzioni del libro: 1 di 3*). Su un server personale serve la versione 0.1.23 o successiva; un server più vecchio non offre la scelta e la revisione finisce dove finiva sempre.
 
+**I Fuori dal coro a un blocco.** Con **Fuori dal coro** → **Quando una revisione del libro si blocca** attivo in **Revisione**, una revisione che smette di migliorare consulta la stanza dei Fuori dal coro invece di finire lì: la stanza creativa legge l'intero libro, il direttore vaglia le sue idee, e quelle che accoglie alimentano le sue correzioni del libro (vedi la guida *Fuori dal coro*). La stessa parte chiede un pre-mortem prima della valutazione di un progetto.
+
 ## Capitoli congelati
 
 Un capitolo è **congelato** quando il direttore lo approva, oppure quando lo congeli tu con **Congela capitolo** nella sua pagina: conserva una traccia del suo testo, e la pagina dice **Congelato il** giorno **dall'autopilot** oppure **da te**. **Scongela capitolo** toglie la traccia, dopo averlo chiesto.

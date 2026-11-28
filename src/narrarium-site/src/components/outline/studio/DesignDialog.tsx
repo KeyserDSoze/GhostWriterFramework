@@ -14,7 +14,10 @@ import { useBookFiles } from "@/autopilot/useBookFiles";
 import { useRunEstimateSources } from "@/autopilot/useRunEstimate";
 import { estimateDesign } from "@/autopilot/runEstimate";
 import { formatCount } from "@/autopilot/format";
-import { MAX_MONEY_CAP, TARGET_MAX, TARGET_MIN } from "@/autopilot/reviewPolicy";
+import { MAX_MONEY_CAP, TARGET_MAX, TARGET_MIN, WILDCARDS_SERVER_VERSION, serverHasWildcards } from "@/autopilot/reviewPolicy";
+import { useAutopilotStore } from "@/autopilot/store";
+import { autopilotRoomEstimate } from "@/autopilot/wildcardsEstimate";
+import { useSettingsStore } from "@/store/settingsStore";
 import { defaultDesignChapters, readDesignForm, type DesignForm } from "@/outline/designModel";
 import { useMoney } from "@/costs/useMoney";
 import type { BookStructure } from "@/types/book";
@@ -58,6 +61,7 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
     campaignRounds: "",
     money: state && state.options.budgetLimit > 0 ? String(state.options.budgetLimit) : "",
     tokens: "",
+    wildcardsDesign: state?.options.review?.wildcards?.design === true,
   }), [state, policy, entries]);
   const [form, setForm] = useState<DesignForm>(initial);
   const [edited, setEdited] = useState(false);
@@ -72,6 +76,13 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
     setForm((now) => ({ ...now, ...patch }));
   };
   const reading = readDesignForm(form, entries);
+  // The room of the wildcards before the first review (`ReviewPolicy.wildcards.design`): the run's policy, given whole with the switch as the dialog says; never to a personal server that predates it.
+  const settings = useSettingsStore((current) => current.settings);
+  const serverInfo = useAutopilotStore((store) => store.server.info);
+  const wildcardsUnsupported = book.autopilotHost === "server" && serverInfo !== null && !serverHasWildcards(serverInfo);
+  const roomBefore = state?.options.review?.wildcards;
+  const roomOn = !wildcardsUnsupported && form.wildcardsDesign === true;
+  const roomChange = wildcardsUnsupported ? undefined : roomOn ? { ...(roomBefore ?? {}), design: true } : roomBefore?.design ? (roomBefore.plateau ? { ...roomBefore, design: false } : null) : undefined;
   const chapters = reading.input.chapters ?? 0;
   const maxRounds = reading.review.policy.maxRounds ?? 3;
   const readerRounds = reading.review.policy.readerRounds ?? 1;
@@ -79,6 +90,16 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
   const view = useBookAutopilotView(book.id);
   const inputs = useRunEstimateSources({ book, branch, structure, state, activities: view.snapshot?.activities });
   const estimate = useMemo(() => (open && chapters > 0 ? estimateDesign(inputs.sources, state, { chapters, maxRounds, readerRounds, readers: form.readers }).estimate : null), [open, chapters, maxRounds, readerRounds, form.readers, inputs.sources, state]);
+  const roomVoices = roomBefore?.voices ?? 4;
+  const room = roomOn && chapters > 0 ? autopilotRoomEstimate(settings, { voices: roomVoices, chapters }) : null;
+  const roomCalls = room ? `${formatCount(room.calls.min)}–${formatCount(room.calls.max)}` : "";
+  const roomText = !room
+    ? null
+    : book.autopilotHost === "server"
+      ? t("autopilot.review.wildcards.estimateServer", { voices: roomVoices, calls: roomCalls })
+      : room.cost
+        ? t("autopilot.review.wildcards.estimate", { voices: roomVoices, calls: roomCalls, cost: `${money.amount(room.cost.min, room.cost.currency, { zero: "amount" })}–${money.amount(room.cost.max, room.cost.currency, { zero: "amount" })}` })
+        : t("autopilot.review.wildcards.estimateNoPrice", { voices: roomVoices, calls: roomCalls });
   const spentCurrency = state?.stats.currency || money.display;
   const spent = money.amount(state?.stats.cost ?? 0, state?.stats.currency, { zero: "amount" });
   const running = view.snapshot?.running === true || view.busyInAnotherTab;
@@ -86,7 +107,7 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
 
   const submit = async () => {
     if (!canSubmit) return;
-    const done = await run("start", (runtime, bookId) => runtime.start(bookId, { design: reading.input, options: { readersOnPlan: form.readers, budgetLimit: reading.budgetLimit } }));
+    const done = await run("start", (runtime, bookId) => runtime.start(bookId, { design: reading.input, options: { readersOnPlan: form.readers, budgetLimit: reading.budgetLimit, ...(roomChange !== undefined ? { review: { wildcards: roomChange } } : {}) } }));
     if (done) {
       onStarted();
       onClose();
@@ -124,6 +145,16 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
             <span>
               <span className="font-medium">{t("design.dialog.readers.label")}</span>
               <span id={`${id}-readers-hint`} className="block text-xs text-muted-foreground">{t("design.dialog.readers.hint")}</span>
+            </span>
+          </label>
+          <label className="flex min-h-11 cursor-pointer items-start gap-2 text-sm sm:col-span-2">
+            <input type="checkbox" data-design-wildcards="" className="mt-0.5 h-4 w-4 accent-primary" checked={roomOn} disabled={wildcardsUnsupported} aria-labelledby={`${id}-wildcards-label`} aria-describedby={`${id}-wildcards-hint`} onChange={(event) => change({ wildcardsDesign: event.target.checked })} />
+            <span className="min-w-0">
+              <span id={`${id}-wildcards-label`} className="font-medium">{t("design.dialog.wildcards.label")}</span>
+              <span id={`${id}-wildcards-hint`} className="block text-xs text-muted-foreground">
+                {wildcardsUnsupported ? t("design.dialog.wildcards.oldServer", { version: WILDCARDS_SERVER_VERSION }) : t("design.dialog.wildcards.hint")}
+                {roomText && <span data-design-wildcards-estimate="" className="block">{roomText}</span>}
+              </span>
             </span>
           </label>
           <OptionalNumberField id={`${id}-target`} label={t("autopilot.review.target.label")} value={form.target} placeholder={t("autopilot.review.target.placeholder", { score: formatCount(director.approvalScore) })} hint={t("design.dialog.target.hint")} problem={problemText(reading.review.problems.target, { min: TARGET_MIN, max: TARGET_MAX })} unit="/10" decimals onChange={(value) => change({ target: value })} />

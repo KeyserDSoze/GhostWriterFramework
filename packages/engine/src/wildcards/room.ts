@@ -51,6 +51,8 @@ export interface WildcardRoomInput {
   secrets?: WildcardRoomSecrets;
   /** What the author asks the room, when they ask something (Brainstorming, the Copilot); else the room gives what each voice gives. */
   question?: string;
+  /** Who asks the question: the author (default) or the director (the autopilot). */
+  asker?: "author" | "director";
   /** Ideas rejected before (`rejectedIdeas` of the journal): the room is told not to give them again. */
   rejected?: readonly string[];
   /** Ideas a voice may give (at most `WILDCARD_MAX_IDEAS_PER_VOICE`). */
@@ -176,7 +178,7 @@ function voicePrompt(input: WildcardRoomInput, profile: WildcardProfile, shared:
     input.rejected?.length ? `ALREADY REJECTED BY THE AUTHOR OR THE DIRECTOR (do not propose these again):\n${input.rejected.map((title) => `- ${title}`).join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
   const asked = currentRequest([
-    input.question?.trim() ? `The author asks the room: ${input.question.trim()}` : "Give what you give about what the room reads.",
+    input.question?.trim() ? `${input.asker === "director" ? "The director" : "The author"} asks the room: ${input.question.trim()}` : "Give what you give about what the room reads.",
     `Answer as «${profile.name}», in ${languageName(input.context.language)}, with at most ${max} items, the best first: each with a title, the ${sentinel ? "problem found (with its evidence and severity)" : "idea"}, why it ${sentinel ? "matters" : "works"}, what it changes (and the chapters and secrets it touches), its risk and its audacity from 1 to 10. No score.`,
   ].join("\n"));
   const user = `${shared}\n\n${untrustedData("metadata", own, "This describes your role in the room.")}\n\n${asked}`;

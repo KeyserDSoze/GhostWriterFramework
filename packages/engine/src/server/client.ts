@@ -23,8 +23,10 @@ import {
   serverSupportsReviewPolicy,
   serverSupportsReviewTargets,
   serverSupportsReviewBookRound,
+  serverSupportsWildcards,
   asksReviewTargets,
   asksReviewBookRound,
+  asksWildcards,
   CAMPAIGN_FEATURES,
   verifyServerIdentity,
   type AskDirectorRequest,
@@ -252,8 +254,8 @@ export class NarrariumServerClient {
 
   /**
    * The settings that only a newer server knows go only to a server that announces them: `options.longRetry` («Retry later») to one that announces
-   * `SERVER_FEATURE_AUTOPILOT_RETRY`, `options.resumeAfterRestart` («Resume after a restart») to one that announces `SERVER_FEATURE_AUTOPILOT_AUTO_RESUME`.
-   * An older one refuses them in the options route, and drops them from `configure` and `start` without a word. With such a setting in a request
+   * `SERVER_FEATURE_AUTOPILOT_RETRY`, `options.resumeAfterRestart` («Resume after a restart») to one that announces `SERVER_FEATURE_AUTOPILOT_AUTO_RESUME`,
+   * `options.review.wildcards` that turns the room on to one that announces `SERVER_FEATURE_AUTOPILOT_WILDCARDS`. An older one refuses them in the options route, and drops them from `configure` and `start` without a word. With such a setting in a request
    * (`null` and `false` included) the client asks the server's features first, and refuses for a server without it before anything is sent: a
    * `ServerRequestError` with status 501 and code `feature_unavailable`. A request without them asks nothing more.
    */
@@ -270,6 +272,9 @@ export class NarrariumServerClient {
     }
     if (asksReviewBookRound(review) && !serverSupportsReviewBookRound(info)) {
       throw new ServerRequestError(`This personal server does not know the book-level round of a review (it does not announce the feature autopilot-review-book-round): it would end the review where it always did. Update the server, or leave bookRound out.`, 501, "feature_unavailable");
+    }
+    if (asksWildcards(review) && !serverSupportsWildcards(info)) {
+      throw new ServerRequestError(`This personal server does not know the room of the wildcards (it does not announce the feature autopilot-wildcards): it would consult nobody. Update the server, or leave wildcards out.`, 501, "feature_unavailable");
     }
     if (longRetry !== undefined && !serverSupportsAutopilotRetry(info)) {
       throw new ServerRequestError(`This personal server does not have "Retry later" (it does not announce the feature autopilot-retry): update the server, or leave longRetry out.`, 501, "feature_unavailable");

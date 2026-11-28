@@ -135,6 +135,8 @@ A review of a finished book takes each chapter to its target, then the director 
 
 The review still stops on the target, after two rounds in a row that raise neither the lowest chapter nor the book, after the rounds you allow (a round for the whole book counts as one of them) or at the money cap of the book: how much it costs depends on how many chapters the director names (at most 12), so the cap is the way to keep it in check. The band says where it is (*the director lists the corrections of the book*, *corrections of the book: 1 of 3*). On a personal server it needs version 0.1.23 or later; an older server does not offer the choice and the review ends where it always did.
 
+**The wildcards at a stall.** With **Wildcards (Fuori dal coro)** → **When a review of the book stalls** on in **Review**, a review that stops getting better asks the room of the wildcards instead of ending there: the creative room reads the whole book, the director triages its ideas, and the ones it accepts feed its corrections of the book (see the guide *Wildcards (Fuori dal coro)*). The same part asks a pre-mortem before the review of a design.
+
 ## Frozen chapters
 
 A chapter is **frozen** when the director approves it, or when you freeze it yourself with **Freeze chapter** on its page: it keeps a record of its text, and the page says **Frozen on** the day **by the autopilot** or **by you**. **Unfreeze chapter** takes the record away, after asking.

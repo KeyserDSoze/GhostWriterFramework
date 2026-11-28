@@ -1,11 +1,14 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Target } from "lucide-react";
-import { DIRECTOR_FILE, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, defaultDirector, parseDirector, type AutopilotOptions, type AutopilotState } from "narrarium-engine";
+import { DIRECTOR_FILE, PLATEAU_BREAKS_MAX, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, WILDCARD_MAX_VOICES, defaultDirector, parseDirector, type AutopilotOptions, type AutopilotState } from "narrarium-engine";
 import { Card } from "@/components/autopilot/Card";
 import { FormRunEstimate, OptionalNumberField, useProblemText } from "@/components/autopilot/review/ReviewFields";
 import { READER_TARGET_RANGE, ReaderTargetsFields } from "@/components/autopilot/review/ReaderTargetsFields";
 import { BookRoundField } from "@/components/autopilot/review/BookRoundField";
+import { WildcardsField, type WildcardsTextField } from "@/components/autopilot/review/WildcardsField";
+import { autopilotRoomEstimate } from "@/autopilot/wildcardsEstimate";
+import { useSettingsStore } from "@/store/settingsStore";
 import { useBookFiles } from "@/autopilot/useBookFiles";
 import { useActiveReaders } from "@/autopilot/useActiveReaders";
 import { MAX_MONEY_CAP, MAX_TOKEN_CAP, REVIEW_SERVER_VERSION, TARGET_MAX, TARGET_MIN, readReviewForm, type ReviewField, type ReviewForm } from "@/autopilot/reviewPolicy";
@@ -17,7 +20,7 @@ import { isAppliedCap } from "@/costs/budgetCaps";
 import "@/i18n/costs";
 
 const ID = "autopilot-review";
-const FIELDS: ReviewField[] = ["target", "rounds", "readerRounds", "campaignRounds", "money", "tokens", "readersTarget"];
+const FIELDS: ReviewField[] = ["target", "rounds", "readerRounds", "campaignRounds", "money", "tokens", "readersTarget", "wildcardsVoices", "wildcardsRounds", "wildcardsMoney"];
 
 export interface ReviewCardHandle {
   /** Show every problem, and give the focus to the first field that has one. */
@@ -36,6 +39,8 @@ export interface ReviewCardProps {
   targetsUnsupported?: boolean;
   /** The personal server has the review policy but predates the book-level round: it would end the review where it always did, so it cannot be chosen here. */
   bookRoundUnsupported?: boolean;
+  /** The personal server has the review policy but predates the room of the wildcards in the autopilot: it would consult nobody, so it cannot be turned on here. */
+  wildcardsUnsupported?: boolean;
   /** The simulated readers read the chapters (`options.readers`): their rounds mean something only then. */
   readers: boolean;
   /** What the book spent so far (`stats.cost`, every run's), in the currency of its prices (`stats.currency`). */
@@ -54,9 +59,10 @@ export interface ReviewCardProps {
  * with one line that says what it does. What the book spent is next to the money cap, which never resets: it is raised. Once a value changed, the estimate of the run
  * with the new values is under the fields. A personal server that predates the policy keeps the director's values, and says so.
  */
-const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function ReviewCard({ book, form, onChange, locked, policyUnsupported, targetsUnsupported = false, bookRoundUnsupported = false, readers, spent, spentCurrency, changed, estimate }, ref) {
+const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function ReviewCard({ book, form, onChange, locked, policyUnsupported, targetsUnsupported = false, bookRoundUnsupported = false, wildcardsUnsupported = false, readers, spent, spentCurrency, changed, estimate }, ref) {
   const { t } = useTranslation();
   const money = useMoney();
+  const settings = useSettingsStore((state) => state.settings);
   const problemText = useProblemText();
   const inputs = useRef<Partial<Record<ReviewField, HTMLInputElement | null>>>({});
   const [touched, setTouched] = useState<ReadonlySet<ReviewField | `reader:${string}`>>(new Set());
@@ -112,6 +118,19 @@ const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function Review
   // The cap is in the currency the book's costs are counted in; a book that spent nothing yet has the settings' currency.
   const currency = spentCurrency || money.display;
   const field = (name: ReviewField) => ({ id: `${ID}-${name}`, value: form[name] ?? "", ref: (element: HTMLInputElement | null) => { inputs.current[name] = element; } });
+  // What one consultation of the room costs: its voices and the director's triage, sized from the chapters of the book; a book on the personal server is priced by the server's models.
+  const roomOn = !wildcardsUnsupported && (form.wildcardsDesign === true || form.wildcardsPlateau === true);
+  const roomVoices = reading.policy.wildcards?.voices ?? 4;
+  const roomEstimate = roomOn ? autopilotRoomEstimate(settings, { voices: roomVoices, chapters: estimate.state?.plan?.chapters.length ?? estimate.structure?.chapters.length ?? 0 }) : null;
+  const roomCalls = roomEstimate ? (roomEstimate.calls.min === roomEstimate.calls.max ? formatCount(roomEstimate.calls.min) : `${formatCount(roomEstimate.calls.min)}–${formatCount(roomEstimate.calls.max)}`) : "";
+  const roomText = !roomEstimate
+    ? null
+    : book.autopilotHost === "server"
+      ? t("autopilot.review.wildcards.estimateServer", { voices: roomVoices, calls: roomCalls })
+      : roomEstimate.cost
+        ? t("autopilot.review.wildcards.estimate", { voices: roomVoices, calls: roomCalls, cost: `${money.amount(roomEstimate.cost.min, roomEstimate.cost.currency, { zero: "amount" })}–${money.amount(roomEstimate.cost.max, roomEstimate.cost.currency, { zero: "amount" })}` })
+        : t("autopilot.review.wildcards.estimateNoPrice", { voices: roomVoices, calls: roomCalls });
+  const roomProblems = Object.fromEntries((["wildcardsVoices", "wildcardsRounds", "wildcardsMoney"] as const).map((name) => [name, problemOf(name, name === "wildcardsVoices" ? 1 : name === "wildcardsRounds" ? 1 : 0, name === "wildcardsVoices" ? WILDCARD_MAX_VOICES : name === "wildcardsRounds" ? PLATEAU_BREAKS_MAX : MAX_MONEY_CAP)])) as Partial<Record<WildcardsTextField, string | null>>;
 
   return (
     <Card id={ID} title={t("autopilot.review.title")} icon={<Target className="h-4 w-4 text-primary" aria-hidden="true" />}>
@@ -200,6 +219,18 @@ const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function Review
         onChange={(mode) => onChange({ ...form, bookRound: mode })}
         disabled={policyOff}
         unsupported={bookRoundUnsupported && !policyUnsupported}
+      />
+      <WildcardsField
+        id={ID}
+        form={form}
+        onSwitch={(patch) => onChange({ ...form, ...patch })}
+        onText={(name, value) => change(name, value)}
+        problems={roomProblems}
+        inputRef={(name, element) => { inputs.current[name] = element; }}
+        disabled={policyOff}
+        unsupported={wildcardsUnsupported && !policyUnsupported}
+        currency={currency}
+        estimate={roomText}
       />
       {changed && reading.valid && estimate.branch !== undefined && (
         <FormRunEstimate

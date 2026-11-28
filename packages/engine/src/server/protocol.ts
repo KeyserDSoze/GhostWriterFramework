@@ -637,6 +637,28 @@ export function asksReviewBookRound(policy: unknown): boolean {
   return mode === "apply" || mode === "ask";
 }
 
+/**
+ * The room of the wildcards in the autopilot (#127, `ReviewPolicy.wildcards`): the step `wildcards` before the review of a design, and the plateau breaker of a review of the book,
+ * which the server registers when it starts. An older server drops `review.wildcards` and consults nobody.
+ */
+export const SERVER_FEATURE_AUTOPILOT_WILDCARDS = "autopilot-wildcards";
+
+/** Whether the server announces the room of the wildcards in the autopilot (`autopilot-wildcards`). Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsWildcards(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  return announces(info, SERVER_FEATURE_AUTOPILOT_WILDCARDS);
+}
+
+/**
+ * Whether a review policy turns the room of the wildcards on (before the review of a design, or at a plateau). `null`, or a room with both off, takes it back, which an older server has
+ * nothing of to take back: it is sent anywhere.
+ */
+export function asksWildcards(policy: unknown): boolean {
+  if (!policy || typeof policy !== "object") return false;
+  const room = (policy as { wildcards?: unknown }).wildcards;
+  if (!room || typeof room !== "object") return false;
+  return (room as { design?: unknown }).design === true || (room as { plateau?: unknown }).plateau === true;
+}
+
 /** The fields of a review policy (or of a review of the book) that need `autopilot-review-targets`. */
 export const REVIEW_TARGET_FIELDS = ["readersTarget", "readerTargets", "readersExcluded"] as const;
 

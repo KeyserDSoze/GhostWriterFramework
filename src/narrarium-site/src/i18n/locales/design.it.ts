@@ -170,6 +170,11 @@ const designIt = {
       target: { hint: "Il voto che il progetto deve raggiungere. Il solo punteggio non basta ad approvarlo: un'incoerenza critica lo rimanda indietro." },
       rounds: { label: "Revisioni del progetto", hint: "Il direttore lo rivede al massimo tante volte; due revisioni di fila che non alzano il voto lo concludono." },
       readerRounds: { label: "Letture dei lettori", hint: "Prima di quante delle prime revisioni i lettori lo rileggono." },
+      wildcards: {
+        label: "I Fuori dal coro leggono prima il progetto",
+        hint: "Un pre-mortem prima della prima valutazione del direttore: alcune voci fuori dal coro dicono perché il libro fallirebbe e cosa lo renderebbe migliore. Il direttore vaglia le loro idee, e solo quelle accolte proseguono; mai un voto.",
+        oldServer: "Il tuo server personale è precedente alla {{version}}: non consulta i Fuori dal coro. Aggiornalo per consultarli.",
+      },
       estimate: "Stima della progettazione",
       submit_one: "Progetta {{count}} capitolo",
       submit_other: "Progetta {{count}} capitoli",

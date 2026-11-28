@@ -1,6 +1,7 @@
 import type { AiRequest, AiResponse } from "../ai/types.js";
 import type { BookSnapshot } from "../book/snapshot.js";
-import type { BookStore } from "../book/store.js";
+import type { BookFileChange, BookStore } from "../book/store.js";
+import type { InsightExtra } from "./tasks.js";
 import { BOOK_MATERIAL_CHARACTERS, type AutopilotState, type InsightTone, type ReviewRoundRecord, type ReviewVotes } from "./types.js";
 import { clipText } from "../util/text.js";
 
@@ -21,7 +22,9 @@ import { clipText } from "../util/text.js";
  * is asked; one that is slow is not waited for beyond the step's own deadlines. With no breaker registered the review ends at the plateau exactly as it always did.
  *
  * Register one with `registerPlateauBreaker` where the host starts (the web app and the personal server each do it for the features they have); it returns the function that
- * takes the breaker away.
+ * takes the breaker away. A breaker registered with `applies` takes a plateau on only for the books whose state it says yes to (the room of the wildcards: the books whose policy
+ * turns it on): for every other book the review ends at the plateau exactly as it would with no breaker. A breaker may give the step files to write with its commit (`changes`: the
+ * journal of what it consulted), never writing the book itself.
  */
 
 /** What a plateau tells a breaker: the review, how it stands, and what the rounds did. Plain data: nothing in it changes the review. */
@@ -43,8 +46,8 @@ export interface ReviewPlateau {
   language: string;
 }
 
-/** What a breaker answers: end the review, or go on with a book-level round that has its `material`. */
-export type ReviewPlateauAnswer = { action: "stop" } | { action: "continue"; material: string };
+/** What a breaker answers: end the review, or go on with a book-level round that has its `material`; with either, the files the step writes with its commit (`changes`). */
+export type ReviewPlateauAnswer = { action: "stop"; changes?: BookFileChange[] } | { action: "continue"; material: string; changes?: BookFileChange[] };
 
 /** What a breaker may use: the state as it is (read only), the book (read only), the model through the step's own client, and a way to say what it did. */
 export interface ReviewPlateauContext {
@@ -54,26 +57,44 @@ export interface ReviewPlateauContext {
   snapshot: BookSnapshot;
   signal: AbortSignal;
   ai: (request: Omit<AiRequest, "signal">) => Promise<AiResponse>;
-  insight: (tone: InsightTone, title: string, detail?: string) => void;
+  /** What it says goes in the step's insights; `extra` gives a client its code and numbers (`InsightExtra`). */
+  insight: (tone: InsightTone, title: string, detail?: string, extra?: InsightExtra) => void;
+  /** The clock of the run. */
+  now?: () => Date;
 }
 
 /** A plateau breaker. It may be asynchronous. */
 export type ReviewPlateauBreaker = (plateau: ReviewPlateau, context: ReviewPlateauContext) => ReviewPlateauAnswer | Promise<ReviewPlateauAnswer>;
 
-const breakers: ReviewPlateauBreaker[] = [];
+/** Whether a breaker takes on the plateaus of a book, from its state (read only). Absent: every book's. */
+export type ReviewPlateauApplies = (state: Readonly<AutopilotState>) => boolean;
 
-/** Register a plateau breaker (asked in the order they were registered). Answers the function that takes it away. */
-export function registerPlateauBreaker(breaker: ReviewPlateauBreaker): () => void {
-  breakers.push(breaker);
+const breakers: Array<{ breaker: ReviewPlateauBreaker; applies?: ReviewPlateauApplies }> = [];
+
+/** Register a plateau breaker (asked in the order they were registered), for the books `applies` says yes to (absent: every book). Answers the function that takes it away. */
+export function registerPlateauBreaker(breaker: ReviewPlateauBreaker, options: { applies?: ReviewPlateauApplies } = {}): () => void {
+  const entry = { breaker, ...(options.applies ? { applies: options.applies } : {}) };
+  breakers.push(entry);
   return () => {
-    const index = breakers.indexOf(breaker);
+    const index = breakers.indexOf(entry);
     if (index >= 0) breakers.splice(index, 1);
   };
 }
 
 /** The plateau breakers registered now. */
 export function plateauBreakers(): readonly ReviewPlateauBreaker[] {
-  return breakers;
+  return breakers.map((entry) => entry.breaker);
+}
+
+/** The plateau breakers that take on the plateaus of a book with this state: what a plateau asks before it begins a book-level round. A test that throws counts as no. */
+export function plateauBreakersFor(state: Readonly<AutopilotState>): readonly ReviewPlateauBreaker[] {
+  return breakers.filter((entry) => {
+    try {
+      return !entry.applies || entry.applies(state);
+    } catch {
+      return false;
+    }
+  }).map((entry) => entry.breaker);
 }
 
 /**
@@ -81,17 +102,20 @@ export function plateauBreakers(): readonly ReviewPlateauBreaker[] {
  * or fails, the answer is `stop`. A breaker that throws is said as a warning and left out; an aborted step is not swallowed.
  */
 export async function consultPlateauBreakers(plateau: ReviewPlateau, context: ReviewPlateauContext): Promise<ReviewPlateauAnswer> {
-  for (const breaker of [...breakers]) {
+  // The files the breakers give the step (a journal of what they consulted), the ones that stopped included.
+  const changes: BookFileChange[] = [];
+  for (const breaker of [...plateauBreakersFor(context.state)]) {
     try {
       const answer = await breaker(plateau, context);
+      if (answer?.changes?.length) changes.push(...answer.changes);
       if (answer && answer.action === "continue") {
         const material = clipText(String(answer.material ?? "").trim(), BOOK_MATERIAL_CHARACTERS);
-        if (material) return { action: "continue", material };
+        if (material) return { action: "continue", material, ...(changes.length ? { changes } : {}) };
       }
     } catch (error) {
       if (context.signal.aborted) throw error;
       context.insight("warning", `A plateau breaker failed and was left out: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { action: "stop" };
+  return { action: "stop", ...(changes.length ? { changes } : {}) };
 }

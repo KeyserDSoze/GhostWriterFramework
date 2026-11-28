@@ -90,6 +90,7 @@ import { bulletList, clipText, countWords, isItalian, languageName, OUTPUT_TOKEN
 import { BOOK_CORRECTIONS_TOOL, bookRoundText, readBookCorrections, verdictPoints, type BookChapterAccess } from "./book-round.js";
 import { acceptBookCorrections, chapterVote } from "./campaign.js";
 import { consultPlateauBreakers, type ReviewPlateau } from "./plateau.js";
+import { runDesignWildcards } from "../wildcards/autopilot.js";
 import { chapterLines, layoutChapters, listSection, outlineList, type ChapterFormat } from "./outline.js";
 import { legacyChapters, queuedMarkReviewed, startedReview } from "./frozen.js";
 import { readerGate, reviewBookRound, reviewMaxRounds, reviewReaderTargets, reviewTarget, type ReaderTargets } from "./review-policy.js";
@@ -1074,6 +1075,9 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
     ...(previous?.skippedReaders?.length ? { skippedReaders: previous.skippedReaders } : {}),
     awaitingAuthor: false,
     ...(previous?.removedChapters?.length ? { removedChapters: previous.removedChapters } : {}),
+    // The room of the wildcards was asked about this design (and what the director accepted waits for its review): a revision of the plan keeps it so.
+    ...(previous?.wildcardsDone ? { wildcardsDone: true } : {}),
+    ...(previous?.wildcardsMaterial ? { wildcardsMaterial: previous.wildcardsMaterial } : {}),
   };
   // The outline is filled from the plan in the same commit: what the author did not write, the author can now correct.
   changes.push(...await fillOutline(ctx, planned, imported, designs));
@@ -1446,6 +1450,9 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
   const maxRounds = designMaxRounds(design);
   const roundNumber = plan.rounds + 1;
   const lastRound = designLastRound(ctx.state);
+  // What the director accepted of the room before this review (`wildcards`): read once, by the review that follows the consultation.
+  const wildcards = plan.wildcardsMaterial;
+  delete plan.wildcardsMaterial;
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.director,
     label: "autopilot:plan-review",
@@ -1466,8 +1473,10 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
       plan.readerReactions.length
         ? `SIMULATED READERS:\n${plan.readerReactions.map((reaction) => `- ${reaction.name} (weight ${ctx.director.readerWeights[reaction.slug] ?? 1}): ${reaction.interest}/10 — ${reaction.reaction}${reaction.concerns.length ? ` Concerns: ${reaction.concerns.join("; ")}.` : ""}${reaction.wishes.length ? ` Wishes: ${reaction.wishes.join("; ")}.` : ""}`).join("\n")}`
         : "",
+      wildcards ? `THE ROOM'S IDEAS YOU ACCEPTED (before this review):\n${wildcards}` : "",
     ], request([
       `Review the design of the book before any prose is written (review ${roundNumber} of at most ${Math.max(maxRounds, roundNumber)}).`,
+      wildcards ? "Before this review the wildcards of the room read the design and you accepted some of their ideas (THE ROOM'S IDEAS YOU ACCEPTED, in the data): fold them into your review, as changes of the chapters they touch, unless the design already answers them. They are advisory: they never decide your verdict or your score." : "",
       `Approve when the design delivers the brief and the vision with a satisfying shape and deserves ${target}/10 or more; otherwise list precise changes chapter by chapter. Weigh the simulated readers by their weights: do not chase every opinion.`,
       ...DESIGN_DIRECTOR_RULES,
       view.any ? "The author's outline (AUTHOR'S OUTLINE, in the data) binds the design: never ask to change its chapters, their order, their titles or their events; ask only for what enriches them." : "",
@@ -2734,6 +2743,7 @@ async function runBookCorrections(ctx: TaskContext): Promise<TaskResult> {
   const access: BookChapterAccess = new Map((plan?.chapters ?? []).map((chapter) => [chapter.number, inScope.has(chapter.number) ? "open" as const : "author" as const]));
 
   // A plateau made the round: whoever registered to take it on is asked first, once. A breaker that has nothing ends the review.
+  const plateauChanges: BookFileChange[] = [];
   if (round.plateau && !round.plateau.consulted) {
     round.plateau.consulted = true;
     const last = review.history[review.history.length - 1] ?? review.start;
@@ -2747,13 +2757,14 @@ async function runBookCorrections(ctx: TaskContext): Promise<TaskResult> {
       broken: review.broken ?? 0,
       language: ctx.language,
     };
-    const answer = await consultPlateauBreakers(plateau, { bookId: ctx.bookId, state: ctx.state, store: ctx.store, snapshot: ctx.snapshot, signal: ctx.signal, ai: ctx.ai, insight: (tone, title, detail) => ctx.insight(tone, title, detail) });
+    const answer = await consultPlateauBreakers(plateau, { bookId: ctx.bookId, state: ctx.state, store: ctx.store, snapshot: ctx.snapshot, signal: ctx.signal, ai: ctx.ai, insight: (tone, title, detail, extra) => ctx.insight(tone, title, detail, extra), now: ctx.now });
     if (answer.action === "stop") {
       round.status = "stopped";
       round.stop = "plateau";
-      return { changes: [], summary: "No plateau breaker had anything to add: the review ends." };
+      return { changes: answer.changes ?? [], summary: "No plateau breaker had anything to add: the review ends." };
     }
     round.material = answer.material;
+    plateauChanges.push(...(answer.changes ?? []));
     review.broken = (review.broken ?? 0) + 1;
     // The plateau is taken on: the round that follows is its own, and two more rounds that raise nothing end the review as they always did.
     review.stalled = 0;
@@ -2807,7 +2818,7 @@ async function runBookCorrections(ctx: TaskContext): Promise<TaskResult> {
     // The review ends (the campaign says why, with the director's words): there is nothing to carry out.
     round.status = "stopped";
     round.stop = "none";
-    return { changes: [], summary: `No correction — ${read.summary}` };
+    return { changes: plateauChanges, summary: `No correction — ${read.summary}` };
   }
   const count = read.corrections.length;
   if (reviewBookRound(ctx.state) === "ask") {
@@ -2821,7 +2832,7 @@ async function runBookCorrections(ctx: TaskContext): Promise<TaskResult> {
       ctx.insight("ok", told.title, read.summary, { code: "bookRoundApplied", figures: { ...figures, corrections: round.corrections.filter((correction) => correction.status === "waiting").length, chapters: touched.length } });
     }
   }
-  return { changes: [], summary: `${count} ${count === 1 ? "correction" : "corrections"} — ${read.summary}` };
+  return { changes: plateauChanges, summary: `${count} ${count === 1 ? "correction" : "corrections"} — ${read.summary}` };
 }
 
 /**
@@ -2890,5 +2901,6 @@ export const TASK_EXECUTORS: Record<TaskDescriptor["kind"], (ctx: TaskContext) =
   revise: runRevise,
   final: runFinal,
   "book-corrections": runBookCorrections,
+  wildcards: runDesignWildcards,
   freeze: runFreeze,
 };

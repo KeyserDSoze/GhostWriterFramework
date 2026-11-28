@@ -47,3 +47,11 @@ In un capitolo o in una scena, chiedi al Copilot «che cosa pensano i provocator
 ## Con il Copilot sulla pagina Fuori dal coro
 
 Sulla pagina il Copilot vede ogni Fuori dal coro e propone le modifiche come un unico insieme: «crea un provocatore che pensa come un hacker», «spegni il Seminatore di caos», «fai dell'Esperto di dominio un avvocato marittimista». Vedi ogni Fuori dal coro con il suo stato prima che venga scritto qualcosa, applichi tutto in una volta e puoi annullare. Il Copilot cambia la stanza del libro: un predefinito lì si spegne, non si cancella mai.
+
+## Nell'autopilot
+
+L'autopilot consulta la stanza solo se lo attivi, e il direttore vaglia ciò che dà: accolta, adattata o scartata, sempre con il motivo, nel registro della stanza. Proseguono solo le idee che accoglie, mai come un voto.
+
+- **Prima della valutazione di un progetto.** In **Progetta il libro**, spunta **I Fuori dal coro leggono prima il progetto** (oppure, in **Configurazione** → **Revisione**, **Fuori dal coro** → **Prima della valutazione di un progetto**). Prima della prima valutazione del direttore un pre-mortem (l'Avvocato del diavolo, l'Ingenuo, l'Antagonista, il Contabile delle promesse) dice perché il libro fallirebbe così come è progettato e che cosa lo renderebbe migliore, e il direttore porta nella sua valutazione ciò che accoglie. Una volta in ogni progettazione.
+- **Quando una revisione del libro si blocca.** In **Configurazione** → **Revisione**, **Quando una revisione del libro si blocca**. Funziona con un giro per il libro intero (**Correggi il libro** o **Mostrami prima le correzioni**): quando due giri di fila non alzano nulla, invece di un altro giro identico la stanza creativa legge l'intero libro, e le idee che il direttore accoglie alimentano le sue correzioni del libro. Al massimo tante volte in una revisione quante ne permetti (da 1 a 3).
+- **Voci, consultazioni e spesa.** La stessa parte ha le voci di una consultazione (da 1 a 8, 4 se vuota), le consultazioni a un blocco e il tetto di spesa di una consultazione, e dice quanto costa una consultazione. Nella pagina Costi queste chiamate sono dell'autopilot. Su un server personale serve la versione 0.1.26 o successiva. L'autopilot usa la stanza del libro: copia nel libro un Fuori dal coro del tuo account per averlo lì.

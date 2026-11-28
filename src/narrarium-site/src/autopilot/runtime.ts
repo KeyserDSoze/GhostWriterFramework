@@ -8,6 +8,7 @@ import {
   isRevisionCampaignErrorCode,
   pickAiRuntimeConfig,
   readStoredAutopilot,
+  registerWildcardsPlateauBreaker,
   remoteBookStore,
   resolveAiCandidates,
   runnerActivity,
@@ -102,6 +103,9 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { bookStorageMode, resolveGitHubCredential, resolveGitHubRemoteToken, type BookEntry, type PersonalServerSettings } from "@/types/settings";
 import { githubRemoteAvailability, isUsableGitHubToken } from "@/github/remoteAvailability";
 import { isRepositoryError, repositoryErrorDescription } from "@/repository/repositoryError";
+
+// The autopilot of this browser starts here: the room of the wildcards takes on the plateaus of the reviews whose policy turns it on (#127); the others end as they always did.
+registerWildcardsPlateauBreaker();
 
 export type AutopilotSetupErrorCode = "no-server" | "book-missing" | "web-locks" | "other-tab" | "github-token" | "no-github-site";
 

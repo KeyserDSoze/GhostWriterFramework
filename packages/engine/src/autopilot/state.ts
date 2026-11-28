@@ -500,6 +500,8 @@ function normalizePlan(value: unknown): AutopilotPlan | null {
     ...(skippedReaders.length ? { skippedReaders } : {}),
     awaitingAuthor: asBoolean(source.awaitingAuthor, false),
     ...(removedChapters.length ? { removedChapters } : {}),
+    ...(source.wildcardsDone === true ? { wildcardsDone: true } : {}),
+    ...(typeof source.wildcardsMaterial === "string" && source.wildcardsMaterial.trim() ? { wildcardsMaterial: source.wildcardsMaterial.slice(0, BOOK_MATERIAL_CHARACTERS) } : {}),
   };
 }
 

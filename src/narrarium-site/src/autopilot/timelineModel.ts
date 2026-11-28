@@ -32,6 +32,8 @@ const CATEGORY: Partial<Record<AutopilotTaskKind, StepCategory>> = {
   "plan-review": "director",
   final: "director",
   "book-corrections": "director",
+  // The room of the wildcards before the review of a design: the director triages what it gives.
+  wildcards: "director",
   impact: "director",
   reader: "readers",
   "readers-summary": "readers",
@@ -200,6 +202,7 @@ const BOOK_LEVEL: Partial<Record<AutopilotTaskKind, GroupKind>> = {
   plan: "plan",
   "plan-reader": "plan",
   "plan-review": "plan",
+  wildcards: "plan",
   final: "final",
   // The director's corrections of the whole book are asked of the book's judgement: they are in the group of the review of the book.
   "book-corrections": "final",

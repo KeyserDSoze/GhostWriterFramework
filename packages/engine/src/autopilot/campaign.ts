@@ -4,7 +4,7 @@ import { authorHeldChapters, beginOutlineRewrite, campaignGoesOn, isFrozenQuesti
 import type { PlanNote } from "./planner.js";
 import { annotationRevision } from "./annotations.js";
 import { bookCorrectionInstruction, bookRoundRecord, bookRoundText } from "./book-round.js";
-import { plateauBreakers } from "./plateau.js";
+import { plateauBreakersFor } from "./plateau.js";
 import { gateFor, normalizeReviewPolicy, readerGate, reviewBookRound, type ReaderTargets } from "./review-policy.js";
 import { blockerText, chapterStanding } from "./review-readers.js";
 import { CAMPAIGN_NOTE_CHARACTERS, MAX_ANNOTATION_RECORDS, MAX_BOOK_CHAPTERS, MAX_CAMPAIGN_CHAPTERS, MAX_REVIEW_RECORDS, MAX_REVIEW_ROUNDS_KEPT } from "./state.js";
@@ -450,7 +450,7 @@ const reviewTarget: RevisionReasonHandler = {
     }
     if (review.stalled >= 2) {
       // A plateau breaker (`plateau.ts`) may take the review on when it has a book-level round to feed: the step that asks for the corrections consults it first.
-      if (bookRound !== "off" && plateauBreakers().length > 0 && (review.broken ?? 0) < PLATEAU_BREAKS_MAX) return beginBookRound(true);
+      if (bookRound !== "off" && plateauBreakersFor(state).length > 0 && (review.broken ?? 0) < PLATEAU_BREAKS_MAX) return beginBookRound(true);
       const readersSaid = gate && now.readers != null ? text(language, ` nor the readers (${vote(now.readers)})`, ` né i lettori (${vote(now.readers)})`) : "";
       const blockedBy = blockedText();
       return finish("plateau", "warning", "reviewStopped", text(language, `The review stopped: two rounds in a row raised neither the lowest chapter (${vote(now.lowest)}) nor the book (${vote(now.book)})${readersSaid}`, `La revisione si è fermata: due giri di fila non hanno alzato né il capitolo più basso (${vote(now.lowest)}) né il libro (${vote(now.book)})${readersSaid}`), `${blockedBy ? `${blockedBy.charAt(0).toUpperCase()}${blockedBy.slice(1)}. ` : ""}${text(language, "Another round would spend without getting closer to the target: change the target, the director or the chapters, then review the book again.", "Un altro giro spenderebbe senza avvicinarsi all'obiettivo: cambia l'obiettivo, il direttore o i capitoli, poi rivedi di nuovo il libro.")}`);

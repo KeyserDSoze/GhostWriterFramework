@@ -19,7 +19,7 @@ import { useServerConnection } from "@/autopilot/serverConnection";
 import { serverHasFrozenChapters } from "@/autopilot/frozenChapters";
 import { retryWaitOf, serverHasAutoResume, serverHasRetry } from "@/autopilot/retry";
 import { OUTLINE_BRIEF_NOTICE_ID, OUTLINE_BRIEF_SERVER_VERSION, serverHasOutlineBrief } from "@/autopilot/outlineBrief";
-import { serverHasReviewBookRound, serverHasReviewPolicy, serverHasReviewTargets } from "@/autopilot/reviewPolicy";
+import { serverHasReviewBookRound, serverHasReviewPolicy, serverHasReviewTargets, serverHasWildcards } from "@/autopilot/reviewPolicy";
 import { questionHeading } from "@/autopilot/format";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
@@ -85,6 +85,8 @@ export function AutopilotSettingsPage() {
   const reviewTargetsUnsupported = host === "server" && Boolean(server.info) && !reviewPolicyUnsupported && !serverHasReviewTargets(server.info);
   // And one that has the targets but not the book-level round of a review would end the review where it always did: the round is not offered.
   const reviewBookRoundUnsupported = host === "server" && Boolean(server.info) && !reviewPolicyUnsupported && !serverHasReviewBookRound(server.info);
+  // And one that predates the room of the wildcards in the autopilot would consult nobody: the room is not offered.
+  const reviewWildcardsUnsupported = host === "server" && Boolean(server.info) && !reviewPolicyUnsupported && !serverHasWildcards(server.info);
   const waitingLong = Boolean(retryWaitOf(summary)?.long);
   const asking = Boolean(summary?.question);
 
@@ -165,6 +167,7 @@ export function AutopilotSettingsPage() {
           reviewPolicyUnsupported={reviewPolicyUnsupported}
           reviewTargetsUnsupported={reviewTargetsUnsupported}
           reviewBookRoundUnsupported={reviewBookRoundUnsupported}
+          reviewWildcardsUnsupported={reviewWildcardsUnsupported}
           waitingLong={waitingLong}
           run={run}
           onStarted={() => navigate(liveHref)}
