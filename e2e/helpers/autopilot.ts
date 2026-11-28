@@ -112,7 +112,7 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
     for await (const piece of request) raw += piece;
     const body = JSON.parse(raw) as {
       model?: string; reasoning_effort?: string; stream?: unknown; store?: unknown; tool_choice?: unknown; max_output_tokens?: unknown; reasoning?: { effort?: string };
-      messages?: Array<{ role: string; content: unknown }>; input?: Array<{ role: string; content: unknown }>; tools?: Array<{ type?: string; name?: string; strict?: unknown; function?: { name: string } }>;
+      messages?: Array<{ role: string; content: unknown }>; input?: Array<{ role: string; content: unknown }>; tools?: Array<{ type?: string; name?: string; parameters?: unknown; strict?: unknown; function?: { name: string; parameters?: unknown } }>;
     };
     const address = new URL(request.url ?? "/", "http://stub");
     const responses = address.pathname.endsWith("/responses");
@@ -121,7 +121,7 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
     const messages = responses ? body.input : body.messages;
     const system = text(messages?.find((message) => message.role === "system" || message.role === "developer")?.content);
     const user = text([...(messages ?? [])].reverse().find((message) => message.role === "user")?.content);
-    const tool = responses ? (body.tools?.[0]?.name ? { name: body.tools[0].name } : undefined) : body.tools?.[0]?.function;
+    const tool = responses ? (body.tools?.[0]?.name ? { name: body.tools[0].name, parameters: body.tools[0].parameters } : undefined) : body.tools?.[0]?.function;
     const level = responses ? body.reasoning?.effort : body.reasoning_effort;
     asked.push(tool?.name ?? "prose");
     const call: StubCall = {
@@ -154,7 +154,7 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
     // A spec may answer a schema itself (`answers`, by the name of the function, or `prose` for a plain text), from the request; the engine's fake answers the others.
     const own = tool ? options.answers?.[tool.name]?.(user, system) : undefined;
     const ownProse = tool ? undefined : options.prose?.(user, system);
-    const answer = own !== undefined ? { text: JSON.stringify(own), json: own } : ownProse !== undefined ? { text: ownProse, json: undefined } : await fake.complete({ system, user, label: "e2e", ...(tool ? { json: { name: tool.name } } : {}) } as never);
+    const answer = own !== undefined ? { text: JSON.stringify(own), json: own } : ownProse !== undefined ? { text: ownProse, json: undefined } : await fake.complete({ system, user, label: "e2e", ...(tool ? { json: { name: tool.name, parameters: tool.parameters } } : {}) } as never);
     if (response.destroyed) return;
     if (responses) {
       await answerResponses(response, { stream: body.stream === true, tool: tool?.name, answer, gapMs: options.pieceGapMs ?? 0 });
