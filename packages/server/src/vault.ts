@@ -45,7 +45,7 @@ async function dpapi(value: Buffer, protect: boolean): Promise<Buffer> {
 }
 
 /** Files of `private/` that hold something this vault encrypted: without the key they can never be read again. */
-const ENCRYPTED_FILES = ["identity.json", "ai.json", "book-tokens.json", "cloudflare-tunnel-token.json", "authorization.json"];
+const ENCRYPTED_FILES = ["identity.json", "ai.json", "book-tokens.json", "cloudflare-tunnel-token.json", "authorization.json", "github-connection.json"];
 
 function holdsEncryptedSecret(value: unknown, depth = 0): boolean {
   if (depth > 8 || value === null || typeof value !== "object") return false;

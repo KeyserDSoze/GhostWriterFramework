@@ -65,7 +65,7 @@ if (!valid || !dataRoot) {
         void stop().catch(() => undefined).finally(() => process.exit(1));
       },
       log: (line) => {
-        if (verbose || line.startsWith("Error") || line.startsWith("Admin error") || line.startsWith("Update") || line.startsWith("Spend") || line.startsWith("The data folder") || line.startsWith("Autopilot")) process.stdout.write(`[${new Date().toISOString()}] ${line}\n`);
+        if (verbose || line.startsWith("Error") || line.startsWith("Admin error") || line.startsWith("Update") || line.startsWith("Spend") || line.startsWith("The data folder") || line.startsWith("Autopilot") || /^The (?:server|broker)\b.*GitHub/.test(line)) process.stdout.write(`[${new Date().toISOString()}] ${line}\n`);
       },
     });
     restoreNetwork = installOutboundNetwork(server.allowedBases);

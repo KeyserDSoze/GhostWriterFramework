@@ -58,6 +58,8 @@ export const ADMIN_ACTIONS = {
   "tunnel.start": "network",
   "tunnel.restart": "network",
   "tunnel.remove": "network",
+  "github.connect": "network",
+  "github.disconnect": "network",
   "book.register": "books",
   "book.remove": "books",
   "run.start": "books",

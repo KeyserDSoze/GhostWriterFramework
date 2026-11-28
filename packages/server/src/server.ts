@@ -22,6 +22,7 @@ import {
   SERVER_FEATURE_AUTOPILOT_RETRY,
   SERVER_FEATURE_AUTOPILOT_RULES,
   SERVER_FEATURE_GITHUB_CONFLICTS,
+  SERVER_FEATURE_GITHUB_CONNECTION,
   SERVER_PACKAGE_NAME,
   encodeServerSentEvent,
   isBookConflictError,
@@ -64,6 +65,7 @@ import { lockDataRoot, unsafeKeys } from "./files.js";
 import { bridgeToApi } from "./gateway.js";
 import { gitVersion } from "./git.js";
 import { asConflictPage, asResolveRequest } from "./github-conflicts.js";
+import { GitHubConnection, type GitHubConnectionOptions } from "./github-connection.js";
 import { ConcurrencyLimiter, WindowLimiter, sourceOf, type LimitVerdict } from "./limits.js";
 import { authenticateMcp, challenge, clientTokenAuthenticator, type McpAuthenticator, type McpPrincipal } from "./mcp-access.js";
 import { McpAudit } from "./mcp-audit.js";
@@ -116,6 +118,8 @@ export interface NarrariumServerOptions {
   ai?: AiPort;
   /** Override the GitHub clone URL (tests). */
   githubRemoteUrl?: (owner: string, repo: string) => string;
+  /** The server's own GitHub connection (tests run a fake GitHub and a fake broker in the process, and move its clock). */
+  githubConnection?: GitHubConnectionOptions;
   /** Running under the npx supervisor (default: the NARRARIUM_SUPERVISED environment variable). */
   supervised?: boolean;
   /** npm release check (tests inject a fake registry). */
@@ -165,7 +169,9 @@ export interface RunningNarrariumServer {
   autoResumed: Promise<AutoResumeOutcome[]>;
   /** The two listeners, for tests and diagnostics. */
   servers: { api: http.Server; admin: http.Server };
-  /** AI origins the outbound network guard may reach. */
+  /** The server's own GitHub connection (its status, its token and its renewal), for tests and diagnostics. */
+  githubConnection: GitHubConnection;
+  /** AI origins the outbound network guard may reach, and the broker of the server's own GitHub connection (github.com itself is always reachable). */
   allowedBases(): string[];
   close(): Promise<void>;
 }
@@ -829,6 +835,10 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
     });
     // Closed after the books: a call that ends while the books close is still written.
     closers.push(() => calls.close());
+    // The server's own connection to GitHub: made once by the owner (the device authorization) and renewed by the server, which keeps its token pair in the vault's private folder.
+    const githubConnection = new GitHubConnection({ store: data, allowedBrokerOrigins: () => data.config.githubConnection?.allowedBrokerOrigins, log }, options.githubConnection);
+    await githubConnection.load();
+    closers.push(() => githubConnection.close());
     const pendingBookUpdates = new Set<string>();
     let bookTimer: NodeJS.Timeout | null = null;
     /** Summaries being built (each asks git for a revision): closing waits for them, so no git process outlives the server. */
@@ -843,6 +853,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       callsBudgetBytes,
       autopilot: options.autopilot,
       githubRemoteUrl: options.githubRemoteUrl,
+      connection: githubConnection,
       log,
       onEvent: (event: AutopilotEvent) => {
         // The engine says it once for a run: the records stopped (no room, or a write failed) and the run goes on without them. The server says it once too, with what the engine reported (never a secret).
@@ -947,7 +958,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_BIBLE_DECISIONS, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_BIBLE_DECISIONS, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", SERVER_FEATURE_GITHUB_CONNECTION, ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -1188,6 +1199,15 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           return aiStatus();
         },
       },
+      // The server's own connection to GitHub: the status (a page only reads it: the server waits for the owner by itself), the start (the device authorization) and the disconnect.
+      { method: "GET", pattern: /^\/api\/v1\/github\/connection$/, scope: "read", handler: async () => githubConnection.status() },
+      {
+        method: "POST", pattern: /^\/api\/v1\/github\/connection$/, scope: "write", handler: async ({ request }) => {
+          books.assertNotInMaintenance();
+          return githubConnection.start(asObject(await readBody(request, 4096)));
+        },
+      },
+      { method: "DELETE", pattern: /^\/api\/v1\/github\/connection$/, scope: "write", handler: async () => githubConnection.disconnect() },
       { method: "GET", pattern: /^\/api\/v1\/books$/, scope: "read", handler: async () => ({ books: await books.summaries() }) },
       {
         method: "PUT", pattern: /^\/api\/v1\/books\/([^/]+)$/, scope: "write", handler: async ({ request, params }) => {
@@ -1196,6 +1216,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
             title: String(body.title ?? ""),
             storage: body.storage as never,
             ...(body.githubToken === null || typeof body.githubToken === "string" ? { githubToken: body.githubToken as string | null } : {}),
+            ...(body.githubAuth !== undefined ? { githubAuth: body.githubAuth as never } : {}),
           });
         },
       },
@@ -2270,7 +2291,8 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       oauth,
       calls,
       autoResumed,
-      allowedBases: () => [...data.config.allowedAiBases],
+      githubConnection,
+      allowedBases: () => [...data.config.allowedAiBases, ...githubConnection.brokerOrigins()],
       close,
     };
   } catch (error) {

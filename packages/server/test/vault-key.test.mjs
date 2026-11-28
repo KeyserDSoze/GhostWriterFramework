@@ -127,3 +127,23 @@ test("R4: the server does not start on a folder whose key is gone, says why, and
     await remove(root);
   }
 });
+
+test("R4: the server's own GitHub connection counts as an encrypted secret: with its key gone the server does not make a new one, and the saved pair comes back with the key", async () => {
+  const root = await temporary();
+  try {
+    const data = await DataDirectory.open(root);
+    await data.writeGitHubConnection(JSON.stringify({ version: 1, state: "connected", accessToken: "ghu_precious_access", refreshToken: "ghr_precious_refresh" }));
+    assert.deepEqual(data.knownSecrets(), ["ghu_precious_access", "ghr_precious_refresh"], "the tokens are kept out of every record from the moment they are saved");
+    const original = await readFile(key(root));
+    await rm(key(root));
+    await rm(`${key(root)}.bak`, { force: true });
+    await assert.rejects(() => Vault.open(root), (error) => /github-connection\.json/.test(error.message));
+    assert.equal(await exists(key(root)), false, "no key was written");
+    await writeFile(key(root), original, { mode: 0o600 });
+    const again = await DataDirectory.open(root);
+    assert.equal(JSON.parse(await again.readGitHubConnection()).refreshToken, "ghr_precious_refresh");
+    assert.deepEqual(again.knownSecrets(), ["ghu_precious_access", "ghr_precious_refresh"], "and they are known again when the folder is opened");
+  } finally {
+    await remove(root);
+  }
+});

@@ -6,6 +6,7 @@ export { Vault } from "./vault.js";
 export { FileBookStore, KeyedMutex } from "./fs-store.js";
 export { GitRepository, GitError, gitVersion, runGit } from "./git.js";
 export { GIT_OPERATION_MARKER, GithubConflictError } from "./github-conflicts.js";
+export { GitHubConnection, parseBrokerAddress, type GitHubConnectionOptions } from "./github-connection.js";
 export { BookRegistry } from "./books.js";
 export { HttpError } from "./errors.js";
 export { SERVER_VERSION } from "./version.js";

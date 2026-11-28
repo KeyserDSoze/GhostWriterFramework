@@ -81,6 +81,12 @@ export function spendChanges(
   return entries;
 }
 
+/** The broker a status says, as the object of a line of the log. */
+const githubObject = (status: unknown): { object?: string } => {
+  const broker = record(status).broker;
+  return typeof broker === "string" ? { object: broker } : {};
+};
+
 const whole = (value: unknown): number => (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0);
 
 const decode = (text: string): string => {
@@ -107,6 +113,13 @@ const RULES: Rule[] = [
     build: ([, id]) => ({ failure: "book.register", object: decode(id), done: (payload) => [{ action: "book.register", object: decode(id), detail: String(record(record(payload).storage).kind ?? "") }] }),
   },
   { method: "DELETE", pattern: /^\/api\/v1\/books\/([^/]+)$/, build: book("book.remove") },
+  {
+    // The server's own GitHub connection: what is written is where it goes (the broker's origin) and how it started (pending, or the problem's code); never a code or a token.
+    method: "POST",
+    pattern: /^\/api\/v1\/github\/connection$/,
+    build: () => ({ failure: "github.connect", done: (payload) => [{ action: "github.connect", ...githubObject(payload), detail: String(record(record(payload).problem).code ?? record(payload).state ?? "") }] }),
+  },
+  { method: "DELETE", pattern: /^\/api\/v1\/github\/connection$/, build: () => ({ failure: "github.disconnect", done: () => [{ action: "github.disconnect" }] }) },
   {
     method: "PUT",
     pattern: /^\/api\/v1\/books\/([^/]+)\/mcp$/,

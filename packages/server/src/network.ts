@@ -22,8 +22,8 @@ export function publicAddress(address: string): boolean {
     && !/^2001:db8:/i.test(address) && !/^2002:/i.test(address);
 }
 
-/** Services the server always needs: GitHub for GitHub books and npm for update checks. */
-const BUILT_IN_ORIGINS = new Set(["https://api.github.com", "https://registry.npmjs.org"]);
+/** Services the server always needs: GitHub for GitHub books (its API, and github.com for the device authorization of the server's own connection) and npm for update checks. */
+const BUILT_IN_ORIGINS = new Set(["https://api.github.com", "https://github.com", "https://registry.npmjs.org"]);
 export const isBuiltInOutboundOrigin = (url: URL): boolean => BUILT_IN_ORIGINS.has(url.origin);
 
 export class OutboundNetworkError extends Error {

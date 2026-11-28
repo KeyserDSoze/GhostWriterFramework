@@ -6,7 +6,7 @@ import { AI_CALL_BUDGETS, DEFAULT_ADMIN_PORT, DEFAULT_SERVER_PORT, pickAiRuntime
 import { AI_CALLS_DIRECTORY } from "./ai-calls.js";
 import { HttpError } from "./errors.js";
 import { KeyedMutex } from "./fs-store.js";
-import { atomicJson, ensurePrivateDirectory, readJson, renameReplacing } from "./files.js";
+import { atomicJson, ensurePrivateDirectory, readJson, renameReplacing, syncDirectory } from "./files.js";
 import { hasSpendSettings, parseSpendSettings, type SpendSettings } from "./spend.js";
 import { isEncryptedSecret, Vault, type EncryptedSecret } from "./vault.js";
 
@@ -49,6 +49,37 @@ export interface ServerConfig {
   spend?: SpendSettings;
   /** The records of the AI calls (absent: recording on, `AI_CALL_BUDGETS.serverPerBookBytes` a book). Only the admin panel changes the switch. */
   aiCalls?: AiCallsSettings;
+  /** The owner's rules for the server's own GitHub connection (absent: none). Only whoever edits `config.json` by hand sets them. */
+  githubConnection?: GitHubConnectionSettings;
+}
+
+/**
+ * What the owner decides about the server's own GitHub connection. The broker address and the client id come from the browser when the connection is made, so the owner can say which brokers are
+ * acceptable: when `allowedBrokerOrigins` is there, only a broker on one of those origins is accepted (an empty list accepts none); when it is not, any https broker is (plain http only on this computer).
+ */
+export interface GitHubConnectionSettings {
+  allowedBrokerOrigins?: string[];
+}
+
+/** The most origins `githubConnection.allowedBrokerOrigins` holds. */
+const MAX_BROKER_ORIGINS = 20;
+
+/** What a stored `githubConnection` says, as far as it can be believed: an origin that is not one (not https, or not plain http on this computer) is left out, and nothing at all when it says nothing. */
+export function parseGitHubConnectionSettings(value: unknown): GitHubConnectionSettings | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = (value as Record<string, unknown>).allowedBrokerOrigins;
+  if (!Array.isArray(raw)) return undefined;
+  const origins: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string" || entry.length > 500) continue;
+    try {
+      const origin = normalizeOrigin(entry);
+      if (!origins.includes(origin)) origins.push(origin);
+    } catch {
+      // An entry that is not an acceptable origin accepts nothing: it is dropped, and the list stays as strict as it was written.
+    }
+  }
+  return { allowedBrokerOrigins: origins.slice(0, MAX_BROKER_ORIGINS) };
 }
 
 /**
@@ -84,6 +115,8 @@ export interface StoredBook {
   bookId: string;
   title: string;
   storage: ServerBookStorage;
+  /** `connection`: the book uses the server's own GitHub connection and keeps no token (absent: a token copy, as before). */
+  githubAuth?: "connection";
   createdAt: string;
   updatedAt: string;
 }
@@ -181,6 +214,7 @@ function parseConfig(stored: unknown, existing: boolean): ServerConfig {
   const value = (stored && typeof stored === "object" ? stored : {}) as Partial<ServerConfig> & { port?: unknown };
   const spend = parseSpendSettings(value.spend);
   const aiCalls = parseAiCallsSettings(value.aiCalls);
+  const githubConnection = parseGitHubConnectionSettings(value.githubConnection);
   return {
     version: 2,
     serverId: typeof value.serverId === "string" && /^[0-9a-f-]{36}$/i.test(value.serverId) ? value.serverId : randomUUID(),
@@ -197,6 +231,7 @@ function parseConfig(stored: unknown, existing: boolean): ServerConfig {
     createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString(),
     ...(hasSpendSettings(spend) ? { spend } : {}),
     ...(aiCalls ? { aiCalls } : {}),
+    ...(githubConnection ? { githubConnection } : {}),
   };
 }
 
@@ -227,6 +262,7 @@ interface IdentityFile {
 class KnownSecrets {
   #aiKeys: string[] = [];
   readonly #tokens = new Map<string, string>();
+  #connection: string[] = [];
   #all: string[] = [];
 
   setAiKeys(keys: readonly string[]): void {
@@ -241,15 +277,33 @@ class KnownSecrets {
     this.#rebuild();
   }
 
+  setConnection(secrets: readonly string[]): void {
+    this.#connection = secrets.map((secret) => secret.trim()).filter((secret) => secret.length > 0);
+    this.#rebuild();
+  }
+
   /** A copy: whoever holds it cannot change what the next call is given. */
   list(): string[] {
     return [...this.#all];
   }
 
   #rebuild(): void {
-    this.#all = [...new Set([...this.#aiKeys, ...this.#tokens.values()])];
+    this.#all = [...new Set([...this.#aiKeys, ...this.#tokens.values(), ...this.#connection])];
   }
 }
+
+/** The tokens a stored GitHub connection holds (what must never reach a record or a log), from its decrypted text; nothing when it is not what it should be. */
+function connectionSecretsOf(text: string): string[] {
+  try {
+    const value = JSON.parse(text) as Record<string, unknown>;
+    return [value.accessToken, value.refreshToken].filter((entry): entry is string => typeof entry === "string");
+  } catch {
+    return [];
+  }
+}
+
+/** The largest stored GitHub connection that is read: it is a pair of tokens and a few names. */
+const MAX_GITHUB_CONNECTION_BYTES = 64 * 1024;
 
 /** Everything the server keeps on disk. Secrets go through the vault. */
 export class DataDirectory {
@@ -317,6 +371,12 @@ export class DataDirectory {
       }
     } catch {
       // Nor does a damaged list.
+    }
+    try {
+      const stored = await this.readGitHubConnection();
+      if (stored !== undefined) this.known.setConnection(connectionSecretsOf(stored));
+    } catch {
+      // A connection that cannot be read is told where it is used.
     }
   }
 
@@ -524,6 +584,37 @@ export class DataDirectory {
       else delete tokens[bookId];
       await atomicJson(this.file("private", "book-tokens.json"), { tokens });
       this.known.setToken(bookId, token ?? undefined);
+    });
+  }
+
+  /**
+   * What the server's own GitHub connection saved (`private/github-connection.json`: one file for the pair of tokens and what goes with them, encrypted by the vault like the other secrets), as the
+   * text it was given; `undefined` when there is none. A file that cannot be read or decrypted is an error: the connection must never be mistaken for one that was never made.
+   */
+  readGitHubConnection(): Promise<string | undefined> {
+    return this.locks.run("github-connection", async () => {
+      const stored = await readJson(this.file("private", "github-connection.json"), MAX_GITHUB_CONNECTION_BYTES) as { version?: unknown; encrypted?: unknown } | undefined;
+      if (stored === undefined) return undefined;
+      if (stored.version !== 1 || !isEncryptedSecret(stored.encrypted)) throw new Error("private/github-connection.json is not valid.");
+      return this.vault.decrypt(stored.encrypted);
+    });
+  }
+
+  /**
+   * Replace the saved GitHub connection with `text`, in one atomic write (a crash leaves the old file or the new one, never a mix), or delete it with `null`. The tokens in it join the
+   * ones that are kept out of every record. The new content is on disk when this returns.
+   */
+  writeGitHubConnection(text: string | null): Promise<void> {
+    return this.locks.run("github-connection", async () => {
+      const file = this.file("private", "github-connection.json");
+      if (text === null) {
+        await fs.rm(file, { force: true });
+        await syncDirectory(path.dirname(file));
+        this.known.setConnection([]);
+        return;
+      }
+      await atomicJson(file, { version: 1, updatedAt: new Date().toISOString(), encrypted: this.vault.encrypt(text) });
+      this.known.setConnection(connectionSecretsOf(text));
     });
   }
 }

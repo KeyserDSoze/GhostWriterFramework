@@ -18,6 +18,9 @@ import {
   type BookCommitResult,
   type BookFileChange,
   type GithubConflictsResponse,
+  GITHUB_AUTH_MODES,
+  GITHUB_CONNECTION_ERROR_CODES,
+  type GitHubAuthMode,
   type RegisterBookRequest,
   type ResolveGithubConflictsRequest,
   type ResolveGithubConflictsResponse,
@@ -32,6 +35,7 @@ import { renameReplacing } from "./files.js";
 import { FileBookStore, KeyedMutex } from "./fs-store.js";
 import { GitRepository } from "./git.js";
 import { GithubConflictError } from "./github-conflicts.js";
+import type { GitHubTokenSource } from "./github-connection.js";
 import { spendSettingsOf, type SpendLedger, type SpendScope, type SpendSettings } from "./spend.js";
 
 export { HttpError };
@@ -71,6 +75,8 @@ export interface BookRegistryOptions {
   autopilot?: AutopilotTuning;
   /** Override the GitHub clone URL (tests use a local bare repository). */
   githubRemoteUrl?: (owner: string, repo: string) => string;
+  /** The server's own GitHub connection: what a book registered with `githubAuth: "connection"` gets its token from. Without it no book can use one. */
+  connection?: GitHubTokenSource;
   onEvent: (event: AutopilotEvent) => void;
   onBookChanged: (bookId: string) => void;
   /**
@@ -100,6 +106,23 @@ function validStorage(storage: unknown): StoredBook["storage"] {
     return { kind: "github", owner: value.owner, repo: value.repo, branch: value.branch };
   }
   throw new HttpError(400, "invalid_storage", "The book storage must be `local` or a GitHub owner, repository and branch.");
+}
+
+/** `githubAuth` is one of the ways a book proves itself to GitHub, and does not come with a token copy that it would not use. */
+function assertGithubAuth(request: RegisterBookRequest): void {
+  const mode: unknown = request.githubAuth;
+  if (mode !== undefined && !(GITHUB_AUTH_MODES as readonly unknown[]).includes(mode)) throw new HttpError(400, "invalid_request", `\`githubAuth\` must be one of: ${GITHUB_AUTH_MODES.join(", ")}.`);
+  if (mode === "connection" && typeof request.githubToken === "string" && request.githubToken.trim()) throw new HttpError(400, "invalid_request", "A book on the server's GitHub connection keeps no token: send `githubAuth: \"connection\"` or a `githubToken`, not both.");
+}
+
+/**
+ * How a registration makes the book prove itself: what the request says, else (a request from a client that does not know `githubAuth`) a token sent with it means `token`, and one that sends none keeps
+ * what the book has (a book on the connection stays on it when an old client changes its title); a new book that says nothing is a `token` book, as it always was.
+ */
+function githubAuthOf(request: RegisterBookRequest, existing: StoredBook | undefined): GitHubAuthMode {
+  if (request.githubAuth) return request.githubAuth;
+  if (typeof request.githubToken === "string" && request.githubToken.trim()) return "token";
+  return existing?.githubAuth ?? "token";
 }
 
 /** Steps that each can be undone: when one fails, the ones that went through are undone, the last first, and the registration leaves no trace. */
@@ -331,8 +354,23 @@ export class BookRegistry {
 
   private readonly tokenCache = new Map<string, string | undefined>();
 
+  /**
+   * The token the next git operation of a book uses, asked before each one: a book on the server's own GitHub connection gets the connection's current access token (renewed first when it ends
+   * soon, so that a run that lasts days never meets an ended one); any other book, the copy that was sent for it.
+   */
   private async refreshToken(bookId: string): Promise<void> {
+    if (this.runtimes.get(bookId)?.book.githubAuth === "connection") {
+      this.tokenCache.delete(bookId);
+      this.tokenCache.set(bookId, await this.connectionToken());
+      return;
+    }
     this.tokenCache.set(bookId, await this.data.bookToken(bookId));
+  }
+
+  /** The connection's access token, or the refusal that says why a book cannot use it (`412 github_connection_required`, `502 github_connection_unavailable`). */
+  private async connectionToken(): Promise<string> {
+    if (!this.options.connection) throw new HttpError(412, GITHUB_CONNECTION_ERROR_CODES.required, "This server has no GitHub connection to use: connect it first.");
+    return this.options.connection.accessToken();
   }
 
   /**
@@ -384,6 +422,7 @@ export class BookRegistry {
     assertBookId(bookId);
     this.assertNotInMaintenance();
     assertBookToken(request.githubToken);
+    assertGithubAuth(request);
     // A new book needs a free place; one that is already hosted (or being registered right now) never does.
     const isNew = !this.runtimes.has(bookId) && !this.arriving.has(bookId);
     if (isNew) {
@@ -405,15 +444,26 @@ export class BookRegistry {
     const existing = this.runtimes.get(bookId);
     const unchanged = existing !== undefined && sameStorage(existing.book.storage, storage);
     if (existing?.session.running && !unchanged) throw new HttpError(409, "busy", "Pause the autopilot before changing where the book is stored.");
-    const token = request.githubToken === undefined ? await this.data.bookToken(bookId) : request.githubToken?.trim() || undefined;
-    if (storage.kind === "github") {
+    if (request.githubAuth === "connection" && storage.kind !== "github") throw new HttpError(400, "invalid_request", "`githubAuth: \"connection\"` is for a book stored on GitHub: a local book has nothing to sign in to.");
+    // A book that moves off GitHub leaves the connection behind, whatever it used there.
+    const mode = storage.kind === "github" ? githubAuthOf(request, existing?.book) : "token";
+    // A book on the server's own connection keeps no token: a copy it held before is dropped with this registration, and one sent with it is refused.
+    const registration: RegisterBookRequest = mode === "connection" ? { ...request, githubToken: null } : request;
+    let token: string | undefined;
+    if (mode === "connection" && storage.kind === "github") {
       if (!this.options.gitAvailable) throw new HttpError(412, "git_unavailable", "Install git on the server to host GitHub books.");
-      if (!token) throw new HttpError(412, "github_token_required", "Send the book's GitHub token (with your consent) so the server can clone and push it.");
+      token = await this.connectionToken();
+    } else {
+      token = request.githubToken === undefined ? await this.data.bookToken(bookId) : request.githubToken?.trim() || undefined;
+      if (storage.kind === "github") {
+        if (!this.options.gitAvailable) throw new HttpError(412, "git_unavailable", "Install git on the server to host GitHub books.");
+        if (!token) throw new HttpError(412, "github_token_required", "Send the book's GitHub token (with your consent) so the server can clone and push it.");
+      }
     }
     const now = new Date().toISOString();
-    const book: StoredBook = { bookId, title, storage, createdAt: existing?.book.createdAt ?? now, updatedAt: now };
-    if (existing && !unchanged) return this.move(existing, book, request, token);
-    return existing ? this.update(existing, book, request) : this.create(book, request, token);
+    const book: StoredBook = { bookId, title, storage, ...(mode === "connection" ? { githubAuth: "connection" as const } : {}), createdAt: existing?.book.createdAt ?? now, updatedAt: now };
+    if (existing && !unchanged) return this.move(existing, book, registration, token);
+    return existing ? this.update(existing, book, registration) : this.create(book, registration, token);
   }
 
   /**
@@ -731,6 +781,7 @@ export class BookRegistry {
       title: runtime.book.title,
       storage: runtime.book.storage,
       hasGithubToken: Boolean(await this.data.bookToken(runtime.book.bookId)),
+      ...(runtime.book.storage.kind === "github" ? { githubAuth: runtime.book.githubAuth ?? "token" } : {}),
       ready: existsSync(runtime.store.root),
       revision,
       // What the live session says: the pause that waits, the limits of the run and where the book is published (the state file alone says none of them, and nothing of the server's default).
