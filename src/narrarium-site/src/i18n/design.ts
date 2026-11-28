@@ -1,5 +1,7 @@
 import designEn from "@/i18n/locales/design.en";
 import designIt from "@/i18n/locales/design.it";
+import designReviewEn from "@/i18n/locales/designReview.en";
+import designReviewIt from "@/i18n/locales/designReview.it";
 import { registerTranslations } from "@/i18n/lazyBundles";
 
 /**
@@ -7,3 +9,4 @@ import { registerTranslations } from "@/i18n/lazyBundles";
  * Importing this module adds them to the shared i18next instance.
  */
 registerTranslations(designEn, designIt);
+registerTranslations(designReviewEn, designReviewIt);

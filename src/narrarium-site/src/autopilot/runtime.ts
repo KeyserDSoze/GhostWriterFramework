@@ -23,7 +23,9 @@ import {
   type AutopilotLiveOptions,
   type AutopilotSnapshot,
   type BookCorrectionsDecision,
+  type DesignPitchChoice,
   type EvaluationTarget,
+  type FindingDecisionInput,
   type FrozenAction,
   type FrozenChangeKind,
   type FrozenStatus,
@@ -65,6 +67,8 @@ import { AutopilotRulesUnsupportedError, serverEditsRules } from "@/autopilot/ru
 import { AutopilotFrozenUnsupportedError, frozenErrorCode, serverHasFrozenChapters } from "@/autopilot/frozenChapters";
 import { AutopilotAnnotationsUnsupportedError, AutopilotCampaignRefusedError, AutopilotOutlineApplyUnsupportedError, AutopilotReviewBookRoundUnsupportedError, AutopilotReviewTargetsUnsupportedError, AutopilotReviewUnsupportedError, campaignRefusal, serverHasAnnotations, serverHasOutlineApply } from "@/autopilot/campaign";
 import { serverHasReviewBook } from "@/autopilot/reviewPolicy";
+import { AutopilotDesignRefusedError, AutopilotDesignReviewUnsupportedError, designRefusal, designRefusalText } from "@/autopilot/designReview";
+import { serverHasDesignReview } from "@/outline/designReviewModel";
 import { AutopilotRetryUnsupportedError, serverHasRetry } from "@/autopilot/retry";
 import { assertGithubConflicts, githubConflictFiles, isGithubConflict, noteGithubConflict } from "@/autopilot/githubConflictsServer";
 import { RefreshCoordinator } from "@/autopilot/refreshCoordinator";
@@ -227,6 +231,7 @@ export function describeAutopilotError(error: unknown): string {
   if (error instanceof ServerAddressError) return i18n.t(`personalServer.address.${error.reason}`);
   if (error instanceof AutopilotBusyError) return i18n.t("autopilot.errors.busy", { label: error.runnerLabel });
   if (error instanceof AutopilotCampaignRefusedError) return i18n.t(`autopilot.campaign.errors.${error.code}`);
+  if (error instanceof AutopilotDesignRefusedError) return designRefusalText(error);
   const frozenCode = frozenErrorCode(error);
   if (frozenCode) return i18n.t(`autopilot.frozen.errors.${frozenCode}`);
   if (error instanceof ServerRequestError) {
@@ -1085,6 +1090,41 @@ export class BrowserAutopilotRuntime {
    */
   reviseAnnotations(bookId: string, input: ReviseAnnotationsInput): Promise<RevisionCampaignResult> {
     return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "revise-annotations", input }));
+  }
+
+  /**
+   * Choose the pitch the book is designed from, among the alternatives the design proposed. Saved at once, here or on the personal server (the author's latest edits are handed to
+   * it first, and what it wrote comes back); a server that predates the reviews of a design is not asked (`AutopilotDesignReviewUnsupportedError`); a refusal of the engine is an
+   * `AutopilotDesignRefusedError` with its code. Nothing is started: `start` does it.
+   */
+  chooseDesignPitch(bookId: string, input: DesignPitchChoice): Promise<void> {
+    return this.operations.run(bookId, "campaign", () => this.designCommand(bookId, { type: "choose", input }));
+  }
+
+  /** Decide about a finding of the analysis of the design: ask the autopilot to fix it, take it, say it is not a problem, or take the decision back. The same ways as `chooseDesignPitch`. */
+  decideDesignFinding(bookId: string, input: FindingDecisionInput): Promise<void> {
+    return this.operations.run(bookId, "campaign", () => this.designCommand(bookId, { type: "decide", input }));
+  }
+
+  private async designCommand(bookId: string, command: { type: "choose"; input: DesignPitchChoice } | { type: "decide"; input: FindingDecisionInput }): Promise<void> {
+    const book = findBook(bookId);
+    try {
+      if (autopilotHostOf(book) === "server") {
+        const { info } = await this.requireServer();
+        if (!serverHasDesignReview(info)) throw new AutopilotDesignReviewUnsupportedError();
+        await this.handToServer(book);
+        const { client } = await this.requireServer();
+        this.applySnapshot(bookId, command.type === "choose" ? await client.chooseDesignPitch(book.id, command.input) : await client.decideDesignFinding(book.id, command.input));
+        await this.bringFromServer(book, client);
+      } else {
+        const session = this.localSession(book, resolveBookBranch(book));
+        if (command.type === "choose") await session.chooseDesignPitch(command.input);
+        else await session.decideDesignFinding(command.input);
+      }
+      await this.refresh(bookId);
+    } catch (error) {
+      throw designRefusal(error);
+    }
   }
 
   /** Cancel the chapters of the campaign that wait (the one being worked finishes): they are left for the author. The same ways as `reviseChapters`. */

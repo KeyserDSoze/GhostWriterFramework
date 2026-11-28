@@ -1,4 +1,5 @@
 import {
+  AutopilotDesignError,
   AutopilotSession,
   FrozenChapterError,
   GITHUB_CONFLICTS_PAGE_LIMIT,
@@ -23,6 +24,8 @@ import {
   type AutopilotSnapshot,
   type AutopilotState,
   type AutopilotStatus,
+  type DesignPitchChoice,
+  type FindingDecisionInput,
   type FrozenAction,
   type FrozenChangeKind,
   type GithubConflict,
@@ -256,6 +259,7 @@ export class FakeBookServer {
       return await work();
     } catch (error) {
       if (error instanceof FrozenChapterError) throw new ServerRequestError(error.message, error.code === "chapter_not_found" ? 404 : error.code === "not_changed" ? 409 : 400, error.code);
+      if (error instanceof AutopilotDesignError) throw new ServerRequestError(error.message, error.code === "invalid_request" || error.code === "unknown_pitch" || error.code === "unknown_finding" ? 400 : 409, error.code);
       throw error;
     }
   }
@@ -599,6 +603,16 @@ export class FakeBookServer {
         await server.serve("resolveFrozenChange");
         server.resolved.push({ number, action, options });
         return server.refusing(() => server.session(bookId).resolveFrozenChange(number, action, options));
+      },
+      async chooseDesignPitch(bookId: string, input: DesignPitchChoice) {
+        await server.serve("chooseDesignPitch");
+        await server.refusing(() => server.session(bookId).chooseDesignPitch(input));
+        return server.session(bookId).snapshot();
+      },
+      async decideDesignFinding(bookId: string, input: FindingDecisionInput) {
+        await server.serve("decideDesignFinding");
+        await server.refusing(() => server.session(bookId).decideDesignFinding(input));
+        return server.session(bookId).snapshot();
       },
       async freezeChapter(bookId: string, slug: string, frozen = true) {
         await server.serve("freezeChapter");
