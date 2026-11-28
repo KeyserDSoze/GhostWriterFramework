@@ -106,6 +106,7 @@ import { DESIGN_RUBRIC_NOTES, DESIGN_RUBRIC_TOKENS, designRubricRule, readDesign
 import { designFlow } from "./design-state.js";
 import { outlineDesignGaps } from "./outline-check.js";
 import { runDesignComplete, runDesignCompleteReader, runDesignCompleteReview } from "./design-complete-run.js";
+import { chapterWritingContext, designLines, type ChapterWritingContext, type WritingContextKind } from "./writing-context.js";
 import {
   CHAPTER_REVIEW_TOOL,
   CHAPTER_SUMMARY_TOOL,
@@ -317,6 +318,11 @@ export function outlineOf(ctx: TaskContext): OutlineReader {
   return reader;
 }
 
+/** What a step reads of the design for a chapter (`chapterWritingContext`): its design, the spoiler guards of the ledgers, the Bible, the entries around it. */
+function writingContext(ctx: TaskContext, number: number, kind: WritingContextKind): Promise<ChapterWritingContext> {
+  return chapterWritingContext({ store: ctx.store, snapshot: ctx.snapshot, outline: outlineOf(ctx), state: ctx.state }, number, kind);
+}
+
 /** What binds the autopilot in the outline: every entry but the autopilot's own untouched ones, and the description the author wrote. */
 export interface AuthorOutline {
   /** The working title and the description of the book, when the author wrote them. */
@@ -328,11 +334,16 @@ export interface AuthorOutline {
   lastChapter: number;
 }
 
-/** Characters of the description of the book, of the entries of the chapters a step plans (shared among them), and of the list of the others. */
+/**
+ * Characters of the description of the book, of the entries of the chapters a step plans (shared among them, with their designs), of the entry just before and just after
+ * them (each whole, as far as this allows), and of the list of the others (a line each, condensed around the focus): the neighbours of a batch are read in full, the
+ * rest as summaries, whatever the length of the book.
+ */
 const OUTLINE_BOOK_CHARS = 3000;
-const OUTLINE_BATCH_CHARS = 24_000;
+const OUTLINE_BATCH_CHARS = 36_000;
+const OUTLINE_NEIGHBOUR_CHARS = 4000;
 const OUTLINE_CONTEXT_CHARS = 12_000;
-const OUTLINE_ENTRY_MIN_CHARS = 400;
+const OUTLINE_ENTRY_MIN_CHARS = 1200;
 
 export async function authorOutline(ctx: TaskContext): Promise<AuthorOutline> {
   const outline = outlineOf(ctx);
@@ -368,13 +379,27 @@ export function outlineBookSection(view: AuthorOutline): string {
   return view.book ? `AUTHOR'S OUTLINE, THE BOOK (binding):\n${view.book}` : "";
 }
 
-/** The entries of the chapters `from` to `to`, whole as far as their share of the budget allows. */
+/**
+ * The entries of the chapters `from` to `to`, whole (with their designs) as far as their share of the budget allows, then the entry of the author's just before and just
+ * after them, in full.
+ */
 function outlineBatchSection(view: AuthorOutline, from: number, to: number): string {
-  const entries = [...view.entries.values()].filter((entry) => entry.number >= from && entry.number <= to).sort((left, right) => left.number - right.number);
+  const all = [...view.entries.values()].sort((left, right) => left.number - right.number);
+  const entries = all.filter((entry) => entry.number >= from && entry.number <= to);
   if (!entries.length) return "";
   const share = Math.max(OUTLINE_ENTRY_MIN_CHARS, Math.floor(OUTLINE_BATCH_CHARS / entries.length));
   const label = from === to ? `CHAPTER ${from}` : `CHAPTERS ${from}-${to}`;
-  return `AUTHOR'S OUTLINE, ${label} (binding):\n${entries.map((entry) => `${entryHeading(entry)}:\n${truncate(entry.body, share) || "(no text)"}`).join("\n\n")}`;
+  const whole = (entry: OutlineChapterEntry, max: number) => {
+    const design = designLines(entry.design);
+    return `${entryHeading(entry)}:\n${truncate([entry.body || "(no text)", design ? `Its design:\n${design}` : ""].filter(Boolean).join("\n"), max)}`;
+  };
+  const before = [...all].reverse().find((entry) => entry.number < from);
+  const after = all.find((entry) => entry.number > to);
+  return [
+    `AUTHOR'S OUTLINE, ${label} (binding):\n${entries.map((entry) => whole(entry, share)).join("\n\n")}`,
+    before ? `AUTHOR'S OUTLINE, THE CHAPTER BEFORE THESE (binding):\n${whole(before, OUTLINE_NEIGHBOUR_CHARS)}` : "",
+    after ? `AUTHOR'S OUTLINE, THE CHAPTER AFTER THESE (binding):\n${whole(after, OUTLINE_NEIGHBOUR_CHARS)}` : "",
+  ].filter(Boolean).join("\n\n");
 }
 
 /** Other entries of the outline, condensed around `around` like every list of chapters. */
@@ -1698,7 +1723,7 @@ async function runReplan(ctx: TaskContext): Promise<TaskResult> {
     return { changes: compact(changes), summary: italian ? `Il capitolo ${number} è uscito dal piano: la sua voce della Sinossi è stata cancellata.` : `Chapter ${number} left the plan: its entry of the synopsis was deleted.` };
   }
 
-  const [view, design, resume] = await Promise.all([authorOutline(ctx), readBody(ctx.store, STORY_DESIGN_FILE, 2500), storySoFar(ctx, number, 4000)]);
+  const [view, design, resume, writing] = await Promise.all([authorOutline(ctx), readBody(ctx.store, STORY_DESIGN_FILE, 2500), storySoFar(ctx, number, 4000), writingContext(ctx, number, "replan")]);
   const secretsPlan = ctx.state.concept.secrets.filter((secret) => secret.revealChapter).map((secret) => `- ${secret.title}: reveal in chapter ${secret.revealChapter}`).join("\n");
   const around = chapterLines(plan.chapters.filter((item) => item.number !== number), { around: number });
   const response = await ctx.ai({
@@ -1708,11 +1733,13 @@ async function runReplan(ctx: TaskContext): Promise<TaskResult> {
     user: `${request([
       `The author changed the outline of chapter ${number}. Plan chapter ${number} again, numbered ${number} to ${number}, following the new entry (AUTHOR'S OUTLINE, CHAPTER ${number}): the same hypothetical title (refine it only if the entry has none) and the same events. Enrich it, never change it.`,
       "Keep it consistent with the other chapters, which do not change, and place the reveals the chapter has to hold.",
+      entry.design ? `The design of the entry (THE DESIGN OF CHAPTER ${number}, in the data) is part of it: the plan carries it forward (its goal, its point of view, its events, what it reveals), and the spoiler guards bind.` : "",
       authorRules(ctx),
     ])}\n\n${data([
       bookHeader(ctx),
       briefBlock(ctx),
       `AUTHOR'S OUTLINE, CHAPTER ${number} (the new entry, binding):\n${entryHeading(entry)}:\n${truncate(entry.body, OUTLINE_BATCH_CHARS) || "(no text)"}`,
+      ...writing.sections,
       outlineBookSection(view),
       design ? `STORY DESIGN (excerpt):\n${design}` : "",
       `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: true }) || "-"}`,
@@ -1735,14 +1762,20 @@ async function runReplan(ctx: TaskContext): Promise<TaskResult> {
   // A folder with somebody's text in it keeps its name; an empty one follows the new title, as a plan made again does.
   const slug = written ? chapter.slug : chapterSlug(number, title);
   if (slug !== chapter.slug && stubHash) changes.push({ path: stubPath, content: null, expectedHash: stubHash });
+  // The design of the entry is carried forward: what the reply leaves out of the plan, the design says.
+  const carried = entry.design ?? {};
+  const listOr = (value: unknown, max: number, fallback: string[] | undefined) => {
+    const list = asStringList(value, max);
+    return list.length ? list : (fallback ?? []).slice(0, max);
+  };
   Object.assign(chapter, {
     title,
     slug,
     summary: asString(proposal.summary),
-    goal: asString(proposal.goal),
-    pov: asStringList(proposal.pov, 6),
-    keyEvents: asStringList(proposal.keyEvents, 12),
-    reveals: asStringList(proposal.reveals, 8),
+    goal: asString(proposal.goal) || carried.goal || "",
+    pov: listOr(proposal.pov, 6, carried.pov),
+    keyEvents: listOr(proposal.keyEvents, 12, carried.events),
+    reveals: listOr(proposal.reveals, 8, carried.reveals),
     status: "planned",
     scenes: [],
     outlineDigest: entry.contentDigest,
@@ -1771,10 +1804,11 @@ async function runScenes(ctx: TaskContext): Promise<TaskResult> {
   // The scenes of the chapter are the planner's: the rule reads the chapter's outline entry (or, without one, the plan of the chapter).
   const entry = await outlineOf(ctx).chapter(chapter.number);
   const target = scenesForChapter(entry?.body || [chapter.summary, chapter.goal, ...chapter.keyEvents].join("\n"));
-  const [resume, design, secrets] = await Promise.all([
+  const [resume, design, secrets, writing] = await Promise.all([
     storySoFar(ctx, chapter.number, 5000),
     readBody(ctx.store, STORY_DESIGN_FILE, 2500),
     secretRules(ctx.store, ctx.snapshot, chapter.number),
+    writingContext(ctx, chapter.number, "scenes"),
   ]);
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.writer,
@@ -1783,11 +1817,13 @@ async function runScenes(ctx: TaskContext): Promise<TaskResult> {
     user: `${request([
       `Break chapter ${chapter.number} «${chapter.title}» into ${target} scenes (one more or one fewer only if the chapter truly needs it).`,
       "Each scene has a goal and a turn, and leads into the next. Respect the reveal rules and the director's guidance.",
+      writing.designed ? "Where the chapter has a design (THE DESIGN OF CHAPTER, in the data), the scenes carry it out: its planned scenes, its characters on stage, its setting and time, its conflicts, its emotional evolution, what it reveals and keeps hidden, its clues, its ending; the spoiler guards and the rules of the world bind." : "",
       authorRules(ctx),
     ])}\n\n${data([
       bookHeader(ctx),
       directorGuidance(ctx),
       chapterPlanBlock(chapter),
+      ...writing.sections,
       previous ? `PREVIOUS CHAPTER: ${previous.number}. ${previous.title}${previous.summary ? ` — ${previous.summary}` : ""}` : "",
       next ? `NEXT CHAPTER (to set up): ${next.number}. ${next.title}${next.summary ? ` — ${next.summary}` : ""}` : "",
       resume ? `STORY SO FAR (before this chapter):\n${resume}` : "",
@@ -1877,12 +1913,13 @@ async function runWrite(ctx: TaskContext): Promise<TaskResult> {
   const scene = sceneOf(chapter, ctx.task.sceneNumber);
   const nextScene = chapter.scenes.find((entry) => entry.number === scene.number + 1);
   const info = chapterFiles(ctx, chapter);
-  const [ghostwriter, context, resume, secrets, neighbors] = await Promise.all([
+  const [ghostwriter, context, resume, secrets, neighbors, writing] = await Promise.all([
     ghostwriterOf(ctx, info),
     readBody(ctx.store, CONTEXT_FILE, 2000),
     storySoFar(ctx, chapter.number, 5000),
     secretRules(ctx.store, ctx.snapshot, chapter.number),
     sceneNeighbors(ctx, chapter, scene),
+    writingContext(ctx, chapter.number, "write"),
   ]);
   const relevant = mentionedCanon(ctx.snapshot, [scene.beats.join(" "), scene.goal, scene.summary ?? ""].join(" "), 12, [...scene.characters, scene.location ?? "", scene.pov ?? ""]);
   const words = ctx.state.brief.wordsPerScene;
@@ -1893,6 +1930,7 @@ async function runWrite(ctx: TaskContext): Promise<TaskResult> {
     user: `${request([
       `Write scene ${scene.number} of chapter ${chapter.number} «${chapter.title}»: «${scene.title}». Target length: about ${words} words.`,
       "Follow the beats in order, start in motion, and end on a turn that leads into the next scene.",
+      writing.designed ? "Write what the design of the chapter plans for this scene (THE DESIGN OF CHAPTER, in the data), and never break the spoiler guards or the rules of the world." : "",
       authorRules(ctx),
     ])}\n\n${data([
       bookHeader(ctx),
@@ -1902,6 +1940,7 @@ async function runWrite(ctx: TaskContext): Promise<TaskResult> {
       context ? `WORLD CONTEXT:\n${context}` : "",
       resume ? `STORY SO FAR (before this chapter):\n${resume}` : "",
       chapterPlanBlock(chapter),
+      ...writing.sections,
       neighbors.writtenSummaries ? `SCENES ALREADY WRITTEN IN THIS CHAPTER:\n${neighbors.writtenSummaries}` : "",
       neighbors.previousEnding ? `PREVIOUS SCENE ENDING (continue seamlessly):\n${neighbors.previousEnding}` : "",
       scenePlanBlock(scene),
@@ -2117,7 +2156,7 @@ async function runSpecialists(ctx: TaskContext): Promise<TaskResult> {
   const source = await chapterSource(ctx, chapter);
   const info = chapterFiles(ctx, chapter);
   const text = source.paragraphs.map((paragraph) => paragraph.body).join("\n");
-  const [ghostwriter, secrets] = await Promise.all([ghostwriterOf(ctx, info), secretRules(ctx.store, ctx.snapshot, chapter.number)]);
+  const [ghostwriter, secrets, writing] = await Promise.all([ghostwriterOf(ctx, info), secretRules(ctx.store, ctx.snapshot, chapter.number), writingContext(ctx, chapter.number, "review")]);
   const relevant = mentionedCanon(ctx.snapshot, text, 16);
   const previousChapters = chapterLines(ctx.state.plan!.chapters.filter((entry) => entry.number < chapter.number), { around: chapter.number });
   const style = evaluationStyleOf(ctx, "specialists");
@@ -2131,6 +2170,7 @@ async function runSpecialists(ctx: TaskContext): Promise<TaskResult> {
       style.block,
       previousChapters.text ? listSection("PREVIOUS CHAPTERS", previousChapters) : "",
       chapterPlanBlock(chapter),
+      ...writing.sections,
       `SCENE PLANS:\n${chapter.scenes.map((scene) => `- Scene ${scene.number} «${scene.title}»: ${scene.goal}`).join("\n")}`,
       `CANON:\n${canonManifest(ctx.snapshot, { includeSecrets: false }) || "-"}`,
       secrets ? `SECRETS AND REVEAL RULES:\n${secrets}` : "",
@@ -2139,6 +2179,7 @@ async function runSpecialists(ctx: TaskContext): Promise<TaskResult> {
       relevant.length ? `CANON DETAILS:\n${await canonDetails(ctx.store, relevant, 600)}` : "",
     ], [], request([
       `Review chapter ${chapter.number} «${chapter.title}» (review round ${review.round}). Return at most 12 findings, most important first, using the scene numbers of the markers.`,
+      writing.designed ? "Check the text against the design of the chapter, the spoiler guards and the rules of the world in the data: what the design plans and the text misses, a secret told before its reveal, a character acting on a secret before learning it, a rule of the world broken." : "",
       review.previousFixes.length ? `These fixes were applied after the previous round: verify them and report only remaining or new real problems.\n${bulletList(review.previousFixes)}` : "",
       style.rule,
       authorRules(ctx, false),
@@ -2192,10 +2233,11 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
   const review = ctx.state.review!;
   await assertRewritable(ctx, [directorOpinionPath({ kind: "chapter", chapter: chapter.slug })]);
   const source = await chapterSource(ctx, chapter);
-  const [resume, secrets, readersSummary] = await Promise.all([
+  const [resume, secrets, readersSummary, writing] = await Promise.all([
     storySoFar(ctx, chapter.number, 4000),
     secretRules(ctx.store, ctx.snapshot, chapter.number),
     review.readerScores.length ? readBody(ctx.store, readerSummaryPath({ kind: "chapter", chapter: chapter.slug }), 2500) : Promise.resolve(""),
+    writingContext(ctx, chapter.number, "review"),
   ]);
   // The target and the rounds of the review policy (the run's, or the review of the book in progress), else the director's.
   const maxRounds = reviewMaxRounds(ctx.state, ctx.director);
@@ -2217,6 +2259,7 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
       directorGuidance(ctx),
       style.block,
       chapterPlanBlock(chapter),
+      ...writing.sections,
       `SCENE PLANS:\n${chapter.scenes.map((scene) => `- Scene ${scene.number} «${scene.title}»: ${scene.goal}`).join("\n")}`,
       resume ? `STORY SO FAR (before this chapter):\n${resume}` : "",
       secrets ? `SECRETS AND REVEAL RULES:\n${secrets}` : "",
@@ -2235,6 +2278,7 @@ async function runDirectorReview(ctx: TaskContext): Promise<TaskResult> {
       `Decide on chapter ${chapter.number} «${chapter.title}» (review round ${review.round} of ${maxRounds}).`,
       "For EVERY finding decide exactly once: accept it with a precise, minimal remediation for the ghostwriter and its scene number, or reject it with the reason. Reject unfounded or unanchored findings, findings against the vision or the author's rules, and single-reader taste the intended audience would not share.",
       `Score the chapter from 1 to 10. Verdict "approve" when it deserves at least ${target}/10 and nothing critical remains; otherwise "revise".`,
+      writing.designed ? "Judge the chapter against its design, the spoiler guards and the rules of the world too (in the data): a design that binds and is not carried out, a secret told before its reveal, or a rule of the world broken must be fixed (accept the finding about it, or add the fix)." : "",
       gate ? "The readers' targets in the data are rules too: the chapter is closed only when they are reached. Accept the concrete corrections of the readers under their target that serve the book's vision, each with a precise fix and its scene." : "",
       style.rule,
       review.authorEdit

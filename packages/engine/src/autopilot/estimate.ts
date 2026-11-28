@@ -211,6 +211,11 @@ export interface EstimateContext {
   rulesWords?: number;
   notesWords?: number;
   styleWords?: number;
+  /**
+   * The design of a chapter of the Synopsis, in words, on average among the entries that have one (none: 0). The steps that plan the scenes, write, and review a chapter read
+   * it, with the spoiler guards of the ledgers and the rules of the world (`chapterWritingContext`); the plan of the scenes also reads the entries around it.
+   */
+  chapterDesignWords?: number;
 }
 
 /** What the model of a capability is: how it is called, what a request may hold, what it costs, how fast it writes. Nothing here is a secret. */
@@ -916,8 +921,23 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   const coherenceCalls = flow.coherence && toWrite > 0 ? coherenceWindows(Array.from({ length: toWrite }, (_, index) => index + 1)).length : 0;
   const chapterReviewBatches = flow.chapterReview && toWrite > 0 ? Math.ceil(toWrite / DESIGN_REVIEW_BATCH_CHAPTERS) : 0;
 
-  // The outline, in the prompts that carry it: the description and the entries (12 000 characters at most), and the entries of a batch (24 000).
+  // The outline, in the prompts that carry it: the description and the entries (12 000 characters at most), and the entries of a batch with the chapter before and after it (44 000).
   const outlineWordsCapped = (cap: number): number => (outlineEntries > 0 ? w(Math.min(outlineWords, cap / CHARS_PER_WORD)) : 0);
+
+  // The design of a chapter, when the entries have one, with the spoiler guards and the rules of the world, in the steps that plan its scenes, write it and review it
+  // (6000, 3500 and 2500 characters at most; the writer of a scene reads less of it); the plan of the scenes also reads the entries before and after it and the others.
+  const chapterDesign = knob(context.chapterDesignWords, 0);
+  const guardsAndBible = Math.min(T.designSecrets * (T.designLedgerWords + 50), 3500 / CHARS_PER_WORD) + Math.min(world, 2500 / CHARS_PER_WORD);
+  const designOfChapter = chapterDesign > 0 ? w(Math.min(chapterDesign, 6000 / CHARS_PER_WORD) + guardsAndBible) : 0;
+  const entryWordsOf = outlineEntries > 0 ? outlineWords / outlineEntries : T.outlineEntryWords;
+  // The entries around a chapter are the author's, and the ones with a design: the entry before and after it, and the others a line each (the plan of the scenes).
+  const around = (outlineEntries > 0 && outlineWords > 0) || chapterDesign > 0;
+  // The first chapter has no entry before it and the last none after it; the others are the entries but the chapter and its two neighbours, 200 characters each at most.
+  const neighbours = around ? Math.max(0, 2 - 2 / Math.max(1, outlineEntries || chapters)) : 0;
+  const neighbourWords = (cap: number, extra: number) => neighbours * (Math.min(entryWordsOf + extra, cap / CHARS_PER_WORD) + 14);
+  const otherLines = around && outlineEntries > 3 && outlineWords > 0 ? Math.min((outlineEntries - 3) * (Math.min(entryWordsOf, 200 / CHARS_PER_WORD) + 4), 6000 / CHARS_PER_WORD) + 12 : 0;
+  const designForScenes = designOfChapter + w(neighbourWords(3000, chapterDesign / 3) + otherLines);
+  const designForScene = chapterDesign > 0 ? w(Math.min(chapterDesign, 4000 / CHARS_PER_WORD) + Math.min(guardsAndBible, 5000 / CHARS_PER_WORD)) : 0;
 
   // ─── The prompts of each kind, in tokens ──────────────────────────────────
   const promptOf = (kind: EstimateCallKind): Prompt => {
@@ -946,7 +966,7 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
         return prompt(scaffold(kind) + w(ideaWords + synopsisWords + Math.min(design, 5000 / CHARS_PER_WORD) + canon + T.secretLineWords + style / 2 + rules + planReaders * ((designing ? T.designReactionWords + (flow.rubric ? T.designRubricWords : 0) : T.planReactionWords) + 14) + (designing ? designEntries + designLedgerContext + 250 + chapterReviewLines + findingLines : 0)) + list(chapters) + outlineWordsCapped(12_000) + (designing && flow.rubric ? rubricRequest : 0));
       case "scenes":
         // The chapter before and the chapter after, one line each; the last chapter of the book has no next one.
-        return prompt(scaffold(kind) + w(notes + T.chapterWords + canon + secrets + rules + Math.min(design, 2500 / CHARS_PER_WORD)) + line, [story(5000), { slope: closedLine, cap: closedLine }, notesRamp], -line);
+        return prompt(scaffold(kind) + w(notes + T.chapterWords + canon + secrets + rules + Math.min(design, 2500 / CHARS_PER_WORD)) + line + designForScenes, [story(5000), { slope: closedLine, cap: closedLine }, notesRamp], -line);
       case "scene-summary":
         return prompt(scaffold(kind) + w(sceneWords));
       case "reader":
@@ -954,10 +974,10 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
       case "readers-summary":
         return prompt(scaffold(kind) + w(chapterReaders * (T.readerWords + 27)));
       case "specialists":
-        return prompt(scaffold(kind) + w(ghostwriter + style + T.chapterWords + scenes * T.sceneLineWords + canon + secrets + rules) + entriesOfChapter + chapterText, [], 0, [earlierChapters]);
+        return prompt(scaffold(kind) + w(ghostwriter + style + T.chapterWords + scenes * T.sceneLineWords + canon + secrets + rules) + entriesOfChapter + chapterText + designOfChapter, [], 0, [earlierChapters]);
       case "director-review": {
         const readerLines = chapterReaders * T.readerLineWords + (chapterReaders > 0 ? T.readersSummaryWords + 25 : 0);
-        return prompt(scaffold(kind) + w(notes + style + T.chapterWords + scenes * T.sceneLineWords + secrets + rules + readerLines + findingsLines * T.findingWords + proposals * T.proposalWords) + chapterText, [story(4000), notesRamp]);
+        return prompt(scaffold(kind) + w(notes + style + T.chapterWords + scenes * T.sceneLineWords + secrets + rules + readerLines + findingsLines * T.findingWords + proposals * T.proposalWords) + chapterText + designOfChapter, [story(4000), notesRamp]);
       }
       case "repair":
         return prompt(scaffold(kind) + w(T.fixWords + ghostwriter + notes + T.sceneWords + secrets + rules + Math.min(400, sceneWords) + Math.min(150, sceneWords) + sceneWords) + entriesOfScene, [notesRamp]);
@@ -973,7 +993,7 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
     const previousEnding = k > 1 ? Math.min(400, sceneWords) : 0;
     const base = scaffold("write")
       + w(ghostwriter + notes + Math.min(world, 2000 / CHARS_PER_WORD) + T.chapterWords + (k - 1) * (T.summaryWords + 6) + previousEnding + T.sceneWords + (k < scenes ? T.sceneWords : 0) + secrets + rules)
-      + entriesOfScene + taste;
+      + entriesOfScene + taste + designForScene;
     // The first scene of a chapter that is not the first begins after the last scene of the chapter before.
     const ramps: Ramp[] = [story(5000), notesRamp];
     if (k === 1) ramps.push({ slope: w(250), cap: w(250) });
@@ -992,7 +1012,7 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
   // The plan: a call for each batch of twenty chapters, asked again for every batch after each revision the director asks for. A revision of a plan in one batch
   // carries the plan as it is; one of a plan in several carries the batch as it is and the lines of the others.
   const planCalls = (() => {
-    const base = scaffold("plan") + w(ideaWords + synopsisWords + Math.min(design, 6000 / CHARS_PER_WORD) + Math.min(world, 2500 / CHARS_PER_WORD) + canon + T.secretLineWords + T.revealsWords + rules) + taste + outlineWordsCapped(36_000)
+    const base = scaffold("plan") + w(ideaWords + synopsisWords + Math.min(design, 6000 / CHARS_PER_WORD) + Math.min(world, 2500 / CHARS_PER_WORD) + canon + T.secretLineWords + T.revealsWords + rules) + taste + outlineWordsCapped(56_000)
       // A design also reads the ledger of the secrets, the themes and the rules of the world, and the ghostwriter who will write the book.
       + (designing ? w(designLedgerContext + 250) : 0);
     const alreadyWritten = written > 0 ? list(written, closedLine) + w(Math.min(T.storyWordsTarget, 4000 / CHARS_PER_WORD, T.storyWordsPerChapter * written)) : 0;
