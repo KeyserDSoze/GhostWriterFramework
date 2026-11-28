@@ -265,3 +265,34 @@ test("the estimate of «Review and complete»: no concept and no plan, a call fo
   const plan = estimateAutopilotRun({ ...input, design: { maxRounds: 3, readerRounds: 1 } });
   assert.equal(plan.steps.concept.calls.max, 1, "a design that plans the book makes its concept");
 });
+
+test("«Review and complete» goes only to a personal server that announces autopilot-design-complete; the mode of a plan is not sent to an older one", async () => {
+  assert.equal(engine.SERVER_FEATURE_AUTOPILOT_DESIGN_COMPLETE, "autopilot-design-complete");
+  assert.equal(engine.serverSupportsDesignComplete({ features: ["autopilot-design-complete"] }), true);
+  for (const odd of [null, undefined, {}, { features: "autopilot-design-complete" }, ["autopilot-design"]]) assert.equal(engine.serverSupportsDesignComplete(odd), false, JSON.stringify(odd));
+  const serverWith = (features) => {
+    const log = [];
+    const fetch = async (input, init = {}) => {
+      const url = new URL(input);
+      log.push({ method: init.method ?? "GET", path: url.pathname, body: init.body === undefined ? undefined : JSON.parse(init.body) });
+      if (url.pathname === "/api/v1/info") return Response.json({ name: "narrarium-server", apiVersion: 1, serverVersion: "0.1.24", engineVersion: "0.1.29", serverId: "s", label: "Test", git: true, features, publicKey: "k", fingerprint: "f", supervised: false });
+      if (url.pathname.endsWith("/design/proposals")) return Response.json({ applied: 1, skipped: 0, outdated: 0, chapters: [1], created: [] });
+      return Response.json({ bookId: "b", state: null, summary: null, activities: [], live: null, running: true, host: "server" });
+    };
+    return { log, client: new engine.NarrariumServerClient({ baseUrl: "http://127.0.0.1:24242", token: "nrs_me", fetch }) };
+  };
+  const old = serverWith(["autopilot", "autopilot-outline-brief", "autopilot-design"]);
+  const refused = await old.client.startAutopilot("b", { design: { mode: "complete" } }).then(() => null, (failure) => failure);
+  assert.deepEqual([refused?.status, refused?.code], [501, "feature_unavailable"]);
+  const notApplied = await old.client.applyDesignProposals("b", { run: "r", apply: [] }).then(() => null, (failure) => failure);
+  assert.equal(notApplied?.code, "feature_unavailable");
+  assert.deepEqual(old.log.map((request) => request.path).filter((path) => path !== "/api/v1/info"), [], "nothing is sent but the question of the features");
+  await old.client.startAutopilot("b", { design: { mode: "plan", chapters: 6 } });
+  assert.deepEqual(old.log.at(-1).body, { design: { chapters: 6 } }, "an older server is asked the design as it always was");
+  const current = serverWith(["autopilot", "autopilot-outline-brief", "autopilot-design", "autopilot-design-complete"]);
+  await current.client.startAutopilot("b", { design: { mode: "complete", review: { maxRounds: 2 } } });
+  assert.deepEqual(current.log.at(-1).body, { design: { mode: "complete", review: { maxRounds: 2 } } });
+  const applied = await current.client.applyDesignProposals("b", { run: "r", apply: ["f1-goal"] });
+  assert.equal(applied.applied, 1);
+  assert.deepEqual(current.log.at(-1), { method: "POST", path: "/api/v1/books/b/autopilot/design/proposals", body: { run: "r", apply: ["f1-goal"] } });
+});

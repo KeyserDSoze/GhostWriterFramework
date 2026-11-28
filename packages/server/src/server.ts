@@ -86,7 +86,7 @@ import { FROZEN_ACTIONS, FROZEN_EDITS_MODES, FrozenChapterError, SERVER_FEATURE_
 import { REVISION_CHAPTER_MODES, REVISION_REASONS, RevisionCampaignError, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, type ReviseChaptersInput } from "narrarium-engine";
 import { SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, type ReviseAnnotationsInput } from "narrarium-engine";
 import { BOOK_ROUND_MODES, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, type BookCorrectionsDecision, type ReviewBookInput } from "narrarium-engine";
-import { AutopilotDesignError, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_AUTOPILOT_DESIGN_REVIEW, SERVER_FEATURE_BIBLE_DECISIONS, normalizeDesignStart, type DesignFindingRequest, type DesignPitchRequest } from "narrarium-engine";
+import { AutopilotDesignError, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_AUTOPILOT_DESIGN_COMPLETE, SERVER_FEATURE_AUTOPILOT_DESIGN_REVIEW, SERVER_FEATURE_BIBLE_DECISIONS, normalizeDesignStart, type DesignFindingRequest, type DesignPitchRequest, type DesignProposalsDecision } from "narrarium-engine";
 import { SERVER_FEATURE_AUTOPILOT_WILDCARDS, registerWildcardsPlateauBreaker } from "narrarium-engine";
 
 /** Tuning of the server's own limits (the defaults are the ones to run with; tests shorten them). */
@@ -315,7 +315,7 @@ const CAMPAIGN_ERROR_STATUS: Record<string, number> = { invalid_request: 400, ca
 /**
  * A design that cannot begin: what was asked is not one (400), the autopilot has written chapters of the book, or the book has no description to design it from (409). A choice or a
  * decision that cannot be made: what names nothing (400), or what the state does not allow (409: no pitches or findings yet, the pitch is locked, a design goes on, a finding the
- * autopilot cannot fix, a Synopsis with no chapter to review).
+ * autopilot cannot fix, a Synopsis with no chapter to review, proposals of «Review and complete» that none waits for or that are another run's).
  */
 const DESIGN_ERROR_STATUS: Record<string, number> = {
   invalid_request: 400,
@@ -329,6 +329,8 @@ const DESIGN_ERROR_STATUS: Record<string, number> = {
   design_no_chapters: 409,
   no_findings: 409,
   not_fixable: 409,
+  no_proposals: 409,
+  stale: 409,
 };
 
 /**
@@ -702,6 +704,24 @@ function asDesignFindingRequest(body: Record<string, unknown>): DesignFindingReq
   return { id: body.id as string, action: body.action as DesignFindingRequest["action"], ...(typeof body.reason === "string" ? { reason: body.reason } : {}) };
 }
 
+/** The proposals of «Review and complete» a decision may name at most (fields, findings and canon of every chapter of a long book). */
+const MAX_DESIGN_PROPOSALS = 20_000;
+
+/**
+ * The body of a decision about the proposals of «Review and complete», `{ run, apply: [ids] }` (`autopilot-design-complete`): the shape, which is checked here (a misspelt key
+ * is refused, not ignored), and what it asks, which the engine judges (its `AutopilotDesignError`: `no_proposals`, `stale`, an id that is not a proposal that waits).
+ */
+function asDesignProposalsDecision(body: Record<string, unknown>): DesignProposalsDecision {
+  const refuse = (problem: string): never => {
+    throw new HttpError(400, "invalid_request", `${problem} A decision is { "run": the design run looked at, "apply": the ids of the proposals to apply }.`);
+  };
+  const unknown = Object.keys(body).filter((key) => key !== "run" && key !== "apply");
+  if (unknown.length) refuse(`${unknown.slice(0, 3).map(named).join(", ")} cannot be sent here.`);
+  if (typeof body.run !== "string" || !body.run || body.run.length > 64) refuse("`run` is when the design run looked at began, as the state says it.");
+  if (!Array.isArray(body.apply) || body.apply.length > MAX_DESIGN_PROPOSALS || body.apply.some((id) => typeof id !== "string" || !id || id.length > 200)) refuse(`\`apply\` is a list of at most ${MAX_DESIGN_PROPOSALS} ids.`);
+  return { run: body.run as string, apply: body.apply as string[] };
+}
+
 /** The folder of a chapter in the address (`…/chapters/:slug/freeze`): a name in `chapters/`, not a path (no separator, no control character), and short. */
 function asChapterFolder(value: string): string {
   if (!value || value.length > 200 || value === "." || value === ".." || /[/\\\u0000-\u001f\u007f]/.test(value)) throw new HttpError(400, "invalid_request", "The chapter in the address must be the name of its folder in chapters/.");
@@ -1008,7 +1028,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_WILDCARDS, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_AUTOPILOT_DESIGN_REVIEW, SERVER_FEATURE_BIBLE_DECISIONS, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", SERVER_FEATURE_GITHUB_CONNECTION, ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_WILDCARDS, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_AUTOPILOT_DESIGN_REVIEW, SERVER_FEATURE_AUTOPILOT_DESIGN_COMPLETE, SERVER_FEATURE_BIBLE_DECISIONS, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", SERVER_FEATURE_GITHUB_CONNECTION, ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -1498,6 +1518,14 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           books.assertNotInMaintenance();
           const runtime = books.get(params[0]);
           return runtime.session.reviseAnnotations(asReviseAnnotations(asObject(await readBody(request, SMALL_BODY))));
+          },
+        },
+      // The author's decision about the proposals of «Review and complete»: the ones chosen are written in one commit, nothing is started.
+      {
+        method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/design\/proposals$/, scope: "run", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          return runtime.session.applyDesignProposals(asDesignProposalsDecision(asObject(await readBody(request, SMALL_BODY))));
         },
       },
       // The author's choice of the pitch the book is designed from, and her decisions about the findings of the analysis of the design: saved at once, nothing is started.

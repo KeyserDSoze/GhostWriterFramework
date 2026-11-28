@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SERVER_FEATURE_AUTOPILOT_DESIGN, parseAutopilotState, readOutlineChapter, serverSupportsDesign } from "narrarium-engine";
+import { SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_AUTOPILOT_DESIGN_COMPLETE, parseAutopilotState, readOutlineChapter, serverSupportsDesign, serverSupportsDesignComplete } from "narrarium-engine";
 import * as testing from "../dist/testing.mjs";
 import { withServer } from "./helpers.mjs";
 import { finished, seededBook } from "./fake-provider.mjs";
@@ -52,5 +52,50 @@ test("#108: a design is refused for what is no design and for a book without a d
     assert.match(files[2].content, /themes:/);
     assert.equal(parseAutopilotState(files[3].content).plan.approved, true);
 
+  });
+});
+
+test("#125: «Review and complete» on the server: the feature is announced, a start reviews the author's chapters and stops, the route applies the chosen proposals in one commit, and its refusals are 400 and 409", async () => {
+  for (const [code, status] of [["design_no_chapters", 409], ["no_proposals", 409], ["stale", 409]]) {
+    const mapped = testing.errorStatus(new testing.AutopilotDesignError(code, `Message of ${code}.`));
+    assert.deepEqual([mapped.status, mapped.code], [status, code]);
+  }
+  await withServer(async (server, client) => {
+    const info = await (await fetch(`${server.url}/api/v1/info`)).json();
+    assert.ok(info.features.includes(SERVER_FEATURE_AUTOPILOT_DESIGN_COMPLETE));
+    assert.equal(serverSupportsDesignComplete(info), true);
+    await seededBook(client, "b", { chapters: 2 });
+    const before = await client.readFiles("b", ["outline/chapters/001.md", "outline/chapters/002.md"]);
+    const api = await rawApi(server);
+    const wrong = await api("POST", "/api/v1/books/b/autopilot/start", { design: { mode: "complete", chapters: 4 }, options: OPTIONS });
+    assert.deepEqual([wrong.status, wrong.json?.code], [400, "invalid_request"]);
+
+    await client.startAutopilot("b", { design: { mode: "complete" }, options: OPTIONS });
+    const done = await finished(client, "b");
+    assert.equal(done.state.status, "paused", done.state.lastError?.message);
+    assert.equal(done.state.design.mode, "complete");
+    assert.deepEqual(done.activities.map((activity) => activity.task), ["design-complete", "design-complete-review"], "no concept, no plan");
+    assert.equal(done.summary.design.mode, "complete");
+    assert.equal(done.summary.design.proposals.chapters, 2);
+    const unchanged = await client.readFiles("b", ["outline/chapters/001.md", "outline/chapters/002.md"]);
+    assert.deepEqual(unchanged.map((file) => file.content), before.map((file) => file.content), "nothing of the author's is written before the author applies");
+
+    for (const body of [{ run: done.state.design.startedAt }, { run: done.state.design.startedAt, apply: "f1-goal" }, { run: done.state.design.startedAt, apply: [], extra: 1 }]) {
+      const answer = await api("POST", "/api/v1/books/b/autopilot/design/proposals", body);
+      assert.deepEqual([answer.status, answer.json?.code], [400, "invalid_request"], JSON.stringify(body));
+    }
+    const stale = await api("POST", "/api/v1/books/b/autopilot/design/proposals", { run: "2020-01-01T00:00:00.000Z", apply: [] });
+    assert.deepEqual([stale.status, stale.json?.code], [409, "stale"]);
+    const result = await client.applyDesignProposals("b", { run: done.state.design.startedAt, apply: ["f1-goal", "f2-ending"] });
+    assert.deepEqual({ applied: result.applied, chapters: result.chapters }, { applied: 2, chapters: [1, 2] });
+    const files = await client.readFiles("b", ["outline/chapters/001.md", "outline/chapters/002.md", "outline/changes.yml"]);
+    const [first, second] = await Promise.all(files.slice(0, 2).map((file, index) => readOutlineChapter(file.path, index + 1, file.content)));
+    assert.equal(first.entry.design.goal, "Proposed goal of chapter 1.");
+    assert.equal(first.entry.body, "Event 1 happens and the story turns.");
+    assert.equal(first.entry.origin, "author");
+    assert.equal(second.entry.design.ending, "Proposed ending of chapter 2.");
+    assert.match(files[2].content, /by: autopilot/);
+    const again = await api("POST", "/api/v1/books/b/autopilot/design/proposals", { run: done.state.design.startedAt, apply: [] });
+    assert.deepEqual([again.status, again.json?.code], [409, "no_proposals"]);
   });
 });

@@ -17,6 +17,7 @@ import {
   serverSupportsDesign,
   serverSupportsGitHubConnection,
   serverSupportsDesignReview,
+  serverSupportsDesignComplete,
   serverSupportsGithubConflicts,
   serverSupportsOutlineApply,
   serverSupportsReviewBook,
@@ -44,6 +45,8 @@ import {
   type BookCorrectionsRequest,
   type DesignFindingRequest,
   type DesignPitchRequest,
+  type DesignProposalsRequest,
+  type DesignProposalsResponse,
   type ReviewBookRequest,
   type ReviseAnnotationsRequest,
   type RevisionCampaignResponse,
@@ -305,6 +308,15 @@ export class NarrariumServerClient {
     // The reviews of a design go only to a server that has them: an older one refuses a design with a key it does not know.
     if (asksDesignReview(options?.design) && !serverSupportsDesignReview(info)) {
       throw new ServerRequestError("This personal server does not have the reviews of a design (it does not announce the feature autopilot-design-review): it would refuse the design. Update the server, or leave the workflow and the review on request out.", 501, "feature_unavailable");
+    }
+    const design = typeof options?.design === "object" && options.design !== null ? options.design : null;
+    // «Review and complete» goes only to a server that knows it (`autopilot-design-complete`); the mode of a plan is the design as it always was, and is not sent to one that does not.
+    if (design?.mode === "complete" && !serverSupportsDesignComplete(info)) {
+      throw new ServerRequestError("This personal server cannot review and complete a book (it does not announce the feature autopilot-design-complete): update the server, or review the book in the browser.", 501, "feature_unavailable");
+    }
+    if (design?.mode === "plan" && !serverSupportsDesignComplete(info)) {
+      const { mode: _plan, ...rest } = design;
+      return this.request("POST", bookRoute(bookId, "/autopilot/start"), { ...options, design: rest }, { timeoutMs: 300_000 });
     }
     return this.request("POST", bookRoute(bookId, "/autopilot/start"), options, { timeoutMs: 300_000 });
   }
@@ -617,6 +629,19 @@ export class NarrariumServerClient {
       throw new ServerRequestError("This personal server does not have the reviews of a design (it does not announce the feature autopilot-design-review): update the server.", 501, "feature_unavailable");
     }
     return this.request("POST", bookRoute(bookId, "/autopilot/design/finding"), request);
+  }
+
+  /**
+   * Apply the proposals of «Review and complete» the author chose: `POST …/autopilot/design/proposals` (`DesignProposalsRequest`, the engine's `AutopilotSession.applyDesignProposals`).
+   * Needs `SERVER_FEATURE_AUTOPILOT_DESIGN_COMPLETE`, else `feature_unavailable` before anything is sent. A refusal carries the code of the engine's `AutopilotDesignError`
+   * (`invalid_request`, `no_proposals`, `stale`), or `busy` while a run goes on. Nothing is started.
+   */
+  async applyDesignProposals(bookId: string, request: DesignProposalsRequest): Promise<DesignProposalsResponse> {
+    const info = await this.info();
+    if (!serverSupportsDesignComplete(info)) {
+      throw new ServerRequestError("This personal server cannot review and complete a book (it does not announce the feature autopilot-design-complete): update the server.", 501, "feature_unavailable");
+    }
+    return this.request("POST", bookRoute(bookId, "/autopilot/design/proposals"), request);
   }
 
   /** Cancel the chapters of the campaign that wait (the one being worked finishes; a review of the book ends with it): `DELETE …/autopilot/campaign`. A server with the campaigns of any reason has it. */

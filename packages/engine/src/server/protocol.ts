@@ -8,6 +8,7 @@ import type { ReviseAnnotationsInput } from "../autopilot/annotations.js";
 import type { FindingDecisionInput } from "../autopilot/design-coherence.js";
 import type { DesignPitchChoice } from "../autopilot/design-alternatives.js";
 import type { RevisionReason } from "../autopilot/types.js";
+import type { DesignProposalsDecision, DesignProposalsResult } from "../autopilot/design-complete-apply.js";
 import type { AutopilotEvent, AutopilotLiveOptions, AutopilotPauseMode, AutopilotSnapshot, AutopilotStateSummary, FrozenAction, FrozenChangeKind, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
 import type { AiCallField } from "../autopilot/calls/types.js";
 
@@ -709,6 +710,22 @@ export const SERVER_FEATURE_AUTOPILOT_ANNOTATIONS = "autopilot-annotations";
 export function serverSupportsAnnotations(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
   return announces(info, SERVER_FEATURE_AUTOPILOT_ANNOTATIONS);
 }
+
+/**
+ * The `ServerInfo.features` entry of a server whose engine reviews and completes a book whose chapters the author wrote (#125): a design start with `mode: "complete"`
+ * (`DesignStartInput.mode`), and `POST /api/v1/books/:id/autopilot/design/proposals` (`DesignProposalsRequest`, `AutopilotSession.applyDesignProposals`). An older server
+ * refuses the mode, or would design the book from scratch: the engine's client refuses to send it there.
+ */
+export const SERVER_FEATURE_AUTOPILOT_DESIGN_COMPLETE = "autopilot-design-complete";
+
+/** Whether the server announces «Review and complete» (`autopilot-design-complete`). Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsDesignComplete(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  return announces(info, SERVER_FEATURE_AUTOPILOT_DESIGN_COMPLETE);
+}
+
+/** The body of `POST …/autopilot/design/proposals`: the author's decision about the proposals of «Review and complete», and what applying them did. */
+export type DesignProposalsRequest = DesignProposalsDecision;
+export type DesignProposalsResponse = DesignProposalsResult;
 
 /** The feature a server announces for the campaigns of a reason: the routes of a campaign are there for it. */
 export const CAMPAIGN_FEATURES: Readonly<Record<RevisionReason, string>> = {
