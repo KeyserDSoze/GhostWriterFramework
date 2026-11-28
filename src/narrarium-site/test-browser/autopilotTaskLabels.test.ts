@@ -26,7 +26,7 @@ describe("the name of a kind of step", () => {
     expect(taskLabel(t("it"), "summarize-imported", 3)).toBe("Riassunto del capitolo importato 3");
   });
 
-  it.each(["concept", "summarize-imported", "plan", "plan-reader", "plan-review", "scenes", "write", "reader", "readers-summary", "specialists", "director-review", "repair", "consolidate", "impact", "revise", "final"] as const)("has a readable name for %s, and never shows a key", (kind) => {
+  it.each(["concept", "summarize-imported", "plan", "plan-reader", "plan-review", "scenes", "write", "reader", "readers-summary", "specialists", "director-review", "repair", "consolidate", "impact", "revise", "final", "book-corrections"] as const)("has a readable name for %s, and never shows a key", (kind) => {
     for (const language of ["en", "it"] as const) {
       const label = taskLabel(t(language), kind, 4);
       expect(label, `${kind} ${language}`).not.toMatch(/autopilot\.task|\{\{|undefined/);

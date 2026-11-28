@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useId, useMemo, useState, type ReactNode }
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { BookOpen, CheckCircle2, Clapperboard, Download, Loader2, Plus, RotateCcw, Target } from "lucide-react";
-import { chapterReading, type ReviewRecord } from "narrarium-engine";
+import { chapterReading, type BookRoundMode, type ReviewRecord } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { ReadFirstBlock } from "@/components/autopilot/result/ReadFirst";
 import { ScoresBlock } from "@/components/autopilot/result/Scores";
@@ -24,6 +24,8 @@ import type { BookEntry } from "@/types/settings";
 const ReviewBookDialog = lazy(withAutopilotTranslations(() => import("@/components/autopilot/result/ReviewBookDialog")));
 // A chapter read in a window over the result is one too: its text, its type and its folder reading are loaded with the first chapter that is opened.
 const ChapterReadingModal = lazy(withAutopilotTranslations(() => import("@/components/autopilot/result/ChapterReadingModal")));
+// «The book as a whole»: the book's vote under its target and what the director asked of it (the corrections of a review's book-level round), a chunk of its own.
+const BookRoundBlock = lazy(withAutopilotTranslations(() => import("@/components/autopilot/result/BookRound")));
 
 /** Shown while the window of a chapter is on its way, after a short wait so that a chunk that comes at once leaves no flash. */
 function OpeningChapter() {
@@ -180,6 +182,8 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true, review }: Au
   const rounds = useMemo(() => reviewRounds(scores), [scores]);
   const [reviewing, setReviewing] = useState(false);
   const [reviewOpened, setReviewOpened] = useState(false);
+  // What the window starts with for the whole book, when the settings of the book have the round off: the block of the book's vote asks for it, the action of the bar does not.
+  const [bookRoundAsked, setBookRoundAsked] = useState<BookRoundMode | undefined>(undefined);
   // The chapter read in a window (by its folder), and the link that opened it, which has the focus again when the window closes.
   const [reading, setReading] = useState<{ slug: string; opener: HTMLElement } | null>(null);
   const openChapter = useCallback<OpenChapter>((slug, opener) => setReading({ slug, opener }), []);
@@ -214,7 +218,7 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true, review }: Au
   if (rounds) numbers.push([t("autopilot.result.numbers.rounds"), <>{formatCount(rounds.rounds)}<span className="ml-1.5 inline-block text-xs font-normal text-muted-foreground">{t("autopilot.result.numbers.roundsMost", { count: rounds.most })}</span></>]);
   const titleOf = (number: number) => byNumber.get(number)?.title;
   const lastReview = state?.reviews?.[state.reviews.length - 1];
-  const openReview = review && state ? () => { setReviewOpened(true); setReviewing(true); } : undefined;
+  const openReview = review && state ? (bookRound?: BookRoundMode) => { setBookRoundAsked(bookRound); setReviewOpened(true); setReviewing(true); } : undefined;
   // The chapter links open the chapter in a window when the book can be read here (its working copy is the one the page has); without, they are links.
   const readHere = review && state ? openChapter : undefined;
 
@@ -229,13 +233,18 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true, review }: Au
         <NumbersBlock items={numbers} />
       </div>
       {state && (hasReadings || state.options.review?.readersTarget !== undefined || Object.keys(state.options.review?.readerTargets ?? {}).length > 0) && <TargetsBlock bookId={bookId} state={state} structure={review?.structure} />}
+      {state && (typeof state.finalReview?.score === "number" || (lastReview?.bookRounds?.length ?? 0) > 0) && (
+        <Suspense fallback={null}>
+          <BookRoundBlock bookId={bookId} state={state} structure={review?.structure} linkedSlugs={linkedSlugs} onReview={openReview ? () => openReview("ask") : undefined} />
+        </Suspense>
+      )}
       {scores.length > 0 && (
         <div className={cn("grid gap-6", wide && "grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]")}>
           <ScoresBlock bookId={bookId} scores={scores} linkedSlugs={linkedSlugs} titleOf={titleOf} onOpenChapter={readHere} />
           <ReadFirstBlock bookId={bookId} items={first} linkedSlugs={linkedSlugs} titleOf={titleOf} onOpenChapter={readHere} />
         </div>
       )}
-      <ActionsBar bookId={bookId} onReview={openReview} />
+      <ActionsBar bookId={bookId} onReview={openReview ? () => openReview() : undefined} />
       {reading && review && state && (
         <Suspense fallback={<OpeningChapter />}>
           <ChapterReadingModal bookId={bookId} book={review.book} branch={review.branch} state={state} linkedSlugs={linkedSlugs} slug={reading.slug} onNavigate={goToChapter} onClose={closeChapter} returnFocusTo={reading.opener} onLinkClick={followLink} />
@@ -243,7 +252,7 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true, review }: Au
       )}
       {reviewOpened && review && state && (
         <Suspense fallback={null}>
-          <ReviewBookDialog open={reviewing} onClose={() => setReviewing(false)} book={review.book} branch={review.branch} structure={review.structure} state={state} />
+          <ReviewBookDialog open={reviewing} onClose={() => setReviewing(false)} book={review.book} branch={review.branch} structure={review.structure} state={state} initialBookRound={bookRoundAsked} />
         </Suspense>
       )}
     </section>

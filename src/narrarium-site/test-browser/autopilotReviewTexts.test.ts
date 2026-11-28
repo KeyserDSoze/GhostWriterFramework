@@ -25,6 +25,12 @@ const SAID: Array<Partial<Insight>> = [
   { code: "reviewHeld", figures: { round: 3, rounds: 2, limit: 2, target: 9 } },
   { code: "budgetReached", figures: { used: 2.5032, limit: 2.5, currency: "USD" } },
   { code: "tokenBudgetReached", figures: { used: 1_200_300, limit: 1_200_000 } },
+  { code: "bookRoundAsked", figures: { round: 2, target: 9, book: 7.4 } },
+  { code: "bookRoundProposed", figures: { round: 2, target: 9, book: 7.4, corrections: 3, chapters: 2 } },
+  { code: "bookRoundApplied", figures: { round: 2, target: 9, book: 7.4, corrections: 3, chapters: 2 } },
+  { code: "bookRoundNone", figures: { round: 2, target: 9, book: 7.4, below: 0, rounds: 1, outcome: "chapters" } },
+  { code: "bookRoundAuthor", figures: { round: 2, target: 9, book: 7.4, below: 0, rounds: 1, outcome: "chapters" } },
+  { code: "plateauBroken" },
 ];
 
 beforeAll(async () => {
@@ -80,13 +86,27 @@ describe("the insights of a review of the book and of the caps", () => {
     }
   });
 
+  it("say what the director asked of the whole book: how many corrections, the vote of the book and the target, singular and plural, in both languages", async () => {
+    const many = SAID.find((body) => body.code === "bookRoundProposed") as Partial<Insight>;
+    expect(text("en", many)).toBe("The director asks 3 corrections to raise the book (7.4/10, target 9/10): they wait for you.");
+    expect(text("en", { ...many, figures: { ...many.figures, corrections: 1, chapters: 1 } })).toBe("The director asks 1 correction to raise the book (7.4/10, target 9/10): it waits for you.");
+    expect(text("en", SAID.find((body) => body.code === "bookRoundApplied") as Partial<Insight>)).toContain("3 corrections of the book are carried out");
+    expect(text("en", SAID.find((body) => body.code === "bookRoundAsked") as Partial<Insight>)).toContain("the book got 7.4/10 (target 9/10)");
+    expect(text("en", SAID.find((body) => body.code === "bookRoundNone") as Partial<Insight>)).toContain("The director has no correction across the chapters to ask");
+    expect(text("en", SAID.find((body) => body.code === "bookRoundAuthor") as Partial<Insight>)).toContain("in chapters that are yours");
+    await act(async () => { await i18n.changeLanguage("it"); });
+    expect(text("it", many)).toBe("Il direttore chiede 3 correzioni per alzare il libro (7,4/10, obiettivo 9/10): aspettano te.");
+    expect(text("it", { ...many, figures: { ...many.figures, corrections: 1, chapters: 1 } })).toBe("Il direttore chiede 1 correzione per alzare il libro (7,4/10, obiettivo 9/10): aspetta te.");
+    expect(text("it", SAID.find((body) => body.code === "plateauBroken") as Partial<Insight>)).toContain("La revisione aveva smesso di migliorare");
+  });
+
   it("write the money of a cap in the currency it was counted in, and the tokens as a count", () => {
     expect(text("en", SAID[7])).toBe("Money cap reached: $2.50 spent of $2.50. Raise the cap to go on.");
     expect(text("en", SAID[8])).toContain("1,200,300 tokens of 1,200,000");
   });
 
   it("keep the engine's own words for an event without its numbers (an older engine)", () => {
-    for (const code of ["reviewChapterDone", "reviewRoundDone", "reviewDone", "reviewStopped", "reviewHeld", "budgetReached", "tokenBudgetReached"] as const) {
+    for (const code of ["reviewChapterDone", "reviewRoundDone", "reviewDone", "reviewStopped", "reviewHeld", "bookRoundAsked", "bookRoundProposed", "bookRoundApplied", "bookRoundNone", "budgetReached", "tokenBudgetReached"] as const) {
       expect(text("it", { code }), code).toBe(ENGINE_WORDS);
     }
     expect(text("it", { code: "reviewChapterSkipped" })).toBe(ENGINE_WORDS);

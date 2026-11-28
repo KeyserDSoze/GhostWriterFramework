@@ -31,6 +31,7 @@ const CATEGORY: Partial<Record<AutopilotTaskKind, StepCategory>> = {
   "director-review": "director",
   "plan-review": "director",
   final: "director",
+  "book-corrections": "director",
   impact: "director",
   reader: "readers",
   "readers-summary": "readers",
@@ -200,6 +201,8 @@ const BOOK_LEVEL: Partial<Record<AutopilotTaskKind, GroupKind>> = {
   "plan-reader": "plan",
   "plan-review": "plan",
   final: "final",
+  // The director's corrections of the whole book are asked of the book's judgement: they are in the group of the review of the book.
+  "book-corrections": "final",
   impact: "other",
 };
 

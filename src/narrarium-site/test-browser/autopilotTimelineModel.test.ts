@@ -33,7 +33,7 @@ const titles = (target: TimelineGroup) => target.rows.map((row) => (row.kind ===
 
 describe("what a step is about", () => {
   it.each([
-    ["director-review", "director"], ["plan-review", "director"], ["final", "director"], ["impact", "director"],
+    ["director-review", "director"], ["plan-review", "director"], ["final", "director"], ["book-corrections", "director"], ["impact", "director"],
     ["reader", "readers"], ["readers-summary", "readers"], ["plan-reader", "readers"],
     ["specialists", "specialists"],
     ["concept", "writing"], ["plan", "writing"], ["scenes", "writing"], ["write", "writing"], ["repair", "writing"], ["revise", "writing"], ["consolidate", "writing"], ["summarize-imported", "writing"],
@@ -164,6 +164,13 @@ describe("the groups: a chapter, and in it a round of the review", () => {
     expect(group(timeline, "plan").steps).toBe(4);
     expect(group(timeline, "other").kind).toBe("other");
     expect(group(timeline, "final").kind).toBe("final");
+  });
+
+  it("puts the director's corrections of the whole book in the group of the review of the book, whose verdict they do not change", () => {
+    const timeline = buildTimeline({ activities: [stepOf("final", { from: 0, summary: "revise 7/10 — The ending is not earned." }), stepOf("book-corrections", { from: 100, summary: "2 corrections — The ending is not earned." })], events: [] });
+    expect(timeline.groups.map((candidate) => candidate.key)).toEqual(["final"]);
+    expect(group(timeline, "final").steps).toBe(2);
+    expect(group(timeline, "final").result).toEqual({ verdict: "revise", score: 7 });
   });
 
   it("reads the verdict and the score of a round from what the director wrote, and says nothing when it cannot", () => {

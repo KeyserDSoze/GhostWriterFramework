@@ -54,6 +54,17 @@ describe("the doc of the autopilot says what the page does with what the engine 
     expect(where).not.toContain("comes with a version of the app after this one");
   });
 
+  it("says what the book-level round of a review is, how the author decides about its corrections, and the extension point a plateau gives to what takes it on", () => {
+    const round = section("The book-level round of a review");
+    for (const word of [
+      "ReviewPolicy.bookRound", "off", "apply", "ask", "book-corrections", "book_corrections", "finalReview.points", "readBookCorrections", "bookRoundProposed", "decideBookCorrections", "no_proposal", "stale",
+      "held: \"author\"", "campaignMaxRounds", "autopilot-review-book-round", "/autopilot/review/corrections", "feature_unavailable", "registerPlateauBreaker", "PLATEAU_BREAKS_MAX", "ReviewPlateauBreaker", "wildcards",
+      "{ action: \"stop\" }", "{ action: \"continue\", material }", "context.ai", "read only",
+    ]) expect(round, word).toContain(word);
+    const result = doc.slice(doc.indexOf("### The result of a finished book"), doc.indexOf("### The start form"));
+    for (const word of ["result/BookRound.tsx", "BookRoundField.tsx", "BookRoundSlot.tsx", "REVIEW_BOOK_ROUND_SERVER_VERSION", "decideBookCorrections", "CampaignChip", "AutopilotReviewBookRoundUnsupportedError"]) expect(result, word).toContain(word);
+  });
+
   // Changed on purpose (engine 0.1.15): the reply of a structured step is shown as it streams; «answering» only says how much has arrived until then.
   it("says that a step which answers with a value shows its reply as it streams, how much has arrived until then, and that every host follows one rule", () => {
     for (const word of ["task-progress", "The model is answering", "shows the JSON of its reply as it streams", "applyLiveProgress", "callSeq"]) expect(doc, word).toContain(word);

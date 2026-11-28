@@ -49,6 +49,7 @@ import { QuickCommands } from "@/components/autopilot/QuickCommands";
 import { ProfileProblemsNotice } from "@/components/autopilot/StopNotices";
 import { QuestionCard } from "@/components/autopilot/QuestionCard";
 import { PendingReviews } from "@/components/autopilot/PendingReviews";
+import { BookRoundSlot } from "@/components/autopilot/BookRoundSlot";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
 import { ErrorPanel } from "@/components/autopilot/ErrorPanel";
 import { LearnedModelNotices } from "@/components/autopilot/LearnedModelNotices";
@@ -213,6 +214,7 @@ export function AutopilotPage() {
     <div data-autopilot-alerts className="space-y-3 empty:hidden">
       {summary?.question && <QuestionCard bookId={bookId} question={summary.question} disabled={busy !== null || running} run={run} />}
       <PendingReviews reviews={state?.pendingReviews} running={running} />
+      <BookRoundSlot bookId={bookId} state={state} linkedSlugs={linkedChapters} />
       <ErrorPanel bookId={bookId} />
       <LearnedModelNotices />
       {profileStop && <ProfileProblemsNotice bookId={bookId} message={summary?.message} hintId={PROFILE_HINT_ID} />}

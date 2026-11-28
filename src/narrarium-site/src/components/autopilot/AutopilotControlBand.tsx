@@ -65,8 +65,8 @@ export function useBandModel(bookId: string): BandModel | null {
   // A plan that waits for the author, to be approved or made again with the changes asked, has its own screen, which says it.
   const awaitingPlan = planReviewMode(state, control.running) !== null;
   // The message is said once, and where it is the one that tells it: a step that runs says itself, the plan that waits has its notice, a question has its card,
-  // the profile files and the error have theirs, and a book that is complete says so in its status and its result.
-  const quiet = control.running || awaitingPlan || Boolean(summary.question) || isProfileProblemStop(summary) || status === "error" || status === "completed";
+  // the profile files and the error have theirs, the corrections of the book that wait for the author have their panel, and a book that is complete says so in its status and its result.
+  const quiet = control.running || awaitingPlan || Boolean(summary.question) || isProfileProblemStop(summary) || status === "error" || status === "completed" || summary.campaign?.review?.bookRound?.status === "proposed";
   return {
     bookId,
     bookName: book?.name ?? bookId,

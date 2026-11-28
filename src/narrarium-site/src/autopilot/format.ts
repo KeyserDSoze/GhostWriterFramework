@@ -233,7 +233,7 @@ export function voteText(value: number | null | undefined): string {
  * The insights of a review of the book (`review-target`) and of the caps of the book, with their numbers (`figures`): the vote of a chapter and the target, the
  * votes of a round, how it ended, what a cap compared (money in the currency it was counted in). Without the numbers (an older engine) its own words stay.
  */
-const REVIEW_CODES = new Set(["reviewChapterDone", "reviewChapterSkipped", "reviewRoundDone", "reviewDone", "reviewStopped", "reviewHeld", "budgetReached", "tokenBudgetReached"]);
+const REVIEW_CODES = new Set(["reviewChapterDone", "reviewChapterSkipped", "reviewRoundDone", "reviewDone", "reviewStopped", "reviewHeld", "bookRoundAsked", "bookRoundProposed", "bookRoundApplied", "bookRoundNone", "bookRoundAuthor", "plateauBroken", "budgetReached", "tokenBudgetReached"]);
 
 function reviewText(t: TFunction, event: Extract<Notice, { type: "insight" }>): string {
   const figures = event.figures;
@@ -257,6 +257,17 @@ function reviewText(t: TFunction, event: Extract<Notice, { type: "insight" }>): 
       return t(key, { ...(figures.outcome === "plateau" || figures.outcome === "chapters" ? { context: figures.outcome } : {}), lowest: voteText(figures.lowest), book: voteText(figures.book), target: voteText(figures.target), defaultValue: title });
     case "reviewHeld":
       return typeof figures?.rounds === "number" ? t(key, { count: figures.rounds, defaultValue: title }) : title;
+    // The book-level round of a review (the director's corrections of the whole book): its numbers are the vote of the book, the target and how many corrections.
+    case "bookRoundAsked":
+    case "bookRoundNone":
+      return typeof figures?.target === "number" ? t(key, { book: voteText(figures.book), target: voteText(figures.target), defaultValue: title }) : title;
+    case "bookRoundProposed":
+    case "bookRoundApplied":
+      if (typeof figures?.target !== "number" || typeof figures.corrections !== "number") return title;
+      return t(key, { count: figures.corrections, corrections: figures.corrections, book: voteText(figures.book), target: voteText(figures.target), defaultValue: title });
+    case "bookRoundAuthor":
+    case "plateauBroken":
+      return t(key, { defaultValue: title });
     case "budgetReached":
       if (typeof figures?.used !== "number" || typeof figures.limit !== "number") return title;
       return t(key, { used: formatCost(figures.used, figures.currency), limit: formatCost(figures.limit, figures.currency), defaultValue: title });
