@@ -215,6 +215,7 @@ const BrainstormIdentity = lazy(() => brainstormParts().then((module) => ({ defa
 const BrainstormBack = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormBack })));
 const BrainstormEmpty = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormEmpty })));
 const BrainstormProposal = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormProposal })));
+const BrainstormCapture = lazy(() => brainstormParts().then((module) => ({ default: module.BrainstormCapture })));
 /** The review of a proposal for a page (the readers' batch…), loaded with the first one. */
 const PageChangesReview = lazy(() => import("@/components/assistant/PageChangesReview"));
 /** The choice between the author's version and the proposal's, for a file that changed after the proposal was made. */
@@ -3311,6 +3312,7 @@ export function AssistantPanel() {
         </Fragment>
       ))}
       {busy && <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{retryNotice ?? t("assistant.thinking")}</div>}
+      {brainstorming && !busy && currentSession?.messages.length ? <Suspense fallback={null}><BrainstormCapture onPick={(prompt) => { setDraft(prompt); composerRef.current?.focus(); }} /></Suspense> : null}
       <div ref={messagesEndRef} />
     </div>
   );

@@ -85,6 +85,27 @@ export function BrainstormEmpty({ onPick }: { onPick: (prompt: string) => void }
   );
 }
 
+/**
+ * «Capture this decision»: under a conversation, the request that asks Brainstorming to put what the author settled in the log of decisions of the book (its
+ * `propose_bible_decisions`, which proposes the change of `bible/decisions.md` for the author to confirm; a decision captured is always open). Like a starter, it fills in
+ * the request: the author changes it, or sends it.
+ */
+export function BrainstormCapture({ onPick }: { onPick: (prompt: string) => void }) {
+  const { t } = useTranslation();
+  return (
+    <div data-brainstorm-capture="" className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      <span>{t("brainstorm.capture.hint")}</span>
+      <button
+        type="button"
+        className="min-h-9 rounded-full border border-primary bg-background px-3 py-1.5 text-left text-xs font-medium text-foreground transition-colors hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        onClick={() => onPick(t("brainstorm.capture.prompt"))}
+      >
+        {t("brainstorm.capture.label")}
+      </button>
+    </div>
+  );
+}
+
 /** A proposal before it is applied (`apply-file-updates`) and once it is (`undo-file-updates`, which undoes it). */
 type FileUpdates = Extract<AssistantAction, { kind: "apply-file-updates" | "undo-file-updates" }>;
 

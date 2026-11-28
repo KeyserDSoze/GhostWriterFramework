@@ -12,6 +12,11 @@ const brainstormEn = {
     empty: "Brainstorming works only on the Synopsis of this book: its idea, its chapter entries, the chapters already written and the names of the canon. Ask a what-if, a new structure or a subplot: every change to the Synopsis is a proposal you see before it is applied.",
     placeholder: "Ask about the big design of the book…",
     noBook: "Brainstorming needs a book that this device has: open the Synopsis of a book again.",
+    capture: {
+      hint: "Settled something?",
+      label: "Capture this decision",
+      prompt: "Capture what we settled in this conversation as decisions of the book, with the questions it leaves open, for me to confirm in the Bible.",
+    },
     starters: {
       label: "Ideas to begin with",
       hint: "A suggestion fills in your request: change it as you like, then send it.",

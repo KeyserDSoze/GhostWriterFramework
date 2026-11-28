@@ -12,6 +12,11 @@ const brainstormIt = {
     empty: "Brainstorming lavora solo sulla Sinossi di questo libro: l'idea, le voci dei capitoli, i capitoli già scritti e i nomi del canone. Chiedi un «e se…», una nuova struttura o una sottotrama: ogni modifica alla Sinossi è una proposta che vedi prima che venga applicata.",
     placeholder: "Chiedi del grande disegno del libro…",
     noBook: "Brainstorming ha bisogno di un libro presente su questo dispositivo: riapri la Sinossi di un libro.",
+    capture: {
+      hint: "Hai deciso qualcosa?",
+      label: "Registra questa decisione",
+      prompt: "Registra ciò che abbiamo deciso in questa conversazione come decisioni del libro, con le domande che lascia aperte, perché io lo confermi nella Bibbia.",
+    },
     starters: {
       label: "Idee per cominciare",
       hint: "Un suggerimento riempie la tua richiesta: cambiala come vuoi, poi inviala.",
