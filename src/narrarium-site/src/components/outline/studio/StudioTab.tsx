@@ -2,7 +2,7 @@ import { Suspense, lazy, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { BookMarked, CheckCircle2, Compass, ListTree, Loader2, Pause, Play, PenLine, Sparkles } from "lucide-react";
-import { OUTLINE_BOOK_FILE, lockedDecisions, openQuestions, serverSupportsDesign, type AutopilotState, type OutlineChapterEntry } from "narrarium-engine";
+import { OUTLINE_BOOK_FILE, lockedDecisions, openQuestions, serverSupportsDesign, summarizeDesign, type AutopilotState, type OutlineChapterEntry } from "narrarium-engine";
 import "@/i18n/design";
 import "@/i18n/bibleStudio";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -15,6 +15,7 @@ import { useAutopilotStore } from "@/autopilot/store";
 import { autopilotLiveHref } from "@/autopilot/pageRoute";
 import { formatDate, voteText } from "@/autopilot/format";
 import { DESIGN_SERVER_VERSION, approveDesignChange, designApprovalOf, designBlockOf, designStatusOf } from "@/outline/designModel";
+import { serverHasDesignReview } from "@/outline/designReviewModel";
 import { composeBible, worldEntries } from "@/outline/bibleModel";
 import type { OutlineSnapshot } from "@/outline/outlineModel";
 import type { OutlineSource } from "@/outline/outlineSource";
@@ -23,6 +24,7 @@ import type { BookStructure } from "@/types/book";
 import type { BookEntry } from "@/types/settings";
 
 const DesignDialog = lazy(() => import("@/components/outline/studio/DesignDialog"));
+const StudioReviews = lazy(() => import("@/components/outline/studio/StudioReviews"));
 
 export interface StudioTabProps {
   book: BookEntry;
@@ -53,7 +55,10 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
   const status = designStatusOf(state);
   const serverInfo = useAutopilotStore((store) => store.server.info);
   const serverWithoutDesign = book.autopilotHost === "server" && serverInfo !== null && !serverSupportsDesign(serverInfo);
+  const serverWithoutReview = book.autopilotHost === "server" && serverInfo !== null && !serverHasDesignReview(serverInfo);
   const block = designBlockOf({ description, state, serverWithoutDesign });
+  // The design asked for her choice of a pitch and waits for it: going on would stop at the same place.
+  const choosingPitch = status.kind === "active" && summarizeDesign(state?.design)?.choosePitch === true;
   const { busy, commands } = useAutopilotActions(book.id);
   const [dialog, setDialog] = useState(false);
   const [announcement, setAnnouncement] = useState("");
@@ -110,7 +115,7 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
           <div data-design-progress className="space-y-2 rounded-xl border border-primary/30 bg-primary/5 p-3" aria-live="polite">
             <p className="flex items-center gap-2 text-sm font-medium">
               {running ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Pause className="h-4 w-4" aria-hidden="true" />}
-              {running ? t("design.studio.status.running") : state?.question ? t("design.studio.status.waiting") : t("design.studio.status.paused")}
+              {running ? t("design.studio.status.running") : state?.question ? t("design.studio.status.waiting") : choosingPitch ? t("designReview.alternatives.statusWaiting") : t("design.studio.status.paused")}
             </p>
             {running && step && <p className="text-sm text-muted-foreground">{t("design.studio.status.step", { step })}</p>}
             {!running && state?.message && <p className="text-sm text-muted-foreground">{state.message}</p>}
@@ -121,8 +126,9 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
             <div className="flex flex-wrap gap-2">
               {running && !view.busyInAnotherTab && <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void commands.pause("after-step")}><Pause className="h-4 w-4" aria-hidden="true" />{t("design.studio.status.pause")}</Button>}
               {!running && state?.question && <Button size="sm" asChild><Link to={autopilotLiveHref(book.id)}>{t("design.studio.status.answer")}</Link></Button>}
-              {!running && !state?.question && <Button size="sm" data-design-resume="" disabled={busy !== null || Boolean(block && block !== "written")} onClick={() => void commands.resume()}><Play className="h-4 w-4" aria-hidden="true" />{t("design.studio.status.resume")}</Button>}
+              {!running && !state?.question && <Button size="sm" data-design-resume="" disabled={busy !== null || choosingPitch || Boolean(block && block !== "written")} aria-describedby={choosingPitch ? "studio-choose-hint" : undefined} onClick={() => void commands.resume()}><Play className="h-4 w-4" aria-hidden="true" />{t("design.studio.status.resume")}</Button>}
             </div>
+            {choosingPitch && !running && <p id="studio-choose-hint" className="text-xs text-muted-foreground">{t("designReview.alternatives.resumeHint")}</p>}
           </div>
         )}
 
@@ -194,6 +200,12 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
             <Button type="button" size="sm" variant="outline" onClick={() => onShowTab("bible")}><BookMarked className="h-4 w-4" aria-hidden="true" />{t("bibleStudio.studio.open")}</Button>
           </div>
         </section>
+      )}
+
+      {(entries.length > 0 || state?.design?.alternatives || state?.design?.rubric || state?.design?.coherence) && (
+        <Suspense fallback={null}>
+          <StudioReviews book={book} state={state} entries={entries} running={running} designing={status.kind === "active"} serverWithoutReview={serverWithoutReview} designBlock={block} />
+        </Suspense>
       )}
 
       <section aria-labelledby="studio-brainstorm-title" className="flex flex-col gap-3 rounded-2xl border border-layer bg-card p-4 shadow-sm sm:flex-row sm:items-center">
