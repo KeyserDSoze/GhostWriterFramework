@@ -1012,12 +1012,12 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
       const reader = ctx.readers.find((entry) => !plan.readerReactions.some((reaction) => reaction.slug === entry.slug) && !plan.skippedReaders?.includes(entry.slug));
       if (reader) return { kind: "task", task: descriptor("plan-reader", "plan", ctx, { reader: reader.slug, readerName: reader.name, design: designing }) };
     }
-    // A design run asks the room of the wildcards once, before the review of its plan, when the review policy turns it on: the director triages what it gives.
-    if (designing && !plan.wildcardsDone && reviewWildcards(state).design) return { kind: "task", task: descriptor("wildcards", "plan", ctx, { design: true }) };
     // The chapters of a design that changed since they were reviewed are reviewed, before the director looks at the whole.
     const review = designing ? nextDesignReview(state, ctx.snapshot) : null;
     if (review?.kind === "design-coherence") return { kind: "task", task: descriptor(review.kind, "plan", ctx) };
     if (review) return { kind: "task", task: { ...descriptor(review.kind, "plan", ctx, { from: review.from, to: review.to }), chapterNumber: review.from } };
+    // A design run asks the room of the wildcards once, right before the director's review of its plan, after the panel and the analysis of the structure, when the review policy turns it on: the director triages what it gives.
+    if (designing && !plan.wildcardsDone && reviewWildcards(state).design) return { kind: "task", task: descriptor("wildcards", "plan", ctx, { design: true }) };
     return { kind: "task", task: descriptor("plan-review", "plan", ctx, { design: designing }) };
   }
 

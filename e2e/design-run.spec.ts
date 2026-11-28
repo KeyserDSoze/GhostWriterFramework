@@ -72,14 +72,16 @@ function chapterDesign(user: string) {
 let reviews = 0;
 let ai: StubProvider;
 test.beforeAll(async () => {
+  // The design's reviews judge the twelve criteria of the rubric: an answer of the spec's own carries them, as the engine's fake does for the others.
+  const { fakeRubric } = await engineModule("testing/index.js");
   ai = await startProvider({
     answers: {
       chapter_design: (user) => chapterDesign(user),
       design_review: () => {
         reviews += 1;
         return reviews === 1
-          ? { verdict: "revise", score: 7, summary: "The reveal costs Mira nothing.", strengths: ["Atmosphere"], changes: [{ chapterNumber: 2, instruction: "Make the reveal cost Mira her trust in her father." }], guidance: [], critical: [], counterProposal: "Reveal the wall in chapter 3, through Orrin." }
-          : { verdict: "approve", score: 8.5, summary: "Now the reveal hurts.", strengths: ["Clear stakes"], changes: [], guidance: ["Keep every chapter ending on a turn."], critical: [], counterProposal: "Open on the flood itself." };
+          ? { verdict: "revise", score: 7, summary: "The reveal costs Mira nothing.", strengths: ["Atmosphere"], changes: [{ chapterNumber: 2, instruction: "Make the reveal cost Mira her trust in her father." }], guidance: [], rubric: fakeRubric(7), critical: [], counterProposal: "Reveal the wall in chapter 3, through Orrin." }
+          : { verdict: "approve", score: 8.5, summary: "Now the reveal hurts.", strengths: ["Clear stakes"], changes: [], guidance: ["Keep every chapter ending on a turn."], rubric: fakeRubric(8.5), critical: [], counterProposal: "Open on the flood itself." };
       },
     },
   });
