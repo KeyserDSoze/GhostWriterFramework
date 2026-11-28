@@ -98,6 +98,7 @@ import { readerGate, reviewBookRound, reviewMaxRounds, reviewReaderTargets, revi
 import { blockersText, readerStanding } from "./review-readers.js";
 import { PLAN_BATCH_CHAPTERS, SCENES_PER_CHAPTER, batchesNamed, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, sceneFile, scenesForChapter, type TaskDescriptor } from "./planner.js";
 import { designFindingsInsight, designLastRound, designPlateau, designReaderRounds, designTarget, endDesign, loadDesignCheckInput, planBatchChapters } from "./design.js";
+import { runDesignPitchReview, runDesignPitches, chosenPitchBlock } from "./design-alternatives.js";
 import { chapterReviewsSection, runDesignChapterReview } from "./design-chapter-review.js";
 import { DESIGN_RUBRIC_NOTES, DESIGN_RUBRIC_TOKENS, designRubricRule, readDesignRubric, recordRubric, rubricLine, rubricOverall, rubricProposals } from "./design-rubric.js";
 import { designFlow } from "./design-state.js";
@@ -716,6 +717,7 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
     ])}\n\n${data([
       bookHeader(ctx),
       briefBlock(ctx),
+      designing ? chosenPitchBlock(ctx.state.design) : "",
       outlineBookSection(view),
       outlineListSection([...view.entries.values()], undefined, "AUTHOR'S OUTLINE, CHAPTER BY CHAPTER (binding)"),
       bookBody ? `BOOK DESCRIPTION:\n${bookBody}` : "",
@@ -1248,7 +1250,7 @@ function planFocus(plan: AutopilotPlan): number | undefined {
  * A reader's reply read by `read`, or the rejection that ended it when this is already the repeat of a rejected reply:
  * a reader whose reply stays incomplete does not hold the book up, it is skipped (see `skipReader`).
  */
-async function readerReply<T>(ctx: TaskContext, reply: Promise<AiResponse>, read: (response: AiResponse) => T): Promise<{ response: AiResponse; value: T } | { skipped: AiReplyRejectedError }> {
+export async function readerReply<T>(ctx: TaskContext, reply: Promise<AiResponse>, read: (response: AiResponse) => T): Promise<{ response: AiResponse; value: T } | { skipped: AiReplyRejectedError }> {
   try {
     const response = await reply;
     return { response, value: read(response) };
@@ -2907,6 +2909,8 @@ export const TASK_EXECUTORS: Record<TaskDescriptor["kind"], (ctx: TaskContext) =
   "plan-reader": runPlanReader,
   "plan-review": runPlanReview,
   "design-chapter-review": runDesignChapterReview,
+  "design-pitches": runDesignPitches,
+  "design-pitch-review": runDesignPitchReview,
   replan: runReplan,
   scenes: runScenes,
   write: runWrite,

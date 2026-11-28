@@ -2,6 +2,7 @@ import { OUTLINE_BRIEF_DEFAULT, OUTLINE_BRIEF_WORDS_PER_SCENE } from "../book/ou
 import { isValidGhostwriterSlug } from "../book/paths.js";
 import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
 import { clipText, countWords } from "../util/text.js";
+import { nextPitchStep } from "./design-flow.js";
 import { normalizeDesignReviews } from "./design-state.js";
 import { normalizeErrorDetail, normalizeErrorKind } from "./errors.js";
 import { normalizeReviewPolicy } from "./review-policy.js";
@@ -1167,6 +1168,7 @@ export function summarizeDesign(design: AutopilotDesign | undefined): AutopilotD
     ...(design.review?.targetScore !== undefined ? { targetScore: design.review.targetScore } : {}),
     ...(last ? { lastScore: last.score } : {}),
     ...(design.endedAt ? { endedAt: design.endedAt, outcome: design.outcome } : {}),
+    ...(!design.endedAt && nextPitchStep({ design }) === "choose" ? { choosePitch: true } : {}),
   };
 }
 

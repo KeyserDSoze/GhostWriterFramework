@@ -127,7 +127,21 @@ export interface FakeAiOptions {
   designRubric?: (subject: string, round: number) => number | Record<string, number>;
   /** The scores of the criteria of the chapters the review of a design judges (`chapter` and the number of the review), as `designRubric`: a number for all, or one by criterion (default 7.5). */
   chapterRubric?: (chapter: number, round: number) => number | Record<string, number>;
+  /** The scores of the criteria of a pitch (`id`: p1, p2…) by whom judges it (`director`, or the slug of a reader), as `designRubric` (default: the higher the number of the pitch, the higher the score). */
+  pitchRubric?: (id: string, by: string) => number | Record<string, number>;
+  /** The pitch the director recommends, among the ids (default: the one with the highest mean of the director's scores, the last of equals). */
+  pitchRecommend?: (ids: string[]) => string;
 }
+
+const FAKE_PITCHES: ReadonlyArray<{ title: string; logline: string; premise: string; protagonist: string; stakes: string; twist: string; tone: string }> = [
+  { title: "The Tide Ledger", logline: "A glassmaker's daughter finds the ledger that proves the sea wall was never mended.", premise: "Mira inherits a workshop and a book of accounts that does not add up.", protagonist: "Mira Vale wants her father's name cleared and fears the harbor's silence.", stakes: "The town floods if the wall stays hidden.", twist: "Her father kept the second set of books.", tone: "Melancholic and tense." },
+  { title: "A Harbor of Mirrors", logline: "Every window of a town of glassmakers reflects a street that does not exist.", premise: "Orrin Hale, the harbor master, notices a second town in the mirrors.", protagonist: "Orrin Hale wants control of the lights and fears being seen.", stakes: "The reflected town replaces the real one.", twist: "The reflection is the older town, drowned.", tone: "Uncanny, patient." },
+  { title: "The Lighthouse Debt", logline: "The light that keeps the ships away from the rocks is owed to someone who wants it back.", premise: "A council pledged the lighthouse for a loan that comes due at the next spring tide.", protagonist: "The keeper's apprentice wants to be believed and fears the dark.", stakes: "Ships wreck on a darkened coast.", twist: "The lender is the sea itself, in a person's shape.", tone: "Fable-like, dry humour." },
+  { title: "Salt and Silence", logline: "Three sisters who stopped speaking must cross a flooded town to bury their mother.", premise: "A funeral procession by boat through streets under water.", protagonist: "The eldest sister wants to be forgiven and fears she is right.", stakes: "The family house, and what is left of them.", twist: "The mother is not in the coffin.", tone: "Quiet, bitter, tender." },
+  { title: "The Glass Cartographer", logline: "A mapmaker draws the coast in glass, and the coast starts to follow the map.", premise: "Maps made of glass change the shore they describe.", protagonist: "Ines wants a map that never lies and fears the one she drew.", stakes: "Every town on the map.", twist: "The first map was a warning, not a copy.", tone: "Wondering, ominous." },
+  { title: "Low Water", logline: "The tide stops coming in, and the town finds out what it was built on.", premise: "A harbor with no water reveals its foundations.", protagonist: "A diver wants a last job and fears the bottom.", stakes: "The founding story of the town.", twist: "The town was built on a ship.", tone: "Eerie, elegiac." },
+];
+
 
 /** The rubric of a reply: the twelve criteria with their scores (a number for all, or one by criterion), the weak ones with an issue and a proposal. */
 export function fakeRubric(scores: number | Record<string, number> = 7.5, options: { applicable?: boolean } = {}): Array<Record<string, unknown>> {
@@ -278,6 +292,23 @@ export function createFakeAutopilotAi(options: FakeAiOptions = {}): AiPort & { c
               redHerrings: numbers.includes(1) ? [{ chapter: 1, note: "The storms are blamed." }] : [],
             }]
             : [],
+        };
+      }
+      case "design_pitches": {
+        const count = Number(/exactly (\d+) alternative pitches/.exec(user)?.[1] ?? "3");
+        return { pitches: Array.from({ length: count }, (_, index) => ({ ...FAKE_PITCHES[index % FAKE_PITCHES.length], difference: `Pitch ${index + 1} is the book where ${FAKE_PITCHES[index % FAKE_PITCHES.length].twist.toLowerCase()}` })) };
+      }
+      case "design_pitch_reaction":
+      case "design_pitch_choice": {
+        const director = request.json?.name === "design_pitch_choice";
+        const by = director ? "director" : /^autopilot:design-pitch-reader:(.+)$/.exec(request.label)?.[1] ?? "reader";
+        const ids = [...new Set([...user.matchAll(/^Pitch (p\d+):/gm)].map((match) => match[1]))];
+        const scores = (id: string) => options.pitchRubric?.(id, by) ?? 6.5 + Number(id.slice(1)) * 0.5;
+        const mean = (id: string) => { const asked = scores(id); const values = typeof asked === "number" ? [asked] : Object.values(asked); return values.reduce((sum, value) => sum + value, 0) / values.length; };
+        const best = ids.reduce((top, id) => (mean(id) >= mean(top) ? id : top), ids[0]);
+        return {
+          pitches: ids.map((id) => ({ id, note: `Pitch ${id} is ${mean(id) >= 7.5 ? "promising" : "familiar"}.`, rubric: fakeRubric(scores(id), { applicable: true }) })),
+          ...(director ? { recommended: options.pitchRecommend?.(ids) ?? best, reason: "It is the book this author's idea promises, with a stronger turn." } : {}),
         };
       }
       case "design_chapter_review": {

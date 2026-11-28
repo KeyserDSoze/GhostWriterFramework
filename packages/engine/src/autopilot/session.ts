@@ -29,6 +29,7 @@ import {
 } from "./frozen.js";
 import { readBrief } from "./brief.js";
 import { createAnnotationsCampaign, readAnnotationNotes, type ReviseAnnotationsInput } from "./annotations.js";
+import { chooseDesignPitch, type DesignPitchChoice } from "./design-alternatives.js";
 import { RevisionCampaignError, cancelRevisionCampaign, createReviewCampaign, createRevisionCampaign, decideBookCorrections as decideCorrections, recordRevisionCampaign, type BookCorrectionsDecision, type ReviewBookInput, type ReviseChaptersInput, type RevisionCampaignResult } from "./campaign.js";
 import { createModelMemory, type AiModelMemory } from "../ai/memory.js";
 import { applyLiveAttempt, applyLiveProgress, startLive } from "./live.js";
@@ -875,6 +876,17 @@ export class AutopilotSession {
     const at = now.toISOString();
     await this.mutate(`Autopilot: rewrite the passages of ${campaign.annotations!.notes.length === 1 ? "1 note" : `${campaign.annotations!.notes.length} notes`}`, (state) => recordRevisionCampaign(state, createAnnotationsCampaign({ ...input, notes }, state, snapshot, now, campaign.id), at, false), { create: false });
     return this.campaignResult();
+  }
+
+  /**
+   * The author chooses the pitch the book is designed from, among the alternatives the design proposed (`DesignWorkflow.alternatives`): the choice is saved at once, and the author
+   * starts the autopilot to go on. Refused with an `AutopilotDesignError`: `no_pitches`, `unknown_pitch`, or `pitch_locked` (the book is designed from a pitch already).
+   */
+  async chooseDesignPitch(input: DesignPitchChoice): Promise<AutopilotState> {
+    if (this.starting) await this.starting.catch(() => undefined);
+    if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
+    const at = this.now().toISOString();
+    return this.mutate("Autopilot: the author chose the pitch", (state) => chooseDesignPitch(state, input, at), { create: false });
   }
 
   /** Cancel the chapters of the campaign that wait (the one being worked finishes): what the reason does with them is its own (`cancel`). Answers as `reviseChapters`. */

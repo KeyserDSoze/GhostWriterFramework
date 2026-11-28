@@ -89,8 +89,12 @@ test("the planner asks for a review of the chapters only when the workflow does,
   const plain = { design: { startedAt: "x", chapters: 2, rounds: [] } };
   assert.equal(nextDesignReview(plain, snapshot), null);
   assert.deepEqual(nextDesignReview({ design: { ...plain.design, workflow: { chapterReview: true } } }, snapshot), { kind: "design-chapter-review", from: 1, to: 2 });
-  assert.deepEqual(designFlow({ workflow: { chapterReview: true } }), { rubric: false, chapterReview: true });
-  assert.deepEqual(designFlow({ workflow: {}, reviewing: { startedAt: "x" } }), { rubric: true, chapterReview: true }, "a review on request judges, whatever the workflow says");
+  const switches = (design) => {
+    const { rubric, chapterReview } = designFlow(design);
+    return { rubric, chapterReview };
+  };
+  assert.deepEqual(switches({ workflow: { chapterReview: true } }), { rubric: false, chapterReview: true });
+  assert.deepEqual(switches({ workflow: {}, reviewing: { startedAt: "x" } }), { rubric: true, chapterReview: true }, "a review on request judges, whatever the workflow says");
   assert.deepEqual(normalizeDesignStart({ workflow: { rubric: true, chapterReview: true } }), { workflow: { rubric: true, chapterReview: true } });
   assert.throws(() => normalizeDesignStart({ workflow: { chapterReview: 1 } }), /design\.workflow\.chapterReview must be true or false/);
 });

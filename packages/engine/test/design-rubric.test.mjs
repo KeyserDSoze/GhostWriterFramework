@@ -217,8 +217,12 @@ test("a design run asks for the rubric only when its workflow says so, and a sta
   for (const bad of [{ workflow: true }, { workflow: [] }, { workflow: { rubric: "yes" } }, { workflow: { rubrics: true } }, { workflows: {} }]) {
     assert.throws(() => normalizeDesignStart(bad), (error) => error instanceof AutopilotDesignError && error.code === "invalid_request", JSON.stringify(bad));
   }
-  assert.deepEqual(designFlow(undefined), { rubric: false, chapterReview: false });
-  assert.deepEqual(designFlow({ workflow: { rubric: true } }), { rubric: true, chapterReview: false });
+  const switches = (design) => {
+    const { rubric, chapterReview } = designFlow(design);
+    return { rubric, chapterReview };
+  };
+  assert.deepEqual(switches(undefined), { rubric: false, chapterReview: false });
+  assert.deepEqual(switches({ workflow: { rubric: true } }), { rubric: true, chapterReview: false });
 });
 
 async function describedBook(extra = {}) {

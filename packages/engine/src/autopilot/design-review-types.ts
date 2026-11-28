@@ -71,6 +71,53 @@ export const DESIGN_REVIEW_BATCH_CHAPTERS = 4;
 /** The most characters of what a review says of a chapter, as of the rest of its texts: more is rejected, never cut. */
 export const DESIGN_SUMMARY_CHARACTERS = 400;
 
+/** The most pitches a design is asked to propose besides the idea of the author, and the fewest (one alone is not an alternative). */
+export const DESIGN_ALTERNATIVES_MIN = 2;
+export const DESIGN_ALTERNATIVES_MAX = 6;
+
+/** The limits of the texts of a pitch: a reply over them is rejected, never cut. */
+export const DESIGN_PITCH_LOGLINE_CHARACTERS = 300;
+export const DESIGN_PITCH_PREMISE_CHARACTERS = 900;
+export const DESIGN_PITCH_FIELD_CHARACTERS = 400;
+
+/** One of the alternative pitches the Brainstormer proposes from the idea of the author. */
+export interface DesignPitch {
+  /** `p1`, `p2`…, in the order proposed. */
+  id: string;
+  title: string;
+  /** The book in one sentence. */
+  logline: string;
+  premise: string;
+  protagonist: string;
+  stakes: string;
+  /** The turn of the story that the reader does not see coming. */
+  twist: string;
+  tone: string;
+  /** What makes it a different book from the other pitches. */
+  difference: string;
+}
+
+/** What one judge (a reader by its slug, or the director) said of a pitch: its mean, its twelve scores (`null`: the criterion did not apply) and a line. */
+export interface DesignPitchEvaluation {
+  by: string;
+  name: string;
+  overall: number | null;
+  scores: Array<number | null>;
+  note: string;
+}
+
+/**
+ * The alternatives a design run proposed before it designed the book: the pitches, what the readers and the director judged of each, the pitch the director
+ * recommended with its reason, and the one the design is made of and who chose it (the director, or the author when the design asks for the author's choice).
+ */
+export interface DesignAlternatives {
+  pitches: DesignPitch[];
+  /** By pitch id. */
+  evaluations: Record<string, DesignPitchEvaluation[]>;
+  recommended?: { id: string; reason: string };
+  selected?: { id: string; by: "director" | "author"; reason: string; at: string };
+}
+
 /** The score under which a criterion is a weak point of what is judged: it is told, and a rewrite starts from it. */
 export const DESIGN_WEAK_SCORE = 7;
 

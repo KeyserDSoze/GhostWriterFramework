@@ -78,6 +78,7 @@ export * from "./autopilot/design-review-types.js";
 export * from "./autopilot/design-rubric.js";
 export * from "./autopilot/design-state.js";
 export * from "./autopilot/design-flow.js";
+export { DESIGN_PITCHES_TOOL, DESIGN_PITCHES_ROLE, chooseDesignPitch, chosenPitchBlock, designPitchEvaluationTool, readDesignPitches, readPitchEvaluations, type DesignPitchChoice } from "./autopilot/design-alternatives.js";
 export * from "./autopilot/frozen.js";
 export * from "./autopilot/story-so-far.js";
 export { TASK_EXECUTORS, cleanProse, renderPlanMarkdown, sameCanonEntity, type TaskContext, type TaskResult, type TaskAi } from "./autopilot/tasks.js";

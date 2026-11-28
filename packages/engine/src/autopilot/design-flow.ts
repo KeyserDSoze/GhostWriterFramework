@@ -54,6 +54,19 @@ export function nextChapterReview(state: Pick<AutopilotState, "design">, snapsho
   return { from: stale[0], to };
 }
 
+/**
+ * What the planner does about the alternatives of a design before the concept: `pitches` (the Brainstormer proposes them), `review` (the readers and the director judge
+ * them), `choose` (the director recommended one and the design asks for the author's choice: the run waits), or `null` (none were asked for, or one is chosen).
+ */
+export function nextPitchStep(state: Pick<AutopilotState, "design">): "pitches" | "review" | "choose" | null {
+  const design = state.design;
+  const flow = designFlow(design);
+  if (!design || !flow.alternatives || design.alternatives?.selected) return null;
+  if (!design.alternatives?.pitches.length) return "pitches";
+  if (!design.alternatives.recommended) return "review";
+  return flow.pitchChoice === "author" ? "choose" : "review";
+}
+
 /** The review the planner asks next in a design run, before the director's: `null` when the workflow asks for none or every part is up to date. */
 export function nextDesignReview(state: Pick<AutopilotState, "design">, snapshot: BookSnapshot): { kind: "design-chapter-review"; from: number; to: number } | null {
   const flow = designFlow(state.design);

@@ -8,7 +8,7 @@ import { advanceRevisionCampaign, campaignChapter, chapterVote } from "./campaig
 import { readerGate, reviewMaxRounds, reviewReaderRounds, reviewWildcards, type ReaderTargets } from "./review-policy.js";
 import { blockersText, readerStanding } from "./review-readers.js";
 import { planBatchChapters } from "./design.js";
-import { nextDesignReview } from "./design-flow.js";
+import { nextDesignReview, nextPitchStep } from "./design-flow.js";
 import { designActive } from "./state.js";
 import type { AutopilotInsightFigures, AutopilotMessageCode, AutopilotPhase, AutopilotPlan, AutopilotState, AutopilotTaskKind, ChapterReview, InsightTone, PlannedChapter, PlannedScene } from "./types.js";
 
@@ -212,6 +212,18 @@ export function describeTask(kind: AutopilotTaskKind, language: string, params: 
         next: text(language, "The director reviews the whole design.", "Il direttore valuta l'intero progetto."),
       };
     }
+    case "design-pitches":
+      return {
+        title: text(language, "The Brainstormer proposes alternative pitches", "Il Brainstormer propone pitch alternativi"),
+        reason: text(language, "Several different books can come from your idea: the Brainstormer proposes them before the design begins.", "Dalla tua idea possono nascere libri diversi: il Brainstormer li propone prima che la progettazione cominci."),
+        next: text(language, "The readers and the director judge the pitches.", "I lettori e il direttore giudicano i pitch."),
+      };
+    case "design-pitch-review":
+      return {
+        title: text(language, "The readers and the director judge the pitches", "I lettori e il direttore giudicano i pitch"),
+        reason: text(language, "Every pitch is scored on the twelve criteria, and one is chosen with its reason.", "Ogni pitch è valutato sui dodici criteri, e uno viene scelto con la sua motivazione."),
+        next: text(language, "Design the book from the chosen pitch.", "Progettare il libro dal pitch scelto."),
+      };
     case "replan":
       return params.outline === "removed"
         ? {
@@ -929,7 +941,14 @@ export function nextStep(state: AutopilotState, ctx: PlannerContext): PlannedSte
     return { kind: "stop", status: "paused", message: italian ? "La Sinossi non ha capitoli: scrivi i capitoli nella Sinossi, poi riprendi." : "The synopsis has no chapters: write the chapters in the Synopsis, then resume." };
   }
 
-  if (!state.concept.done) return { kind: "task", task: descriptor("concept", "concept", ctx) };
+  if (!state.concept.done) {
+    // A design with alternatives proposes them, has them judged and takes the choice before it designs anything.
+    const pitch = designActive(state) ? nextPitchStep(state) : null;
+    if (pitch === "pitches") return { kind: "task", task: descriptor("design-pitches", "concept", ctx) };
+    if (pitch === "review") return { kind: "task", task: descriptor("design-pitch-review", "concept", ctx) };
+    if (pitch === "choose") return { kind: "stop", status: "waiting-author", message: italian ? "Scegli il pitch da cui progettare il libro." : "Choose the pitch the book is designed from.", code: "designPitchChoice" };
+    return { kind: "task", task: descriptor("concept", "concept", ctx) };
+  }
 
   const plan = state.plan;
   const designing = designActive(state);

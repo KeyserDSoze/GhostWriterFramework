@@ -5,7 +5,7 @@ import type { AiErrorBody } from "../ai/provider-error.js";
 import type { AiAttemptThinking, AiThinkingWhy } from "../ai/request.js";
 import type { AiCallDropReason, AiCallStatus } from "./calls/types.js";
 import type { ChapterFreezeAuthor, FrozenChapterChanges } from "../book/freeze.js";
-import type { DesignChapterReview, DesignRubrics } from "./design-review-types.js";
+import type { DesignAlternatives, DesignChapterReview, DesignRubrics } from "./design-review-types.js";
 
 /** Lifecycle of the autopilot of one book. */
 export type AutopilotStatus = "idle" | "running" | "paused" | "waiting-author" | "error" | "completed";
@@ -22,6 +22,8 @@ export type AutopilotTaskKind =
   | "plan-reader"
   | "plan-review"
   | "design-chapter-review"
+  | "design-pitches"
+  | "design-pitch-review"
   | "replan"
   | "scenes"
   | "write"
@@ -1117,6 +1119,13 @@ export interface DesignWorkflow {
   rubric?: boolean;
   /** The design of every chapter is reviewed with the chapters beside it (`design-chapter-review`), and a chapter that changed is reviewed again. */
   chapterReview?: boolean;
+  /**
+   * Alternative pitches proposed before the design, from 2 to 6 (`DESIGN_ALTERNATIVES_MIN`…): the Brainstormer proposes them from the idea, the readers and the
+   * director judge them on the rubric, and one is chosen, with its reason: the design is made of it. Absent: the design is made of the idea.
+   */
+  alternatives?: number;
+  /** Who chooses among the alternatives: the director (absent) or the author, who is asked and the run waits. */
+  pitchChoice?: "author";
 }
 
 /** The reviews of a design when the policy says nothing: the director looks at it up to three times, as at a plan. */
@@ -1158,6 +1167,8 @@ export interface AutopilotDesign {
   reviewed?: Record<string, DesignChapterReview>;
   /** A review of the design on request goes on (`DesignStartInput.reviewOnly`): the chapters it looks at (absent: all), and whether it is over. */
   reviewing?: { chapters?: number[]; startedAt: string; done?: boolean };
+  /** The alternative pitches of the design, and the choice (`DesignAlternatives`). */
+  alternatives?: DesignAlternatives;
 }
 
 /** A design run asked with a start (`StartOptions.design`). */
@@ -1184,6 +1195,8 @@ export interface AutopilotDesignSummary {
   lastScore?: number;
   endedAt?: string;
   outcome?: DesignOutcome;
+  /** The run waits for the author to choose the pitch the book is designed from (the design asks for her choice and the director has recommended one): it stops without a question. */
+  choosePitch?: boolean;
 }
 
 export interface AutopilotState {
@@ -1352,7 +1365,10 @@ export type AutopilotMessageCode =
   | "designEscalated"
   | "wildcardsTriaged"
   | "wildcardsNone"
-  | "designChapterReview";
+  | "designChapterReview"
+  | "designPitches"
+  | "designPitchChosen"
+  | "designPitchChoice";
 
 /**
  * Which candidate of the route a call asks now, and how: what the `call-attempt` event says and `AutopilotLive.trying` keeps, so that a client shows it as the request is sent. Only

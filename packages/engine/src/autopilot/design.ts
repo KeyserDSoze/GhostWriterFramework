@@ -25,7 +25,7 @@ export const DESIGN_DEFAULT_CHAPTERS = 12;
 /** The most chapters a design run is asked for at once: a longer book is designed in more runs, or from a Synopsis that already has its entries. */
 export const DESIGN_MAX_CHAPTERS = 500;
 
-export type AutopilotDesignErrorCode = "invalid_request" | "design_written" | "design_no_description";
+export type AutopilotDesignErrorCode = "invalid_request" | "design_written" | "design_no_description" | "no_pitches" | "unknown_pitch" | "pitch_locked";
 
 /**
  * A design run that cannot begin: what was asked is not one (`invalid_request`), the autopilot has already written chapters of the book (`design_written`: a design is
@@ -132,6 +132,7 @@ export function beginDesign(state: AutopilotState, input: DesignStartInput, cont
     ...(workflow && Object.keys(workflow).length ? { workflow } : {}),
     ...(previous?.rubric ? { rubric: previous.rubric } : {}),
     ...(previous?.reviewed ? { reviewed: previous.reviewed } : {}),
+    ...(previous?.alternatives ? { alternatives: previous.alternatives } : {}),
   };
   next.design = design;
   if (!going && next.plan) {
