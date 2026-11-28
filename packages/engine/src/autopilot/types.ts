@@ -1377,7 +1377,8 @@ export type AutopilotMessageCode =
   | "designPitches"
   | "designPitchChosen"
   | "designPitchChoice"
-  | "designCoherence";
+  | "designCoherence"
+  | "designProposals";
 
 /**
  * Which candidate of the route a call asks now, and how: what the `call-attempt` event says and `AutopilotLive.trying` keeps, so that a client shows it as the request is sent. Only

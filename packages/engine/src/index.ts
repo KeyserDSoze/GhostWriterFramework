@@ -78,6 +78,7 @@ export * from "./autopilot/design-review-types.js";
 export * from "./autopilot/design-rubric.js";
 export * from "./autopilot/design-state.js";
 export * from "./autopilot/design-flow.js";
+export * from "./autopilot/design-rewrite.js";
 export { DESIGN_COHERENCE_TOOL, applyFindingDecisions, blockingFindings, checkFindings, coherenceId, coherenceKindOf, coherenceSection, coherenceWindows, findingNote, mergeCoherence, ownerOf, readCoherenceFindings, readFindingDecisions, type FindingDecision } from "./autopilot/design-coherence.js";
 export { DESIGN_PITCHES_TOOL, DESIGN_PITCHES_ROLE, chooseDesignPitch, chosenPitchBlock, designPitchEvaluationTool, readDesignPitches, readPitchEvaluations, type DesignPitchChoice } from "./autopilot/design-alternatives.js";
 export * from "./autopilot/frozen.js";

@@ -101,6 +101,7 @@ import { designFindingsInsight, designLastRound, designPlateau, designReaderRoun
 import { runDesignPitchReview, runDesignPitches, chosenPitchBlock } from "./design-alternatives.js";
 import { chapterReviewsSection, runDesignChapterReview } from "./design-chapter-review.js";
 import { applyFindingDecisions, blockingFindings, coherenceSection, findingNote, readFindingDecisions, runDesignCoherence } from "./design-coherence.js";
+import { rewriteExtras } from "./design-rewrite.js";
 import { DESIGN_RUBRIC_NOTES, DESIGN_RUBRIC_TOKENS, designRubricRule, readDesignRubric, recordRubric, rubricLine, rubricOverall, rubricProposals } from "./design-rubric.js";
 import { designFlow } from "./design-state.js";
 import { outlineDesignGaps } from "./outline-check.js";
@@ -1543,17 +1544,34 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
   design.rounds = [...design.rounds, { round: roundNumber, score, verdict: "revise", ...(readers !== undefined ? { readers } : {}), critical: critical.length, findings: findings.length, ...(rubricOverallScore !== null ? { rubric: rubricOverallScore } : {}), at }];
   if (rubricScores) design.rubric = recordRubric(design.rubric, "design", rubricScores, { round: roundNumber, at }, { whole: true });
   const plateau = designPlateau(design);
+  // What the reviews found weak, besides what the director asked, is what a round rewrites; the author's entries are never rewritten, and what concerns only them is a proposal.
+  const rewritable = (chapter: number) => chapter === 0 || !view.entries.has(chapter);
+  const rubricNotes = rubricScores ? rubricProposals(rubricScores, DESIGN_RUBRIC_NOTES).map((note) => `${italian ? "Criterio debole" : "Weak criterion"} — ${note}`) : [];
+  const extras = flow.rubric || flow.chapterReview || flow.coherence
+    ? rewriteExtras({ language: ctx.language, existingNotes: criticalNotes.length + changesRequested.length + rubricNotes.length, named: new Set([...critical, ...requested].map((change) => change.chapterNumber).filter(Boolean)), reviewed: design.reviewed, rubric: design.rubric, findings: design.coherence?.findings ?? [], rewritable })
+    : { notes: [], chapters: [], proposals: [] };
+  // A critical item that only the author's entries can answer is not something another round can fix.
+  const stuck = critical.length > 0 && critical.every((item) => !rewritable(item.chapterNumber)) && !changesRequested.length && !extras.notes.length;
   // A score alone never approves: the target and no critical inconsistency; or nothing left to change at all.
   let outcome: DesignOutcome | null = null;
   let escalate = false;
   if (!critical.length && verdictGiven === "approve" && score >= target) outcome = "target";
-  else if (!critical.length && !changesRequested.length) outcome = "unchanged";
-  else if (lastRound || plateau) {
+  else if (!critical.length && !changesRequested.length && !extras.notes.length) outcome = "unchanged";
+  else if (lastRound || plateau || stuck) {
     if (critical.length && !design.escalated) escalate = true;
-    else outcome = lastRound ? "rounds" : "plateau";
+    else outcome = lastRound ? "rounds" : plateau ? "plateau" : "rounds";
   }
   if (verdictGiven === "approve" && score < target && !critical.length && changesRequested.length && !outcome) {
     ctx.insight("warning", withheldApproval(ctx, score, italian ? "il progetto viene rivisto." : "the design is revised.", target));
+  }
+  if (extras.proposals.length) {
+    const chaptersProposed = [...new Set(extras.proposals.map((proposal) => proposal.chapter))];
+    ctx.insight(
+      "info",
+      italian ? `${extras.proposals.length === 1 ? "Una proposta" : `${extras.proposals.length} proposte`} per ${chaptersProposed.length === 1 ? "un capitolo scritto da te" : "capitoli scritti da te"}: il progetto non li riscrive` : `${extras.proposals.length === 1 ? "One proposal" : `${extras.proposals.length} proposals`} for ${chaptersProposed.length === 1 ? "a chapter you wrote" : "chapters you wrote"}: the design does not rewrite them`,
+      extras.proposals.slice(0, 6).map((proposal) => `- ${italian ? "Capitolo" : "Chapter"} ${proposal.chapter}: ${truncate(proposal.text, 240)}`).join("\n"),
+      { code: "designProposals", figures: { chapters: chaptersProposed.length } },
+    );
   }
   const figures = { round: roundNumber, rounds: maxRounds, score, target, critical: critical.length, findings: findings.length };
   const changes: Array<BookFileChange | null> = [];
@@ -1580,8 +1598,8 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
     ctx.insight(tone, title, [summaryText, leftDetail].filter(Boolean).join("\n"), { code: "designReady", figures: { ...figures, designOutcome: outcome, chapters } });
   } else {
     plan.rounds += 1;
-    plan.revisionNotes = [...criticalNotes, ...changesRequested, ...(rubricScores ? rubricProposals(rubricScores, DESIGN_RUBRIC_NOTES).map((note) => `${italian ? "Criterio debole" : "Weak criterion"} — ${note}`) : [])];
-    plan.revisionBatches = batchesNamed(range, [...critical, ...requested].map((change) => change.chapterNumber), size);
+    plan.revisionNotes = [...criticalNotes, ...changesRequested, ...rubricNotes, ...extras.notes];
+    plan.revisionBatches = batchesNamed(range, [...[...critical, ...requested].map((change) => change.chapterNumber), ...extras.chapters], size);
     // The readers read the design again before the next review while the policy says so.
     if (plan.rounds < designReaderRounds(ctx.state)) {
       plan.readersDone = false;
