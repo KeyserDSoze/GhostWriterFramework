@@ -411,6 +411,27 @@ export const docEntries: DocEntry[] = [
     }
   },
   {
+    "title": "The Story Bible: decisions, questions, threads and checks",
+    "href": "/docs/story-bible",
+    "slug": "story-bible",
+    "group": "reference",
+    "groupLabel": "Reference",
+    "sourcePath": "docs/story-bible.md",
+    "summary": "The Bible tab of the Synopsis page composes everything the book has agreed, from its own files (the format is in `repository-spec.md`, «The Synopsis and the Story Bible»). This note says how the parts work together.",
+    "translations": {
+      "en": {
+        "title": "The Story Bible: decisions, questions, threads and checks",
+        "summary": "The Bible tab of the Synopsis page composes everything the book has agreed, from its own files (the format is in `repository-spec.md`, «The Synopsis and the Story Bible»). This note says how the parts work together.",
+        "sourcePath": "docs/story-bible.md"
+      },
+      "it": {
+        "title": "The Story Bible: decisions, questions, threads and checks",
+        "summary": "The Bible tab of the Synopsis page composes everything the book has agreed, from its own files (the format is in `repository-spec.md`, «The Synopsis and the Story Bible»). This note says how the parts work together.",
+        "sourcePath": "docs/story-bible.md"
+      }
+    }
+  },
+  {
     "title": "Ghostwriter Profiles",
     "href": "/docs/style-profiles",
     "slug": "style-profiles",
@@ -607,6 +628,7 @@ export const docMarkdown: Record<string, () => Promise<{ default: string }>> = {
   "docs/review-dialogue-action-beats.md": () => import("../../../../docs/review-dialogue-action-beats.md?raw"),
   "docs/revise-chapter.md": () => import("../../../../docs/revise-chapter.md?raw"),
   "docs/revise-paragraph.md": () => import("../../../../docs/revise-paragraph.md?raw"),
+  "docs/story-bible.md": () => import("../../../../docs/story-bible.md?raw"),
   "docs/style-profiles.md": () => import("../../../../docs/style-profiles.md?raw"),
   "packages/astro-reader/README.md": () => import("../../../../packages/astro-reader/README.md?raw"),
   "packages/core/README.md": () => import("../../../../packages/core/README.md?raw"),
