@@ -343,7 +343,7 @@ export function BookAnnotationsPage() {
       />
       <AnnotationReasonDialog bookId={bookId ?? ""} scope={reason} catalog={data.catalog} titles={titles} onClose={() => setReason(null)} onFix={(annotation, instruction) => setFix({ annotation, instruction })} />
       {fixQueue && (
-        <div role="status" className="fixed bottom-4 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-3 rounded-full border bg-card px-4 py-2 text-sm shadow-lg" data-fix-queue="">
+        <div role="status" className="fixed bottom-4 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-3 rounded-full border border-layer bg-card px-4 py-2 text-sm shadow-lg" data-fix-queue="">
           {t("annotationsPage.bulkFix.progress", { position: fixQueue.done, total: fixQueue.total })}
           <Button type="button" size="sm" variant="ghost" onClick={() => { setFixQueue(null); setFix(null); }}>{t("annotationsPage.bulkFix.cancel")}</Button>
         </div>
