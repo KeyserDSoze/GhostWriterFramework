@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.141.0",
+    "date": "2026-11-28",
+    "en": {
+      "title": "The notes of your book in one page: fix them with the AI, go through them one by one, and have the autopilot answer them",
+      "summary": "A new Annotations page (Book › Annotations) lists every passage you marked while reading, by chapter. From it you can close notes in bulk, fix a note with the AI after reviewing the change, reason about notes with the AI, go through them one at a time with the keyboard, and ask the autopilot to rewrite the passages for you.",
+      "changes": [
+        "The new Annotations page in the Book menu lists the notes of the whole book by chapter, in the order of the book, from the copy on this device (nothing is read from GitHub). Filter by chapter, tag, status and words (the filters are in the address), mark one or many notes as handled, later or dismissed, delete them, and make the tags of this book and of your account in the same page.",
+        "Fix with the AI: on a note, the AI proposes a new text for the paragraphs that hold the passage, and you see the change word by word, keep or skip each part, edit the proposal, ask again with an instruction, and apply it in one write; Undo puts the scene and the note back. The note is then marked as handled with the AI. A chapter the autopilot approved tells you that fixing it changes it after approval.",
+        "Let's reason together: a short conversation with the AI about one note, one chapter or all the notes shown; it suggests and asks, and it changes nothing. It can end in a proposal that opens the fix with what you said.",
+        "Go through them one by one (also a button in the reader's header): one note at a time with Handled, Later, Dismiss, Retry with the AI, Reason together, Open the paragraph and Skip. Every action has a letter key (H, L, D, F, R, P, S) announced to screen readers, a progress bar, and a swipe on a touch screen (right for handled, left for later). It remembers the notes you skipped on this device, so you can resume. You can also fix several selected notes with the AI one after another, after seeing a rough estimate.",
+        "Have the autopilot answer: on a book the autopilot wrote, the autopilot can rewrite the open notes (the ones you chose, or all), chapter by chapter, review each chapter again like any change, and close each note as handled by the autopilot with what it did. You see an estimate first; chapters you wrote or froze are left alone unless you tick them; the live band shows how many notes are answered, and the Autopilot page says what it did. On a personal server this needs version 0.1.25 or later."
+      ]
+    },
+    "it": {
+      "title": "Le note del tuo libro in una pagina: correggile con l'AI, passale una per una e fai rispondere l'autopilota",
+      "summary": "Una nuova pagina Appunti (Libro › Appunti) elenca ogni passaggio che hai segnato leggendo, per capitolo. Da lì puoi chiudere più note insieme, correggere una nota con l'AI dopo aver rivisto la modifica, ragionare sulle note con l'AI, passarle una alla volta con la tastiera e chiedere all'autopilota di riscrivere i passaggi per te.",
+      "changes": [
+        "La nuova pagina Appunti nel menu Libro elenca le note dell'intero libro per capitolo, nell'ordine del libro, dalla copia su questo dispositivo (non si legge nulla da GitHub). Filtra per capitolo, etichetta, stato e parole (i filtri sono nell'indirizzo), segna una o più note come fatte, più tardi o scartate, eliminale, e crea nella stessa pagina le etichette di questo libro e del tuo account.",
+        "Correggi con l'AI: su una nota, l'AI propone un nuovo testo per i paragrafi che contengono il passaggio, e vedi la modifica parola per parola, tieni o salti ogni parte, correggi la proposta, richiedi con un'istruzione e applichi tutto in una sola scrittura; Annulla rimette a posto la scena e la nota. La nota risulta poi sistemata con l'AI. Un capitolo che l'autopilota ha approvato ti avvisa che correggerlo lo cambia dopo l'approvazione.",
+        "Ragioniamo insieme: una breve conversazione con l'AI su una nota, un capitolo o tutte le note mostrate; suggerisce e chiede, non cambia nulla. Può finire in una proposta che apre la correzione con ciò che hai detto.",
+        "Passali uno per uno (anche un pulsante nell'intestazione del reader): una nota alla volta con Fatto, Più tardi, Scarta, Riprova con l'AI, Ragioniamo insieme, Apri il paragrafo e Salta. Ogni azione ha un tasto lettera (H, L, D, F, R, P, S) annunciato agli screen reader, una barra di avanzamento e, su touch screen, il trascinamento (a destra fatto, a sinistra più tardi). Ricorda su questo dispositivo le note che hai saltato, così puoi riprendere. Puoi anche correggere più note selezionate con l'AI una dopo l'altra, dopo aver visto una stima approssimativa.",
+        "Fai rispondere l'autopilota: su un libro scritto dall'autopilota, può riscrivere le note aperte (quelle che scegli, o tutte), capitolo per capitolo, rivedere di nuovo ogni capitolo come per ogni modifica e chiudere ogni nota come sistemata dall'autopilota, con ciò che ha fatto. Vedi prima una stima; i capitoli che hai scritto o congelato restano com'erano a meno che tu non li spunti; la fascia in diretta mostra quante note hanno risposta e la pagina Autopilota dice cosa ha fatto. Su un server personale serve la versione 0.1.25 o successiva."
+      ]
+    }
+  },
+  {
     "version": "0.140.0",
     "date": "2026-11-28",
     "en": {
