@@ -101,7 +101,9 @@ export interface BookAnnotations {
   catalog: ResolvedTag[];
   language: AppLanguage;
   saveAnnotation: (annotation: Annotation) => Promise<void>;
+  saveAnnotations: (annotations: readonly Annotation[]) => Promise<void>;
   deleteAnnotation: (annotation: Pick<Annotation, "id" | "chapter">) => Promise<void>;
+  deleteAnnotations: (annotations: ReadonlyArray<Pick<Annotation, "id" | "chapter">>) => Promise<void>;
   saveBookTag: (tag: AnnotationTagDefinition) => Promise<void>;
   deleteBookTag: (id: string) => Promise<void>;
 }
@@ -205,6 +207,35 @@ export function useBookAnnotations(bookId: string | undefined): BookAnnotations 
     }));
   }, [target, write]);
 
+  /** Several changes at once: one write for each chapter they are in (one local commit each), the changes of a chapter together. Throws what the first failed write threw. */
+  const saveAnnotations = useCallback(async (annotations: readonly Annotation[]) => {
+    if (!target) throw new Error("The book is not open.");
+    const byChapter = new Map<string, Annotation[]>();
+    for (const annotation of annotations) byChapter.set(annotation.chapter, [...(byChapter.get(annotation.chapter) ?? []), annotation]);
+    for (const [chapter, list] of byChapter) {
+      await write(annotationsChapterPath(chapter), () => changeChapterAnnotations({
+        ...target,
+        chapterSlug: chapter,
+        change: (file) => list.reduce(upsertAnnotation, file),
+        message: list.length === 1 ? `Annotate ${chapter}` : `Change ${list.length} annotations of ${chapter}`,
+      }));
+    }
+  }, [target, write]);
+
+  const removeAnnotations = useCallback(async (annotations: ReadonlyArray<Pick<Annotation, "id" | "chapter">>) => {
+    if (!target) throw new Error("The book is not open.");
+    const byChapter = new Map<string, string[]>();
+    for (const annotation of annotations) byChapter.set(annotation.chapter, [...(byChapter.get(annotation.chapter) ?? []), annotation.id]);
+    for (const [chapter, ids] of byChapter) {
+      await write(annotationsChapterPath(chapter), () => changeChapterAnnotations({
+        ...target,
+        chapterSlug: chapter,
+        change: (file) => ids.reduce((current, id) => deleteAnnotation(current, id, new Date().toISOString()), file),
+        message: ids.length === 1 ? `Delete an annotation of ${chapter}` : `Delete ${ids.length} annotations of ${chapter}`,
+      }));
+    }
+  }, [target, write]);
+
   const saveBookTag = useCallback(async (tag: AnnotationTagDefinition) => {
     if (!target) throw new Error("The book is not open.");
     await write(ANNOTATION_TAGS_PATH, () => changeBookTags({ ...target, change: (file) => upsertTag(file, tag), message: `Tag ${tag.name}` }));
@@ -226,7 +257,9 @@ export function useBookAnnotations(bookId: string | undefined): BookAnnotations 
     catalog,
     language,
     saveAnnotation,
+    saveAnnotations,
     deleteAnnotation: removeAnnotation,
+    deleteAnnotations: removeAnnotations,
     saveBookTag,
     deleteBookTag: removeBookTag,
   };

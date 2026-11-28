@@ -95,6 +95,7 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/chapters/:chapterId/reader-evaluations", lazy: appPage("ReaderEvaluationsPage") },
       { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/reader-evaluations", lazy: appPage("ReaderEvaluationsPage") },
       { path: "books/:bookId/chapters/:chapterId/audit", lazy: appPage("AuditPage") },
+      { path: "books/:bookId/annotations", lazy: appPage("BookAnnotationsPage") },
       { path: "books/:bookId/chapters/:chapterId/annotations", lazy: appPage("ChapterAnnotationsPage") },
       { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/audit", lazy: appPage("AuditPage") },
       { path: "books/:bookId/chapters/:chapterId/paragraphs/:paragraphNum/split", lazy: appPage("ParagraphSplitPage") },

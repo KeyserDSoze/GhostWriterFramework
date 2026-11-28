@@ -14,9 +14,9 @@ const BOOK: BookEntry = { id: "book-1", owner: "local", repo: "book-1", name: "T
 const ROOT = "/app/books/book-1";
 const t = (key: string) => i18n.t(key) as string;
 
-/** The groups the owner chose, in his order, with the address of every entry (the Outline after the Dashboard). */
+/** The groups the owner chose, in his order, with the address of every entry (the Outline after the Dashboard, the notes of the book after the reader). */
 const GROUPS: Array<[string, string[]]> = [
-  ["nav.groupBook", [ROOT, `${ROOT}/dashboard`, `${ROOT}/outline`, `${ROOT}/reader`, `${ROOT}/export`]],
+  ["nav.groupBook", [ROOT, `${ROOT}/dashboard`, `${ROOT}/outline`, `${ROOT}/reader`, `${ROOT}/annotations`, `${ROOT}/export`]],
   ["autopilot.title", [`${ROOT}/autopilot`, `${ROOT}/autopilot/settings`]],
   ["nav.groupProfiles", [`${ROOT}/director`, `${ROOT}/ghostwriters`, `${ROOT}/evaluation-style`, `${ROOT}/simulated-readers`]],
   ["nav.groupTools", [`${ROOT}/audit`, `${ROOT}/research`, `${ROOT}/assets`]],
@@ -152,7 +152,7 @@ describe.each<Menu>(["desktop", "mobile"])("the menu of a book (%s)", (menu) => 
     open(menu, ROOT, "it");
     expect(screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent?.trim())).toEqual(["Libro", "Autopilot", "Profili", "Strumenti"]);
     const names = (key: string) => within(group(key)).getAllByRole("link").map((link) => link.textContent?.trim());
-    expect(names("nav.groupBook")).toEqual(["Panoramica", "Dashboard", "Sinossi", "Reader", "Esporta"]);
+    expect(names("nav.groupBook")).toEqual(["Panoramica", "Dashboard", "Sinossi", "Reader", "Appunti", "Esporta"]);
     expect(names("autopilot.title")).toEqual(["In diretta", "Configurazione"]);
     expect(names("nav.groupProfiles")).toEqual(["Direttore", "Ghostwriter", "Stile di valutazione", "Lettori simulati"]);
     expect(names("nav.groupTools")).toEqual(["Audit", "Ricerche", "Asset"]);
@@ -166,7 +166,7 @@ describe("the Synopsis", () => {
     open("desktop", ROOT);
     expect(within(group("nav.groupBook")).getByRole("link", { name: t("nav.outline") })).toHaveAttribute("href", `${ROOT}/outline`);
     const book = bookMenuGroups("book-1").find((entry) => entry.id === "book");
-    expect(book?.items.map((item) => item.href)).toEqual([ROOT, `${ROOT}/dashboard`, `${ROOT}/outline`, `${ROOT}/reader`, `${ROOT}/export`]);
+    expect(book?.items.map((item) => item.href)).toEqual([ROOT, `${ROOT}/dashboard`, `${ROOT}/outline`, `${ROOT}/reader`, `${ROOT}/annotations`, `${ROOT}/export`]);
     expect(book?.items[2].labelKey).toBe("nav.outline");
     expect([i18n.getFixedT("en")("nav.outline"), i18n.getFixedT("it")("nav.outline")]).toEqual(["Synopsis", "Sinossi"]);
   });

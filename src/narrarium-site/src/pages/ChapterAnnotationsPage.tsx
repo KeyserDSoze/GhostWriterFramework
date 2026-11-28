@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, ArrowLeft, BookOpen, PencilLine, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BookOpen, PencilLine } from "lucide-react";
 import "@/i18n/annotations";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -11,14 +11,13 @@ import { useToast } from "@/components/ui/use-toast";
 import { BookStructureErrorAlert } from "@/components/book/BookStructureErrorAlert";
 import { AnchorNotice } from "@/components/annotations/AnchorNotice";
 import { AnnotationEditorDialog, type AnnotationEditTarget } from "@/components/annotations/AnnotationEditorDialog";
-import { TagEditor, suggestedMark } from "@/components/annotations/TagEditor";
 import { TagLabel } from "@/components/annotations/TagLabel";
-import { usePublicNotice } from "@/components/annotations/usePublicNotice";
+import { BookTagsPanel } from "@/components/annotations/page/BookTagsPanel";
 import { sceneSlugOfPath } from "@/components/annotations/reader/useLocatedAnnotations";
 import { useBookStructure } from "@/hooks/useBookStructure";
 import { loadFileContent } from "@/github/githubClient";
 import { listPosition, locateInChapter, type ChapterAnchorMatch } from "@/annotations/anchoring";
-import { ANNOTATION_STATUSES, annotationStatus, isPendingStatus, resolveTag, type Annotation, type AnnotationTagDefinition } from "@/annotations/model";
+import { ANNOTATION_STATUSES, annotationStatus, isPendingStatus, resolveTag, type Annotation } from "@/annotations/model";
 import { sceneTextOfMarkdown } from "@/annotations/sceneText";
 import { AnnotationsFileError } from "@/annotations/repository";
 import { useBookAnnotations } from "@/annotations/useBookAnnotations";
@@ -40,14 +39,11 @@ export function ChapterAnnotationsPage() {
   const [params, setParams] = useSearchParams();
   const { structure, loading, error, reload } = useBookStructure(bookId);
   const annotations = useBookAnnotations(bookId);
-  const notice = usePublicNotice(annotations.book);
   const chapter = structure?.chapters.find((entry) => entry.slug === chapterId);
   const state = chapterId ? annotations.chapters.get(chapterId) : undefined;
   const [texts, setTexts] = useState<Map<string, string> | null>(null);
   const [readFailed, setReadFailed] = useState(false);
   const [editTargets, setEditTargets] = useState<AnnotationEditTarget[] | null>(null);
-  const [tagEditor, setTagEditor] = useState<{ tag?: AnnotationTagDefinition } | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const tagFilter = params.get("tag") ?? "";
   const statusFilter = (STATUS_FILTERS as readonly string[]).includes(params.get("status") ?? "") ? (params.get("status") as StatusFilter) : "pending";
@@ -127,27 +123,6 @@ export function ChapterAnnotationsPage() {
       return false;
     }
   };
-  const saveTag = async (tag: AnnotationTagDefinition) => {
-    if (!(await notice.confirm("tag"))) return;
-    setBusy(true);
-    try {
-      await annotations.saveBookTag(tag);
-      setTagEditor(null);
-    } catch (cause) {
-      toast({ title: t("annotations.reader.saveFailed"), description: describe(cause), variant: "destructive" });
-    } finally {
-      setBusy(false);
-    }
-  };
-  const removeTag = async (tag: AnnotationTagDefinition) => {
-    if (!window.confirm(t("annotations.list.deleteTagConfirm", { name: tag.name }))) return;
-    try {
-      await annotations.deleteBookTag(tag.id);
-    } catch (cause) {
-      toast({ title: t("annotations.reader.saveFailed"), description: describe(cause), variant: "destructive" });
-    }
-  };
-
   if (loading && !structure) return <div className="space-y-4"><Skeleton className="h-10 w-2/3" /><Skeleton className="h-40 w-full" /></div>;
   if (error && !structure) return <BookStructureErrorAlert error={error} reload={reload} />;
   if (!chapter) return <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{t("bookPage.notFound")}</AlertDescription></Alert>;
@@ -156,7 +131,6 @@ export function ChapterAnnotationsPage() {
     const scene = scenes.find((entry) => entry.slug === slug);
     return scene ? `/app/books/${bookId}/chapters/${chapterId}/paragraphs/${scene.number}` : undefined;
   };
-  const takenNames = annotations.catalog.map((tag) => tag.name.toLocaleLowerCase());
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -240,47 +214,9 @@ export function ChapterAnnotationsPage() {
         </div>
       )}
 
-      <section aria-labelledby="book-tags" className="space-y-3 rounded-xl border bg-card p-4">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <h2 id="book-tags" className="text-lg font-semibold">{t("annotations.list.bookTags")}</h2>
-            <p className="text-sm text-muted-foreground">{t("annotations.list.bookTagsDescription")}</p>
-          </div>
-          {!tagEditor && <Button size="sm" onClick={() => setTagEditor({})} className="[@media(pointer:coarse)]:h-11"><Plus aria-hidden="true" />{t("annotations.list.newTag")}</Button>}
-        </div>
-        {annotations.tagsError && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{t("annotations.reader.unreadable", { chapter: t("annotations.list.bookTags"), path: "annotations/tags.yml", detail: annotations.tagsError })}</AlertDescription></Alert>}
-        {tagEditor && (
-          <div className="rounded-lg border p-3">
-            <TagEditor
-              initial={tagEditor.tag}
-              takenNames={takenNames}
-              suggested={suggestedMark(annotations.catalog.map((tag) => tag.mark))}
-              onSave={saveTag}
-              onCancel={() => setTagEditor(null)}
-              busy={busy}
-            />
-          </div>
-        )}
-        {annotations.bookTags.length === 0 ? (
-          !tagEditor && <p className="text-sm text-muted-foreground">{t("annotations.list.noBookTags")}</p>
-        ) : (
-          <ul className="divide-y">
-            {annotations.bookTags.map((tag) => (
-              <li key={tag.id} className="flex flex-wrap items-center gap-2 py-2">
-                <div className="min-w-0 flex-1">
-                  <TagLabel tag={{ ...tag, scope: "book" }} />
-                  {tag.description && <p className="mt-1 text-sm text-muted-foreground">{tag.description}</p>}
-                </div>
-                <Button size="icon" variant="ghost" className="[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" aria-label={t("annotations.tag.edit", { name: tag.name })} onClick={() => setTagEditor({ tag })}><PencilLine className="h-4 w-4" /></Button>
-                <Button size="icon" variant="ghost" className="text-destructive [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-11" aria-label={t("annotations.tag.delete", { name: tag.name })} onClick={() => void removeTag(tag)}><Trash2 className="h-4 w-4" /></Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <BookTagsPanel bookId={bookId} />
 
       <AnnotationEditorDialog targets={editTargets} catalog={annotations.catalog} onClose={() => setEditTargets(null)} onSave={save} onDelete={remove} />
-      {notice.element}
     </div>
   );
 }

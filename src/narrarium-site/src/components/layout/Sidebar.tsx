@@ -41,6 +41,7 @@ import { APP_VERSION } from "@/config/version";
 import { useNavigationHistoryStore } from "@/store/navigationHistoryStore";
 import { getDocGroups, localizedDoc, normalizeDocLang } from "@/lib/docs";
 import { bookMenuGroupOf, bookMenuGroups, type BookMenuGroupId } from "@/components/layout/bookMenu";
+import { HighlighterIcon } from "@/components/layout/HighlighterIcon";
 
 /** Whether the links of the menu replace the current entry of the history (the step of the open drawer on a phone). */
 const ReplaceHistory = createContext(false);
@@ -104,16 +105,6 @@ function NavSection({ title, open, onToggle, children }: { title: string; open: 
         {children}
       </ul>
     </section>
-  );
-}
-
-/** The highlighter of the annotations, drawn here (Lucide's, ISC): the library's own icon would be a chunk that the shell shares with the lazy pages that also use it. */
-function HighlighterIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="lucide lucide-highlighter h-4 w-4">
-      <path d="m9 11-6 6v3h9l3-3" />
-      <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
-    </svg>
   );
 }
 

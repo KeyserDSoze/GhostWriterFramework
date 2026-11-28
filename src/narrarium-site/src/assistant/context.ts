@@ -11,6 +11,7 @@ export type AppRouteContext =
   | { kind: "app-home" }
   | { kind: "book"; bookId: string }
   | { kind: "book-dashboard"; bookId: string }
+  | { kind: "book-annotations"; bookId: string }
   | { kind: "book-outline"; bookId: string }
   | { kind: "book-autopilot"; bookId: string }
   | { kind: "book-autopilot-settings"; bookId: string }
@@ -72,6 +73,9 @@ export function parseAppRoute(pathname: string): AppRouteContext {
 
   match = /^\/app\/books\/([^/]+)\/export$/.exec(clean);
   if (match) return { kind: "book-export", bookId: decodeURIComponent(match[1]) };
+
+  match = /^\/app\/books\/([^/]+)\/annotations$/.exec(clean);
+  if (match) return { kind: "book-annotations", bookId: decodeURIComponent(match[1]) };
 
   match = /^\/app\/books\/([^/]+)\/dashboard$/.exec(clean);
   if (match) return { kind: "book-dashboard", bookId: decodeURIComponent(match[1]) };
@@ -261,6 +265,7 @@ export async function loadWriterContext(
     switch (route.kind) {
       case "book":
       case "book-dashboard":
+      case "book-annotations":
       case "book-assets":
       case "book-ghostwriters":
       case "book-evaluation-style":
@@ -396,6 +401,7 @@ export function buildContextTitle(
   switch (route.kind) {
     case "book": return structure?.title ?? "Book";
     case "book-dashboard": return "Book dashboard";
+    case "book-annotations": return "Annotations of the book";
     case "book-outline": return "Synopsis";
     case "book-autopilot": return "Autopilot";
     case "book-autopilot-settings": return "Autopilot configuration";
@@ -448,6 +454,7 @@ export function buildContextSummary(
   switch (route.kind) {
     case "book": return `Book context for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-dashboard": return `Dashboard for ${structure?.title ?? book?.name ?? "book"}.`;
+    case "book-annotations": return `The annotations of ${structure?.title ?? book?.name ?? "book"}: the passages the author marked while reading, with their tags, notes and status (open, later, handled, dismissed), by chapter. Nothing is changed without the author.`;
     case "book-outline": return `Synopsis (the outline) of ${structure?.title ?? book?.name ?? "book"}: the idea of the book (outline/book.md, its description) and one entry per chapter (outline/chapters/<NNN>.md) with a hypothetical title, what happens and its ghostwriter. The autopilot follows it as binding.`;
     case "book-autopilot": return `Autopilot of ${structure?.title ?? book?.name ?? "book"}, live: what it is doing, its history, its plan and the author's permanent rules.`;
     case "book-autopilot-settings": return `Autopilot configuration for ${structure?.title ?? book?.name ?? "book"}: the brief, how it reviews and publishes the book, the author's permanent rules and the profiles it uses.`;
@@ -498,7 +505,7 @@ function buildNoteTargetPath(route: AppRouteContext, chapter: Chapter | null): s
   if (route.kind === "chapter" || route.kind === "paragraph" || route.kind === "chapter-workspace" || route.kind === "paragraph-workspace" || route.kind === "chapter-audit" || route.kind === "paragraph-audit") {
     return chapter ? `drafts/${chapter.slug}/notes.md` : null;
   }
-  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-outline" || route.kind === "book-autopilot" || route.kind === "book-autopilot-settings" || route.kind === "book-director" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-evaluation-style" || route.kind === "book-simulated-readers" || route.kind === "reader" || route.kind === "book-export" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "book-audit" || route.kind === "app-home") {
+  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-annotations" || route.kind === "book-outline" || route.kind === "book-autopilot" || route.kind === "book-autopilot-settings" || route.kind === "book-director" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-evaluation-style" || route.kind === "book-simulated-readers" || route.kind === "reader" || route.kind === "book-export" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "book-audit" || route.kind === "app-home") {
     return "notes.md";
   }
   return null;

@@ -127,6 +127,20 @@ describe("a chapter file", () => {
     expect(serializeChapterAnnotations(back)).toBe(text);
   });
 
+  it("writes how an annotation was handled after its status, and keeps what a newer app added to it", () => {
+    const handled = annotation("a-1", { status: "handled", resolution: { by: "autopilot", at: "2026-11-26T08:00:00.000Z", summary: "Rewrote the image: «the color of old steel» is gone." } });
+    const text = serializeChapterAnnotations(fileOf(handled));
+    expect(text).toContain("    status: handled\n    resolution:\n      by: autopilot\n      at: 2026-11-26T08:00:00.000Z\n      summary: \"Rewrote the image");
+    expect(parsed(text)).toEqual(fileOf(handled));
+    const future = text.replace("      by: autopilot\n", "      by: autopilot\n      model: slow\n");
+    const back = parsed(future);
+    expect(liveAnnotations(back)[0].resolution).toMatchObject({ by: "autopilot", extra: { model: "slow" } });
+    expect(serializeChapterAnnotations(back)).toContain("      model: slow\n");
+    // A resolution without who is not one; an open note has none.
+    expect(liveAnnotations(parsed(text.replace("by: autopilot", "by: ''")))[0].resolution).toBeUndefined();
+    expect(serializeChapterAnnotations(fileOf(annotation("a-2")))).not.toContain("resolution");
+  });
+
   it("keeps any text exactly: colons, hashes, quotes, new lines, leading and trailing spaces, emoji, words YAML would read as values", () => {
     const awkward = [
       "x: y # not a comment", " leading space", "trailing space ", "\"quoted\" and 'single'", "line one\nline two\n", "1984", "no", "yes", "null", "~",

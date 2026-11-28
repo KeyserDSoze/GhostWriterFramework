@@ -5,6 +5,7 @@ import {
   normalizeMarkStyle,
   type Annotation,
   type AnnotationEntry,
+  type AnnotationResolution,
   type AnnotationTagDefinition,
   type AnnotationTombstone,
 } from "./model";
@@ -95,7 +96,8 @@ const pickExtra = (record: Record<string, unknown>, known: readonly string[]): R
   return Object.keys(extra).length ? extra : undefined;
 };
 
-const ANNOTATION_KEYS = ["id", "paragraph", "quote", "prefix", "suffix", "offset", "tag", "comment", "status", "createdAt", "updatedAt", "createdOnDevice"] as const;
+const ANNOTATION_KEYS = ["id", "paragraph", "quote", "prefix", "suffix", "offset", "tag", "comment", "status", "resolution", "createdAt", "updatedAt", "createdOnDevice"] as const;
+const RESOLUTION_KEYS = ["by", "at", "summary"] as const;
 const TOMBSTONE_KEYS = ["id", "deletedAt", "updatedAt"] as const;
 const FILE_KEYS = ["version", "chapter", "annotations"] as const;
 const TAG_KEYS = ["id", "name", "description", "mark", "createdAt", "updatedAt", "deletedAt"] as const;
@@ -131,8 +133,19 @@ function readEntry(raw: unknown, chapterSlug: string): AnnotationEntry | null {
     updatedAt: text(raw.updatedAt),
     createdOnDevice: text(raw.createdOnDevice),
   };
+  const resolution = readResolution(raw.resolution);
+  if (resolution) annotation.resolution = resolution;
   const extra = pickExtra(raw, ANNOTATION_KEYS);
   return extra ? { ...annotation, extra } : annotation;
+}
+
+function readResolution(raw: unknown): AnnotationResolution | undefined {
+  if (!isRecord(raw)) return undefined;
+  const by = text(raw.by).trim();
+  if (!by) return undefined;
+  const summary = text(raw.summary).trim();
+  const extra = pickExtra(raw, RESOLUTION_KEYS);
+  return { by, at: text(raw.at), ...(summary ? { summary } : {}), ...(extra ? { extra } : {}) };
 }
 
 /** The chapter of the file is its name: what the file says inside is only a check. */
@@ -177,11 +190,16 @@ function writeEntry(entry: AnnotationEntry, chapterSlug: string): Record<string,
     tag: entry.tag,
     comment: entry.comment,
     status: entry.status,
+    ...(entry.resolution ? { resolution: writeResolution(entry.resolution) } : {}),
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
     createdOnDevice: entry.createdOnDevice,
     ...sortedRecord(entry.extra),
   };
+}
+
+function writeResolution(resolution: AnnotationResolution): Record<string, unknown> {
+  return { by: resolution.by, at: resolution.at, ...(resolution.summary ? { summary: resolution.summary } : {}), ...sortedRecord(resolution.extra) };
 }
 
 function sortedRecord(record: Record<string, unknown> | undefined): Record<string, unknown> {

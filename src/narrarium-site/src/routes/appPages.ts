@@ -33,6 +33,7 @@ export const appPages = {
   BookSettingsPage: () => import("@/pages/BookSettingsPage"),
   CanonEntityPage: () => import("@/pages/CanonEntityPage"),
   ChapterAnnotationsPage: () => import("@/pages/ChapterAnnotationsPage"),
+  BookAnnotationsPage: () => import("@/pages/BookAnnotationsPage"),
   ChapterPage: () => import("@/pages/ChapterPage"),
   CostsPage: () => import("@/pages/CostsPage"),
   CustomActionsPage: () => import("@/pages/CustomActionsPage"),

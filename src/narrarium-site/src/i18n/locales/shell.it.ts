@@ -11,6 +11,7 @@ const shellIt = {
   nav: {
     annotations: "Annotazioni",
     annotationTags: "Etichette delle annotazioni",
+    bookAnnotations: "Appunti",
   },
   shell: {
     navMenu: "Menu di navigazione",

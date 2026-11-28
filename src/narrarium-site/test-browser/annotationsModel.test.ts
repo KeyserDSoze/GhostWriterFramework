@@ -15,6 +15,7 @@ import {
   pendingCounts,
   resolveTag,
   tagCatalog,
+  withStatus,
   type Annotation,
   type AnnotationTagDefinition,
 } from "@/annotations/model";
@@ -106,5 +107,21 @@ describe("marks, ids and statuses", () => {
       { ...base, id: "a-5", paragraph: "003-three", status: "dismissed" },
     ];
     expect(pendingCounts(annotations)).toEqual({ total: 3, byParagraph: { "001-one": 2, "002-two": 1 } });
+  });
+
+  it("another status is a new copy at that moment; handled keeps how it was handled, any other takes it away, and no change is nothing", () => {
+    const base: Annotation = { id: "a-1", chapter: "001-x", paragraph: "001-one", quote: "q", prefix: "", suffix: "", offset: 0, tag: "rewrite", comment: "", status: "open", createdAt: "t0", updatedAt: "t0", createdOnDevice: "d" };
+    const handled = withStatus(base, "handled", "t1", { by: "ai", at: "t1", summary: "Rewrote the image." });
+    expect(handled).toMatchObject({ status: "handled", updatedAt: "t1", resolution: { by: "ai", at: "t1", summary: "Rewrote the image." } });
+    expect(base.status).toBe("open");
+    expect(withStatus(handled!, "handled", "t2")).toBeNull();
+    // Handled again with another resolution: the new one; with none: the one it has.
+    expect(withStatus(handled!, "handled", "t2", { by: "author", at: "t2" })?.resolution).toEqual({ by: "author", at: "t2" });
+    const later = withStatus(handled!, "later", "t3")!;
+    expect(later).toMatchObject({ status: "later", updatedAt: "t3" });
+    expect(later).not.toHaveProperty("resolution");
+    expect(withStatus(withStatus(later, "dismissed", "t4")!, "handled", "t5")).not.toHaveProperty("resolution");
+    // A status of a newer app that reads as open: setting open is a change (it is written as open).
+    expect(withStatus({ ...base, status: "snoozed" }, "open", "t6")).toMatchObject({ status: "open" });
   });
 });

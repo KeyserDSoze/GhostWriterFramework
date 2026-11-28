@@ -1,4 +1,6 @@
-import { BookOpen, BookOpenText, ClipboardCheck, Clapperboard, Download, Feather, Images, LayoutDashboard, ListTree, Plane, Search, ShieldAlert, SlidersHorizontal, Users, type LucideIcon } from "lucide-react";
+import type { ComponentType } from "react";
+import { BookOpen, BookOpenText, ClipboardCheck, Clapperboard, Download, Feather, Images, LayoutDashboard, ListTree, Plane, Search, ShieldAlert, SlidersHorizontal, Users } from "lucide-react";
+import { HighlighterIcon } from "@/components/layout/HighlighterIcon";
 
 /**
  * The Outline (the plan of the chapters, a page of the book): its entry is in the Book group, after the Dashboard. `outlineReady: false` leaves it
@@ -12,7 +14,8 @@ export interface BookMenuItem {
   /** The key of its label in the always-loaded texts: the menu is drawn before any page loads its own. */
   labelKey: string;
   href: string;
-  icon: LucideIcon;
+  /** A Lucide icon, or any component that takes a `className` (the highlighter is drawn by the menu itself). */
+  icon: ComponentType<{ className?: string }>;
   /** The pages under this address belong to the entry too (one research is a page of Research): its group opens on them. */
   ownsSubpages?: boolean;
 }
@@ -24,7 +27,7 @@ export interface BookMenuGroup {
 }
 
 /**
- * The menu of a book, as the owner chose it: Book (overview, dashboard, outline, reader, export), Autopilot (live, configuration), Profiles
+ * The menu of a book, as the owner chose it: Book (overview, dashboard, outline, reader, annotations, export), Autopilot (live, configuration), Profiles
  * (director, ghostwriters, evaluation style, simulated readers) and Tools (audit, research, assets). The canon and the settings of the book
  * are drawn apart by the sidebar.
  */
@@ -39,6 +42,7 @@ export function bookMenuGroups(bookId: string, { outlineReady = OUTLINE_PAGE_REA
         { labelKey: "dashboard.title", href: `${root}/dashboard`, icon: LayoutDashboard },
         ...(outlineReady ? [{ labelKey: "nav.outline", href: `${root}/outline`, icon: ListTree }] : []),
         { labelKey: "reader.title", href: `${root}/reader`, icon: BookOpenText },
+        { labelKey: "nav.bookAnnotations", href: `${root}/annotations`, icon: HighlighterIcon },
         { labelKey: "export.title", href: `${root}/export`, icon: Download },
       ],
     },

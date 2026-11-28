@@ -15,6 +15,17 @@ export function isPendingStatus(status: AnnotationStatus): boolean {
   return status === "open" || status === "later";
 }
 
+/**
+ * The annotation with another status, at `at`. A status other than `handled` takes the resolution away (it says how the note was closed); `handled` keeps
+ * the one given, or the one it has. A status of a newer app that this version reads as the one it was is not a change: nothing is done (`null`).
+ */
+export function withStatus(annotation: Annotation, status: AnnotationStatus, at: string, resolution?: AnnotationResolution): Annotation | null {
+  if (annotation.status === status && !resolution) return null;
+  const { resolution: current, ...rest } = annotation;
+  const kept = status === "handled" ? resolution ?? current : undefined;
+  return { ...rest, status, updatedAt: at, ...(kept ? { resolution: kept } : {}) };
+}
+
 /** A status this version knows, else `open`: a status written by a newer app is shown as open (and written back as it was). */
 export function annotationStatus(raw: string): AnnotationStatus {
   return (ANNOTATION_STATUSES as readonly string[]).includes(raw) ? raw as AnnotationStatus : "open";
@@ -33,6 +44,23 @@ export interface TextAnchor {
   offset: number;
 }
 
+/** Who closed an annotation and how: the author by hand, the AI fix the author reviewed, or the autopilot's revision. */
+export const RESOLUTION_AUTHORS = ["author", "ai", "autopilot"] as const;
+export type ResolutionAuthor = (typeof RESOLUTION_AUTHORS)[number];
+
+/** How an annotation was handled, written with the status that says it is: who, when, and in a few words what was done (what the AI or the autopilot did). */
+export interface AnnotationResolution {
+  /** One of `RESOLUTION_AUTHORS`, or one a newer app wrote (kept as it is). */
+  by: string;
+  at: string;
+  /** What was done, in a sentence or two; absent for a note the author handled by hand. */
+  summary?: string;
+  /** Fields of a newer app, kept as they are. */
+  extra?: Record<string, unknown>;
+}
+
+export const RESOLUTION_SUMMARY_MAX = 600;
+
 export interface Annotation extends TextAnchor {
   /** Stable for the life of the annotation: `a-<time in base 36>-<random>`, so the file sorted by id is in the order they were made. */
   id: string;
@@ -46,6 +74,8 @@ export interface Annotation extends TextAnchor {
   comment: string;
   /** The status as written: one of `ANNOTATION_STATUSES`, or one of a newer app (read with `annotationStatus`). */
   status: string;
+  /** How it was handled, once it is (`handled`): taken away when the annotation is open again. */
+  resolution?: AnnotationResolution;
   createdAt: string;
   updatedAt: string;
   /** An opaque short tag of the device that made it (not the device's own id). */
