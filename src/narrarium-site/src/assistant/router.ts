@@ -4,7 +4,9 @@ import { effectiveThinking } from "@/router/thinking";
 import { followOrder, integrationChatModels, modelSupportsCapability, pickModelFor, resolveReviewIntegration, resolveWritingIntegration, CONFIRMATION_TOOL_DEFINITION, type ForcedToolDefinition, type LlmFinishReport, type LlmMessage, type LlmResult, type LlmUsageReport } from "@/assistant/llm";
 import { executeCompletionFallback } from "@/assistant/completionFallback";
 import { fallbackBudgetNote } from "narrarium-engine";
-import { DEFAULT_MAX_INPUT_TOKENS, budgetLlmMessages, likelyMessageTokens, modelWindow, resolveModelTokenBudgets } from "@/assistant/promptBudget";
+import { DEFAULT_MAX_INPUT_TOKENS, UPPER_BOUND_MEASURE, budgetLlmMessages, likelyMeasure, likelyMessageTokens, modelWindow, resolveModelTokenBudgets, type TokenMeasure } from "@/assistant/promptBudget";
+import { recordTokenUsage, requestShape, shapeTotal, tokenRatio } from "@/assistant/contextBudget";
+import { announceTurnRequest, announceTurnUsage } from "@/assistant/turnContext";
 import { announceRetry } from "@/assistant/retryNotice";
 import { announcePromptCut, promptCutOf } from "@/assistant/promptCut";
 import { usageTaskOf } from "@/costs/usageTasks";
@@ -79,13 +81,41 @@ function inputRoom(candidate: TaskCandidate, outputTokens: number, reservedToken
 }
 
 /** The messages of a forced call, cut to what the window of the candidate holds after the schema: the engine sends it as the only tool of the request. */
-function budgetForcedToolMessages(messages: LlmMessage[], candidate: TaskCandidate, outputTokens: number, tool: ForcedToolDefinition, extraReserve = 0): LlmMessage[] {
+function budgetForcedToolMessages(messages: LlmMessage[], candidate: TaskCandidate, outputTokens: number, tool: ForcedToolDefinition, extraReserve = 0, measure: TokenMeasure = UPPER_BOUND_MEASURE): LlmMessage[] {
   const inputTokens = resolveModelTokenBudgets(candidate.maxInputTokens, outputTokens).inputTokens;
   const reserve = toolTokens(tool).atMost + extraReserve;
   if (reserve > inputTokens) throw new CandidateInputBudgetError();
-  const budgeted = budgetLlmMessages(messages, candidate.maxInputTokens, outputTokens, reserve);
+  const budgeted = budgetLlmMessages(messages, candidate.maxInputTokens, outputTokens, reserve, measure);
   if (messages.length > 0 && budgeted.length === 0) throw new CandidateInputBudgetError();
   return budgeted;
+}
+
+/** The chats whose requests are measured as the chat measures its context (#122): the Copilot and Brainstorming. */
+const CHAT_MEASURED: ReadonlySet<ChatCapability> = new Set<ChatCapability>(["copilot", "brainstorming"]);
+
+/**
+ * How a request is counted where it may be cut: the requests of the chats (and the summary of a compaction, `measure: "chat"`) by the chat's tokens times what the provider
+ * counted for the requests of the model (`contextBudget.ts`), so that a request is cut where its window really ends (the UTF-8 upper bound cut the prose of a request at about a
+ * quarter of the window) and the compaction of the chat comes first; every other task by the UTF-8 upper bound, as before.
+ */
+function measureFor(capability: ChatCapability, candidate: TaskCandidate, measure?: "chat"): TokenMeasure {
+  return measure === "chat" || CHAT_MEASURED.has(capability) ? likelyMeasure(tokenRatio({ integrationId: candidate.integration?.id, model: candidate.model })) : UPPER_BOUND_MEASURE;
+}
+
+/**
+ * A request that goes to a candidate, told to the chat that made it (`turnContext.ts`): its shape, part by part, as the chat composed it (before a cut: the ring says how much
+ * the chat asks of the window). The result is the likely tokens of what is sent, that the provider's count is measured against.
+ */
+function tellRequest(signal: AbortSignal | undefined, capability: ChatCapability, candidate: TaskCandidate, messages: LlmMessage[], sent: LlmMessage[], toolTokensSent = 0): number {
+  const shape = requestShape(messages, toolTokensSent);
+  if (signal && candidate.integration && candidate.model) announceTurnRequest(signal, { capability, integrationId: candidate.integration.id, model: candidate.model, shape });
+  return sent === messages ? shapeTotal(shape) : shapeTotal(requestShape(sent, toolTokensSent));
+}
+
+/** What the provider counted for a request: the ratio of its model learns from it, and the chat that sent it hears it. */
+function tellUsage(signal: AbortSignal | undefined, capability: ChatCapability, report: LlmUsageReport, likely: number): void {
+  recordTokenUsage({ integrationId: report.integrationId, model: report.model }, likely, report.inputTokens);
+  if (report.inputTokens > 0) announceTurnUsage(signal, { capability, integrationId: report.integrationId, model: report.model, inputTokens: report.inputTokens, cachedInputTokens: report.cachedInputTokens, outputTokens: report.outputTokens });
 }
 
 /** A request cut to fit the window of the candidate is said to the chat that sent it (`promptCut.ts`): how much was sent, for which window (the model's own, or the default). */
@@ -421,7 +451,7 @@ export async function completeTextRouted(
   settings: AppSettings,
   messages: LlmMessage[],
   capability: ChatCapability,
-  options: { accountScope: string | null; signal?: AbortSignal; label?: string; onText?: (text: string) => void; onUsage?: (usage: LlmUsageReport) => void; onFinish?: (report: LlmFinishReport) => void; onAttempt?: (routeCandidateIndex: number) => void; overflow?: PromptOverflow; preferred?: RoutingTarget; validateText?: (text: string) => void; fallbackMaxOutputTokens?: number },
+  options: { accountScope: string | null; signal?: AbortSignal; label?: string; onText?: (text: string) => void; onUsage?: (usage: LlmUsageReport) => void; onFinish?: (report: LlmFinishReport) => void; onAttempt?: (routeCandidateIndex: number) => void; overflow?: PromptOverflow; preferred?: RoutingTarget; validateText?: (text: string) => void; fallbackMaxOutputTokens?: number; measure?: "chat" },
 ): Promise<string> {
   const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
   try {
@@ -472,8 +502,9 @@ export async function completeTextRouted(
     },
     describe: (_candidate, error) => clientSentence(error),
     run: async (candidate, signal) => {
-      const prompt = options.overflow === "fail" ? messages : budgetLlmMessages(messages, candidate.maxInputTokens, outputLimit(candidate));
+      const prompt = options.overflow === "fail" ? messages : budgetLlmMessages(messages, candidate.maxInputTokens, outputLimit(candidate), 0, measureFor(capability, candidate, options.measure));
       tellCut(options.signal, candidate, messages, prompt);
+      const likely = tellRequest(options.signal, capability, candidate, messages, prompt);
       let text: string;
       try {
         const response = await runCopilotAttempt({
@@ -493,6 +524,7 @@ export async function completeTextRouted(
           onEnd: (end) => {
             if (end.finishReason === undefined) return;
             const report = usageReport(candidate, end);
+            tellUsage(options.signal, capability, report, likely);
             options.onUsage?.(report);
             options.onFinish?.({ ...report, finishReason: end.finishReason, replyCharacters: end.replyCharacters ?? 0, reasoningCharacters: end.reasoningCharacters ?? 0 });
           },
@@ -526,7 +558,7 @@ export async function completeToolRouted<T>(
   messages: LlmMessage[],
   capability: ChatCapability,
   tool: ForcedToolDefinition,
-  options: { accountScope: string | null; signal?: AbortSignal; label?: string; validate?: (output: unknown) => T; fallbackMaxOutputTokens?: number; onFinish?: (report: LlmFinishReport) => void; onAttempt?: (routeCandidateIndex: number) => void; overflow?: PromptOverflow; onStructuredText?: (json: string) => void },
+  options: { accountScope: string | null; signal?: AbortSignal; label?: string; validate?: (output: unknown) => T; fallbackMaxOutputTokens?: number; onFinish?: (report: LlmFinishReport) => void; onAttempt?: (routeCandidateIndex: number) => void; overflow?: PromptOverflow; onStructuredText?: (json: string) => void; measure?: "chat" },
 ): Promise<LlmResult<T> & { metadata: RoutedLlmRunMetadata }> {
   const operation = beginAccountScopedAiOperation(options?.signal, options?.accountScope);
   try {
@@ -583,8 +615,9 @@ export async function completeToolRouted<T>(
     const position = resolved.indexOf(candidate);
     options.onAttempt?.(position);
     try {
-      const prompt = options.overflow === "fail" ? messages : budgetForcedToolMessages(messages, chat, limit, tool, instruction);
+      const prompt = options.overflow === "fail" ? messages : budgetForcedToolMessages(messages, chat, limit, tool, instruction, measureFor(capability, chat, options.measure));
       tellCut(options.signal, chat, messages, prompt);
+      const likely = tellRequest(options.signal, capability, chat, messages, prompt, schema.about + instruction);
       let ended: { end: FetchAiAttemptEnd; debugId: string | undefined } | undefined;
       const response = await runCopilotAttempt({
         settings,
@@ -601,7 +634,9 @@ export async function completeToolRouted<T>(
         onEnd: (end, debugId) => {
           ended = { end, debugId };
           if (end.finishReason === undefined) return;
-          options.onFinish?.({ ...usageReport(chat, end), finishReason: end.finishReason, replyCharacters: end.replyCharacters ?? 0, reasoningCharacters: end.reasoningCharacters ?? 0 });
+          const report = usageReport(chat, end);
+          tellUsage(options.signal, capability, report, likely);
+          options.onFinish?.({ ...report, finishReason: end.finishReason, replyCharacters: end.replyCharacters ?? 0, reasoningCharacters: end.reasoningCharacters ?? 0 });
         },
         clock,
         onRetry: (notice) => announceRetry(options?.signal, notice),

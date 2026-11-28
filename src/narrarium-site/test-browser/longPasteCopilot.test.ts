@@ -184,6 +184,8 @@ describe("what is said when a request is cut or refused", () => {
   };
 
   it("judges a request by the window of its model: nothing is cut of a 63,000-character text for a model of 1,000,000 tokens or for one whose window is not set (128,000 assumed), and a cut is said with how much and for which window", async () => {
+    // Since #122 a request is measured with the likely tokens (about four characters each, times 1.25 until the provider counts one), not the bytes: it is cut where the window
+    // really ends. A window of 12,000 tokens does not hold the text; the default window does not hold seven copies of it.
     const wide = listen();
     await ask(`Cosa ne pensi di questo testo?\n\n${DOC}`, settingsWith({ ...OWNER_LIKE, supportsToolCalls: false }), undefined, { signal: wide.signal });
     expect(provider.calls.length).toBeGreaterThan(0);
@@ -195,10 +197,10 @@ describe("what is said when a request is cut or refused", () => {
     expect(unset.cuts, "the default window holds it").toEqual([]);
 
     const narrow = listen();
-    await ask(`Cosa ne pensi di questo testo?\n\n${DOC}`, settingsWith({ supportsToolCalls: false, maxInputTokens: 32_000 }), undefined, { signal: narrow.signal });
+    await ask(`Cosa ne pensi di questo testo?\n\n${DOC}`, settingsWith({ supportsToolCalls: false, maxInputTokens: 12_000 }), undefined, { signal: narrow.signal });
     expect(narrow.cuts.length).toBeGreaterThan(0);
     const [cut] = narrow.cuts;
-    expect(cut).toMatchObject({ model: "big", integration: "Fake", windowTokens: 32_000, configured: true, images: 0 });
+    expect(cut).toMatchObject({ model: "big", integration: "Fake", windowTokens: 12_000, configured: true, images: 0 });
     expect(cut.characters).toBeGreaterThan(DOC.length);
     expect(cut.sentCharacters).toBeLessThan(cut.characters / 2);
     const t = (key: string, values?: Record<string, unknown>) => `${key}${values ? JSON.stringify(values) : ""}`;
@@ -208,7 +210,7 @@ describe("what is said when a request is cut or refused", () => {
     expect(note).toContain("autopilot.copilotCut.where");
 
     const huge = listen();
-    await ask(`Cosa ne pensi di questo testo?\n\n${DOC}\n\n${DOC}\n\n${DOC}`, settingsWith({ supportsToolCalls: false }), undefined, { signal: huge.signal });
+    await ask(`Cosa ne pensi di questo testo?\n\n${Array.from({ length: 7 }, () => DOC).join("\n\n")}`, settingsWith({ supportsToolCalls: false }), undefined, { signal: huge.signal });
     expect(huge.cuts[0]).toMatchObject({ windowTokens: 128_000, configured: false });
     expect(promptCutNote(huge.cuts, t as never, (value) => String(value))).toContain("autopilot.copilotCut.lineDefault");
   });

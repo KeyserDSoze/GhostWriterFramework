@@ -59,27 +59,95 @@ function takeUtf8(value: string, maxBytes: number, fromEnd = false): string {
   return selected.join("");
 }
 
-function truncateText(text: string, maxTokens: number): string {
-  if (textTokenUpperBound(text) <= maxTokens) return text;
-  const noticeTokens = textTokenUpperBound(TRUNCATION_NOTICE) + 2;
-  if (maxTokens <= noticeTokens) {
-    if (maxTokens <= textTokenUpperBound(SHORT_TRUNCATION_NOTICE)) return takeUtf8(text, maxTokens);
-    const markerTokens = textTokenUpperBound(SHORT_TRUNCATION_NOTICE);
-    return `${takeUtf8(text, maxTokens - markerTokens)}${SHORT_TRUNCATION_NOTICE}`;
+/** How a budget counts the tokens of a text, and keeps the start or the end of one within a number of them. */
+export interface TokenMeasure {
+  count(text: string): number;
+  take(text: string, tokens: number, fromEnd?: boolean): string;
+}
+
+/** The UTF-8 bytes: no byte-level tokenizer emits more tokens, so a prompt within them always fits, and most are cut long before they would not. */
+export const UPPER_BOUND_MEASURE: TokenMeasure = { count: textTokenUpperBound, take: takeUtf8 };
+
+/** The characters of a text beyond ASCII (a pair of surrogates is one). */
+export function nonAsciiCount(text: string): number {
+  let count = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code > 0x7f && !(code >= 0xdc00 && code <= 0xdfff)) count += 1;
   }
-  const remaining = maxTokens - noticeTokens;
-  const head = Math.ceil(remaining * 0.6);
-  return `${takeUtf8(text, head)}\n${TRUNCATION_NOTICE}\n${takeUtf8(text, remaining - head, true)}`;
+  return count;
 }
 
 /**
- * Approximate provider tokenization conservatively, preserving the beginning and end of
- * every text block so instructions and the latest request remain visible after truncation.
+ * The tokens the chat counts a text at (#122): the engine's likely estimate (`likelyTextTokens`, about four characters a token), and never fewer than one a character beyond
+ * ASCII. For English and Italian prose the two are the same; a text in Chinese, Japanese, Korean, Cyrillic or Greek, which takes about a token a character, is not counted at a
+ * quarter of what it takes.
  */
-export function budgetLlmMessages(messages: LlmMessage[], maxContextTokens = DEFAULT_MAX_INPUT_TOKENS, maxOutputTokens?: number, reservedInputTokens = 0): LlmMessage[] {
+export function chatTextTokens(text: string): number {
+  return Math.max(Math.ceil(text.length / 4), nonAsciiCount(text));
+}
+
+/**
+ * The chat's tokens (`chatTextTokens`) times what the provider counted for the requests of the model (`ratio`, see `contextBudget.ts`): what the Copilot and Brainstorming
+ * measure their context with, so that a request is cut where the window really ends, and the compaction at 90% of it comes first.
+ */
+export function likelyMeasure(ratio: number): TokenMeasure {
+  const scale = Math.max(0.25, ratio);
+  const tokensOf = (characters: number, nonAscii: number) => Math.ceil(Math.max(characters / 4, nonAscii) * scale);
+  return {
+    count: (text) => tokensOf(text.length, nonAsciiCount(text)),
+    take: (text, tokens, fromEnd = false) => {
+      if (tokens <= 0) return "";
+      if (tokensOf(text.length, nonAsciiCount(text)) <= tokens) return text;
+      // As many characters as the tokens hold, from the start or from the end, never half of a pair of surrogates.
+      let characters = 0;
+      let nonAscii = 0;
+      let index = fromEnd ? text.length - 1 : 0;
+      while (fromEnd ? index >= 0 : index < text.length) {
+        const code = text.charCodeAt(index);
+        const pair = fromEnd ? code >= 0xdc00 && code <= 0xdfff && index > 0 : code >= 0xd800 && code <= 0xdbff && index + 1 < text.length;
+        const width = pair ? 2 : 1;
+        const wide = code > 0x7f ? 1 : 0;
+        if (tokensOf(characters + width, nonAscii + wide) > tokens) break;
+        characters += width;
+        nonAscii += wide;
+        index += fromEnd ? -width : width;
+      }
+      return fromEnd ? text.slice(text.length - characters) : text.slice(0, characters);
+    },
+  };
+}
+
+function truncateText(text: string, maxTokens: number, measure: TokenMeasure): string {
+  if (measure.count(text) <= maxTokens) return text;
+  const noticeTokens = measure.count(TRUNCATION_NOTICE) + 2;
+  if (maxTokens <= noticeTokens) {
+    if (maxTokens <= measure.count(SHORT_TRUNCATION_NOTICE)) return measure.take(text, maxTokens);
+    const markerTokens = measure.count(SHORT_TRUNCATION_NOTICE);
+    return `${measure.take(text, maxTokens - markerTokens)}${SHORT_TRUNCATION_NOTICE}`;
+  }
+  const remaining = maxTokens - noticeTokens;
+  const head = Math.ceil(remaining * 0.6);
+  return `${measure.take(text, head)}\n${TRUNCATION_NOTICE}\n${measure.take(text, remaining - head, true)}`;
+}
+
+function measureMessages(messages: LlmMessage[], measure: TokenMeasure): number {
+  return messages.reduce((total, message) => {
+    const contentTokens = typeof message.content === "string"
+      ? measure.count(message.content)
+      : message.content.reduce((sum, part) => sum + (part.type === "text" ? measure.count(part.text) : IMAGE_TOKENS), 0);
+    return total + MESSAGE_OVERHEAD_TOKENS + contentTokens;
+  }, 0);
+}
+
+/**
+ * Fits messages to the window of a model, preserving the beginning and end of every text block so instructions and the latest request remain visible after truncation. The
+ * tokens are counted with `measure`: the UTF-8 upper bound by default (it never overflows, and cuts early), the chat's likely measure for the Copilot and Brainstorming.
+ */
+export function budgetLlmMessages(messages: LlmMessage[], maxContextTokens = DEFAULT_MAX_INPUT_TOKENS, maxOutputTokens?: number, reservedInputTokens = 0, measure: TokenMeasure = UPPER_BOUND_MEASURE): LlmMessage[] {
   const { inputTokens: maxInputTokens } = resolveModelTokenBudgets(maxContextTokens, maxOutputTokens);
   const messageBudget = Math.max(0, maxInputTokens - Math.max(0, Math.floor(reservedInputTokens)));
-  if (estimateMessageTokens(messages) <= messageBudget) return messages;
+  if (measureMessages(messages, measure) <= messageBudget) return messages;
 
   const messageSlots = Math.floor(messageBudget / (MESSAGE_OVERHEAD_TOKENS + 1));
   if (messageSlots === 0) return [];
@@ -129,18 +197,18 @@ export function budgetLlmMessages(messages: LlmMessage[], maxContextTokens = DEF
     last.set(`${last.get()}\n\n${IMAGE_NOTICE}`);
   }
 
-  const totalTokens = textParts.reduce((sum, part) => sum + textTokenUpperBound(part.get()), 0);
+  const totalTokens = textParts.reduce((sum, part) => sum + measure.count(part.get()), 0);
   if (totalTokens > available && totalTokens > 0) {
     let remainingTokens = available;
     let remainingSourceTokens = totalTokens;
     for (const [index, part] of textParts.entries()) {
       const source = part.get();
-      const sourceTokens = textTokenUpperBound(source);
+      const sourceTokens = measure.count(source);
       const share = index === textParts.length - 1
         ? remainingTokens
         : Math.floor(remainingTokens * sourceTokens / remainingSourceTokens);
-      part.set(truncateText(source, Math.max(0, share)));
-      remainingTokens -= Math.min(share, textTokenUpperBound(part.get()));
+      part.set(truncateText(source, Math.max(0, share), measure));
+      remainingTokens -= Math.min(share, measure.count(part.get()));
       remainingSourceTokens -= sourceTokens;
     }
   }
