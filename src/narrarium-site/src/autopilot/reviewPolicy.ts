@@ -1,4 +1,4 @@
-import { REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, serverSupportsReviewBook, serverSupportsReviewPolicy, serverSupportsReviewTargets, type AutopilotOptions, type ReviewPolicy, type ReviewPolicyUpdate, type ServerInfo } from "narrarium-engine";
+import { REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, serverSupportsReviewBook, serverSupportsReviewBookRound, serverSupportsReviewPolicy, serverSupportsReviewTargets, type AutopilotOptions, type BookRoundMode, type ReviewPolicy, type ReviewPolicyUpdate, type ServerInfo } from "narrarium-engine";
 
 /**
  * The review policy of a run (`options.review`) and the caps of the book (`options.budgetLimit`, `options.budgetTokens`) as the configuration edits them: one form of
@@ -20,6 +20,14 @@ export const REVIEW_TARGETS_SERVER_VERSION = "0.1.21";
 /** Whether the personal server takes the targets for the readers. An older one drops them without a word, and the engine's client refuses to send them there. */
 export function serverHasReviewTargets(info: Pick<ServerInfo, "features"> | null | undefined): boolean {
   return serverSupportsReviewTargets(info);
+}
+
+/** The release of the personal server that knows the book-level round of a review (`autopilot-review-book-round`): the director's corrections of the whole book. */
+export const REVIEW_BOOK_ROUND_SERVER_VERSION = "0.1.23";
+
+/** Whether the personal server takes the book-level round. An older one drops it without a word, and the engine's client refuses to send it there. */
+export function serverHasReviewBookRound(info: Pick<ServerInfo, "features"> | null | undefined): boolean {
+  return serverSupportsReviewBookRound(info);
 }
 
 /** Whether the personal server reviews a finished book again. An older one answers 404 to `POST …/autopilot/review`. */
@@ -54,6 +62,8 @@ export interface ReviewForm {
   readersTarget?: string;
   readerTargets?: Readonly<Record<string, string>>;
   readersExcluded?: readonly string[];
+  /** What the review does when every chapter has its targets and the book does not (absent: `off`). */
+  bookRound?: BookRoundMode;
 }
 
 /** The fields that are one text each. */
@@ -88,6 +98,7 @@ export function reviewFormOf(options: Pick<AutopilotOptions, "review" | "budgetL
     readersTarget: text(policy.readersTarget),
     readerTargets: Object.fromEntries(Object.entries(policy.readerTargets ?? {}).map(([slug, vote]) => [slug, String(vote)])),
     readersExcluded: [...(policy.readersExcluded ?? [])],
+    bookRound: policy.bookRound ?? "off",
   };
 }
 
@@ -150,6 +161,7 @@ export function readReviewForm(form: ReviewForm): ReviewReading {
     ...(readersTarget !== undefined ? { readersTarget } : {}),
     ...(Object.keys(readerTargets).length ? { readerTargets } : {}),
     ...(excluded.length ? { readersExcluded: excluded } : {}),
+    ...(form.bookRound === "apply" || form.bookRound === "ask" ? { bookRound: form.bookRound } : {}),
   };
   return { policy, budgetLimit: money ?? 0, budgetTokens: tokens ?? 0, problems, readerProblems, valid: Object.keys(problems).length === 0 && Object.keys(readerProblems).length === 0 };
 }
@@ -168,7 +180,16 @@ export function policyUpdate(policy: ReviewPolicy, previous?: ReviewPolicy): Rev
     ...(policy.readersTarget !== undefined || had("readersTarget") ? { readersTarget: policy.readersTarget ?? null } : {}),
     ...(policy.readerTargets || had("readerTargets") ? { readerTargets: policy.readerTargets ?? null } : {}),
     ...(policy.readersExcluded || had("readersExcluded") ? { readersExcluded: policy.readersExcluded ?? null } : {}),
+    // The book-level round only when there is one, or the book had one to take back (a server that predates it is never sent a field it has nothing of).
+    ...(policy.bookRound !== undefined || previous?.bookRound !== undefined ? { bookRound: policy.bookRound ?? null } : {}),
   };
+}
+
+/** The policy without the book-level round: what a server that predates it is sent (and what it is compared with). */
+export function policyWithoutBookRound(policy: ReviewPolicy | undefined): ReviewPolicy | undefined {
+  if (!policy) return policy;
+  const { bookRound: _mode, ...rest } = policy;
+  return rest;
 }
 
 /** The policy without the targets for the readers: what a server that predates them is sent (and what it is compared with). */
@@ -188,5 +209,5 @@ export function samePolicy(left: ReviewPolicy | undefined, right: ReviewPolicy |
   const keys: Array<"targetScore" | "maxRounds" | "readerRounds" | "campaignMaxRounds" | "readersTarget"> = ["targetScore", "maxRounds", "readerRounds", "campaignMaxRounds", "readersTarget"];
   const targets = (policy: ReviewPolicy | undefined) => JSON.stringify(Object.entries(policy?.readerTargets ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
   const excluded = (policy: ReviewPolicy | undefined) => JSON.stringify([...(policy?.readersExcluded ?? [])].sort());
-  return keys.every((key) => (left?.[key] ?? undefined) === (right?.[key] ?? undefined)) && targets(left) === targets(right) && excluded(left) === excluded(right);
+  return keys.every((key) => (left?.[key] ?? undefined) === (right?.[key] ?? undefined)) && targets(left) === targets(right) && excluded(left) === excluded(right) && (left?.bookRound ?? undefined) === (right?.bookRound ?? undefined);
 }

@@ -24,7 +24,7 @@ import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { SetupCard } from "@/components/autopilot/config/SetupCard";
 import { RunPreview } from "@/components/autopilot/config/RunPreview";
 import { EMPTY_OUTLINE_BRIEF } from "@/autopilot/outlineBrief";
-import { hasReaderTargets, policyUpdate, policyWithoutReaderTargets, readReviewForm, reviewFormOf, samePolicy, typedNumber } from "@/autopilot/reviewPolicy";
+import { hasReaderTargets, policyUpdate, policyWithoutBookRound, policyWithoutReaderTargets, readReviewForm, reviewFormOf, samePolicy, serverHasReviewBookRound, typedNumber } from "@/autopilot/reviewPolicy";
 import type { BookEntry } from "@/types/settings";
 
 const T0 = "2026-11-26T10:00:00.000Z";
@@ -129,6 +129,40 @@ describe("the form of the review, as the engine reads it", () => {
       expect(samePolicy({ readersExcluded: ["a"] }, undefined)).toBe(false);
     });
   });
+
+  describe("the round for the whole book", () => {
+    const blank = reviewFormOf(DEFAULT_OPTIONS);
+
+    it("is off for a book that has none, and read as the engine reads it: apply and ask are in the policy, off is no policy", () => {
+      expect(blank.bookRound).toBe("off");
+      expect(readReviewForm(blank).policy).toEqual({});
+      expect(readReviewForm({ ...blank, bookRound: "apply" }).policy).toEqual({ bookRound: "apply" });
+      expect(readReviewForm({ ...blank, bookRound: "ask" }).policy).toEqual({ bookRound: "ask" });
+      expect(readReviewForm({ ...blank, bookRound: "off" }).policy).toEqual({});
+      const options = normalizeOptions({ review: { targetScore: 8, bookRound: "ask" } });
+      expect(reviewFormOf(options).bookRound).toBe("ask");
+      expect(readReviewForm(reviewFormOf(options)).policy).toEqual(options.review);
+    });
+
+    it("sends the mode only when there is one or the book had one to take back, so that a server that predates it is never sent a field it has nothing of", () => {
+      expect(policyUpdate({ targetScore: 8 })).not.toHaveProperty("bookRound");
+      expect(policyUpdate({ targetScore: 8 }, { targetScore: 8 })).not.toHaveProperty("bookRound");
+      expect(policyUpdate({ bookRound: "apply" })).toMatchObject({ bookRound: "apply" });
+      expect(policyUpdate({}, { bookRound: "ask" })).toMatchObject({ bookRound: null });
+      const before = normalizeOptions({ review: { bookRound: "ask" } });
+      expect(normalizeOptions({ review: policyUpdate({}, before.review) }, before).review, "turned off, it goes back").toBeUndefined();
+      expect(policyWithoutBookRound({ targetScore: 8, bookRound: "ask", readersTarget: 7 })).toEqual({ targetScore: 8, readersTarget: 7 });
+      expect(policyWithoutBookRound(undefined)).toBeUndefined();
+    });
+
+    it("tells two policies apart by it", () => {
+      expect([samePolicy({ bookRound: "ask" }, { bookRound: "ask" }), samePolicy({ bookRound: "ask" }, { bookRound: "apply" }), samePolicy({ bookRound: "ask" }, {}), samePolicy({}, undefined)]).toEqual([true, false, false, true]);
+    });
+
+    it("is known to a personal server that announces autopilot-review-book-round, and to no other", () => {
+      expect([serverHasReviewBookRound({ features: ["autopilot-review-book-round"] }), serverHasReviewBookRound({ features: ["autopilot-review-targets"] }), serverHasReviewBookRound(null)]).toEqual([true, false, false]);
+    });
+  });
 });
 
 describe("the card «Review» of the configuration", () => {
@@ -226,6 +260,72 @@ describe("the card «Review» of the configuration", () => {
     expect(document.querySelector("[data-estimate='rounds']")?.textContent).toContain("The review of this run allows up to 5 rounds of review per chapter (your director: 2).");
     rerender(<MemoryRouter><RunPreview inputs={inputs} form={{ brief: DEFAULT_BRIEF, options: DEFAULT_OPTIONS }} dirty={false} bookId="book-1" /></MemoryRouter>);
     expect(document.querySelector("[data-estimate='rounds']")?.textContent).toContain("Your director allows up to 2 rounds of review per chapter.");
+  });
+
+  describe("and the round for the whole book", () => {
+    const part = () => document.querySelector<HTMLElement>("[data-book-round-field]") as HTMLElement;
+    const mode = (name: "off" | "apply" | "ask") => screen.getByRole("radio", { name: t(`autopilot.review.bookRound.${name}.label`) }) as HTMLInputElement;
+    const savedReview = async () => {
+      fireEvent.click(screen.getByRole("button", { name: t("autopilot.setup.save") }));
+      await waitFor(() => expect(runtime.configure).toHaveBeenCalledTimes(1));
+      return (runtime.configure.mock.calls[0] as unknown as [string, { options: { review?: Record<string, unknown> } }])[1].options.review;
+    };
+
+    it("offers the three ways, off for a book that has none, each with a line that says what it does", async () => {
+      openForm();
+      await drawn();
+      expect(screen.getByRole("heading", { level: 3, name: t("autopilot.review.bookRound.title") })).toBeInTheDocument();
+      expect(within(part()).getByRole("radiogroup", { name: t("autopilot.review.bookRound.title") })).toBeInTheDocument();
+      expect(["off", "apply", "ask"].map((name) => mode(name as "off").checked)).toEqual([true, false, false]);
+      for (const name of ["off", "apply", "ask"] as const) expect(mode(name)).toHaveAccessibleDescription(t(`autopilot.review.bookRound.${name}.hint`));
+    });
+
+    it("starts the autopilot with the way chosen, and sends nothing of it while it is off", async () => {
+      openForm();
+      await drawn();
+      fireEvent.click(mode("ask"));
+      expect(mode("ask")).toBeChecked();
+      fireEvent.click(screen.getByRole("button", { name: t("autopilot.actions.start") }));
+      await waitFor(() => expect(runtime.start).toHaveBeenCalledTimes(1));
+      const review = (runtime.start.mock.calls[0] as unknown as [string, { options: Record<string, unknown> }])[1].options.review as Record<string, unknown>;
+      expect(review).toMatchObject({ bookRound: "ask" });
+      expect(normalizeOptions({ review }).review).toEqual({ bookRound: "ask" });
+    });
+
+    it("shows the way the book has, and turning it off sends null, which the engine reads as taking it back", async () => {
+      openForm(existing({ review: { bookRound: "apply" } }));
+      await drawn();
+      expect(mode("apply")).toBeChecked();
+      fireEvent.click(mode("off"));
+      const review = await savedReview();
+      expect(review).toMatchObject({ bookRound: null });
+      expect(normalizeOptions({ review }, normalizeOptions({ review: { bookRound: "apply" } })).review).toBeUndefined();
+    });
+
+    it("keeps it closed while a run goes on", async () => {
+      openForm(existing({ review: { bookRound: "ask" } }), { running: true });
+      await drawn();
+      for (const name of ["off", "apply", "ask"] as const) expect(mode(name)).toBeDisabled();
+    });
+
+    it("on a personal server that has the targets but not the round: says so, offers it off, and never sends what the book has of it", async () => {
+      openForm(existing({ review: { targetScore: 8, bookRound: "ask" } }), { reviewBookRoundUnsupported: true });
+      await drawn();
+      expect(part()).toHaveTextContent(t("autopilot.review.bookRound.oldServer", { version: "0.1.23" }));
+      for (const name of ["off", "apply", "ask"] as const) expect(mode(name)).toBeDisabled();
+      expect(mode("off")).toBeChecked();
+      type(field("rounds"), "4");
+      const review = await savedReview();
+      expect(review).toEqual({ targetScore: 8, maxRounds: 4, readerRounds: null, campaignMaxRounds: null });
+    });
+
+    it("is in Italian when the app is", async () => {
+      await i18n.changeLanguage("it");
+      openForm();
+      expect(await screen.findByRole("radiogroup", { name: "Il libro intero" })).toBeInTheDocument();
+      expect(screen.getByRole("radio", { name: "Mostrami prima le correzioni" })).toBeInTheDocument();
+      expect(screen.getByRole("radio", { name: "Correggi il libro" })).toHaveAccessibleDescription(/Il direttore elenca le correzioni tra i capitoli/);
+    });
   });
 
   describe("and the targets for the readers", () => {

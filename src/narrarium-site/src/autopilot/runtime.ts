@@ -3,6 +3,7 @@ import {
   AutopilotBusyError,
   AutopilotSession,
   ServerRequestError,
+  asksReviewBookRound,
   asksReviewTargets,
   isRevisionCampaignErrorCode,
   pickAiRuntimeConfig,
@@ -11,6 +12,7 @@ import {
   resolveAiCandidates,
   runnerActivity,
   serverHasCalls,
+  serverSupportsReviewBookRound,
   serverSupportsReviewTargets,
   syncBookStores,
   type AiPort,
@@ -18,6 +20,7 @@ import {
   type AutopilotEvent,
   type AutopilotLiveOptions,
   type AutopilotSnapshot,
+  type BookCorrectionsDecision,
   type EvaluationTarget,
   type FrozenAction,
   type FrozenChangeKind,
@@ -56,7 +59,7 @@ import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
 import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
 import { AutopilotRulesUnsupportedError, serverEditsRules } from "@/autopilot/rules";
 import { AutopilotFrozenUnsupportedError, frozenErrorCode, serverHasFrozenChapters } from "@/autopilot/frozenChapters";
-import { AutopilotCampaignRefusedError, AutopilotOutlineApplyUnsupportedError, AutopilotReviewTargetsUnsupportedError, AutopilotReviewUnsupportedError, campaignRefusal, serverHasOutlineApply } from "@/autopilot/campaign";
+import { AutopilotCampaignRefusedError, AutopilotOutlineApplyUnsupportedError, AutopilotReviewBookRoundUnsupportedError, AutopilotReviewTargetsUnsupportedError, AutopilotReviewUnsupportedError, campaignRefusal, serverHasOutlineApply } from "@/autopilot/campaign";
 import { serverHasReviewBook } from "@/autopilot/reviewPolicy";
 import { AutopilotRetryUnsupportedError, serverHasRetry } from "@/autopilot/retry";
 import { assertGithubConflicts, githubConflictFiles, isGithubConflict, noteGithubConflict } from "@/autopilot/githubConflictsServer";
@@ -1056,12 +1059,21 @@ export class BrowserAutopilotRuntime {
     return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "review-book", input }));
   }
 
+  /**
+   * Decide about the corrections of the whole book that wait for the author (a review whose book-level round asks first): the ones chosen are carried out by the next run, the
+   * others are left out. The same ways as `reviseChapters`; a personal server that predates the round is not asked (`AutopilotReviewBookRoundUnsupportedError`). Nothing is started:
+   * `start` does it.
+   */
+  decideBookCorrections(bookId: string, decision: BookCorrectionsDecision): Promise<RevisionCampaignResult> {
+    return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "decide-book-corrections", input: decision }));
+  }
+
   /** Cancel the chapters of the campaign that wait (the one being worked finishes): they are left for the author. The same ways as `reviseChapters`. */
   cancelRevisionCampaign(bookId: string): Promise<RevisionCampaignResult> {
     return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "cancel-campaign" }));
   }
 
-  private async campaignCommand(bookId: string, command: Extract<RelayedCommand, { type: "revise-chapters" | "review-book" | "cancel-campaign" }>): Promise<RevisionCampaignResult> {
+  private async campaignCommand(bookId: string, command: Extract<RelayedCommand, { type: "revise-chapters" | "review-book" | "decide-book-corrections" | "cancel-campaign" }>): Promise<RevisionCampaignResult> {
     const book = findBook(bookId);
     try {
       if (autopilotHostOf(book) === "server") {
@@ -1069,11 +1081,16 @@ export class BrowserAutopilotRuntime {
         // Each command needs the feature of its campaign; a cancel, any campaign the server has.
         if (command.type === "review-book" && !serverHasReviewBook(info)) throw new AutopilotReviewUnsupportedError();
         if (command.type === "review-book" && asksReviewTargets(command.input) && !serverSupportsReviewTargets(info)) throw new AutopilotReviewTargetsUnsupportedError();
+        if (command.type === "review-book" && asksReviewBookRound(command.input) && !serverSupportsReviewBookRound(info)) throw new AutopilotReviewBookRoundUnsupportedError();
+        if (command.type === "decide-book-corrections" && !serverSupportsReviewBookRound(info)) throw new AutopilotReviewBookRoundUnsupportedError();
         if (command.type === "revise-chapters" && !serverHasOutlineApply(info)) throw new AutopilotOutlineApplyUnsupportedError();
         if (command.type === "cancel-campaign" && !serverHasOutlineApply(info) && !serverHasReviewBook(info)) throw new AutopilotOutlineApplyUnsupportedError();
         await this.handToServer(book);
         const { client } = await this.requireServer();
-        const result = command.type === "revise-chapters" ? await client.reviseChapters(book.id, command.input) : command.type === "review-book" ? await client.reviewBook(book.id, command.input) : await client.cancelRevisionCampaign(book.id);
+        const result = command.type === "revise-chapters" ? await client.reviseChapters(book.id, command.input)
+          : command.type === "review-book" ? await client.reviewBook(book.id, command.input)
+          : command.type === "decide-book-corrections" ? await client.decideBookCorrections(book.id, command.input)
+          : await client.cancelRevisionCampaign(book.id);
         await this.bringFromServer(book, client);
         await this.refresh(bookId);
         return result;
@@ -1081,7 +1098,12 @@ export class BrowserAutopilotRuntime {
       const session = this.localSession(book, resolveBookBranch(book));
       let result: RevisionCampaignResult;
       if (!session.running && await this.lockHeldElsewhere(book.id)) result = await this.relay(book.id, command) as RevisionCampaignResult;
-      else result = command.type === "revise-chapters" ? await session.reviseChapters(command.input) : command.type === "review-book" ? await session.reviewBook(command.input) : await session.cancelRevisionCampaign();
+      else {
+        result = command.type === "revise-chapters" ? await session.reviseChapters(command.input)
+          : command.type === "review-book" ? await session.reviewBook(command.input)
+          : command.type === "decide-book-corrections" ? await session.decideBookCorrections(command.input)
+          : await session.cancelRevisionCampaign();
+      }
       await this.refresh(bookId);
       return result;
     } catch (error) {
@@ -1202,6 +1224,7 @@ export class BrowserAutopilotRuntime {
       else if (command.type === "set-frozen") await (command.frozen ? session.freezeChapter(command.slug) : session.unfreezeChapter(command.slug));
       else if (command.type === "revise-chapters") result = await session.reviseChapters(command.input);
       else if (command.type === "review-book") result = await session.reviewBook(command.input);
+      else if (command.type === "decide-book-corrections") result = await session.decideBookCorrections(command.input);
       else if (command.type === "cancel-campaign") result = await session.cancelRevisionCampaign();
       else await session.intervene(command.input);
       this.post({ kind: "command-result", id, ok: true, ...(result === undefined ? {} : { result }) });

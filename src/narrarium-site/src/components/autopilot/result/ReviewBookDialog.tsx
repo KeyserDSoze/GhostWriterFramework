@@ -1,12 +1,13 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, RefreshCcw, Target } from "lucide-react";
-import { DIRECTOR_FILE, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, chapterFilePath, defaultDirector, gateFor, parseDirector, type AutopilotState, type ReviewBookInput } from "narrarium-engine";
+import { DIRECTOR_FILE, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, chapterFilePath, defaultDirector, gateFor, parseDirector, type AutopilotState, type BookRoundMode, type ReviewBookInput } from "narrarium-engine";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EstimateLine, OptionalNumberField, ReadersDelta, useProblemText } from "@/components/autopilot/review/ReviewFields";
 import { READER_TARGET_RANGE, ReaderTargetsFields } from "@/components/autopilot/review/ReaderTargetsFields";
+import { BookRoundField } from "@/components/autopilot/review/BookRoundField";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useBookFiles } from "@/autopilot/useBookFiles";
@@ -16,7 +17,7 @@ import { useActiveReaders } from "@/autopilot/useActiveReaders";
 import { estimateDelta, estimateReview } from "@/autopilot/runEstimate";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
 import { formatCount, voteText } from "@/autopilot/format";
-import { MAX_MONEY_CAP, REVIEW_SERVER_VERSION, REVIEW_TARGETS_SERVER_VERSION, TARGET_MAX, TARGET_MIN, TARGET_STEP, readReviewForm, reviewFormOf, serverHasReviewBook, serverHasReviewTargets, typedNumber } from "@/autopilot/reviewPolicy";
+import { MAX_MONEY_CAP, REVIEW_SERVER_VERSION, REVIEW_TARGETS_SERVER_VERSION, TARGET_MAX, TARGET_MIN, TARGET_STEP, readReviewForm, reviewFormOf, serverHasReviewBook, serverHasReviewBookRound, serverHasReviewTargets, typedNumber } from "@/autopilot/reviewPolicy";
 import { defaultReviewTarget, reviewCandidates, type ReviewCandidate } from "@/autopilot/resultModel";
 import { chapterFreezes } from "@/outline/outlineModel";
 import { useMoney } from "@/costs/useMoney";
@@ -30,6 +31,8 @@ export interface ReviewBookDialogProps {
   branch: string;
   structure: BookStructure | undefined;
   state: AutopilotState;
+  /** What the review does for the whole book when the settings of the book have it off: the window starts from it (the author may change it). */
+  initialBookRound?: BookRoundMode;
 }
 
 /** The fields of the dialog, as they are typed. */
@@ -43,6 +46,8 @@ interface ReviewBookForm {
   readersTarget: string;
   readerTargets: Record<string, string>;
   readersExcluded: string[];
+  /** What the review does when every chapter has its targets and the book does not. */
+  bookRound: BookRoundMode;
 }
 
 type Field = "target" | "rounds" | "readerRounds" | "campaignRounds" | "money" | "readersTarget";
@@ -62,7 +67,7 @@ function whole(raw: string, min: number, max: number): { value: number | null; p
  * be reviewed again, in the order of the book: the autopilot's, and the author's only when the author includes them; one changed since it was frozen waits for the decision about
  * that change. Confirmed, the review is recorded (`reviewBook`) and the autopilot started. A personal server that predates it is not asked, and the dialog says why.
  */
-export default function ReviewBookDialog({ open, onClose, book, branch, structure, state }: ReviewBookDialogProps) {
+export default function ReviewBookDialog({ open, onClose, book, branch, structure, state, initialBookRound }: ReviewBookDialogProps) {
   const { t } = useTranslation();
   const id = useId();
   const money = useMoney();
@@ -72,6 +77,8 @@ export default function ReviewBookDialog({ open, onClose, book, branch, structur
   const unsupported = book.autopilotHost === "server" && serverInfo !== null && !serverHasReviewBook(serverInfo);
   // A server that reviews the book again but predates the targets for the readers would drop them without a word: they are not offered, and never sent.
   const targetsUnsupported = book.autopilotHost === "server" && serverInfo !== null && !unsupported && !serverHasReviewTargets(serverInfo);
+  // One that predates the book-level round would end the review where it always did, and drop the field: it is not offered, and never sent.
+  const bookRoundUnsupported = book.autopilotHost === "server" && serverInfo !== null && !unsupported && !serverHasReviewBookRound(serverInfo);
   const chapters = state.plan?.chapters ?? [];
   const active = useActiveReaders(book.id, structure, state.options.maxReaders, open);
 
@@ -95,8 +102,10 @@ export default function ReviewBookDialog({ open, onClose, book, branch, structur
       readersTarget: targetsUnsupported ? "" : policy.readersTarget ?? "",
       readerTargets: targetsUnsupported ? {} : { ...policy.readerTargets },
       readersExcluded: targetsUnsupported ? [] : [...(policy.readersExcluded ?? [])],
+      // The settings of the book say what the review does for the whole book; with it off the window may start from the one asked for (the author chooses).
+      bookRound: bookRoundUnsupported ? "off" : (policy.bookRound ?? "off") !== "off" ? policy.bookRound ?? "off" : initialBookRound ?? "off",
     };
-  }, [current, director.maxReviewRounds, state.options, targetsUnsupported]);
+  }, [current, director.maxReviewRounds, state.options, targetsUnsupported, bookRoundUnsupported, initialBookRound]);
   const [form, setForm] = useState<ReviewBookForm>(initial);
   const [edited, setEdited] = useState(false);
   useEffect(() => {
@@ -108,6 +117,10 @@ export default function ReviewBookDialog({ open, onClose, book, branch, structur
   const change = (field: Field, value: string) => {
     setEdited(true);
     setForm((now) => ({ ...now, [field]: value }));
+  };
+  const changeBookRound = (mode: BookRoundMode) => {
+    setEdited(true);
+    setForm((now) => ({ ...now, bookRound: mode }));
   };
   const changeReaderTarget = (slug: string, value: string) => {
     setEdited(true);
@@ -159,6 +172,11 @@ export default function ReviewBookDialog({ open, onClose, book, branch, structur
   const reviewed = candidates.filter((entry) => entry.kind === "review" || (entry.kind === "author" && include.has(entry.number)));
   const authors = candidates.filter((entry) => entry.kind === "author");
   const waiting = candidates.filter((entry) => entry.kind === "changed");
+  // Every chapter of the review has its targets but the director's vote of the book does not: with the round for the whole book on, the review begins there.
+  const bookVote = state.finalReview?.score;
+  const bookUnder = target !== null && typeof bookVote === "number" && bookVote < target;
+  const bookRoundOn = !bookRoundUnsupported && form.bookRound !== "off";
+  const atTheBook = bookRoundOn && bookUnder && reviewed.length === 0;
 
   // What a round costs: the chapters under the target, reviewed again, and the book judged again.
   const view = useBookAutopilotView(book.id);
@@ -177,7 +195,7 @@ export default function ReviewBookDialog({ open, onClose, book, branch, structur
   const spent = money.amount(state.stats.cost, state.stats.currency, { zero: "amount" });
   const capNow = moneyValue !== null && Number.isFinite(moneyValue) && moneyValue > 0 ? money.amount(moneyValue, spentCurrency) : null;
   const running = useAutopilotStore((store) => store.views[book.id]?.snapshot?.running === true || store.views[book.id]?.busyInAnotherTab === true);
-  const canSubmit = valid && reviewed.length > 0 && !unsupported && busy === null && !running;
+  const canSubmit = valid && (reviewed.length > 0 || atTheBook) && !unsupported && busy === null && !running;
   // A review with targets for the readers is taken up for them too.
   const reviewedWithReaders = Boolean(gate);
 
@@ -203,6 +221,8 @@ export default function ReviewBookDialog({ open, onClose, book, branch, structur
       ...(readerPolicy.readersTarget !== undefined ? { readersTarget: readerPolicy.readersTarget } : {}),
       ...(readerPolicy.readerTargets ? { readerTargets: readerPolicy.readerTargets } : {}),
       ...(readerPolicy.readersExcluded ? { readersExcluded: readerPolicy.readersExcluded } : {}),
+      // What this review does for the whole book, when it is not what the settings of the book say (it wins over them for this review): never to a server that would not know the field.
+      ...(bookRoundUnsupported || form.bookRound === (state.options.review?.bookRound ?? "off") ? {} : { bookRound: form.bookRound }),
     };
     const done = await run("answer", async (runtime, bookId) => {
       await runtime.reviewBook(bookId, input);
@@ -268,9 +288,15 @@ export default function ReviewBookDialog({ open, onClose, book, branch, structur
           headingLevel={3}
         />
 
+        <BookRoundField id={id} value={form.bookRound} onChange={changeBookRound} disabled={false} unsupported={bookRoundUnsupported} headingLevel={3} />
+
         <section aria-labelledby={`${id}-chapters`} className="space-y-2">
           <h3 id={`${id}-chapters`} className="text-sm font-semibold">{target === null ? t("autopilot.reviewBook.chaptersNoTarget") : chaptersText}</h3>
-          {target !== null && candidates.length === 0 && <p data-review-nothing className="text-sm text-muted-foreground">{t("autopilot.reviewBook.nothing", { target: voteText(target), book: voteText(state.finalReview?.score) })}</p>}
+          {target !== null && candidates.length === 0 && (
+            bookUnder && !bookRoundUnsupported
+              ? <p data-review-nothing data-review-book-next={bookRoundOn ? "" : undefined} className="text-sm text-muted-foreground">{t(bookRoundOn ? "autopilot.reviewBook.nothingBook" : "autopilot.reviewBook.nothingBookOff", { target: voteText(target), book: voteText(bookVote) })}</p>
+              : <p data-review-nothing className="text-sm text-muted-foreground">{t("autopilot.reviewBook.nothing", { target: voteText(target), book: voteText(state.finalReview?.score) })}</p>
+          )}
           {candidates.filter((entry) => entry.kind === "review").length > 0 && (
             <ol data-review-chapters className="space-y-1 text-sm">
               {candidates.filter((entry) => entry.kind === "review").map((entry) => <li key={entry.number} data-review-chapter={entry.number}>{row(entry)}</li>)}
@@ -310,13 +336,14 @@ export default function ReviewBookDialog({ open, onClose, book, branch, structur
             )}
           />
         )}
+        {bookRoundOn && <p data-review-book-round-cost="" className="text-xs text-muted-foreground">{t("autopilot.reviewBook.bookRoundCost")}</p>}
         <p className="text-xs text-muted-foreground">{t("autopilot.reviewBook.stops")}</p>
 
         <DialogFooter className="gap-2">
           <Button type="button" variant="outline" onClick={onClose} disabled={busy !== null}>{t("autopilot.reviewBook.cancel")}</Button>
           <Button type="button" onClick={() => void submit()} disabled={!canSubmit} aria-describedby={running ? `${id}-running` : undefined}>
             {busy !== null ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCcw className="h-4 w-4" aria-hidden="true" />}
-            {t("autopilot.reviewBook.submit", { count: reviewed.length })}
+            {atTheBook ? t("autopilot.reviewBook.submitBook") : t("autopilot.reviewBook.submit", { count: reviewed.length })}
           </Button>
         </DialogFooter>
         {running && <p id={`${id}-running`} className="text-xs text-muted-foreground">{t("autopilot.reviewBook.running")}</p>}

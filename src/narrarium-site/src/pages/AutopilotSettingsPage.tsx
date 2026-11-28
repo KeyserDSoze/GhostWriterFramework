@@ -19,7 +19,7 @@ import { useServerConnection } from "@/autopilot/serverConnection";
 import { serverHasFrozenChapters } from "@/autopilot/frozenChapters";
 import { retryWaitOf, serverHasAutoResume, serverHasRetry } from "@/autopilot/retry";
 import { OUTLINE_BRIEF_NOTICE_ID, OUTLINE_BRIEF_SERVER_VERSION, serverHasOutlineBrief } from "@/autopilot/outlineBrief";
-import { serverHasReviewPolicy, serverHasReviewTargets } from "@/autopilot/reviewPolicy";
+import { serverHasReviewBookRound, serverHasReviewPolicy, serverHasReviewTargets } from "@/autopilot/reviewPolicy";
 import { questionHeading } from "@/autopilot/format";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useAutopilotControl } from "@/autopilot/useAutopilotControl";
@@ -83,6 +83,8 @@ export function AutopilotSettingsPage() {
   const reviewPolicyUnsupported = host === "server" && Boolean(server.info) && !serverHasReviewPolicy(server.info);
   // A server that has the policy but not the targets for the readers: it would drop them without a word, so they are not offered.
   const reviewTargetsUnsupported = host === "server" && Boolean(server.info) && !reviewPolicyUnsupported && !serverHasReviewTargets(server.info);
+  // And one that has the targets but not the book-level round of a review would end the review where it always did: the round is not offered.
+  const reviewBookRoundUnsupported = host === "server" && Boolean(server.info) && !reviewPolicyUnsupported && !serverHasReviewBookRound(server.info);
   const waitingLong = Boolean(retryWaitOf(summary)?.long);
   const asking = Boolean(summary?.question);
 
@@ -162,6 +164,7 @@ export function AutopilotSettingsPage() {
           outlineBriefUnsupported={outlineBriefUnsupported}
           reviewPolicyUnsupported={reviewPolicyUnsupported}
           reviewTargetsUnsupported={reviewTargetsUnsupported}
+          reviewBookRoundUnsupported={reviewBookRoundUnsupported}
           waitingLong={waitingLong}
           run={run}
           onStarted={() => navigate(liveHref)}

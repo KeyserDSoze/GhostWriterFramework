@@ -20,7 +20,7 @@ vi.mock("@/autopilot/browserStore", async (importOriginal) => ({
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { autopilotRuntime, describeAutopilotError } from "@/autopilot/runtime";
-import { AutopilotCampaignRefusedError, AutopilotReviewUnsupportedError } from "@/autopilot/campaign";
+import { AutopilotCampaignRefusedError, AutopilotReviewBookRoundUnsupportedError, AutopilotReviewUnsupportedError } from "@/autopilot/campaign";
 import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
@@ -64,5 +64,29 @@ describe("«Review the book again» through the runtime of the autopilot", () =>
     expect(refused).toBeInstanceOf(AutopilotReviewUnsupportedError);
     expect(describeAutopilotError(refused)).toBe(i18n.t("autopilot.reviewBook.oldServer", { version: "0.1.19" }));
     expect(mocks.server.calls.filter((call) => call !== "info")).toEqual([]);
+  });
+
+  it("on a personal server that reviews the book but predates the round for the whole book: a review that asks for it, and a decision about its corrections, send nothing and tell the author to update the server", async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, books: [SERVER_BOOK], personalServer: CONNECTION } });
+    (mocks.server as unknown as FakeBookServer).extraFeatures = ["autopilot-review-book", "autopilot-review-policy", "autopilot-review-targets"];
+    // One after the other: the commands of a book are one at a time.
+    for (const ask of [
+      () => autopilotRuntime.reviewBook(BOOK.id, { targetScore: 8, bookRound: "apply" }),
+      () => autopilotRuntime.reviewBook(BOOK.id, { targetScore: 8, bookRound: "ask" }),
+      () => autopilotRuntime.decideBookCorrections(BOOK.id, { round: 1, action: "decline" }),
+    ]) {
+      const refused = await ask().then(() => null, (error: unknown) => error);
+      expect(refused).toBeInstanceOf(AutopilotReviewBookRoundUnsupportedError);
+      expect(describeAutopilotError(refused)).toBe(i18n.t("autopilot.reviewBook.oldServerBookRound", { version: "0.1.23" }));
+    }
+    expect(mocks.server.calls.filter((call) => call !== "info")).toEqual([]);
+  });
+
+  it("in this browser: a decision about corrections when none waits for it is refused by the engine, with its code, in the author's words", async () => {
+    useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS, books: [BOOK] } });
+    const refused = await autopilotRuntime.decideBookCorrections(BOOK.id, { round: 1, action: "apply" }).then(() => null, (error: unknown) => error);
+    expect(refused).toBeInstanceOf(AutopilotCampaignRefusedError);
+    expect((refused as AutopilotCampaignRefusedError).code).toBe("no_proposal");
+    expect(describeAutopilotError(refused)).toBe(i18n.t("autopilot.campaign.errors.no_proposal"));
   });
 });

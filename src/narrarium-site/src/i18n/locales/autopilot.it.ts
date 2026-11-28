@@ -1095,6 +1095,11 @@ const autopilotIt = {
       intro: "Il direttore ha giudicato il libro {{book}}, e ora approva capitoli e libro a {{target}}. Scegli il voto da raggiungere: i capitoli sotto quel voto vengono rivisti di nuovo, giro dopo giro, nell'ordine del libro, e poi il direttore giudica di nuovo il libro intero.",
       oldServer: "Il tuo server personale è precedente alla {{version}} e non può rivedere di nuovo il libro: aggiornalo per farlo da qui.",
       oldServerTargets: "Il tuo server personale è precedente alla {{version}} e ignorerebbe gli obiettivi dei lettori: aggiornalo, o lasciali vuoti.",
+      oldServerBookRound: "Il tuo server personale è precedente alla {{version}} e finirebbe la revisione dove finiva sempre, quando ogni capitolo ha i suoi obiettivi: aggiornalo, o lascia spento il giro per il libro intero.",
+      nothingBook: "Ogni capitolo ha {{target}} o più e il libro ha preso {{book}}: al direttore si chiedono le correzioni tra i capitoli, che vengono eseguite come hai scelto qui sopra.",
+      nothingBookOff: "Ogni capitolo ha {{target}} o più, ma il libro ha preso {{book}}: scegli qui sopra cosa fa la revisione per il libro intero perché il direttore lo corregga.",
+      bookRoundCost: "La richiesta delle correzioni è una chiamata del direttore. Ogni capitolo che nomina (al massimo 12) viene poi rivisto e riesaminato, e il libro è giudicato di nuovo: quanto costa dipende da quanti ne nomina, e il tetto di spesa del libro lo ferma.",
+      submitBook: "Chiedi le correzioni del libro",
       targetHint: "Il voto che ogni capitolo e il libro devono raggiungere: da 5 a 10, per mezzi punti.",
       readersHint: "In quanti dei primi giri i lettori simulati rileggono un capitolo: da 0 (mai) a 10.",
       moneyHint: "Speso finora: {{spent}} su {{cap}}. Il tetto non si azzera mai: quando è raggiunto l'autopilot si ferma, e lo alzi per continuare.",
@@ -1198,6 +1203,14 @@ const autopilotIt = {
         delta: "Cosa aggiungono gli obiettivi dei lettori: {{calls}} chiamate AI · {{cost}} · {{time}}",
         deltaNone: "Gli obiettivi dei lettori non aggiungono nessuna chiamata a questa corsa.",
       },
+      bookRound: {
+        title: "Il libro intero",
+        intro: "Un capitolo può essere buono e il libro no: quando ogni capitolo ha i suoi obiettivi ma il voto del direttore sul libro intero no, un altro giro degli stessi capitoli non cambia nulla. Scegli cosa fa allora una revisione.",
+        oldServer: "Il tuo server personale è precedente alla {{version}}: una revisione finisce quando ogni capitolo ha i suoi obiettivi e il giro per il libro intero non si può scegliere. Aggiornalo per sceglierlo.",
+        off: { label: "Fermati lì", hint: "La revisione finisce quando ogni capitolo ha i suoi obiettivi, come ha sempre fatto." },
+        apply: { label: "Correggi il libro", hint: "Il direttore elenca le correzioni tra i capitoli (quali cambiare, cosa in ciascuno e perché) e la revisione le esegue, riesamina quei capitoli e giudica di nuovo il libro. Un capitolo che è tuo resta com'è." },
+        ask: { label: "Mostrami prima le correzioni", hint: "Lo stesso, ma la revisione aspetta te: leggi le correzioni, scegli quali eseguire e la riavvii. Un capitolo che è tuo cambia solo se scegli la sua correzione." },
+      },
     },
     campaign: {
       chip: {
@@ -1216,7 +1229,8 @@ const autopilotIt = {
         not_changed: "Un capitolo non ha più una modifica da applicare: l'autopilot segue già la sua voce, o ci sta lavorando. Guarda di nuovo cosa è cambiato.",
         stale: "La Sinossi è cambiata di nuovo da quando l'hai guardata: guarda di nuovo cosa è cambiato.",
         not_finished: "Il libro non è finito: una revisione del libro intero viene dopo il suo ultimo capitolo e il giudizio del direttore.",
-        nothing_to_review: "Ogni capitolo ha già l'obiettivo: alzalo per rivederli di nuovo.",
+        nothing_to_review: "Ogni capitolo ha già l'obiettivo: alzalo, o scegli cosa fa la revisione per il libro intero, per rivedere di nuovo.",
+        no_proposal: "Nessuna correzione del libro aspetta più una tua decisione: guarda di nuovo lo stato della revisione.",
       },
     },
     frozen: {

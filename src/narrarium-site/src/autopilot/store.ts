@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { applyLiveAttempt, applyLiveProgress, normalizeLive, startLive } from "narrarium-engine";
-import type { AutopilotEvent, AutopilotLive, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, FrozenAction, FrozenChangeKind, InterventionInput, ReviewBookInput, ReviseChaptersInput, RevisionCampaignResult, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
+import type { AutopilotEvent, AutopilotLive, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, BookCorrectionsDecision, FrozenAction, FrozenChangeKind, InterventionInput, ReviewBookInput, ReviseChaptersInput, RevisionCampaignResult, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
 import type { HandoverPlan, HandoverSide } from "@/autopilot/handover";
 import type { BookOperation } from "@/autopilot/operations";
 import type { PersonalServerSettings } from "@/types/settings";
@@ -291,6 +291,7 @@ export type RelayedCommand =
   | { type: "set-frozen"; slug: string; frozen: boolean }
   | { type: "revise-chapters"; input: ReviseChaptersInput }
   | { type: "review-book"; input: ReviewBookInput }
+  | { type: "decide-book-corrections"; input: BookCorrectionsDecision }
   | { type: "cancel-campaign" };
 
 /** What the tab that holds the live connection tells the others about it. */

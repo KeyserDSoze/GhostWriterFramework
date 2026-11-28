@@ -63,6 +63,8 @@ export class FakeBookServer {
   readonly gates: Record<string, Promise<void> | undefined> = {};
   /** A call named here fails with the error. */
   readonly failures: Record<string, Error | undefined> = {};
+  /** Other features the server announces (a test says which: «has the review of the book but not the round for the whole book»). */
+  extraFeatures: string[] = [];
   readonly registered: Array<{ bookId: string; input: unknown }> = [];
   /** The state the book's autopilot is in on the server. */
   running = false;
@@ -179,8 +181,8 @@ export class FakeBookServer {
   info(): ServerInfo {
     const info = this.controls ? SERVER_INFO : OLD_SERVER_INFO;
     const extra = [...(this.frozen ? [SERVER_FEATURE_AUTOPILOT_FROZEN] : []), ...(this.retry ? [SERVER_FEATURE_AUTOPILOT_RETRY] : []), ...(this.githubConflicts ? [SERVER_FEATURE_GITHUB_CONFLICTS] : []), ...(this.mcp ? [SERVER_FEATURE_MCP] : []), ...(this.mcpOAuth ? [SERVER_FEATURE_MCP_OAUTH] : [])];
-    if (!extra.length) return info;
-    return { ...info, ...(this.frozen ? { serverVersion: "0.1.9" } : {}), ...(this.retry ? { serverVersion: "0.1.10" } : {}), features: [...(info.features ?? []), ...extra] };
+    if (!extra.length && !this.extraFeatures.length) return info;
+    return { ...info, ...(this.frozen ? { serverVersion: "0.1.9" } : {}), ...(this.retry ? { serverVersion: "0.1.10" } : {}), features: [...(info.features ?? []), ...extra, ...this.extraFeatures] };
   }
 
   /**

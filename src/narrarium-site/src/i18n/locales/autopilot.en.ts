@@ -1095,6 +1095,11 @@ const autopilotEn = {
       intro: "The director judged the book {{book}}, and approves chapters and book at {{target}} now. Choose the score to reach: the chapters under it are reviewed again, round after round, in the order of the book, and then the director judges the whole book again.",
       oldServer: "Your personal server is older than {{version}} and cannot review the book again: update it to do this from here.",
       oldServerTargets: "Your personal server is older than {{version}} and would ignore the readers' targets: update it, or leave them blank.",
+      oldServerBookRound: "Your personal server is older than {{version}} and would end the review where it always did, when every chapter has its targets: update it, or leave the round for the whole book off.",
+      nothingBook: "Every chapter has {{target}} or more, and the book got {{book}}: the director is asked for the corrections across the chapters, and they are carried out as you chose above.",
+      nothingBookOff: "Every chapter has {{target}} or more, but the book got {{book}}: choose above what the review does for the whole book to have the director correct it.",
+      bookRoundCost: "The request for the corrections is one call of the director. Each chapter it names (at most 12) is then revised and reviewed again, and the book is judged again: how much that costs depends on how many it names, and the money cap of the book stops it.",
+      submitBook: "Ask for the corrections of the book",
       targetHint: "The vote every chapter and the book must reach: 5 to 10, by halves.",
       readersHint: "In how many of the first rounds the simulated readers read a chapter again: 0 (not at all) to 10.",
       moneyHint: "Spent so far: {{spent}} of {{cap}}. The cap never resets: when it is reached the autopilot stops, and you raise it to go on.",
@@ -1198,6 +1203,14 @@ const autopilotEn = {
         delta: "What the readers' targets add: {{calls}} AI calls · {{cost}} · {{time}}",
         deltaNone: "The readers' targets add no call to this run.",
       },
+      bookRound: {
+        title: "The book as a whole",
+        intro: "A chapter can be good and the book still not: when every chapter has its targets but the director's vote of the whole book does not, another round of the same chapters changes nothing. Choose what a review does then.",
+        oldServer: "Your personal server is older than {{version}}: a review ends when every chapter has its targets, and the round for the whole book cannot be chosen. Update it to choose it.",
+        off: { label: "Stop there", hint: "The review ends when every chapter has its targets, as it always did." },
+        apply: { label: "Correct the book", hint: "The director lists the corrections across the chapters (which to change, what in each and why) and the review carries them out, reviews those chapters again and judges the book again. A chapter that is yours is left as it is." },
+        ask: { label: "Show me the corrections first", hint: "The same, but the review waits for you: you read the corrections, choose which to carry out and start it again. A chapter that is yours is changed only if you choose its correction." },
+      },
     },
     campaign: {
       chip: {
@@ -1216,7 +1229,8 @@ const autopilotEn = {
         not_changed: "A chapter has no change to apply any more: the autopilot already follows its entry, or is working on it. Look at what changed again.",
         stale: "The Synopsis changed again since you looked at it: look at what changed again.",
         not_finished: "The book is not finished: a review of the whole book comes after its last chapter and the director's judgement of it.",
-        nothing_to_review: "Every chapter has the target already: raise it to review them again.",
+        nothing_to_review: "Every chapter has the target already: raise it, or choose what the review does for the whole book, to review again.",
+        no_proposal: "No corrections of the book wait for your decision any more: look at the state of the review again.",
       },
     },
     frozen: {

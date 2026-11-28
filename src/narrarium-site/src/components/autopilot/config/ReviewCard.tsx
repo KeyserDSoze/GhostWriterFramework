@@ -5,6 +5,7 @@ import { DIRECTOR_FILE, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, defaultDi
 import { Card } from "@/components/autopilot/Card";
 import { FormRunEstimate, OptionalNumberField, useProblemText } from "@/components/autopilot/review/ReviewFields";
 import { READER_TARGET_RANGE, ReaderTargetsFields } from "@/components/autopilot/review/ReaderTargetsFields";
+import { BookRoundField } from "@/components/autopilot/review/BookRoundField";
 import { useBookFiles } from "@/autopilot/useBookFiles";
 import { useActiveReaders } from "@/autopilot/useActiveReaders";
 import { MAX_MONEY_CAP, MAX_TOKEN_CAP, REVIEW_SERVER_VERSION, TARGET_MAX, TARGET_MIN, readReviewForm, type ReviewField, type ReviewForm } from "@/autopilot/reviewPolicy";
@@ -33,6 +34,8 @@ export interface ReviewCardProps {
   policyUnsupported: boolean;
   /** The personal server has the review policy but predates the targets for the readers: it would ignore them, so they cannot be chosen here. */
   targetsUnsupported?: boolean;
+  /** The personal server has the review policy but predates the book-level round: it would end the review where it always did, so it cannot be chosen here. */
+  bookRoundUnsupported?: boolean;
   /** The simulated readers read the chapters (`options.readers`): their rounds mean something only then. */
   readers: boolean;
   /** What the book spent so far (`stats.cost`, every run's), in the currency of its prices (`stats.currency`). */
@@ -51,7 +54,7 @@ export interface ReviewCardProps {
  * with one line that says what it does. What the book spent is next to the money cap, which never resets: it is raised. Once a value changed, the estimate of the run
  * with the new values is under the fields. A personal server that predates the policy keeps the director's values, and says so.
  */
-const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function ReviewCard({ book, form, onChange, locked, policyUnsupported, targetsUnsupported = false, readers, spent, spentCurrency, changed, estimate }, ref) {
+const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function ReviewCard({ book, form, onChange, locked, policyUnsupported, targetsUnsupported = false, bookRoundUnsupported = false, readers, spent, spentCurrency, changed, estimate }, ref) {
   const { t } = useTranslation();
   const money = useMoney();
   const problemText = useProblemText();
@@ -190,6 +193,13 @@ const ReviewCard = forwardRef<ReviewCardHandle, ReviewCardProps>(function Review
         onTarget={changeReaderTarget}
         onCounts={changeCounts}
         averageRef={(element) => { inputs.current.readersTarget = element; }}
+      />
+      <BookRoundField
+        id={ID}
+        value={form.bookRound ?? "off"}
+        onChange={(mode) => onChange({ ...form, bookRound: mode })}
+        disabled={policyOff}
+        unsupported={bookRoundUnsupported && !policyUnsupported}
       />
       {changed && reading.valid && estimate.branch !== undefined && (
         <FormRunEstimate
