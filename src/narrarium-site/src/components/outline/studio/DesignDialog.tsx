@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { BudgetOutlook } from "@/components/costs/budget/BudgetOutlook";
+import { outlookOf } from "@/costs/budgetOutlook";
 import { EstimateLine, OptionalNumberField, useProblemText } from "@/components/autopilot/review/ReviewFields";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useBookAutopilotView } from "@/autopilot/hooks";
@@ -126,9 +128,12 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
   const running = view.snapshot?.running === true || view.busyInAnotherTab;
   const canSubmit = reading.valid && !workflow.problem && chapters > 0 && busy === null && !running;
 
-  const submit = async () => {
+  const submit = async (pastBudgets = false) => {
     if (!canSubmit) return;
-    const done = await run("start", (runtime, bookId) => runtime.start(bookId, { design: { ...reading.input, ...(workflow.workflow ? { workflow: workflow.workflow } : {}) }, options: { readersOnPlan: form.readers, budgetLimit: reading.budgetLimit, ...(roomChange !== undefined ? { review: { wildcards: roomChange } } : {}) } }));
+    const done = await run("start", async (runtime, bookId) => {
+      if (pastBudgets) runtime.allowBudgetOverrun(bookId);
+      await runtime.start(bookId, { design: { ...reading.input, ...(workflow.workflow ? { workflow: workflow.workflow } : {}) }, options: { readersOnPlan: form.readers, budgetLimit: reading.budgetLimit, ...(roomChange !== undefined ? { review: { wildcards: roomChange } } : {}) } });
+    });
     if (done) {
       onStarted();
       onClose();
@@ -197,6 +202,7 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
         <WorkflowFields form={workflowForm} onChange={changeWorkflow} supported={reviewsSupported} alternativesAllowed={alternativesAllowed} problem={workflow.problem} />
 
         {estimate && <EstimateLine label={t("design.dialog.estimate")} estimate={estimate} currency={inputs.sources.currency || "USD"} />}
+        {estimate && <BudgetOutlook bookId={book.id} {...outlookOf(estimate, inputs.sources.currency || "USD", "designed")} {...(canSubmit ? { onStartAnyway: () => void submit(true) } : {})} busy={busy !== null} />}
 
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={onClose} disabled={busy !== null}>{t("common.cancel")}</Button>

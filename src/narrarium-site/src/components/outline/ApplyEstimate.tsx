@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Gauge, Info } from "lucide-react";
 import type { AutopilotActivity, AutopilotState } from "narrarium-engine";
 import { Stat, useLocale, useWhyUnknown } from "@/components/autopilot/config/EstimateParts";
+import { BudgetOutlook } from "@/components/costs/budget/BudgetOutlook";
+import { outlookOf } from "@/costs/budgetOutlook";
 import { estimateRest, type RunEstimate } from "@/autopilot/runEstimate";
 import { formatMinutes, formatMoney, formatWhole, roundMinutesRange, roundMoneyRange, roundRange } from "@/autopilot/runEstimateFormat";
 import { useRunEstimateSources, type RunEstimateInputs } from "@/autopilot/useRunEstimate";
@@ -70,6 +72,7 @@ export const ApplyEstimate = memo(function ApplyEstimate({ book, branch, structu
           {figures.rewrite && <Figures name="rewrite" heading={t("outline.apply.estimate.rewrite", { count: numbers.length })} result={figures.rewrite} inputs={inputs} />}
           {figures.rest && <Figures name="rest" heading={t("outline.apply.estimate.rest", { count: figures.rest.estimate.chaptersToWrite })} result={figures.rest} inputs={inputs} />}
           {!figures.rewrite && !figures.rest && <p className="text-sm text-muted-foreground">{t("outline.apply.estimate.nothing")}</p>}
+          <AgainstBudget bookId={book.id} parts={[figures.rewrite, figures.rest]} fallback={inputs.sources.currency || "USD"} />
           <p className="flex gap-1.5 text-xs text-muted-foreground"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{t("outline.apply.estimate.bound")}</p>
           {inputs.host === "server" && inputs.server.status === "unavailable" && <p className="text-xs text-muted-foreground">{t("autopilot.estimate.server.unavailable")}</p>}
         </>
@@ -77,6 +80,19 @@ export const ApplyEstimate = memo(function ApplyEstimate({ book, branch, structu
     </section>
   );
 });
+
+/** The rewrite and the rest together against the budget: what applying the Synopsis will spend, as one run; the chapters are the rest's (the rewrite has no order of its own). */
+function AgainstBudget({ bookId, parts, fallback }: { bookId: string; parts: ReadonlyArray<RunEstimate | null>; fallback: string }) {
+  const present = parts.filter((part): part is RunEstimate => part !== null);
+  if (present.length === 0) return null;
+  const costs = present.map((part) => part.estimate.cost);
+  const known = costs.every((cost): cost is NonNullable<typeof cost> => cost !== null);
+  const currency = costs.find((cost) => cost?.currency)?.currency || fallback;
+  const whole = known ? { min: costs.reduce((sum, cost) => sum + cost.min, 0), max: costs.reduce((sum, cost) => sum + cost.max, 0), currency } : null;
+  const rest = parts[1];
+  const { chapters } = rest ? outlookOf(rest.estimate, currency) : { chapters: null };
+  return <BudgetOutlook bookId={bookId} cost={whole} currency={currency} chapters={chapters} />;
+}
 
 function Figures({ name, heading, result, inputs }: { name: string; heading: string; result: RunEstimate; inputs: RunEstimateInputs }) {
   const { t } = useTranslation();

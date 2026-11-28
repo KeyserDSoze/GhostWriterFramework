@@ -1,6 +1,8 @@
 import { forwardRef, useMemo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { AutopilotOptions, AutopilotState, EstimateResult } from "narrarium-engine";
+import { BudgetOutlook } from "@/components/costs/budget/BudgetOutlook";
+import { outlookOf } from "@/costs/budgetOutlook";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useLocale } from "@/components/autopilot/config/EstimateParts";
@@ -111,7 +113,12 @@ export function FormRunEstimate({ book, branch, structure, state, options, brief
   const delta = useMemo(() => (aimed ? estimateDelta(estimate, estimateRun(inputs.sources, { brief, options: withoutReaderTargets(options) }).estimate) : null), [aimed, estimate, inputs.sources, brief, options]);
   // A finished book has no run left to estimate: the values are for the chapters still to come and for a review of the book.
   if (estimate.calls.max === 0) return <p data-review-estimate="nothing" className="rounded-lg border bg-muted/30 p-2.5 text-xs text-muted-foreground">{t("autopilot.review.estimate.nothing")}</p>;
-  return <EstimateLine label={t("autopilot.review.estimate.run")} estimate={estimate} currency={sourcesCurrency(inputs.sources)} extra={aimed ? <ReadersDelta delta={delta} currency={sourcesCurrency(inputs.sources)} /> : undefined} />;
+  return (
+    <>
+      <EstimateLine label={t("autopilot.review.estimate.run")} estimate={estimate} currency={sourcesCurrency(inputs.sources)} extra={aimed ? <ReadersDelta delta={delta} currency={sourcesCurrency(inputs.sources)} /> : undefined} />
+      <BudgetOutlook bookId={book.id} {...outlookOf(estimate, sourcesCurrency(inputs.sources))} />
+    </>
+  );
 }
 
 /** What the targets for the readers add to the estimate, in one line (or that they add no call): the figures of the run less the figures of the run without them. */

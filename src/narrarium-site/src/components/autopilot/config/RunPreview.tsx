@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import { Gauge, Info } from "lucide-react";
 import { autopilotPresetSkeleton, isItalian, type AutopilotPresetId, type AutopilotState, type EstimateCapability } from "narrarium-engine";
 import { Card } from "@/components/autopilot/Card";
+import { BudgetOutlook } from "@/components/costs/budget/BudgetOutlook";
+import { outlookOf } from "@/costs/budgetOutlook";
 import { EstimateWarnings, RangeText, Stat, useLocale, useRoleNames, useWhyUnknown } from "@/components/autopilot/config/EstimateParts";
 import { callsByRole, estimateRun, groupWarnings, type SetupFormValues } from "@/autopilot/runEstimate";
 import { formatMinutes, formatMoney, formatTokens, formatWhole, roundMinutesRange, roundMoneyRange, roundRange, type Range } from "@/autopilot/runEstimateFormat";
@@ -144,6 +146,8 @@ export function RunPreview({ inputs, form, dirty, bookId, startPreset }: RunPrev
             />
             <Stat name="minutes" label={t("autopilot.estimate.stats.minutes")} real={estimate.minutes} shown={minutes} format={duration} unknown={t("autopilot.estimate.notEstimated")} why={why.minutes} />
           </dl>
+
+          <BudgetOutlook bookId={bookId} {...outlookOf(estimate, sources.currency || "USD")} />
 
           <p className="text-xs text-muted-foreground">{t("autopilot.estimate.interval", { rounds })}</p>
           {rounds !== undefined && (

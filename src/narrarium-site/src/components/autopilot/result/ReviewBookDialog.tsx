@@ -4,6 +4,8 @@ import { Loader2, RefreshCcw, Target } from "lucide-react";
 import { DIRECTOR_FILE, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_ROUNDS, chapterFilePath, defaultDirector, gateFor, parseDirector, type AutopilotState, type BookRoundMode, type ReviewBookInput } from "narrarium-engine";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { BudgetOutlook } from "@/components/costs/budget/BudgetOutlook";
+import { outlookOf } from "@/costs/budgetOutlook";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EstimateLine, OptionalNumberField, ReadersDelta, useProblemText } from "@/components/autopilot/review/ReviewFields";
 import { READER_TARGET_RANGE, ReaderTargetsFields } from "@/components/autopilot/review/ReaderTargetsFields";
@@ -208,7 +210,7 @@ export default function ReviewBookDialog({ open, onClose, book, branch, structur
     return () => window.clearTimeout(timer);
   }, [open, edited, chaptersText]);
 
-  const submit = async () => {
+  const submit = async (pastBudgets = false) => {
     if (!canSubmit || target === null || rounds.value === null) return;
     const input: ReviewBookInput = {
       targetScore: target,
@@ -226,6 +228,7 @@ export default function ReviewBookDialog({ open, onClose, book, branch, structur
     };
     const done = await run("answer", async (runtime, bookId) => {
       await runtime.reviewBook(bookId, input);
+      if (pastBudgets) runtime.allowBudgetOverrun(bookId);
       await runtime.start(bookId);
     });
     if (done) onClose();
@@ -336,6 +339,7 @@ export default function ReviewBookDialog({ open, onClose, book, branch, structur
             )}
           />
         )}
+        {estimate && <BudgetOutlook bookId={book.id} {...outlookOf(estimate, inputs.sources.currency || "USD", null)} {...(canSubmit ? { onStartAnyway: () => void submit(true) } : {})} busy={busy !== null} />}
         {bookRoundOn && <p data-review-book-round-cost="" className="text-xs text-muted-foreground">{t("autopilot.reviewBook.bookRoundCost")}</p>}
         <p className="text-xs text-muted-foreground">{t("autopilot.reviewBook.stops")}</p>
 

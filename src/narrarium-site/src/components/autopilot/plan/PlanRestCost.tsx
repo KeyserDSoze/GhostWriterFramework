@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Gauge, Info } from "lucide-react";
 import type { AiRuntimeConfig, AutopilotActivity, AutopilotState } from "narrarium-engine";
+import { BudgetOutlook } from "@/components/costs/budget/BudgetOutlook";
+import { outlookOf } from "@/costs/budgetOutlook";
 import { ActionLink, Stat, WarningBox, isolate, rowOf, uniqueRoles, useLocale, useRoleNames, useWhyUnknown } from "@/components/autopilot/config/EstimateParts";
 import { estimateRest, restProblems, type RestProblem, type RunEstimate } from "@/autopilot/runEstimate";
 import { formatMinutes, formatMoney, formatTokens, formatWhole, roundMinutesRange, roundMoneyRange, roundRange } from "@/autopilot/runEstimateFormat";
@@ -187,6 +189,7 @@ function RestFigures({ bookId, mode, inputs, result }: { bookId: string; mode: P
         <Stat name="cost" label={t("autopilot.estimate.stats.cost")} real={estimate.cost ? { min: estimate.cost.min, max: estimate.cost.max } : null} shown={cost} format={money} unknown={t("autopilot.estimate.notKnown")} why={why.cost} />
         <Stat name="minutes" label={t("autopilot.estimate.stats.minutes")} real={estimate.minutes} shown={minutes} format={duration} unknown={t("autopilot.estimate.notEstimated")} why={why.minutes} />
       </dl>
+      <BudgetOutlook bookId={bookId} {...outlookOf(estimate, sources.currency || "USD")} />
       {mode === "revise" && <p className="text-xs text-muted-foreground">{t("autopilot.approval.rest.again")}</p>}
       <RestProblems problems={problems} host={host} ai={sources.ai} />
       {notes.length > 0 && <ul className="space-y-1.5">{notes}</ul>}

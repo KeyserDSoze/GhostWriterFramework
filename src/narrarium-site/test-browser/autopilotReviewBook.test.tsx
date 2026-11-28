@@ -6,6 +6,8 @@ import { DEFAULT_OPTIONS, defaultDirector, serializeDirector, type AutopilotFina
 const mocks = vi.hoisted(() => ({
   files: new Map<string, string>(),
   runtime: null as unknown as Record<string, ReturnType<typeof vi.fn>>,
+  /** The AI configuration the estimate reads: none, or a priced one. */
+  ai: null as unknown,
 }));
 
 // What the dialog reads of the book: the director's profile and the records of the frozen chapters.
@@ -16,7 +18,7 @@ vi.mock("@/autopilot/loader", () => ({ loadAutopilotRuntime: async () => mocks.r
 vi.mock("@/autopilot/useRunEstimate", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/autopilot/useRunEstimate")>()),
   useRunEstimateSources: () => ({
-    sources: { book: { read: true, directorFile: true, directorRounds: 2, context: {}, designWritten: false, outline: { entries: 12, lastChapter: 12, words: 1200 } }, ai: null, aiFrom: "browser", activities: [], state: null, chapters: null, canonEntries: 0, currency: "USD" },
+    sources: { book: { read: true, directorFile: true, directorRounds: 2, context: {}, designWritten: false, outline: { entries: 12, lastChapter: 12, words: 1200 } }, ai: mocks.ai, aiFrom: "browser", activities: [], state: null, chapters: null, canonEntries: 0, currency: "USD" },
     reading: false,
     server: { status: "idle" },
     host: "browser",
@@ -29,6 +31,7 @@ import { AutopilotResult } from "@/components/autopilot/AutopilotResult";
 import { useAutopilotStore } from "@/autopilot/store";
 import { useSettingsStore } from "@/store/settingsStore";
 import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
+import "@/i18n/costs";
 import { defaultReviewTarget, reviewCandidates, reviewRounds, chapterScores } from "@/autopilot/resultModel";
 import { judgedPlan } from "./helpers/autopilotFixtures";
 import { seedRun } from "./helpers/autopilotBand";
@@ -71,12 +74,14 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await i18n.changeLanguage("en");
+  mocks.ai = null;
   mocks.files = new Map([["director.md", serializeDirector({ ...defaultDirector("en"), approvalScore: 7, maxReviewRounds: 2 })]]);
   mocks.runtime = {
     refresh: vi.fn(async () => null),
     frozenStatus: vi.fn(async () => ({ mode: "ask", changes: [{ kind: "frozen", number: 6, slug: "006-chapter-6", title: "Chapter 6", fingerprint: "f", actions: [] }], pending: [], warnings: [] })),
     reviewBook: vi.fn(async () => ({ campaign: null, frozen: { mode: "ask", changes: [], pending: [], warnings: [] } })),
     start: vi.fn(async () => undefined),
+    allowBudgetOverrun: vi.fn(),
     describeError: vi.fn((error: unknown) => String(error)),
   };
 });
@@ -103,6 +108,48 @@ describe("the model of a review of the book", () => {
     const imported = chapters.map((chapter, index) => (index === 1 ? { ...chapter, imported: true } : chapter));
     expect(reviewCandidates(imported, 8, new Map(), new Set())[0].kind, "written before the autopilot, and not frozen by it").toBe("author");
     expect(reviewCandidates(imported, 8, new Map([[chapters[1].slug, "autopilot"]]), new Set())[0].kind, "imported by a plan made again, but the autopilot's").toBe("review");
+  });
+});
+
+describe("«Review the book again» against the budget", () => {
+  const PRICED = { aiIntegrations: [{ id: "cloud", name: "Cloud", provider: "openai", endpoint: "https://api.example.test/v1", apiKey: "sk-secret", chatModels: [{ id: "m1", name: "writer-1", capabilities: ["default"], supportsToolCalls: true, maxInputTokens: 128_000, maxOutputTokens: 16_000, pricing: { inputPerMTok: 2, outputPerMTok: 8 } }] }], defaultWritingIntegrationId: "cloud", costCurrency: "USD" };
+
+  it("says what a round is estimated at against what is left, and starts it past the budgets when the author says so", async () => {
+    mocks.ai = PRICED;
+    finished();
+    useSettingsStore.setState((store) => ({ settings: { ...store.settings, costCurrency: "USD", costBudgets: { global: { USD: { total: 0.5 } } } } }));
+    show();
+    const shown = await openDialog();
+    await waitFor(() => expect(shown.querySelector("[data-budget-outlook]")).not.toBeNull());
+    const box = shown.querySelector<HTMLElement>("[data-budget-outlook]")!;
+    expect(box.getAttribute("data-budget-outlook")).toBe("stops");
+    expect(box.querySelector("[data-outlook-text]")?.textContent).toMatch(/This run is estimated at .*you have \$0\.50 left in the budget \(All books, in total\): it would stop before it finishes\./);
+    fireEvent.click(within(box).getByRole("button", { name: "Start anyway" }));
+    await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledTimes(1));
+    expect(mocks.runtime.allowBudgetOverrun).toHaveBeenCalledWith("book-1");
+    expect(mocks.runtime.reviewBook.mock.invocationCallOrder[0]).toBeLessThan(mocks.runtime.allowBudgetOverrun.mock.invocationCallOrder[0]);
+    expect(mocks.runtime.allowBudgetOverrun.mock.invocationCallOrder[0]).toBeLessThan(mocks.runtime.start.mock.invocationCallOrder[0]);
+  });
+
+  it("does not start past the budgets when the author starts the review as it is", async () => {
+    mocks.ai = PRICED;
+    finished();
+    useSettingsStore.setState((store) => ({ settings: { ...store.settings, costCurrency: "USD", costBudgets: { global: { USD: { total: 0.5 } } } } }));
+    show();
+    const shown = await openDialog();
+    await waitFor(() => expect(shown.querySelector("[data-budget-outlook]")).not.toBeNull());
+    fireEvent.click(within(shown).getByRole("button", { name: /^Review \d+ chapters?$/ }));
+    await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledTimes(1));
+    expect(mocks.runtime.allowBudgetOverrun).not.toHaveBeenCalled();
+  });
+
+  it("says nothing when no budget limits the run", async () => {
+    mocks.ai = PRICED;
+    finished();
+    show();
+    const shown = await openDialog();
+    await waitFor(() => expect(shown.querySelector("[data-review-estimate]")).not.toBeNull());
+    expect(shown.querySelector("[data-budget-outlook]")).toBeNull();
   });
 });
 
