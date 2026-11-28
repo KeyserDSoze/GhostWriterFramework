@@ -1,0 +1,236 @@
+name: Checks
+
+# The full checks of the repository, in parallel jobs: the dependency policy, the packages (build, types, tests), the personal server, the site (typecheck,
+# unit tests, component tests in shards with one coverage gate over all of them) and the E2E suite (in shards, plus the GitHub Pages
+# basename routing). Called by CI and by the deploy (scripts/release-lane.mjs says when the deploy waits for them). Nothing here deploys.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to check (default the commit of the run).
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    name: Dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          # The site's release gate (scripts/check-patch-notes.mjs) compares with the parent commit.
+          fetch-depth: 0
+
+      - name: Set up the workspace
+        uses: ./.github/actions/setup
+        with:
+          prerequisites: "false"
+
+      - name: Verify dependency security policy
+        run: npm run dependency:check
+
+  packages:
+    name: Packages (build, types, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          # The site's release gate (scripts/check-patch-notes.mjs) compares with the parent commit.
+          fetch-depth: 0
+
+      - name: Set up the workspace
+        uses: ./.github/actions/setup
+        with:
+          prerequisites: "false"
+
+      - name: Build workspace
+        env:
+          SITE_BASE: /
+        run: npm run build
+
+      - name: Validate types
+        run: npm run validate
+
+      - name: Test the packages
+        run: npm run test:libraries
+
+  server:
+    name: Personal server (build, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          # The site's release gate (scripts/check-patch-notes.mjs) compares with the parent commit.
+          fetch-depth: 0
+
+      - name: Set up the workspace
+        uses: ./.github/actions/setup
+
+      - name: Test the personal server
+        run: npm run test -w narrarium-server
+
+  site-unit:
+    name: Site (typecheck, unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          # The site's release gate (scripts/check-patch-notes.mjs) compares with the parent commit.
+          fetch-depth: 0
+
+      - name: Set up the workspace
+        uses: ./.github/actions/setup
+
+      - name: Typecheck the site and its tests
+        run: npm run test:typecheck -w narrarium-site
+
+      - name: Run the unit tests of the site
+        run: npm run test:unit -w narrarium-site
+
+  site-browser:
+    name: Site component tests (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          # The site's release gate (scripts/check-patch-notes.mjs) compares with the parent commit.
+          fetch-depth: 0
+
+      - name: Set up the workspace
+        uses: ./.github/actions/setup
+
+      # A shard covers a part of the files: its thresholds are zero here, and the coverage gate of vitest.config.ts is applied once to
+      # the coverage of all the shards together (site-coverage).
+      - name: Run the component tests of this shard
+        run: >-
+          npm run test:browser -w narrarium-site --
+          --shard=${{ matrix.shard }}/4 --reporter=default --reporter=blob
+          --coverage.thresholds.statements=0 --coverage.thresholds.branches=0 --coverage.thresholds.functions=0 --coverage.thresholds.lines=0
+
+      - name: Keep the report of this shard
+        uses: actions/upload-artifact@v6
+        with:
+          name: site-vitest-blob-${{ matrix.shard }}
+          path: src/narrarium-site/.vitest-reports/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  site-coverage:
+    name: Site component tests (all shards, coverage gate)
+    needs: site-browser
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          # The site's release gate (scripts/check-patch-notes.mjs) compares with the parent commit.
+          fetch-depth: 0
+
+      - name: Set up the workspace
+        uses: ./.github/actions/setup
+        with:
+          prerequisites: "false"
+
+      - name: Collect the reports of the shards
+        uses: actions/download-artifact@v8
+        with:
+          pattern: site-vitest-blob-*
+          merge-multiple: true
+          path: src/narrarium-site/.vitest-reports
+
+      - name: Merge the reports and apply the coverage thresholds
+        working-directory: src/narrarium-site
+        run: npx vitest --merge-reports --coverage
+
+      - name: Upload Narrarium site coverage
+        uses: actions/upload-artifact@v6
+        with:
+          name: narrarium-site-coverage
+          path: src/narrarium-site/coverage
+
+  e2e:
+    name: E2E (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          # The site's release gate (scripts/check-patch-notes.mjs) compares with the parent commit.
+          fetch-depth: 0
+
+      - name: Set up the workspace
+        uses: ./.github/actions/setup
+        with:
+          chromium: "true"
+
+      # The E2E site is built as the deployed one is; the component tests run without these variables, as they always did.
+      - name: Build E2E site
+        env:
+          SITE_BASE: /
+          SITE_URL: https://narrarium.net
+          MCP_PUBLIC_URL: https://narrarium.space/mcp
+          MCP_HEALTH_URL: https://narrarium.space/health
+          VITE_GITHUB_MODELS_BASE: ${{ vars.VITE_GITHUB_MODELS_BASE }}
+        run: npm run test:e2e:build
+
+      - name: Run the E2E files of this shard
+        env:
+          SITE_BASE: /
+        run: node scripts/e2e-shards.mjs run ${{ matrix.shard }} 3
+
+  e2e-basename:
+    name: E2E (GitHub Pages basename)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          # The site's release gate (scripts/check-patch-notes.mjs) compares with the parent commit.
+          fetch-depth: 0
+
+      - name: Set up the workspace
+        uses: ./.github/actions/setup
+        with:
+          chromium: "true"
+
+      - name: Verify GitHub Pages basename routing
+        run: npm run test:e2e:basename
+
+  passed:
+    name: All checks passed
+    needs: [policy, packages, server, site-unit, site-coverage, e2e, e2e-basename]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every check passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"'
+          test "$(echo "$RESULTS" | jq '[.[] | select(.result != "success")] | length')" -eq 0

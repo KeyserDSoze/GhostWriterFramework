@@ -1,0 +1,98 @@
+name: Publish the site
+
+# Build the site of one commit for GitHub Pages and publish it. Called by the deploy once the lane of the run allows it
+# (scripts/release-lane.mjs). The build and the upload are never conditional; the publication happens only for a run of main
+# (the github-pages environment accepts main only as well), so a run of any other branch builds and stops there.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to build and publish.
+        type: string
+        required: true
+      express:
+        description: "The express lane (no tests): the summary says so."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          # The site's release gate (scripts/check-patch-notes.mjs) compares with the parent commit.
+          fetch-depth: 0
+
+      # Written out, not through .github/actions/setup and the scripts of today: a rollback builds an older commit, which has neither.
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npx --yes npm@12.0.2 ci
+
+      # The scaffolder is built too: the site keeps a snapshot of what it writes for a new book, and its build fails when the snapshot is stale.
+      - name: Build Narrarium core, shared engine and book scaffolder
+        run: npm run build -w narrarium && npm run build -w narrarium-engine && npm run build:cli -w narrarium-astro-reader && npm run build -w create-narrarium-book
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - name: Build Narrarium site
+        env:
+          SITE_BASE: /
+          SITE_URL: https://narrarium.net
+          MCP_PUBLIC_URL: https://narrarium.space/mcp
+          MCP_HEALTH_URL: https://narrarium.space/health
+          VITE_GITHUB_MODELS_BASE: ${{ vars.VITE_GITHUB_MODELS_BASE }}
+          VITE_GITHUB_APP_CLIENT_ID: ${{ vars.VITE_GITHUB_APP_CLIENT_ID }}
+          VITE_GITHUB_APP_SLUG: ${{ vars.VITE_GITHUB_APP_SLUG }}
+        run: npm run docs:build
+
+      - name: Say that the tests were skipped
+        if: ${{ inputs.express }}
+        run: |
+          live="$(curl -fsS --max-time 20 https://narrarium.net/version.json 2>/dev/null | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(JSON.parse(d).version)}catch{console.log("")}})')"
+          mine="$(node -p 'require("./src/narrarium-site/package.json").version')"
+          {
+            echo "### Express lane: the tests were skipped"
+            echo "Published without the unit tests, the dependency check and the E2E suites. Run CI by hand on main afterwards (workflow_dispatch), or let the next push run the full checks."
+            echo "- commit: \`$(git rev-parse --short HEAD)\`; site version of this build: \`$mine\`; live now: \`${live:-unknown}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$live" ] && [ "$live" = "$mine" ]; then
+            echo "::warning::This build has the same version as the live site ($mine): browsers that already have that version keep their cached files, so bump the site version for readers to get it."
+          fi
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: src/narrarium-site/dist
+
+  deploy:
+    name: Publish to GitHub Pages
+    needs: build
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

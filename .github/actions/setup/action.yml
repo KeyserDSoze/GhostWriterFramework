@@ -1,0 +1,48 @@
+name: Set up the workspace
+description: >-
+  Node 22 and the dependencies (npm ci with the npm cache of setup-node), then, when asked, the built prerequisites of the site
+  (core, engine, the reader CLI, the book scaffolder) and Chromium for the E2E suites, kept in a cache by Playwright version.
+
+inputs:
+  prerequisites:
+    description: Build core, engine, the reader CLI and the book scaffolder (`npm run build:prerequisites`).
+    default: "true"
+  chromium:
+    description: Install Chromium for Playwright (from the cache when this Playwright version has it).
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@v6
+      with:
+        node-version: 22
+        cache: npm
+
+    - name: Install dependencies
+      shell: bash
+      run: npx --yes npm@12.0.2 ci
+
+    - name: Build the prerequisites
+      if: ${{ inputs.prerequisites == 'true' }}
+      shell: bash
+      run: npm run build:prerequisites
+
+    - name: Read the Playwright version
+      if: ${{ inputs.chromium == 'true' }}
+      id: playwright
+      shell: bash
+      run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Chromium
+      if: ${{ inputs.chromium == 'true' }}
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+    - name: Install Chromium
+      if: ${{ inputs.chromium == 'true' }}
+      shell: bash
+      run: npm run e2e:install

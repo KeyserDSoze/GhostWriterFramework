@@ -1,68 +1,43 @@
 name: CI
 
+# The full checks (checks.yml) of every pull request, and of every push to main that the deploy does not check: the deploy
+# (book-management-system.yml) runs the same checks for its paths, so they are this workflow's paths-ignore (scripts/fast-track.test.mjs
+# keeps the two lists equal). A push that touches both runs both. Run it by hand on any branch (workflow_dispatch) as well.
+
 on:
   push:
     branches:
       - main
       - master
+    paths-ignore:
+      - README.md
+      - AGENTS.md
+      - docs/**
+      - packages/*/README.md
+      - packages/engine/**
+      - packages/core/**
+      - packages/astro-reader/**
+      - packages/create-narrarium-book/**
+      - src/narrarium-site/**
+      - .github/workflows/book-management-system.yml
+      - .github/workflows/pages.yml
+      - packages/mcp-server/src/index.ts
+      - packages/mcp-server/src/public-http-server.ts
+      - packages/server/mcp-tools.json
+      - package.json
+      - package-lock.json
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push of a pull request replaces the older run; every commit of main keeps its own.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  validate:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npx --yes npm@12.0.2 ci
-
-      - name: Verify dependency security policy
-        run: npm run dependency:check
-
-      - name: Build workspace
-        env:
-          SITE_BASE: /
-        run: npm run build
-
-      - name: Install Chromium
-        run: npm run e2e:install
-
-      - name: Build E2E site
-        env:
-          SITE_BASE: /
-        run: npm run test:e2e:build
-
-      - name: Verify GitHub Pages basename routing
-        run: npm run test:e2e:basename
-
-      - name: Rebuild root-scope E2E site
-        env:
-          SITE_BASE: /
-        run: npm run test:e2e:build
-
-      - name: Run E2E smoke tests
-        env:
-          SITE_BASE: /
-        run: npm run test:e2e
-
-      - name: Validate types
-        run: npm run validate
-
-      - name: Run tests
-        run: npm run test
-
-      - name: Upload Narrarium site coverage
-        uses: actions/upload-artifact@v6
-        with:
-          name: narrarium-site-coverage
-          path: src/narrarium-site/coverage
+  checks:
+    name: Checks
+    uses: ./.github/workflows/checks.yml
