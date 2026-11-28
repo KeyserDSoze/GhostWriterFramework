@@ -71,6 +71,7 @@ import {
 import { appendOutlineJournal, outlineJournalChaptersOf, type OutlineJournalSeen } from "../book/outline-journal.js";
 import { askDirector, directorSystemPrompt, parseDirectorVerdict, renderDirectorOpinion, withheldApprovalNote, type DirectorOpinion } from "../director/opinion.js";
 import { assertFrontmatterReadable, frontmatterString, parseMarkdown, renderMarkdown } from "../markdown/frontmatter.js";
+import { brainstormerPrompt, type BrainstormerProfile } from "../profiles/brainstormer.js";
 import { directorPrompt, type DirectorProfile } from "../profiles/director.js";
 import { evaluationStyleBlock, evaluationStyleInstruction, type EvaluationStyle } from "../profiles/evaluation-style.js";
 import type { GhostwriterProfile } from "../profiles/ghostwriter.js";
@@ -103,7 +104,6 @@ import {
   CHAPTER_SUMMARY_TOOL,
   CONCEPT_TOOL,
   CONSOLIDATION_TOOL,
-  DESIGN_ARCHITECT_ROLE,
   DESIGN_CHAPTER_RULE,
   DESIGN_CONCEPT_TOOL,
   DESIGN_DIRECTOR_RULES,
@@ -112,6 +112,7 @@ import {
   DESIGN_REACTION_TOOL,
   DESIGN_READER_ROLE,
   DESIGN_REVIEW_TOOL,
+  designArchitectSystem,
   FINDINGS_TOOL,
   IMPACT_TOOL,
   PLAN_REACTION_TOOL,
@@ -147,6 +148,8 @@ export interface TaskContext {
   state: AutopilotState;
   snapshot: BookSnapshot;
   director: DirectorProfile;
+  /** The brainstormer (`brainstormer.md`) while a design run goes on; absent otherwise. */
+  brainstormer?: BrainstormerProfile | null;
   readerPanel: ReaderPersonaProfile[];
   language: string;
   task: TaskDescriptor;
@@ -695,7 +698,7 @@ async function runConcept(ctx: TaskContext): Promise<TaskResult> {
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.writer,
     label: "autopilot:concept",
-    system: designing ? `${architectSystemPrompt(ctx.language)}\n\n${DESIGN_ARCHITECT_ROLE}` : architectSystemPrompt(ctx.language),
+    system: designing ? designArchitectSystem(ctx.language, ctx.brainstormer ? brainstormerPrompt(ctx.brainstormer) : null) : architectSystemPrompt(ctx.language),
     user: `${request([
       designing
         ? `Design the foundation of this novel from the author's description, for about ${view.lastChapter} chapters: no prose, only the design a writer needs.`
@@ -960,7 +963,7 @@ async function runPlan(ctx: TaskContext): Promise<TaskResult> {
   const response = await ctx.ai({
     capability: AI_CAPABILITIES.writer,
     label: "autopilot:plan",
-    system: designing ? `${architectSystemPrompt(ctx.language)}\n\n${DESIGN_ARCHITECT_ROLE}` : architectSystemPrompt(ctx.language),
+    system: designing ? designArchitectSystem(ctx.language, ctx.brainstormer ? brainstormerPrompt(ctx.brainstormer) : null) : architectSystemPrompt(ctx.language),
     user: `${request([
       designing
         ? (revising ? `Revise the design of chapters ${from}-${to} applying the director's changes:\n${bulletList(notes)}` : `Design the next ${batchCount} chapters of the novel, numbered ${from} to ${to}.`)

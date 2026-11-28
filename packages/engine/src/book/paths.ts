@@ -11,6 +11,8 @@ export const TOTAL_RESUME_FILE = "resumes/total.md";
 export const EVALUATION_GUIDELINES_FILE = "evaluation-guidelines.md";
 /** The author's stand-in: vision, taste, priorities and red lines used by the autopilot. */
 export const DIRECTOR_FILE = "director.md";
+/** The co-author of a design run: its personality, its boldness and what it refuses (`profiles/brainstormer.ts`). */
+export const BRAINSTORMER_FILE = "brainstormer.md";
 export const AUTOPILOT_DIRECTORY = "autopilot";
 export const AUTOPILOT_STATE_FILE = "autopilot/state.json";
 export const AUTOPILOT_ACTIVITY_FILE = "autopilot/activity.json";

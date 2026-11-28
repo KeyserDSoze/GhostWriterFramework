@@ -466,6 +466,14 @@ export const DESIGN_ARCHITECT_ROLE = [
   "Never write the prose of a chapter: only what a writer needs to write it later.",
 ].join("\n");
 
+/**
+ * The system prompt of the architect in a design run: the architect's, the role of the brainstormer of a writers' room, and the Brainstormer profile of the book (its
+ * personality, its boldness, what it refuses) when it is given.
+ */
+export function designArchitectSystem(language: string, brainstormer?: string | null): string {
+  return [architectSystemPrompt(language), DESIGN_ARCHITECT_ROLE, brainstormer ?? ""].filter((part) => part && part.trim()).join("\n\n");
+}
+
 /** The role of a simulated reader reading a design: the reader keeps the personality of the panel. */
 export const DESIGN_READER_ROLE = [
   "You are reading the design of a novel that is not written yet: the pitch, the cast, the world, the secrets and the design of every chapter.",

@@ -1,10 +1,11 @@
 import { redactSecrets } from "../ai/redact.js";
 import { AiProviderError, AiReplyRejectedError, type AiPort, type AiProgress, type AiRequest, type AiResponse, type AiUsage } from "../ai/types.js";
-import { activeReaders, isThinDocument, loadDirectorProfile, loadEvaluationStyle, loadReaderPanel, readBody } from "../book/context.js";
+import { activeReaders, isThinDocument, loadBrainstormerProfile, loadDirectorProfile, loadEvaluationStyle, loadReaderPanel, readBody } from "../book/context.js";
 import { OutlineCache, OutlineReader } from "../book/outline.js";
 import { AUTOPILOT_ACTIVITY_FILE, AUTOPILOT_STATE_FILE, STORY_DESIGN_FILE } from "../book/paths.js";
 import { SnapshotCache, loadBookSnapshot, type BookSnapshot } from "../book/snapshot.js";
 import { BookConflictError, isBookConflictError, normalizeChanges, type BookFileChange, type BookStore } from "../book/store.js";
+import type { BrainstormerProfile } from "../profiles/brainstormer.js";
 import type { DirectorProfile } from "../profiles/director.js";
 import type { EvaluationStyle } from "../profiles/evaluation-style.js";
 import type { ReaderPersonaProfile } from "../profiles/readers.js";
@@ -35,6 +36,7 @@ import {
   MAX_REVISION_NOTES,
   capConstraints,
   createAutopilotState,
+  designActive,
   effectivePublish,
   hostDefaultPublish,
   inspectAutopilotState,
@@ -735,6 +737,8 @@ interface StepContext {
   director: DirectorProfile;
   panel: ReaderPersonaProfile[];
   evaluationStyle: EvaluationStyle | null;
+  /** The brainstormer (`brainstormer.md`): read while a design run goes on, the only runs that use it. */
+  brainstormer: BrainstormerProfile | null;
   outline: OutlineReader;
 }
 
@@ -1009,11 +1013,12 @@ export class AutopilotRun {
     const language = languageCode(snapshot.book.language);
     this.language = language;
     const outline = OutlineReader.of(this.store, snapshot, this.outlineCache);
-    const [director, panel, design, evaluationStyle, lastChapter, decisions] = await Promise.all([
+    const [director, panel, design, evaluationStyle, brainstormer, lastChapter, decisions] = await Promise.all([
       loadDirectorProfile(this.store, language),
       loadReaderPanel(this.store, snapshot),
       readBody(this.store, STORY_DESIGN_FILE, 20000),
       loadEvaluationStyle(this.store),
+      designActive(state) ? loadBrainstormerProfile(this.store, language) : Promise.resolve(null),
       // The chapters of the book are the outline's: the last entry's number (read from the index, without reading an entry).
       outline.last,
       loadDecisions(this.store),
@@ -1025,6 +1030,7 @@ export class AutopilotRun {
       director,
       panel,
       evaluationStyle,
+      brainstormer,
       outline,
     };
   }
@@ -1302,7 +1308,7 @@ export class AutopilotRun {
           break;
         }
         // A profile the autopilot cannot read as it is written (a typo in director.md, a ghostwriter with broken YAML) is the author's to correct: nothing is spent, and no file is replaced by the defaults.
-        const problems = await profileProblems({ store, snapshot, state, director: context.director, panel: context.panel, task: step.task, evaluationStyle: context.evaluationStyle });
+        const problems = await profileProblems({ store, snapshot, state, director: context.director, panel: context.panel, task: step.task, evaluationStyle: context.evaluationStyle, brainstormer: context.brainstormer });
         if (problems.length) {
           this.emit({ type: "insight", tone: "warning", code: "profileProblems", title: profileProblemsTitle(problems, context.planner.language), detail: problems.join("\n") });
           state = await this.finish(state, "waiting-author", profileProblemsMessage(problems, context.planner.language));
@@ -1499,6 +1505,7 @@ export class AutopilotRun {
             ...(extra?.figures ? { figures: extra.figures } : {}),
           }),
           evaluationStyle: context.evaluationStyle,
+          brainstormer: context.brainstormer,
           outline: context.outline,
           decisions: context.decisions,
         };

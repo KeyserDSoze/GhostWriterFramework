@@ -24,6 +24,7 @@ export * from "./book/outline-journal.js";
 export * from "./profiles/ghostwriter.js";
 export * from "./profiles/readers.js";
 export * from "./profiles/director.js";
+export * from "./profiles/brainstormer.js";
 export * from "./profiles/evaluation-style.js";
 export * from "./profiles/wildcards.js";
 

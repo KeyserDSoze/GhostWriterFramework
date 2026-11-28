@@ -1,11 +1,13 @@
 import { loadGhostwriter } from "../book/context.js";
 import type { BookSnapshot, ChapterInfo } from "../book/snapshot.js";
 import type { BookStore } from "../book/store.js";
+import type { BrainstormerProfile } from "../profiles/brainstormer.js";
 import type { DirectorProfile } from "../profiles/director.js";
 import type { EvaluationStyle } from "../profiles/evaluation-style.js";
 import type { ReaderPersonaProfile } from "../profiles/readers.js";
 import { isItalian, truncate } from "../util/text.js";
 import type { TaskDescriptor } from "./planner.js";
+import { designActive } from "./state.js";
 import type { AutopilotState, AutopilotTaskKind } from "./types.js";
 
 /** The steps that write, or review the writing, with the profile of a ghostwriter. */
@@ -22,8 +24,10 @@ const MAX_PROBLEM_CHARACTERS = 320;
  * problem the author must fix: the autopilot never goes on with a profile that is not what its file says, and never replaces the file
  * with the defaults.
  */
-export async function profileProblems(input: { store: BookStore; snapshot: BookSnapshot; state: AutopilotState; director: DirectorProfile; panel: ReaderPersonaProfile[]; task: TaskDescriptor; evaluationStyle?: EvaluationStyle | null }): Promise<string[]> {
+export async function profileProblems(input: { store: BookStore; snapshot: BookSnapshot; state: AutopilotState; director: DirectorProfile; panel: ReaderPersonaProfile[]; task: TaskDescriptor; evaluationStyle?: EvaluationStyle | null; brainstormer?: BrainstormerProfile | null }): Promise<string[]> {
   const problems: string[] = [...(input.director.warnings ?? []), ...(input.evaluationStyle?.warnings ?? [])];
+  // The brainstormer writes a design run: its file counts only while one goes on.
+  if (designActive(input.state)) problems.push(...(input.brainstormer?.warnings ?? []));
   if (input.state.options.readers || input.state.options.readersOnPlan) for (const reader of input.panel) problems.push(...(reader.warnings ?? []));
   if (GHOSTWRITER_TASKS.has(input.task.kind)) {
     const planned = input.state.plan?.chapters.find((chapter) => chapter.number === input.task.chapterNumber);
