@@ -26,6 +26,8 @@ export interface FixState {
   scenePath?: string;
   sceneTitle?: string;
   target?: FixTarget;
+  /** The chapter was approved and frozen by the autopilot: the fix changes it after approval. */
+  frozen?: boolean;
   /** What the AI proposed for those blocks. */
   proposal?: string;
 }
@@ -77,7 +79,7 @@ export function useAnnotationFix(bookId: string | undefined) {
     const scene = await prepare(annotation);
     if (controller.signal.aborted || !scene) return;
     loaded.current = scene;
-    setState({ phase: "asking", scenePath: scene.path, sceneTitle: scene.sceneTitle, target: scene.target });
+    setState({ phase: "asking", scenePath: scene.path, sceneTitle: scene.sceneTitle, target: scene.target, frozen: scene.frozen });
     try {
       const tag = resolveTag(data.catalog, annotation.tag, t("annotations.tag.missing"));
       const { system, request: ask, data: material } = fixRequest({
@@ -96,7 +98,7 @@ export function useAnnotationFix(bookId: string | undefined) {
       if (controller.signal.aborted) return;
       const proposal = readFixReply(reply);
       if (!proposal) { setState((current) => ({ ...current, phase: "idle", problem: "empty" })); return; }
-      setState({ phase: "proposed", scenePath: scene.path, sceneTitle: scene.sceneTitle, target: scene.target, proposal });
+      setState({ phase: "proposed", scenePath: scene.path, sceneTitle: scene.sceneTitle, target: scene.target, frozen: scene.frozen, proposal });
     } catch (error) {
       if (controller.signal.aborted) return;
       setState((current) => ({ ...current, phase: "idle", problem: "ai", detail: error instanceof Error ? error.message : String(error) }));

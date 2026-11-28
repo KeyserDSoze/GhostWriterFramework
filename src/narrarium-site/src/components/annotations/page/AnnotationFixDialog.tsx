@@ -102,6 +102,9 @@ export function AnnotationFixDialog({ bookId, request, catalog, sceneNumber, onC
           {state.phase === "applying" && <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("annotationsPage.fix.applying")}</span>}
           {state.phase === "applied" && !state.problem && <span className="inline-flex items-center gap-2 text-emerald-800 dark:text-emerald-300"><Check className="h-4 w-4" aria-hidden="true" />{t("annotationsPage.fix.applied")}</span>}
         </p>
+        {state.frozen && (
+          <p className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm" data-fix-frozen="">{t("annotationsPage.fix.frozen")}</p>
+        )}
         {state.problem && (
           <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
             {problemText(state.problem)}{state.detail ? ` ${state.detail}` : ""}

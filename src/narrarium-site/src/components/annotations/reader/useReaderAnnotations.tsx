@@ -360,6 +360,13 @@ export function useReaderAnnotations(input: ReaderAnnotationsInput) {
       <Button variant="outline" size="sm" onClick={() => setPanel({ chapter: currentChapter ?? scenes?.[0]?.chapterSlug ?? "" })} disabled={!scenes?.length}>
         <ListChecks className="h-4 w-4" aria-hidden="true" /><span className="sr-only sm:not-sr-only">{t("annotations.reader.panel")}</span>{pendingTotal > 0 && <span className="rounded-full bg-primary/15 px-1.5 text-xs font-semibold tabular-nums">{pendingTotal}</span>}
       </Button>
+      {pendingTotal > 0 && bookId && (
+        <Button asChild variant="outline" size="sm">
+          <Link to={`/app/books/${bookId}/annotations?triage=1`} data-reader-triage="">
+            <ListChecks className="h-4 w-4" aria-hidden="true" /><span className="sr-only sm:not-sr-only">{t("annotations.reader.triage")}</span>
+          </Link>
+        </Button>
+      )}
       <Button variant="outline" size="icon" title={show ? t("annotations.reader.hideMarks") : t("annotations.reader.showMarks")} aria-label={show ? t("annotations.reader.hideMarks") : t("annotations.reader.showMarks")} onClick={onToggleShow}>
         {show ? <MessageSquareText className="h-4 w-4" aria-hidden="true" /> : <MessageSquareOff className="h-4 w-4" aria-hidden="true" />}
       </Button>

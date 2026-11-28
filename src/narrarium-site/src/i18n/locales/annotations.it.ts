@@ -127,6 +127,7 @@ const annotationsIt = {
       showMarks: "Mostra le annotazioni",
       hideMarks: "Nascondi le annotazioni",
       panel: "Annotazioni",
+      triage: "Passali uno per uno",
       panelTitle: "Annotazioni di «{{chapter}}»",
       panelDescription: "Le annotazioni del capitolo che stai leggendo. «Mostra» porta al passaggio.",
       panelEmpty: "Ancora nessuna annotazione in questo capitolo. Seleziona un passaggio e scegli Annota.",

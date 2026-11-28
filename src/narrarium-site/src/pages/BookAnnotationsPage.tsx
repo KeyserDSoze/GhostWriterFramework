@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, ChevronDown, ChevronRight, ListChecks, MessageCircle, Search, Trash2 } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronRight, ListChecks, MessageCircle, Search, Sparkles, Trash2 } from "lucide-react";
 import "@/i18n/annotations";
 import "@/i18n/annotationsPage";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -16,6 +16,7 @@ import { AnnotationFixDialog, type FixRequest } from "@/components/annotations/p
 import { AnnotationReasonDialog, type ReasonScope } from "@/components/annotations/page/AnnotationReasonDialog";
 import { BookTagsPanel } from "@/components/annotations/page/BookTagsPanel";
 import { GlobalTagsPanel } from "@/components/annotations/page/GlobalTagsPanel";
+import { TriageFlow } from "@/components/annotations/page/TriageFlow";
 import { NoteCard, type NoteCardActions } from "@/components/annotations/page/NoteCard";
 import { sceneSlugOfPath } from "@/components/annotations/reader/useLocatedAnnotations";
 import { useBookStructure } from "@/hooks/useBookStructure";
@@ -34,6 +35,8 @@ import {
   type NoteFilters,
   type NoteItem,
 } from "@/annotations/notesView";
+import { estimateBulkFix } from "@/annotations/triage";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 const FIELD = "h-10 w-full rounded-md border border-field bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [@media(pointer:coarse)]:h-11";
@@ -58,6 +61,8 @@ export function BookAnnotationsPage() {
   const [reason, setReason] = useState<ReasonScope | null>(null);
   const [editing, setEditing] = useState<AnnotationEditTarget[] | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  const [bulkAsk, setBulkAsk] = useState<Annotation[] | null>(null);
+  const [fixQueue, setFixQueue] = useState<{ done: number; rest: Annotation[]; total: number } | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
 
   const chapters = structure?.chapters;
@@ -107,6 +112,28 @@ export function BookAnnotationsPage() {
 
   const describe = (cause: unknown) => (cause instanceof AnnotationsFileError ? cause.message : cause instanceof Error ? cause.message : String(cause));
   const failed = (cause: unknown) => toast({ title: t("annotations.reader.saveFailed"), description: describe(cause), variant: "destructive" });
+
+  const triage = params.get("triage") === "1";
+  const setTriage = (on: boolean) => { const next = new URLSearchParams(params); if (on) next.set("triage", "1"); else next.delete("triage"); setParams(next, { replace: false }); };
+
+  // The fixes of several notes run one after the other, each reviewed and applied (or not) by the author: closing one dialog opens the next.
+  const nextFix = () => {
+    if (fixQueue && fixQueue.rest.length) {
+      const [first, ...rest] = fixQueue.rest;
+      setFixQueue({ ...fixQueue, done: fixQueue.done + 1, rest });
+      setFix({ annotation: first });
+      return;
+    }
+    setFixQueue(null);
+    setFix(null);
+  };
+  const startBulkFix = (list: readonly Annotation[]) => {
+    const [first, ...rest] = list;
+    setBulkAsk(null);
+    if (!first) return;
+    setFixQueue({ done: 1, rest, total: list.length });
+    setFix({ annotation: first });
+  };
 
   const changeStatus = useCallback(async (list: readonly Annotation[], status: AnnotationStatus) => {
     const at = new Date().toISOString();
@@ -162,6 +189,18 @@ export function BookAnnotationsPage() {
         <Alert key={state.chapter} variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>{t("annotations.reader.unreadable", { chapter: titles.get(state.chapter) ?? state.chapter, path: state.path, detail: state.error })}</AlertDescription></Alert>
       ))}
 
+      {triage ? (
+        <TriageFlow
+          bookId={bookId ?? ""}
+          items={items}
+          catalog={data.catalog}
+          chapter={filters.chapter}
+          onStatus={(annotation, status) => changeStatus([annotation], status)}
+          onFix={(annotation) => setFix({ annotation })}
+          onReason={(annotation) => setReason({ kind: "note", annotation })}
+          onExit={() => setTriage(false)}
+        />
+      ) : (<>
       <section aria-label={t("annotationsPage.filters")} className="space-y-3 rounded-xl border bg-card p-3 sm:p-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5 sm:col-span-2">
@@ -194,6 +233,7 @@ export function BookAnnotationsPage() {
           ))}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" size="sm" disabled={counts.open === 0} onClick={() => setTriage(true)} className="[@media(pointer:coarse)]:h-11" data-triage-start=""><ListChecks aria-hidden="true" />{t("annotationsPage.triage.start")}</Button>
           {filtered && <Button type="button" size="sm" variant="ghost" onClick={() => setParams(new URLSearchParams(), { replace: true })} className="[@media(pointer:coarse)]:h-11">{t("annotationsPage.clear")}</Button>}
           <Button type="button" size="sm" variant="outline" disabled={!shown.length} onClick={() => setReason(chapterScope ?? { kind: "book", annotations: shown.map((item) => item.annotation) })} className="ml-auto [@media(pointer:coarse)]:h-11" data-reason-all="">
             <MessageCircle aria-hidden="true" />{chapterScope ? t("annotationsPage.reasonChapter") : t("annotationsPage.reasonBook")}
@@ -219,6 +259,7 @@ export function BookAnnotationsPage() {
                 <select id="notes-bulk-status" className={cn(FIELD, "w-auto")} value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value as AnnotationStatus)}>
                   {ANNOTATION_STATUSES.map((status) => <option key={status} value={status}>{t(`annotationsPage.markAs.${status}`)}</option>)}
                 </select>
+                <Button type="button" size="sm" variant="secondary" onClick={() => setBulkAsk(selectedNotes)} className="[@media(pointer:coarse)]:h-11" data-bulk-fix=""><Sparkles aria-hidden="true" />{t("annotationsPage.bulkFix.button")}</Button>
                 <Button type="button" size="sm" onClick={() => void changeStatus(selectedNotes, bulkStatus)} className="[@media(pointer:coarse)]:h-11" data-bulk-apply="">{t("annotationsPage.apply")}</Button>
                 <Button type="button" size="sm" variant="outline" onClick={() => void remove(selectedNotes)} className="text-destructive [@media(pointer:coarse)]:h-11"><Trash2 aria-hidden="true" />{t("annotationsPage.delete")}</Button>
               </div>
@@ -274,6 +315,8 @@ export function BookAnnotationsPage() {
         </div>
       )}
 
+      </>)}
+
       <section aria-labelledby="notes-tags" className="space-y-4">
         <h2 id="notes-tags" className="text-xl font-semibold">{t("annotationsPage.tags.title")}</h2>
         <BookTagsPanel bookId={bookId} />
@@ -285,10 +328,32 @@ export function BookAnnotationsPage() {
         request={fix}
         catalog={data.catalog}
         sceneNumber={fix ? items.find((entry) => entry.annotation.id === fix.annotation.id)?.sceneNumber : undefined}
-        onClose={() => setFix(null)}
+        onClose={nextFix}
         onApplied={() => setAnnouncement(t("annotationsPage.fix.appliedAnnounce"))}
       />
       <AnnotationReasonDialog bookId={bookId ?? ""} scope={reason} catalog={data.catalog} titles={titles} onClose={() => setReason(null)} onFix={(annotation, instruction) => setFix({ annotation, instruction })} />
+      {fixQueue && (
+        <div role="status" className="fixed bottom-4 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-3 rounded-full border bg-card px-4 py-2 text-sm shadow-lg" data-fix-queue="">
+          {t("annotationsPage.bulkFix.progress", { position: fixQueue.done, total: fixQueue.total })}
+          <Button type="button" size="sm" variant="ghost" onClick={() => { setFixQueue(null); setFix(null); }}>{t("annotationsPage.bulkFix.cancel")}</Button>
+        </div>
+      )}
+      <Dialog open={bulkAsk !== null} onOpenChange={(open) => { if (!open) setBulkAsk(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("annotationsPage.bulkFix.title", { count: bulkAsk?.length ?? 0 })}</DialogTitle>
+            <DialogDescription>{t("annotationsPage.bulkFix.description")}</DialogDescription>
+          </DialogHeader>
+          {bulkAsk && (() => {
+            const estimate = estimateBulkFix(bulkAsk);
+            return <p className="text-sm" data-bulk-estimate="">{t("annotationsPage.bulkFix.estimate", { calls: estimate.calls, input: estimate.inputTokens.toLocaleString(), output: estimate.outputTokens.toLocaleString() })}</p>;
+          })()}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setBulkAsk(null)}>{t("annotationsPage.bulkFix.cancel")}</Button>
+            <Button type="button" onClick={() => bulkAsk && startBulkFix(bulkAsk)} data-bulk-fix-start="">{t("annotationsPage.bulkFix.start")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <AnnotationEditorDialog
         targets={editing}
         catalog={data.catalog}

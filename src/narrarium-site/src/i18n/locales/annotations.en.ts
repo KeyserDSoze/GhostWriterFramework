@@ -127,6 +127,7 @@ const annotationsEn = {
       showMarks: "Show the annotations",
       hideMarks: "Hide the annotations",
       panel: "Annotations",
+      triage: "Go through them",
       panelTitle: "Annotations of «{{chapter}}»",
       panelDescription: "The annotations of the chapter you are reading. «Show» goes to the passage.",
       panelEmpty: "No annotation in this chapter yet. Select a passage and choose Annotate.",

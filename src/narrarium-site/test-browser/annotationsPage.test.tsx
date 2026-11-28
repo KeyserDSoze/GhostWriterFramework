@@ -337,6 +337,23 @@ describe("fixing a note with the AI", () => {
     expect(await sceneOf(book)).toBe(original);
   });
 
+  it("tells the author that a frozen chapter is changed after approval, and says nothing for a chapter that is not frozen", async () => {
+    mocks.complete.mockResolvedValue(REPLY);
+    blockNetwork();
+    const frozenFiles = BOOK_FILES.map((file) => (file.path === `chapters/${GATE}/chapter.md` ? { ...file, content: file.content.replace("title: The Gate\n", "title: The Gate\nfrozen:\n  version: 1\n  at: 2026-11-20T10:00:00.000Z\n") } : file));
+    const book = await createLocalOnlyBook("The Annotated Gate", frozenFiles);
+    await openPage(book);
+    await waitFor(() => expect(cards().length).toBeGreaterThan(0));
+    fireEvent.click(within(card(IDS.steel)).getByRole("button", { name: t("annotationsPage.fixWithAi") }));
+    await within(dialog()).findByText(t("annotationsPage.fix.reviewTitle"));
+    expect(dialog().querySelector("[data-fix-frozen]")).toHaveTextContent(t("annotationsPage.fix.frozen"));
+    fireEvent.click(within(dialog()).getByRole("button", { name: t("annotationsPage.fix.cancel") }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(within(card(IDS.rope)).getByRole("button", { name: t("annotationsPage.fixWithAi") }));
+    await waitFor(() => expect(mocks.complete).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("dialog", { name: t("annotationsPage.fix.title") }).querySelector("[data-fix-frozen]")).toBeNull();
+  });
+
   it("works the same in Italian", async () => {
     await i18n.changeLanguage("it");
     mocks.complete.mockResolvedValue(REPLY);

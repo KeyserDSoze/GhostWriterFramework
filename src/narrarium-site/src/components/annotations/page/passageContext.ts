@@ -9,6 +9,8 @@ import type { Chapter } from "@/types/book";
 
 /** The scene of a passage as the working copy has it: the file, the blocks that hold the passage and where it is. */
 export interface PassageContext {
+  /** The chapter carries a `frozen` record (the autopilot approved it). */
+  frozen: boolean;
   path: string;
   raw: string;
   target: FixTarget;
@@ -36,7 +38,10 @@ export async function loadPassageContext(input: { token: string; book: BookEntry
     const scene = scenes.find((entry) => entry.paragraph === match.paragraph);
     const target = scene ? fixTarget(scene.raw, scene.text, { start: match.start, end: match.end }, (block) => sceneTextOfMarkdown(block, scene.path)) : null;
     if (!scene || !target) return { problem: "orphaned" };
-    return { context: { path: scene.path, raw: scene.raw, target, chapterTitle: chapter.title, sceneTitle: scene.title, sceneNumber: scene.number } };
+    // A chapter the autopilot approved carries a `frozen` record in its chapter.md: changing it is allowed, but the author is told what follows.
+    const header = await loadFileContent(input.token, input.book.owner, input.book.repo, `${chapter.path}/chapter.md`, input.branch).catch(() => "");
+    const frozen = /^---\r?\n[\s\S]*?^frozen:/m.test(header.split(/\r?\n---\r?\n/)[0] ?? "");
+    return { context: { frozen, path: scene.path, raw: scene.raw, target, chapterTitle: chapter.title, sceneTitle: scene.title, sceneNumber: scene.number } };
   } catch (error) {
     return { problem: "read", detail: error instanceof Error ? error.message : String(error) };
   }

@@ -151,7 +151,7 @@ export async function startProvider(options: { delayMs?: number; chapters?: numb
     }
     const wait = state.behavior.kind === "slow" ? state.behavior.ms : state.delayMs;
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
-    // A spec may answer a schema itself (`answers`, by the name of the function), from the request; the engine's fake answers the others.
+    // A spec may answer a schema itself (`answers`, by the name of the function, or `prose` for a plain text), from the request; the engine's fake answers the others.
     const own = tool ? options.answers?.[tool.name]?.(user, system) : undefined;
     const ownProse = tool ? undefined : options.prose?.(user, system);
     const answer = own !== undefined ? { text: JSON.stringify(own), json: own } : ownProse !== undefined ? { text: ownProse, json: undefined } : await fake.complete({ system, user, label: "e2e", ...(tool ? { json: { name: tool.name } } : {}) } as never);
