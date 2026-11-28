@@ -672,7 +672,8 @@ describe("the prompt cache", () => {
     recordedCalls();
     await showFresh("en", [PRICED({ promptCaching: "unsupported" })]);
     expect(preview().querySelector("[data-note='caching']")).toBeNull();
-    expect(range("cost").min).toBeCloseTo(engineSays(DEFAULT_BRIEF, DEFAULT_OPTIONS).cost!.min, 6);
+    // The preview settles a moment after it is drawn: on a loaded machine the figure of the page is waited for, not read after a fixed pause.
+    await vi.waitFor(() => expect(range("cost").min).toBeCloseTo(engineSays(DEFAULT_BRIEF, DEFAULT_OPTIONS).cost!.min, 6), { timeout: 10_000 });
     cleanup();
     useCostsStore.setState({ file: emptyCostsFile(), persisted: emptyCostsFile(), dirty: false });
     await showFresh("en", [PRICED()]);
