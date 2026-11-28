@@ -28,7 +28,7 @@ export interface BookMenuGroup {
 
 /**
  * The menu of a book, as the owner chose it: Book (overview, dashboard, outline, reader, annotations, export), Autopilot (live, configuration), Profiles
- * (director, ghostwriters, evaluation style, simulated readers, wildcards) and Tools (audit, research, assets). The canon and the settings of the book
+ * (director, Brainstormer, ghostwriters, evaluation style, simulated readers, wildcards) and Tools (audit, research, assets). The canon and the settings of the book
  * are drawn apart by the sidebar.
  */
 export function bookMenuGroups(bookId: string, { outlineReady = OUTLINE_PAGE_READY }: { outlineReady?: boolean } = {}): BookMenuGroup[] {
@@ -59,6 +59,7 @@ export function bookMenuGroups(bookId: string, { outlineReady = OUTLINE_PAGE_REA
       titleKey: "nav.groupProfiles",
       items: [
         { labelKey: "director.title", href: `${root}/director`, icon: Clapperboard },
+        { labelKey: "nav.brainstormer", href: `${root}/brainstormer`, icon: Sparkles },
         { labelKey: "ghostwriters.title", href: `${root}/ghostwriters`, icon: Feather },
         { labelKey: "evaluationStyle.title", href: `${root}/evaluation-style`, icon: ClipboardCheck },
         { labelKey: "readerPersonas.title", href: `${root}/simulated-readers`, icon: Users },

@@ -5,6 +5,8 @@ import en from "../src/i18n/locales/en.ts";
 import it from "../src/i18n/locales/it.ts";
 import reviewEn from "../src/i18n/locales/designReview.en.ts";
 import reviewIt from "../src/i18n/locales/designReview.it.ts";
+import brainstormerEn from "../src/i18n/locales/brainstormer.en.ts";
+import brainstormerIt from "../src/i18n/locales/brainstormer.it.ts";
 
 function leaves(tree, prefix = "") {
   return Object.entries(tree).flatMap(([key, value]) => (value && typeof value === "object" ? leaves(value, `${prefix}${key}.`) : [[`${prefix}${key}`, value]]));
@@ -20,7 +22,7 @@ function studioFiles() {
   return existsSync(folder) ? readdirSync(folder).filter((name) => /\.tsx?$/.test(name)).map((name) => `components/outline/studio/${name}`) : [];
 }
 
-const PAIRS = [["the reviews of a design", reviewEn, reviewIt, "designReview"]];
+const PAIRS = [["the reviews of a design", reviewEn, reviewIt, "designReview"], ["the Brainstormer", brainstormerEn, brainstormerIt, "brainstormerPage"]];
 
 for (const [name, english, italian, root] of PAIRS) {
   test(`the texts of ${name} speak both languages, with the same keys and the same placeholders`, () => {
@@ -84,14 +86,17 @@ test("every text the Studio asks of the reviews is in the catalogue, in every fo
   assert.deepEqual(given.filter((code) => !codes.includes(code)).sort(), ["design_no_description", "design_written"]);
 });
 
-test("the texts of the reviews come with the Studio and its dialog, never with the app", () => {
+test("the texts of the reviews and of the Brainstormer come with their chunks, never with the app", () => {
   for (const locale of [en, it]) {
     assert.equal("designReview" in locale, false);
+    assert.equal("brainstormerPage" in locale, false);
   }
   assert.match(source("i18n/design.ts"), /designReview\.en/);
   assert.match(source("i18n/design.ts"), /designReview\.it/);
+  assert.match(source("i18n/brainstormer.ts"), /registerTranslations\(brainstormerEn, brainstormerIt\)/);
+  assert.match(source("pages/BrainstormerPage.tsx"), /^import "@\/i18n\/brainstormer";$/m);
   assert.match(source("components/outline/studio/StudioReviews.tsx"), /^import "@\/i18n\/design";$/m);
-  assert.doesNotMatch(source("pages/OutlinePage.tsx"), /@\/i18n\/design/);
+  assert.doesNotMatch(source("pages/OutlinePage.tsx"), /@\/i18n\/(design|brainstormer)/);
   // The Studio reaches the reviews through one lazy import: they are not part of the Studio's own chunk, nor of the app's.
   assert.match(source("components/outline/studio/StudioTab.tsx"), /lazy\(\(\) => import\("@\/components\/outline\/studio\/StudioReviews"\)\)/);
   assert.doesNotMatch(source("components/outline/studio/StudioTab.tsx"), /^import .*StudioReviews/m);

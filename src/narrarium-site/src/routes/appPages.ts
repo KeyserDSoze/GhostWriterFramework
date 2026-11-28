@@ -28,6 +28,7 @@ export const appPages = {
   AutopilotPage: withAutopilotTranslations(() => import("@/pages/AutopilotPage")),
   AutopilotSettingsPage: withAutopilotTranslations(() => import("@/pages/AutopilotSettingsPage")),
   BookDashboardPage: () => import("@/pages/BookDashboardPage"),
+  BrainstormerPage: () => import("@/pages/BrainstormerPage"),
   BookExportPage: () => import("@/pages/BookExportPage"),
   BookPage: () => import("@/pages/BookPage"),
   BookSettingsPage: () => import("@/pages/BookSettingsPage"),

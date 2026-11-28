@@ -199,6 +199,20 @@ describe("the page of a run that waits because a profile file has problems", () 
     expect(screen.getByText("Aspetta te: ci sono problemi nei file dei profili")).toBeInTheDocument();
   });
 
+  it("leads to the Brainstormer's page for a problem in its file, in both languages, and to no other", async () => {
+    const problem = "brainstormer.md: boldness «very bold» is not a number from 1 to 10: 6 is used";
+    seed({ message: message(problem) });
+    const view = render(<Page />);
+    expect(link(t("autopilot.profileProblems.openBrainstormer")).getAttribute("href")).toBe("/app/books/book-1/brainstormer");
+    expect(t("autopilot.profileProblems.openBrainstormer")).toBe("Open the Brainstormer");
+    expect(screen.queryByRole("link", { name: t("autopilot.profileProblems.openDirector") })).not.toBeInTheDocument();
+    view.unmount();
+    await i18n.changeLanguage("it");
+    seed({ message: message(problem) });
+    render(<Page />);
+    expect(link("Apri il Brainstormer").getAttribute("href")).toBe("/app/books/book-1/brainstormer");
+  });
+
   it("is announced once, however many times the state is heard again with the same words", async () => {
     seed({ message: message(DIRECTOR_PROBLEM) });
     render(<Page />);

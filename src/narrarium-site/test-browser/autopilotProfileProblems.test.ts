@@ -4,7 +4,7 @@ import { MemoryBookStore, createFakeAutopilotAi, seedBookFiles } from "narrarium
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { presentFeedEvent } from "@/autopilot/format";
-import { isProfileProblemStop, problemLines, profilePagesFor } from "@/autopilot/stopReason";
+import { isProblemLine, isProfileProblemStop, problemLines, profilePageRoute, profilePagesFor } from "@/autopilot/stopReason";
 import { isPitchChoiceStop, studioHref } from "@/autopilot/pitchChoice";
 
 const AT = "2026-11-21T10:00:00.000Z";
@@ -165,6 +165,26 @@ describe("which pages correct the files a message names", () => {
   it("offers every page when the message names none it recognises: the author is never left without a way to the files", () => {
     expect(profilePagesFor(["Something a newer engine says."])).toEqual(["director", "ghostwriters", "readers", "evaluationStyle"]);
     expect(profilePagesFor([])).toEqual(["director", "ghostwriters", "readers", "evaluationStyle"]);
+  });
+
+  it("points at the Brainstormer's page when its file is the one named, after the others, and offers it to no author who has no problem with it", () => {
+    expect(profilePagesFor(["brainstormer.md: boldness «x» is not a number from 1 to 10: 6 is used"])).toEqual(["brainstormer"]);
+    expect(profilePagesFor(["brainstormer.md: a", "personas/a.md: b", "director.md: c"])).toEqual(["director", "readers", "brainstormer"]);
+    expect(profilePageRoute("book-1", "brainstormer")).toBe("/app/books/book-1/brainstormer");
+    expect(isProblemLine("brainstormer.md: boldness «x» is not a number from 1 to 10")).toBe(true);
+    expect(problemLines("Correct this profile before resuming: brainstormer.md: boldness «x» is not a number · director.md: strictness is not a number")).toEqual(["brainstormer.md: boldness «x» is not a number", "director.md: strictness is not a number"]);
+  });
+
+  it("finds the Brainstormer's file in what a design run really says when it cannot read it", async () => {
+    const store = new MemoryBookStore({ ...seedBookFiles({ chapters: 0 }), "brainstormer.md": "---\nboldness: very bold\n---\n\nNotes" });
+    await writeOutlineBrief(store, { idea: "A harbor town built on glass hides a lie that the tide will tell.", wordsPerScene: 200 });
+    const session = new AutopilotSession({ bookId: "book-1", store, ai: createFakeAutopilotAi(), host: "browser", hostLabel: "test", retryDelayMs: 0 });
+    await session.start({ design: { chapters: 2 }, options: { readersOnPlan: false, pauseAfterPlan: false } });
+    await session.waitForIdle();
+    const summary = summarizeAutopilotState((await session.snapshot()).state!);
+    expect(isProfileProblemStop(summary)).toBe(true);
+    expect(problemLines(summary.message).some((line) => isProblemLine(line) && line.startsWith("brainstormer.md: boldness"))).toBe(true);
+    expect(profilePagesFor(problemLines(summary.message))).toEqual(["brainstormer"]);
   });
 
   it("finds the files in what the engine really says", async () => {

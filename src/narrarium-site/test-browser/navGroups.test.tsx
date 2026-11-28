@@ -18,7 +18,7 @@ const t = (key: string) => i18n.t(key) as string;
 const GROUPS: Array<[string, string[]]> = [
   ["nav.groupBook", [ROOT, `${ROOT}/dashboard`, `${ROOT}/outline`, `${ROOT}/reader`, `${ROOT}/annotations`, `${ROOT}/export`]],
   ["autopilot.title", [`${ROOT}/autopilot`, `${ROOT}/autopilot/settings`]],
-  ["nav.groupProfiles", [`${ROOT}/director`, `${ROOT}/ghostwriters`, `${ROOT}/evaluation-style`, `${ROOT}/simulated-readers`, `${ROOT}/wildcards`]],
+  ["nav.groupProfiles", [`${ROOT}/director`, `${ROOT}/brainstormer`, `${ROOT}/ghostwriters`, `${ROOT}/evaluation-style`, `${ROOT}/simulated-readers`, `${ROOT}/wildcards`]],
   ["nav.groupTools", [`${ROOT}/audit`, `${ROOT}/research`, `${ROOT}/assets`]],
 ];
 const CANON = ["characters", "locations", "factions", "items", "timelines", "secrets"].map((section) => `${ROOT}#${section}`);
@@ -154,7 +154,7 @@ describe.each<Menu>(["desktop", "mobile"])("the menu of a book (%s)", (menu) => 
     const names = (key: string) => within(group(key)).getAllByRole("link").map((link) => link.textContent?.trim());
     expect(names("nav.groupBook")).toEqual(["Panoramica", "Dashboard", "Sinossi", "Reader", "Appunti", "Esporta"]);
     expect(names("autopilot.title")).toEqual(["In diretta", "Configurazione"]);
-    expect(names("nav.groupProfiles")).toEqual(["Direttore", "Ghostwriter", "Stile di valutazione", "Lettori simulati", "Fuori dal coro"]);
+    expect(names("nav.groupProfiles")).toEqual(["Direttore", "Brainstormer", "Ghostwriter", "Stile di valutazione", "Lettori simulati", "Fuori dal coro"]);
     expect(names("nav.groupTools")).toEqual(["Audit", "Ricerche", "Asset"]);
     expect(screen.getByRole("link", { name: "Impostazioni libro" })).toHaveAttribute("href", `${ROOT}/settings`);
   });
@@ -180,6 +180,16 @@ describe("the Synopsis", () => {
     const groups = bookMenuGroups("book-1", { outlineReady: false });
     expect(groups.map((entry) => entry.id)).toEqual(["book", "autopilot", "profiles", "tools"]);
     expect(groups.flatMap((entry) => entry.items.map((item) => item.href))).toEqual(GROUPS.flatMap(([, entries]) => entries).filter((href) => href !== `${ROOT}/outline`));
+  });
+});
+
+describe("the Brainstormer", () => {
+  it("is in the Profiles group, after the director, and the menu of the book stays around its page with its entry marked as the current one", () => {
+    expect(bookMenuGroups("book-1").find((entry) => entry.id === "profiles")?.items.map((item) => item.labelKey)).toEqual(["director.title", "nav.brainstormer", "ghostwriters.title", "evaluationStyle.title", "readerPersonas.title"]);
+    open("desktop", `${ROOT}/brainstormer`);
+    expect(within(group("nav.groupProfiles")).getByRole("link", { name: t("nav.brainstormer") })).toHaveAttribute("aria-current", "page");
+    for (const [key] of GROUPS) expect(group(key)).toBeInTheDocument();
+    expect([i18n.getFixedT("en")("nav.brainstormer"), i18n.getFixedT("it")("nav.brainstormer")]).toEqual(["Brainstormer", "Brainstormer"]);
   });
 });
 

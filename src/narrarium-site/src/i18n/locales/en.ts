@@ -21,6 +21,7 @@ const en = {
     bookOverview: "Overview",
     groupBook: "Book",
     groupProfiles: "Profiles",
+    brainstormer: "Brainstormer",
     wildcards: "Wildcards",
     groupTools: "Tools",
     autopilotLive: "Live",

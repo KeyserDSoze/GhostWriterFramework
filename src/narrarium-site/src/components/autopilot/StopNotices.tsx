@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { bookFileRoute, filesInError, isProblemLine, problemLines, profilePageRoute, profilePagesFor, type ProfilePage } from "@/autopilot/stopReason";
 import { cn } from "@/lib/utils";
 
-const OPEN_KEY: Record<ProfilePage, string> = { director: "openDirector", ghostwriters: "openGhostwriters", readers: "openReaders", evaluationStyle: "openEvaluationStyle" };
+const OPEN_KEY: Record<ProfilePage, string> = { director: "openDirector", ghostwriters: "openGhostwriters", readers: "openReaders", evaluationStyle: "openEvaluationStyle", brainstormer: "openBrainstormer" };
 
 /**
  * A run that waits for the author without a question: the engine found a profile file (the director, a ghostwriter, a simulated

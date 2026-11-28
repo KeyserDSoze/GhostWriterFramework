@@ -1,12 +1,15 @@
 import type { AutopilotStateSummary } from "narrarium-engine";
 
 /** The pages of a book that correct the profile files the autopilot reads, in the order the author meets them (the evaluation style is `evaluation-guidelines.md`). */
-export type ProfilePage = "director" | "ghostwriters" | "readers" | "evaluationStyle";
+export type ProfilePage = "director" | "ghostwriters" | "readers" | "evaluationStyle" | "brainstormer";
 
+/** The pages offered when a message names none it recognises. The Brainstormer's is not among them: a design run alone reads it, and the message names it when it is the one at fault. */
 export const PROFILE_PAGES: readonly ProfilePage[] = ["director", "ghostwriters", "readers", "evaluationStyle"];
 
+const NAMED_PAGES: readonly ProfilePage[] = [...PROFILE_PAGES, "brainstormer"];
+
 /** The profile files whose problems stop a run: each line of the engine begins with one of them. */
-const PROFILE_FILE = String.raw`(?:director\.md|evaluation-guidelines\.md|(?:ghostwriters|personas)\/[^\s:]+\.md)`;
+const PROFILE_FILE = String.raw`(?:director\.md|brainstormer\.md|evaluation-guidelines\.md|(?:ghostwriters|personas)\/[^\s:]+\.md)`;
 
 /**
  * A run that waits for the author without a question to answer: the engine stops this way when a profile file (the director,
@@ -64,16 +67,18 @@ export function profilePagesFor(lines: readonly string[]): ProfilePage[] {
   const found = new Set<ProfilePage>();
   for (const line of lines) {
     if (/^director\.md\b/.test(line)) found.add("director");
+    else if (/^brainstormer\.md\b/.test(line)) found.add("brainstormer");
     else if (/^ghostwriters\//.test(line)) found.add("ghostwriters");
     else if (/^personas\//.test(line)) found.add("readers");
     else if (/^evaluation-guidelines\.md\b/.test(line)) found.add("evaluationStyle");
   }
-  return found.size ? PROFILE_PAGES.filter((page) => found.has(page)) : [...PROFILE_PAGES];
+  return found.size ? NAMED_PAGES.filter((page) => found.has(page)) : [...PROFILE_PAGES];
 }
 
 export function profilePageRoute(bookId: string, page: ProfilePage): string {
   const root = `/app/books/${encodeURIComponent(bookId)}`;
   if (page === "director") return `${root}/director`;
+  if (page === "brainstormer") return `${root}/brainstormer`;
   if (page === "evaluationStyle") return `${root}/evaluation-style`;
   return page === "ghostwriters" ? `${root}/ghostwriters` : `${root}/simulated-readers`;
 }
@@ -90,6 +95,7 @@ export function bookFileRoute(bookId: string, path: string | null | undefined): 
   const encode = encodeURIComponent;
   if (path === "book.md") return root;
   if (path === "director.md") return `${root}/director`;
+  if (path === "brainstormer.md") return `${root}/brainstormer`;
   if (path === "evaluation-guidelines.md") return `${root}/evaluation-style`;
   if (path === "outline/book.md") return `${root}/outline`;
   if (/^ghostwriters\/[^/]+\.md$/.test(path)) return `${root}/ghostwriters`;

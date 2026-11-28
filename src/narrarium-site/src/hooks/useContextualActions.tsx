@@ -80,7 +80,7 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
   const auditScope = (() => {
     if (route.kind === "paragraph" || route.kind === "paragraph-workspace" || route.kind === "paragraph-reader-evaluations" || route.kind === "paragraph-audit") return "paragraph";
     if (route.kind === "chapter" || route.kind === "chapter-workspace" || route.kind === "chapter-reader-evaluations" || route.kind === "chapter-audit") return "chapter";
-    if (["book", "book-dashboard", "book-annotations", "book-autopilot", "book-autopilot-settings", "book-director", "book-assets", "book-ghostwriters", "book-evaluation-style", "book-simulated-readers", "book-wildcards", "reader", "book-export", "research", "research-detail", "canon", "book-audit"].includes(route.kind)) return "book";
+    if (["book", "book-dashboard", "book-annotations", "book-autopilot", "book-autopilot-settings", "book-director", "book-brainstormer", "book-assets", "book-ghostwriters", "book-evaluation-style", "book-simulated-readers", "book-wildcards", "reader", "book-export", "research", "research-detail", "canon", "book-audit"].includes(route.kind)) return "book";
     return null;
   })();
   const auditTarget: AuditTarget | null = auditScope === "paragraph" && paragraph && chapterId

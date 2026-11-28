@@ -11,6 +11,7 @@ describe("the page that opens a file of the book", () => {
   it.each([
     ["book.md", `${root}`],
     ["director.md", `${root}/director`],
+    ["brainstormer.md", `${root}/brainstormer`],
     ["ghostwriters/night-owl.md", `${root}/ghostwriters`],
     ["personas/standard-general.md", `${root}/simulated-readers`],
     ["characters/ada-lovelace.md", `${root}/canon/characters/ada-lovelace`],

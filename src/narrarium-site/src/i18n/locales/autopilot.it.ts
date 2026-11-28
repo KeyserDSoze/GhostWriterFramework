@@ -858,6 +858,7 @@ const autopilotIt = {
       openGhostwriters: "Apri i ghostwriter",
       openReaders: "Apri i lettori simulati",
       openEvaluationStyle: "Apri lo stile di valutazione",
+      openBrainstormer: "Apri il Brainstormer",
       resumeHint: "Quando li hai corretti, scegli «{{action}}»: l'autopilot ricontrolla i file prima di spendere qualsiasi cosa.",
     },
     fileError: {

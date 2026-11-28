@@ -30,6 +30,7 @@ const routeCases = [
   ["/app/books/book/autopilot", "book-autopilot"],
   ["/app/books/book/autopilot/settings", "book-autopilot-settings"],
   ["/app/books/book/director", "book-director"],
+  ["/app/books/book/brainstormer", "book-brainstormer"],
   ["/app/books/book/assets", "book-assets"],
   ["/app/books/book/reader", "reader"],
   ["/app/books/book/export", "book-export"],

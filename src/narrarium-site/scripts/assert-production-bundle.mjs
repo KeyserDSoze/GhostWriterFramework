@@ -199,7 +199,8 @@ report.budgets.routes = {
   // which are the specification and the guide of the room in the index of the documents that the public pages carry (their titles and summaries; the summary
   // of the specification was cut to one sentence before raising) and, in the entry, the entry «Wildcards» of the menu of a book, the two words of the right
   // click and the Italian name of the Copilot's tool (its description shortened before raising). The page, the dialog, the room, their texts and the
-  // documents themselves load when they are used.
+  // documents themselves load when they are used. The entry of the Brainstormer in the Profiles group (119/37 bytes: its label in the two texts that are always loaded and its route) is
+  // in the same figure.
   mcp: { rawBytes: 796_500, gzipBytes: 255_000 }, // 795_439/254_630
   login: { rawBytes: 940_000, gzipBytes: 292_500 }, // 929_737/289_244
   // Raised in 0.107.0 by the same margin (it was 2_703_000/819_500 for 2_675_530/810_894): the store of the shell follows the text of the step that runs

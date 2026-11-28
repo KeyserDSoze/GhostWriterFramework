@@ -77,6 +77,7 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/autopilot", lazy: appPage("AutopilotPage") },
       { path: "books/:bookId/autopilot/settings", lazy: appPage("AutopilotSettingsPage") },
       { path: "books/:bookId/director", lazy: appPage("DirectorPage") },
+      { path: "books/:bookId/brainstormer", lazy: appPage("BrainstormerPage") },
       { path: "books/:bookId/assets", lazy: appPage("AssetGalleryPage") },
       { path: "books/:bookId/reader", lazy: appPage("ReaderPreviewPage") },
       { path: "books/:bookId/export", lazy: appPage("BookExportPage") },

@@ -21,6 +21,7 @@ const it = {
     bookOverview: "Panoramica",
     groupBook: "Libro",
     groupProfiles: "Profili",
+    brainstormer: "Brainstormer",
     wildcards: "Fuori dal coro",
     groupTools: "Strumenti",
     autopilotLive: "In diretta",
