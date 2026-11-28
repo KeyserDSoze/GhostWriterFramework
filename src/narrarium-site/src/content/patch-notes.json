@@ -1,5 +1,31 @@
 [
   {
+    "version": "0.138.0",
+    "date": "2026-11-28",
+    "en": {
+      "title": "A review can correct the whole book, not only its chapters",
+      "summary": "When every chapter reaches its target but the director's vote of the whole book does not, the review can now ask the director for corrections across the chapters, carry them out, and judge the book again. You choose whether they are carried out at once or shown to you first. The finished-book card says when the book is under its target and what the director asked of it.",
+      "changes": [
+        "Autopilot → Configuration → Review has a new part, The book as a whole, and so has the Review the book again window: Stop there (what a review always did), Correct the book (the director lists the corrections across the chapters, which to change, what in each and why, and the review carries them out) or Show me the corrections first (the review waits for you). It is off unless you turn it on, and a chapter that is yours is never changed unless you tick its correction.",
+        "A book whose chapters are all at the target but whose book is not could not be reviewed again. With the round on, Review the book again now says so, and its button becomes Ask for the corrections of the book. The window says what it costs as far as it is known (one call of the director, then a revision and a new review for each chapter it names, at most 12), and the money cap of the book stops it.",
+        "When the review waits for you, the Live page lists the corrections the director asks for: the chapter, what to change, why, and the points of its judgement of the book that each one answers, each with a box (every one is ticked, but those of a chapter that is yours). Carry out N corrections revises the chapters they name, reviews them again and has the director judge the book again; Leave them all out ends the review with nothing changed. While the corrections are carried out, the page and the band say how far they are.",
+        "How the book turned out has a new part, The book as a whole: it says when the director's vote of the book is under its target (and whether every chapter has its targets), offers Review the book as a whole, and shows what the director asked of the book in the last review, round by round, with what became of each correction: carried out, or left out because the chapter is yours, because you did not choose it, or because it is gone.",
+        "The review still stops on the target, after two rounds in a row that raise nothing, after the rounds you allow (a round for the whole book counts as one) or at the money cap of the book. On a personal server it needs narrarium-server 0.1.23: an older one does not offer the choice, is sent nothing of it, and ends the review where it always did."
+      ]
+    },
+    "it": {
+      "title": "Una revisione può correggere l'intero libro, non solo i suoi capitoli",
+      "summary": "Quando ogni capitolo raggiunge il suo obiettivo ma il voto del direttore sull'intero libro no, la revisione ora può chiedere al direttore correzioni tra i capitoli, eseguirle e giudicare di nuovo il libro. Scegli tu se eseguirle subito o mostrartele prima. La scheda del libro finito dice quando il libro è sotto il suo obiettivo e cosa il direttore gli ha chiesto.",
+      "changes": [
+        "Autopilot → Configurazione → Revisione ha una nuova parte, Il libro intero, e così la finestra Rivedi di nuovo il libro: Fermati lì (ciò che una revisione ha sempre fatto), Correggi il libro (il direttore elenca le correzioni tra i capitoli, quali cambiare, cosa in ciascuno e perché, e la revisione le esegue) oppure Mostrami prima le correzioni (la revisione aspetta te). È spento finché non lo accendi, e un capitolo che è tuo non cambia mai se non spunti la sua correzione.",
+        "Un libro i cui capitoli sono tutti all'obiettivo ma il libro no non si poteva rivedere di nuovo. Con il giro acceso, Rivedi di nuovo il libro ora lo dice, e il suo pulsante diventa Chiedi le correzioni del libro. La finestra dice quanto costa per quanto si sa (una chiamata del direttore, poi una revisione e un nuovo esame per ogni capitolo che nomina, al massimo 12), e il tetto di spesa del libro lo ferma.",
+        "Quando la revisione aspetta te, la pagina Live elenca le correzioni che il direttore chiede: il capitolo, cosa cambiare, perché, e i punti del suo giudizio sul libro a cui ciascuna risponde, ognuna con una casella (sono tutte spuntate, tranne quelle di un capitolo tuo). Esegui N correzioni rivede i capitoli che nominano, li riesamina e fa giudicare di nuovo il libro al direttore; Lasciale fuori tutte chiude la revisione senza cambiare nulla. Mentre le correzioni vengono eseguite, la pagina e la fascia dicono a che punto sono.",
+        "Com'è venuto il libro ha una nuova parte, Il libro intero: dice quando il voto del direttore sul libro è sotto il suo obiettivo (e se ogni capitolo ha i suoi obiettivi), offre Rivedi il libro intero e mostra cosa il direttore ha chiesto al libro nell'ultima revisione, giro per giro, con ciò che ne è stato di ogni correzione: eseguita, oppure lasciata fuori perché il capitolo è tuo, perché non l'hai scelta o perché non c'è più.",
+        "La revisione si ferma comunque sull'obiettivo, dopo due giri di fila che non alzano nulla, dopo i giri che concedi (un giro per il libro intero conta come uno) o al tetto di spesa del libro. Su un server personale serve narrarium-server 0.1.23: uno più vecchio non offre la scelta, non riceve nulla e finisce la revisione dove finiva sempre."
+      ]
+    }
+  },
+  {
     "version": "0.137.0",
     "date": "2026-11-28",
     "en": {
