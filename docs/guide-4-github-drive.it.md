@@ -8,6 +8,8 @@ Narrarium scrive prima ogni normale azione utente nello storage durevole del bro
 
 Gli errori remoti non annullano mai le modifiche locali. Lo stato globale distingue **Salvato localmente**, **Sync in attesa**, **richiede login** e repliche remote confermate.
 
+Il Copilot segue la stessa regola: una modifica che applica (o annulla) non viene mai rifiutata perché il libro ha lavoro che GitHub non ha ancora, un commit locale o una modifica che non è un commit. Viene salvata come commit locale sopra, e, quando GitHub è raggiungibile, la normale sincronizzazione del libro la invia subito insieme al lavoro precedente, in ordine e senza mai forzare («Applicato e sincronizzato: 1 tua modifica e 3 precedenti»). Senza GitHub resta su questo dispositivo e parte con la prossima sincronizzazione; un vero conflitto apre la finestra dei conflitti e lascia la modifica salvata. Un file toccato dalla proposta che è cambiato dopo che era stata proposta ti lascia scegliere tra la tua versione e la proposta.
+
 ## Libri
 
 Un libro può essere **solo locale** o collegato a GitHub. La modalità solo locale è predefinita e usa la stessa working copy di file, commit locali, dirty tracking, lock, diagnostica e snapshot di recovery senza inventare owner o repository remoti.

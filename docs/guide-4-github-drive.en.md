@@ -8,6 +8,8 @@ Narrarium writes every normal user action to durable browser storage first. The 
 
 Remote failures never roll back local changes. The global status distinguishes **Saved locally**, **Sync pending**, **needs login**, and confirmed remote replicas.
 
+The Copilot follows the same rule: a change it applies (or undoes) is never refused because the book holds work GitHub does not have yet, a local commit or an edit that is not a commit. It is saved as a local commit on top, and, when GitHub can be reached, the book's normal sync sends it at once together with the earlier work, in order and never forcing («Applied and synchronised: 1 change of yours and 3 earlier ones»). Without GitHub it stays on this device and goes with the next sync; a real conflict opens the conflict window and leaves the change saved. A file the proposal touches that changed after it was proposed lets you choose between your version and the proposal.
+
 ## Books
 
 A book can be **local-only** or connected to GitHub. Local-only is the default and uses the same file working copy, local commits, dirty tracking, locks, diagnostics, and recovery snapshots without inventing a remote owner or repository.
