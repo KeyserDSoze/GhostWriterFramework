@@ -9,6 +9,8 @@ const ROUTED_CALL_SITES = [
   "src/assistant/contextCompaction.ts",
   "src/assistant/copilotLoop.ts",
   "src/assistant/pages/structured.ts",
+  "src/components/annotations/page/AnnotationReasonDialog.tsx",
+  "src/components/annotations/page/useAnnotationFix.ts",
   "src/components/assistant/AssistantPanel.tsx",
   "src/components/editor/useProseAssist.tsx",
   "src/custom-actions/customActions.ts",

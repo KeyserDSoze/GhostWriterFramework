@@ -320,7 +320,7 @@ describe("fixing a note with the AI", () => {
     fireEvent.click(within(dialog()).getByRole("button", { name: t("annotationsPage.fix.undo") }));
     await waitFor(async () => expect(await sceneOf(book)).toBe(original));
     await waitFor(() => expect(within(dialog()).getByRole("button", { name: t("annotationsPage.fix.apply") })).toBeInTheDocument());
-    expect((await notesOf(book, GATE)).find((note) => note.id === IDS.steel)).toMatchObject({ status: "open" });
+    await waitFor(async () => expect((await notesOf(book, GATE)).find((note) => note.id === IDS.steel)).toMatchObject({ status: "open" }));
     expect((await notesOf(book, GATE)).find((note) => note.id === IDS.steel)).not.toHaveProperty("resolution");
   });
 
