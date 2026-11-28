@@ -14,6 +14,7 @@ export * from "./book/freeze.js";
 export * from "./book/context.js";
 export * from "./book/outline.js";
 export * from "./book/design.js";
+export * from "./book/design-history.js";
 export * from "./book/bible.js";
 export * from "./book/design-checks.js";
 export * from "./book/spoilers.js";

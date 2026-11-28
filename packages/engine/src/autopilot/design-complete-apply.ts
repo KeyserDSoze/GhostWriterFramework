@@ -38,6 +38,8 @@ export interface DesignProposalsResult {
   created: string[];
   /** What a locked decision of the author held (`bible/decisions.md`): its proposals are left out, and said here, a line each in the language of the book. */
   held: string[];
+  /** The version of the Synopsis and the Bible kept as they were before (`history/design/…`), when something was written. */
+  version?: string;
 }
 
 /** A finding as a note for the ghostwriter of its chapter. */

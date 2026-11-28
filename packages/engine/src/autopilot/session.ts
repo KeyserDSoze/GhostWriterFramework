@@ -36,6 +36,7 @@ import { designProposalsChanges, type DesignProposalsDecision, type DesignPropos
 import { lockedDecisionConflicts } from "./decisions-guard.js";
 import { decisionConflictText } from "../book/bible.js";
 import { loadDecisions } from "../book/design-load.js";
+import { designSnapshotChange, isDesignFile } from "../book/design-history.js";
 import { RevisionCampaignError, cancelRevisionCampaign, createReviewCampaign, createRevisionCampaign, decideBookCorrections as decideCorrections, recordRevisionCampaign, type BookCorrectionsDecision, type ReviewBookInput, type ReviseChaptersInput, type RevisionCampaignResult } from "./campaign.js";
 import { createModelMemory, type AiModelMemory } from "../ai/memory.js";
 import { applyLiveAttempt, applyLiveProgress, startLive } from "./live.js";
@@ -933,9 +934,13 @@ export class AutopilotSession {
         applied = await designProposalsChanges({ ...input, held });
       }
       const { state, changes, result } = applied;
+      // The Synopsis and the Bible as they were before are kept as a version of their own, in the same commit: what was applied can be taken back.
+      const before = changes.length ? (await Promise.all([...snapshot.files.keys()].filter(isDesignFile).map((path) => store.read(path)))).filter((file) => file !== null) : [];
+      const version = changes.length ? designSnapshotChange(before, { at: now.toISOString(), reason: "proposals", ...(stored.state.design?.startedAt ? { run: stored.state.design.startedAt } : {}) }) : null;
+      if (version) result.version = version.path;
       const next = stampState(state, now);
       try {
-        await store.commit([...changes, stateChange(next, stored.stateHash)], "Autopilot: the author applied the proposals of «Review and complete»");
+        await store.commit([...(version ? [version] : []), ...changes, stateChange(next, stored.stateHash)], "Autopilot: the author applied the proposals of «Review and complete»");
         this.emit({ type: "state", state: this.summarize(next) });
         return result;
       } catch (error) {
