@@ -2,18 +2,10 @@ import { useTranslation } from "react-i18next";
 import { AlertTriangle, ArrowRightLeft, Check, Flag, Hourglass, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { isHandoverCancellable, isHandoverOver, type HandoverPlan } from "@/autopilot/handover";
+import { handoverText } from "@/autopilot/handoverText";
 import type { QuickModel } from "@/components/autopilot/quick/model";
 import { Chip } from "@/components/autopilot/quick/parts";
 import { cn } from "@/lib/utils";
-
-const PHASE_KEYS: Record<Exclude<HandoverPlan["phase"], "armed" | "running-there">, string> = {
-  pausing: "pausing",
-  moving: "moving",
-  starting: "starting",
-  returning: "returning",
-  done: "done",
-  failed: "failed",
-};
 
 /**
  * The second group of the bar: what is pending or going on, one chip each (a pause that waits, the limits of the run, a switch of the autopilot
@@ -50,10 +42,7 @@ function HandoverChip({ model, plan }: { model: QuickModel; plan: HandoverPlan }
   const side = plan.to;
   const base = "autopilot.quick.handover";
   const over = isHandoverOver(plan);
-  const text =
-    plan.phase === "armed" ? t(`${base}.${plan.returnAfterSteps ? "armedReturn" : "armed"}.${side}`)
-    : plan.phase === "running-there" ? t(`${base}.runningThere.${side}`, { count: plan.returnAfterSteps ?? 1 })
-    : t(`${base}.${PHASE_KEYS[plan.phase]}.${side}`);
+  const text = handoverText(t, plan);
   const icon = plan.phase === "done" ? <Check className="h-3.5 w-3.5" /> : plan.phase === "failed" ? <AlertTriangle className="h-3.5 w-3.5" /> : plan.phase === "armed" ? <ArrowRightLeft className="h-3.5 w-3.5" /> : <Loader2 className="h-3.5 w-3.5 animate-spin" />;
   const action = isHandoverCancellable(plan)
     ? { label: named(t(`${base}.cancel.${side}`)), onClick: () => void commands.cancelHandover() }
@@ -81,7 +70,7 @@ export function HandoverFailure({ model }: { model: QuickModel }) {
       {handover.error && <p className="break-words font-medium">{handover.error}</p>}
       <p className="text-muted-foreground">{moved ? t(`${base}.failedHintMoved.${handover.to}`) : t(`${base}.failedHint`)}</p>
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="outline" aria-label={named(t(`${base}.openWhere`))} onClick={() => model.openWhere(handover.to)}>{t(`${base}.openWhere`)}</Button>
+        <Button size="sm" variant="outline" aria-label={named(t(`${base}.openWhere`))} onClick={() => model.openWhere({ to: handover.to })}>{t(`${base}.openWhere`)}</Button>
         <Button size="sm" variant="ghost" aria-label={named(t(`${base}.dismiss`))} onClick={() => void commands.dismissHandover()}>{t(`${base}.dismiss`)}</Button>
       </div>
     </div>

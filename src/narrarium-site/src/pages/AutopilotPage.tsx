@@ -1,5 +1,4 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { GitHubServerTokenNotice } from "@/components/book/GitHubServerTokenNotice";
 import { Link, Navigate, useLocation, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -51,6 +50,9 @@ import { QuestionCard } from "@/components/autopilot/QuestionCard";
 import { PendingReviews } from "@/components/autopilot/PendingReviews";
 import { BookRoundSlot } from "@/components/autopilot/BookRoundSlot";
 import { loadAutopilotRuntime } from "@/autopilot/loader";
+import { BlockedWhy, ToBrowserPanel, ToServerPanel, Why, type ConsentProblem } from "@/components/autopilot/WherePanels";
+import { isHandoverConsentError, type HandoverRequest } from "@/autopilot/handover";
+import { activePlan, radiosBlocker, syncBlocker, whereMove, type WhereMode } from "@/autopilot/whereModel";
 import { ErrorPanel } from "@/components/autopilot/ErrorPanel";
 import { LearnedModelNotices } from "@/components/autopilot/LearnedModelNotices";
 import { GithubConflictsAction } from "@/components/autopilot/GithubConflictsAction";
@@ -511,7 +513,7 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
   const { save } = useSettings();
   const server = useServerConnection();
   const view = useBookAutopilotView(book.id);
-  const { busy, run } = useAutopilotActions(book.id);
+  const { busy, run, commands } = useAutopilotActions(book.id);
   const host = book.autopilotHost === "server" ? "server" : "browser";
   const [choice, setChoice] = useState<"browser" | "server">(host);
   const [consentAi, setConsentAi] = useState(true);
@@ -523,13 +525,69 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
   useEffect(() => setChoice(host), [host]);
 
   const setHost = (next: "browser" | "server") => setAutopilotHost(book.id, next, save);
-  // The quick commands send the author here when a consent is missing: the side they wanted to pass to is already chosen.
+  // The quick commands send the author here when a consent is missing: the side they wanted to pass to is already chosen, and what they asked for (after the step, now, one step there)
+  // is what this card finishes: the consents asked here are the ones that make the plan the command could not make.
+  const [intent, setIntent] = useState<HandoverRequest | null>(null);
+  const [problem, setProblem] = useState<ConsentProblem>(null);
+  const primaryRef = useRef<HTMLButtonElement>(null);
+  const planRef = useRef<HTMLDivElement>(null);
+  const focusNext = useRef<"primary" | "plan" | null>(null);
+  const handOn = useRef(false);
   const whereIntent = useAutopilotStore((state) => state.whereIntent);
   useEffect(() => {
     if (whereIntent?.bookId !== book.id) return;
     setChoice(whereIntent.side);
+    setIntent({ to: whereIntent.side, ...(whereIntent.when ? { when: whereIntent.when } : {}), ...(whereIntent.returnAfterSteps ? { returnAfterSteps: whereIntent.returnAfterSteps } : {}) });
+    setProblem(null);
+    focusNext.current = "primary";
+    // The link that brought the author here gives the focus to the card itself a moment later: for a little while the card hands that focus on to the button.
+    handOn.current = true;
+    window.setTimeout(() => { handOn.current = false; }, 2000);
     useAutopilotStore.getState().setWhereIntent(null);
   }, [whereIntent, book.id]);
+  const plan = activePlan(view.handover);
+  // The author asked for something: the focus goes to what finishes it, and, once it is planned, to where the plan says it is.
+  useEffect(() => {
+    const target = focusNext.current === "plan" ? planRef.current : focusNext.current === "primary" ? primaryRef.current : null;
+    // A button that is disabled (the action is still on its way) cannot take the focus: it waits for the next render.
+    if (!target || (target instanceof HTMLButtonElement && target.disabled)) return;
+    focusNext.current = null;
+    // Centred first: the bar of commands that sits at the foot of a phone's screen would cover a button that the browser leaves where it is, on the screen but behind the bar.
+    target.scrollIntoView?.({ block: "center" });
+    target.focus({ preventScroll: true });
+  });
+  const where = whereMove({ choice, host, running, busy: busy !== null, plan, server: serverReady ? "ready" : server.status === "disabled" ? "disabled" : "unverified", github, consentGithub, serverHasGithubToken: Boolean(serverBook?.hasGithubToken), intent });
+  const radiosOff = radiosBlocker({ busy: busy !== null });
+  const syncOff = syncBlocker({ busy: busy !== null, server: serverReady ? "ready" : server.status === "disabled" ? "disabled" : "unverified" });
+  const acting = busy === "move" || busy === "handover";
+  // The primary button: a stopped book moves at once; a run that goes on is passed by a plan, which carries what was consented to and sends it when the book moves.
+  const pass = (mode: WhereMode) => {
+    if (mode === "move") { if (choice === "server") move(); else moveBack(); return; }
+    setProblem(null);
+    const request: HandoverRequest = {
+      to: choice,
+      ...(mode === "now" ? { when: "now" as const } : {}),
+      ...(mode === "step" ? { returnAfterSteps: intent?.returnAfterSteps ?? 1 } : {}),
+      ...(choice === "server" ? { consent: { sendAiConfiguration: consentAi, sendGitHubToken: github && consentGithub } } : {}),
+    };
+    // The focus goes to the plan as soon as it is there (it is asked for before the plan exists, and waits for it), and comes back to the button when the plan fails to be made.
+    focusNext.current = "plan";
+    void commands.handover(request, {
+      saveSettings: save,
+      onError: (error) => {
+        if (!isHandoverConsentError(error)) return false;
+        setProblem(error.missing);
+        return true;
+      },
+    }).then((armed) => {
+      if (armed) setIntent(null);
+      else focusNext.current = "primary";
+    });
+  };
+  const cancelPlan = () => {
+    focusNext.current = "primary";
+    void commands.cancelHandover().then((cancelled) => { if (!cancelled) focusNext.current = null; setProblem(null); });
+  };
   const move = () => void run("move", async (runtime, id) => {
     await runtime.moveToServer(id, { sendAiConfiguration: consentAi, sendGitHubToken: github && consentGithub });
     await setHost("server");
@@ -561,17 +619,24 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
   // The server says its sync with GitHub stopped on files that both changed: the way to settle them is here, as it is in the panel of the error.
   const githubConflicts = host === "server" ? githubConflictsOfSync(serverBook?.lastSync) : null;
 
+  const panelProps = { book, mode: where.mode ?? "move", blocker: where.blocker, plan: where.plan, acting, running, primaryRef, planRef, onPass: pass, onCancel: cancelPlan, onAllowGithub: () => setConsentGithub(true) };
+  const discardOff = busy !== null || running;
   return (
-    <Card id="autopilot-where" title={t("autopilot.where.title")} icon={<Server className="h-4 w-4 text-primary" />} quiet={quiet}>
+    <Card id="autopilot-where" title={t("autopilot.where.title")} icon={<Server className="h-4 w-4 text-primary" />} quiet={quiet} onFocus={(event) => {
+      if (!handOn.current || event.target !== event.currentTarget || !primaryRef.current || primaryRef.current.disabled) return;
+      handOn.current = false;
+      primaryRef.current.scrollIntoView?.({ block: "center" });
+      primaryRef.current.focus({ preventScroll: true });
+    }}>
       <p className="text-xs text-muted-foreground">{t("autopilot.where.description")}</p>
-      <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={t("autopilot.where.title")}>
+      <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={t("autopilot.where.title")} aria-describedby={radiosOff ? `where-radios-${book.id}` : undefined}>
         {(["browser", "server"] as const).map((option) => (
           <button
             key={option}
             type="button"
             role="radio"
             aria-checked={choice === option}
-            disabled={running || busy !== null}
+            disabled={radiosOff !== null}
             onClick={() => setChoice(option)}
             className={cn("flex items-center gap-2 rounded-lg border p-2 text-left text-sm transition disabled:opacity-60", choice === option ? "border-primary/60 bg-primary/5" : "hover:bg-muted/40")}
           >
@@ -580,23 +645,9 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
           </button>
         ))}
       </div>
+      {radiosOff && <Why id={`where-radios-${book.id}`}>{t("autopilot.quick.where.busy")}</Why>}
       {choice === "server" && host === "browser" && (
-        <div className="space-y-2">
-          {serverReady ? (
-            <>
-              <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={consentAi} onChange={(event) => setConsentAi(event.target.checked)} />{t("autopilot.where.consentAi")}</label>
-              {github && <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={consentGithub} onChange={(event) => setConsentGithub(event.target.checked)} />{t("autopilot.where.consentGithub")}</label>}
-              {github && <GitHubServerTokenNotice book={book} />}
-            </>
-          ) : (
-            <p id={`where-move-blocked-${book.id}`} className="text-xs text-muted-foreground" role="note">
-              {server.status === "disabled" ? t("autopilot.where.noServer") : t("autopilot.where.serverUnverified")} <Link className="underline" to="/app/settings/server">{t("personalServer.title")}</Link>
-            </p>
-          )}
-          <Button size="sm" disabled={!serverReady || busy !== null || running || (github && !consentGithub && !serverBook?.hasGithubToken)} aria-describedby={serverReady ? undefined : `where-move-blocked-${book.id}`} onClick={move}>
-            {busy === "move" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Server className="h-3.5 w-3.5" />}{t("autopilot.where.move")}
-          </Button>
-        </div>
+        <ToServerPanel {...panelProps} github={github} server={serverReady ? "ready" : server.status === "disabled" ? "disabled" : "unverified"} consent={{ ai: consentAi, github: consentGithub }} onConsent={(change) => { if (change.ai !== undefined) setConsentAi(change.ai); if (change.github !== undefined) setConsentGithub(change.github); setProblem(null); }} problem={problem} />
       )}
       {host === "server" && (
         <div className="space-y-2">
@@ -606,18 +657,16 @@ export function WhereCard({ book, running, quiet = false }: { book: BookEntry; r
             <p className="text-xs text-amber-800 dark:text-amber-300">{t("autopilot.where.serverBookMissing")}</p>
           ) : null}
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" disabled={busy !== null || !serverReady} onClick={() => void run("sync", async (runtime, id) => { toast(syncToast(t, await runtime.syncWithServer(id, { push: true }))); })}>
+            <Button size="sm" variant="outline" disabled={syncOff !== null} aria-describedby={syncOff ? `where-sync-why-${book.id}` : undefined} onClick={() => void run("sync", async (runtime, id) => { toast(syncToast(t, await runtime.syncWithServer(id, { push: true }))); })}>
               {busy === "sync" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}{t("autopilot.where.sync")}
             </Button>
-            {choice === "browser" && (
-              <Button size="sm" disabled={busy !== null || running} onClick={moveBack}>
-                {busy === "move" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Laptop className="h-3.5 w-3.5" />}{t("autopilot.where.moveBack")}
-              </Button>
-            )}
             {choice === "browser" && !serverReady && (
-              <Button size="sm" variant="ghost" disabled={busy !== null || running} onClick={moveBackWithoutDownloading}>{t("autopilot.where.discardServerWork")}</Button>
+              <Button size="sm" variant="ghost" disabled={discardOff} aria-describedby={running ? `where-discard-why-${book.id}` : undefined} onClick={moveBackWithoutDownloading}>{t("autopilot.where.discardServerWork")}</Button>
             )}
           </div>
+          {syncOff && <BlockedWhy id={`where-sync-why-${book.id}`} blocker={syncOff} />}
+          {choice === "browser" && !serverReady && running && <Why id={`where-discard-why-${book.id}`}>{t("autopilot.where.discardRunning")}</Why>}
+          {choice === "browser" && <ToBrowserPanel {...panelProps} />}
           {githubConflicts !== null && (
             <div data-github-conflicts-notice className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
               <p className="flex items-start gap-1.5 text-sm">

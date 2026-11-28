@@ -135,7 +135,7 @@ const autopilotIt = {
         planned: "Per questo libro c'è già un passaggio in programma.",
       },
       handover: {
-        armed: { server: "Passa al server dopo questo passo", browser: "Passa a questo browser dopo questo passo" },
+        armed: { server: "Il libro passerà al server quando il passo in corso finisce", browser: "Il libro passerà a questo browser quando il passo in corso finisce" },
         armedReturn: { server: "Un passo sul server, poi torna qui", browser: "Un passo in questo browser, poi torna al server" },
         pausing: { server: "Mi fermo per passare al server…", browser: "Mi fermo per passare a questo browser…" },
         moving: { server: "Sposto il libro sul tuo server…", browser: "Riporto il libro in questo browser…" },
@@ -1642,6 +1642,16 @@ const autopilotIt = {
       serverBook: "Sul server: {{status}}",
       serverBookMissing: "Questo libro non è sul server: spostalo di nuovo o riportalo in questo browser.",
       serverUnverified: "L'identità di questo server non è verificata in questo momento, e Narrarium sposta un libro solo su un server verificato. Controlla il suo stato:",
+      runningHere: "L'autopilota sta girando in questo browser. Il libro passa al server quando finisce il passo in corso: quel passo non va perso.",
+      runningThere: "L'autopilota sta girando sul tuo server. Il libro torna in questo browser quando finisce il passo in corso: quel passo non va perso.",
+      finishLead: "Scegli cosa inviare con il libro. Per ora non viene inviato nulla: parte quando il passo finisce, e non parte affatto se annulli.",
+      githubConsentMissing: "Il tuo server non ha il token GitHub di questo libro. Invialo insieme al libro per proseguire.",
+      githubConsentAllow: "Invia il token con il libro",
+      needConsent: {
+        ai: "Il tuo server non ha ancora una configurazione AI: invia la tua insieme al libro per proseguire.",
+        github: "Il tuo server non ha il token GitHub di questo libro: invialo insieme al libro per proseguire.",
+      },
+      discardRunning: "L'autopilota sta girando sul server: il libro torna dopo il passo in corso. Per lasciare il lavoro del server, fermalo prima là.",
     },
     hub: {
       state: {

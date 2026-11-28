@@ -42,7 +42,7 @@ export function WhereGroup({ model }: { model: QuickModel }) {
       if (!isHandoverConsentError(error)) return false;
       // A secret is never sent by itself: the flow that asks for the consent is the one of “Where it runs”.
       toast({ title: t("autopilot.quick.handover.consentTitle"), description: error.message });
-      model.openWhere(to);
+      model.openWhere(request);
       return true;
     },
   });

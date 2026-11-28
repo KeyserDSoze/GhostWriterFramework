@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { effectivePublish, type AutopilotLimitsSummary, type AutopilotPausePending, type AutopilotPublishMode, type AutopilotState, type AutopilotStateSummary } from "narrarium-engine";
 import { useSettings } from "@/drive/useSettings";
 import { useBookAutopilotView } from "@/autopilot/hooks";
-import type { HandoverPlan, HandoverSide } from "@/autopilot/handover";
+import type { HandoverPlan, HandoverRequest, HandoverSide } from "@/autopilot/handover";
 import type { BookOperation } from "@/autopilot/operations";
 import { serverHasQuickControls } from "@/autopilot/quickControls";
 import { retryWaitOf, serverHasRetry, type RetryWait } from "@/autopilot/retry";
@@ -67,8 +67,8 @@ export interface QuickModel {
   retried: RetryOutcome | null;
   commands: AutopilotCommands;
   save: () => Promise<unknown>;
-  /** Open the flow of “Where it runs” on the page of the book, with the side the author wants to pass to. */
-  openWhere: (side: HandoverSide) => void;
+  /** Open the flow of “Where it runs” on the page of the book, with what the author asked for (the side, and when): the card finishes it. */
+  openWhere: (request: HandoverRequest) => void;
   ids: { remote: string; stopHint: string; noAi: string; where: string; publish: string; busy: string; more: string };
 }
 
@@ -135,8 +135,8 @@ export function useQuickModel(bookId: string, variant: QuickVariant): QuickModel
     retried: retried && (!wait || wait.at === retried.waitAt) ? retried : null,
     commands,
     save,
-    openWhere: (side) => {
-      useAutopilotStore.getState().setWhereIntent({ bookId, side, at: Date.now() });
+    openWhere: (request) => {
+      useAutopilotStore.getState().setWhereIntent({ bookId, side: request.to, ...(request.when ? { when: request.when } : {}), ...(request.returnAfterSteps ? { returnAfterSteps: request.returnAfterSteps } : {}), at: Date.now() });
       navigate({ pathname: pageHref, hash: "autopilot-where" });
     },
     ids,

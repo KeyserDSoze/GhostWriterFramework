@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { applyLiveAttempt, applyLiveProgress, normalizeLive, startLive } from "narrarium-engine";
 import type { AutopilotEvent, AutopilotLive, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, BookCorrectionsDecision, FrozenAction, FrozenChangeKind, InterventionInput, ReviewBookInput, ReviseAnnotationsInput, ReviseChaptersInput, RevisionCampaignResult, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
-import type { HandoverPlan, HandoverSide } from "@/autopilot/handover";
+import type { HandoverPlan, HandoverSide, HandoverWhen } from "@/autopilot/handover";
 import type { BookOperation } from "@/autopilot/operations";
 import type { PersonalServerSettings } from "@/types/settings";
 
@@ -95,6 +95,9 @@ export interface ServerConnectionState {
 export interface WhereIntent {
   bookId: string;
   side: HandoverSide;
+  /** When the quick command asked to pass the book (`now`), and for how many steps there before coming back: the card finishes exactly this. */
+  when?: HandoverWhen;
+  returnAfterSteps?: number;
   /** When it was asked: a second request for the same book is a new one. */
   at: number;
 }
