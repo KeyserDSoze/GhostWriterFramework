@@ -5,6 +5,8 @@ import type { DirectorOpinion } from "../director/opinion.js";
 import type { FrozenChapterResult, FrozenStatus } from "../autopilot/frozen.js";
 import type { BookCorrectionsDecision, ReviewBookInput, ReviseChaptersInput, RevisionCampaignResult } from "../autopilot/campaign.js";
 import type { ReviseAnnotationsInput } from "../autopilot/annotations.js";
+import type { FindingDecisionInput } from "../autopilot/design-coherence.js";
+import type { DesignPitchChoice } from "../autopilot/design-alternatives.js";
 import type { RevisionReason } from "../autopilot/types.js";
 import type { AutopilotEvent, AutopilotLiveOptions, AutopilotPauseMode, AutopilotSnapshot, AutopilotStateSummary, FrozenAction, FrozenChangeKind, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
 import type { AiCallField } from "../autopilot/calls/types.js";
@@ -719,6 +721,37 @@ export const CAMPAIGN_FEATURES: Readonly<Record<RevisionReason, string>> = {
 export type ReviseChaptersRequest = ReviseChaptersInput;
 /** The body of `POST /api/v1/books/:id/autopilot/review` (`AutopilotSession.reviewBook`). */
 export type ReviewBookRequest = ReviewBookInput;
+/**
+ * The `ServerInfo.features` entry of a server whose engine has the reviews of a design (#108, phase 3): a design run that proposes alternative pitches, reviews every chapter with its
+ * neighbours on the twelve criteria of the rubric and analyses the whole structure (`StartOptions.design.workflow`), a review of the design on request (`design.reviewOnly`), the
+ * author's choice among the pitches (`POST …/autopilot/design/pitch`) and her decisions about the findings (`POST …/autopilot/design/finding`). An older one refuses a `design` with a
+ * key it does not know (a misspelt one would design another book): the engine's client refuses to send it there, with the reason.
+ */
+export const SERVER_FEATURE_AUTOPILOT_DESIGN_REVIEW = "autopilot-design-review";
+
+/** Whether the server announces the reviews of a design (`autopilot-design-review`). Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsDesignReview(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  return announces(info, SERVER_FEATURE_AUTOPILOT_DESIGN_REVIEW);
+}
+
+/**
+ * Whether a `design` of a start asks for what only an engine with the reviews of a design has: a workflow with a part on, or a review on request. A plain design, `false` and a workflow that
+ * takes everything back (`null`, `{}`) are sent anywhere: the older engines know them.
+ */
+export function asksDesignReview(design: unknown): boolean {
+  if (!design || typeof design !== "object" || Array.isArray(design)) return false;
+  const source = design as { workflow?: unknown; reviewOnly?: unknown };
+  if (source.reviewOnly !== undefined && source.reviewOnly !== false) return true;
+  const workflow = source.workflow;
+  if (!workflow || typeof workflow !== "object" || Array.isArray(workflow)) return false;
+  return Object.values(workflow as Record<string, unknown>).some((value) => value !== undefined && value !== null && value !== false && value !== 0 && value !== "director");
+}
+
+/** The body of `POST /api/v1/books/:id/autopilot/design/pitch` (`AutopilotSession.chooseDesignPitch`): the pitch the author chose among the alternatives the design proposed. */
+export type DesignPitchRequest = DesignPitchChoice;
+/** The body of `POST /api/v1/books/:id/autopilot/design/finding` (`AutopilotSession.decideDesignFinding`): the author's decision about a finding of the analysis of the design. */
+export type DesignFindingRequest = FindingDecisionInput;
+
 /** The body of `POST /api/v1/books/:id/autopilot/review/corrections` (`AutopilotSession.decideBookCorrections`): the author's decision about the corrections of the book that wait for it. */
 export type BookCorrectionsRequest = BookCorrectionsDecision;
 /** The body of `POST /api/v1/books/:id/autopilot/annotations` (`AutopilotSession.reviseAnnotations`). */

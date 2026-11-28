@@ -16,6 +16,7 @@ import {
   serverSupportsAutopilotRetry,
   serverSupportsDesign,
   serverSupportsGitHubConnection,
+  serverSupportsDesignReview,
   serverSupportsGithubConflicts,
   serverSupportsOutlineApply,
   serverSupportsReviewBook,
@@ -27,6 +28,7 @@ import {
   asksReviewTargets,
   asksReviewBookRound,
   asksWildcards,
+  asksDesignReview,
   CAMPAIGN_FEATURES,
   verifyServerIdentity,
   type AskDirectorRequest,
@@ -40,6 +42,8 @@ import {
   type ResolveFrozenChangeRequest,
   type ReviseChaptersRequest,
   type BookCorrectionsRequest,
+  type DesignFindingRequest,
+  type DesignPitchRequest,
   type ReviewBookRequest,
   type ReviseAnnotationsRequest,
   type RevisionCampaignResponse,
@@ -297,6 +301,10 @@ export class NarrariumServerClient {
     // A design goes only to a server that designs: an older one would start a run that writes. Ending a design (`false`) is safe anywhere.
     if (options?.design !== undefined && options.design !== false && !serverSupportsDesign(info)) {
       throw new ServerRequestError("This personal server cannot design a book (it does not announce the feature autopilot-design): it would start a run that writes. Update the server, or design the book in the browser.", 501, "feature_unavailable");
+    }
+    // The reviews of a design go only to a server that has them: an older one refuses a design with a key it does not know.
+    if (asksDesignReview(options?.design) && !serverSupportsDesignReview(info)) {
+      throw new ServerRequestError("This personal server does not have the reviews of a design (it does not announce the feature autopilot-design-review): it would refuse the design. Update the server, or leave the workflow and the review on request out.", 501, "feature_unavailable");
     }
     return this.request("POST", bookRoute(bookId, "/autopilot/start"), options, { timeoutMs: 300_000 });
   }
@@ -583,6 +591,32 @@ export class NarrariumServerClient {
       throw new ServerRequestError("This personal server cannot rewrite the passages you annotated (it does not announce the feature autopilot-annotations): update the server.", 501, "feature_unavailable");
     }
     return this.request("POST", bookRoute(bookId, "/autopilot/annotations"), request);
+  }
+
+  /**
+   * Choose the pitch the book is designed from, among the alternatives the design proposed: `POST …/autopilot/design/pitch` (`DesignPitchRequest`, the engine's
+   * `AutopilotSession.chooseDesignPitch`). Needs `SERVER_FEATURE_AUTOPILOT_DESIGN_REVIEW`, else `feature_unavailable` before anything is sent. A refusal carries the code of the
+   * engine's `AutopilotDesignError` (`no_pitches`, `unknown_pitch`, `pitch_locked`). Nothing is started: the author starts the autopilot to go on.
+   */
+  async chooseDesignPitch(bookId: string, request: DesignPitchRequest): Promise<AutopilotSnapshot> {
+    const info = await this.info();
+    if (!serverSupportsDesignReview(info)) {
+      throw new ServerRequestError("This personal server does not have the reviews of a design (it does not announce the feature autopilot-design-review): update the server.", 501, "feature_unavailable");
+    }
+    return this.request("POST", bookRoute(bookId, "/autopilot/design/pitch"), request);
+  }
+
+  /**
+   * Decide about a finding of the analysis of a design: ask the autopilot to fix it, take it, say it is not a problem, or take the decision back: `POST …/autopilot/design/finding`
+   * (`DesignFindingRequest`, the engine's `AutopilotSession.decideDesignFinding`). Needs `SERVER_FEATURE_AUTOPILOT_DESIGN_REVIEW`, else `feature_unavailable` before anything is sent.
+   * A refusal carries the code of the engine's `AutopilotDesignError` (`no_findings`, `unknown_finding`, `not_fixable`, `invalid_request`). Nothing is started.
+   */
+  async decideDesignFinding(bookId: string, request: DesignFindingRequest): Promise<AutopilotSnapshot> {
+    const info = await this.info();
+    if (!serverSupportsDesignReview(info)) {
+      throw new ServerRequestError("This personal server does not have the reviews of a design (it does not announce the feature autopilot-design-review): update the server.", 501, "feature_unavailable");
+    }
+    return this.request("POST", bookRoute(bookId, "/autopilot/design/finding"), request);
   }
 
   /** Cancel the chapters of the campaign that wait (the one being worked finishes; a review of the book ends with it): `DELETE …/autopilot/campaign`. A server with the campaigns of any reason has it. */

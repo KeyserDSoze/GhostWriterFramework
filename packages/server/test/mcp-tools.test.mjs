@@ -483,7 +483,11 @@ test("S7: write_file writes a text file of the book that no other tool is for: a
     assert.equal(await onDisk(server, "drafts/act-two.md"), "# Act two\n");
     refused(await rpc.call("write_file", { path: "drafts/act-two.md", content: "x" }), "expected_hash_required", /exists/);
     refused(await rpc.call("write_file", { path: "drafts/ghost.md", content: "x", expectedHash: "a".repeat(64) }), "conflict");
-    assert.equal(commitCount(server), before + 2, "two writes, two commits");
+    // The profiles of the book are the book's to read and write, the Brainstormer's too.
+    const profile = done(await rpc.call("write_file", { path: "brainstormer.md", content: "---\nname: Ada\n---\n\nBold.\n" }));
+    assert.deepEqual([profile.written, profile.created], [true, true]);
+    assert.equal(done(await rpc.call("read_file", { path: "brainstormer.md" })).writable, true);
+    assert.equal(commitCount(server), before + 3, "three writes, three commits");
 
     const kept = commitCount(server);
     for (const path_ of ["autopilot/state.json", "autopilot/activity.json", "autopilot/plan.md", "outline/act-one.md", "outline/chapters/001.md", "conversations/chat.md", ".github/workflows/ci.yml", ".github/workflows/new.yml", ".vscode/tasks.json", ".opencode/plugins/x.json", ".claude/agents/x.md", ".gitignore", ".hidden/notes.md", "README.md", "package.json", "src/x.md", "node_modules/x.md"]) {

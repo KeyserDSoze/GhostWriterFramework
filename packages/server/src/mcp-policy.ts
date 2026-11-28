@@ -9,7 +9,7 @@ import { assertSafeBookPath, isTextBookPath } from "narrarium-engine";
  * every entry as the author's, with the numbering and the checks it owns, which a file written by hand would bypass (it could even name the autopilot as its author).
  */
 const ROOT_FILES: ReadonlySet<string> = new Set([
-  "book.md", "context.md", "ideas.md", "notes.md", "plot.md", "promoted.md", "story-design.md", "director.md", "evaluation-guidelines.md",
+  "book.md", "context.md", "ideas.md", "notes.md", "plot.md", "promoted.md", "story-design.md", "director.md", "brainstormer.md", "evaluation-guidelines.md",
 ]);
 
 /** The folders of a book whose text files can be read. */

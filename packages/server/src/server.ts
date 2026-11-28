@@ -86,7 +86,7 @@ import { FROZEN_ACTIONS, FROZEN_EDITS_MODES, FrozenChapterError, SERVER_FEATURE_
 import { REVISION_CHAPTER_MODES, REVISION_REASONS, RevisionCampaignError, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, type ReviseChaptersInput } from "narrarium-engine";
 import { SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, type ReviseAnnotationsInput } from "narrarium-engine";
 import { BOOK_ROUND_MODES, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, type BookCorrectionsDecision, type ReviewBookInput } from "narrarium-engine";
-import { AutopilotDesignError, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_BIBLE_DECISIONS, normalizeDesignStart } from "narrarium-engine";
+import { AutopilotDesignError, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_AUTOPILOT_DESIGN_REVIEW, SERVER_FEATURE_BIBLE_DECISIONS, normalizeDesignStart, type DesignFindingRequest, type DesignPitchRequest } from "narrarium-engine";
 import { SERVER_FEATURE_AUTOPILOT_WILDCARDS, registerWildcardsPlateauBreaker } from "narrarium-engine";
 
 /** Tuning of the server's own limits (the defaults are the ones to run with; tests shorten them). */
@@ -312,8 +312,24 @@ const FROZEN_ERROR_STATUS: Record<string, number> = { chapter_not_found: 404, no
  */
 const CAMPAIGN_ERROR_STATUS: Record<string, number> = { invalid_request: 400, campaign_active: 409, not_changed: 409, stale: 409, not_finished: 409, nothing_to_review: 409, no_proposal: 409 };
 
-/** A design that cannot begin: what was asked is not one (400), the autopilot has written chapters of the book, or the book has no description to design it from (409). */
-const DESIGN_ERROR_STATUS: Record<string, number> = { invalid_request: 400, design_written: 409, design_no_description: 409 };
+/**
+ * A design that cannot begin: what was asked is not one (400), the autopilot has written chapters of the book, or the book has no description to design it from (409). A choice or a
+ * decision that cannot be made: what names nothing (400), or what the state does not allow (409: no pitches or findings yet, the pitch is locked, a design goes on, a finding the
+ * autopilot cannot fix, a Synopsis with no chapter to review).
+ */
+const DESIGN_ERROR_STATUS: Record<string, number> = {
+  invalid_request: 400,
+  design_written: 409,
+  design_no_description: 409,
+  unknown_pitch: 400,
+  unknown_finding: 400,
+  no_pitches: 409,
+  pitch_locked: 409,
+  design_active: 409,
+  design_no_chapters: 409,
+  no_findings: 409,
+  not_fixable: 409,
+};
 
 /**
  * What a failure is answered with. Only errors this server knows keep their meaning: its own HttpError, the engine's
@@ -655,6 +671,37 @@ function asReviseAnnotations(body: Record<string, unknown>): ReviseAnnotationsIn
   };
 }
 
+/**
+ * The body of the author's choice of a pitch, `{ id, reason? }` (`autopilot-design-review`): the shape, which is checked here (a misspelt key is refused, not ignored: the author would
+ * choose something else), and what it asks, which the engine judges (its `AutopilotDesignError`: `no_pitches`, `unknown_pitch`, `pitch_locked`).
+ */
+function asDesignPitchRequest(body: Record<string, unknown>): DesignPitchRequest {
+  const refuse = (problem: string): never => {
+    throw new HttpError(400, "invalid_request", `${problem} A choice is { "id": the id of the pitch (p1, p2…), "reason"?: why, in a few words }.`);
+  };
+  const unknown = Object.keys(body).filter((key) => key !== "id" && key !== "reason");
+  if (unknown.length) refuse(`${unknown.slice(0, 3).map(named).join(", ")} cannot be sent here.`);
+  if (typeof body.id !== "string" || !body.id.trim() || body.id.length > 20) refuse("`id` is the id of the pitch, a short text.");
+  if (body.reason !== undefined && (typeof body.reason !== "string" || body.reason.length > 2000)) refuse("`reason` is a text of at most 2000 characters.");
+  return { id: body.id as string, ...(typeof body.reason === "string" ? { reason: body.reason } : {}) };
+}
+
+/**
+ * The body of the author's decision about a finding, `{ id, action, reason? }` (`autopilot-design-review`): the shape, checked here, and what it asks, which the engine judges (its
+ * `AutopilotDesignError`: `no_findings`, `unknown_finding`, `not_fixable`).
+ */
+function asDesignFindingRequest(body: Record<string, unknown>): DesignFindingRequest {
+  const refuse = (problem: string): never => {
+    throw new HttpError(400, "invalid_request", `${problem} A decision is { "id": the id of the finding, "action": "fix", "mine", "dismiss" or "reopen", "reason"?: why, in a few words }.`);
+  };
+  const unknown = Object.keys(body).filter((key) => key !== "id" && key !== "action" && key !== "reason");
+  if (unknown.length) refuse(`${unknown.slice(0, 3).map(named).join(", ")} cannot be sent here.`);
+  if (typeof body.id !== "string" || !body.id.trim() || body.id.length > 40) refuse("`id` is the id of the finding, a short text.");
+  if (body.action !== "fix" && body.action !== "mine" && body.action !== "dismiss" && body.action !== "reopen") refuse("`action` is `fix`, `mine`, `dismiss` or `reopen`.");
+  if (body.reason !== undefined && (typeof body.reason !== "string" || body.reason.length > 2000)) refuse("`reason` is a text of at most 2000 characters.");
+  return { id: body.id as string, action: body.action as DesignFindingRequest["action"], ...(typeof body.reason === "string" ? { reason: body.reason } : {}) };
+}
+
 /** The folder of a chapter in the address (`…/chapters/:slug/freeze`): a name in `chapters/`, not a path (no separator, no control character), and short. */
 function asChapterFolder(value: string): string {
   if (!value || value.length > 200 || value === "." || value === ".." || /[/\\\u0000-\u001f\u007f]/.test(value)) throw new HttpError(400, "invalid_request", "The chapter in the address must be the name of its folder in chapters/.");
@@ -961,7 +1008,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_WILDCARDS, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_BIBLE_DECISIONS, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", SERVER_FEATURE_GITHUB_CONNECTION, ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_WILDCARDS, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_AUTOPILOT_DESIGN_REVIEW, SERVER_FEATURE_BIBLE_DECISIONS, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", SERVER_FEATURE_GITHUB_CONNECTION, ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -1451,6 +1498,23 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           books.assertNotInMaintenance();
           const runtime = books.get(params[0]);
           return runtime.session.reviseAnnotations(asReviseAnnotations(asObject(await readBody(request, SMALL_BODY))));
+        },
+      },
+      // The author's choice of the pitch the book is designed from, and her decisions about the findings of the analysis of the design: saved at once, nothing is started.
+      {
+        method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/design\/pitch$/, scope: "run", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          await runtime.session.chooseDesignPitch(asDesignPitchRequest(asObject(await readBody(request, SMALL_BODY))));
+          return runtime.session.snapshot();
+        },
+      },
+      {
+        method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/design\/finding$/, scope: "run", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          await runtime.session.decideDesignFinding(asDesignFindingRequest(asObject(await readBody(request, SMALL_BODY))));
+          return runtime.session.snapshot();
         },
       },
       {

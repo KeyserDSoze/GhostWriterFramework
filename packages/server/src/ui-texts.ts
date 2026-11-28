@@ -214,7 +214,7 @@ const en: ViewTexts = {
     budget: "budget reached", limit: "limit reached", profile: "profile problem", config: "configuration problem", provider: "provider error", unknown: "unknown error",
   },
   runsSteps: {
-    concept: "concept", "summarize-imported": "summarizing imported text", plan: "planning", "plan-reader": "reader check of the plan", "plan-review": "plan review", replan: "re-planning", scenes: "scene outline",
+    concept: "concept", "summarize-imported": "summarizing imported text", plan: "planning", "plan-reader": "reader check of the plan", "plan-review": "plan review", "design-pitches": "alternative pitches", "design-pitch-review": "judging the pitches", "design-chapter-review": "reviewing the chapters of the design", "design-coherence": "analysing the structure of the design", replan: "re-planning", scenes: "scene outline",
     write: "writing", reader: "reader feedback", "readers-summary": "summary of the readers", specialists: "specialist checks", "director-review": "director review", repair: "repairing",
     consolidate: "consolidating", impact: "impact check", revise: "revising", final: "final pass", "book-corrections": "corrections of the whole book", wildcards: "wildcards on the design", freeze: "freezing chapters",
   },
@@ -499,7 +499,7 @@ const it: ViewTexts = {
     budget: "budget raggiunto", limit: "limite raggiunto", profile: "problema di profilo", config: "problema di configurazione", provider: "errore del provider", unknown: "errore sconosciuto",
   },
   runsSteps: {
-    concept: "concept", "summarize-imported": "riassunto del testo importato", plan: "pianificazione", "plan-reader": "controllo dei lettori sul piano", "plan-review": "revisione del piano", replan: "nuova pianificazione",
+    concept: "concept", "summarize-imported": "riassunto del testo importato", plan: "pianificazione", "plan-reader": "controllo dei lettori sul piano", "plan-review": "revisione del piano", "design-pitches": "pitch alternativi", "design-pitch-review": "giudizio sui pitch", "design-chapter-review": "revisione dei capitoli del progetto", "design-coherence": "analisi della struttura del progetto", replan: "nuova pianificazione",
     scenes: "scaletta delle scene", write: "scrittura", reader: "commenti dei lettori", "readers-summary": "sintesi dei lettori", specialists: "controlli specialistici", "director-review": "revisione del direttore",
     repair: "riparazione", consolidate: "consolidamento", impact: "verifica dell'impatto", revise: "revisione", final: "passaggio finale", "book-corrections": "correzioni del libro intero", wildcards: "Fuori dal coro sul progetto", freeze: "blocco dei capitoli",
   },
