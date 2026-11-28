@@ -62,13 +62,25 @@ export async function preflightRepositoryOperation(input: {
   return { repoId: meta.id, remoteHeadSha: meta.remoteHeadSha, branch: input.branch };
 }
 
-/** A change published at once must not take along local work the author has not published yet: that waits for the author's own push or sync. */
-async function assertNothingElseToPublish(repoId: string, signal?: AbortSignal): Promise<void> {
+/**
+ * What a change published at once finds in the working copy besides itself: local commits not sent yet and edits not saved as a commit yet (the sync commits them as
+ * one). These never stop the change: it is saved as a local commit on top, and the book's normal sync sends it together with them, in order.
+ */
+async function earlierWork(repoId: string, ownPaths: ReadonlySet<string>, signal?: AbortSignal): Promise<number> {
   const [dirty, ahead] = await Promise.all([listDirtyLocalFiles(repoId), listUnpushedLocalCommits(repoId)]);
   signal?.throwIfAborted();
-  if (dirty.length) throw new Error("The local working copy must be clean before starting this operation.");
-  if (ahead.length) throw new Error("Push or discard existing local commits before starting this operation.");
+  return ahead.length + (dirty.some((file) => !ownPaths.has(file.path)) ? 1 : 0);
 }
+
+/**
+ * What became of a change that was to reach GitHub at once (every change of the Copilot on a book on GitHub): sent with the sync (`earlier` is the number of changes
+ * of the author's that went with it), saved on this device and left for the next sync (and why), or sent as far as a real conflict allows (the resolver is open).
+ * It is never an error: the change is in the working copy in all three.
+ */
+export type MutationDelivery =
+  | { kind: "published"; earlier: number; pulled: number }
+  | { kind: "saved"; reason: "local-book" | "no-credential" | "offline" | "unreachable" | "branch-unpublished" | "held" | "failed"; earlier: number; error?: unknown }
+  | { kind: "conflict"; earlier: number; files: string[] };
 
 /** A branch without a working copy on this device lives only on GitHub: a book kept on this device, or one without a credential, never goes there. */
 export function assertRemoteBranchReachable(input: { token: string; book: BookEntry }): void {
@@ -171,7 +183,7 @@ export async function commitAndPushTextFileMutation(input: {
   signal?: AbortSignal;
   /** `false` leaves the commit on this device for the author's next sync; by default it is published at once whenever GitHub can be reached. */
   push?: boolean;
-}): Promise<{ commitSha: string; mode: "local" | "remote" }> {
+}): Promise<{ commitSha: string; mode: "local" | "remote"; /** Only for a change that was to be published (`push` not `false`) and made a commit. */ delivery?: MutationDelivery }> {
   const meter = new RepositoryByteMeter("mutation");
   for (const mutation of input.mutations) if (typeof mutation.content === "string") meter.add("text", utf8Bytes(mutation.content));
   const operationScope = captureRepositoryOperationScope();
@@ -187,8 +199,9 @@ export async function commitAndPushTextFileMutation(input: {
   if (local.remoteHeadSha !== input.expectedRemoteHeadSha) throw new RepositoryConflictError("The local working copy is based on a different remote head.");
   // A book kept on this device has nowhere to publish; without a GitHub credential (none, or one GitHub refused) or a connection the next sync publishes:
   // the change stays a local commit. So does a change of a branch made on this device that GitHub does not have yet: the sync publishes the two together.
-  const publish = input.push !== false && local.remoteKind !== "none" && !local.pendingBranch && isUsableGitHubToken(input.token)
-    && (typeof navigator === "undefined" || navigator.onLine !== false);
+  const wantsPush = input.push !== false;
+  const online = typeof navigator === "undefined" || navigator.onLine !== false;
+  const publish = wantsPush && local.remoteKind !== "none" && !local.pendingBranch && isUsableGitHubToken(input.token) && online;
   const writes = input.mutations.filter((mutation) => mutation.content !== undefined);
   const snapshots = await Promise.all(writes.map(async (mutation) => ({ path: mutation.path, file: await getLocalFile(local.id, mutation.path, operationScope) ?? null })));
   input.signal?.throwIfAborted();
@@ -210,9 +223,10 @@ export async function commitAndPushTextFileMutation(input: {
     return { commitSha: input.expectedRemoteHeadSha, mode: "local" };
   }
   let localCommit;
+  let earlier = 0;
   try {
     input.signal?.throwIfAborted();
-    if (publish) await assertNothingElseToPublish(local.id, input.signal);
+    if (wantsPush) earlier = await earlierWork(local.id, new Set(writes.map((mutation) => mutation.path)), input.signal);
     localCommit = await mutateLocalTextFilesAndCreateCommitAtomically(local.id, operationScope, input.message, input.mutations);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("File changed since")) {
@@ -221,7 +235,15 @@ export async function commitAndPushTextFileMutation(input: {
     }
     throw error;
   }
-  if (!publish) return { commitSha: localCommit.id, mode: "local" };
+  if (!wantsPush) return { commitSha: localCommit.id, mode: "local" };
+  if (!publish) {
+    const reason = local.remoteKind === "none" ? "local-book" : local.pendingBranch ? "branch-unpublished" : !isUsableGitHubToken(input.token) ? "no-credential" : "offline";
+    return { commitSha: localCommit.id, mode: "local", delivery: { kind: "saved", reason, earlier } };
+  }
+  const settleBySync = (fallbackSha: string) => syncAfterLocalCommit({ input, local, identity: identity!, operationScope, fallbackSha, earlier });
+  // Work of the author's that GitHub does not have yet goes first, in order, and the sync (which commits what is not committed, takes what GitHub has and
+  // pushes, never forcing) is the one that sends it together with this change.
+  if (earlier > 0) return settleBySync(localCommit.id);
   let pushed;
   let pushStarted = false;
   try {
@@ -249,43 +271,56 @@ export async function commitAndPushTextFileMutation(input: {
       if (reconciled.landed && reconciled.headSha) {
         await markLocalCommitsPushed(local.id, operationScope, [localCommit.id], reconciled.headSha, reconciled.blobShas ?? {}).catch(() => undefined);
         await recordRepositoryWriteValidated({ accountIdentity: identity!, token: input.token, owner: input.book.owner, repo: input.book.repo, branch: input.branch });
-        return { commitSha: reconciled.headSha, mode: "local" };
+        return { commitSha: reconciled.headSha, mode: "local", delivery: { kind: "published", earlier: 0, pulled: 0 } };
       }
       await restoreLocalFilesAndDeleteCommit(local.id, operationScope, localCommit.id, snapshots);
       if (error.cause instanceof DOMException && error.cause.name === "AbortError") throw error.cause;
       throw new RepositoryConflictError("The local push outcome could not be proven by generated-commit ancestry and revision parity.");
     }
-    if (error instanceof RemoteHeadMismatchError) {
-      try {
-        await syncFullRepository({
-          bookId: input.book.id,
-          token: input.token,
-          repoId: local.id,
-          owner: input.book.owner,
-          repo: input.book.repo,
-          branch: input.branch,
-          accountIdentity: identity!,
-        });
-      } catch (syncError) {
-        if (syncError instanceof RepositorySyncConflictError) useRepositorySyncStore.getState().setConflict({
-          error: syncError,
-          target: { bookId: input.book.id, repoId: local.id, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: identity! },
-        });
-        throw syncError;
-      }
-      const settled = await getLocalRepository(input.book.owner, input.book.repo, input.branch, operationScope);
-      if (!settled) throw new Error("The local working copy disappeared after repository sync.");
-      return { commitSha: settled.remoteHeadSha, mode: "local" };
-    }
+    // GitHub moved: the sync takes what it has and sends this change after it.
+    if (error instanceof RemoteHeadMismatchError) return settleBySync(localCommit.id);
     // GitHub out of reach, or the credential refused: the commit stays on this device, like any other local change, and the next sync publishes it.
-    if (isRepositoryError(error, "network") || isRepositoryError(error, "credential-invalid") || isRepositoryError(error, "no-credential")) return { commitSha: localCommit.id, mode: "local" };
+    if (isRepositoryError(error, "network")) return { commitSha: localCommit.id, mode: "local", delivery: { kind: "saved", reason: "unreachable", earlier } };
+    if (isRepositoryError(error, "credential-invalid") || isRepositoryError(error, "no-credential")) return { commitSha: localCommit.id, mode: "local", delivery: { kind: "saved", reason: "no-credential", earlier } };
     // The automatic sync of the branch may have published this very commit between its making and this push: it is on GitHub, so it is kept.
     const published = await getLocalCommit(local.id, localCommit.id).catch(() => null);
-    if (published?.pushed) return { commitSha: published.remoteCommitSha ?? (await getLocalRepository(input.book.owner, input.book.repo, input.branch, operationScope))?.remoteHeadSha ?? localCommit.id, mode: "local" };
+    if (published?.pushed) return { commitSha: published.remoteCommitSha ?? (await getLocalRepository(input.book.owner, input.book.repo, input.branch, operationScope))?.remoteHeadSha ?? localCommit.id, mode: "local", delivery: { kind: "published", earlier: 0, pulled: 0 } };
     await restoreLocalFilesAndDeleteCommit(local.id, operationScope, localCommit.id, snapshots);
     throw error;
   }
-  return { commitSha: pushed.commitSha, mode: "local" };
+  return { commitSha: pushed.commitSha, mode: "local", delivery: { kind: "published", earlier: 0, pulled: 0 } };
+}
+
+/**
+ * The book's normal sync, right after a change was saved as a local commit: it sends the change with whatever else this device holds, in order. What it finds is
+ * a delivery, never an error: a real conflict opens the resolver (the change stays saved here, the sync did not force anything), and GitHub out of reach leaves
+ * everything on this device for the next sync. Only a cancelled operation is thrown.
+ */
+async function syncAfterLocalCommit(context: {
+  input: { token: string; book: BookEntry; branch: string; signal?: AbortSignal };
+  local: { id: string };
+  identity: string;
+  operationScope: ReturnType<typeof captureRepositoryOperationScope>;
+  fallbackSha: string;
+  earlier: number;
+}): Promise<{ commitSha: string; mode: "local"; delivery: MutationDelivery }> {
+  const { input, local, identity, earlier } = context;
+  const target = { bookId: input.book.id, repoId: local.id, owner: input.book.owner, repo: input.book.repo, branch: input.branch, accountIdentity: identity };
+  try {
+    const result = await syncFullRepository({ ...target, token: input.token, signal: input.signal });
+    const settled = await getLocalRepository(input.book.owner, input.book.repo, input.branch, context.operationScope).catch(() => null);
+    const commitSha = settled?.remoteHeadSha ?? context.fallbackSha;
+    if (result.unpublished > 0) return { commitSha: context.fallbackSha, mode: "local", delivery: { kind: "saved", reason: "held", earlier } };
+    return { commitSha, mode: "local", delivery: { kind: "published", earlier, pulled: result.pulled } };
+  } catch (error) {
+    if (error instanceof RepositorySyncConflictError) {
+      useRepositorySyncStore.getState().setConflict({ error, target });
+      return { commitSha: context.fallbackSha, mode: "local", delivery: { kind: "conflict", earlier, files: error.conflicts.map((conflict) => conflict.path) } };
+    }
+    if ((error instanceof DOMException && error.name === "AbortError") || isRepositoryError(error, "abort")) throw error;
+    const reason = isRepositoryError(error, "network") ? "unreachable" : isRepositoryError(error, "credential-invalid") || isRepositoryError(error, "no-credential") ? "no-credential" : "failed";
+    return { commitSha: context.fallbackSha, mode: "local", delivery: { kind: "saved", reason, earlier, ...(reason === "failed" ? { error } : {}) } };
+  }
 }
 
 export { sha256Text };

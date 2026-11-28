@@ -119,17 +119,20 @@ describe("a change the Copilot applies", () => {
     expect((await getLocalRepositoryStatusSnapshot(linked.book.owner, linked.book.repo, linked.branch, localWorkspaceScope()))?.status.ahead).toBe(1);
   });
 
-  it("still refuses to publish at once together with edits the author has not committed", async () => {
+  it("applies it together with edits the author has not committed, and keeps everything on this device while GitHub cannot be reached", async () => {
     const network = blockNetwork();
     const linked = await createLinkedBookClone({ token: "ghp_real_token", files: [{ path: "book.md", content: "# Book\n" }, { path: "plot.md", content: "# Plot\n" }] });
     const plot = await getLocalFile(linked.meta.id, "plot.md", captureRepositoryOperationScope());
     await updateFile(linked.token, linked.book.owner, linked.book.repo, linked.branch, "plot.md", plot!.currentHash, "# Plot, edited\n", "Edit plot");
     const book = await getLocalFile(linked.meta.id, "book.md", captureRepositoryOperationScope());
 
-    await expect(commitAndPushTextFileMutation({ token: linked.token, book: linked.book, branch: linked.branch, expectedRemoteHeadSha: "remote-head", message: "Apply 1 Copilot file update", mutations: [{ path: "book.md", content: "# Book, revised\n", expectedCurrentHash: book!.currentHash }] }))
-      .rejects.toThrow("The local working copy must be clean before starting this operation.");
-    expect((await getLocalFile(linked.meta.id, "book.md", captureRepositoryOperationScope()))?.text).toBe("# Book\n");
-    expect(network.requests).toEqual([]);
+    const result = await commitAndPushTextFileMutation({ token: linked.token, book: linked.book, branch: linked.branch, expectedRemoteHeadSha: "remote-head", message: "Apply 1 Copilot file update", mutations: [{ path: "book.md", content: "# Book, revised\n", expectedCurrentHash: book!.currentHash }] });
+
+    // Not a refusal («The local working copy must be clean…», issue #124): applied, saved here, and the sync that tried to send it found no GitHub.
+    expect(result.delivery).toEqual({ kind: "saved", reason: "unreachable", earlier: 1 });
+    expect((await getLocalFile(linked.meta.id, "book.md", captureRepositoryOperationScope()))?.text).toBe("# Book, revised\n");
+    expect((await getLocalFile(linked.meta.id, "plot.md", captureRepositoryOperationScope()))?.text).toBe("# Plot, edited\n");
+    expect(network.github().length).toBeGreaterThan(0);
   });
 });
 

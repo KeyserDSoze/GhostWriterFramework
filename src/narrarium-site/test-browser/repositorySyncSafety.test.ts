@@ -813,7 +813,7 @@ test("an immediate save automatically merges an unrelated remote file and pushes
     expectedRemoteHeadSha: "base-head",
     message: "Update ghostwriter",
     mutations: [{ path: "ghostwriters/default.md", content: "local profile", expectedCurrentHash: profile.currentHash }],
-  })).resolves.toEqual({ commitSha: "merged-head", mode: "local" });
+  })).resolves.toMatchObject({ commitSha: "merged-head", mode: "local", delivery: { kind: "published", earlier: 0 } });
 
   expect(await getLocalFile(repoId, "ghostwriters/default.md")).toMatchObject({ text: "local profile", status: "clean", baseSha: "profile-local" });
   expect(await getLocalFile(repoId, "plot.md")).toMatchObject({ text: "remote plot", status: "clean", baseSha: "plot-remote" });

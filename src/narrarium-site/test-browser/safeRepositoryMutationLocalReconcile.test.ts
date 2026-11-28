@@ -39,7 +39,7 @@ async function setup() {
 
 test("local push recovery accepts a descendant only with generated ancestry and exact revisions", async () => {
   const file = await setup();
-  await expect(commitAndPushTextFileMutation({ token: "token", book: { id: "book", owner: "owner", repo: "repo" } as any, branch: "main", expectedRemoteHeadSha: "source", message: "Update", mutations: [{ path: "plot.md", content: "new", expectedCurrentHash: file.currentHash }] })).resolves.toEqual({ commitSha: "descendant", mode: "local" });
+  await expect(commitAndPushTextFileMutation({ token: "token", book: { id: "book", owner: "owner", repo: "repo" } as any, branch: "main", expectedRemoteHeadSha: "source", message: "Update", mutations: [{ path: "plot.md", content: "new", expectedCurrentHash: file.currentHash }] })).resolves.toMatchObject({ commitSha: "descendant", mode: "local", delivery: { kind: "published", earlier: 0, pulled: 0 } });
   expect(await listUnpushedLocalCommits(repoId)).toEqual([]);
   expect(await getLocalFile(repoId, "plot.md", captureRepositoryOperationScope())).toMatchObject({ text: "new", status: "clean" });
 });
