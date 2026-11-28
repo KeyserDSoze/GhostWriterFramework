@@ -50,7 +50,7 @@ export function BrainstormBack({ onBack, disabled }: { onBack: () => void; disab
 /** The starting points: to start a book from its premise, and to change one that has a Synopsis. Each fills in the request, which the author then sends. */
 export const BRAINSTORM_STARTERS = {
   start: ["premise", "heart", "shapes", "arcs"],
-  change: ["whatIf", "restructure", "subplot", "reorder", "middle", "check"],
+  change: ["whatIf", "restructure", "subplot", "reorder", "middle", "check", "room"],
 } as const;
 
 /** What an empty chat of Brainstorming says it can do, with the starting points. */

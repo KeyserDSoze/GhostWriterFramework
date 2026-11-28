@@ -26,6 +26,10 @@ Open **Wildcards** in the **Profiles** group of the book's menu. The list shows 
 
 Only a sentinel may know the secrets as you do (the Secrets Guardian does, to catch an involuntary spoiler). Every other wildcard knows only the secrets the text already reached, never one still hidden there.
 
+## Ask the room in Brainstorming
+
+In Brainstorming (the Synopsis page), ask the room what it thinks: choose **Ask the room** among the starters, or ask in your words («what would the provocateurs change?», «run a pre-mortem»). Two to four voices read the Synopsis and answer in the chat, each as its own character, with ideas and never a score; then Brainstorming sums them up: what they agree on, the strongest idea, the risks. If you like an idea, ask Brainstorming to turn it into a proposal of the Synopsis, which you review and apply as always. The Secrets Guardian does not sit in Brainstorming's room: Brainstorming never sees the secrets.
+
 ## With the Copilot
 
 On the page the Copilot sees every wildcard and proposes changes as one batch: «create a provocateur who thinks like a hacker», «turn off the Chaos Maker», «make the Domain Expert a maritime lawyer». You see every wildcard with its state before anything is written, apply the batch in one go, and can undo it. The Copilot changes the room of the book: a built-in wildcard is turned off there, never deleted.

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readOutlineChapter, serializeOutlineBook, serializeOutlineChapter } from "narrarium-engine";
-import { MemoryBookStore } from "narrarium-engine/testing";
+import { MemoryBookStore, createFakeAutopilotAi } from "narrarium-engine/testing";
 
-const mocks = vi.hoisted(() => ({ store: null as unknown, complete: vi.fn() }));
+const mocks = vi.hoisted(() => ({ store: null as unknown, complete: vi.fn(), ai: null as unknown }));
 
 // The book's working copy is a store in memory: the same reads and commits the Synopsis page makes.
 vi.mock("@/outline/outlineSource", async (original) => {
@@ -10,6 +10,8 @@ vi.mock("@/outline/outlineSource", async (original) => {
   return { ...module, browserOutlineSource: () => module.storeOutlineSource(mocks.store as never) };
 });
 vi.mock("@/assistant/router", () => ({ completeTextRouted: mocks.complete }));
+// The room's calls go to the engine's fake provider: the voices answer by their names.
+vi.mock("@/wildcards/roomRunner", async (original) => ({ ...(await original<typeof import("@/wildcards/roomRunner")>()), roomAi: () => mocks.ai, roomWindow: () => undefined }));
 
 import { BRAINSTORM_TOOL_IDS, appendBrainstormNotes, brainstormToolIds, runBrainstormTool, synopsisFindings, type BrainstormToolEnv } from "@/assistant/brainstorm/tools";
 import { loadBrainstormContext } from "@/assistant/brainstorm/context";
@@ -60,11 +62,12 @@ async function env(settings: AppSettings = DEFAULT_SETTINGS): Promise<Brainstorm
 beforeEach(() => {
   seed();
   mocks.complete.mockReset();
+  mocks.ai = createFakeAutopilotAi();
 });
 
 describe("Brainstorming's registry", () => {
-  it("has exactly its nine tools, none of the Copilot's, and the Copilot's registry has none of them", () => {
-    expect(brainstormToolIds()).toEqual(["read_synopsis", "read_synopsis_entry", "read_chapter_summary", "read_canon_entry", "propose_synopsis_edits", "import_synopsis_text", "check_synopsis", "save_brainstorm_notes", "propose_bible_decisions"]);
+  it("has exactly its ten tools, none of the Copilot's, and the Copilot's registry has none of them", () => {
+    expect(brainstormToolIds()).toEqual(["read_synopsis", "read_synopsis_entry", "read_chapter_summary", "read_canon_entry", "propose_synopsis_edits", "import_synopsis_text", "check_synopsis", "save_brainstorm_notes", "propose_bible_decisions", "ask_the_room"]);
     expect(brainstormToolIds()).toEqual([...BRAINSTORM_TOOL_IDS]);
     ensureBuiltinCopilotToolsRegistered();
     const copilot = copilotToolRegistry.list().map((tool) => tool.id);
@@ -182,6 +185,57 @@ describe("Brainstorming's tools", () => {
     expect(update.content).toBe("# Brainstorming\n\n## 2026-11-20 09:00\n\n- Earlier.\n\n## 2026-11-25 10:42 · The vault first\n\n- Chapter 3 comes before the key.\n");
     expect(outcome.message.action.sourceRevisions["outline/brainstorm.md"]).toBe(tools.context.synopsis.files.get("outline/brainstorm.md")!.hash);
     expect(appendBrainstormNotes("", { title: "", notes: "- One.", at: new Date(2026, 0, 2, 3, 4) })).toBe("# Brainstorming\n\n## 2026-01-02 03:04\n\n- One.\n");
+  });
+});
+
+describe("Ask the room", () => {
+  type Calls = { calls: Array<{ capability: string; label: string; user: string; cacheKey?: string }> };
+  it("asks the voices of the creative room about the Synopsis, each as its own character, and gives them back to synthesise; no voice reads a secret", async () => {
+    seed({ "wildcards/poet.md": "---\ntype: wildcard\nid: wildcard:poet\nenabled: false\n---\n" });
+    const room: string[] = [];
+    const outcome = await runBrainstormTool({ tool: "ask_the_room", args: { question: "What would make chapter 2 unforgettable?" } }, { ...(await env()), room });
+    const calls = (mocks.ai as Calls).calls;
+    // The creative room without the Poet, whom the book turned off.
+    expect(calls.map((call) => call.label)).toEqual(["wildcards:subversive", "wildcards:cliche-hunter", "wildcards:twist-engineer"]);
+    for (const call of calls) {
+      expect(call.capability).toBe("wildcards");
+      expect(call.cacheKey).toBe("book/wildcards");
+      expect(call.user).toContain("Mira opens the vault.");
+      expect(call.user).toContain("The author asks the room: What would make chapter 2 unforgettable?");
+      expect(call.user).not.toContain("drowned");
+    }
+    expect(outcome.kind).toBe("data");
+    expect(outcome.text).toContain("VOICE The Subversive (provocateur):");
+    expect(outcome.text).toContain("Now synthesise for the author");
+    expect(room).toHaveLength(1);
+    expect(room[0]).toMatch(/^\*\*The room \(Fuori dal coro\): 3 voices\*\*/);
+    expect(room[0]).toContain("> **The Subversive** · provocateur");
+    expect(room[0]).toContain("> 1. **The Subversive: tell it from the tide** — Let the tide narrate the night of the flood.");
+    expect(room[0]).toContain("_Advisory: never a score, and nothing is applied by itself._");
+  });
+
+  it("keeps the Secrets Guardian out of Brainstorming's room, and says which voices it has", async () => {
+    const outcome = await runBrainstormTool({ tool: "ask_the_room", args: { question: "Any spoiler?", voices: ["secrets-guardian"] } }, await env());
+    expect(outcome.kind).toBe("refused");
+    expect(outcome.text).toContain("No wildcard of the room answers to «secrets-guardian»");
+    expect((mocks.ai as Calls).calls).toHaveLength(0);
+    // Named by their names, the voices are found too.
+    const named = await runBrainstormTool({ tool: "ask_the_room", args: { question: "Why would it fail?", voices: ["The Naive", "antagonist"] } }, await env());
+    expect(named.kind).toBe("data");
+    expect((mocks.ai as Calls).calls.map((call) => call.label)).toEqual(["wildcards:naive", "wildcards:antagonist"]);
+  });
+
+  it("shows the voices before Brainstorming's synthesis in the turn's message", async () => {
+    mocks.complete
+      .mockResolvedValueOnce(JSON.stringify({ reply: "Let me ask the room.", calls: [{ tool: "ask_the_room", args: { question: "What do the provocateurs think?", preset: "pre-mortem" } }] }))
+      .mockResolvedValueOnce(JSON.stringify({ reply: "They agree on one thing: Orrin must act. Shall I turn it into a proposal?", calls: [] }));
+    const message = await runBrainstormPrompt({ prompt: "Ask the room what they think", settings: { ...DEFAULT_SETTINGS, ui: { ...DEFAULT_SETTINGS.ui, language: "en" as const } }, book: BOOK, branch: "main", structure: structure(), history: [], accountScope: "workspace:test" });
+    const room = message.text.indexOf("**The room (Fuori dal coro): 4 voices**");
+    expect(room).toBe(0);
+    expect(message.text.indexOf("They agree on one thing")).toBeGreaterThan(message.text.indexOf("> **The Naive** · provocateur"));
+    expect((mocks.ai as Calls).calls.map((call) => call.label)).toEqual(["wildcards:devils-advocate", "wildcards:naive", "wildcards:antagonist", "wildcards:ledger-keeper"]);
+    expect(message.text).toContain("> **The Ledger Keeper** · sentinel");
+    expect(message.action).toBeUndefined();
   });
 });
 

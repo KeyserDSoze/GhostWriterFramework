@@ -5,7 +5,7 @@ import { composeOutlineProposal, modelOutlineEditSchema, outlineProposalMessage,
 import type { AssistantMessage } from "@/assistant/store";
 import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTools";
 import { isCopilotToolIdEnabled } from "@/assistant/tools/registry";
-import { BRAINSTORM_CANON_SECTIONS, summaryOf, type BrainstormContext } from "@/assistant/brainstorm/context";
+import { BRAINSTORM_CANON_SECTIONS, brainstormContextText, summaryOf, type BrainstormContext } from "@/assistant/brainstorm/context";
 import { matchKey } from "@/lib/matchText";
 import { heldLines } from "@/assistant/decisionHold";
 import { runScopedTool, scopedToolLines, toolData, toolRefused, type ScopedTool, type ScopedToolOutcome } from "@/assistant/scopedTools";
@@ -20,7 +20,7 @@ import type { SynopsisSections } from "@/assistant/synopsisImport";
  * Copilot: this registry is its own, the Copilot's is never asked, and a call to anything else is refused here, in code, whatever the model writes.
  */
 
-export const BRAINSTORM_TOOL_IDS = ["read_synopsis", "read_synopsis_entry", "read_chapter_summary", "read_canon_entry", "propose_synopsis_edits", "import_synopsis_text", "check_synopsis", "save_brainstorm_notes", "propose_bible_decisions"] as const;
+export const BRAINSTORM_TOOL_IDS = ["read_synopsis", "read_synopsis_entry", "read_chapter_summary", "read_canon_entry", "propose_synopsis_edits", "import_synopsis_text", "check_synopsis", "save_brainstorm_notes", "propose_bible_decisions", "ask_the_room"] as const;
 export type BrainstormToolId = (typeof BRAINSTORM_TOOL_IDS)[number];
 
 /** What Brainstorming's tools work on: the context of the request (the book as Brainstorming knows it) and the settings of the author. */
@@ -37,6 +37,8 @@ export interface BrainstormToolEnv {
   /** The chapters of a synopsis the author pasted with the request (see `synopsisSections`): what `import_synopsis_text` reads. */
   sections?: SynopsisSections;
   onProgress?: (progress: { from: number; to: number; total: number }) => void;
+  /** What the room said in this turn (`ask_the_room`), each consultation as the chat shows it: the turn puts it before the synthesis. */
+  room?: string[];
 }
 
 export type BrainstormToolOutcome = ScopedToolOutcome<BrainstormToolId>;
@@ -334,7 +336,52 @@ const proposeBibleDecisions: BrainstormTool<{ decisions?: Array<z.infer<typeof d
   },
 };
 
-const TOOLS = [readSynopsis, readSynopsisEntry, readChapterSummary, readCanonEntry, proposeSynopsisEdits, importSynopsisText, checkSynopsis, saveBrainstormNotes, proposeBibleDecisions] as const;
+/** Voices of the room a request of Brainstorming may ask, at most and by default. */
+const ROOM_MAX_VOICES = 4;
+
+/**
+ * Ask the room: two to four wildcards («Fuori dal coro») read the Synopsis and the author's question, each in a call of its own, and answer as their own
+ * characters with ideas, never a score. The chat shows them before the synthesis; the model reads them to synthesise, and turns the ideas the author likes
+ * into a proposal of the Synopsis only as every proposal is made. Brainstorming never sees a secret, so no voice that knows them sits in its room.
+ */
+const askTheRoom: BrainstormTool<{ question: string; voices?: string[]; preset?: "creative-room" | "pre-mortem" }> = {
+  id: "ask_the_room",
+  description: "asks 2 to 4 wildcards of the room («Fuori dal coro»: provocateurs such as subversive, devils-advocate, cliche-hunter, twist-engineer, genre-guest, naive, antagonist, chaos-maker, poet, or the author's own) about the Synopsis and a question; each answers as its own character with ideas, never a score. The author sees their answers in the chat; you get them back to synthesise: what they agree on, the strongest idea, the risks. Choose the voices by slug or name, or a preset (creative-room, pre-mortem); without either, the creative room",
+  args: '{"question":"what the author asks the room","voices"?:["subversive","antagonist"],"preset"?:"creative-room|pre-mortem"}',
+  schema: z.object({ question: z.string().trim().min(1).max(2_000), voices: z.array(z.string().trim().min(1).max(120)).max(ROOM_MAX_VOICES).optional(), preset: z.enum(["creative-room", "pre-mortem"]).optional() }).strict(),
+  async run(args, env) {
+    const { context, settings, italian } = env;
+    const [{ pickWildcardVoices, runWildcardRoom }, { rejectedFromJournal, roomAi, roomPanelOf, roomWindow }, { roomForModel, roomTranscript }] = await Promise.all([import("narrarium-engine"), import("@/wildcards/roomRunner"), import("@/wildcards/roomText")]);
+    const files = context.source.readFolder ? await context.source.readFolder("wildcards/").catch(() => []) : [];
+    // No voice that knows the secrets as the author does: Brainstorming keeps them out of its whole conversation.
+    const panel = roomPanelOf(settings, context.language || settings.ui.language, files).filter((profile) => !(profile.group === "sentinel" && profile.secrets === "author"));
+    const voices = pickWildcardVoices(panel, { ...(args.voices?.length ? { slugs: args.voices.map((voice) => panel.find((profile) => matchKey(profile.name) === matchKey(voice))?.slug ?? voice) } : { preset: args.preset ?? "creative-room" }), max: ROOM_MAX_VOICES });
+    if (!voices.length) return refused("ask_the_room", `No wildcard of the room answers to ${args.voices?.length ? args.voices.map((voice) => `«${voice}»`).join(", ") : `the preset ${args.preset ?? "creative-room"}`} (the ones that are on: ${panel.filter((profile) => profile.enabled).map((profile) => profile.slug).join(", ")}).`);
+    const journal = (await context.source.readFiles(["bible/ideas.yml"]).catch(() => []))[0]?.content;
+    const window = roomWindow(settings);
+    const result = await runWildcardRoom({
+      ai: roomAi({ settings, book: context.book, ...(env.accountScope !== undefined ? { accountScope: env.accountScope } : {}), ...(env.signal ? { signal: env.signal } : {}) }),
+      voices,
+      target: { kind: "conversation", label: italian ? "La conversazione di Brainstorming" : "The Brainstorming conversation" },
+      material: brainstormContextText(context),
+      context: { title: context.title, language: context.language || settings.ui.language },
+      question: args.question,
+      rejected: rejectedFromJournal(journal),
+      parallel: ROOM_MAX_VOICES,
+      ...(window ? { windowTokens: window } : {}),
+      cacheKey: `${context.book.id}/wildcards`,
+      ...(env.signal ? { signal: env.signal } : {}),
+    });
+    env.room?.push(roomTranscript(result, italian));
+    return data("ask_the_room", [
+      `The room answered (${result.voices.filter((voice) => voice.status === "ok").length} of ${result.voices.length} voices); the author already sees each voice in the chat, so do not repeat them one by one.`,
+      roomForModel(result),
+      "Now synthesise for the author, briefly: what the voices agree on, the strongest idea and why, the risks, and what you would do. Offer to turn the ideas the author chooses into a proposal of the Synopsis; propose it only when the author asks or agrees.",
+    ].join("\n"));
+  },
+};
+
+const TOOLS = [readSynopsis, readSynopsisEntry, readChapterSummary, readCanonEntry, proposeSynopsisEdits, importSynopsisText, checkSynopsis, saveBrainstormNotes, proposeBibleDecisions, askTheRoom] as const;
 
 /** Brainstorming's registry: these tools, in this order, and nothing else. */
 export const brainstormToolRegistry: ReadonlyMap<string, BrainstormTool<never>> = new Map(TOOLS.map((tool) => [tool.id, tool as unknown as BrainstormTool<never>]));

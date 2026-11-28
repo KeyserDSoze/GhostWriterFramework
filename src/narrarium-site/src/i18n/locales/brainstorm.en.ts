@@ -30,6 +30,7 @@ const brainstormEn = {
         reorder: { label: "Reorder the chapters", prompt: "Is there an order of the chapters that works better? Propose the moves, with what each one gains." },
         middle: { label: "Tighten the middle", prompt: "Find where the middle of the book sags, and propose how to tighten it: entries to merge, cut or sharpen." },
         check: { label: "Check the Synopsis", prompt: "Run the coherence check of the whole Synopsis and tell me what to fix first." },
+        room: { label: "Ask the room", prompt: "Ask the room (Fuori dal coro): what do the provocateurs think of this Synopsis, and what would they change?" },
       },
     },
     proposal: {

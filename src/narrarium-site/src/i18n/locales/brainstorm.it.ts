@@ -30,6 +30,7 @@ const brainstormIt = {
         reorder: { label: "Riordinare i capitoli", prompt: "C'è un ordine dei capitoli che funziona meglio? Proponi gli spostamenti, con ciò che ciascuno guadagna." },
         middle: { label: "Stringere il centro", prompt: "Trova dove il centro del libro si affloscia e proponi come stringerlo: voci da unire, tagliare o rendere più nette." },
         check: { label: "Controllare la Sinossi", prompt: "Esegui il controllo di coerenza dell'intera Sinossi e dimmi cosa sistemare per primo." },
+        room: { label: "Chiedi alla stanza", prompt: "Chiedi alla stanza (Fuori dal coro): che cosa pensano i provocatori di questa Sinossi, e che cosa cambierebbero?" },
       },
     },
     proposal: {

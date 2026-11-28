@@ -263,7 +263,7 @@ describe("a proposal of Brainstorming", () => {
     panel();
     const starters = await screen.findByRole("region", { name: "brainstorm.starters.label" });
     expect(starters.querySelectorAll("[data-brainstorm-starter^='start.']")).toHaveLength(4);
-    expect(starters.querySelectorAll("[data-brainstorm-starter^='change.']")).toHaveLength(6);
+    expect(starters.querySelectorAll("[data-brainstorm-starter^='change.']")).toHaveLength(7);
     fireEvent.click(within(starters).getByRole("button", { name: "brainstorm.starters.change.middle.label" }));
     const composer = screen.getByPlaceholderText("brainstorm.placeholder") as HTMLTextAreaElement;
     expect(composer.value).toBe("brainstorm.starters.change.middle.prompt");

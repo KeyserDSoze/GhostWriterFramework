@@ -26,6 +26,10 @@ Apri **Fuori dal coro** nel gruppo **Profili** del menu del libro. L'elenco most
 
 Solo una sentinella può conoscere i segreti come te (il Guardiano dei segreti li conosce, per scovare uno spoiler involontario). Ogni altro Fuori dal coro conosce solo i segreti che il testo ha già raggiunto, mai uno ancora nascosto lì.
 
+## Chiedi alla stanza in Brainstorming
+
+In Brainstorming (la pagina Sinossi) chiedi alla stanza che cosa pensa: scegli **Chiedi alla stanza** tra i suggerimenti, o chiedilo con parole tue («che cosa cambierebbero i provocatori?», «fai un pre-mortem»). Da due a quattro voci leggono la Sinossi e rispondono nella chat, ognuna come un personaggio a sé, con idee e mai un voto; poi Brainstorming le riassume: su che cosa concordano, l'idea più forte, i rischi. Se un'idea ti piace, chiedi a Brainstorming di trasformarla in una proposta della Sinossi, che rivedi e applichi come sempre. Il Guardiano dei segreti non siede nella stanza di Brainstorming: Brainstorming non vede mai i segreti.
+
 ## Con il Copilot
 
 Sulla pagina il Copilot vede ogni Fuori dal coro e propone le modifiche come un unico insieme: «crea un provocatore che pensa come un hacker», «spegni il Seminatore di caos», «fai dell'Esperto di dominio un avvocato marittimista». Vedi ogni Fuori dal coro con il suo stato prima che venga scritto qualcosa, applichi tutto in una volta e puoi annullare. Il Copilot cambia la stanza del libro: un predefinito lì si spegne, non si cancella mai.

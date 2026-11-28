@@ -76,7 +76,10 @@ export async function runBrainstormPrompt(input: BrainstormPromptInput): Promise
   const importer = material ? await import("@/assistant/synopsisImport") : null;
   const sections = importer?.synopsisSections(material) ?? null;
   const onText = input.onText;
+  // What the room says in this turn, each consultation as the chat shows it (`ask_the_room`).
+  const room: string[] = [];
   const env = {
+    room,
     context,
     settings: input.settings,
     italian,
@@ -123,6 +126,7 @@ export async function runBrainstormPrompt(input: BrainstormPromptInput): Promise
   const refusal = refusedTools.length
     ? (italian ? `_Brainstorming non ha ${refusedTools.map((tool) => `«${tool}»`).join(", ")}: non è stato eseguito nulla._` : `_Brainstorming has no ${refusedTools.map((tool) => `«${tool}»`).join(", ")}: nothing of it was run._`)
     : "";
-  const text = [answer || (italian ? "Non ho una risposta da darti: riprova con altre parole." : "I have no answer for that: try asking in other words."), ...notes, proposal?.text ?? "", refusal].filter(Boolean).join("\n\n");
+  // The voices of the room first, each as its own character, then Brainstorming's synthesis of them.
+  const text = [...room, answer || (italian ? "Non ho una risposta da darti: riprova con altre parole." : "I have no answer for that: try asking in other words."), ...notes, proposal?.text ?? "", refusal].filter(Boolean).join("\n\n");
   return { ...reply(text), ...(proposal?.action ? { action: proposal.action } : {}) };
 }

@@ -1,3 +1,5 @@
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { expect, test, type Page } from "@playwright/test";
 import { engineModule, filesUnder, openApp, seed, settingsOf, startProvider, waitForAiSettings, type SeedBook, type StubProvider } from "./helpers/autopilot";
 import { overflowing } from "./helpers/review-view";
@@ -107,4 +109,110 @@ test("the Wildcards page lists the built-in voices, turns one off in the book, k
   expect(ai.asked).toEqual(["copilot_turn", "wildcard_personas"]);
   expect(github, "no request went to GitHub").toEqual([]);
   expect(openAi).toEqual([]);
+});
+
+// ─── Brainstorming: «Ask the room» ───────────────────────────────────────────────────────────────────────────────────────────────────────
+
+interface RoomProvider {
+  url: string;
+  /** Every request: the function it asked for (or `brainstorming`), its system prompt and its request. */
+  calls: Array<{ tool: string; system: string; user: string }>;
+  close(): Promise<void>;
+}
+
+/** A provider for Brainstorming and the room: Brainstorming asks the room, then synthesises; every voice of the room is answered by the engine's own fake. */
+async function startRoomProvider(): Promise<RoomProvider> {
+  const { createFakeAutopilotAi } = await engineModule("testing/index.js");
+  const fake = createFakeAutopilotAi();
+  const calls: RoomProvider["calls"] = [];
+  const server: Server = createServer(async (request, response) => {
+    response.setHeader("access-control-allow-origin", "*");
+    response.setHeader("access-control-allow-headers", "*");
+    if (request.method === "OPTIONS") { response.writeHead(204); response.end(); return; }
+    if (request.method !== "POST") { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ data: [] })); return; }
+    let raw = "";
+    for await (const piece of request) raw += piece;
+    const body = JSON.parse(raw) as { messages?: Array<{ role: string; content: unknown }>; tools?: Array<{ function?: { name: string } }> };
+    const text = (content: unknown) => (typeof content === "string" ? content : Array.isArray(content) ? content.map((part) => (typeof part?.text === "string" ? part.text : "")).join("") : "");
+    const system = text(body.messages?.find((message) => message.role === "system")?.content);
+    const user = text([...(body.messages ?? [])].reverse().find((message) => message.role === "user")?.content);
+    const tool = body.tools?.[0]?.function?.name;
+    calls.push({ tool: tool ?? "brainstorming", system, user });
+    const usage = { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 };
+    if (tool) {
+      const answer = await fake.complete({ system, user, label: "e2e", json: { name: tool } } as never);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ id: "cmpl-1", object: "chat.completion", model: "fake-model", usage, choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: tool, arguments: JSON.stringify(answer.json) } }] } }] }));
+      return;
+    }
+    const content = user.includes("TOOL RESULTS")
+      ? JSON.stringify({ reply: "The room agrees on one thing: Orrin must act on his own. The tide as narrator is the boldest idea, and the riskiest. Shall I turn it into a proposal for chapter 2?", calls: [] })
+      : JSON.stringify({ reply: "Let me ask the room.", calls: [{ tool: "ask_the_room", args: { question: "What do the provocateurs think of this Synopsis, and what would they change?" } }] });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ id: "cmpl-1", object: "chat.completion", model: "fake-model", usage, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }] }));
+  });
+  await new Promise<void>((listening) => server.listen(0, "127.0.0.1", listening));
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
+    calls,
+    close: () => new Promise<void>((closed) => { server.closeAllConnections(); server.close(() => closed()); }),
+  };
+}
+
+test("in Brainstorming the author asks the room: four voices answer as their own characters, Brainstorming synthesises, and the calls are the room's own use in the costs", async ({ page }) => {
+  const github = watchGitHub(page);
+  const room = await startRoomProvider();
+  try {
+    const { serializeOutlineBook, serializeOutlineChapter } = await engineModule("index.js");
+    const { seedBookFiles } = await engineModule("testing/index.js");
+    const brainstormBook: SeedBook = {
+      id: "book-room", repo: "e2e-local-room", name: "The Glass Harbor",
+      files: {
+        ...seedBookFiles({ title: "The Glass Harbor" }),
+        "outline/book.md": serializeOutlineBook({ body: "A harbor town built on glass hides a lie that the tide will tell.", origin: "author" }),
+        "outline/chapters/001.md": serializeOutlineChapter({ number: 1, title: "Arrival", body: "Mira arrives at the glass harbor.", origin: "author" }),
+        "outline/chapters/002.md": serializeOutlineChapter({ number: 2, title: "The key", body: "Mira finds the key of the old vault.", origin: "author" }),
+        "secrets/the-wall.md": "---\ntype: secret\nid: secret:the-wall\ntitle: The Wall Is Failing\nreveal_in: chapter:009-ch\n---\n\nThe sea wall cracked years ago.\n",
+      },
+    };
+    const { openAi } = await seed(page, settingsOf(room.url, [brainstormBook]), [brainstormBook]);
+    await openApp(page);
+    await page.goto("app/books", { waitUntil: "domcontentloaded" });
+    await waitForAiSettings(page, room.url);
+
+    await page.goto(`app/books/${brainstormBook.id}/outline`, { waitUntil: "domcontentloaded" });
+    await page.locator("[data-brainstorm-open]").click();
+    const panel = page.locator('[data-assistant-mode="brainstorming"]');
+    await expect(panel).toBeVisible();
+    await panel.getByRole("button", { name: "Ask the room", exact: true }).click();
+    await expect(panel.getByPlaceholder("Ask about the big design of the book…")).toHaveValue("Ask the room (Fuori dal coro): what do the provocateurs think of this Synopsis, and what would they change?");
+    await panel.getByRole("button", { name: "Send" }).click();
+
+    // The voices, each as its own character, then Brainstorming's synthesis.
+    await expect(panel.getByText("The room (Fuori dal coro): 4 voices", { exact: true })).toBeVisible({ timeout: 30_000 });
+    for (const name of ["The Subversive", "The Cliché Hunter", "The Twist Engineer", "The Poet"]) await expect(panel.locator("blockquote strong", { hasText: name }).first()).toBeVisible();
+    await expect(panel.getByText("Advisory: never a score, and nothing is applied by itself.", { exact: true })).toBeVisible();
+    await expect(panel.locator(".doc-prose p", { hasText: "The room agrees on one thing" })).toBeVisible();
+
+    // Brainstorming, the four voices of the creative room, Brainstorming again; no voice was told a secret, and nothing was written.
+    expect(room.calls.map((call) => call.tool)).toEqual(["brainstorming", "wildcard_ideas", "wildcard_ideas", "wildcard_ideas", "wildcard_ideas", "brainstorming"]);
+    for (const call of room.calls.filter((entry) => entry.tool === "wildcard_ideas")) {
+      expect(call.user).toContain("Mira finds the key of the old vault.");
+      expect(call.user).not.toContain("sea wall cracked");
+    }
+    expect(room.calls[5].user).toContain("VOICE The Subversive (provocateur)");
+    expect(await filesUnder(page, brainstormBook.repo, "bible/")).toEqual([]);
+
+    // On the Costs page the room is a use of its own.
+    await page.keyboard.press("Escape");
+    await page.goto("app/costs", { waitUntil: "domcontentloaded" });
+    await expect(page.getByLabel("Use", { exact: true }).locator("option")).toContainText(["Wildcards' ideas"], { timeout: 30_000 });
+    await page.getByRole("radio", { name: "Uses" }).check({ force: true });
+    await expect(page.getByRole("table").locator('[data-costs-row="ideas"]')).toContainText("Wildcards' ideas");
+
+    expect(github, "no request went to GitHub").toEqual([]);
+    expect(openAi).toEqual([]);
+  } finally {
+    await room.close();
+  }
 });
