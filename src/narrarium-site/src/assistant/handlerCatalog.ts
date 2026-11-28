@@ -9,7 +9,7 @@ export const COPILOT_HANDLER_IDS = [
   "list-pull-requests", "create-pull-request", "get-book", "get-chapter", "get-paragraph", "get-character",
   "get-location", "get-faction", "get-item", "get-secret", "get-timeline-event", "get-body", "get-frontmatter",
   "delete-current-note", "delete-current-paragraph", "delete-current-entity", "delete-reader-evaluation", "deep-research",
-  "create-from-research", "multi-file-edit", "edit-outline", "edit-page",
+  "create-from-research", "multi-file-edit", "edit-outline", "edit-page", "ask-wildcards",
 ] as const;
 
 export const EXECUTABLE_COPILOT_HANDLER_IDS: ReadonlySet<string> = new Set(COPILOT_HANDLER_IDS);
@@ -18,7 +18,7 @@ export const LLM_COPILOT_TOOL_IDS: ReadonlySet<string> = new Set([
   "answer-from-context", "create-chapter", "create-entity", "create-from-research", "create-note", "create-paragraph",
   "create-script", "create-simulated-reader", "deep-research", "evaluate-chapter-paragraphs", "evaluate-with-readers",
   "import-attachments", "multi-file-edit", "edit-outline", "edit-page", "review-context", "rewrite-current-paragraph", "run-audit", "summarize-context",
-  "summarize-reader-evaluations", "update-audit", "update-plot", "write-evaluation", "write-resume",
+  "summarize-reader-evaluations", "update-audit", "update-plot", "write-evaluation", "write-resume", "ask-wildcards",
 ]);
 
 export function assertExecutableHandlerMap(handlers: Record<string, unknown>): void {

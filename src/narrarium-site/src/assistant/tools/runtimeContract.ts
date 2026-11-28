@@ -23,6 +23,7 @@ export interface CopilotToolContractResult {
 
 const LLM_TASKS: Readonly<Record<string, ChatCapability>> = {
   "answer-from-context": "copilot",
+  "ask-wildcards": "wildcards",
   "create-chapter": "default",
   "create-entity": "default",
   "create-from-research": "create-from-research",

@@ -2582,6 +2582,11 @@ const it = {
         description: "Cambia lo stato attivo di una Reader Persona standard o personalizzata.",
         output: "Reader Persona aggiornata",
       },
+      "ask-wildcards": {
+        name: "Chiedi ai Fuori dal coro",
+        description: "Chiede ai Fuori dal coro idee e rilievi sul capitolo o sulla scena corrente, mai un voto: li accetti o li scarti in una tabella.",
+        output: "Le idee della stanza, in chat e in tabella",
+      },
       "evaluate-with-readers": {
         name: "Valuta con i lettori simulati",
         description: "Valuta capitolo o paragrafo corrente con i lettori attivi o nominati, salvando file separati.",

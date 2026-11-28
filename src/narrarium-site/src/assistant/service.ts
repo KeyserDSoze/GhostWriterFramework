@@ -263,6 +263,15 @@ export async function runAssistantPrompt(input: {
     "create-from-research": () => proposeEntityFromResearch({ ...promptInput, book, branch, token }),
     "multi-file-edit": () => proposeMultiFileUpdates({ ...promptInput, book, branch, token }),
     "edit-outline": () => proposeOutlineEditFromPrompt({ ...promptInput, book, branch, token }),
+    // The room of the wildcards on the chapter or the scene the request is about: loaded with the first such request.
+    "ask-wildcards": async () => {
+      const unresolved = unresolvedTargetMessage(promptInput);
+      if (unresolved) return unresolved;
+      const chapter = resolveChapterFromPrompt(promptInput);
+      const paragraph = resolveParagraphFromPrompt(promptInput);
+      const { askWildcardsFromPrompt } = await import("@/wildcards/copilotRoom");
+      return askWildcardsFromPrompt({ prompt, settings, book, branch, structure: context.structure, token, accountScope, signal, ...(promptInput.onText ? { onText: promptInput.onText } : {}), ...(chapter ? { chapterSlug: chapter.slug } : {}), ...(paragraph ? { paragraphSlug: paragraph.paragraph.path.split("/").pop()?.replace(/\.md$/i, "") } : {}) });
+    },
     // The batch of a page (its own tool, loaded with it) for a model that cannot call tools: the keyword rules reach it.
     "edit-page": async () => (await import("@/assistant/pages/fallback")).pageChanges(page, { context, settings, book: selectedBook, branch, token, prompt, accountScope, signal }),
   } as const;

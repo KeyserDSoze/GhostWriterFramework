@@ -40,6 +40,10 @@ Nulla viene applicato prima che tu prema il pulsante, e nulla del tutto se non t
 
 In Brainstorming (la pagina Sinossi) chiedi alla stanza che cosa pensa: scegli **Chiedi alla stanza** tra i suggerimenti, o chiedilo con parole tue («che cosa cambierebbero i provocatori?», «fai un pre-mortem»). Da due a quattro voci leggono la Sinossi e rispondono nella chat, ognuna come un personaggio a sé, con idee e mai un voto; poi Brainstorming le riassume: su che cosa concordano, l'idea più forte, i rischi. Se un'idea ti piace, chiedi a Brainstorming di trasformarla in una proposta della Sinossi, che rivedi e applichi come sempre. Il Guardiano dei segreti non siede nella stanza di Brainstorming: Brainstorming non vede mai i segreti.
 
-## Con il Copilot
+## Chiedi al Copilot
+
+In un capitolo o in una scena, chiedi al Copilot «che cosa pensano i provocatori di questo capitolo?» (o le sentinelle, un pre-mortem, il Poeta e l'Antagonista per nome). Le voci rispondono nella chat, ognuna come un personaggio a sé, e si apre la tabella delle loro idee, dove le accetti o le scarti e le applichi come da un clic destro.
+
+## Con il Copilot sulla pagina Fuori dal coro
 
 Sulla pagina il Copilot vede ogni Fuori dal coro e propone le modifiche come un unico insieme: «crea un provocatore che pensa come un hacker», «spegni il Seminatore di caos», «fai dell'Esperto di dominio un avvocato marittimista». Vedi ogni Fuori dal coro con il suo stato prima che venga scritto qualcosa, applichi tutto in una volta e puoi annullare. Il Copilot cambia la stanza del libro: un predefinito lì si spegne, non si cancella mai.

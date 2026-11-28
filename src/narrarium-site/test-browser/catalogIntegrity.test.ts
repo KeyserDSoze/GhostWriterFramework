@@ -57,6 +57,7 @@ const EXPECTED_PREREQUISITES: Record<string, CopilotToolPrerequisite[]> = {
   "create-simulated-reader": ["book open", "context loaded"],
   "toggle-simulated-reader": ["book open", "context loaded"],
   "evaluate-with-readers": ["chapter or paragraph open", "context loaded"],
+  "ask-wildcards": ["chapter or paragraph open", "context loaded"],
   "summarize-reader-evaluations": ["reader evaluations available", "context loaded"],
   "open-reader-evaluations": ["chapter or paragraph open"],
   "generate-draft-from-feedback": ["chapter or paragraph open"],

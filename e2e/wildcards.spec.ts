@@ -326,3 +326,43 @@ test("right click: the room's ideas on a selection become a rewrite the author k
     await stub.close();
   }
 });
+
+// ─── The Copilot: «What do the provocateurs think of this chapter?» ─────────────────────────────────────────────────────────────────────
+
+test("the Copilot asks the provocateurs about the chapter it is on: the voices answer in the chat, and the table of their ideas opens", async ({ page }) => {
+  const github = watchGitHub(page);
+  const stub = await startProvider({ answers: { copilot_turn: () => ({ reply: "", calls: [{ tool: "ask-wildcards", args: {} }] }) } });
+  try {
+    const { seedBookFiles } = await engineModule("testing/index.js");
+    const copilotBook: SeedBook = {
+      id: "book-copilot-room", repo: "e2e-local-copilot-room", name: "The Glass Harbor",
+      files: {
+        ...seedBookFiles({ title: "The Glass Harbor" }),
+        "chapters/001-arrival/chapter.md": "---\ntype: chapter\nid: chapter:001-arrival\nnumber: 1\ntitle: Arrival\n---\n\n# Arrival\n",
+        "chapters/001-arrival/001-quay.md": `---\ntype: paragraph\nnumber: 1\ntitle: The Quay\n---\n\n${SCENE}\n`,
+      },
+    };
+    const { openAi } = await seed(page, settingsOf(stub.url, [copilotBook]), [copilotBook]);
+    await openApp(page);
+    await page.goto("app/books", { waitUntil: "domcontentloaded" });
+    await waitForAiSettings(page, stub.url);
+    await page.goto(`app/books/${copilotBook.id}/chapters/001-arrival`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("main").getByText("1 paragraph", { exact: true })).toBeVisible({ timeout: 30_000 });
+
+    await page.getByRole("button", { name: "Copilot", exact: true }).click();
+    const panel = page.locator('[data-assistant-mode="copilot"]');
+    await panel.locator("textarea").fill("What do the provocateurs think of this chapter?");
+    await panel.getByRole("button", { name: "Send" }).click();
+    await expect(panel.getByText("The room (Fuori dal coro): 4 voices", { exact: true })).toBeVisible({ timeout: 30_000 });
+    for (const name of ["The Subversive", "The Cliché Hunter", "The Twist Engineer", "The Poet"]) await expect(panel.locator("blockquote strong", { hasText: name }).first()).toBeVisible();
+    const dialog = page.getByRole("dialog", { name: "Out-of-the-box ideas" });
+    await expect(dialog.getByRole("table").locator("tbody tr")).toHaveCount(8, { timeout: 30_000 });
+    await expect(dialog.getByRole("button", { name: "Apply to the Synopsis entry", exact: true })).toBeDisabled();
+    expect(stub.asked).toEqual(["copilot_turn", "wildcard_ideas", "wildcard_ideas", "wildcard_ideas", "wildcard_ideas"]);
+    expect(await filesUnder(page, copilotBook.repo, "bible/"), "nothing is written by asking").toEqual([]);
+    expect(github, "no request went to GitHub").toEqual([]);
+    expect(openAi).toEqual([]);
+  } finally {
+    await stub.close();
+  }
+});
