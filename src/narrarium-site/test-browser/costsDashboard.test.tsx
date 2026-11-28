@@ -261,7 +261,9 @@ describe("a book in the dashboard", () => {
     renderCosts();
     expect(words(rowOf("The Lighthouse"))).toContain("Personal server: $0.50 · 3 calls · 1.2K tokens, from the server's summary, not in the totals");
     expect(words(totals())).toContain("Spend €0.13 + $0.16");
-    expect(document.querySelector("[data-server-totals]")).toHaveTextContent("1 book runs on your personal server: $0.50 more from the server's summary, not added to the totals.");
+    const line = document.querySelector("[data-server-totals]");
+    expect(line).toHaveTextContent("On your server: $0.50 over all the runs of 1 book, from the server's own count. It is not split by month, so it is not added to the totals above.");
+    expect(line).toHaveTextContent("Included: the autopilot's calls of the books that run on your server. Not included: what your browsers recorded");
   });
 });
 

@@ -5,6 +5,7 @@ import { AlertTriangle, Coins, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BudgetsPanel } from "@/components/costs/budget/BudgetsPanel";
 import { CachePanel } from "@/components/costs/dashboard/CachePanel";
+import { ServerTotals } from "@/components/costs/dashboard/ServerTotals";
 import { CostsTable } from "@/components/costs/dashboard/CostsTable";
 import { DashboardFiltersBar } from "@/components/costs/dashboard/DashboardFilters";
 import { useBookAutopilots } from "@/components/costs/dashboard/useBookAutopilots";
@@ -15,8 +16,8 @@ import { useCostsStore } from "@/costs/costsStore";
 import { buildGroups, defaultFilters, filterRows, optionsOf, periodRange, sortGroups, todayOf, toCsv, type DashboardFilters, type GroupBy, type SortDirection, type SortKey } from "@/costs/dashboardModel";
 import { USAGE_SOURCES } from "@/costs/ledger";
 import { EARLIER, usageRows } from "@/costs/legacyCosts";
-import { addRecordedMoney, type MoneyTotals } from "@/costs/money";
 import { useMoney } from "@/costs/useMoney";
+import { useServerSpend } from "@/costs/useServerSpend";
 import { summarize } from "@/costs/usageViews";
 import { useContainerWidth } from "@/hooks/useContainerWidth";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -79,10 +80,8 @@ export function CostsPage() {
   const totals = useMemo(() => summarize(kept, undefined, money.relabels), [kept, money.relabels]);
   const autopilots = useBookAutopilots(books);
   // The budgets count the autopilot of a book on the personal server by the server's own summary, for what the ledger of this browser does not hold of it.
-  const unrecorded = useMemo(
-    () => unrecordedCosts(rows, books.filter((book) => book.autopilotHost === "server").flatMap((book) => { const stats = autopilots[book.id]?.stats; return stats ? [{ bookId: book.id, currency: stats.currency || money.display, cost: stats.cost }] : []; })),
-    [rows, books, autopilots, money.display],
-  );
+  const everyServerBook = useServerSpend();
+  const unrecorded = useMemo(() => unrecordedCosts(rows, everyServerBook.books), [rows, everyServerBook.books]);
   const budgets = useBudgetLines(rows, unrecorded);
 
   const bookName = (bookId: string) => (bookId ? books.find((book) => book.id === bookId)?.name ?? file.books[bookId]?.bookName ?? bookId : t("costs.dashboard.noBook"));
@@ -101,20 +100,9 @@ export function CostsPage() {
     [kept, history, by, today, money, sort, books, file.books, locale],
   );
 
-  // What the personal server counts of its books: its own summary, told apart and never added to the ledger. Its count is the autopilot's, which includes the steps
-  // of the book that ran in a browser before the book moved to the server, and those are in the ledger of that browser too: adding the two would count them twice.
-  const server = useMemo(() => {
-    const served = books.filter((book) => book.autopilotHost === "server" && (filters.bookId === "" || filters.bookId === book.id));
-    let spend: MoneyTotals = {};
-    let count = 0;
-    for (const book of served) {
-      const stats = autopilots[book.id]?.stats;
-      if (!stats) continue;
-      count += 1;
-      spend = addRecordedMoney(spend, stats.currency || money.display, stats.cost, undefined, money.relabels);
-    }
-    return { count, spend };
-  }, [books, autopilots, filters.bookId, money.display, money.relabels]);
+  // What the personal server counts of its books: its own summary, told apart and never added to the ledger. Its count is the autopilot's, over all its runs and not split by month, and
+  // includes the steps of the book that ran in a browser before the book moved to the server, which are in the ledger of that browser too: adding the two would count them twice.
+  const server = useServerSpend(filters.bookId);
 
   // Said once the rows settle after a change of the filters or of the rows, never at the first draw.
   const [announced, setAnnounced] = useState("");
@@ -187,7 +175,7 @@ export function CostsPage() {
             </div>
           )}
         </dl>
-        {server.count > 0 && <p data-server-totals className="mt-1 text-xs text-muted-foreground">{t("costs.dashboard.server.totals", { count: server.count, spend: money.totals(server.spend, { empty: "—" }) })}</p>}
+        {server.served > 0 && <ServerTotals server={server} />}
       </section>
 
       <CachePanel rows={kept} integrationName={integrationName} relabels={money.relabels} />

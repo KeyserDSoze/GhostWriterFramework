@@ -3,7 +3,9 @@ import i18n from "@/i18n";
 import { bookAutopilotOf } from "@/autopilot/bookAutopilot";
 import { useAutopilotStore } from "@/autopilot/store";
 import { appliedCapOf, decideCap, rememberAppliedCap, type AppliedCap } from "@/costs/budgetCaps";
-import { budgetLines, normalizeBudgets, planCap, unrecordedCosts } from "@/costs/budgets";
+import { normalizeBudgets } from "@/costs/budgets";
+import { budgetPlan } from "@/costs/budgetPlan";
+import { serverSpend } from "@/costs/serverSpend";
 import { useCostsStore } from "@/costs/costsStore";
 import { usageRows } from "@/costs/legacyCosts";
 import { moneyContextOf } from "@/costs/useMoney";
@@ -54,14 +56,8 @@ export function startWithBudgets<T extends Start>(book: BookEntry, start: T, ign
   const rows = usageRows(useCostsStore.getState().file, context.display);
   let plan = null;
   if (budgets && !ignore) {
-    const store = useAutopilotStore.getState();
-    const served = settings.books
-      .filter((entry) => entry.autopilotHost === "server")
-      .map((entry) => ({ bookId: entry.id, stats: bookAutopilotOf(store, entry.id).stats }))
-      .filter((entry): entry is { bookId: string; stats: NonNullable<typeof entry.stats> } => Boolean(entry.stats))
-      .map((entry) => ({ bookId: entry.bookId, currency: entry.stats.currency || context.display, cost: entry.stats.cost }));
-    const lines = budgetLines(budgets, rows, { today: localDay(now), rates: context.rates, relabels: context.relabels, unrecorded: unrecordedCosts(rows, served) });
-    plan = planCap(lines, { bookId: book.id, runCurrency: context.display, statsCost: known.stats?.cost ?? 0, rates: context.rates });
+    const { books: served } = serverSpend(settings.books, useAutopilotStore.getState(), context, "");
+    plan = budgetPlan({ budgets, rows, context, today: localDay(now), served, bookId: book.id, runCurrency: context.display, statsCost: known.stats?.cost ?? 0 }).plan;
     if (plan.usedUp && plan.binding) {
       const { scope, bookId, period, currency, limit } = plan.binding;
       throw new AutopilotBudgetUsedUpError({ scope, bookId, period, currency, limit });
