@@ -224,3 +224,156 @@ test("a server that does not stop in time keeps running, and a malformed request
     await supervised;
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// #103: a supervisor that starts again never acts on a request that was already answered
+// ---------------------------------------------------------------------------------------------
+
+/** Start a supervisor and wait until it has started its server and looked at the request file `reads` times since (it has seen what is there), or has stopped that server. */
+async function supervisorThatHasLooked(installer, { currentVersion = "0.1.0", reads = 5 } = {}) {
+  const children = fakeChildren();
+  let stopped = false;
+  const spawn = children.spawn;
+  children.spawn = (...args) => {
+    const child = spawn(...args);
+    if (stopped) child.exit(0);
+    return child;
+  };
+  let seen = 0;
+  const read = installer.readUpdateRequest;
+  const watched = Object.create(installer);
+  watched.readUpdateRequest = async () => {
+    seen += 1;
+    return read();
+  };
+  const supervised = superviseServer({ installer: watched, currentVersion, spawnChild: children.spawn, pollMs: 5, stopTimeoutMs: 2000, forwardSignals: false });
+  // Whatever a test asserts, the supervisor ends with it: every server it has started, or starts, exits at once.
+  const stop = async () => {
+    stopped = true;
+    for (const child of children.list) child.exit(0);
+    await Promise.race([supervised.catch(() => undefined), sleep(3000)]);
+  };
+  try {
+    await until(() => children.list.length >= 1);
+    const from = seen;
+    // A supervisor that replays a request stops its server at once: that ends the wait too, and the test says what it did.
+    await until(() => seen - from >= reads || children.list[0].signals.length > 0);
+  } catch (error) {
+    await stop();
+    throw error;
+  }
+  return { children, supervised, stop };
+}
+
+/** What a replay would change: the result on disk (its moment too), the npm commands, the request. */
+const footprint = async (installer, npm) => ({ result: await installer.readUpdateResult(), npm: npm.calls.length, request: await installer.readUpdateRequest() });
+
+test("#103: a supervisor that starts again does not replay a failed update, and the request stays for diagnosis", async () => {
+  await withRuntime(async (installer, npm) => {
+    const first = await supervisorThatHasLooked(installer);
+    const request = updateRequest("0.3.0");
+    await installer.writeUpdateRequest(request);
+    await until(() => first.children.list.length === 2);
+    assert.equal((await installer.readUpdateResult()).state, "failed");
+    first.children.list[1].exit(0);
+    await first.supervised;
+    const before = await footprint(installer, npm);
+
+    const again = await supervisorThatHasLooked(installer);
+    try {
+      assert.deepEqual(again.children.list[0].signals, [], "the running server is not stopped for it");
+      assert.equal(again.children.list.length, 1);
+      assert.deepEqual(await footprint(installer, npm), before, "nothing was installed or answered again");
+      assert.deepEqual(before.request, request, "the answered request is still there to read");
+    } finally {
+      await again.stop();
+    }
+  }, { failInstall: ["0.3.0"] });
+});
+
+test("#103: a supervisor that starts again does not replay an update that was limited, and so cannot go past three an hour", async () => {
+  await withRuntime(async (installer, npm) => {
+    const first = await supervisorThatHasLooked(installer);
+    for (const [index, version] of ["0.2.0", "0.3.0", "0.4.0"].entries()) {
+      await installer.writeUpdateRequest(updateRequest(version));
+      await until(() => first.children.list.length === index + 2);
+    }
+    const fourth = updateRequest("0.5.0");
+    await installer.writeUpdateRequest(fourth);
+    await until(async () => (await installer.readUpdateResult())?.requestId === fourth.requestId);
+    assert.equal((await installer.readUpdateResult()).outcome, "limited");
+    first.children.list[3].exit(0);
+    await first.supervised;
+    const before = await footprint(installer, npm);
+
+    const again = await supervisorThatHasLooked(installer, { currentVersion: "0.4.0" });
+    try {
+      assert.deepEqual(again.children.list[0].signals, []);
+      assert.deepEqual(await footprint(installer, npm), before);
+      assert.equal((await installer.activeRuntime()).version, "0.4.0", "0.5.0 was not installed by a restart");
+    } finally {
+      await again.stop();
+    }
+  });
+});
+
+test("#103: a supervisor that starts again does not replay a refused rollback, nor an update whose request could not be removed", async () => {
+  await withRuntime(async (installer, npm) => {
+    const first = await supervisorThatHasLooked(installer);
+    const done = updateRequest("0.2.0");
+    await installer.writeUpdateRequest(done);
+    await until(() => first.children.list.length === 2);
+    assert.equal((await installer.readUpdateResult()).state, "completed");
+    const back = updateRequest("0.1.0");
+    await installer.writeUpdateRequest(back);
+    await until(async () => (await installer.readUpdateResult())?.requestId === back.requestId);
+    assert.equal((await installer.readUpdateResult()).state, "failed", "older than 0.2.0: refused");
+    first.children.list[1].exit(0);
+    await first.supervised;
+
+    const beforeRefused = await footprint(installer, npm);
+    const second = await supervisorThatHasLooked(installer, { currentVersion: "0.2.0" });
+    try {
+      assert.deepEqual(second.children.list[0].signals, []);
+      assert.deepEqual(await footprint(installer, npm), beforeRefused, "the refusal is not written again");
+    } finally {
+      await second.stop();
+    }
+
+    // The completed update removes its request; when that removal failed, the request and its completed result are both on disk.
+    const completed = { ...(await installer.readUpdateResult()), requestId: done.requestId, state: "completed", outcome: "completed", version: "0.2.0", fromVersion: "0.1.0", message: UPDATE_MESSAGES.completed };
+    await installer.writeUpdateResult(completed);
+    await installer.writeUpdateRequest(done);
+    const beforeCompleted = await footprint(installer, npm);
+    const third = await supervisorThatHasLooked(installer, { currentVersion: "0.2.0" });
+    try {
+      assert.deepEqual(third.children.list[0].signals, [], "the server is not stopped to install 0.2.0 again");
+      assert.deepEqual(await footprint(installer, npm), beforeCompleted);
+    } finally {
+      await third.stop();
+    }
+  });
+});
+
+test("#103: a request written while the supervisor was down, which nothing answered, is honoured when it starts", async () => {
+  await withRuntime(async (installer) => {
+    const first = await supervisorThatHasLooked(installer);
+    const failed = updateRequest("0.3.0");
+    await installer.writeUpdateRequest(failed);
+    await until(() => first.children.list.length === 2);
+    first.children.list[1].exit(0);
+    await first.supervised;
+
+    const fresh = updateRequest("0.2.0");
+    await installer.writeUpdateRequest(fresh);
+    const children = fakeChildren();
+    const supervised = superviseServer({ installer, currentVersion: "0.1.0", spawnChild: children.spawn, pollMs: 5, stopTimeoutMs: 2000, forwardSignals: false });
+    await until(() => children.list.length === 2);
+    assert.deepEqual(children.list[0].signals, ["SIGTERM"]);
+    assert.match(children.list[1].serverPath, /versions[\\/]0\.2\.0[\\/]/);
+    const result = await installer.readUpdateResult();
+    assert.deepEqual([result.requestId, result.state], [fresh.requestId, "completed"]);
+    children.list[1].exit(0);
+    await supervised;
+  }, { failInstall: ["0.3.0"] });
+});

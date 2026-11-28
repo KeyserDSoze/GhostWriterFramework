@@ -963,6 +963,16 @@ export async function superviseServer(options: SupervisorOptions): Promise<Child
     const cutoff = Date.now() - hourMs;
     while (updateRestarts[0] !== undefined && updateRestarts[0] < cutoff) updateRestarts.shift();
   };
+  // A request is answered once. The result file says which request it answers, whatever the outcome, and it outlives the supervisor: a
+  // request it already answers (the supervisor stopped since, or the removal of a completed request failed) is never acted on again.
+  // The request stays on disk as it was, for diagnosis. The result of a request is read once; then it is remembered here.
+  const answered = async (request: UpdateRequest): Promise<boolean> => {
+    if (ignoredRequests.has(request.requestId)) return true;
+    const result = await installer.readUpdateResult().catch(() => undefined);
+    if (result?.requestId !== request.requestId) return false;
+    ignoredRequests.add(request.requestId);
+    return true;
+  };
   try {
     if (!await installer.activeRuntime()) await installer.installVersion(options.currentVersion, { bootstrapRegistryRelease: true, log });
     for (;;) {
@@ -978,12 +988,12 @@ export async function superviseServer(options: SupervisorOptions): Promise<Child
           } catch {
             updateRequest = undefined;
           }
-          if (stopping || !updateRequest || ignoredRequests.has(updateRequest.requestId)) return exited;
+          if (stopping || !updateRequest || await answered(updateRequest)) return exited;
           break;
         }
         try {
           const request = await installer.readUpdateRequest();
-          if (!request || ignoredRequests.has(request.requestId)) continue;
+          if (!request || await answered(request)) continue;
           updateRequest = request;
           prune();
           if (updateRestarts.length >= 3) {
