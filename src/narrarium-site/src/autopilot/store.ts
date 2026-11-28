@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { applyLiveAttempt, applyLiveProgress, normalizeLive, startLive } from "narrarium-engine";
-import type { AutopilotEvent, AutopilotLive, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, BookCorrectionsDecision, FrozenAction, FrozenChangeKind, InterventionInput, ReviewBookInput, ReviseAnnotationsInput, ReviseChaptersInput, RevisionCampaignResult, ServerBookSummary, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
+import type { AutopilotEvent, AutopilotLive, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, BookCorrectionsDecision, FrozenAction, FrozenChangeKind, InterventionInput, ReviewBookInput, ReviseAnnotationsInput, ReviseChaptersInput, RevisionCampaignResult, ServerBookSummary, ServerGitHubConnection, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
 import type { HandoverPlan, HandoverSide, HandoverWhen } from "@/autopilot/handover";
 import type { BookOperation } from "@/autopilot/operations";
 import type { PersonalServerSettings } from "@/types/settings";
@@ -89,6 +89,11 @@ export interface ServerConnectionState {
    * `online` means this server proved the pinned identity and accepted the token.
    */
   connection: PersonalServerSettings | null;
+  /**
+   * The server's own connection to GitHub, as the server said it when it was last asked (`null`: it does not have the feature; absent: nobody asked yet). It is asked only
+   * where a card that shows it, or the choice of how a book signs in to GitHub, is on screen: never when a page mounts.
+   */
+  githubConnection?: ServerGitHubConnection | null;
 }
 
 /** A request to open the flow of "Where it runs" for a book on its page (the quick commands ask for it when a consent is missing). */

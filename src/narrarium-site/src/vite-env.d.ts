@@ -10,6 +10,8 @@ interface ImportMetaEnv {
 
 interface Window {
   __NARRARIUM_ENABLE_E2E_BRIDGE__?: boolean;
+  /** E2E builds only: the Client ID of the GitHub App and the broker that the server's own GitHub connection starts with, in place of the build's (see `serverGitHubSite`). */
+  __serverGitHubSiteForTests?: { clientId: string; broker: string };
   __narrariumE2e?: {
     upgradeStorage(repoId: string, accountIdentity: string): Promise<import("./e2eBridge").E2eStorageUpgradeResult>;
     closeRewriteStorage(): Promise<void>;

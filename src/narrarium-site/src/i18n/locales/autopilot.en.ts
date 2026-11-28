@@ -1710,6 +1710,7 @@ const autopilotEn = {
       webLocks: "This browser cannot guarantee a single writer (Web Locks unavailable). Use an up-to-date browser or the personal server.",
       otherTab: "The other tab did not answer: switch to it to control the autopilot.",
       githubToken: "This needs GitHub, and the book has no GitHub credential on this device: connect GitHub in Settings → GitHub.",
+      noGithubSite: "This build of Narrarium has no GitHub App or no sign-in broker, so the server cannot be connected to GitHub from here.",
       bookMissing: "This book is no longer in your library.",
       busy: "The autopilot of this book is already running on {{label}}.",
       busyWith: {

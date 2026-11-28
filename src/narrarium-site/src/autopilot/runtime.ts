@@ -13,6 +13,7 @@ import {
   runnerActivity,
   serverHasCalls,
   serverSupportsReviewBookRound,
+  serverSupportsGitHubConnection,
   serverSupportsReviewTargets,
   syncBookStores,
   type AiPort,
@@ -38,6 +39,7 @@ import {
   type ResolveGithubConflictsResponse,
   type ServerBookStorage,
   type ServerBookSummary,
+  type ServerGitHubConnection,
   type ServerStreamMessage,
   type StartOptions,
 } from "narrarium-engine";
@@ -66,6 +68,7 @@ import { AutopilotRetryUnsupportedError, serverHasRetry } from "@/autopilot/retr
 import { assertGithubConflicts, githubConflictFiles, isGithubConflict, noteGithubConflict } from "@/autopilot/githubConflictsServer";
 import { RefreshCoordinator } from "@/autopilot/refreshCoordinator";
 import { ServerAddressError, validateServerAddress } from "@/autopilot/serverAddress";
+import { serverGitHubSite } from "@/autopilot/serverGitHub";
 import { ServerIdentityError, verifiedServer, type VerifiedServer, type VerifiedServerOptions } from "@/autopilot/serverIdentity";
 import {
   autopilotChannel,
@@ -100,7 +103,7 @@ import { bookStorageMode, resolveGitHubCredential, resolveGitHubRemoteToken, typ
 import { githubRemoteAvailability, isUsableGitHubToken } from "@/github/remoteAvailability";
 import { isRepositoryError, repositoryErrorDescription } from "@/repository/repositoryError";
 
-export type AutopilotSetupErrorCode = "no-server" | "book-missing" | "web-locks" | "other-tab" | "github-token";
+export type AutopilotSetupErrorCode = "no-server" | "book-missing" | "web-locks" | "other-tab" | "github-token" | "no-github-site";
 
 export class AutopilotSetupError extends Error {
   constructor(readonly code: AutopilotSetupErrorCode) {
@@ -115,6 +118,7 @@ const SETUP_ERROR_KEYS: Record<AutopilotSetupErrorCode, string> = {
   "web-locks": "autopilot.errors.webLocks",
   "other-tab": "autopilot.errors.otherTab",
   "github-token": "autopilot.errors.githubToken",
+  "no-github-site": "autopilot.errors.noGithubSite",
 };
 
 /** Files changed on both sides stop the hand-over of a book until the author chooses which version of each to keep. */
@@ -1323,6 +1327,40 @@ export class BrowserAutopilotRuntime {
   }
 
   /**
+   * The server's own connection to GitHub, as the server says it now. It is asked where a card that shows it (or the choice of how a book signs in to GitHub) is on screen, never when a page
+   * mounts. A server that does not announce the feature (`server-github-connection`) is not asked: the status is `null` and nothing is sent. The status holds only what is public (the code to type,
+   * the dates, the account's name, a problem code): never a token.
+   */
+  async readServerGitHub(): Promise<ServerGitHubConnection | null> {
+    const { client, info } = await this.requireServer();
+    const status = serverSupportsGitHubConnection(info) ? await client.githubConnection() : null;
+    useAutopilotStore.getState().setServer({ githubConnection: status });
+    return status;
+  }
+
+  /**
+   * Start the server's own connection to GitHub: the server asks GitHub for a code, answers it, and waits for the owner to type it on github.com by itself. What this browser says is the public
+   * Client ID of Narrarium's GitHub App and the broker of this site, and nothing from this browser's own GitHub sign-in (the server's pair is its own: GitHub rotates a refresh token at every use,
+   * so a shared one would sign one of the two out). It throws when this build has no Client ID or no broker; a refusal of GitHub comes back as a status with its problem.
+   */
+  async connectServerGitHub(): Promise<ServerGitHubConnection> {
+    const site = serverGitHubSite();
+    if (!site) throw new AutopilotSetupError("no-github-site");
+    const { client } = await this.requireServer();
+    const status = await client.connectGitHub(site);
+    useAutopilotStore.getState().setServer({ githubConnection: status });
+    return status;
+  }
+
+  /** Disconnect the server from GitHub: it stops waiting for a code, forgets its pair and asks the broker to revoke its own token. The books that use it stop until it is connected again. */
+  async disconnectServerGitHub(): Promise<ServerGitHubConnection> {
+    const { client } = await this.requireServer();
+    const status = await client.disconnectGitHub();
+    useAutopilotStore.getState().setServer({ githubConnection: status });
+    return status;
+  }
+
+  /**
    * Bring the server's work back and run the autopilot in this browser again. The server lets the book go only after
    * its work was downloaded without conflicts (the author can choose to leave without it when the server cannot be reached).
    */
@@ -1510,7 +1548,7 @@ export class BrowserAutopilotRuntime {
     this.stream = null;
     const store = useAutopilotStore.getState();
     if (!connection) {
-      store.setServer({ status: "disabled", info: null, message: null, books: [], updates: null, connection: null });
+      store.setServer({ status: "disabled", info: null, message: null, books: [], updates: null, connection: null, githubConnection: undefined });
       return;
     }
     const stream: FollowedStream = { controller: new AbortController(), key, id: hashKey(key), connection, shared: false, leader: false, sawLeader: false, known: { status: "connecting", info: null, message: null, books: [], updates: null } };
@@ -1518,10 +1556,10 @@ export class BrowserAutopilotRuntime {
     const followed = store.server.connection;
     const sameServer = followed?.url === connection.url && followed.token === connection.token;
     // What was learned from another address or token is not shown for this one.
-    store.setServer({ connection, ...(sameServer ? {} : { info: null, message: null, books: [], updates: null }) });
+    store.setServer({ connection, ...(sameServer ? {} : { info: null, message: null, books: [], updates: null, githubConnection: undefined }) });
     const address = validateServerAddress(connection.url);
     if (address.ok === false) {
-      store.setServer({ status: "error", info: null, books: [], updates: null, message: describeAutopilotError(new ServerAddressError(address.reason)) });
+      store.setServer({ status: "error", info: null, books: [], updates: null, githubConnection: undefined, message: describeAutopilotError(new ServerAddressError(address.reason)) });
       return;
     }
     this.startFollowing(stream);

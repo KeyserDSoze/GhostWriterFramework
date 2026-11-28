@@ -9,6 +9,7 @@ import {
   SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF,
   SERVER_FEATURE_AUTOPILOT_RETRY,
   SERVER_FEATURE_GITHUB_CONFLICTS,
+  SERVER_FEATURE_GITHUB_CONNECTION,
   SERVER_FEATURE_MCP,
   SERVER_FEATURE_MCP_OAUTH,
   ServerRequestError,
@@ -33,6 +34,7 @@ import {
   type ServerAiStatus,
   type ServerBookSummary,
   type ServerBookSync,
+  type ServerGitHubConnection,
   type ServerInfo,
   type ServerMcpClient,
   type ServerMcpStatus,
@@ -123,6 +125,19 @@ export class FakeBookServer {
    * by default: a server that predates them, which the engine's client refuses before it sends anything (`feature_unavailable`).
    */
   githubConflicts = false;
+  /**
+   * The server announces its own GitHub connection (`SERVER_FEATURE_GITHUB_CONNECTION`) and serves its three routes as narrarium-server does: `connectGitHub` answers the status that
+   * `connectAnswer` says (`pending` with a code, by default), `disconnectGitHub` forgets the connection, and a book registered with `githubAuth: "connection"` is refused with
+   * `412 github_connection_required` while the connection is not `connected`. Off by default: a server that predates it, which the engine's client refuses before it sends anything.
+   */
+  githubConnectionFeature = false;
+  githubConnection: ServerGitHubConnection = { state: "disconnected" };
+  /** What the next `connectGitHub` answers (and keeps as the connection). */
+  connectAnswer: ServerGitHubConnection = { state: "pending", broker: "https://auth.example.com", pending: { userCode: "WDJB-MJHT", verificationUri: "https://github.com/login/device", expiresAt: "2026-11-28T10:15:00.000Z", interval: 5 } };
+  /** What the server was asked to connect with, in order. */
+  readonly connectRequests: Array<{ clientId: string; broker: string }> = [];
+  /** The `githubAuth` of the book as the server holds it after the last registration. */
+  githubAuth: "token" | "connection" | undefined;
   /** What the server finds when it compares its copy with GitHub's: the files that both changed. A resolution empties it. */
   conflicts: GithubConflict[] = [];
   /** Which side's state, log and plan a resolution keeps when both changed them (`autopilotFiles` of the list). */
@@ -180,7 +195,7 @@ export class FakeBookServer {
   /** The server's own `GET /info`, with or without the quick controls, with the frozen chapters, «Retry later», the conflicts with GitHub and the MCP features when it has them. */
   info(): ServerInfo {
     const info = this.controls ? SERVER_INFO : OLD_SERVER_INFO;
-    const extra = [...(this.frozen ? [SERVER_FEATURE_AUTOPILOT_FROZEN] : []), ...(this.retry ? [SERVER_FEATURE_AUTOPILOT_RETRY] : []), ...(this.githubConflicts ? [SERVER_FEATURE_GITHUB_CONFLICTS] : []), ...(this.mcp ? [SERVER_FEATURE_MCP] : []), ...(this.mcpOAuth ? [SERVER_FEATURE_MCP_OAUTH] : [])];
+    const extra = [...(this.githubConnectionFeature ? [SERVER_FEATURE_GITHUB_CONNECTION] : []), ...(this.frozen ? [SERVER_FEATURE_AUTOPILOT_FROZEN] : []), ...(this.retry ? [SERVER_FEATURE_AUTOPILOT_RETRY] : []), ...(this.githubConflicts ? [SERVER_FEATURE_GITHUB_CONFLICTS] : []), ...(this.mcp ? [SERVER_FEATURE_MCP] : []), ...(this.mcpOAuth ? [SERVER_FEATURE_MCP_OAUTH] : [])];
     if (!extra.length && !this.extraFeatures.length) return info;
     return { ...info, ...(this.frozen ? { serverVersion: "0.1.9" } : {}), ...(this.retry ? { serverVersion: "0.1.10" } : {}), features: [...(info.features ?? []), ...extra, ...this.extraFeatures] };
   }
@@ -243,6 +258,11 @@ export class FakeBookServer {
       if (error instanceof FrozenChapterError) throw new ServerRequestError(error.message, error.code === "chapter_not_found" ? 404 : error.code === "not_changed" ? 409 : 400, error.code);
       throw error;
     }
+  }
+
+  /** What the engine's client does before it sends a route of the server's own GitHub connection to a server that does not announce it: it refuses. */
+  requireGithubConnectionFeature(): void {
+    if (!this.githubConnectionFeature) throw new ServerRequestError("This personal server cannot connect to GitHub by itself (it does not announce the feature server-github-connection): update the server.", 501, "feature_unavailable");
   }
 
   /** The status of the book's MCP, as `GET /books/:id/mcp` answers it: `connections` and `oauth` only from a server with OAuth apps. */
@@ -410,7 +430,8 @@ export class FakeBookServer {
   };
 
   summary(bookId: string): ServerBookSummary {
-    return { bookId, title: "The Glass Harbor", storage: { kind: "local" }, hasGithubToken: this.hasGithubToken, ready: true, revision: "r1", autopilot: null, running: this.engine ? this.session(bookId).running : this.running, lastSync: this.lastSync };
+    const onConnection = this.githubAuth === "connection";
+    return { bookId, title: "The Glass Harbor", storage: onConnection ? { kind: "github", owner: "acme", repo: "glass-harbor", branch: "main" } : { kind: "local" }, hasGithubToken: onConnection ? false : this.hasGithubToken, ...(this.githubAuth ? { githubAuth: this.githubAuth } : {}), ready: true, revision: "r1", autopilot: null, running: this.engine ? this.session(bookId).running : this.running, lastSync: this.lastSync };
   }
 
   /** The run ends, as the server's engine ends it: the stored state says how, and nothing waits any more. */
@@ -468,8 +489,33 @@ export class FakeBookServer {
       },
       async registerBook(bookId: string, input: unknown) {
         await server.serve("registerBook");
+        const asked = (input ?? {}) as { githubAuth?: "token" | "connection"; githubToken?: string | null };
+        if (asked.githubAuth === "connection" && server.githubConnection.state !== "connected") {
+          throw new ServerRequestError("The server is not connected to GitHub. Connect it in the personal server settings (GitHub connection) before using it for a book.", 412, "github_connection_required");
+        }
         server.registered.push({ bookId, input });
+        if (asked.githubAuth) server.githubAuth = asked.githubAuth;
+        else if (typeof asked.githubToken === "string" && asked.githubToken) server.githubAuth = "token";
         return server.summary(bookId);
+      },
+      async githubConnection() {
+        await server.serve("githubConnection");
+        server.requireGithubConnectionFeature();
+        return structuredClone(server.githubConnection);
+      },
+      async connectGitHub(input: { clientId: string; broker: string }) {
+        await server.serve("connectGitHub");
+        server.requireGithubConnectionFeature();
+        server.connectRequests.push(input);
+        if (server.githubConnection.state === "connected" || server.githubConnection.state === "pending") throw new ServerRequestError("The server is already connected to GitHub.", 409, "github_connection_exists");
+        server.githubConnection = structuredClone(server.connectAnswer);
+        return structuredClone(server.githubConnection);
+      },
+      async disconnectGitHub() {
+        await server.serve("disconnectGitHub");
+        server.requireGithubConnectionFeature();
+        server.githubConnection = { state: "disconnected" };
+        return structuredClone(server.githubConnection);
       },
       async putAiConfig() {
         await server.serve("putAiConfig");
