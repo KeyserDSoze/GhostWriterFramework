@@ -32,7 +32,7 @@ import { DEFAULT_SETTINGS, type BookEntry } from "@/types/settings";
 
 const BOOK = { id: "book-1", name: "The Glass Harbor", owner: "", repo: "", storageMode: "local-only", tokenIndex: null, addedAt: "2026-01-01T00:00:00.000Z" } as BookEntry;
 
-const show = () => render(<MemoryRouter><DesignDialog open onClose={() => undefined} onStarted={() => undefined} book={BOOK} branch="main" structure={undefined} state={null} entries={8} /></MemoryRouter>);
+const show = () => render(<MemoryRouter><DesignDialog open onClose={() => undefined} onStarted={() => undefined} book={BOOK} branch="main" structure={undefined} state={null} entries={8} choice={{ mode: "plan", reason: "none", chapters: 0, written: [], missing: [] } as never} description="A harbor town." serverWithoutComplete={false} /></MemoryRouter>);
 
 beforeAll(async () => {
   await loadAutopilotTranslations();
