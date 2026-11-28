@@ -86,7 +86,8 @@ export function GitHubTab({ book, draft, patch, opened, onGoToReader }: Props) {
         onCustomTokenLabel={(customTokenLabel) => patch({ customTokenLabel })}
         hasToken={Boolean(token)}
       />
-      <Suspense fallback={null}><BookGitHubAccess book={book} /></Suspense>
+      {/* A token given in the dialog of the notice is saved at once: the draft of this page follows it, so that saving the page does not put the old token back. */}
+      <Suspense fallback={null}><BookGitHubAccess book={book} onTokenSaved={({ token: customToken, label: customTokenLabel }) => patch({ tokenMode: "custom", customToken, customTokenLabel })} /></Suspense>
       <TokenStatusCard book={book} branch={branch} />
       <WorkingBranchCard book={book} activeBranch={draft.activeBranch} onActiveBranch={(activeBranch) => patch({ activeBranch })} />
       <BranchMemoryCard book={book} />

@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { UsePersonalTokenButton, usePersonalTokenDialog } from "@/components/book/UsePersonalTokenButton";
 import { credentialMode } from "@/account/credentialMode";
 import type { LocalGitHubConnection } from "@/account/types";
 import { GITHUB_APP_CLIENT_ID, GITHUB_APP_SLUG } from "@/config/publicClients";
@@ -17,6 +18,7 @@ import { useAppInstallations } from "@/github/useAppInstallations";
 import { useBrokerAvailability } from "@/hooks/useBrokerAvailability";
 import { useSettings } from "@/drive/useSettings";
 import { useSettingsStore } from "@/store/settingsStore";
+import type { BookEntry } from "@/types/settings";
 
 const LINK = "inline-flex min-h-6 items-center gap-1 font-medium text-foreground underline underline-offset-2";
 
@@ -194,7 +196,7 @@ export function GitHubAccessSection(props: GitHubAccessSectionProps) {
           <ul className="space-y-1 text-xs" aria-label={t("accountSync.github.books.sectionLabel")}>
             {lines.map((line) => {
               const offerLine = offerLines.find((entry) => entry.bookId === line.bookId);
-              return <BookLine key={line.bookId} line={line} offer={Boolean(offerLine && canOfferConnection(offerLine))} switching={switching === line.bookId} disabled={switching !== null} onUse={() => offerLine && void useConnection(offerLine)} outcome={outcome?.bookId === line.bookId ? outcome : null} />;
+              return <BookLine key={line.bookId} line={line} book={settings.books.find((entry) => entry.id === line.bookId)} offer={Boolean(offerLine && canOfferConnection(offerLine))} switching={switching === line.bookId} disabled={switching !== null} onUse={() => offerLine && void useConnection(offerLine)} outcome={outcome?.bookId === line.bookId ? outcome : null} />;
             })}
           </ul>
           {removable && (
@@ -226,14 +228,21 @@ export function GitHubAccessSection(props: GitHubAccessSectionProps) {
   );
 }
 
-function BookLine({ line, offer, switching, disabled, onUse, outcome }: { line: BookCredentialLine; offer: boolean; switching: boolean; disabled: boolean; onUse: () => void; outcome: { text: string; failed: boolean } | null }) {
+function BookLine({ line, book, offer, switching, disabled, onUse, outcome }: { line: BookCredentialLine; book: BookEntry | undefined; offer: boolean; switching: boolean; disabled: boolean; onUse: () => void; outcome: { text: string; failed: boolean } | null }) {
   const { t } = useTranslation();
   const uses = t(`accountSync.github.books.uses.${line.source ?? "none"}`);
+  // The dialog stays where it is when the token it saves makes the warning of the line go.
+  const token = usePersonalTokenDialog(book);
   return (
     <li className="space-y-0.5">
       <p>{t("accountSync.github.books.line", { book: line.name, uses })}</p>
       {line.reach && <ReachNote line={line} />}
-      {line.serverWithAppToken && <p className="flex items-start gap-2 text-amber-800 dark:text-amber-300"><AlertTriangle aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />{t("accountSync.github.server.warning")}</p>}
+      {line.serverWithAppToken && (
+        <div className="space-y-1.5">
+          <p className="flex items-start gap-2 text-amber-800 dark:text-amber-300"><AlertTriangle aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />{t("accountSync.github.server.warning")}</p>
+          {book && <UsePersonalTokenButton book={book} named onOpen={token.open} />}
+        </div>
+      )}
       {offer && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="text-muted-foreground">{t("accountSync.github.use.offer")}</span>
@@ -243,6 +252,7 @@ function BookLine({ line, offer, switching, disabled, onUse, outcome }: { line: 
         </div>
       )}
       <div role="status" aria-live="polite">{outcome && <p className={outcome.failed ? "text-destructive" : "text-muted-foreground"}>{outcome.text}</p>}</div>
+      {token.dialog}
     </li>
   );
 }

@@ -430,6 +430,40 @@ describe("browser → server with the consent of the author in the plan (the flo
   });
 });
 
+describe("giving the server the token that a book uses now", () => {
+  const hosted: BookEntry = { ...GITHUB_BOOK, autopilotHost: "server", bookToken: "ghp_own_token_of_the_book" };
+
+  it("registers the book again with its own token, when the server runs the book and holds a token for it: the copy of the app's token that lapses is replaced", async () => {
+    useBook(hosted);
+    useAutopilotStore.getState().patchView(hosted.id, { server: { ...server.summary(hosted.id), hasGithubToken: true } });
+    expect(await runtime.replaceServerGitHubToken(hosted.id)).toBe(true);
+    expect(server.registered).toHaveLength(1);
+    expect(server.registered[0].input).toMatchObject({ storage: { kind: "github", owner: "acme", repo: "glass-harbor" }, githubToken: "ghp_own_token_of_the_book" });
+  });
+
+  it("sends nothing for a book the server holds no token for: no consent was given for it", async () => {
+    useBook(hosted);
+    useAutopilotStore.getState().patchView(hosted.id, { server: { ...server.summary(hosted.id), hasGithubToken: false } });
+    expect(await runtime.replaceServerGitHubToken(hosted.id)).toBe(false);
+    expect(server.registered).toEqual([]);
+  });
+
+  it("sends nothing for a book that runs in this browser, or that is not on GitHub", async () => {
+    useBook({ ...hosted, autopilotHost: "browser" });
+    expect(await runtime.replaceServerGitHubToken(hosted.id)).toBe(false);
+    useBook({ ...BOOK, autopilotHost: "server" });
+    expect(await runtime.replaceServerGitHubToken(BOOK.id)).toBe(false);
+    expect(server.registered).toEqual([]);
+  });
+
+  it("says that the server could not be reached, and does not pretend that it was given the token", async () => {
+    useBook(hosted);
+    useAutopilotStore.getState().patchView(hosted.id, { server: { ...server.summary(hosted.id), hasGithubToken: true } });
+    server.failures.registerBook = new ServerRequestError("The personal server is not reachable.", 0, "unreachable");
+    await expect(runtime.replaceServerGitHubToken(hosted.id)).rejects.toThrow();
+  });
+});
+
 describe("server → browser", () => {
   beforeEach(() => {
     useBook({ ...BOOK, autopilotHost: "server" });

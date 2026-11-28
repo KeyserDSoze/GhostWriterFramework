@@ -1306,6 +1306,23 @@ export class BrowserAutopilotRuntime {
   }
 
   /**
+   * Gives the server the token that the book uses now, for a GitHub book that the server runs and holds a token for: what is done when the author gives the book a token of its own
+   * (the server's copy of the app's token lapses in 8 hours; the personal access token does not). It is the consent the author gave when the book was moved, for the same token of the same
+   * book, so nothing else is sent; a book the server does not hold a token for gets nothing. `false` when there was nothing to replace; it throws when the server could not be reached.
+   */
+  async replaceServerGitHubToken(bookId: string): Promise<boolean> {
+    const book = findBook(bookId);
+    if (autopilotHostOf(book) !== "server" || bookStorageMode(book) !== "github" || !hasServer(this.currentConnection())) return false;
+    if (!useAutopilotStore.getState().views[bookId]?.server?.hasGithubToken) return false;
+    const token = resolveGitHubRemoteToken(book, settings());
+    if (!isUsableGitHubToken(token)) return false;
+    const { client } = await this.requireServer();
+    const summary = await client.registerBook(bookId, { title: book.name, storage: { kind: "github", owner: book.owner, repo: book.repo, branch: resolveBookBranch(book) }, githubToken: token });
+    useAutopilotStore.getState().patchView(bookId, { server: summary });
+    return true;
+  }
+
+  /**
    * Bring the server's work back and run the autopilot in this browser again. The server lets the book go only after
    * its work was downloaded without conflicts (the author can choose to leave without it when the server cannot be reached).
    */

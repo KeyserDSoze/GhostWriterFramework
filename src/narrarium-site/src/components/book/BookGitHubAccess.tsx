@@ -4,6 +4,7 @@ import { Github } from "lucide-react";
 import "@/i18n/githubApp";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { GitHubServerTokenNotice } from "@/components/book/GitHubServerTokenNotice";
+import type { SavedBookToken } from "@/components/book/BookTokenDialog";
 import { useConnectionStore } from "@/account/connectionStore";
 import { bookCredentialLines } from "@/github/githubAccessModel";
 import { GITHUB_APP_SLUG } from "@/config/publicClients";
@@ -13,7 +14,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { bookStorageMode, type BookEntry } from "@/types/settings";
 
 /** The card of a book's settings that says which GitHub token the book uses (and why), whether the app reaches its repository, and warns about a server-run book on an app token. */
-export function BookGitHubAccess({ book }: { book: BookEntry }) {
+export function BookGitHubAccess({ book, onTokenSaved }: { book: BookEntry; onTokenSaved?: (saved: SavedBookToken) => void }) {
   const { t } = useTranslation();
   const settings = useSettingsStore((state) => state.settings);
   const connection = useConnectionStore((state) => state.configuration.github);
@@ -38,7 +39,7 @@ export function BookGitHubAccess({ book }: { book: BookEntry }) {
             {GITHUB_APP_SLUG && <a className="inline-flex min-h-6 items-center font-medium underline underline-offset-2" href={installAppUrl()} target="_blank" rel="noopener noreferrer">{t("accountSync.github.install.choose")}<span className="sr-only"> {t("accountSync.github.install.opensNewTab")}</span></a>}
           </p>
         )}
-        <GitHubServerTokenNotice book={book} />
+        <GitHubServerTokenNotice book={book} onSaved={onTokenSaved} />
         <p className="text-xs text-muted-foreground">{t("accountSync.github.book.change")} <Link className="font-medium underline underline-offset-2" to="/app/account-sync">{t("accountSync.github.book.link")}</Link></p>
       </CardContent>
     </Card>

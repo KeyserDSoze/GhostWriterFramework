@@ -62,6 +62,12 @@ export function canOfferConnection(line: BookCredentialLine): boolean {
   return line.appReach !== null && REACHED.includes(line.appReach) && (line.source === "book-pat" || line.source === "named-pat" || line.source === "default-pat") && !line.runsOnServer;
 }
 
+/** The book as it is once it has a token of its own: that token, labelled, and neither a named token nor the GitHub connection (a token of its own wins over both). */
+export function bookWithOwnToken(book: BookEntry, token: string, label: string): BookEntry {
+  const { useGitHubConnection: _useGitHubConnection, ...rest } = book;
+  return { ...rest, tokenIndex: null, bookToken: token.trim(), bookTokenLabel: label };
+}
+
 /** The book as it is once it uses the GitHub connection: no token of its own, no named token, and not the default token. The named token stays in the list. */
 export function bookUsingConnection(book: BookEntry): BookEntry {
   const { bookToken: _bookToken, bookTokenLabel: _bookTokenLabel, ...rest } = book;
