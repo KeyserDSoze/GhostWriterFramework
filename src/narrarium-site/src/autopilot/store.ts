@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { applyLiveAttempt, applyLiveProgress, normalizeLive, startLive } from "narrarium-engine";
-import type { AutopilotEvent, AutopilotLive, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, BookCorrectionsDecision, FrozenAction, FrozenChangeKind, InterventionInput, ReviewBookInput, ReviseAnnotationsInput, ReviseChaptersInput, RevisionCampaignResult, ServerBookSummary, ServerGitHubConnection, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
+import type { AutopilotEvent, AutopilotLive, AutopilotLiveOptions, AutopilotMessageCode, AutopilotSnapshot, AutopilotStateSummary, AutopilotStatus, BookCorrectionsDecision, DesignProposalsDecision, DesignProposalsResult, FrozenAction, FrozenChangeKind, InterventionInput, ReviewBookInput, ReviseAnnotationsInput, ReviseChaptersInput, RevisionCampaignResult, ServerBookSummary, ServerGitHubConnection, ServerInfo, ServerStreamMessage, ServerUpdateInfo, SyncSkippedFile } from "narrarium-engine";
 import type { HandoverPlan, HandoverSide, HandoverWhen } from "@/autopilot/handover";
 import type { BookOperation } from "@/autopilot/operations";
 import type { PersonalServerSettings } from "@/types/settings";
@@ -301,7 +301,8 @@ export type RelayedCommand =
   | { type: "review-book"; input: ReviewBookInput }
   | { type: "decide-book-corrections"; input: BookCorrectionsDecision }
   | { type: "revise-annotations"; input: ReviseAnnotationsInput }
-  | { type: "cancel-campaign" };
+  | { type: "cancel-campaign" }
+  | { type: "apply-design-proposals"; input: DesignProposalsDecision };
 
 /** What the tab that holds the live connection tells the others about it. */
 export type SharedServerState = Pick<ServerConnectionState, "status" | "info" | "message" | "books" | "updates">;
@@ -317,7 +318,7 @@ export type AutopilotChannelMessage =
    * `result` is what the command answers, when it answers something (whether «Retry now» skipped a wait, the campaign as it was saved); `code` is the code of a
    * refusal of the engine that the tab which asked tells in its own words (a campaign that cannot be recorded).
    */
-  | { kind: "command-result"; id: string; ok: boolean; error?: string; code?: string; result?: boolean | RevisionCampaignResult }
+  | { kind: "command-result"; id: string; ok: boolean; error?: string; code?: string; result?: boolean | RevisionCampaignResult | DesignProposalsResult }
   | { kind: "server-message"; stream: string; message: ServerStreamMessage }
   | { kind: "server-state"; stream: string; state: SharedServerState }
   | { kind: "server-state-request"; stream: string }

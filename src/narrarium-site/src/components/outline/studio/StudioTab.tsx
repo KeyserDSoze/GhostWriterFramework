@@ -1,8 +1,8 @@
 import { Suspense, lazy, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { BookMarked, CheckCircle2, Compass, ListTree, Loader2, Pause, Play, PenLine, Sparkles } from "lucide-react";
-import { OUTLINE_BOOK_FILE, lockedDecisions, openQuestions, serverSupportsDesign, summarizeDesign, type AutopilotState, type OutlineChapterEntry } from "narrarium-engine";
+import { BookMarked, CheckCircle2, ClipboardCheck, Compass, ListTree, Loader2, Pause, Play, PenLine, Sparkles } from "lucide-react";
+import { OUTLINE_BOOK_FILE, designModeChoice, lockedDecisions, openQuestions, serverSupportsDesign, summarizeDesign, type AutopilotState, type OutlineChapterEntry } from "narrarium-engine";
 import "@/i18n/design";
 import "@/i18n/bibleStudio";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -14,8 +14,9 @@ import { useAutopilotRefresh, useBookAutopilotView } from "@/autopilot/hooks";
 import { useAutopilotStore } from "@/autopilot/store";
 import { autopilotLiveHref } from "@/autopilot/pageRoute";
 import { formatDate, voteText } from "@/autopilot/format";
-import { DESIGN_SERVER_VERSION, approveDesignChange, designApprovalOf, designBlockOf, designStatusOf } from "@/outline/designModel";
+import { DESIGN_SERVER_VERSION, approveDesignChange, designApprovalOf, designBlockOf, designModeBlockOf, designStatusOf, initialDesignMode } from "@/outline/designModel";
 import { serverHasDesignReview } from "@/outline/designReviewModel";
+import { serverHasDesignComplete } from "@/autopilot/designComplete";
 import { composeBible, worldEntries } from "@/outline/bibleModel";
 import type { OutlineSnapshot } from "@/outline/outlineModel";
 import type { OutlineSource } from "@/outline/outlineSource";
@@ -25,6 +26,7 @@ import type { BookEntry } from "@/types/settings";
 
 const DesignDialog = lazy(() => import("@/components/outline/studio/DesignDialog"));
 const StudioReviews = lazy(() => import("@/components/outline/studio/StudioReviews"));
+const DesignProposals = lazy(() => import("@/components/outline/studio/DesignProposals"));
 
 export interface StudioTabProps {
   book: BookEntry;
@@ -56,9 +58,15 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
   const serverInfo = useAutopilotStore((store) => store.server.info);
   const serverWithoutDesign = book.autopilotHost === "server" && serverInfo !== null && !serverSupportsDesign(serverInfo);
   const serverWithoutReview = book.autopilotHost === "server" && serverInfo !== null && !serverHasDesignReview(serverInfo);
-  const block = designBlockOf({ description, state, serverWithoutDesign });
+  const serverWithoutComplete = book.autopilotHost === "server" && serverInfo !== null && !serverHasDesignComplete(serverInfo);
+  // Which design runs, and why (#125): «Review and complete» when every chapter of the book is the author's in the Synopsis, the design of the book otherwise.
+  const choice = useMemo(() => designModeChoice(entries), [entries]);
+  const mode = initialDesignMode(choice, { description, serverWithoutComplete });
+  const modeBlocked = designModeBlockOf(mode, { description, choice, serverWithoutComplete });
+  const block = designBlockOf({ description, state, serverWithoutDesign, authorChapters: choice.written.length });
   // The design asked for her choice of a pitch and waits for it: going on would stop at the same place.
   const choosingPitch = status.kind === "active" && summarizeDesign(state?.design)?.choosePitch === true;
+  const completing = status.kind !== "none" && status.mode === "complete";
   const { busy, commands } = useAutopilotActions(book.id);
   const [dialog, setDialog] = useState(false);
   const [announcement, setAnnouncement] = useState("");
@@ -101,6 +109,12 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
   };
 
   const blockedText = block === "description" ? t("design.studio.blocked.description") : block === "written" ? t("design.studio.blocked.written") : block === "server" ? t("design.studio.blocked.server", { version: DESIGN_SERVER_VERSION }) : running && status.kind !== "active" ? t("design.studio.blocked.running") : null;
+  // What will run, said before it starts: the mode the dialog offers first and why.
+  const modeText = block || modeBlocked ? null : mode === "complete"
+    ? t("design.mode.studio.complete", { count: choice.written.length })
+    : choice.reason === "missing"
+      ? t("design.mode.studio.missing", { count: choice.missing.length, written: choice.written.length })
+      : t("design.mode.studio.plan");
   const canStart = !block && !running && busy === null;
 
   return (
@@ -110,12 +124,12 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
         <p className="max-w-3xl text-sm text-muted-foreground">{t("design.studio.intro")}</p>
 
         {status.kind === "none" && <p className="text-sm">{t("design.studio.status.none")}</p>}
-        {status.kind === "ended" && <p className="text-sm">{t("design.studio.ended", { date: formatDate(status.endedAt) })}</p>}
+        {status.kind === "ended" && !completing && <p className="text-sm">{t("design.studio.ended", { date: formatDate(status.endedAt) })}</p>}
         {status.kind === "active" && (
           <div data-design-progress className="space-y-2 rounded-xl border border-primary/30 bg-primary/5 p-3" aria-live="polite">
             <p className="flex items-center gap-2 text-sm font-medium">
               {running ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Pause className="h-4 w-4" aria-hidden="true" />}
-              {running ? t("design.studio.status.running") : state?.question ? t("design.studio.status.waiting") : choosingPitch ? t("designReview.alternatives.statusWaiting") : t("design.studio.status.paused")}
+              {running ? (completing ? t("design.studio.status.runningComplete") : t("design.studio.status.running")) : state?.question ? t("design.studio.status.waiting") : choosingPitch ? t("designReview.alternatives.statusWaiting") : t("design.studio.status.paused")}
             </p>
             {running && step && <p className="text-sm text-muted-foreground">{t("design.studio.status.step", { step })}</p>}
             {!running && state?.message && <p className="text-sm text-muted-foreground">{state.message}</p>}
@@ -135,16 +149,24 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
         {status.kind !== "active" && (
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap gap-2">
-              <Button type="button" data-design-open="" variant={status.kind === "ready" ? "outline" : "default"} disabled={!canStart} aria-describedby={blockedText ? "studio-design-blocked" : undefined} onClick={() => setDialog(true)}>
-                <Compass className="h-4 w-4" aria-hidden="true" />{status.kind === "ready" ? t("design.studio.again") : t("design.studio.start")}
+              <Button type="button" data-design-open="" variant={status.kind === "ready" ? "outline" : "default"} disabled={!canStart} aria-describedby={blockedText ? "studio-design-blocked" : modeText ? "studio-design-mode" : undefined} onClick={() => setDialog(true)}>
+                {mode === "complete" ? <ClipboardCheck className="h-4 w-4" aria-hidden="true" /> : <Compass className="h-4 w-4" aria-hidden="true" />}
+                {mode === "complete" ? (status.kind === "ready" && completing ? t("design.studio.againComplete") : t("design.studio.startComplete")) : status.kind === "ready" ? t("design.studio.again") : t("design.studio.start")}
               </Button>
             </div>
             {blockedText && <p id="studio-design-blocked" data-design-blocked={block ?? "running"} className="text-sm text-muted-foreground">{blockedText}</p>}
+            {!blockedText && modeText && <p id="studio-design-mode" data-design-mode={mode} className="max-w-3xl text-sm text-muted-foreground">{modeText}</p>}
           </div>
         )}
       </section>
 
-      {status.kind === "ready" && (
+      {completing && (
+        <Suspense fallback={null}>
+          <DesignProposals bookId={book.id} state={state} entries={entries} running={running} onShowTab={onShowTab} onStartWriting={() => void startWriting()} />
+        </Suspense>
+      )}
+
+      {status.kind === "ready" && !completing && (
         <section aria-labelledby="studio-ready-title" data-design-ready className="space-y-3 rounded-2xl border border-emerald-600/40 bg-emerald-500/5 p-4 shadow-sm sm:p-5">
           <h2 id="studio-ready-title" className="flex items-center gap-2 text-lg font-semibold"><CheckCircle2 className="h-5 w-5 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />{t("design.studio.ready.title")}</h2>
           <p data-design-counts className="text-base font-medium">
@@ -227,11 +249,14 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
             structure={structure}
             state={state}
             entries={entries.length}
+            choice={choice}
+            description={description}
+            serverWithoutComplete={serverWithoutComplete}
             onStarted={() => setAnnouncement(t("design.dialog.started"))}
           />
         </Suspense>
       )}
-      {announcement && status.kind !== "ready" && <p role="status" className="sr-only">{announcement}</p>}
+      {announcement && (status.kind !== "ready" || completing) && <p role="status" className="sr-only">{announcement}</p>}
     </div>
   );
 }

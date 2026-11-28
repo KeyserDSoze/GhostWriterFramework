@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Compass, Loader2 } from "lucide-react";
-import { DIRECTOR_FILE, REVIEW_MAX_ROUNDS, defaultDirector, parseDirector, type AutopilotState } from "narrarium-engine";
+import { DIRECTOR_FILE, REVIEW_MAX_ROUNDS, defaultDirector, parseDirector, type AutopilotState, type DesignMode, type DesignModeChoice } from "narrarium-engine";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -18,12 +18,12 @@ import { useRunEstimateSources } from "@/autopilot/useRunEstimate";
 import { estimateDesign } from "@/autopilot/runEstimate";
 import { formatCount } from "@/autopilot/format";
 import { MAX_MONEY_CAP, TARGET_MAX, TARGET_MIN, WILDCARDS_SERVER_VERSION, serverHasWildcards } from "@/autopilot/reviewPolicy";
-import { useAutopilotStore } from "@/autopilot/store";
 import { autopilotRoomEstimate } from "@/autopilot/wildcardsEstimate";
 import { useSettingsStore } from "@/store/settingsStore";
-import { defaultDesignChapters, readDesignForm, type DesignForm } from "@/outline/designModel";
+import { defaultDesignChapters, designModeBlockOf, initialDesignMode, readDesignForm, type DesignForm } from "@/outline/designModel";
 import { WorkflowFields } from "@/components/outline/studio/WorkflowFields";
 import { readWorkflowForm, serverHasDesignReview, workflowFormOf, type WorkflowForm } from "@/outline/designReviewModel";
+import { DESIGN_COMPLETE_SERVER_VERSION } from "@/autopilot/designComplete";
 import { useMoney } from "@/costs/useMoney";
 import type { BookStructure } from "@/types/book";
 import type { BookEntry } from "@/types/settings";
@@ -37,15 +37,27 @@ export interface DesignDialogProps {
   state: AutopilotState | null;
   /** The entries the Synopsis has: the design has at least as many chapters. */
   entries: number;
+  /** Which design fits the book and why (`designModeChoice`): the mode offered first. */
+  choice: DesignModeChoice;
+  /** The description of the book: a design of the book starts from it. */
+  description: string;
+  /** The book runs on a personal server that does not review and complete a book. */
+  serverWithoutComplete: boolean;
   onStarted: () => void;
 }
 
+/** The chapters a reason names, eight at most and how many more. */
+function chapterList(numbers: readonly number[], more: (count: number) => string): string {
+  const shown = numbers.slice(0, 8).map((number) => formatCount(number)).join(", ");
+  return numbers.length > 8 ? `${shown} ${more(numbers.length - 8)}` : shown;
+}
+
 /**
- * «Design the book»: the chapters, whether the simulated readers read the design, the vote it must reach, the reviews and the readings of the readers (the fields of
- * the review of a run), the money cap of the book, and what it will cost. Confirmed, the design run starts (`StartOptions.design`); the writing autopilot is not
- * started.
+ * «Design the book»: what the run does (it reviews and completes the chapters the author wrote, or designs the book, with the reason for the one offered first), the
+ * chapters, whether the simulated readers read the design, the vote it must reach, the reviews and the readings of the readers (the fields of the review of a run), the
+ * money cap of the book, and what it will cost. Confirmed, the design run starts (`StartOptions.design`); the writing autopilot is not started.
  */
-export default function DesignDialog({ open, onClose, book, branch, structure, state, entries, onStarted }: DesignDialogProps) {
+export default function DesignDialog({ open, onClose, book, branch, structure, state, entries, choice, description, serverWithoutComplete, onStarted }: DesignDialogProps) {
   const { t } = useTranslation();
   const id = useId();
   const money = useMoney();
@@ -58,7 +70,8 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
   }, [directorFile.files, structure?.language]);
   const policy = state?.design?.review;
   const initial = useMemo<DesignForm>(() => ({
-    chapters: String(state?.design?.chapters || defaultDesignChapters(entries)),
+    mode: initialDesignMode(choice, { description, serverWithoutComplete }),
+    chapters: String((state?.design?.mode !== "complete" && state?.design?.chapters) || defaultDesignChapters(entries)),
     readers: state?.options.readersOnPlan ?? true,
     target: policy?.targetScore !== undefined ? String(policy.targetScore) : "",
     rounds: policy?.maxRounds !== undefined ? String(policy.maxRounds) : "",
@@ -67,7 +80,7 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
     money: state && state.options.budgetLimit > 0 ? String(state.options.budgetLimit) : "",
     tokens: "",
     wildcardsDesign: state?.options.review?.wildcards?.design === true,
-  }), [state, policy, entries]);
+  }), [state, policy, entries, choice, description, serverWithoutComplete]);
   const [form, setForm] = useState<DesignForm>(initial);
   const [edited, setEdited] = useState(false);
   useEffect(() => {
@@ -101,18 +114,20 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
   const reading = readDesignForm(form, entries);
   // The room of the wildcards before the first review (`ReviewPolicy.wildcards.design`): the run's policy, given whole with the switch as the dialog says; never to a personal server that predates it.
   const settings = useSettingsStore((current) => current.settings);
-  const serverInfo = useAutopilotStore((store) => store.server.info);
   const wildcardsUnsupported = book.autopilotHost === "server" && serverInfo !== null && !serverHasWildcards(serverInfo);
   const roomBefore = state?.options.review?.wildcards;
   const roomOn = !wildcardsUnsupported && form.wildcardsDesign === true;
   const roomChange = wildcardsUnsupported ? undefined : roomOn ? { ...(roomBefore ?? {}), design: true } : roomBefore?.design ? (roomBefore.plateau ? { ...roomBefore, design: false } : null) : undefined;
-  const chapters = reading.input.chapters ?? 0;
+  const mode: DesignMode = form.mode ?? "plan";
+  const complete = mode === "complete";
+  const modeBlocked = designModeBlockOf(mode, { description, choice, serverWithoutComplete });
+  const chapters = complete ? choice.written.length : reading.input.chapters ?? 0;
   const maxRounds = reading.review.policy.maxRounds ?? 3;
   const readerRounds = reading.review.policy.readerRounds ?? 1;
 
   const view = useBookAutopilotView(book.id);
   const inputs = useRunEstimateSources({ book, branch, structure, state, activities: view.snapshot?.activities });
-  const estimate = useMemo(() => (open && chapters > 0 ? estimateDesign(inputs.sources, state, { chapters, maxRounds, readerRounds, readers: form.readers, ...(workflow.workflow ? { workflow: workflow.workflow } : {}) }).estimate : null), [open, chapters, maxRounds, readerRounds, form.readers, inputs.sources, state, workflow.workflow]);
+  const estimate = useMemo(() => (open && chapters > 0 ? estimateDesign(inputs.sources, state, { chapters, maxRounds, readerRounds, readers: form.readers, ...(workflow.workflow && !complete ? { workflow: workflow.workflow } : {}), ...(complete ? { mode: "complete" as const } : {}) }).estimate : null), [open, chapters, maxRounds, readerRounds, form.readers, inputs.sources, state, workflow.workflow, complete]);
   const roomVoices = roomBefore?.voices ?? 4;
   const room = roomOn && chapters > 0 ? autopilotRoomEstimate(settings, { voices: roomVoices, chapters }) : null;
   const roomCalls = room ? `${formatCount(room.calls.min)}–${formatCount(room.calls.max)}` : "";
@@ -126,7 +141,12 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
   const spentCurrency = state?.stats.currency || money.display;
   const spent = money.amount(state?.stats.cost ?? 0, state?.stats.currency, { zero: "amount" });
   const running = view.snapshot?.running === true || view.busyInAnotherTab;
-  const canSubmit = reading.valid && !workflow.problem && chapters > 0 && busy === null && !running;
+  const canSubmit = reading.valid && !workflow.problem && chapters > 0 && !modeBlocked && busy === null && !running;
+  const reason = choice.reason === "written"
+    ? t("design.mode.reason.written", { count: choice.chapters })
+    : choice.reason === "missing"
+      ? t("design.mode.reason.missing", { count: choice.missing.length, list: chapterList(choice.missing, (count) => t("design.mode.more", { count })) })
+      : t("design.mode.reason.none");
 
   const submit = async (pastBudgets = false) => {
     if (!canSubmit) return;
@@ -145,12 +165,43 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
       <DialogContent data-design-dialog="" className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Compass className="h-5 w-5 text-primary" aria-hidden="true" />{t("design.dialog.title")}</DialogTitle>
-          <DialogDescription>{t("design.dialog.intro")}</DialogDescription>
+          <DialogDescription>{complete ? t("design.dialog.introComplete") : t("design.dialog.intro")}</DialogDescription>
         </DialogHeader>
         {running && <Alert><AlertDescription>{t("design.studio.blocked.running")}</AlertDescription></Alert>}
 
+        <fieldset data-design-mode={mode} className="space-y-2">
+          <legend className="mb-1 text-sm font-medium">{t("design.mode.legend")}</legend>
+          {(["complete", "plan"] as const).map((option) => {
+            const blocked = designModeBlockOf(option, { description, choice, serverWithoutComplete });
+            const checked = mode === option;
+            return (
+              <label key={option} className={`flex min-h-11 items-start gap-2 rounded-lg border p-3 text-sm ${checked ? "border-primary bg-primary/5" : "border-layer"} ${blocked ? "cursor-not-allowed opacity-75" : "cursor-pointer"}`}>
+                <input
+                  type="radio"
+                  name={`${id}-mode`}
+                  value={option}
+                  data-design-mode-option={option}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                  checked={checked}
+                  disabled={Boolean(blocked)}
+                  aria-labelledby={`${id}-mode-${option}-label`}
+                  aria-describedby={`${id}-mode-${option}`}
+                  onChange={() => change({ mode: option })}
+                />
+                <span className="min-w-0">
+                  <span id={`${id}-mode-${option}-label`} className="font-medium">{t(`design.mode.${option}.label`)}</span>
+                  <span id={`${id}-mode-${option}`} className="block text-xs text-muted-foreground">
+                    {blocked ? t(`design.mode.blocked.${blocked}`, { version: DESIGN_COMPLETE_SERVER_VERSION }) : t(`design.mode.${option}.hint`, { count: choice.written.length })}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+          <p data-design-mode-reason={choice.reason} className="text-xs text-muted-foreground">{reason}</p>
+        </fieldset>
+
         <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-          <div className="flex min-w-0 flex-col gap-1">
+          {!complete && <div className="flex min-w-0 flex-col gap-1">
             <Label htmlFor={`${id}-chapters`} className="text-xs font-medium">{t("design.dialog.chapters.label")}</Label>
             <Input
               id={`${id}-chapters`}
@@ -165,7 +216,7 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
             />
             <p id={`${id}-chapters-hint`} className="text-xs text-muted-foreground">{entries > 0 ? t("design.dialog.chapters.hint", { count: entries }) : t("design.dialog.chapters.hintNone")}</p>
             {reading.chaptersProblem && <p id={`${id}-chapters-problem`} className="text-xs font-medium text-destructive">{problemText(reading.chaptersProblem, { min: Math.max(1, entries), max: 500 })}</p>}
-          </div>
+          </div>}
           <label className="flex min-h-11 cursor-pointer items-start gap-2 self-center text-sm">
             <input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={form.readers} aria-describedby={`${id}-readers-hint`} onChange={(event) => change({ readers: event.target.checked })} />
             <span>
@@ -208,7 +259,7 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
           <Button type="button" variant="ghost" onClick={onClose} disabled={busy !== null}>{t("common.cancel")}</Button>
           <Button type="button" data-design-start="" onClick={() => void submit()} disabled={!canSubmit}>
             {busy === "start" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Compass className="h-4 w-4" aria-hidden="true" />}
-            {t("design.dialog.submit", { count: chapters || defaultDesignChapters(entries) })}
+            {complete ? t("design.dialog.submitComplete", { count: chapters }) : t("design.dialog.submit", { count: chapters || defaultDesignChapters(entries) })}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -5,6 +5,7 @@ import {
   STORY_DESIGN_FILE,
   countWords,
   defaultDirector,
+  designText,
   directorPrompt,
   evaluationStyleBlock,
   ghostwriterPrompt,
@@ -33,7 +34,7 @@ export interface EstimateBook {
   /** The book has its own `director.md`. */
   directorFile: boolean;
   /** The words the files weigh as the prompts carry them: only the ones the book has, the engine's typical size for the others. */
-  context: Pick<EstimateContext, "designWords" | "worldWords" | "ghostwriterWords" | "directorWords" | "styleWords">;
+  context: Pick<EstimateContext, "designWords" | "worldWords" | "ghostwriterWords" | "directorWords" | "styleWords" | "chapterDesignWords">;
   /** The author wrote the story design: the autopilot does not start with its concept. */
   designWritten: boolean;
   /** The readers of the panel the director does not ignore. */
@@ -70,21 +71,27 @@ async function readAll(store: EstimateBookInput["store"], paths: string[]): Prom
   return new Map(files.map((file) => [file.path, file.content]));
 }
 
-async function readOutline(input: EstimateBookInput): Promise<EstimateBook["outline"]> {
+async function readOutline(input: EstimateBookInput): Promise<{ outline?: EstimateBook["outline"]; chapterDesignWords?: number }> {
   try {
     const parsed = await parseOutline(await input.outlineFiles());
+    // The design of a chapter, whoever wrote it, is what the writing steps read of it: its size on average among the entries that have one.
+    const designed = parsed.chapters.filter((entry) => entry.design);
+    const chapterDesignWords = designed.length ? Math.round(designed.reduce((total, entry) => total + countWords(designText(entry.design, 100_000)), 0) / designed.length) : 0;
     // The entries the autopilot wrote and nobody changed since are its own: they bind nothing, and they are not the author's outline. The empty ones it made with
     // no digest (a new book of a given size, the chapters a design adds) are the chapters of the book all the same: they give its length.
     const author = parsed.chapters.filter((entry) => !entry.intact || (!entry.digest && !entry.title && !entry.body.trim() && !entry.ghostwriter && !entry.design));
-    if (author.length === 0) return undefined;
+    if (author.length === 0) return chapterDesignWords ? { chapterDesignWords } : {};
     // The description of the book is the idea, which the estimate takes from the brief: it is not counted again among the outline's words.
     return {
-      entries: author.length,
-      lastChapter: author.reduce((last, entry) => Math.max(last, entry.number), 0),
-      words: author.reduce((total, entry) => total + countWords(`${entry.title} ${entry.body}`.trim()), 0),
+      outline: {
+        entries: author.length,
+        lastChapter: author.reduce((last, entry) => Math.max(last, entry.number), 0),
+        words: author.reduce((total, entry) => total + countWords(`${entry.title} ${entry.body}`.trim()), 0),
+      },
+      ...(chapterDesignWords ? { chapterDesignWords } : {}),
     };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -131,6 +138,7 @@ export async function readEstimateBook(input: EstimateBookInput): Promise<Estima
   const panel = mergeReaderPersonas(language, overrides);
   const readerPanelSize = panel.filter((reader) => reader.enabled && (director.readerWeights[reader.slug] ?? 1) > 0).length;
 
-  const outline = await readOutline(input);
+  const { outline, chapterDesignWords } = await readOutline(input);
+  if (chapterDesignWords) context.chapterDesignWords = chapterDesignWords;
   return { read: true, directorRounds: director.maxReviewRounds, directorFile: directorText !== undefined, context, designWritten, readerPanelSize, ...(outline ? { outline } : {}) };
 }

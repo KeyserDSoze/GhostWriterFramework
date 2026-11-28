@@ -801,6 +801,7 @@ const autopilotEn = {
       designCoherence: "The analysis of the structure found {{findings}} open findings, {{critical}} of them critical.",
       designProposals: "Some findings concern chapters you wrote: the design proposes changes and does not rewrite them.",
       designReviewed: "The review of the design on request is done.",
+      designCompletionReady: "Review and complete is done: its proposals wait for you in the Studio of the Synopsis.",
       budgetReached: "Money cap reached: {{used}} spent of {{limit}}. Raise the cap to go on.",
       tokenBudgetReached: "Token cap reached: {{used}} tokens of {{limit}}. Raise the cap to go on.",
       longRetryWait: "The step failed after the quick retries: retrying in {{wait}} (restart {{cycle}} of {{cycles}}).",
@@ -842,6 +843,9 @@ const autopilotEn = {
       final: "The director reviews the whole book",
       "book-corrections": "The director lists the corrections of the whole book",
       wildcards: "The wildcards look at the design",
+      "design-complete": "Reviewing and completing your chapters",
+      "design-complete-reader": "A reader reads your chapters and the proposals",
+      "design-complete-review": "The director reviews your chapters and the proposals",
       unknown: "Autopilot step",
     },
     designChoice: {
@@ -1193,6 +1197,9 @@ const autopilotEn = {
       result: "The autopilot answered {{handled}} of {{notes}} in {{chapters}}.",
       resultCancelled: "You stopped the autopilot's answer to your notes: {{handled}} of {{notes}} were answered.",
       chipNotes: "{{handled}} of {{notes}} notes",
+    },
+    designComplete: {
+      oldServer: "Your personal server is older than {{version}} and cannot review and complete a book: update it to do this from here.",
     },
     reviewBook: {
       title: "Review the book again",

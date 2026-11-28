@@ -1,14 +1,19 @@
 import {
+  DESIGN_APPROVED_KEY,
   OUTLINE_BOOK_FILE,
   OUTLINE_DESIGN_FIELDS,
   OUTLINE_DESIGN_KEYS,
   designMaxRounds,
   normalizeDesignPatch,
   parseMarkdown,
+  readDesignApproval,
   renderMarkdown,
   serializeOutlineBook,
   type AutopilotState,
   type BookFileChange,
+  type DesignApproval,
+  type DesignMode,
+  type DesignModeChoice,
   type DesignOutcome,
   type DesignRound,
   type DesignStartInput,
@@ -81,37 +86,62 @@ export function filledDesignFields(design: OutlineChapterDesign | undefined): nu
 export type DesignStatus =
   /** The book was never designed by the autopilot. */
   | { kind: "none" }
-  /** A design goes on (a run designs it now, or it is paused, or waits for an answer). */
-  | { kind: "active"; startedAt: string; chapters: number; rounds: DesignRound[]; maxRounds: number; target?: number }
+  /** A design goes on (a run designs it now, or it is paused, or waits for an answer). `mode`: «Review and complete» (`complete`), else a design of the book. */
+  | { kind: "active"; startedAt: string; chapters: number; rounds: DesignRound[]; maxRounds: number; target?: number; mode: DesignMode }
   /** The director approved the design: it waits for the author. */
-  | { kind: "ready"; startedAt: string; chapters: number; rounds: DesignRound[]; maxRounds: number; target?: number; endedAt: string; outcome: Exclude<DesignOutcome, "author"> }
+  | { kind: "ready"; startedAt: string; chapters: number; rounds: DesignRound[]; maxRounds: number; target?: number; endedAt: string; outcome: Exclude<DesignOutcome, "author">; mode: DesignMode }
   /** The author ended the design and the autopilot went on to write. */
-  | { kind: "ended"; startedAt: string; endedAt: string };
+  | { kind: "ended"; startedAt: string; endedAt: string; mode: DesignMode };
 
 export function designStatusOf(state: Pick<AutopilotState, "design"> | null | undefined): DesignStatus {
   const design = state?.design;
   if (!design) return { kind: "none" };
-  const common = { startedAt: design.startedAt, chapters: design.chapters, rounds: design.rounds, maxRounds: designMaxRounds(design), ...(design.review?.targetScore !== undefined ? { target: design.review.targetScore } : {}) };
+  const mode: DesignMode = design.mode === "complete" ? "complete" : "plan";
+  const common = { startedAt: design.startedAt, chapters: design.chapters, rounds: design.rounds, maxRounds: designMaxRounds(design), ...(design.review?.targetScore !== undefined ? { target: design.review.targetScore } : {}), mode };
   if (!design.endedAt) return { kind: "active", ...common };
-  if (design.outcome === "author" || !design.outcome) return { kind: "ended", startedAt: design.startedAt, endedAt: design.endedAt };
+  if (design.outcome === "author" || !design.outcome) return { kind: "ended", startedAt: design.startedAt, endedAt: design.endedAt, mode };
   return { kind: "ready", ...common, endedAt: design.endedAt, outcome: design.outcome };
 }
 
 /** The release of the personal server that designs a book (`autopilot-design`: `design` in the start of a run). */
 export const DESIGN_SERVER_VERSION = "0.1.20";
 
-/** Why the design of the book cannot begin now, or `null`: a book needs a description, and no chapter written by the autopilot. */
+/**
+ * Why the design of the book cannot begin now, or `null`: a book needs a description or chapters of the author's (the description for a design of the book, the
+ * chapters for «Review and complete»), and no chapter written by the autopilot.
+ */
 export type DesignBlock = "description" | "written" | "server";
 
-export function designBlockOf(input: { description: string; state: Pick<AutopilotState, "plan"> | null | undefined; serverWithoutDesign?: boolean }): DesignBlock | null {
-  if (!input.description.trim()) return "description";
+export function designBlockOf(input: { description: string; state: Pick<AutopilotState, "plan"> | null | undefined; serverWithoutDesign?: boolean; authorChapters?: number }): DesignBlock | null {
+  if (!input.description.trim() && !input.authorChapters) return "description";
   if ((input.state?.plan?.chapters ?? []).some((chapter) => !chapter.imported && chapter.scenes.some((scene) => scene.status !== "planned"))) return "written";
   if (input.serverWithoutDesign) return "server";
   return null;
 }
 
-/** The form of the dialog «Design the book»: the chapters, the readers, and the review fields of a run (the money cap is the book's). */
+/**
+ * Why a mode of the design cannot run now, or `null`: «Design the book» needs a description, «Review and complete» chapters of the author's and, on a personal server,
+ * one that knows it.
+ */
+export type DesignModeBlock = "description" | "chapters" | "server";
+
+export function designModeBlockOf(mode: DesignMode, input: { description: string; choice: Pick<DesignModeChoice, "written">; serverWithoutComplete?: boolean }): DesignModeBlock | null {
+  if (mode === "plan") return input.description.trim() ? null : "description";
+  if (!input.choice.written.length) return "chapters";
+  return input.serverWithoutComplete ? "server" : null;
+}
+
+/** The mode the dialog offers first: the one the book's Synopsis suggests (`designModeChoice`), unless it cannot run while the other can. */
+export function initialDesignMode(choice: DesignModeChoice, input: { description: string; serverWithoutComplete?: boolean }): DesignMode {
+  const suggested = choice.mode;
+  const other: DesignMode = suggested === "complete" ? "plan" : "complete";
+  if (designModeBlockOf(suggested, { ...input, choice }) && !designModeBlockOf(other, { ...input, choice })) return other;
+  return suggested;
+}
+
+/** The form of the dialog «Design the book»: the mode, the chapters, the readers, and the review fields of a run (the money cap is the book's). */
 export interface DesignForm extends ReviewForm {
+  mode?: DesignMode;
   chapters: string;
   readers: boolean;
 }
@@ -121,14 +151,18 @@ export function defaultDesignChapters(entries: number): number {
   return entries > 0 ? entries : 12;
 }
 
-/** What the form says, checked: the chapters (whole, from the entries the Synopsis has to 500) and the review. */
+/**
+ * What the form says, checked: the chapters (whole, from the entries the Synopsis has to 500) and the review. «Review and complete» takes no chapters: it reviews the
+ * ones the Synopsis has.
+ */
 export function readDesignForm(form: DesignForm, entries: number): { input: DesignStartInput; budgetLimit: number; readers: boolean; valid: boolean; chaptersProblem: "number" | "range" | null; review: ReturnType<typeof readReviewForm> } {
   const review = readReviewForm(form);
+  const complete = form.mode === "complete";
   const typed = Number(form.chapters.trim());
-  const chaptersProblem = !form.chapters.trim() || !Number.isInteger(typed) ? "number" : typed < Math.max(1, entries) || typed > 500 ? "range" : null;
+  const chaptersProblem = complete ? null : !form.chapters.trim() || !Number.isInteger(typed) ? "number" : typed < Math.max(1, entries) || typed > 500 ? "range" : null;
   const policy = { ...(review.policy.targetScore !== undefined ? { targetScore: review.policy.targetScore } : {}), ...(review.policy.maxRounds !== undefined ? { maxRounds: review.policy.maxRounds } : {}), ...(review.policy.readerRounds !== undefined ? { readerRounds: review.policy.readerRounds } : {}) };
   return {
-    input: { ...(chaptersProblem ? {} : { chapters: typed }), review: Object.keys(policy).length ? policy : null },
+    input: { ...(complete ? { mode: "complete" as const } : chaptersProblem ? {} : { chapters: typed }), review: Object.keys(policy).length ? policy : null },
     budgetLimit: review.budgetLimit,
     readers: form.readers,
     valid: review.valid && !chaptersProblem,
@@ -139,21 +173,13 @@ export function readDesignForm(form: DesignForm, entries: number): { input: Desi
 
 // ─── The author's approval ────────────────────────────────────────────────────
 
-/** The key of `outline/book.md` that keeps the author's approval of a design: when, and which design run it approves (`state.design.startedAt`). */
-export const DESIGN_APPROVED_KEY = "design_approved";
-
-export interface DesignApproval {
-  at: string;
-  /** The design run it approves; another run (the design made again) is not approved by it. */
-  run: string;
-}
+/** The key of `outline/book.md` that keeps the author's approval of a design (the engine's: the writing autopilot reads it, `readDesignApproval`). */
+export { DESIGN_APPROVED_KEY };
+export type { DesignApproval };
 
 export function designApprovalOf(bookFile: string | undefined): DesignApproval | null {
   if (!bookFile) return null;
-  const value = parseMarkdown(bookFile).frontmatter[DESIGN_APPROVED_KEY];
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  return typeof record.at === "string" && typeof record.run === "string" ? { at: record.at, run: record.run } : null;
+  return readDesignApproval(parseMarkdown(bookFile).frontmatter);
 }
 
 /**

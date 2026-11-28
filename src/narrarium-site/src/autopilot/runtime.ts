@@ -24,6 +24,8 @@ import {
   type AutopilotSnapshot,
   type BookCorrectionsDecision,
   type DesignPitchChoice,
+  type DesignProposalsDecision,
+  type DesignProposalsResult,
   type EvaluationTarget,
   type FindingDecisionInput,
   type FrozenAction,
@@ -65,6 +67,7 @@ import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
 import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
 import { AutopilotRulesUnsupportedError, serverEditsRules } from "@/autopilot/rules";
 import { AutopilotFrozenUnsupportedError, frozenErrorCode, serverHasFrozenChapters } from "@/autopilot/frozenChapters";
+import { AutopilotDesignCompleteUnsupportedError, serverHasDesignComplete } from "@/autopilot/designComplete";
 import { AutopilotAnnotationsUnsupportedError, AutopilotCampaignRefusedError, AutopilotOutlineApplyUnsupportedError, AutopilotReviewBookRoundUnsupportedError, AutopilotReviewTargetsUnsupportedError, AutopilotReviewUnsupportedError, campaignRefusal, serverHasAnnotations, serverHasOutlineApply } from "@/autopilot/campaign";
 import { serverHasReviewBook } from "@/autopilot/reviewPolicy";
 import { AutopilotDesignRefusedError, AutopilotDesignReviewUnsupportedError, designRefusal, designRefusalText } from "@/autopilot/designReview";
@@ -1127,6 +1130,33 @@ export class BrowserAutopilotRuntime {
     }
   }
 
+  /**
+   * Apply the proposals of «Review and complete» the author chose: the engine's `applyDesignProposals`, one commit. The same ways as `reviseChapters`: a book run by another
+   * tab of this browser is asked through that tab; on the personal server the author's latest edits are handed to it first, a server that predates «Review and complete» is
+   * not asked (`AutopilotDesignCompleteUnsupportedError`), and what it wrote comes back. Nothing is started.
+   */
+  applyDesignProposals(bookId: string, decision: DesignProposalsDecision): Promise<DesignProposalsResult> {
+    return this.operations.run(bookId, "campaign", async () => {
+      const book = findBook(bookId);
+      if (autopilotHostOf(book) === "server") {
+        const { info } = await this.requireServer();
+        if (!serverHasDesignComplete(info)) throw new AutopilotDesignCompleteUnsupportedError();
+        await this.handToServer(book);
+        const { client } = await this.requireServer();
+        const result = await client.applyDesignProposals(book.id, decision);
+        await this.bringFromServer(book, client);
+        await this.refresh(bookId);
+        return result;
+      }
+      const session = this.localSession(book, resolveBookBranch(book));
+      const result = !session.running && await this.lockHeldElsewhere(book.id)
+        ? await this.relay(book.id, { type: "apply-design-proposals", input: decision }) as DesignProposalsResult
+        : await session.applyDesignProposals(decision);
+      await this.refresh(bookId);
+      return result;
+    });
+  }
+
   /** Cancel the chapters of the campaign that wait (the one being worked finishes): they are left for the author. The same ways as `reviseChapters`. */
   cancelRevisionCampaign(bookId: string): Promise<RevisionCampaignResult> {
     return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "cancel-campaign" }));
@@ -1272,7 +1302,7 @@ export class BrowserAutopilotRuntime {
     const session = this.sessions.get(bookId)?.session;
     if (!session?.running) return;
     try {
-      let result: boolean | RevisionCampaignResult | undefined;
+      let result: boolean | RevisionCampaignResult | DesignProposalsResult | undefined;
       if (command.type === "pause") {
         session.pause(command.mode);
         this.notePause(bookId, command.mode);
@@ -1289,6 +1319,7 @@ export class BrowserAutopilotRuntime {
       else if (command.type === "decide-book-corrections") result = await session.decideBookCorrections(command.input);
       else if (command.type === "revise-annotations") result = await session.reviseAnnotations(command.input);
       else if (command.type === "cancel-campaign") result = await session.cancelRevisionCampaign();
+      else if (command.type === "apply-design-proposals") result = await session.applyDesignProposals(command.input);
       else await session.intervene(command.input);
       this.post({ kind: "command-result", id, ok: true, ...(result === undefined ? {} : { result }) });
     } catch (error) {

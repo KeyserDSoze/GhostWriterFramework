@@ -402,15 +402,17 @@ export function withoutReaderTargets(options: AutopilotOptions): AutopilotOption
 
 /**
  * What a design run will cost (`StartOptions.design`): the concept when it is not done, the design of every chapter not written in batches, its reviews and the readers' readings
- * for the rounds of its policy, nothing written. `chapters` is the length the design asks for (the Synopsis gets the entries it lacks).
+ * for the rounds of its policy, nothing written. `chapters` is the length the design asks for (the Synopsis gets the entries it lacks); with `mode: "complete"` («Review and
+ * complete») it is the author's chapters it reviews, with no concept and no plan.
  */
-export function estimateDesign(sources: EstimateSources, state: AutopilotState | null, input: { chapters: number; maxRounds: number; readerRounds: number; readers: boolean; workflow?: DesignWorkflow }): RunEstimate {
+export function estimateDesign(sources: EstimateSources, state: AutopilotState | null, input: { chapters: number; maxRounds: number; readerRounds: number; readers: boolean; workflow?: DesignWorkflow; mode?: "complete" }): RunEstimate {
   const entries = sources.book.outline?.entries ?? 0;
-  const lastChapter = Math.max(sources.book.outline?.lastChapter ?? 0, input.chapters);
+  const lastChapter = input.mode === "complete" ? sources.book.outline?.lastChapter ?? input.chapters : Math.max(sources.book.outline?.lastChapter ?? 0, input.chapters);
   const book = { ...sources.book, outline: { entries, lastChapter, words: sources.book.outline?.words ?? 0 } };
   const options = { ...(state?.options ?? {}), readersOnPlan: input.readers };
   const progress: EstimateProgress = { conceptDone: state?.concept?.done === true || sources.book.designWritten === true };
-  return estimateRun({ ...sources, book, state, chapters: null }, { brief: state?.brief ?? DEFAULT_BRIEF, options: { ...DEFAULT_OPTIONS, ...options } }, { progress, design: { maxRounds: input.maxRounds, readerRounds: input.readerRounds, ...(input.workflow ? { workflow: input.workflow } : {}) } });
+  const design = { maxRounds: input.maxRounds, readerRounds: input.readerRounds, ...(input.workflow ? { workflow: input.workflow } : {}), ...(input.mode === "complete" ? { mode: "complete" as const, chapters: input.chapters } : {}) };
+  return estimateRun({ ...sources, book, state, chapters: null }, { brief: state?.brief ?? DEFAULT_BRIEF, options: { ...DEFAULT_OPTIONS, ...options } }, { progress, design });
 }
 
 // ─── What an author reads ────────────────────────────────────────────────────

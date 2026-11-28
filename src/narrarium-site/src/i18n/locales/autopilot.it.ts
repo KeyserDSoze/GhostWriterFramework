@@ -801,6 +801,7 @@ const autopilotIt = {
       designCoherence: "L'analisi della struttura ha trovato {{findings}} rilievi aperti, {{critical}} critici.",
       designProposals: "Alcuni rilievi riguardano capitoli scritti da te: il progetto propone modifiche e non li riscrive.",
       designReviewed: "La revisione del progetto su richiesta è finita.",
+      designCompletionReady: "Rivedi e completa ha finito: le sue proposte ti aspettano nello Studio della Sinossi.",
       budgetReached: "Tetto di spesa raggiunto: {{used}} spesi su {{limit}}. Alza il tetto per continuare.",
       tokenBudgetReached: "Tetto di token raggiunto: {{used}} token su {{limit}}. Alza il tetto per continuare.",
       longRetryWait: "Il passo non è riuscito dopo i tentativi ravvicinati: riprovo tra {{wait}} (ripartenza {{cycle}} di {{cycles}}).",
@@ -842,6 +843,9 @@ const autopilotIt = {
       final: "Il direttore valuta l'intero libro",
       "book-corrections": "Il direttore elenca le correzioni dell'intero libro",
       wildcards: "I Fuori dal coro guardano il progetto",
+      "design-complete": "Revisione e completamento dei tuoi capitoli",
+      "design-complete-reader": "Un lettore legge i tuoi capitoli e le proposte",
+      "design-complete-review": "Il direttore valuta i tuoi capitoli e le proposte",
       unknown: "Passo dell'autopilot",
     },
     designChoice: {
@@ -1193,6 +1197,9 @@ const autopilotIt = {
       result: "L'autopilota ha risposto a {{handled}} su {{notes}} in {{chapters}}.",
       resultCancelled: "Hai fermato la risposta dell'autopilota alle tue note: {{handled}} su {{notes}} hanno avuto risposta.",
       chipNotes: "{{handled}} note su {{notes}}",
+    },
+    designComplete: {
+      oldServer: "Il tuo server personale è precedente alla {{version}} e non sa rivedere e completare un libro: aggiornalo per farlo da qui.",
     },
     reviewBook: {
       title: "Rivedi di nuovo il libro",
