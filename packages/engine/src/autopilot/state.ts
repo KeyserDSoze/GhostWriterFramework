@@ -2,6 +2,7 @@ import { OUTLINE_BRIEF_DEFAULT, OUTLINE_BRIEF_WORDS_PER_SCENE } from "../book/ou
 import { isValidGhostwriterSlug } from "../book/paths.js";
 import { asArray, asBoolean, asInteger, asNumber, asOneOf, asRecord, asString, asStringList } from "../util/json.js";
 import { clipText, countWords } from "../util/text.js";
+import { normalizeDesignReviews } from "./design-state.js";
 import { normalizeErrorDetail, normalizeErrorKind } from "./errors.js";
 import { normalizeReviewPolicy } from "./review-policy.js";
 import { AUTOPILOT_PUBLISH_MODES, BOOK_CORRECTIONS_MAX, BOOK_CORRECTION_CHANGE_CHARACTERS, BOOK_CORRECTION_REASON_CHARACTERS, BOOK_MATERIAL_CHARACTERS, BOOK_POINTS_MAX, BOOK_POINT_CHARACTERS, BOOK_ROUNDS_KEPT, BOOK_ROUND_MODES, DESIGN_DEFAULT_ROUNDS, FROZEN_CHANGE_ACTIONS, FROZEN_EDITS_MODES, LAST_ERROR_CODES, LONG_RETRY_MAX_CYCLES, LONG_RETRY_MAX_MINUTES, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, REVISION_CHAPTER_MODES, REVISION_CHAPTER_STATUSES, REVISION_REASONS } from "./types.js";
@@ -1113,11 +1114,13 @@ export function normalizeDesign(value: unknown): AutopilotDesign | undefined {
     const at = readMoment(round.at);
     if (score === undefined || !at) continue;
     const readers = readVote(round.readers);
+    const rubric = readVote(round.rubric);
     rounds.push({
       round: asInteger(round.round, rounds.length + 1, 1, REVIEW_MAX_CAMPAIGN_ROUNDS),
       score,
       verdict: round.verdict === "approve" ? "approve" : "revise",
       ...(readers !== undefined ? { readers } : {}),
+      ...(rubric !== undefined ? { rubric } : {}),
       critical: asInteger(round.critical, 0, 0, 1000),
       findings: asInteger(round.findings, 0, 0, 100_000),
       at,
@@ -1138,6 +1141,7 @@ export function normalizeDesign(value: unknown): AutopilotDesign | undefined {
     ...(source.escalated === true ? { escalated: true } : {}),
     ...(typeof source.pauseAfterPlan === "boolean" ? { pauseAfterPlan: source.pauseAfterPlan } : {}),
     ...(Object.keys(ledgers).length ? { ledgers } : {}),
+    ...normalizeDesignReviews(source),
   };
 }
 

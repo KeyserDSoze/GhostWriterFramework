@@ -1,5 +1,6 @@
 import type { AiJsonSchema } from "../ai/types.js";
 import { languageName } from "../util/text.js";
+import { designRubricProperty } from "./design-rubric.js";
 
 const string = { type: "string" } as const;
 const strings = { type: "array", items: { type: "string" } } as const;
@@ -458,6 +459,28 @@ export const DESIGN_REVIEW_TOOL: AiJsonSchema = {
     required: [...(PLAN_REVIEW_TOOL.parameters.required as string[]), "critical", "counterProposal"],
   },
 };
+
+/** The tool with more properties, which the reply must all have. */
+function withRequired(tool: AiJsonSchema, properties: Record<string, unknown>): AiJsonSchema {
+  return {
+    ...tool,
+    parameters: {
+      ...tool.parameters,
+      properties: { ...(tool.parameters.properties as Record<string, unknown>), ...properties },
+      required: [...(tool.parameters.required as string[]), ...Object.keys(properties)],
+    },
+  };
+}
+
+/** The reader's reaction to a design, with the rubric of the twelve criteria when the design asks for it. */
+export function designReactionTool(rubric: boolean): AiJsonSchema {
+  return rubric ? withRequired(DESIGN_REACTION_TOOL, { rubric: designRubricProperty("all") }) : DESIGN_REACTION_TOOL;
+}
+
+/** The director's review of a design, with the rubric of the twelve criteria when the design asks for it. */
+export function designReviewTool(rubric: boolean): AiJsonSchema {
+  return rubric ? withRequired(DESIGN_REVIEW_TOOL, { rubric: designRubricProperty("all") }) : DESIGN_REVIEW_TOOL;
+}
 
 /** The role of the architect in a design run: the Brainstormer of the writers' room. */
 export const DESIGN_ARCHITECT_ROLE = [

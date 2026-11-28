@@ -5,6 +5,7 @@ import type { AiErrorBody } from "../ai/provider-error.js";
 import type { AiAttemptThinking, AiThinkingWhy } from "../ai/request.js";
 import type { AiCallDropReason, AiCallStatus } from "./calls/types.js";
 import type { ChapterFreezeAuthor, FrozenChapterChanges } from "../book/freeze.js";
+import type { DesignRubrics } from "./design-review-types.js";
 
 /** Lifecycle of the autopilot of one book. */
 export type AutopilotStatus = "idle" | "running" | "paused" | "waiting-author" | "error" | "completed";
@@ -1098,11 +1099,22 @@ export interface DesignRound {
   critical: number;
   /** Findings of the deterministic checks (`designChecks`) when the review was made. */
   findings: number;
+  /** The mean of the director's twelve criteria (`DesignWorkflow.rubric`), when it scored them. */
+  rubric?: number;
   at: string;
 }
 
 /** How the design is reviewed (`AutopilotDesign.review`): the review policy's fields that apply to a plan. Absent: the director's approval score, three reviews, readers before the first. */
 export type DesignPolicy = Pick<ReviewPolicy, "targetScore" | "maxRounds" | "readerRounds">;
+
+/**
+ * What a design run does besides what every one does (`AutopilotDesign.workflow`): each part is off while it is absent, so that a design run asked without it is the
+ * one of every engine before it. `rubric`: the director and the readers score the twelve criteria of the rubric (`DESIGN_CRITERIA`), and what falls short is what a
+ * round rewrites.
+ */
+export interface DesignWorkflow {
+  rubric?: boolean;
+}
 
 /** The reviews of a design when the policy says nothing: the director looks at it up to three times, as at a plan. */
 export const DESIGN_DEFAULT_ROUNDS = 3;
@@ -1135,6 +1147,10 @@ export interface AutopilotDesign {
   pauseAfterPlan?: boolean;
   /** The fingerprint of the ledger (`secretLedgerDigest`) of every secret whose ledger the design wrote, by path: a ledger that changed since is the author's. */
   ledgers?: Record<string, string>;
+  /** What the run does besides the plain design (`DesignWorkflow`). Absent: nothing more. */
+  workflow?: DesignWorkflow;
+  /** The rubric of the subjects that were judged, with how their scores went (`DesignRubrics`). */
+  rubric?: DesignRubrics;
 }
 
 /** A design run asked with a start (`StartOptions.design`). */
@@ -1143,6 +1159,8 @@ export interface DesignStartInput {
   chapters?: number;
   /** How the design is reviewed: a value sets it, `null` takes it back (`ReviewPolicyUpdate`). */
   review?: ReviewPolicyUpdate | null;
+  /** What the run does besides the plain design: a value sets it, `null` takes it back (`DesignWorkflow`). */
+  workflow?: DesignWorkflow | null;
 }
 
 /** What a summary says of the design run (`AutopilotStateSummary.design`). */

@@ -10,6 +10,7 @@ import { parseMarkdown } from "../markdown/frontmatter.js";
 import type { DirectorProfile } from "../profiles/director.js";
 import { isItalian } from "../util/text.js";
 import { isPlannedChapterWritten } from "./chapter-state.js";
+import { readWorkflowInput } from "./design-state.js";
 import { normalizeReviewPolicy } from "./review-policy.js";
 import { MAX_BOOK_CHAPTERS, designActive, designMaxRounds } from "./state.js";
 import { DESIGN_BATCH_CHAPTERS, type AutopilotDesign, type AutopilotState, type DesignOutcome, type DesignPolicy, type DesignStartInput } from "./types.js";
@@ -47,8 +48,8 @@ export function normalizeDesignStart(value: unknown): DesignStartInput | false |
   if (value === true) return {};
   if (typeof value !== "object" || Array.isArray(value)) throw new AutopilotDesignError("invalid_request", "design must be true, false or { chapters?, review? }.");
   const source = value as Record<string, unknown>;
-  const unknown = Object.keys(source).filter((key) => key !== "chapters" && key !== "review");
-  if (unknown.length) throw new AutopilotDesignError("invalid_request", `design does not take ${unknown.map((key) => `«${key}»`).join(", ")}: it takes chapters and review.`);
+  const unknown = Object.keys(source).filter((key) => key !== "chapters" && key !== "review" && key !== "workflow");
+  if (unknown.length) throw new AutopilotDesignError("invalid_request", `design does not take ${unknown.map((key) => `«${key}»`).join(", ")}: it takes chapters, review and workflow.`);
   const input: DesignStartInput = {};
   if (source.chapters !== undefined) {
     const chapters = source.chapters;
@@ -63,6 +64,14 @@ export function normalizeDesignStart(value: unknown): DesignStartInput | false |
       throw new AutopilotDesignError("invalid_request", "design.review takes targetScore, maxRounds and readerRounds.");
     }
     input.review = source.review as DesignStartInput["review"];
+  }
+  if (source.workflow !== undefined) {
+    if (source.workflow === null) input.workflow = null;
+    else {
+      const read = readWorkflowInput(source.workflow);
+      if ("error" in read) throw new AutopilotDesignError("invalid_request", read.error);
+      input.workflow = read.workflow;
+    }
   }
   return input;
 }
@@ -111,6 +120,7 @@ export function beginDesign(state: AutopilotState, input: DesignStartInput, cont
   const next: AutopilotState = structuredClone(state);
   const pauseAfterPlan = going?.pauseAfterPlan ?? state.options.pauseAfterPlan;
   next.options = { ...next.options, pauseAfterPlan: true };
+  const workflow = input.workflow === null ? undefined : input.workflow ?? previous?.workflow;
   const design: AutopilotDesign = {
     startedAt: going?.startedAt ?? context.now,
     chapters,
@@ -119,6 +129,8 @@ export function beginDesign(state: AutopilotState, input: DesignStartInput, cont
     ...(going?.escalated ? { escalated: true } : {}),
     pauseAfterPlan,
     ...(previous?.ledgers ? { ledgers: previous.ledgers } : {}),
+    ...(workflow && Object.keys(workflow).length ? { workflow } : {}),
+    ...(previous?.rubric ? { rubric: previous.rubric } : {}),
   };
   next.design = design;
   if (!going && next.plan) {

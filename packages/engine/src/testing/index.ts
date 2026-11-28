@@ -1,4 +1,5 @@
 import type { AiPort, AiRequest, AiResponse } from "../ai/types.js";
+import { DESIGN_CRITERIA } from "../autopilot/design-review-types.js";
 import { BookConflictError, type BookCommitResult, type BookFileChange, type BookFileContent, type BookFileEntry, type BookStore } from "../book/store.js";
 import { sha256Hex } from "../util/hash.js";
 
@@ -117,6 +118,28 @@ export interface FakeAiOptions {
   wildcardIdeas?: (name: string, user: string) => unknown;
   /** The Director's triage of the room's ideas, by their ids (default: the first adopted, the second adapted, the others rejected). */
   wildcardTriage?: (ids: string[], user: string) => unknown;
+  /** The reply to a request, before the defaults (return `undefined` to leave it to them): a test says what a step gets. */
+  answer?: (request: AiRequest) => unknown;
+  /**
+   * The score of the twelve criteria of the rubric of a design (`subject`: `design` for the director, `reader:<slug>`; `round`: the number of the review), a number for
+   * all of them or one by criterion (default 7.5). Added to every reply that asks for the rubric and has none.
+   */
+  designRubric?: (subject: string, round: number) => number | Record<string, number>;
+}
+
+/** The rubric of a reply: the twelve criteria with their scores (a number for all, or one by criterion), the weak ones with an issue and a proposal. */
+export function fakeRubric(scores: number | Record<string, number> = 7.5, options: { applicable?: boolean } = {}): Array<Record<string, unknown>> {
+  return DESIGN_CRITERIA.map((criterion) => {
+    const score = typeof scores === "number" ? scores : scores[criterion] ?? 7.5;
+    return {
+      criterion,
+      ...(options.applicable ? { applicable: true } : {}),
+      score,
+      reason: `A fair ${criterion}.`,
+      issues: score < 7 ? [`The ${criterion} is weak.`] : [],
+      proposals: score < 7 ? [`Strengthen the ${criterion}.`] : [],
+    };
+  });
 }
 
 function prose(words: number, seed: string): string {
@@ -145,6 +168,18 @@ function firstQuote(user: string): string {
 export function createFakeAutopilotAi(options: FakeAiOptions = {}): AiPort & { calls: AiRequest[] } {
   const calls: AiRequest[] = [];
   const respond = (request: AiRequest): unknown => {
+    const custom = options.answer?.(request);
+    const reply = custom !== undefined ? custom : answerOf(request);
+    const properties = (request.json?.parameters?.properties ?? {}) as Record<string, unknown>;
+    if (reply && typeof reply === "object" && !Array.isArray(reply) && "rubric" in properties && !("rubric" in reply)) {
+      const slug = /^autopilot:plan-reader:(.+)$/.exec(request.label)?.[1];
+      const round = Number(/review (\d+) of at most/.exec(request.user)?.[1] ?? "1");
+      const asked = options.designRubric?.(slug ? `reader:${slug}` : "design", round) ?? 7.5;
+      return { ...reply, rubric: fakeRubric(asked) };
+    }
+    return reply;
+  };
+  const answerOf = (request: AiRequest): unknown => {
     const user = request.user;
     switch (request.json?.name) {
       case "book_concept":

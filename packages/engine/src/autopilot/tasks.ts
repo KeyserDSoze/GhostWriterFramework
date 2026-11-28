@@ -98,6 +98,8 @@ import { readerGate, reviewBookRound, reviewMaxRounds, reviewReaderTargets, revi
 import { blockersText, readerStanding } from "./review-readers.js";
 import { PLAN_BATCH_CHAPTERS, SCENES_PER_CHAPTER, batchesNamed, firstMissingChapter, importedChapters, isExtensionNote, nextPlanBatch, planRange, revisionBatchStarts, sceneFile, scenesForChapter, type TaskDescriptor } from "./planner.js";
 import { designFindingsInsight, designLastRound, designPlateau, designReaderRounds, designTarget, endDesign, loadDesignCheckInput, planBatchChapters } from "./design.js";
+import { DESIGN_RUBRIC_NOTES, DESIGN_RUBRIC_TOKENS, designRubricRule, readDesignRubric, recordRubric, rubricLine, rubricOverall, rubricProposals } from "./design-rubric.js";
+import { designFlow } from "./design-state.js";
 import { outlineDesignGaps } from "./outline-check.js";
 import {
   CHAPTER_REVIEW_TOOL,
@@ -109,10 +111,10 @@ import {
   DESIGN_DIRECTOR_RULES,
   DESIGN_LEDGER_RULE,
   DESIGN_PLAN_TOOL,
-  DESIGN_REACTION_TOOL,
   DESIGN_READER_ROLE,
-  DESIGN_REVIEW_TOOL,
   designArchitectSystem,
+  designReactionTool,
+  designReviewTool,
   FINDINGS_TOOL,
   IMPACT_TOOL,
   PLAN_REACTION_TOOL,
@@ -1272,6 +1274,7 @@ async function runPlanReader(ctx: TaskContext): Promise<TaskResult> {
   const design = await readBody(ctx.store, STORY_DESIGN_FILE, 2500);
   // A reader of a design reads the design of every chapter, and must contest it as well as judge it.
   const designing = designActive(ctx.state);
+  const rubric = designing && designFlow(ctx.state.design).rubric;
   const designSections = designing ? [...(await designContext(ctx)).sections.filter((section) => !section.startsWith("GHOSTWRITER")), await designedEntriesSection(ctx, undefined, undefined, "THE DESIGN OF EVERY CHAPTER")] : [];
   const asked = await readerReply(ctx, ctx.ai({
     capability: AI_CAPABILITIES.reader,
@@ -1281,21 +1284,25 @@ async function runPlanReader(ctx: TaskContext): Promise<TaskResult> {
       : `${readerPersonaSystemPrompt(reader, languageName(ctx.language), "brief")}\n\nYou are reading the pitch and the chapter plan of a novel that is not written yet. React honestly as this reader would.`,
     user: `${request([designing
       ? "React as this reader: would you read this book? What excites you, what worries you, what is predictable, inconsistent, superfluous or dull, and what would you do instead?"
-      : "React as this reader: would you read this book? What excites you, what worries you, what would you wish for?"])}\n\n${data([
+      : "React as this reader: would you read this book? What excites you, what worries you, what would you wish for?", ...(rubric ? designRubricRule("all") : [])])}\n\n${data([
       bookHeader(ctx),
       ctx.state.brief.idea ? `PITCH:\n${ctx.state.brief.idea}` : "",
       design ? `PREMISE:\n${design}` : "",
       listSection("CHAPTER PLAN", outlineList(plan, { around: planFocus(plan) })),
       ...designSections,
     ])}`,
-    json: designing ? DESIGN_REACTION_TOOL : PLAN_REACTION_TOOL,
-    maxOutputTokens: outputLimit(ctx, designing ? 2500 : 1500),
-  }), (response) => requireStructuredFields(response.json, designing ? { interest: "score", reaction: "text", counterProposal: "text" } : { interest: "score", reaction: "text" }, "The reader's reaction"));
+    json: designing ? designReactionTool(rubric) : PLAN_REACTION_TOOL,
+    maxOutputTokens: outputLimit(ctx, (designing ? 2500 : 1500) + (rubric ? DESIGN_RUBRIC_TOKENS : 0)),
+  }), (response) => {
+    const fields = requireStructuredFields(response.json, designing ? { interest: "score", reaction: "text", counterProposal: "text" } : { interest: "score", reaction: "text" }, "The reader's reaction");
+    return { fields, scores: rubric ? readDesignRubric(fields.rubric, { subject: "The reader's reaction", mode: "all" }) : null };
+  });
   if ("skipped" in asked) {
     plan.skippedReaders = [...new Set([...(plan.skippedReaders ?? []), reader.slug])];
     return skipReader(ctx, reader.name, asked.skipped);
   }
-  const output = asked.value;
+  const output = asked.value.fields;
+  if (asked.value.scores) ctx.state.design!.rubric = recordRubric(ctx.state.design!.rubric, `reader:${reader.slug}`, asked.value.scores, { round: plan.rounds + 1, at: ctx.now().toISOString() }, { whole: true });
   const counterProposal = designing ? asString(output.counterProposal) : "";
   const reaction = {
     slug: reader.slug,
@@ -1435,6 +1442,7 @@ async function approvedPlanChanges(ctx: TaskContext, plan: AutopilotPlan): Promi
 async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
   const plan = ctx.state.plan!;
   const design = ctx.state.design!;
+  const flow = designFlow(design);
   const italian = isItalian(ctx.language);
   await assertRewritable(ctx, await secretsToPlace(ctx, plan));
   const outline = outlineOf(ctx);
@@ -1474,7 +1482,7 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
       entriesSection,
       findings.length ? `DESIGN CHECKS (found without a model):\n${findings.slice(0, 30).map((finding) => `- ${findingText(finding, "en")}`).join("\n")}${findings.length > 30 ? `\n- … and ${findings.length - 30} more` : ""}` : "DESIGN CHECKS (found without a model): nothing.",
       plan.readerReactions.length
-        ? `SIMULATED READERS:\n${plan.readerReactions.map((reaction) => `- ${reaction.name} (weight ${ctx.director.readerWeights[reaction.slug] ?? 1}): ${reaction.interest}/10 — ${reaction.reaction}${reaction.concerns.length ? ` Concerns: ${reaction.concerns.join("; ")}.` : ""}${reaction.wishes.length ? ` Wishes: ${reaction.wishes.join("; ")}.` : ""}`).join("\n")}`
+        ? `SIMULATED READERS:\n${plan.readerReactions.map((reaction) => `- ${reaction.name} (weight ${ctx.director.readerWeights[reaction.slug] ?? 1}): ${reaction.interest}/10 — ${reaction.reaction}${reaction.concerns.length ? ` Concerns: ${reaction.concerns.join("; ")}.` : ""}${reaction.wishes.length ? ` Wishes: ${reaction.wishes.join("; ")}.` : ""}${flow.rubric && design.rubric?.[`reader:${reaction.slug}`] ? ` Rubric: ${rubricLine(design.rubric[`reader:${reaction.slug}`].latest)}.` : ""}`).join("\n")}`
         : "",
       wildcards ? `THE ROOM'S IDEAS YOU ACCEPTED (before this review):\n${wildcards}` : "",
     ], request([
@@ -1482,18 +1490,20 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
       wildcards ? "Before this review the wildcards of the room read the design and you accepted some of their ideas (THE ROOM'S IDEAS YOU ACCEPTED, in the data): fold them into your review, as changes of the chapters they touch, unless the design already answers them. They are advisory: they never decide your verdict or your score." : "",
       `Approve when the design delivers the brief and the vision with a satisfying shape and deserves ${target}/10 or more; otherwise list precise changes chapter by chapter. Weigh the simulated readers by their weights: do not chase every opinion.`,
       ...DESIGN_DIRECTOR_RULES,
+      ...(flow.rubric ? designRubricRule("all") : []),
       view.any ? "The author's outline (AUTHOR'S OUTLINE, in the data) binds the design: never ask to change its chapters, their order, their titles or their events; ask only for what enriches them." : "",
       style.rule,
       lastRound ? "This is the final review of the design: approve it unless a critical inconsistency is left, and turn anything still imperfect into standing guidance." : "",
       ctx.director.autonomy === "full" ? "Never ask the author a question of taste: decide." : "Ask the author (questionForAuthor) only for a critical choice you cannot settle from the vision and the author's rules.",
       authorRules(ctx, false),
     ])),
-    json: DESIGN_REVIEW_TOOL,
-    maxOutputTokens: outputLimit(ctx, 5000),
+    json: designReviewTool(flow.rubric),
+    maxOutputTokens: outputLimit(ctx, 5000 + (flow.rubric ? DESIGN_RUBRIC_TOKENS : 0)),
   });
   // Without a verdict and a score the design is never approved by default.
   const output = requireStructuredFields(response.json, { verdict: "text", score: "score" }, "The director's review of the design");
   const verdictGiven = verdictOf(output.verdict, "The director's review of the design");
+  const rubricScores = flow.rubric ? readDesignRubric(output.rubric, { subject: "The director's review of the design", mode: "all" }) : null;
   const score = Math.round(normalizeScore(output.score)! * 10) / 10;
   const summaryText = asString(output.summary);
   const counterProposal = asString(output.counterProposal);
@@ -1510,7 +1520,9 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
   const interests = plan.readerReactions.map((reaction) => reaction.interest);
   const readers = interests.length ? Math.round((interests.reduce((sum, value) => sum + value, 0) / interests.length) * 10) / 10 : undefined;
   const at = ctx.now().toISOString();
-  design.rounds = [...design.rounds, { round: roundNumber, score, verdict: "revise", ...(readers !== undefined ? { readers } : {}), critical: critical.length, findings: findings.length, at }];
+  const rubricOverallScore = rubricScores ? rubricOverall(rubricScores) : null;
+  design.rounds = [...design.rounds, { round: roundNumber, score, verdict: "revise", ...(readers !== undefined ? { readers } : {}), critical: critical.length, findings: findings.length, ...(rubricOverallScore !== null ? { rubric: rubricOverallScore } : {}), at }];
+  if (rubricScores) design.rubric = recordRubric(design.rubric, "design", rubricScores, { round: roundNumber, at }, { whole: true });
   const plateau = designPlateau(design);
   // A score alone never approves: the target and no critical inconsistency; or nothing left to change at all.
   let outcome: DesignOutcome | null = null;
@@ -1549,7 +1561,7 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
     ctx.insight(tone, title, [summaryText, leftDetail].filter(Boolean).join("\n"), { code: "designReady", figures: { ...figures, designOutcome: outcome, chapters } });
   } else {
     plan.rounds += 1;
-    plan.revisionNotes = [...criticalNotes, ...changesRequested];
+    plan.revisionNotes = [...criticalNotes, ...changesRequested, ...(rubricScores ? rubricProposals(rubricScores, DESIGN_RUBRIC_NOTES).map((note) => `${italian ? "Criterio debole" : "Weak criterion"} — ${note}`) : [])];
     plan.revisionBatches = batchesNamed(range, [...critical, ...requested].map((change) => change.chapterNumber), size);
     // The readers read the design again before the next review while the policy says so.
     if (plan.rounds < designReaderRounds(ctx.state)) {
