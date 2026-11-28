@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.140.0",
+    "date": "2026-11-28",
+    "en": {
+      "title": "The Bible keeps the book's decisions, lock the ones that must not change, and the design is checked for what does not hold together",
+      "summary": "The Bible tab of the Synopsis now holds the decisions of the book, its open questions, its setups and payoffs, its timeline and guidelines, a table of every chapter's design and the checks of that design. A decision you lock binds the design run, the writing autopilot, Brainstorming and the Copilot.",
+      "changes": [
+        "Decisions: capture what you settle (with the chapters it covers and the phrases it forbids) and lock it. A locked decision is told to every agent; a change that goes against it is held and put to you («Apply it anyway» or «Leave it») instead of being applied, and the autopilot stops and names the decision. Only you lock: what an agent captures stays open.",
+        "Open questions: the director's questions about the story, Brainstorming's and the Copilot's are listed in the Bible; you answer them, and can record the answer as a locked decision.",
+        "Tone and audience, setups and payoffs (what the story plants and must pay off), the timeline in the order of its dates and the guidelines are shown and edited in the Bible.",
+        "A table shows the design of every chapter at once (the 17 fields), with the gaps in the needed fields marked in words and filters by text, gap and finding.",
+        "New checks, found without a model and shown with their severity and chapter in the Bible and the Studio: a secret told too early or named by a clue, a character acting on a secret before learning it, a setup never paid, dates and places that clash, names the canon does not have. «Check the written chapters» reads what is already written and lists sentences that state a secret before its reveal; the director's chapter review gets the same evidence.",
+        "Brainstorming knows the locked decisions, flags a proposal that touches one, and can capture decisions and questions for the Bible. The MCP endpoint of a book gets read_bible, read_design and edit_bible, and autopilot_resume can design the book."
+      ]
+    },
+    "it": {
+      "title": "La Bibbia tiene le decisioni del libro, blocca quelle che non devono cambiare, e il progetto viene controllato per ciò che non regge",
+      "summary": "La scheda Bibbia della Sinossi ora contiene le decisioni del libro, le domande aperte, le preparazioni e le chiusure, la cronologia e le linee guida, una tabella del progetto di ogni capitolo e i controlli su quel progetto. Una decisione che blocchi vincola l'esecuzione del progetto, l'autopilot di scrittura, il Brainstorming e il Copilot.",
+      "changes": [
+        "Decisioni: registra ciò che stabilisci (con i capitoli che copre e le frasi che vieta) e bloccalo. Una decisione bloccata viene detta a ogni agente; una modifica che la contraddice viene fermata e chiesta a te («Applicala comunque» o «Lasciala») invece di essere applicata, e l'autopilot si ferma e nomina la decisione. Solo tu blocchi: ciò che un agente registra resta aperto.",
+        "Domande aperte: le domande del direttore sulla storia, quelle del Brainstorming e del Copilot sono elencate nella Bibbia; rispondi tu, e puoi registrare la risposta come decisione bloccata.",
+        "Tono e pubblico, preparazioni e chiusure (ciò che la storia pianta e deve chiudere), la cronologia nell'ordine delle sue date e le linee guida si vedono e si modificano nella Bibbia.",
+        "Una tabella mostra il progetto di ogni capitolo in una volta (i 17 campi), con le lacune nei campi richiesti segnate a parole e filtri per testo, lacuna e rilievo.",
+        "Nuovi controlli, trovati senza modello e mostrati con gravità e capitolo nella Bibbia e nello Studio: un segreto detto troppo presto o nominato da un indizio, un personaggio che agisce su un segreto prima di scoprirlo, una preparazione mai chiusa, date e luoghi in contrasto, nomi che il canone non ha. «Controlla i capitoli scritti» legge ciò che è già scritto ed elenca le frasi che dicono un segreto prima della rivelazione; la revisione del direttore sul capitolo riceve la stessa prova.",
+        "Il Brainstorming conosce le decisioni bloccate, segnala una proposta che ne tocca una e può registrare decisioni e domande per la Bibbia. L'endpoint MCP di un libro ha read_bible, read_design ed edit_bible, e autopilot_resume può progettare il libro."
+      ]
+    }
+  },
+  {
     "version": "0.139.0",
     "date": "2026-11-28",
     "en": {
