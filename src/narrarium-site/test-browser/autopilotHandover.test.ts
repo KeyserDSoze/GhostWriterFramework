@@ -6,6 +6,7 @@ import {
   HandoverRefusedError,
   isHandoverCancellable,
   isHandoverOver,
+  type HandoverConsent,
   type HandoverPlan,
   type HandoverPorts,
   type HandoverSide,
@@ -31,6 +32,8 @@ interface Script {
 function fakePorts(initial: Partial<Script> = {}) {
   const script: Script = { host: "browser", running: true, controllable: true, pausePending: null, busy: null, fails: {}, ...initial };
   const log: string[] = [];
+  /** The consent that each check and each move was given, by call. */
+  const consents: Array<{ call: string; consent: HandoverConsent | undefined }> = [];
   const published: Array<HandoverPlan | null> = [];
   const waiters: Array<{ resolve: (outcome: RunOutcome) => void; reject: (error: unknown) => void }> = [];
   const ports: HandoverPorts = {
@@ -45,6 +48,7 @@ function fakePorts(initial: Partial<Script> = {}) {
     },
     prepareMove: async (_id, to, options) => {
       log.push(`prepare:${to}${options.limits ? ":limits" : ""}`);
+      consents.push({ call: `prepare:${to}`, consent: options.consent });
       if (script.fails.prepare) throw script.fails.prepare;
     },
     pause: async (_id, mode) => {
@@ -56,8 +60,9 @@ function fakePorts(initial: Partial<Script> = {}) {
       waiters.push({ resolve, reject });
       signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
     }),
-    move: async (_id, to) => {
+    move: async (_id, to, consent) => {
       log.push(`move:${to}`);
+      consents.push({ call: `move:${to}`, consent });
       if (script.fails.move) throw script.fails.move;
       script.host = to;
     },
@@ -73,6 +78,7 @@ function fakePorts(initial: Partial<Script> = {}) {
     ports,
     script,
     log,
+    consents,
     published,
     phases: () => published.map((plan) => plan?.phase ?? null),
     /** The run on the current side ends as `outcome` says. */
@@ -112,6 +118,64 @@ describe("the plan to move a running autopilot to the other side", () => {
     expect(fake.log).toEqual(["inspect", "prepare:server", "pause:after-step", "wait", "move:server", "start"]);
     expect(fake.phases()).toEqual(["armed", "moving", "starting", "done"]);
     expect(fake.script).toMatchObject({ host: "server", running: true });
+  });
+
+  it("the consent of the author travels with the plan: the check has it, and it is sent when the book moves, not before", async () => {
+    const consent: HandoverConsent = { sendAiConfiguration: true, sendGitHubToken: true };
+    const fake = fakePorts({ host: "browser", running: true });
+    const coordinator = new HandoverCoordinator(fake.ports);
+    await coordinator.arm(BOOK, { to: "server", consent });
+    // Waiting for the end of the step: the server was only asked whether it can take the book, and nothing was moved.
+    expect(fake.consents).toEqual([{ call: "prepare:server", consent }]);
+    expect(fake.log).not.toContain("move:server");
+
+    fake.endRun();
+    await coordinator.finished(BOOK);
+    expect(fake.consents).toEqual([{ call: "prepare:server", consent }, { call: "move:server", consent }]);
+  });
+
+  it("a plan that is taken back sends nothing: the consent was only held by the plan", async () => {
+    const fake = fakePorts({ host: "browser", running: true });
+    const coordinator = new HandoverCoordinator(fake.ports);
+    await coordinator.arm(BOOK, { to: "server", consent: { sendAiConfiguration: true, sendGitHubToken: true } });
+    expect(await coordinator.cancel(BOOK)).toBe(true);
+    expect(fake.log.some((entry) => entry.startsWith("move:"))).toBe(false);
+    expect(fake.consents.filter((entry) => entry.call.startsWith("move:"))).toEqual([]);
+    expect(coordinator.plan(BOOK)).toBeNull();
+  });
+
+  it("without a consent the plan asks for none: what the server lacks is refused before anything is paused, as it was", async () => {
+    const fake = fakePorts({ host: "browser", running: true });
+    const coordinator = new HandoverCoordinator(fake.ports);
+    await coordinator.arm(BOOK, { to: "server" });
+    expect(fake.consents).toEqual([{ call: "prepare:server", consent: undefined }]);
+    fake.endRun();
+    await coordinator.finished(BOOK);
+    expect(fake.consents[fake.consents.length - 1]).toEqual({ call: "move:server", consent: undefined });
+  });
+
+  it("the consent covers the move to the server only: the way back, and the check of the way back, carry none", async () => {
+    const consent: HandoverConsent = { sendAiConfiguration: true, sendGitHubToken: false };
+    const fake = fakePorts({ host: "browser", running: true });
+    const coordinator = new HandoverCoordinator(fake.ports);
+    await coordinator.arm(BOOK, { to: "server", returnAfterSteps: 1, consent });
+    fake.endRun();
+    await settle();
+    fake.endRun(STEP_LIMIT);
+    await coordinator.finished(BOOK);
+    expect(fake.consents).toEqual([
+      { call: "prepare:server", consent },
+      { call: "prepare:browser", consent: undefined },
+      { call: "move:server", consent },
+      { call: "move:browser", consent: undefined },
+    ]);
+  });
+
+  it("a consent given for a move to the browser is not carried: nothing is sent to a browser", async () => {
+    const fake = fakePorts({ host: "server", running: true });
+    const coordinator = new HandoverCoordinator(fake.ports);
+    await coordinator.arm(BOOK, { to: "browser", consent: { sendAiConfiguration: true, sendGitHubToken: true } });
+    expect(fake.consents).toEqual([{ call: "prepare:browser", consent: undefined }]);
   });
 
   it("server → browser after the step: the same, the other way round", async () => {

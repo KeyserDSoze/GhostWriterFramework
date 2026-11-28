@@ -26,12 +26,23 @@ export interface HandoverPlan {
   error?: string;
 }
 
+/**
+ * What the author agrees to send to the server when the book moves there. It is given by the author in the flow of "Where it runs", on the button that makes the plan:
+ * the quick commands never give it, and it is sent when the book moves (after the step), never before, so that a plan that is taken back has sent nothing.
+ */
+export interface HandoverConsent {
+  sendAiConfiguration: boolean;
+  sendGitHubToken: boolean;
+}
+
 /** What the author asks for. */
 export interface HandoverRequest {
   to: HandoverSide;
   /** `after-step` when it is not said. */
   when?: HandoverWhen;
   returnAfterSteps?: number;
+  /** For a move to the server: what the author consents to send. Without it the server must already have what a run needs, and the plan is refused when it does not. */
+  consent?: HandoverConsent;
 }
 
 /** The phases in which nothing more happens to the plan: it is over, or it has failed. */
@@ -96,12 +107,12 @@ export interface HandoverPorts {
    * Check, before anything is paused, that the book can go to `to`: the server is reachable and verified, it has the AI configuration and
    * the GitHub token a run needs (a handover never sends a secret by itself), and, when the run there is limited, it keeps the limit.
    */
-  prepareMove(bookId: string, to: HandoverSide, options: { limits: boolean }): Promise<void>;
+  prepareMove(bookId: string, to: HandoverSide, options: { limits: boolean; consent?: HandoverConsent }): Promise<void>;
   pause(bookId: string, mode: PauseCommand): Promise<void>;
   /** Resolves when the run of the book has ended, however it ended; `since` is when the plan began asking for it. Rejects when `signal` aborts, or when the run cannot be watched. */
   waitUntilStopped(bookId: string, signal: AbortSignal, since: number): Promise<RunOutcome>;
-  /** Move the files of the book and make `to` its host. It throws, and the book stays where it was, when it cannot. */
-  move(bookId: string, to: HandoverSide): Promise<void>;
+  /** Move the files of the book and make `to` its host, sending what the author consented to. It throws, and the book stays where it was, when it cannot. */
+  move(bookId: string, to: HandoverSide, consent?: HandoverConsent): Promise<void>;
   start(bookId: string, options?: { limits?: { steps: number } }): Promise<void>;
   /** What the screen shows of the plan of the book; `null` when there is none. */
   publish(bookId: string, plan: HandoverPlan | null): void;
@@ -123,6 +134,8 @@ interface HandoverEntry {
   askedPause: boolean;
   /** The pause the author had asked for before the plan (`after-chapter` is less strict than the plan's own, and has to be asked again). */
   pausedBefore: "after-step" | "after-chapter" | null;
+  /** What the author consented to send when the book moves to the server. */
+  consent?: HandoverConsent;
   finished: Promise<HandoverPlan>;
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -179,7 +192,8 @@ export class HandoverCoordinator {
       const returnAfterSteps = Number.isSafeInteger(request.returnAfterSteps) && (request.returnAfterSteps ?? 0) > 0 ? request.returnAfterSteps : undefined;
       const inspection = await this.ports.inspect(bookId);
       if (inspection.running && !inspection.controllable) throw new HandoverRefusedError("not-controllable");
-      await this.ports.prepareMove(bookId, request.to, { limits: returnAfterSteps !== undefined });
+      const consent = request.to === "server" ? request.consent : undefined;
+      await this.ports.prepareMove(bookId, request.to, { limits: returnAfterSteps !== undefined, ...(consent ? { consent } : {}) });
       if (returnAfterSteps !== undefined) await this.ports.prepareMove(bookId, from, { limits: false });
 
       const since = this.now();
@@ -199,7 +213,7 @@ export class HandoverCoordinator {
         ...(returnAfterSteps !== undefined ? { returnAfterSteps } : {}),
         phase: inspection.running ? (when === "now" ? "pausing" : "armed") : "moving",
       };
-      const entry: HandoverEntry = { plan, controller: new AbortController(), askedPause, pausedBefore: inspection.pausePending, finished: Promise.resolve(plan) };
+      const entry: HandoverEntry = { plan, controller: new AbortController(), askedPause, pausedBefore: inspection.pausePending, ...(consent ? { consent } : {}), finished: Promise.resolve(plan) };
       this.entries.set(bookId, entry);
       this.ports.publish(bookId, { ...plan });
       entry.finished = this.drive(bookId, entry, { from, wasRunning: inspection.running, since });
@@ -256,7 +270,7 @@ export class HandoverCoordinator {
         resume = endedByRequestedPause(outcome);
       }
       this.set(bookId, entry, { phase: "moving" });
-      await this.ports.move(bookId, to);
+      await this.ports.move(bookId, to, entry.consent);
       if (resume || returnAfterSteps !== undefined) {
         this.set(bookId, entry, { phase: "starting" });
         const since = this.now();

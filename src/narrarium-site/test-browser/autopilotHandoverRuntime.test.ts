@@ -22,7 +22,7 @@ vi.mock("@/repository/repositoryService", async (importOriginal) => ({
 import i18n from "@/i18n";
 import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { isHandoverConsentError } from "@/autopilot/handover";
-import { BrowserAutopilotRuntime } from "@/autopilot/runtime";
+import { AutopilotSetupError, BrowserAutopilotRuntime } from "@/autopilot/runtime";
 import { emptyView, useAutopilotStore } from "@/autopilot/store";
 import { useAuthStore } from "@/store/authStore";
 import { useSettingsStore } from "@/store/settingsStore";
@@ -75,7 +75,7 @@ const last = <T,>(items: readonly T[]): T | undefined => items[items.length - 1]
 const view = () => useAutopilotStore.getState().views[BOOK.id];
 const plan = () => view()?.handover ?? null;
 const hostOf = () => useSettingsStore.getState().settings.books[0].autopilotHost ?? "browser";
-const untilPhase = (phase: string) => vi.waitFor(() => expect(plan()?.phase, `the plan is ${plan()?.phase}`).toBe(phase), { timeout: 20_000 });
+const untilPhase = (phase: string) => vi.waitFor(() => expect(plan()?.phase, `the plan is ${plan()?.phase}${plan()?.error ? `: ${plan()?.error}` : ""}`).toBe(phase), { timeout: 20_000 });
 const idle = () => vi.waitFor(() => expect(runtime.isRunningHere(BOOK.id)).toBe(false), { timeout: 20_000 });
 
 /** The server says, in its live stream, that the run of the book ended. */
@@ -338,6 +338,95 @@ describe("browser → server", () => {
     expect(mocks.publish).toHaveBeenCalledTimes(1);
     expect(server.registered[0].input).toMatchObject({ storage: { kind: "github", owner: "acme", repo: "glass-harbor" } });
     expect(server.registered[0].input).not.toHaveProperty("githubToken");
+  });
+});
+
+describe("browser → server with the consent of the author in the plan (the flow of «Where it runs» for a run that goes on)", () => {
+  it("passes a running book to a server that has no AI configuration: nothing is sent while the step runs, the configuration is sent when the book moves, and the run goes on there", async () => {
+    server.aiConfigured = false;
+    const release = await startLocalRun();
+    await runtime.armHandover(BOOK.id, { to: "server", consent: { sendAiConfiguration: true, sendGitHubToken: false } }, { saveSettings: mocks.save });
+    expect(plan()).toMatchObject({ to: "server", when: "after-step", phase: "armed" });
+    // The step is in flight: the plan holds the consent, and the server has been sent no secret and has no book.
+    expect(server.count("putAiConfig")).toBe(0);
+    expect(server.registered).toEqual([]);
+
+    release();
+    await untilPhase("done");
+    expect(server.count("putAiConfig")).toBe(1);
+    expect(hostOf()).toBe("server");
+    expect(server.started).toEqual([{}]);
+  });
+
+  it("passes a running GitHub book to a server that has nothing of this device, and sends the token only when the book moves, after publishing it", async () => {
+    useBook(GITHUB_BOOK);
+    server.aiConfigured = false;
+    server.hasGithubToken = false;
+    const release = await startLocalRun(GITHUB_BOOK);
+    await runtime.armHandover(GITHUB_BOOK.id, { to: "server", consent: { sendAiConfiguration: true, sendGitHubToken: true } }, { saveSettings: mocks.save });
+    expect(plan()).toMatchObject({ to: "server", when: "after-step", phase: "armed" });
+    expect(server.count("putAiConfig")).toBe(0);
+    expect(server.registered).toEqual([]);
+    expect(mocks.publish).not.toHaveBeenCalled();
+
+    release();
+    await vi.waitFor(() => expect(server.registered).toHaveLength(1), { timeout: 20_000 });
+    expect(server.count("putAiConfig")).toBe(1);
+    expect(mocks.publish).toHaveBeenCalledTimes(1);
+    expect(server.registered[0].input).toMatchObject({ storage: { kind: "github", owner: "acme", repo: "glass-harbor" }, githubToken: "ghp_token" });
+  });
+
+  it("sends only what the author consented to: the AI configuration without the token, when the server holds the token already", async () => {
+    useBook(GITHUB_BOOK);
+    server.aiConfigured = false;
+    useAutopilotStore.getState().patchView(GITHUB_BOOK.id, { server: { ...server.summary(GITHUB_BOOK.id), hasGithubToken: true } });
+    const release = await startLocalRun(GITHUB_BOOK);
+    await runtime.armHandover(GITHUB_BOOK.id, { to: "server", consent: { sendAiConfiguration: true, sendGitHubToken: false } }, { saveSettings: mocks.save });
+    release();
+    await vi.waitFor(() => expect(server.registered).toHaveLength(1), { timeout: 20_000 });
+    expect(server.count("putAiConfig")).toBe(1);
+    expect(server.registered[0].input).not.toHaveProperty("githubToken");
+  });
+
+  it("is still refused, saying what is missing, when the author consents to one thing and the other is missing", async () => {
+    useBook(GITHUB_BOOK);
+    server.aiConfigured = false;
+    server.hasGithubToken = false;
+    await startLocalRun(GITHUB_BOOK);
+    const refused = await runtime.armHandover(GITHUB_BOOK.id, { to: "server", consent: { sendAiConfiguration: false, sendGitHubToken: true } }).catch((error: unknown) => error);
+    expect(isHandoverConsentError(refused)).toBe(true);
+    expect((refused as { missing: string }).missing).toBe("ai");
+    expect(plan()).toBeNull();
+    expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(true);
+  });
+
+  it("is refused before anything is paused when the author consents to send a token that the book does not have", async () => {
+    useBook(GITHUB_BOOK);
+    useSettingsStore.setState({ settings: { ...useSettingsStore.getState().settings, defaultGitHubToken: "" } });
+    server.hasGithubToken = false;
+    await startLocalRun(GITHUB_BOOK);
+    const refused = await runtime.armHandover(GITHUB_BOOK.id, { to: "server", consent: { sendAiConfiguration: true, sendGitHubToken: true } }).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(AutopilotSetupError);
+    expect((refused as AutopilotSetupError).code).toBe("github-token");
+    expect(plan()).toBeNull();
+    expect(useAutopilotStore.getState().summaries[GITHUB_BOOK.id]?.pausePending ?? null).toBeNull();
+    expect(runtime.isRunningHere(GITHUB_BOOK.id)).toBe(true);
+  });
+
+  it("sends nothing when the plan is taken back: the consent was only held by the plan", async () => {
+    useBook(GITHUB_BOOK);
+    server.aiConfigured = false;
+    server.hasGithubToken = false;
+    const release = await startLocalRun(GITHUB_BOOK);
+    await runtime.armHandover(GITHUB_BOOK.id, { to: "server", consent: { sendAiConfiguration: true, sendGitHubToken: true } }, { saveSettings: mocks.save });
+    expect(await runtime.cancelHandover(GITHUB_BOOK.id)).toBe(true);
+    expect(plan()).toBeNull();
+    release();
+    // The plan was taken back and the pause with it: the run goes on here, and ends.
+    await idle();
+    expect(server.count("putAiConfig")).toBe(0);
+    expect(server.registered).toEqual([]);
+    expect(hostOf()).toBe("browser");
   });
 });
 

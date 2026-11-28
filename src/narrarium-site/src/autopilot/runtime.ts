@@ -48,7 +48,7 @@ import { createBrowserAi } from "@/autopilot/browserAi";
 import "@/autopilot/taskCosts";
 import { LocalWorkingCopyMissingError, createBrowserBookStore } from "@/autopilot/browserStore";
 import { selectAutopilotControl } from "@/autopilot/control";
-import { HandoverCoordinator, HandoverConsentError, type HandoverOptions, type HandoverPorts, type HandoverRequest, type HandoverSide, type RunInspection, type RunOutcome } from "@/autopilot/handover";
+import { HandoverCoordinator, HandoverConsentError, type HandoverConsent, type HandoverOptions, type HandoverPorts, type HandoverRequest, type HandoverSide, type RunInspection, type RunOutcome } from "@/autopilot/handover";
 import { setAutopilotHost } from "@/autopilot/host";
 import { AutopilotOperationBusyError, BookOperations, type AutopilotOperationKind } from "@/autopilot/operations";
 import { copyServerCalls, ensureCallsHost } from "@/autopilot/calls/host";
@@ -1741,10 +1741,10 @@ export class BrowserAutopilotRuntime {
         if (active) throw new AutopilotOperationBusyError("moveToServer", active.kind);
       },
       inspect: (bookId) => this.inspectRun(bookId),
-      prepareMove: (bookId, to, options) => this.prepareHandoverMove(bookId, to, options.limits),
+      prepareMove: (bookId, to, options) => this.prepareHandoverMove(bookId, to, options.limits, options.consent),
       pause: (bookId, mode) => this.pause(bookId, mode),
       waitUntilStopped: (bookId, signal, since) => this.waitUntilStopped(bookId, signal, since),
-      move: (bookId, to) => this.moveForHandover(bookId, to),
+      move: (bookId, to, consent) => this.moveForHandover(bookId, to, consent),
       start: (bookId, options) => (options?.limits ? this.start(bookId, { limits: options.limits }) : this.start(bookId)),
       publish: (bookId, plan) => useAutopilotStore.getState().patchView(bookId, { handover: plan }),
       describeError: (error) => describeAutopilotError(error),
@@ -1765,28 +1765,33 @@ export class BrowserAutopilotRuntime {
   /**
    * Check, before a run is paused for it, that the book can go to the other side. The server proves its identity, keeps the limit of a run when
    * one is asked, and holds what a run on it needs: the AI configuration and, for a GitHub book, the token. A handover never sends a secret by
-   * itself, so what is missing is for the author to give, in the flow of "Where it runs".
+   * itself, so what the server lacks is for the author to give, in the flow of "Where it runs": that flow puts the consent in the plan (`consent`),
+   * and what it covers is sent when the book moves. A consent that covers nothing the book can send (a GitHub book without a usable token) is refused here, not after the step.
    */
-  private async prepareHandoverMove(bookId: string, to: HandoverSide, limits: boolean): Promise<void> {
+  private async prepareHandoverMove(bookId: string, to: HandoverSide, limits: boolean, consent?: HandoverConsent): Promise<void> {
     const book = findBook(bookId);
     const { client, info } = await this.requireServer();
     if (to !== "server") return;
     if (limits && !serverHasQuickControls(info)) throw new AutopilotControlsUnsupportedError();
-    if ((await client.aiStatus()).configured !== true) throw new HandoverConsentError("ai");
+    if (consent?.sendAiConfiguration !== true && (await client.aiStatus()).configured !== true) throw new HandoverConsentError("ai");
     if (bookStorageMode(book) === "github") {
-      const store = useAutopilotStore.getState();
-      const known = store.server.books.find((entry) => entry.bookId === bookId) ?? store.views[bookId]?.server;
-      if (!known?.hasGithubToken) throw new HandoverConsentError("github");
+      if (consent?.sendGitHubToken === true) {
+        if (!isUsableGitHubToken(resolveGitHubRemoteToken(book, settings()))) throw new AutopilotSetupError("github-token");
+      } else {
+        const store = useAutopilotStore.getState();
+        const known = store.server.books.find((entry) => entry.bookId === bookId) ?? store.views[bookId]?.server;
+        if (!known?.hasGithubToken) throw new HandoverConsentError("github");
+      }
     }
   }
 
   /**
    * The files of the book, and its host: what "Move to my server" and "Bring back to this browser" do, with the consents the server already
-   * holds. The run that has just ended in this tab lets go of the book's lock a moment after it is over, so a book that looks held by another
+   * holds, and with what the author consented to in the plan (`consent`). The run that has just ended in this tab lets go of the book's lock a moment after it is over, so a book that looks held by another
    * tab is looked at again for a little while before the plan gives up.
    */
-  private async moveForHandover(bookId: string, to: HandoverSide): Promise<void> {
-    const move = () => (to === "server" ? this.moveToServer(bookId, { sendAiConfiguration: false, sendGitHubToken: false }) : this.moveToBrowser(bookId));
+  private async moveForHandover(bookId: string, to: HandoverSide, consent?: HandoverConsent): Promise<void> {
+    const move = () => (to === "server" ? this.moveToServer(bookId, { sendAiConfiguration: consent?.sendAiConfiguration === true, sendGitHubToken: consent?.sendGitHubToken === true }) : this.moveToBrowser(bookId));
     for (let attempt = 0; ; attempt += 1) {
       try {
         await move();
