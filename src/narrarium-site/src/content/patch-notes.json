@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.148.0",
+    "date": "2026-11-28",
+    "en": {
+      "title": "What the reviewers said, a chart of the votes, and versions of the Synopsis and the Bible you can restore",
+      "summary": "The Studio no longer shows only how many changes the director asked for: every review of a design keeps what the director and each simulated reader said, with a chart of the votes. The Synopsis and the Bible are kept as versions you can compare with now and restore, and Brainstorming offers to capture what you settled as a decision.",
+      "changes": [
+        "Under each review of a design in the Studio, «What the reviewers said» opens the director's judgement, the devil's advocate (the strongest alternative to the weakest part), the changes asked chapter by chapter, the critical inconsistencies, and each simulated reader's vote, reaction and counter-proposal. Review and complete keeps the director's words, the chapters it sent back and the readings too.",
+        "A chart above the reviews draws the votes round after round: the director's, the readers' average and the target. A screen reader reads its figures in words.",
+        "«Versions of the Synopsis and the Bible» in the Studio: a version is kept when you approve a design, before the proposals of Review and complete are applied, before a restore, and whenever you press «Save a version now». «Compare with now» lists, file by file, what would come back, go or change, each with its difference.",
+        "«Restore this version» asks once more and then writes the files back in one go; the files as they were are kept as a version of their own first, so a restore can be taken back too. Nothing changes until you confirm, and a file changed elsewhere in the meantime stops the restore with nothing written.",
+        "In Brainstorming, under a conversation, «Capture this decision» fills in the request that asks Brainstorming to put what you settled in the log of decisions of the book: you confirm the change of the Bible, and a captured decision stays open until you lock it there.",
+        "On a personal server, the words of the reviews and the version kept before the proposals are applied come with the server 0.1.30; an older server keeps the votes as before."
+      ]
+    },
+    "it": {
+      "title": "Cosa hanno detto i revisori, un grafico dei voti, e versioni della Sinossi e della Bibbia che puoi ripristinare",
+      "summary": "Lo Studio non mostra più solo quante modifiche ha chiesto il direttore: ogni revisione di un progetto conserva ciò che hanno detto il direttore e ogni lettore simulato, con un grafico dei voti. La Sinossi e la Bibbia si conservano in versioni che puoi confrontare con ora e ripristinare, e Brainstorming ti offre di registrare come decisione ciò che hai stabilito.",
+      "changes": [
+        "Sotto ogni revisione di un progetto nello Studio, «Cosa hanno detto i revisori» apre il giudizio del direttore, l'avvocato del diavolo (l'alternativa più forte alla parte più debole), le modifiche chieste capitolo per capitolo, le incoerenze critiche, e il voto, la reazione e la controproposta di ogni lettore simulato. Anche Rivedi e completa conserva le parole del direttore, i capitoli che ha rimandato e le letture.",
+        "Un grafico sopra le revisioni disegna i voti giro dopo giro: quello del direttore, la media dei lettori e l'obiettivo. Un lettore di schermo ne legge i valori a parole.",
+        "«Versioni della Sinossi e della Bibbia» nello Studio: una versione si conserva quando approvi un progetto, prima che si applichino le proposte di Rivedi e completa, prima di un ripristino, e ogni volta che premi «Salva una versione ora». «Confronta con ora» elenca, file per file, cosa tornerebbe, cosa andrebbe via e cosa cambierebbe, ciascuno con la sua differenza.",
+        "«Ripristina questa versione» chiede ancora una volta e poi riscrive i file in un colpo solo; i file com'erano vengono prima conservati in una versione a sé, così anche un ripristino si può annullare. Nulla cambia finché non confermi, e un file cambiato altrove nel frattempo ferma il ripristino senza scrivere nulla.",
+        "In Brainstorming, sotto una conversazione, «Registra questa decisione» compila la richiesta che chiede a Brainstorming di mettere ciò che hai stabilito nel registro delle decisioni del libro: confermi tu la modifica della Bibbia, e una decisione registrata resta aperta finché non la blocchi lì.",
+        "Su un server personale, le parole delle revisioni e la versione conservata prima di applicare le proposte arrivano con il server 0.1.30; un server più vecchio conserva i voti come prima."
+      ]
+    }
+  },
+  {
     "version": "0.147.0",
     "date": "2026-11-28",
     "en": {
