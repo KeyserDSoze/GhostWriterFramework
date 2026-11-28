@@ -1113,7 +1113,33 @@ export interface DesignRound {
   /** The mean of the director's twelve criteria (`DesignWorkflow.rubric`), when it scored them. */
   rubric?: number;
   at: string;
+  /** What the reviewers said in this review, in their words (`DesignRoundTexts`): the Studio shows it. Absent in the reviews of an engine before it. */
+  texts?: DesignRoundTexts;
 }
+
+/** A simulated reader's reading of a design before a review: its vote, its reaction and its counter-proposal. */
+export interface DesignRoundReading {
+  slug: string;
+  name: string;
+  score: number;
+  text: string;
+  counterProposal?: string;
+}
+
+/**
+ * The words of a review of a design (`DesignRound.texts`): the director's judgement, the devil's advocate (the strongest alternative to the weakest part), the changes it
+ * asked chapter by chapter, the critical inconsistencies it found, and what each simulated reader said before it. Cut to the limits of `DESIGN_ROUND_TEXT_LIMITS`.
+ */
+export interface DesignRoundTexts {
+  summary?: string;
+  counterProposal?: string;
+  changes?: string[];
+  critical?: string[];
+  readers?: DesignRoundReading[];
+}
+
+/** The most characters of each text of a review, and the items of its lists, that the state keeps. */
+export const DESIGN_ROUND_TEXT_LIMITS = { summary: 1500, counterProposal: 1000, item: 500, items: 24, readers: 12, reading: 1000 } as const;
 
 /** How the design is reviewed (`AutopilotDesign.review`): the review policy's fields that apply to a plan. Absent: the director's approval score, three reviews, readers before the first. */
 export type DesignPolicy = Pick<ReviewPolicy, "targetScore" | "maxRounds" | "readerRounds">;

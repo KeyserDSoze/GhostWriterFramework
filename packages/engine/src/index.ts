@@ -83,6 +83,7 @@ export { DESIGN_COHERENCE_TOOL, FINDING_ACTIONS, applyFindingDecisions, blocking
 export { DESIGN_PITCHES_TOOL, DESIGN_PITCHES_ROLE, chooseDesignPitch, chosenPitchBlock, designPitchEvaluationTool, readDesignPitches, readPitchEvaluations, type DesignPitchChoice } from "./autopilot/design-alternatives.js";
 export * from "./autopilot/design-complete.js";
 export * from "./autopilot/writing-context.js";
+export * from "./autopilot/design-texts.js";
 export { designProposalsChanges, findingNote as completionFindingNote, type DesignProposalsDecision, type DesignProposalsResult } from "./autopilot/design-complete-apply.js";
 export * from "./autopilot/frozen.js";
 export * from "./autopilot/story-so-far.js";

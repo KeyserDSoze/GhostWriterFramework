@@ -14,6 +14,7 @@ import { DESIGN_FINDING_CRITERIA, DESIGN_CANON_PROPOSAL_KINDS, COMPLETION_CANON_
 import { designPlateau, designTarget, endDesign, loadDesignCheckInput } from "./design.js";
 import { outlineDesignGaps } from "./outline-check.js";
 import { designMaxRounds } from "./state.js";
+import { roundTexts } from "./design-texts.js";
 import {
   authorOutline,
   authorRules,
@@ -460,7 +461,14 @@ export async function runDesignCompleteReview(ctx: TaskContext): Promise<TaskRes
   const scores = readings.map((reading) => reading.score);
   const readers = scores.length ? Math.round((scores.reduce((sum, value) => sum + value, 0) / scores.length) * 10) / 10 : undefined;
   const at = ctx.now().toISOString();
-  design.rounds = [...design.rounds, { round, score, verdict: "revise", ...(readers !== undefined ? { readers } : {}), critical, findings: checks.length, at }];
+  const criticalTexts = Object.values(completion.entries).flatMap((entry) => entry.findings.filter((finding) => finding.source === "director" && finding.severity === "critical").map((finding) => `Chapter ${entry.number}: ${finding.text}`));
+  const texts = roundTexts({
+    summary,
+    changes: [...redo.entries()].flatMap(([chapter, notes]) => notes.map((note) => `Chapter ${chapter}: ${note}`)),
+    critical: criticalTexts,
+    readers: readings.map((reading) => ({ slug: reading.slug, name: reading.name, score: reading.score, text: reading.summary })),
+  });
+  design.rounds = [...design.rounds, { round, score, verdict: "revise", ...(readers !== undefined ? { readers } : {}), critical, findings: checks.length, at, ...(texts ? { texts } : {}) }];
   const plateau = designPlateau(design);
   let outcome: DesignOutcome | null = null;
   if (verdict === "approve" && score >= target) outcome = "target";

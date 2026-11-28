@@ -107,6 +107,7 @@ import { designFlow } from "./design-state.js";
 import { outlineDesignGaps } from "./outline-check.js";
 import { runDesignComplete, runDesignCompleteReader, runDesignCompleteReview } from "./design-complete-run.js";
 import { chapterWritingContext, designLines, type ChapterWritingContext, type WritingContextKind } from "./writing-context.js";
+import { counterProposalOf, roundTexts } from "./design-texts.js";
 import {
   CHAPTER_REVIEW_TOOL,
   CHAPTER_SUMMARY_TOOL,
@@ -1567,7 +1568,15 @@ async function runDesignReview(ctx: TaskContext): Promise<TaskResult> {
   const readers = interests.length ? Math.round((interests.reduce((sum, value) => sum + value, 0) / interests.length) * 10) / 10 : undefined;
   const at = ctx.now().toISOString();
   const rubricOverallScore = rubricScores ? rubricOverall(rubricScores) : null;
-  design.rounds = [...design.rounds, { round: roundNumber, score, verdict: "revise", ...(readers !== undefined ? { readers } : {}), critical: critical.length, findings: findings.length, ...(rubricOverallScore !== null ? { rubric: rubricOverallScore } : {}), at }];
+  // The words of the review stay with it, for the Studio: the director's, the devil's advocate's, the changes asked, and what each reader said.
+  const texts = roundTexts({
+    summary: summaryText,
+    counterProposal,
+    changes: changesRequested,
+    critical: criticalNotes,
+    readers: plan.readerReactions.map((reaction) => ({ slug: reaction.slug, name: reaction.name, score: reaction.interest, text: reaction.reaction, counterProposal: counterProposalOf(reaction.wishes) })),
+  });
+  design.rounds = [...design.rounds, { round: roundNumber, score, verdict: "revise", ...(readers !== undefined ? { readers } : {}), critical: critical.length, findings: findings.length, ...(rubricOverallScore !== null ? { rubric: rubricOverallScore } : {}), at, ...(texts ? { texts } : {}) }];
   if (rubricScores) design.rubric = recordRubric(design.rubric, "design", rubricScores, { round: roundNumber, at }, { whole: true });
   const plateau = designPlateau(design);
   // What the reviews found weak, besides what the director asked, is what a round rewrites; the author's entries are never rewritten, and what concerns only them is a proposal.
