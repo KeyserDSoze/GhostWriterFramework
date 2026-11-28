@@ -1,5 +1,29 @@
 [
   {
+    "version": "0.142.0",
+    "date": "2026-11-28",
+    "en": {
+      "title": "Before a run starts you see how it stands against your budget, and the books on your personal server are counted in the costs",
+      "summary": "Every estimate of a run now says in words how it compares with what your budget has left and where it would stop; the top bar and the Costs page count what your personal server spent on its books, apart from your browsers' months; and the estimate and the call details say which context window a model was judged by.",
+      "changes": [
+        "The setup of the autopilot, the approval of the plan, Design the book, Review the book again (with its round for the whole book) and the cost of applying the Synopsis say: «This run is estimated at $4 to $9, you have $6 left in the budget (All books, per month): it would stop at about chapter 7.» Raise the budget sets the limit that covers the run; the dialogs that start something add Start anyway, and Cancel is theirs. Nothing is shown without a budget that limits the run.",
+        "The coin in the top bar shows what your personal server's autopilot counted for its books, after the month («server $3.20»), and the Costs page has a line «On your server» under the totals. It is the server's count over all the runs, which it does not split by month, so it is never added to your browsers' days and months; the page says what the figure holds and what it does not (a book not read yet, calls without a price). The total budgets count it, less what your browser already recorded of the same book.",
+        "The estimate of a run now warns about a prompt larger than the model's window even when the window was never set: it is judged by the default of 128,000 tokens and the warning says so. The details of an AI call show the context window its model was judged by, «the default» or «set in AI Integrations», and a model left out for its window says when it was the default.",
+        "The guides of the autopilot and of the AI Router describe all of this, in English and Italian."
+      ]
+    },
+    "it": {
+      "title": "Prima che una corsa parta vedi come sta rispetto al tuo budget, e i libri sul tuo server personale sono contati nei costi",
+      "summary": "Ogni stima di una corsa ora dice a parole come si confronta con quanto resta del tuo budget e dove si fermerebbe; la barra in alto e la pagina Costi contano ciò che il tuo server personale ha speso per i suoi libri, a parte dai mesi dei tuoi browser; e la stima e i dettagli delle chiamate dicono con quale finestra di contesto è stato giudicato un modello.",
+      "changes": [
+        "La configurazione dell'autopilota, l'approvazione del piano, Progetta il libro, Rivedi di nuovo il libro (con il suo giro per tutto il libro) e il costo di applicare la Sinossi dicono: «Questa esecuzione è stimata in $4–$9, nel budget (Tutti i libri, al mese) ti restano $6: si fermerebbe intorno al capitolo 7.» Alza il budget imposta il limite che copre la corsa; le finestre che avviano qualcosa aggiungono Avvia comunque, e Annulla è il loro. Non si mostra nulla senza un budget che limiti la corsa.",
+        "La moneta nella barra in alto mostra ciò che l'autopilota del tuo server personale ha contato per i suoi libri, dopo il mese («server $3.20»), e la pagina Costi ha una riga «Sul tuo server» sotto i totali. È il conteggio del server su tutte le esecuzioni, che non divide per mese, quindi non è mai sommato ai giorni e ai mesi dei tuoi browser; la pagina dice cosa contiene la cifra e cosa no (un libro non ancora letto, le chiamate senza prezzo). I budget totali lo contano, meno ciò che il tuo browser ha già registrato dello stesso libro.",
+        "La stima di una corsa ora avverte di un prompt più grande della finestra del modello anche quando la finestra non è mai stata impostata: lo giudica con quella predefinita di 128.000 token e l'avviso lo dice. I dettagli di una chiamata AI mostrano la finestra di contesto con cui il modello è stato giudicato, «quella predefinita» o «impostata in Integrazioni AI», e un modello escluso per la sua finestra dice quando era quella predefinita.",
+        "Le guide dell'autopilota e del Router AI descrivono tutto questo, in italiano e in inglese."
+      ]
+    }
+  },
+  {
     "version": "0.141.0",
     "date": "2026-11-28",
     "en": {
