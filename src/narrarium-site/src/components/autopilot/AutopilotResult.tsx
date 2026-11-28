@@ -21,6 +21,7 @@ import type { BookStructure } from "@/types/book";
 import type { BookEntry } from "@/types/settings";
 
 // «Review the book again» is a chunk of its own: nothing of it is loaded until the author opens it.
+import { AnnotationsRunLine } from "@/components/autopilot/result/AnnotationsRunLine";
 const ReviewBookDialog = lazy(withAutopilotTranslations(() => import("@/components/autopilot/result/ReviewBookDialog")));
 // A chapter read in a window over the result is one too: its text, its type and its folder reading are loaded with the first chapter that is opened.
 const ChapterReadingModal = lazy(withAutopilotTranslations(() => import("@/components/autopilot/result/ChapterReadingModal")));
@@ -218,6 +219,7 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true, review }: Au
   if (rounds) numbers.push([t("autopilot.result.numbers.rounds"), <>{formatCount(rounds.rounds)}<span className="ml-1.5 inline-block text-xs font-normal text-muted-foreground">{t("autopilot.result.numbers.roundsMost", { count: rounds.most })}</span></>]);
   const titleOf = (number: number) => byNumber.get(number)?.title;
   const lastReview = state?.reviews?.[state.reviews.length - 1];
+  const lastAnnotations = state?.annotationRuns?.[state.annotationRuns.length - 1];
   const openReview = review && state ? (bookRound?: BookRoundMode) => { setBookRoundAsked(bookRound); setReviewOpened(true); setReviewing(true); } : undefined;
   // The chapter links open the chapter in a window when the book can be read here (its working copy is the one the page has); without, they are links.
   const readHere = review && state ? openChapter : undefined;
@@ -229,6 +231,7 @@ export function AutopilotResult({ bookId, linkedSlugs, wide = true, review }: Au
         <div className="min-w-0 space-y-2">
           {verdict && <VerdictBlock verdict={verdict} />}
           {lastReview && <LastReviewLine record={lastReview} />}
+          {lastAnnotations && <AnnotationsRunLine record={lastAnnotations} />}
         </div>
         <NumbersBlock items={numbers} />
       </div>

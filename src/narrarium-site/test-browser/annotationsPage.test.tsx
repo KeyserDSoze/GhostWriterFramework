@@ -5,12 +5,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 
 const mocks = vi.hoisted(() => ({ toast: vi.fn(), complete: vi.fn() }));
 vi.mock("@/components/ui/use-toast", () => ({ useToast: () => ({ toast: mocks.toast }), toast: mocks.toast }));
+vi.mock("@/autopilot/loader", () => ({ loadAutopilotRuntime: async () => ({ refresh: async () => null }) }));
 vi.mock("@/drive/useSettings", () => ({ useSettings: () => ({ save: vi.fn(async () => undefined), load: async () => undefined, syncStatus: "idle", lastSynced: null }) }));
 vi.mock("@/assistant/router", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/assistant/router")>()), completeTextRouted: mocks.complete }));
 
 import i18n from "@/i18n";
 import "@/i18n/annotations";
 import "@/i18n/annotationsPage";
+import { loadAutopilotTranslations } from "@/i18n/autopilot";
 import { BookAnnotationsPage } from "@/pages/BookAnnotationsPage";
 import { resetBookStructureLoadCoordinator } from "@/hooks/useBookStructure";
 import { getLocalFile } from "@/repository/localRepository";
@@ -219,6 +221,21 @@ describe("the page of the notes of a book", () => {
     await openPage(book);
     expect(await screen.findByRole("region", { name: t("annotations.list.bookTags") })).toHaveTextContent("Slow pace");
     expect(screen.getByRole("region", { name: t("annotationsPage.tags.globalTitle") })).toContainElement(screen.getByRole("region", { name: t("annotations.settings.customTitle") }));
+  });
+});
+
+describe("the autopilot answering the notes", () => {
+  it("opens from the page with the notes shown (or the ones selected) and says what to do when the autopilot has not written the book", async () => {
+    blockNetwork();
+    const book = await createLocalOnlyBook("The Annotated Gate", BOOK_FILES);
+    await openPage(book);
+    await waitFor(() => expect(cards()).toHaveLength(4));
+    await loadAutopilotTranslations();
+    fireEvent.click(document.querySelector("[data-autopilot-start]")!);
+    const shown = await screen.findByRole("dialog", { name: t("autopilot.annotations.title") });
+    expect(await within(shown).findByText(t("autopilot.annotations.noPlan"))).toBeInTheDocument();
+    fireEvent.click(within(shown).getByRole("button", { name: t("autopilot.annotations.cancel") }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 });
 

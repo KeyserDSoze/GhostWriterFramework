@@ -63,6 +63,7 @@ export function CampaignChip({ campaign, spent }: { campaign: AutopilotStateSumm
     <span data-campaign={campaign.reason} className="inline-flex flex-wrap items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-foreground">
       <ListChecks className="h-3 w-3 shrink-0" aria-hidden="true" />
       {review ? t("autopilot.campaign.chip.review-target", { target: voteText(review.targetScore), round: review.round }) : t(`autopilot.campaign.chip.${campaign.reason}`, { done: campaign.done, total: campaign.total })}
+      {campaign.annotations && <span className="text-muted-foreground">· {t("autopilot.annotations.chipNotes", { handled: campaign.annotations.handled, notes: campaign.annotations.notes })}</span>}
       {review?.maxRounds !== undefined && <span className="text-muted-foreground">{t("autopilot.campaign.allowed", { done: review.roundsThisRun, max: review.maxRounds })}</span>}
       {campaign.held ? <span className="text-muted-foreground">· {t("autopilot.campaign.held")}</span> : review?.phase === "verdict" ? <span className="text-muted-foreground">· {t("autopilot.campaign.verdict")}</span> : bookRound?.status === "asking" ? <span data-campaign-book="asking" className="text-muted-foreground">· {t("autopilot.campaign.book")}</span> : bookRound?.status === "proposed" ? <span data-campaign-book="proposed" className="text-muted-foreground">· {t("autopilot.campaign.bookProposed")}</span> : (
         <>

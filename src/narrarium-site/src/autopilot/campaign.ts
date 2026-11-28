@@ -1,4 +1,4 @@
-import { RevisionCampaignError, ServerRequestError, isRevisionCampaignErrorCode, serverSupportsOutlineApply, type RevisionCampaignErrorCode, type ServerInfo } from "narrarium-engine";
+import { RevisionCampaignError, ServerRequestError, isRevisionCampaignErrorCode, serverSupportsAnnotations, serverSupportsOutlineApply, type RevisionCampaignErrorCode, type ServerInfo } from "narrarium-engine";
 import i18n from "@/i18n";
 import { REVIEW_BOOK_ROUND_SERVER_VERSION, REVIEW_SERVER_VERSION, REVIEW_TARGETS_SERVER_VERSION } from "@/autopilot/reviewPolicy";
 
@@ -8,6 +8,19 @@ export const OUTLINE_APPLY_SERVER_VERSION = "0.1.19";
 /** Whether the personal server announces that it applies the Synopsis to a book. An older one answers 404 to the routes of the campaigns. */
 export function serverHasOutlineApply(info: Pick<ServerInfo, "features"> | null | undefined): boolean {
   return serverSupportsOutlineApply(info);
+}
+
+/** Whether the personal server announces that it works on the author's annotations (`autopilot-annotations`). */
+export function serverHasAnnotations(info: Pick<ServerInfo, "features"> | null | undefined): boolean {
+  return serverSupportsAnnotations(info);
+}
+
+/** The personal server that runs the book predates the notes as input of the autopilot: nothing is sent to it, and the author is told to update it. */
+export class AutopilotAnnotationsUnsupportedError extends Error {
+  constructor() {
+    super(i18n.t("autopilot.annotations.oldServer"));
+    this.name = "AutopilotAnnotationsUnsupportedError";
+  }
 }
 
 /** The personal server that runs the book predates the campaigns: nothing is sent to it, and the author is told to update it. */

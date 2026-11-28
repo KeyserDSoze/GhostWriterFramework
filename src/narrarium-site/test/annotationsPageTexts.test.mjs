@@ -40,6 +40,6 @@ test("the guide of the reader describes the notes page and the triage keys in bo
   const read = (name) => readFileSync(new URL(`../src/content/guides/${name}`, import.meta.url), "utf8");
   const english = read("reader-export.en.md");
   const italian = read("reader-export.it.md");
-  for (const word of ["**Annotations** page", pageEn.annotationsPage.fix.title.replace(/^/, "**").concat("**"), "**Let's reason together**", "**Go through them one by one**", "**H** handled", "**S** skip"]) assert.ok(english.includes(word), `en: ${word}`);
-  for (const word of ["pagina **Appunti**", `**${pageIt.annotationsPage.fix.title}**`, "**Ragioniamo insieme**", "**Passali uno per uno**", "**H** fatto", "**S** salta"]) assert.ok(italian.includes(word), `it: ${word}`);
+  for (const word of ["**Annotations** page", pageEn.annotationsPage.fix.title.replace(/^/, "**").concat("**"), "**Let's reason together**", "**Go through them one by one**", "**H** handled", "**S** skip", "**Have the autopilot answer**", "autopilot-annotations"]) assert.ok(english.includes(word), `en: ${word}`);
+  for (const word of ["pagina **Appunti**", `**${pageIt.annotationsPage.fix.title}**`, "**Ragioniamo insieme**", "**Passali uno per uno**", "**H** fatto", "**S** salta", "**Fai rispondere l'autopilota**", "autopilot-annotations"]) assert.ok(italian.includes(word), `it: ${word}`);
 });

@@ -65,6 +65,7 @@ const annotationsPageEn = {
       globalTitle: "Account tags",
       globalDescription: "Made here or in Settings › Annotation tags: they are account data, saved as soon as you change them, and every book has them.",
     },
+    autopilotButton: "Have the autopilot answer",
     triage: {
       start: "Go through them one by one",
       title: "One note at a time",

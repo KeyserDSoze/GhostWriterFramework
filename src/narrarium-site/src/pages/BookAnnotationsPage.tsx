@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, ChevronDown, ChevronRight, ListChecks, MessageCircle, Search, Sparkles, Trash2 } from "lucide-react";
+import { AlertCircle, ChevronDown, ChevronRight, ListChecks, MessageCircle, Search, Sparkles, Trash2, Wand2 } from "lucide-react";
 import "@/i18n/annotations";
 import "@/i18n/annotationsPage";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -37,7 +37,12 @@ import {
 } from "@/annotations/notesView";
 import { estimateBulkFix } from "@/annotations/triage";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { withAutopilotTranslations } from "@/i18n/autopilot";
+import { useBookAutopilotView } from "@/autopilot/hooks";
 import { cn } from "@/lib/utils";
+
+const AnnotationsRunLine = lazy(withAutopilotTranslations(() => import("@/components/autopilot/result/AnnotationsRunLine").then((module) => ({ default: module.AnnotationsRunLine }))));
+const ReviseAnnotationsDialog = lazy(withAutopilotTranslations(() => import("@/components/autopilot/result/ReviseAnnotationsDialog")));
 
 const FIELD = "h-10 w-full rounded-md border border-field bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [@media(pointer:coarse)]:h-11";
 
@@ -61,6 +66,7 @@ export function BookAnnotationsPage() {
   const [reason, setReason] = useState<ReasonScope | null>(null);
   const [editing, setEditing] = useState<AnnotationEditTarget[] | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  const [autopilotAsk, setAutopilotAsk] = useState(false);
   const [bulkAsk, setBulkAsk] = useState<Annotation[] | null>(null);
   const [fixQueue, setFixQueue] = useState<{ done: number; rest: Annotation[]; total: number } | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
@@ -97,6 +103,8 @@ export function BookAnnotationsPage() {
   const groups = useMemo(() => groupNotes(shown), [shown]);
   const counts = useMemo(() => statusCounts(items), [items]);
   const tags = useMemo(() => tagsInUse(items), [items]);
+  const autopilotView = useBookAutopilotView(bookId);
+  const lastAnswered = autopilotView.snapshot?.state?.annotationRuns?.slice(-1)[0];
   const unreadable = [...data.chapters.values()].filter((state) => state.error);
 
   // What was selected and is not shown any more (changed, filtered out, deleted) is not selected.
@@ -234,6 +242,7 @@ export function BookAnnotationsPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" size="sm" disabled={counts.open === 0} onClick={() => setTriage(true)} className="[@media(pointer:coarse)]:h-11" data-triage-start=""><ListChecks aria-hidden="true" />{t("annotationsPage.triage.start")}</Button>
+          <Button type="button" size="sm" variant="outline" disabled={counts.open === 0} onClick={() => setAutopilotAsk(true)} className="[@media(pointer:coarse)]:h-11" data-autopilot-start=""><Wand2 aria-hidden="true" />{t("annotationsPage.autopilotButton")}</Button>
           {filtered && <Button type="button" size="sm" variant="ghost" onClick={() => setParams(new URLSearchParams(), { replace: true })} className="[@media(pointer:coarse)]:h-11">{t("annotationsPage.clear")}</Button>}
           <Button type="button" size="sm" variant="outline" disabled={!shown.length} onClick={() => setReason(chapterScope ?? { kind: "book", annotations: shown.map((item) => item.annotation) })} className="ml-auto [@media(pointer:coarse)]:h-11" data-reason-all="">
             <MessageCircle aria-hidden="true" />{chapterScope ? t("annotationsPage.reasonChapter") : t("annotationsPage.reasonBook")}
@@ -241,6 +250,7 @@ export function BookAnnotationsPage() {
         </div>
       </section>
 
+      {lastAnswered && <Suspense fallback={null}><AnnotationsRunLine record={lastAnswered} /></Suspense>}
       <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-notes-count="">
         {announcement || t("annotationsPage.count", { count: shown.length })}
       </p>
@@ -354,6 +364,11 @@ export function BookAnnotationsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {autopilotAsk && data.book && data.branch && (
+        <Suspense fallback={null}>
+          <ReviseAnnotationsDialog open onClose={() => setAutopilotAsk(false)} book={data.book} branch={data.branch} structure={structure} notes={selectedNotes.length ? selectedNotes : shown.map((item) => item.annotation)} />
+        </Suspense>
+      )}
       <AnnotationEditorDialog
         targets={editing}
         catalog={data.catalog}

@@ -65,6 +65,7 @@ const annotationsPageIt = {
       globalTitle: "Etichette dell'account",
       globalDescription: "Create qui o in Impostazioni › Etichette delle annotazioni: sono dati dell'account, salvati appena le cambi, e ogni libro le ha.",
     },
+    autopilotButton: "Fai rispondere l'autopilota",
     triage: {
       start: "Passali uno per uno",
       title: "Un appunto alla volta",

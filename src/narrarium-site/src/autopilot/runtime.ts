@@ -30,6 +30,7 @@ import {
   type NarrariumServerClient,
   type QuestionAnswer,
   type ReviewBookInput,
+  type ReviseAnnotationsInput,
   type ReviseChaptersInput,
   type RevisionCampaignResult,
   type ServerInfo,
@@ -59,7 +60,7 @@ import { PLAN_FULL_LIST_LIMIT } from "@/autopilot/planWindow";
 import { AutopilotControlsUnsupportedError, hasRunLimit, serverHasQuickControls, type PauseCommand, type RunOneKind } from "@/autopilot/quickControls";
 import { AutopilotRulesUnsupportedError, serverEditsRules } from "@/autopilot/rules";
 import { AutopilotFrozenUnsupportedError, frozenErrorCode, serverHasFrozenChapters } from "@/autopilot/frozenChapters";
-import { AutopilotCampaignRefusedError, AutopilotOutlineApplyUnsupportedError, AutopilotReviewBookRoundUnsupportedError, AutopilotReviewTargetsUnsupportedError, AutopilotReviewUnsupportedError, campaignRefusal, serverHasOutlineApply } from "@/autopilot/campaign";
+import { AutopilotAnnotationsUnsupportedError, AutopilotCampaignRefusedError, AutopilotOutlineApplyUnsupportedError, AutopilotReviewBookRoundUnsupportedError, AutopilotReviewTargetsUnsupportedError, AutopilotReviewUnsupportedError, campaignRefusal, serverHasAnnotations, serverHasOutlineApply } from "@/autopilot/campaign";
 import { serverHasReviewBook } from "@/autopilot/reviewPolicy";
 import { AutopilotRetryUnsupportedError, serverHasRetry } from "@/autopilot/retry";
 import { assertGithubConflicts, githubConflictFiles, isGithubConflict, noteGithubConflict } from "@/autopilot/githubConflictsServer";
@@ -1068,12 +1069,20 @@ export class BrowserAutopilotRuntime {
     return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "decide-book-corrections", input: decision }));
   }
 
+  /**
+   * Have the autopilot rewrite the passages the author marked: the engine's campaign of reason `annotations` (`reviseAnnotations`). The same ways as `reviseChapters`; a personal
+   * server that does not announce `autopilot-annotations` is not asked (`AutopilotAnnotationsUnsupportedError`). Nothing is started: `start` does it.
+   */
+  reviseAnnotations(bookId: string, input: ReviseAnnotationsInput): Promise<RevisionCampaignResult> {
+    return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "revise-annotations", input }));
+  }
+
   /** Cancel the chapters of the campaign that wait (the one being worked finishes): they are left for the author. The same ways as `reviseChapters`. */
   cancelRevisionCampaign(bookId: string): Promise<RevisionCampaignResult> {
     return this.operations.run(bookId, "campaign", () => this.campaignCommand(bookId, { type: "cancel-campaign" }));
   }
 
-  private async campaignCommand(bookId: string, command: Extract<RelayedCommand, { type: "revise-chapters" | "review-book" | "decide-book-corrections" | "cancel-campaign" }>): Promise<RevisionCampaignResult> {
+  private async campaignCommand(bookId: string, command: Extract<RelayedCommand, { type: "revise-chapters" | "review-book" | "revise-annotations" | "decide-book-corrections" | "cancel-campaign" }>): Promise<RevisionCampaignResult> {
     const book = findBook(bookId);
     try {
       if (autopilotHostOf(book) === "server") {
@@ -1083,6 +1092,7 @@ export class BrowserAutopilotRuntime {
         if (command.type === "review-book" && asksReviewTargets(command.input) && !serverSupportsReviewTargets(info)) throw new AutopilotReviewTargetsUnsupportedError();
         if (command.type === "review-book" && asksReviewBookRound(command.input) && !serverSupportsReviewBookRound(info)) throw new AutopilotReviewBookRoundUnsupportedError();
         if (command.type === "decide-book-corrections" && !serverSupportsReviewBookRound(info)) throw new AutopilotReviewBookRoundUnsupportedError();
+        if (command.type === "revise-annotations" && !serverHasAnnotations(info)) throw new AutopilotAnnotationsUnsupportedError();
         if (command.type === "revise-chapters" && !serverHasOutlineApply(info)) throw new AutopilotOutlineApplyUnsupportedError();
         if (command.type === "cancel-campaign" && !serverHasOutlineApply(info) && !serverHasReviewBook(info)) throw new AutopilotOutlineApplyUnsupportedError();
         await this.handToServer(book);
@@ -1090,6 +1100,7 @@ export class BrowserAutopilotRuntime {
         const result = command.type === "revise-chapters" ? await client.reviseChapters(book.id, command.input)
           : command.type === "review-book" ? await client.reviewBook(book.id, command.input)
           : command.type === "decide-book-corrections" ? await client.decideBookCorrections(book.id, command.input)
+          : command.type === "revise-annotations" ? await client.reviseAnnotations(book.id, command.input)
           : await client.cancelRevisionCampaign(book.id);
         await this.bringFromServer(book, client);
         await this.refresh(bookId);
@@ -1102,6 +1113,7 @@ export class BrowserAutopilotRuntime {
         result = command.type === "revise-chapters" ? await session.reviseChapters(command.input)
           : command.type === "review-book" ? await session.reviewBook(command.input)
           : command.type === "decide-book-corrections" ? await session.decideBookCorrections(command.input)
+          : command.type === "revise-annotations" ? await session.reviseAnnotations(command.input)
           : await session.cancelRevisionCampaign();
       }
       await this.refresh(bookId);
@@ -1225,6 +1237,7 @@ export class BrowserAutopilotRuntime {
       else if (command.type === "revise-chapters") result = await session.reviseChapters(command.input);
       else if (command.type === "review-book") result = await session.reviewBook(command.input);
       else if (command.type === "decide-book-corrections") result = await session.decideBookCorrections(command.input);
+      else if (command.type === "revise-annotations") result = await session.reviseAnnotations(command.input);
       else if (command.type === "cancel-campaign") result = await session.cancelRevisionCampaign();
       else await session.intervene(command.input);
       this.post({ kind: "command-result", id, ok: true, ...(result === undefined ? {} : { result }) });
