@@ -1279,6 +1279,10 @@ const it = {
     evaluateWithReaders: "Valuta con i lettori",
     evaluateSelection: "Valuta la selezione con i lettori"
   },
+  wildcardsMenu: {
+    ideas: "Idee fuori dal coro…",
+    selection: "Idee fuori dal coro sulla selezione…",
+  },
   feedbackRewrite: {
     generate: "Genera bozza dai feedback",
     generateFromOpinion: "Genera bozza da questo parere",

@@ -216,3 +216,113 @@ test("in Brainstorming the author asks the room: four voices answer as their own
     await room.close();
   }
 });
+
+// ─── Right click: «Out-of-the-box ideas…» ────────────────────────────────────────────────────────────────────────────────────────────────
+
+const SCENE = "Mira stepped on the quay while the tide came in. The glass houses rang like bells in the wind, and Orrin watched from the harbour office.";
+
+test("right click: the room's ideas on a selection become a rewrite the author keeps, on a chapter its Synopsis entry; the decisions are in the journal and only the Guardian reads a hidden secret", async ({ page }) => {
+  const github = watchGitHub(page);
+  const prompts: string[] = [];
+  const reply = (user: string) => {
+    prompts.push(user);
+    const name = /You are «([^»]+)»/.exec(user)?.[1] ?? "A voice";
+    const sentinel = /a sentinel: you check/.test(user);
+    return { items: [1, 2].map((index) => ({ title: `${name} ${index}`, idea: `${name} proposes idea ${index}.`, why: "It lifts the scene.", changes: "One beat changes.", chapters: [1], risk: "Small.", audacity: 6, ...(sentinel ? { evidence: "the tide", severity: "minor" } : {}) })) };
+  };
+  const stub = await startProvider({ answers: { wildcard_ideas: reply } });
+  try {
+    const { serializeOutlineChapter } = await engineModule("index.js");
+    const { seedBookFiles } = await engineModule("testing/index.js");
+    const roomBook: SeedBook = {
+      id: "book-ideas", repo: "e2e-local-ideas", name: "The Glass Harbor",
+      files: {
+        ...seedBookFiles({ title: "The Glass Harbor" }),
+        "outline/chapters/001.md": serializeOutlineChapter({ number: 1, title: "Arrival", body: "Mira arrives at the glass harbor.", origin: "author" }),
+        "chapters/001-arrival/chapter.md": "---\ntype: chapter\nid: chapter:001-arrival\nnumber: 1\ntitle: Arrival\n---\n\n# Arrival\n",
+        "chapters/001-arrival/001-quay.md": `---\ntype: paragraph\nnumber: 1\ntitle: The Quay\n---\n\n${SCENE}\n`,
+        "secrets/the-wall.md": "---\ntype: secret\nid: secret:the-wall\ntitle: The Wall Is Failing\nreveal_in: chapter:009-ch\n---\n\nThe sea wall cracked years ago.\n",
+      },
+    };
+    const { openAi } = await seed(page, settingsOf(stub.url, [roomBook]), [roomBook]);
+    await openApp(page);
+    await page.goto("app/books", { waitUntil: "domcontentloaded" });
+    await waitForAiSettings(page, stub.url);
+
+    // A selection in the scene's editor, and the room on it.
+    await page.goto(`app/books/${roomBook.id}/chapters/001-arrival/paragraphs/001`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Edit paragraph" }).click({ timeout: 30_000 });
+    const editor = page.getByRole("textbox", { name: "Start writing…" });
+    await expect(editor).toHaveValue(`${SCENE}\n`, { timeout: 30_000 });
+    await editor.evaluate((element: HTMLTextAreaElement) => { element.focus(); element.setSelectionRange(0, 48); });
+    const box = await editor.boundingBox();
+    await editor.dispatchEvent("contextmenu", { clientX: (box?.x ?? 0) + 30, clientY: (box?.y ?? 0) + 15, button: 2 });
+    await page.getByRole("button", { name: "Out-of-the-box ideas on the selection…", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Out-of-the-box ideas" });
+    await expect(dialog.getByRole("radio", { name: /Creative room/ })).toBeChecked({ timeout: 30_000 });
+    await expect(dialog.locator("[data-wildcards-estimate]")).toContainText(/About 4–8 calls/);
+    await dialog.getByRole("button", { name: "Ask the room", exact: true }).click();
+    const table = dialog.getByRole("table");
+    await expect(table.locator("tbody tr")).toHaveCount(8, { timeout: 30_000 });
+    expect(await filesUnder(page, roomBook.repo, "bible/"), "nothing is written by asking").toEqual([]);
+    await dialog.getByRole("button", { name: "Skip all", exact: true }).click();
+    await dialog.getByRole("group", { name: "Decision on «The Subversive 1»" }).getByRole("radio", { name: "Accept" }).check();
+    await dialog.getByRole("group", { name: "Decision on «The Poet 2»" }).getByRole("radio", { name: "Accept" }).check();
+    await expect(dialog.getByText("2 accepted · 6 skipped · 0 not decided")).toBeVisible();
+    await dialog.getByRole("button", { name: "Apply to the selection", exact: true }).click();
+
+    // The rewrite by the ghostwriter, as a difference; kept, it replaces the selection only.
+    const keep = page.getByRole("button", { name: "Keep the new one" });
+    await expect(keep).toBeEnabled({ timeout: 30_000 });
+    await keep.click();
+    await expect(editor).not.toHaveValue(`${SCENE}\n`, { timeout: 20_000 });
+    expect(await editor.inputValue()).toContain(SCENE.slice(48));
+    // In the editor, as an edit of the author's: saved like any other.
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(async () => {
+      const [scene] = await filesUnder(page, roomBook.repo, "chapters/001-arrival/001-quay.md");
+      expect(scene?.text).toContain(SCENE.slice(48));
+      expect(scene?.text).not.toContain(SCENE.slice(0, 48));
+    }).toPass({ timeout: 20_000 });
+    const { parseIdeasJournal } = await engineModule("index.js");
+    const [journal] = await filesUnder(page, roomBook.repo, "bible/ideas.yml");
+    const entries = parseIdeasJournal(journal?.text).entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ by: "author", preset: "creative-room", target: { kind: "selection", chapter: 1, paragraph: 1 } });
+    expect(entries[0].ideas.map((idea: { decision?: { verdict: string; by: string } }) => `${idea.decision?.verdict}:${idea.decision?.by}`).sort()).toEqual([...Array(2).fill("adopted:author"), ...Array(6).fill("rejected:author")].sort());
+
+    // The chapter: the narrative quality check, and the accepted finding in its entry of the Synopsis.
+    prompts.length = 0;
+    await page.goto(`app/books/${roomBook.id}/chapters/001-arrival`, { waitUntil: "domcontentloaded" });
+    const count = page.getByRole("main").getByText("1 paragraph", { exact: true });
+    await expect(count).toBeVisible({ timeout: 30_000 });
+    await count.click({ button: "right" });
+    await page.getByRole("button", { name: "Out-of-the-box ideas…", exact: true }).click();
+    await dialog.getByRole("radio", { name: /Narrative quality check/ }).check();
+    await dialog.getByRole("button", { name: "Ask the room", exact: true }).click();
+    await expect(table.locator("tbody tr")).toHaveCount(8, { timeout: 30_000 });
+    await dialog.getByRole("button", { name: "Skip all", exact: true }).click();
+    await dialog.getByRole("group", { name: "Decision on «The Ledger Keeper 1»" }).getByRole("radio", { name: "Accept" }).check();
+    await dialog.getByRole("button", { name: "Apply to the Synopsis entry", exact: true }).click();
+    await expect(page.getByText("Synopsis entry of chapter 1, with the accepted ideas")).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "Keep the new one" }).click();
+    await expect(async () => {
+      const [entry] = await filesUnder(page, roomBook.repo, "outline/chapters/001.md");
+      expect(entry?.text).toContain("Ideas from the room (Fuori dal coro), accepted on");
+      expect(entry?.text).toContain("- The Ledger Keeper 1: The Ledger Keeper proposes idea 1.");
+      expect(entry?.text).toContain("origin: author");
+    }).toPass({ timeout: 20_000 });
+    const [changes] = await filesUnder(page, roomBook.repo, "outline/changes.yml");
+    expect(changes?.text).toContain("by: author");
+
+    // Only the Secrets Guardian was told the hidden secret; the other three sentinels were not.
+    const guardian = prompts.filter((prompt) => prompt.includes("You are «The Secrets Guardian»"));
+    expect(guardian).toHaveLength(1);
+    expect(guardian[0]).toContain("The sea wall cracked years ago.");
+    expect(prompts.filter((prompt) => !prompt.includes("You are «The Secrets Guardian»")).every((prompt) => !prompt.includes("sea wall cracked"))).toBe(true);
+    expect(github, "no request went to GitHub").toEqual([]);
+    expect(openAi).toEqual([]);
+  } finally {
+    await stub.close();
+  }
+});

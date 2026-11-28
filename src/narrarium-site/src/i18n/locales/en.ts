@@ -1279,6 +1279,10 @@ const en = {
     evaluateWithReaders: "Evaluate with readers",
     evaluateSelection: "Evaluate selection with readers"
   },
+  wildcardsMenu: {
+    ideas: "Out-of-the-box ideas…",
+    selection: "Out-of-the-box ideas on the selection…",
+  },
   feedbackRewrite: {
     generate: "Generate Draft from Feedback",
     generateFromOpinion: "Generate draft from this opinion",

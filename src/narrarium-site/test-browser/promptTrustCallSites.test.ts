@@ -23,6 +23,7 @@ const ROUTED_CALL_SITES = [
   "src/research/createFromResearch.ts",
   "src/research/engine.ts",
   "src/research/regenerateEntity.ts",
+  "src/wildcards/applyIdeas.ts",
 ];
 
 /** The text, the forced calls and the confirmations of the Copilot go through the engine's client (`createBrowserAi`), so they are not here: only the media and the Azure helpers still call a provider API themselves. */

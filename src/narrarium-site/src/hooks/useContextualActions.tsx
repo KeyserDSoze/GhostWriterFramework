@@ -18,6 +18,7 @@ import { useUiStore } from "@/store/uiStore";
 import { resolveContextualNavigation } from "@/lib/contextualNavigation";
 import { chapterNumberFromSlug } from "@/lib/chapterSlug";
 import { openAskDirector } from "@/store/askDirectorStore";
+import { openWildcardsDialog } from "@/store/wildcardsDialogStore";
 
 export interface ContextualAction {
   id: string;
@@ -205,6 +206,8 @@ export function useContextualActions(): { actions: ContextualAction[]; hasBookAc
         ? { kind: "chapter" as const, chapter: chapter.slug }
         : { kind: "book" as const };
     actions.push({ id: "ask-director", label: t("director.ask.action"), icon: <Clapperboard className="h-4 w-4" />, run: () => openAskDirector({ bookId, target }) });
+    // The room of the wildcards on the scene or the chapter (a selection has its own item in the menu).
+    if (target.kind !== "book") actions.push({ id: "wildcards", label: t("wildcardsMenu.ideas"), icon: <Sparkles className="h-4 w-4" />, run: () => openWildcardsDialog({ bookId, target }) });
   }
 
   if (structure && auditTarget) {

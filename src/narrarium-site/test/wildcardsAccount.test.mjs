@@ -63,7 +63,7 @@ test("the wildcards speak both languages, with the same texts and placeholders, 
     assert.ok(value.trim(), `${key} is not empty`);
     assert.deepEqual(placeholders(italian.get(key)), placeholders(value), `${key}: placeholders`);
   }
-  const same = new Set(["wildcards.presets.pre-mortem", "wildcards.toggle"]);
+  const same = new Set(["wildcards.presets.pre-mortem", "wildcards.toggle", "wildcards.review.idea", "wildcards.review.ideas_one"]);
   assert.deepEqual(leaves(wildcardsEn).filter(([key, value]) => !same.has(key) && italian.get(key) === value).map(([key]) => key), [], "the Italian is written in Italian");
   assert.equal("wildcards" in en, false, "the always-loaded catalogue has none of them");
   assert.equal(en.nav.wildcards, "Wildcards", "only the name of the page in the book's menu");

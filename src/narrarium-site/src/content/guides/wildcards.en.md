@@ -26,6 +26,16 @@ Open **Wildcards** in the **Profiles** group of the book's menu. The list shows 
 
 Only a sentinel may know the secrets as you do (the Secrets Guardian does, to catch an involuntary spoiler). Every other wildcard knows only the secrets the text already reached, never one still hidden there.
 
+## Out-of-the-box ideas on a selection, a scene or a chapter
+
+Right-click a selection in a scene, a scene or a chapter and choose **Out-of-the-box ideas…**. Choose who is asked (**Creative room**, **Pre-mortem**, **Narrative quality check**, or the voices one by one) and, if you like, what you ask; the dialog says what the consultation will cost before it starts. The ideas arrive in a table: who gave each, why it works, what it changes and its risk. **Accept** or **Skip** each one (or all at once), then press the one button:
+
+- the decisions are kept in the journal of the room (`bible/ideas.yml`), so the room does not propose again what you skipped;
+- for a selection or a scene, the ghostwriter rewrites it using the accepted ideas as material, and you see the difference before keeping it;
+- for a chapter, the accepted ideas are added to its entry in the Synopsis, which the autopilot follows (for a chapter already written it asks, or does, what you chose for a changed entry).
+
+Nothing is applied before you press the button, and nothing at all if you keep neither the rewrite nor the entry.
+
 ## Ask the room in Brainstorming
 
 In Brainstorming (the Synopsis page), ask the room what it thinks: choose **Ask the room** among the starters, or ask in your words («what would the provocateurs change?», «run a pre-mortem»). Two to four voices read the Synopsis and answer in the chat, each as its own character, with ideas and never a score; then Brainstorming sums them up: what they agree on, the strongest idea, the risks. If you like an idea, ask Brainstorming to turn it into a proposal of the Synopsis, which you review and apply as always. The Secrets Guardian does not sit in Brainstorming's room: Brainstorming never sees the secrets.

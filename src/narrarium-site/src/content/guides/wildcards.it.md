@@ -26,6 +26,16 @@ Apri **Fuori dal coro** nel gruppo **Profili** del menu del libro. L'elenco most
 
 Solo una sentinella può conoscere i segreti come te (il Guardiano dei segreti li conosce, per scovare uno spoiler involontario). Ogni altro Fuori dal coro conosce solo i segreti che il testo ha già raggiunto, mai uno ancora nascosto lì.
 
+## Idee fuori dal coro su una selezione, una scena o un capitolo
+
+Fai clic destro su una selezione in una scena, su una scena o su un capitolo e scegli **Idee fuori dal coro…**. Scegli chi interpellare (**Stanza creativa**, **Pre-mortem**, **Controllo qualità narrativa**, o le voci una per una) e, se vuoi, che cosa chiedere; il dialogo dice quanto costerà la consultazione prima che parta. Le idee arrivano in una tabella: chi l'ha data, perché funziona, che cosa cambia e il rischio. **Accetta** o **Scarta** ognuna (o tutte insieme), poi premi l'unico pulsante:
+
+- le decisioni restano nel diario della stanza (`bible/ideas.yml`), così la stanza non ripropone ciò che hai scartato;
+- per una selezione o una scena, il ghostwriter la riscrive usando le idee accettate come materiale, e vedi la differenza prima di tenerla;
+- per un capitolo, le idee accettate si aggiungono alla sua voce nella Sinossi, che l'autopilota segue (per un capitolo già scritto chiede, o fa, ciò che hai scelto per una voce cambiata).
+
+Nulla viene applicato prima che tu prema il pulsante, e nulla del tutto se non tieni né la riscrittura né la voce.
+
 ## Chiedi alla stanza in Brainstorming
 
 In Brainstorming (la pagina Sinossi) chiedi alla stanza che cosa pensa: scegli **Chiedi alla stanza** tra i suggerimenti, o chiedilo con parole tue («che cosa cambierebbero i provocatori?», «fai un pre-mortem»). Da due a quattro voci leggono la Sinossi e rispondono nella chat, ognuna come un personaggio a sé, con idee e mai un voto; poi Brainstorming le riassume: su che cosa concordano, l'idea più forte, i rischi. Se un'idea ti piace, chiedi a Brainstorming di trasformarla in una proposta della Sinossi, che rivedi e applichi come sempre. Il Guardiano dei segreti non siede nella stanza di Brainstorming: Brainstorming non vede mai i segreti.

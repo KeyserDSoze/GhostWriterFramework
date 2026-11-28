@@ -22,6 +22,7 @@ import { CustomActionRunner, type CustomActionInvocation } from "@/components/cu
 import { compatibleCustomActions, customActionRecordIdentity, customActionTargetIdentity, resolveCustomActionTarget } from "@/custom-actions/customActions";
 import type { CustomAction } from "@/types/settings";
 import { selectionMenuRegistry, type SelectionMenuExtension } from "@/components/editor/selectionMenuStore";
+import { openWildcardsDialog } from "@/store/wildcardsDialogStore";
 
 type Editable = HTMLTextAreaElement | HTMLInputElement;
 
@@ -466,6 +467,18 @@ export function GlobalContextMenu() {
               {menu.selection.trim() && readerEvaluationPath && (
                 <>
                   <MenuItem icon={<Users className="h-4 w-4" />} label={t("readerEvaluations.evaluateSelection")} onClick={() => { navigate(readerEvaluationPath, { state: { readerEvaluationSelection: menu.selection } }); close(); }} />
+                  {menu.editable && dossierBookId && "chapterId" in dossierRoute && (
+                    <MenuItem
+                      icon={<Sparkles className="h-4 w-4" />}
+                      label={t("wildcardsMenu.selection")}
+                      onClick={() => {
+                        const editable = menu.editable!;
+                        const range = (editable.selectionEnd ?? 0) > (editable.selectionStart ?? 0) ? { start: editable.selectionStart ?? 0, end: editable.selectionEnd ?? 0 } : null;
+                        openWildcardsDialog({ bookId: dossierBookId, target: { kind: "selection", chapter: dossierRoute.chapterId, ...("paragraphNum" in dossierRoute ? { paragraph: String(dossierRoute.paragraphNum) } : {}) }, selection: { text: menu.selection, editable, range, sourceValue: editable.value } });
+                        close();
+                      }}
+                    />
+                  )}
                   <div className="my-1 h-px bg-border" />
                 </>
               )}
