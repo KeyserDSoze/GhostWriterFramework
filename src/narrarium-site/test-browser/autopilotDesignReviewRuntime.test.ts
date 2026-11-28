@@ -153,7 +153,7 @@ describe("the same on a personal server", () => {
       expect(error).toBeInstanceOf(AutopilotDesignReviewUnsupportedError);
       expect(describeAutopilotError(error)).toBe(i18n.t("designReview.oldServer", { version: DESIGN_REVIEW_SERVER_VERSION }));
     }
-    expect(DESIGN_REVIEW_SERVER_VERSION).toBe("0.1.26");
+    expect(DESIGN_REVIEW_SERVER_VERSION).toBe("0.1.28");
     expect((mocks.server as unknown as FakeBookServer).calls.filter((call) => call !== "info")).toEqual([]);
   });
 

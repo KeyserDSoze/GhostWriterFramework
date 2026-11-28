@@ -186,6 +186,6 @@ describe("the reviews in the Studio", () => {
     const card = await screen.findByRole("region", { name: t("designReview.request.title") });
     const whole = within(card).getByRole("button", { name: t("designReview.request.whole") });
     expect(whole).toBeDisabled();
-    expect(whole).toHaveAccessibleDescription(new RegExp(t("designReview.request.blocked.server", { version: "0.1.26" }).slice(0, 40)));
+    expect(whole).toHaveAccessibleDescription(new RegExp(t("designReview.request.blocked.server", { version: "0.1.28" }).slice(0, 40)));
   });
 });

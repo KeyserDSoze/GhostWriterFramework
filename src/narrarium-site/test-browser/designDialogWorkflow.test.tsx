@@ -199,7 +199,7 @@ describe("the reviews in the dialog «Design the book»", () => {
     const dialog = await open();
     const reviews = dialog.querySelector("[data-design-reviews-fieldset]") as HTMLFieldSetElement;
     expect(reviews).toBeDisabled();
-    expect(within(reviews).getByText(t("designReview.oldServer", { version: "0.1.26" }))).toBeInTheDocument();
+    expect(within(reviews).getByText(t("designReview.oldServer", { version: "0.1.28" }))).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: /^Design/ }));
     await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledTimes(1));
     expect(mocks.runtime.start.mock.calls[0][1].design).not.toHaveProperty("workflow");

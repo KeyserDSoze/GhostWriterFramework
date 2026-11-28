@@ -219,7 +219,7 @@ describe("the Studio", () => {
     const old = await screen.findByRole("dialog", { name: t("design.dialog.title") });
     const off = within(old).getByRole("checkbox", { name: t("design.dialog.wildcards.label") });
     expect(off).toBeDisabled();
-    expect(off).toHaveAccessibleDescription(t("design.dialog.wildcards.oldServer", { version: "0.1.26" }));
+    expect(off).toHaveAccessibleDescription(t("design.dialog.wildcards.oldServer", { version: "0.1.27" }));
   });
 
   it("follows a design that goes on: its reviews, its last vote, and the way to go on with it", async () => {

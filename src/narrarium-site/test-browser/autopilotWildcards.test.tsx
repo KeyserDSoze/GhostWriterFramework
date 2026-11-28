@@ -185,7 +185,7 @@ describe("the part «Wildcards» of the Review tab", () => {
   it("on a personal server that predates it: says so, offers it off, and never sends what the book has of it", async () => {
     openForm(existing({ review: { targetScore: 8, wildcards: { design: true } } }), { reviewWildcardsUnsupported: true });
     await drawn();
-    expect(part()).toHaveTextContent(t("autopilot.review.wildcards.oldServer", { version: "0.1.26" }));
+    expect(part()).toHaveTextContent(t("autopilot.review.wildcards.oldServer", { version: "0.1.27" }));
     for (const key of ["design", "plateau"] as const) {
       expect(toggle(key)).toBeDisabled();
       expect(toggle(key)).not.toBeChecked();

@@ -367,7 +367,7 @@ describe("the review on request", () => {
     expect(within(card).getByRole("button", { name: t("designReview.request.chapter") })).toBeDisabled();
     const why = card.querySelector("[data-review-blocked]") as HTMLElement;
     expect(why).toHaveAttribute("data-review-blocked", reason);
-    expect(why).toHaveTextContent(t(`designReview.request.blocked.${reason}`, { version: "0.1.26" }));
+    expect(why).toHaveTextContent(t(`designReview.request.blocked.${reason}`, { version: "0.1.28" }));
     // The reason is what the button is described by, so that a screen reader says it with the button.
     expect(within(card).getByRole("button", { name: t("designReview.request.whole") }).getAttribute("aria-describedby")).toContain(why.id);
   });
