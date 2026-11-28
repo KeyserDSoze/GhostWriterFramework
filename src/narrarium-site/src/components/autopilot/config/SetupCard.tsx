@@ -1,10 +1,10 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Github, Loader2, Play, Rocket, Save, RotateCcw } from "lucide-react";
-import { DEFAULT_BRIEF, DEFAULT_OPTIONS, FROZEN_EDITS_MODES, autopilotPresetSkeleton, effectivePublish, type AutopilotBrief, type AutopilotLiveOptions, type AutopilotOptions, type AutopilotPublishMode, type AutopilotState, type StartOptions } from "narrarium-engine";
+import { BookConflictError, DEFAULT_BRIEF, DEFAULT_OPTIONS, FROZEN_EDITS_MODES, autopilotPresetSkeleton, effectivePublish, type AutopilotBrief, type AutopilotLiveOptions, type AutopilotOptions, type AutopilotPublishMode, type AutopilotState, type StartOptions } from "narrarium-engine";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { ConfigOverview } from "@/components/autopilot/config/ConfigOverview";
+import { ConfigOverview, type SynopsisOnlyOutcome } from "@/components/autopilot/config/ConfigOverview";
 import { ConfigTabs, type ConfigTab } from "@/components/autopilot/config/ConfigTabs";
 import { NumberField } from "@/components/autopilot/config/NumberField";
 import { BookRunPreview } from "@/components/autopilot/config/RunPreview";
@@ -17,7 +17,8 @@ import type { OutlineBriefOfBook } from "@/autopilot/useOutlineBrief";
 import type { BookStructure } from "@/types/book";
 import { bookStorageMode, type BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
-import { OUTLINE_BRIEF_NOTICE_ID } from "@/autopilot/outlineBrief";
+import { OUTLINE_BRIEF_FILE, OUTLINE_BRIEF_NOTICE_ID, parseOutlineBrief, serializeOutlineBrief } from "@/autopilot/outlineBrief";
+import { browserOutlineSource } from "@/outline/outlineSource";
 import { autoResumeOn, setAutoResume } from "@/autopilot/resume";
 import { policyUpdate, policyWithoutBookRound, policyWithoutReaderTargets, policyWithoutWildcards, readReviewForm, reviewFormOf, samePolicy, type ReviewForm } from "@/autopilot/reviewPolicy";
 import type { ReviewCardHandle } from "@/components/autopilot/config/ReviewCard";
@@ -264,6 +265,22 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
   const previewPolicy = reviewPolicyUnsupported ? initial.review : reviewReading.policy;
   const previewKey = JSON.stringify(previewPolicy ?? null);
   const previewForm = useMemo(() => ({ brief, options: { ...options, review: previewPolicy && Object.keys(previewPolicy).length ? previewPolicy : undefined } }), [brief, options, previewKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // «Use my Synopsis only» (#125): the brief's chapter-by-chapter plot is emptied, expecting the file as it was read, so that the entries of the Synopsis are the one source.
+  const synopsisOnly = async (): Promise<SynopsisOnlyOutcome> => {
+    if (branch === undefined) return "failed";
+    const source = browserOutlineSource(book, branch);
+    try {
+      const file = (await source.files()).find((entry) => entry.path === OUTLINE_BRIEF_FILE);
+      const reading = file ? parseOutlineBrief(file.content, file.hash) : null;
+      if (!file || !reading || reading.unreadable) return "failed";
+      await source.commit([{ path: OUTLINE_BRIEF_FILE, content: serializeOutlineBrief({ ...reading.brief, synopsis: "" }, reading.frontmatter), expectedHash: file.hash }], "Outline: use the Synopsis only, without the plot of the brief");
+      return "saved";
+    } catch (error) {
+      return error instanceof BookConflictError ? "conflict" : "failed";
+    } finally {
+      outline.reload();
+    }
+  };
   const tabs: ConfigTab[] = [
     {
       key: "overview",
@@ -279,6 +296,7 @@ export function SetupCard({ book, state, running, busy, disabled, asking = false
           loaded={outline.loaded}
           lastChapter={outline.lastChapter}
           noChapters={noChapters}
+          onSynopsisOnly={synopsisOnly}
           preview={branch !== undefined && <BookRunPreview book={book} branch={branch} structure={structure} state={state} form={previewForm} dirty={dirty} scaletta={`${outline.chapters}/${outline.lastChapter}/${outline.loaded}`} />}
         />
       ),

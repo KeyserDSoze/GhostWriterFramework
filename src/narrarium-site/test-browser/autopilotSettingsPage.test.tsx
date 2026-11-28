@@ -228,6 +228,32 @@ describe("the overview of the configuration", () => {
     expect(within(overview).getByRole("link", { name: t("autopilot.config.overview.edit") })).toHaveAttribute("href", `${ROOT}/outline`);
   });
 
+  it("says that the entries of the Synopsis bind over the brief's plot, and «Use my Synopsis only» empties that plot once the author confirms (#125)", async () => {
+    seedRun({ status: "paused" });
+    render(<Page />);
+    const overview = panel("overview");
+    const note = await waitFor(() => {
+      const found = overview.querySelector<HTMLElement>("[data-synopsis-binds]");
+      if (!found) throw new Error("not read yet");
+      return found;
+    });
+    expect(note).toHaveTextContent(t("autopilot.config.overview.synopsisBinds"));
+    const button = within(note).getByRole("button", { name: t("autopilot.config.overview.synopsisOnly") });
+    expect(button).toHaveAccessibleDescription(t("autopilot.config.overview.synopsisOnlyHint"));
+    fireEvent.click(button);
+    expect(within(note).getByText(t("autopilot.config.overview.synopsisOnlyAsk"))).toBeInTheDocument();
+    fireEvent.click(within(note).getByRole("button", { name: t("autopilot.config.overview.synopsisOnlyCancel") }));
+    expect((mocks.local as MemoryBookStore).files.get("outline/_brief.md")).toContain("Chapter 1: the wall cracks.");
+    fireEvent.click(within(note).getByRole("button", { name: t("autopilot.config.overview.synopsisOnly") }));
+    fireEvent.click(within(note).getByRole("button", { name: t("autopilot.config.overview.synopsisOnlyConfirm") }));
+    await waitFor(() => expect(overview.querySelector("[data-synopsis-only-outcome]")).toHaveTextContent(t("autopilot.config.overview.synopsisOnlyDone")));
+    const brief = (mocks.local as MemoryBookStore).files.get("outline/_brief.md")!;
+    expect(brief).not.toContain("the wall cracks");
+    expect(brief).toMatch(/genre: mystery\naudience: adults/);
+    await waitFor(() => expect(overview.querySelector("[data-synopsis-binds]")).toBeNull());
+    expect((mocks.local as MemoryBookStore).files.get("outline/chapters/001.md")).toContain("title: The wall");
+  });
+
   it("says the expected length as the chapter count and the words per scene, and no total of scenes", async () => {
     seedRun({ status: "paused" });
     render(<Page />);

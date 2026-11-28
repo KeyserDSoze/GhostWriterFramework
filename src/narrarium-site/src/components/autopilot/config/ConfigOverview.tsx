@@ -1,7 +1,7 @@
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Loader2, Pencil, Plane } from "lucide-react";
+import { AlertTriangle, Eraser, Loader2, Pencil, Plane } from "lucide-react";
 import type { AutopilotState } from "narrarium-engine";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -24,18 +24,24 @@ export interface ConfigOverviewProps {
   noChapters: boolean;
   /** The run's estimate, shown under the Scaletta. */
   preview?: ReactNode;
+  /** «Use my Synopsis only»: empty the chapter-by-chapter plot of the brief, so that the entries are the one source (#125). Absent: not offered. */
+  onSynopsisOnly?: () => Promise<SynopsisOnlyOutcome>;
 }
+
+export type SynopsisOnlyOutcome = "saved" | "conflict" | "failed";
 
 /**
  * The first part of the configuration: the state of the autopilot with its live page, and what it follows from the Scaletta: the brief and the
  * chapter entries, read here and never edited here. The link goes to the Scaletta, where they are written.
  */
-export function ConfigOverview({ bookId, state, fresh, brief, chapters, readable, loaded, lastChapter, noChapters, preview }: ConfigOverviewProps) {
+export function ConfigOverview({ bookId, state, fresh, brief, chapters, readable, loaded, lastChapter, noChapters, preview, onSynopsisOnly }: ConfigOverviewProps) {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage || i18n.language || "en";
   const scaletta = `/app/books/${encodeURIComponent(bookId)}/outline`;
   const none = t("autopilot.config.overview.notWritten");
   const synopsis = brief.synopsis.trim();
+  // What «Use my Synopsis only» came to stays said once the note goes (the brief has no plot any more).
+  const [synopsisOutcome, setSynopsisOutcome] = useState<SynopsisOnlyOutcome | null>(null);
   const facts: Array<[string, string]> = [
     [t("autopilot.config.overview.idea"), brief.idea.trim() || none],
     [t("autopilot.config.overview.genre"), brief.genre.trim() || none],
@@ -91,6 +97,18 @@ export function ConfigOverview({ bookId, state, fresh, brief, chapters, readable
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground">{t("autopilot.config.overview.synopsis")}</p>
               <p className="line-clamp-3 whitespace-pre-line break-words text-sm">{synopsis || none}</p>
+              {/* Two sources that can disagree: the entries of the Synopsis bind, and the brief's text is the older fallback (#125). */}
+              {synopsis && chapters > 0 && (
+                <div data-synopsis-binds="" className="mt-2 space-y-2 rounded-lg border border-layer bg-muted/30 p-3 text-sm">
+                  <p>{t("autopilot.config.overview.synopsisBinds")}</p>
+                  {onSynopsisOnly && <SynopsisOnly onConfirm={onSynopsisOnly} onOutcome={setSynopsisOutcome} />}
+                </div>
+              )}
+              {synopsisOutcome && (
+                <p role="status" data-synopsis-only-outcome={synopsisOutcome} className={synopsisOutcome === "saved" ? "mt-2 text-sm font-medium" : "mt-2 text-sm font-medium text-destructive"}>
+                  {synopsisOutcome === "saved" ? t("autopilot.config.overview.synopsisOnlyDone") : synopsisOutcome === "conflict" ? t("autopilot.config.overview.synopsisOnlyConflict") : t("autopilot.config.overview.synopsisOnlyFailed")}
+                </p>
+              )}
             </div>
             {lastChapter > 0 && <p className="text-sm font-medium">{t("autopilot.config.overview.length", { count: lastChapter, words: formatWhole(brief.wordsPerScene, locale) })}</p>}
           </>
@@ -98,6 +116,39 @@ export function ConfigOverview({ bookId, state, fresh, brief, chapters, readable
       </section>
 
       {preview}
+    </div>
+  );
+}
+
+/** «Use my Synopsis only», asked once more before the brief's text is emptied, and what came of it. */
+function SynopsisOnly({ onConfirm, onOutcome }: { onConfirm: () => Promise<SynopsisOnlyOutcome>; onOutcome: (outcome: SynopsisOnlyOutcome | null) => void }) {
+  const { t } = useTranslation();
+  const id = useId();
+  const [step, setStep] = useState<"idle" | "asking" | "saving">("idle");
+  const confirm = async () => {
+    setStep("saving");
+    const result = await onConfirm().catch((): SynopsisOnlyOutcome => "failed");
+    onOutcome(result);
+    setStep("idle");
+  };
+  return (
+    <div className="space-y-2">
+      {step === "idle" ? (
+        <Button type="button" size="sm" variant="outline" data-synopsis-only="" aria-describedby={`${id}-hint`} onClick={() => { onOutcome(null); setStep("asking"); }}>
+          <Eraser className="h-4 w-4" aria-hidden="true" />{t("autopilot.config.overview.synopsisOnly")}
+        </Button>
+      ) : (
+        <div role="group" aria-labelledby={`${id}-ask`} className="space-y-2">
+          <p id={`${id}-ask`} className="font-medium">{t("autopilot.config.overview.synopsisOnlyAsk")}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" data-synopsis-only-confirm="" disabled={step === "saving"} onClick={() => void confirm()}>
+              {step === "saving" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Eraser className="h-4 w-4" aria-hidden="true" />}{t("autopilot.config.overview.synopsisOnlyConfirm")}
+            </Button>
+            <Button type="button" size="sm" variant="ghost" disabled={step === "saving"} onClick={() => setStep("idle")}>{t("autopilot.config.overview.synopsisOnlyCancel")}</Button>
+          </div>
+        </div>
+      )}
+      <p id={`${id}-hint`} className="text-xs text-muted-foreground">{t("autopilot.config.overview.synopsisOnlyHint")}</p>
     </div>
   );
 }
