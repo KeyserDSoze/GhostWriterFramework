@@ -15,7 +15,7 @@ const ROOT_FILES: ReadonlySet<string> = new Set([
 /** The folders of a book whose text files can be read. */
 const FOLDERS: ReadonlySet<string> = new Set([
   "guidelines", "ghostwriters", "characters", "items", "locations", "factions", "timelines", "secrets", "chapters", "audit", "drafts", "scripts",
-  "resumes", "state", "evaluations", "operations", "personas", "research", "deepresearches", "assets", "outline", "autopilot", "conversations",
+  "resumes", "state", "evaluations", "operations", "personas", "research", "deepresearches", "assets", "outline", "bible", "autopilot", "conversations",
 ]);
 
 /**
@@ -24,6 +24,7 @@ const FOLDERS: ReadonlySet<string> = new Set([
  * conversations (a record of what was said) and the outline, which has a tool of its own.
  */
 const READ_ONLY_FOLDERS: Readonly<Record<string, string>> = {
+  bible: "the Bible (`bible/`: decisions, questions, threads, themes, rules of the world) is changed with edit_bible, which captures a decision open (only the author locks it, in the app) and writes the formats the engine owns.",
   autopilot: "the autopilot's files change only through the autopilot tools.",
   conversations: "the exports of conversations are a record.",
   outline: "the synopsis (the outline, `outline/`) is changed with edit_outline, which makes every change as the author's, with the numbering and the checks of the engine: a file written by hand could break them, or name the autopilot as its author. read_outline and read_outline_entry read it, and give the hash that edit_outline needs.",

@@ -140,6 +140,17 @@ describe("the decisions and the open questions", () => {
     expect([...section.querySelectorAll<HTMLElement>("[data-decision]")].map((row) => row.dataset.decision)).toEqual(["d-002"]);
   });
 
+  it("warns that a lock does not bind the autopilot of a book on a server that does not announce the decisions, and says nothing when it does", async () => {
+    mocks.book = { ...BOOK, autopilotHost: "server" };
+    useAutopilotStore.setState((state) => ({ server: { ...state.server, info: { features: ["autopilot", "autopilot-design"] } as never } }));
+    let root = await bible({ "bible/decisions.md": log() });
+    expect(root.querySelector("[data-server-without-decisions]")).toHaveTextContent(t("bibleStudio.decisions.serverWithout"));
+    cleanup();
+    useAutopilotStore.setState((state) => ({ server: { ...state.server, info: { features: ["autopilot", "bible-decisions"] } as never } }));
+    root = await bible({ "bible/decisions.md": log() });
+    expect(root.querySelector("[data-server-without-decisions]")).toBeNull();
+  });
+
   it("captures a decision with its chapters and the phrases it forbids, open or locked at once, in a book that has no log yet", async () => {
     const root = await bible({});
     const section = root.querySelector<HTMLElement>("#bible-decisions")!;

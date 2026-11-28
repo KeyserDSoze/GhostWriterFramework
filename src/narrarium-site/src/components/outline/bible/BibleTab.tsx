@@ -2,7 +2,7 @@ import { Suspense, lazy, useId, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { BookMarked, Loader2 } from "lucide-react";
-import { BIBLE_THEMES_FILE, BIBLE_WORLD_FILE, findingText, serializeBibleThemes, serializeBibleWorld, type AutopilotState, type DesignFinding, type OutlineChapterEntry } from "narrarium-engine";
+import { BIBLE_THEMES_FILE, BIBLE_WORLD_FILE, findingText, serverSupportsDecisions, serializeBibleThemes, serializeBibleWorld, type AutopilotState, type DesignFinding, type OutlineChapterEntry } from "narrarium-engine";
 import "@/i18n/design";
 import "@/i18n/bibleStudio";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -17,6 +17,7 @@ import { FindingIcon, SaveRow, Section, useBibleSave, useFollowingForm } from "@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useBibleFiles } from "@/components/outline/bible/useBibleFiles";
+import { useAutopilotStore } from "@/autopilot/store";
 import { canonHref, composeBible, type BibleCanonEntry, type BibleData, type BibleSecret, type BibleSection } from "@/outline/bibleModel";
 import type { OutlineSource } from "@/outline/outlineSource";
 import type { BookEntry } from "@/types/settings";
@@ -55,6 +56,9 @@ export function BibleTab({ bookId, book, branch = "main", source, entries, state
   const language = i18n.resolvedLanguage ?? i18n.language;
   const names = useMemo(() => new Map((data?.canon.characters ?? []).flatMap((entry) => [[`character:${entry.slug}`, entry.name], [entry.slug, entry.name]] as const)), [data]);
   const nameOf = (value: string) => names.get(value) ?? value.replace(/^character:/, "");
+  // The autopilot of this book runs on the owner's server: a server that does not announce the decisions would write the book without knowing a lock.
+  const serverInfo = useAutopilotStore((store) => store.server.info);
+  const serverWithoutDecisions = book?.autopilotHost === "server" && serverInfo !== null && !serverSupportsDecisions(serverInfo);
   const shownChapters = useMemo(() => new Set(entries.map((entry) => entry.number)), [entries]);
   const fileMap = useMemo(() => new Map((files ?? []).map((file) => [file.path, file])), [files]);
 
@@ -91,7 +95,7 @@ export function BibleTab({ bookId, book, branch = "main", source, entries, state
       </Section>
 
       <Section id={SECTION_IDS.decisions} title={t("bibleStudio.sections.decisions")}>
-        <DecisionsSection data={data} source={source} onSaved={reload} />
+        <DecisionsSection data={data} source={source} onSaved={reload} serverWithoutDecisions={serverWithoutDecisions} />
       </Section>
 
       <Section id={SECTION_IDS.world} title={t("design.bible.sections.world")}>

@@ -19,6 +19,7 @@ const bibleStudioIt = {
     decisions: {
       intro: "Ciò che l'autore ha stabilito. Una decisione bloccata vincola l'esecuzione del progetto, l'autopilot di scrittura, il Brainstorming e il Copilot: la conoscono, e una modifica che la contraddice viene fermata e chiesta a te. Solo tu blocchi una decisione.",
       empty: "Ancora nessuna decisione. Registra qui ciò che stabilisci e blocca ciò che non deve cambiare.",
+      serverWithout: "Il server che esegue l'autopilot di questo libro non conosce ancora le decisioni: scrive il libro senza. Aggiorna il server personale e un blocco vincolerà anche lui. Il Copilot e il Brainstorming lo rispettano già.",
       problems: "Una parte del file non si è potuta leggere: {{problems}}",
       locked: "Bloccata",
       open: "Aperta",

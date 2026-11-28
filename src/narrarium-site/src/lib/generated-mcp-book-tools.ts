@@ -312,6 +312,56 @@ export const mcpBookTools: BookToolEntry[] = [
     ]
   },
   {
+    "name": "read_bible",
+    "permission": "read",
+    "title": "Read the Bible",
+    "description": "Reads what the book has agreed, from the files of `bible/` and the timeline: the decisions (the log, with the ones the author LOCKED: they bind every agent, so never propose what contradicts one), the open questions (not yours to settle), the threads of setup and payoff, the events of the timeline with their date and chapter, the themes, the tone and the audience, and the rules of the world. `part` reads one of them.",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true
+    },
+    "parameters": [
+      {
+        "name": "part",
+        "required": false
+      }
+    ]
+  },
+  {
+    "name": "read_design",
+    "permission": "read",
+    "title": "Read the design of the chapters",
+    "description": "Reads the design of the chapters of the Synopsis (their `design:`: goal, pov, characters, setting, time, events, scenes, conflicts, emotions, reveals, withholds, clues, previous, next, ending, cliffhanger, notes) with the fields each lacks, and what the deterministic checks of the design find: a secret told too early, a clue that names the secret, a character acting on a secret before learning it, a thread without a payoff, a date or a place that contradicts another, a name the canon does not have. They are findings, never blockers. With `written` it also reads the chapters already written and lists the sentences that state a secret before its reveal.",
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true
+    },
+    "parameters": [
+      {
+        "name": "from",
+        "required": false
+      },
+      {
+        "name": "to",
+        "required": false
+      },
+      {
+        "name": "limit",
+        "required": false
+      },
+      {
+        "name": "findings",
+        "required": false
+      },
+      {
+        "name": "written",
+        "required": false
+      }
+    ]
+  },
+  {
     "name": "create_chapter",
     "permission": "write",
     "title": "Create a chapter",
@@ -596,6 +646,47 @@ export const mcpBookTools: BookToolEntry[] = [
     ]
   },
   {
+    "name": "edit_bible",
+    "permission": "write",
+    "title": "Edit the Bible",
+    "description": "Writes `bible/` as ONE commit: captures decisions (ALWAYS open: only the author locks one, in the app, and a lock is what binds every agent), adds open questions (only the author answers them), adds or changes threads of setup and payoff, and sets the themes, the tone, the audience and the rules of the world. Nothing is overwritten that the call does not name; a decision or a question is added at the end of the log, never rewritten. Read the Bible first (`read_bible`) so as not to repeat what it says.",
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false
+    },
+    "parameters": [
+      {
+        "name": "decisions",
+        "required": false
+      },
+      {
+        "name": "questions",
+        "required": false
+      },
+      {
+        "name": "threads",
+        "required": false
+      },
+      {
+        "name": "themes",
+        "required": false
+      },
+      {
+        "name": "tone",
+        "required": false
+      },
+      {
+        "name": "audience",
+        "required": false
+      },
+      {
+        "name": "rules",
+        "required": false
+      }
+    ]
+  },
+  {
     "name": "autopilot_pause",
     "permission": "run",
     "title": "Pause the autopilot",
@@ -641,6 +732,14 @@ export const mcpBookTools: BookToolEntry[] = [
       },
       {
         "name": "chapters",
+        "required": false
+      },
+      {
+        "name": "design",
+        "required": false
+      },
+      {
+        "name": "designChapters",
         "required": false
       }
     ]

@@ -16,6 +16,8 @@ interface Props {
   data: BibleData;
   source: OutlineSource | null;
   onSaved: () => void;
+  /** This book's autopilot runs on a server that does not announce the decisions: a lock does not bind it there. */
+  serverWithoutDecisions?: boolean;
 }
 
 const numbersOf = (text: string): number[] => [...new Set(text.split(/[\s,;]+/).map((item) => Number(item)).filter((value) => Number.isSafeInteger(value) && value > 0))];
@@ -26,7 +28,7 @@ function Status({ message }: { message: { tone: "ok" | "error"; text: string } |
 }
 
 /** The decisions of the book (the log of `bible/decisions.md`): read, captured, locked by the author; and the open questions the agents add and the author answers. */
-export function DecisionsSection({ data, source, onSaved }: Props) {
+export function DecisionsSection({ data, source, onSaved, serverWithoutDecisions = false }: Props) {
   const { t } = useTranslation();
   const { busy, message, save } = useBibleSave(source, onSaved);
   const [filter, setFilter] = useState<"all" | "locked" | "open">("all");
@@ -39,6 +41,7 @@ export function DecisionsSection({ data, source, onSaved }: Props) {
   return (
     <div className="space-y-4">
       <p className="max-w-3xl text-sm text-muted-foreground">{t("bibleStudio.decisions.intro")}</p>
+      {serverWithoutDecisions && <p role="alert" data-server-without-decisions className="rounded-lg border border-amber-500/60 bg-amber-50 p-2 text-xs text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">{t("bibleStudio.decisions.serverWithout")}</p>}
       {data.decisionsProblems.length > 0 && <p role="alert" className="text-xs text-amber-800 dark:text-amber-300">{t("bibleStudio.decisions.problems", { problems: data.decisionsProblems.join("; ") })}</p>}
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Label htmlFor={filterId} className="text-xs font-medium">{t("bibleStudio.decisions.filterLabel")}</Label>

@@ -19,6 +19,7 @@ const bibleStudioEn = {
     decisions: {
       intro: "What the author has settled. A locked decision binds the design run, the writing autopilot, Brainstorming and the Copilot: they are told it, and a change that contradicts it is held and asked to you. Only you lock a decision.",
       empty: "No decision yet. Capture what you settle here, and lock what must not change.",
+      serverWithout: "The server that runs this book's autopilot does not know the decisions yet: it writes the book without them. Update the personal server, and a lock will bind it too. The Copilot and Brainstorming already respect it.",
       problems: "Some of the file could not be read: {{problems}}",
       locked: "Locked",
       open: "Open",

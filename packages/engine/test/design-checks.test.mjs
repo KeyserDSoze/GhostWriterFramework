@@ -208,3 +208,11 @@ test("the checks read a real book: the timeline events with their chapters and d
   assert.deepEqual((await engine.spoilerFindingsOfChapter(store, snapshot, written[0])).map((finding) => finding.chapter), [2]);
   assert.deepEqual(await engine.spoilerFindingsOfChapter(store, snapshot, written[1]), []);
 });
+
+test("a server announces that it respects the locked decisions with the feature `bible-decisions`; an older one, or an odd answer, says no", () => {
+  assert.equal(engine.SERVER_FEATURE_BIBLE_DECISIONS, "bible-decisions");
+  assert.equal(engine.serverSupportsDecisions({ features: ["autopilot", "bible-decisions"] }), true);
+  assert.equal(engine.serverSupportsDecisions({ features: ["autopilot", "autopilot-design"] }), false);
+  assert.equal(engine.serverSupportsDecisions(null), false);
+  assert.equal(engine.serverSupportsDecisions({ features: 7 }), false);
+});

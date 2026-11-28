@@ -1,4 +1,4 @@
-import type { InterventionScope, PauseAutopilotMode } from "narrarium-engine";
+import { AutopilotDesignError, type InterventionScope, type PauseAutopilotMode } from "narrarium-engine";
 import { describeAutopilot } from "./mcp-read.js";
 import { boolean, choice, integer, shape, string } from "./mcp-schema.js";
 import { asString, json, ToolError, type McpTool, type ToolContext } from "./mcp-kit.js";
@@ -50,15 +50,25 @@ const autopilotResume: McpTool = {
   inputSchema: shape({
     steps: integer("Pause again after this many steps of this run.", 1, 10_000),
     chapters: integer("Pause again after this many chapters of this run.", 1, 1000),
+    design: boolean("`true`: design the book instead of writing it (a design run: the concept, the design of every chapter, the secrets and the world, reviewed by the director and the readers; it writes no prose and stops when the design is approved). `false`: end the design that goes on and write. Absent: a design that goes on goes on, and anything else is what it always was. Only for a book whose chapters are not written yet; the owner's server must announce `autopilot-design`."),
+    designChapters: integer("With `design: true`, how many chapters to design (default 12).", 1, 500),
   }),
   async run(context, args) {
     const { runtime, books } = context;
+    if (args.design !== true && typeof args.designChapters === "number") throw new ToolError("invalid_input", "designChapters goes with design: true.");
     books.assertNotInMaintenance();
     const snapshot = await runtime.session.snapshot();
     if (snapshot.stateError) throw new ToolError("state_corrupt", snapshot.stateError.message);
     if (!snapshot.state) throw new ToolError("no_autopilot", "The autopilot of this book was never set up: set it up (the idea, the number of chapters…) in the Narrarium app. Only the app can start a book from nothing.");
     const limits = { ...(typeof args.steps === "number" ? { steps: args.steps } : {}), ...(typeof args.chapters === "number" ? { chapters: args.chapters } : {}) };
-    await books.startRun(runtime, Object.keys(limits).length ? { limits } : {});
+    const design = args.design === true ? (typeof args.designChapters === "number" ? { chapters: args.designChapters } : true) : args.design === false ? false : undefined;
+    try {
+      await books.startRun(runtime, { ...(Object.keys(limits).length ? { limits } : {}), ...(design !== undefined ? { design } : {}) });
+    } catch (error) {
+      // A design that cannot begin says why (the chapters are written, the book has no description): the model can act on it.
+      if (error instanceof AutopilotDesignError) throw new ToolError(error.code, error.message);
+      throw error;
+    }
     return status(context);
   },
 };

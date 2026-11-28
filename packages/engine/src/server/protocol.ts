@@ -571,6 +571,18 @@ export function serverSupportsDesign(info: { features?: unknown } | readonly unk
   return announces(info, SERVER_FEATURE_AUTOPILOT_DESIGN);
 }
 
+/**
+ * The `ServerInfo.features` entry of a server whose engine respects the decisions of a book (`bible/decisions.md`: a locked decision is in every request of the autopilot, and a step
+ * that contradicts one is not committed) and that reads the checks of the design (`designFindings`). An older server runs the autopilot without them: the app says so where the
+ * author locks a decision, instead of letting a lock look binding when the server that writes the book does not know it.
+ */
+export const SERVER_FEATURE_BIBLE_DECISIONS = "bible-decisions";
+
+/** Whether the server announces that its autopilot respects the locked decisions of a book (`bible-decisions`). Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsDecisions(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  return announces(info, SERVER_FEATURE_BIBLE_DECISIONS);
+}
+
 /** The feature a server announces for the campaigns of a reason: the routes of a campaign are there for it. */
 export const CAMPAIGN_FEATURES: Readonly<Record<RevisionReason, string>> = {
   "outline-change": SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY,
