@@ -1,4 +1,5 @@
 import { normalizeScore, requireStructuredFields, splitReasoningBlock } from "../ai/structured.js";
+import { annotationSummary, closeAnnotations } from "./annotations.js";
 import { AI_CAPABILITIES, AiReplyRejectedError, type AiRequest, type AiResponse } from "../ai/types.js";
 import {
   canonDetails,
@@ -2682,7 +2683,9 @@ async function runRevise(ctx: TaskContext): Promise<TaskResult> {
   if (summary) scene.summary = summary;
   revision.cursor += 1;
   ctx.insight("ok", isItalian(ctx.language) ? `Scena ${chapter.number}.${scene.number} riscritta` : `Scene ${chapter.number}.${scene.number} rewritten`, target.instruction);
-  return { changes: [change], summary: `${words} words — ${target.instruction}` };
+  // The notes of the author this rewrite answers are closed in the same commit: handled by the autopilot, with what it did.
+  const closed = target.noteIds?.length ? await closeAnnotations(ctx.store, chapter.slug, target.noteIds, ctx.now().toISOString(), annotationSummary(chapter.number, scene.number, ctx.language)) : null;
+  return { changes: compact([change, closed]), summary: `${words} words — ${target.instruction}` };
 }
 
 async function runFinal(ctx: TaskContext): Promise<TaskResult> {

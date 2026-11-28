@@ -1275,7 +1275,7 @@ export class AutopilotRun {
         for (const note of settled.notes) this.announce(note);
         this.frozenWaitingCount = settled.waiting;
         // A review of the book leaves the author's chapters to the author: it learns which they are now.
-        context.planner.frozen = { outlineWritten: outlineStatus.written, now: at, ...(settled.state.campaign?.review ? authorHeldChapters(snapshot) : {}) };
+        context.planner.frozen = { outlineWritten: outlineStatus.written, now: at, ...(settled.state.campaign?.review || settled.state.campaign?.annotations ? authorHeldChapters(snapshot) : {}) };
         // A decision about a change may start now (the chapter goes back to review, before the plan). Advancing is idempotent: it is done
         // again only when there is something new for it.
         if (settled.state !== state || settled.state.pendingReviews?.some((entry) => !entry.started) || campaignGoesOn(settled.state)) state = advanceState(settled.state, context.planner);

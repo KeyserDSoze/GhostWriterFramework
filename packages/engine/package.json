@@ -19,6 +19,10 @@
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "import": "./dist/testing/index.js"
+    },
+    "./annotations": {
+      "types": "./dist/annotations/index.d.ts",
+      "import": "./dist/annotations/index.js"
     }
   },
   "files": [

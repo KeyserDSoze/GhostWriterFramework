@@ -145,7 +145,7 @@ The reader of the app lets the author mark a passage, tag it and add a note. The
 - `annotations/chapters/<chapter-slug>.yml`: the annotations of one chapter, one entry per marked passage
 - `annotations/tags.yml`: the tags made for this book (the built-in tags live in the app, the tags for every book in the author's account settings)
 
-They are the author's notes about the book, not the book: plain YAML without frontmatter, outside every folder `validateBook()`, `doctorBook()` and `searchBook()` read, never published by the online reader (public or protected), and not part of the context the engine builds for the autopilot. A book whose repository is public on GitHub makes its annotations public there; the app says so once per book.
+They are the author's notes about the book, not the book: plain YAML without frontmatter, outside every folder `validateBook()`, `doctorBook()` and `searchBook()` read, never published by the online reader (public or protected), and not part of the context the engine builds for the autopilot. The autopilot reads them only when the author asks it to answer them (`AutopilotSession.reviseAnnotations`, the campaign of reason `annotations`): the open notes of the chapters it closed are rewritten as they ask, and each note it answered is closed with a `resolution` by `autopilot`. A book whose repository is public on GitHub makes its annotations public there; the app says so once per book.
 
 ```yaml
 # Annotations of this chapter, written by Narrarium: one entry per marked passage, sorted by id. Do not rename this file by hand.

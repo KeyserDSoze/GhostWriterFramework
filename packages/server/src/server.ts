@@ -82,6 +82,7 @@ import { SERVER_VERSION } from "./version.js";
 import { OutlineTextLimitError } from "narrarium-engine";
 import { FROZEN_ACTIONS, FROZEN_EDITS_MODES, FrozenChapterError, SERVER_FEATURE_AUTOPILOT_FROZEN, type FrozenAction, type FrozenChangeKind, type FrozenEditsMode } from "narrarium-engine";
 import { REVISION_CHAPTER_MODES, REVISION_REASONS, RevisionCampaignError, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, type ReviseChaptersInput } from "narrarium-engine";
+import { SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, type ReviseAnnotationsInput } from "narrarium-engine";
 import { BOOK_ROUND_MODES, REVIEW_MAX_CAMPAIGN_ROUNDS, REVIEW_MAX_READER_ENTRIES, REVIEW_MAX_ROUNDS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, type BookCorrectionsDecision, type ReviewBookInput } from "narrarium-engine";
 import { AutopilotDesignError, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_BIBLE_DECISIONS, normalizeDesignStart } from "narrarium-engine";
 
@@ -615,6 +616,38 @@ function asBookCorrectionsDecision(body: Record<string, unknown>): BookCorrectio
   return { round: body.round as number, action: body.action as "apply" | "decline", ...(body.chosen !== undefined ? { chosen: body.chosen as number[] } : {}) };
 }
 
+/** The keys of a request to rewrite the author's annotations (`POST …/autopilot/annotations`). */
+const REVISE_ANNOTATIONS_KEYS = ["ids", "chapters", "include", "accountTags", "language", "note"];
+
+/**
+ * The body of a request to rewrite the passages the author marked, `{ ids?, chapters?, include?, accountTags?, language?, note? }`: the shape, which is checked here (a misspelt
+ * key is refused, not ignored), and what it asks, which the engine judges (its `RevisionCampaignError`).
+ */
+function asReviseAnnotations(body: Record<string, unknown>): ReviseAnnotationsInput {
+  const refuse = (problem: string): never => {
+    throw new HttpError(400, "invalid_request", `${problem} A request is { "ids"?: [note ids], "chapters"?: [chapter names], "include"?: [chapter numbers], "accountTags"?: [tags], "language"?: "en" | "it", "note"?: text }.`);
+  };
+  const unknown = Object.keys(body).filter((key) => !REVISE_ANNOTATIONS_KEYS.includes(key));
+  if (unknown.length) refuse(`${unknown.slice(0, 3).map(named).join(", ")} cannot be sent here.`);
+  const list = (key: string, check: (entry: unknown) => boolean, max: number) => {
+    if (body[key] !== undefined && (!Array.isArray(body[key]) || (body[key] as unknown[]).length > max || !(body[key] as unknown[]).every(check))) refuse(`\`${key}\` is a list of at most ${max} entries of the right kind.`);
+  };
+  list("ids", (entry) => typeof entry === "string" && entry.length <= 64, 2000);
+  list("chapters", (entry) => typeof entry === "string" && entry.length <= 200, MAX_CAMPAIGN_REQUEST_CHAPTERS * 5);
+  list("include", (entry) => Number.isSafeInteger(entry), MAX_CAMPAIGN_REQUEST_CHAPTERS);
+  list("accountTags", (entry) => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry), 200);
+  if (body.language !== undefined && typeof body.language !== "string") refuse("`language` must be a string.");
+  if (body.note !== undefined && typeof body.note !== "string") refuse("`note`, the author's words for the director, must be a string.");
+  return {
+    ...(body.ids !== undefined ? { ids: body.ids as string[] } : {}),
+    ...(body.chapters !== undefined ? { chapters: body.chapters as string[] } : {}),
+    ...(body.include !== undefined ? { include: body.include as number[] } : {}),
+    ...(body.accountTags !== undefined ? { accountTags: body.accountTags as ReviseAnnotationsInput["accountTags"] } : {}),
+    ...(typeof body.language === "string" ? { language: body.language.slice(0, 20) } : {}),
+    ...(typeof body.note === "string" ? { note: body.note.slice(0, MAX_CAMPAIGN_NOTE_CHARACTERS) } : {}),
+  };
+}
+
 /** The folder of a chapter in the address (`…/chapters/:slug/freeze`): a name in `chapters/`, not a path (no separator, no control character), and short. */
 function asChapterFolder(value: string): string {
   if (!value || value.length > 200 || value === "." || value === ".." || /[/\\\u0000-\u001f\u007f]/.test(value)) throw new HttpError(400, "invalid_request", "The chapter in the address must be the name of its folder in chapters/.");
@@ -914,7 +947,7 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
       serverId: data.config.serverId,
       label: publicLabel(data.config.label),
       git: gitAvailable,
-      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_BIBLE_DECISIONS, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
+      features: ["autopilot", "director", "sync", "pairing", "updates", "spend", SERVER_FEATURE_AUTOPILOT_CONTROLS, SERVER_FEATURE_AUTOPILOT_RULES, SERVER_FEATURE_AUTOPILOT_FROZEN, SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK, SERVER_FEATURE_AUTOPILOT_REVIEW_POLICY, SERVER_FEATURE_AUTOPILOT_REVIEW_TARGETS, SERVER_FEATURE_AUTOPILOT_ANNOTATIONS, SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK_ROUND, SERVER_FEATURE_AUTOPILOT_DESIGN, SERVER_FEATURE_BIBLE_DECISIONS, SERVER_FEATURE_AUTOPILOT_RETRY, SERVER_FEATURE_AUTOPILOT_AUTO_RESUME, SERVER_FEATURE_AUTOPILOT_OUTLINE_BRIEF, SERVER_FEATURE_AUTOPILOT_CALLS, "mcp", "mcp-oauth", ...(gitAvailable ? ["github", SERVER_FEATURE_GITHUB_CONFLICTS] : [])],
       publicKey: data.publicKey,
       fingerprint: data.fingerprint,
       supervised,
@@ -1380,6 +1413,14 @@ export async function startNarrariumServer(options: NarrariumServerOptions): Pro
           books.assertNotInMaintenance();
           const runtime = books.get(params[0]);
           return runtime.session.decideBookCorrections(asBookCorrectionsDecision(asObject(await readBody(request, SMALL_BODY))));
+        },
+      },
+      // Rewrite the passages the author marked: the campaign of reason `annotations`, which the next run carries out (and `DELETE …/campaign` cancels).
+      {
+        method: "POST", pattern: /^\/api\/v1\/books\/([^/]+)\/autopilot\/annotations$/, scope: "run", handler: async ({ request, params }) => {
+          books.assertNotInMaintenance();
+          const runtime = books.get(params[0]);
+          return runtime.session.reviseAnnotations(asReviseAnnotations(asObject(await readBody(request, SMALL_BODY))));
         },
       },
       {

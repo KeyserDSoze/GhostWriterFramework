@@ -2,11 +2,12 @@ import type { BookSnapshot } from "../book/snapshot.js";
 import { inRevision, startedReview } from "./chapter-state.js";
 import { authorHeldChapters, beginOutlineRewrite, campaignGoesOn, isFrozenQuestion, withDeferral, withoutDeferrals, type FrozenStatus, type FrozenWorkItem, type PlannerFrozen } from "./frozen.js";
 import type { PlanNote } from "./planner.js";
+import { annotationRevision } from "./annotations.js";
 import { bookCorrectionInstruction, bookRoundRecord, bookRoundText } from "./book-round.js";
 import { plateauBreakers } from "./plateau.js";
 import { gateFor, normalizeReviewPolicy, readerGate, reviewBookRound, type ReaderTargets } from "./review-policy.js";
 import { blockerText, chapterStanding } from "./review-readers.js";
-import { CAMPAIGN_NOTE_CHARACTERS, MAX_BOOK_CHAPTERS, MAX_CAMPAIGN_CHAPTERS, MAX_REVIEW_RECORDS, MAX_REVIEW_ROUNDS_KEPT } from "./state.js";
+import { CAMPAIGN_NOTE_CHARACTERS, MAX_ANNOTATION_RECORDS, MAX_BOOK_CHAPTERS, MAX_CAMPAIGN_CHAPTERS, MAX_REVIEW_RECORDS, MAX_REVIEW_ROUNDS_KEPT } from "./state.js";
 import {
   BOOK_ROUNDS_KEPT,
   BOOK_ROUND_MODES,
@@ -16,6 +17,7 @@ import {
   REVISION_CHAPTER_MODES,
   REVISION_REASONS,
   type AutopilotInsightFigures,
+  type AnnotationsRecord,
   type AutopilotMessageCode,
   type AutopilotState,
   type BookRoundMode,
@@ -115,7 +117,7 @@ export interface RevisionReasonHandler {
   /** A reason to stop the campaign before its next chapter (`null`: go on). The chapters that wait end as cancelled (and `cancel` says what becomes of them), and the words say why (`campaignStopped`'s detail). */
   stop?(state: AutopilotState, campaign: RevisionCampaign, language: string): string | null;
   /** After the last chapter (mutates). */
-  complete?(state: AutopilotState, campaign: RevisionCampaign): void;
+  complete?(state: AutopilotState, campaign: RevisionCampaign, at: string): void;
   /**
    * Once no chapter waits or is being worked (and the author did not cancel the campaign): what comes next (`CampaignNext`; without this hook the campaign ends,
    * said with `texts.done`). A reason with this hook says how it ended itself. Mutates `state` and `campaign`; every moment comes from `frozen.now`.
@@ -534,8 +536,67 @@ function afterBookPhase(state: AutopilotState, campaign: RevisionCampaign, froze
   return end("chapters", "info", book.status === "declined" ? "reviewStopped" : book.stop === "author" ? "bookRoundAuthor" : "bookRoundNone", told.title, [told.detail, book.summary].filter(Boolean).join(" ") || undefined);
 }
 
+// ─── The notes of the author (`annotations`) ────────────────────────────────
+
+const annotationsReason: RevisionReasonHandler = {
+  check() {
+    throw new RevisionCampaignError("invalid_request", "A campaign of annotations is asked with reviseAnnotations (the notes to work), not as a list of chapters.");
+  },
+  record(state, campaign) {
+    return { ...state, campaign };
+  },
+  start(state, chapter, item, campaign, frozen) {
+    if (!state.plan?.approved || chapter.status !== "done") return { outcome: "wait" };
+    // The chapters of the author's keep their rules: one the author froze, or changed since it was frozen, is left to the author unless the author included it.
+    const include = campaign.annotations?.include?.includes(chapter.number);
+    if ((frozen.authorFrozen?.has(chapter.slug) && !include) || frozen.changedFrozen?.has(chapter.slug)) return { outcome: "skip", why: "author" };
+    const revision = annotationRevision(campaign, chapter, frozen.now);
+    if (!revision) return { outcome: "skip", why: "gone" };
+    state.revision = revision;
+    // The book is rewritten: nobody has judged it as it is going to be.
+    state.finalDone = false;
+    delete state.finalReview;
+    void item;
+    return { outcome: "started" };
+  },
+  finished(state, chapter) {
+    return chapter.status === "done" && !inRevision(state, chapter.number) && state.review?.chapterNumber !== chapter.number;
+  },
+  keep() {
+    // The author never keeps a chapter of this reason: every chapter is worked.
+  },
+  cancel(input) {
+    return input;
+  },
+  complete(state, campaign, at) {
+    const notes = campaign.annotations?.notes ?? [];
+    const done = new Set(campaign.chapters.filter((item) => item.status === "done").map((item) => item.number));
+    const record: AnnotationsRecord = {
+      campaignId: campaign.id,
+      startedAt: campaign.createdAt,
+      endedAt: campaign.cancelledAt ?? at,
+      notes: notes.length,
+      handled: notes.filter((note) => done.has(note.chapterNumber)).length,
+      chapters: [...done].sort((left, right) => left - right),
+      ...(campaign.cancelledAt ? { cancelled: true } : {}),
+    };
+    state.annotationRuns = [...(state.annotationRuns ?? []), record].slice(-MAX_ANNOTATION_RECORDS);
+  },
+  texts: {
+    chapterDone: (number, done, total, language) => text(language, `Chapter ${number} rewritten from your notes (${done} of ${total})`, `Il capitolo ${number} riscritto dalle tue note (${done} di ${total})`),
+    skipped: (number, why, language) => why === "author"
+      ? text(language, `Chapter ${number} is yours now (you froze it, or changed it since it was frozen): its notes are left to you`, `Il capitolo ${number} ora è tuo (l'hai congelato, o modificato dopo il congelamento): le sue note restano a te`)
+      : text(language, `Chapter ${number}: its notes no longer match a scene of the plan, so there is nothing to rewrite`, `Capitolo ${number}: le sue note non corrispondono più a una scena del piano, quindi non c'è nulla da riscrivere`),
+    done: (worked, language) => text(
+      language,
+      `Your notes are answered: ${worked === 1 ? "1 chapter" : `${worked} chapters`} rewritten and reviewed again. The notes are closed as handled by the autopilot. The plan goes on.`,
+      `Le tue note hanno una risposta: ${worked === 1 ? "1 capitolo riscritto" : `${worked} capitoli riscritti`} e rivisti di nuovo. Le note sono chiuse come sistemate dall'autopilota. Il piano prosegue.`,
+    ),
+  },
+};
+
 /** The handlers of the reasons: the extension point of the campaigns. */
-export const REVISION_REASON_HANDLERS: Readonly<Record<RevisionReason, RevisionReasonHandler>> = { "outline-change": outlineChange, "review-target": reviewTarget };
+export const REVISION_REASON_HANDLERS: Readonly<Record<RevisionReason, RevisionReasonHandler>> = { "outline-change": outlineChange, "review-target": reviewTarget, annotations: annotationsReason };
 
 /**
  * What the author asks when the book is reviewed again (`AutopilotSession.reviewBook`): the target score (from 1 to 10), and what else the review is allowed:
@@ -867,7 +928,7 @@ export function advanceRevisionCampaign(state: AutopilotState, report: (note: Pl
     delete state.campaign;
     return;
   }
-  handler.complete?.(state, campaign);
+  handler.complete?.(state, campaign, frozen.now);
   const rewritten = worked().filter((item) => item.status === "done").length;
   if (!stopped && !handler.afterChapters && (rewritten || worked().some((item) => item.status === "skipped"))) report({ key: `campaign-done:${campaign.id}`, tone: "ok", code: "campaignDone", title: handler.texts.done(rewritten, language) });
   delete state.campaign;

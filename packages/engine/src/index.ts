@@ -60,6 +60,7 @@ export * from "./autopilot/outline-compose.js";
 export * from "./autopilot/book-round.js";
 export * from "./autopilot/campaign.js";
 export * from "./autopilot/plateau.js";
+export * from "./autopilot/annotations.js";
 export * from "./autopilot/review-policy.js";
 export * from "./autopilot/review-readers.js";
 export * from "./autopilot/design.js";

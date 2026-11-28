@@ -4,6 +4,7 @@ import type { BookFileChange, BookFileContent, BookFileEntry } from "../book/sto
 import type { DirectorOpinion } from "../director/opinion.js";
 import type { FrozenChapterResult, FrozenStatus } from "../autopilot/frozen.js";
 import type { BookCorrectionsDecision, ReviewBookInput, ReviseChaptersInput, RevisionCampaignResult } from "../autopilot/campaign.js";
+import type { ReviseAnnotationsInput } from "../autopilot/annotations.js";
 import type { RevisionReason } from "../autopilot/types.js";
 import type { AutopilotEvent, AutopilotLiveOptions, AutopilotPauseMode, AutopilotSnapshot, AutopilotStateSummary, FrozenAction, FrozenChangeKind, InterventionInput, QuestionAnswer, StartOptions } from "../autopilot/types.js";
 import type { AiCallField } from "../autopilot/calls/types.js";
@@ -583,10 +584,22 @@ export function serverSupportsDecisions(info: { features?: unknown } | readonly 
   return announces(info, SERVER_FEATURE_BIBLE_DECISIONS);
 }
 
+/**
+ * The `ServerInfo.features` entry of a server that rewrites the passages the author marked (`POST /api/v1/books/:id/autopilot/annotations`, the campaign of reason
+ * `annotations`: `AutopilotSession.reviseAnnotations`) and closes the notes it answered. A server without it answers 404: the engine's client refuses before sending.
+ */
+export const SERVER_FEATURE_AUTOPILOT_ANNOTATIONS = "autopilot-annotations";
+
+/** Whether the server announces that it works on the author's annotations (`autopilot-annotations`). Never throws: an older server, or an odd answer, says no. */
+export function serverSupportsAnnotations(info: { features?: unknown } | readonly unknown[] | null | undefined): boolean {
+  return announces(info, SERVER_FEATURE_AUTOPILOT_ANNOTATIONS);
+}
+
 /** The feature a server announces for the campaigns of a reason: the routes of a campaign are there for it. */
 export const CAMPAIGN_FEATURES: Readonly<Record<RevisionReason, string>> = {
   "outline-change": SERVER_FEATURE_AUTOPILOT_OUTLINE_APPLY,
   "review-target": SERVER_FEATURE_AUTOPILOT_REVIEW_BOOK,
+  annotations: SERVER_FEATURE_AUTOPILOT_ANNOTATIONS,
 };
 
 /** The body of `POST /api/v1/books/:id/autopilot/campaign` (`AutopilotSession.reviseChapters`). */
@@ -595,6 +608,8 @@ export type ReviseChaptersRequest = ReviseChaptersInput;
 export type ReviewBookRequest = ReviewBookInput;
 /** The body of `POST /api/v1/books/:id/autopilot/review/corrections` (`AutopilotSession.decideBookCorrections`): the author's decision about the corrections of the book that wait for it. */
 export type BookCorrectionsRequest = BookCorrectionsDecision;
+/** The body of `POST /api/v1/books/:id/autopilot/annotations` (`AutopilotSession.reviseAnnotations`). */
+export type ReviseAnnotationsRequest = ReviseAnnotationsInput;
 /** The answer of `POST` and `DELETE …/autopilot/campaign`: the campaign as it is saved (`null`: none goes on), and the changes after it. */
 export type RevisionCampaignResponse = RevisionCampaignResult;
 /** The answer of `POST …/chapters/:slug/freeze`. */

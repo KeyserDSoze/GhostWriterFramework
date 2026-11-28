@@ -344,5 +344,5 @@ test("the client of the personal server sends a review where the server has it, 
   await assert.rejects(makeClient(["autopilot"]).cancelRevisionCampaign("my book"), (error) => error.code === "feature_unavailable");
   assert.equal(log.length, 5, "nothing else was sent");
   assert.deepEqual([engine.serverSupportsReviewBook(all), engine.serverSupportsReviewPolicy({ features: all }), engine.serverSupportsReviewBook(null), engine.serverSupportsReviewPolicy({ features: ["autopilot"] })], [true, true, false, false]);
-  assert.deepEqual(engine.CAMPAIGN_FEATURES, { "outline-change": "autopilot-outline-apply", "review-target": "autopilot-review-book" });
+  assert.deepEqual(engine.CAMPAIGN_FEATURES, { "outline-change": "autopilot-outline-apply", "review-target": "autopilot-review-book", annotations: "autopilot-annotations" });
 });

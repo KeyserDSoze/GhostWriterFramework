@@ -13,6 +13,9 @@ import type {
   DesignPolicy,
   DesignRound,
   AutopilotBrief,
+  AnnotationsCampaign,
+  AnnotationsRecord,
+  AnnotationWork,
   AutopilotCampaignSummary,
   AutopilotFinalReview,
   AutopilotLastErrorCode,
@@ -88,6 +91,9 @@ export const CAMPAIGN_NOTE_CHARACTERS = 2000;
 /** The rounds of a review of the book the state keeps (`ReviewCampaign.history`), and the reviews over it remembers (`AutopilotState.reviews`). */
 export const MAX_REVIEW_ROUNDS_KEPT = 50;
 export const MAX_REVIEW_RECORDS = 20;
+/** The campaigns of annotations the state remembers, and the notes one campaign carries at most. */
+export const MAX_ANNOTATION_RECORDS = 20;
+export const MAX_ANNOTATION_NOTES = 400;
 /**
  * Upper bound for any chapter number or chapter count read from a file or a reply. It only guards against typos and
  * garbage: a book has no maximum length, and nothing below this value is ever clamped.
@@ -778,6 +784,43 @@ function normalizeReviewCampaign(value: unknown): ReviewCampaign | undefined {
   };
 }
 
+/** The annotations a campaign answers, as a file says them: the valid notes only (a scene, a chapter and an instruction each, once each). */
+function normalizeAnnotationsCampaign(value: unknown): AnnotationsCampaign | undefined {
+  const source = asRecord(value);
+  const seen = new Set<string>();
+  const notes = asArray(source.notes).map((entry): AnnotationWork | null => {
+    const note = asRecord(entry);
+    const id = readText(note.id, 64);
+    const instruction = readText(note.instruction, 4000);
+    const chapterNumber = asInteger(note.chapterNumber, 0, 0, MAX_BOOK_CHAPTERS);
+    const sceneNumber = asInteger(note.sceneNumber, 0, 0, 999);
+    if (!id || !instruction || !chapterNumber || !sceneNumber || seen.has(id)) return null;
+    seen.add(id);
+    return { id, chapterNumber, sceneNumber, instruction };
+  }).filter((entry): entry is AnnotationWork => entry !== null).slice(0, MAX_ANNOTATION_NOTES);
+  if (!notes.length) return undefined;
+  const numbers = (list: unknown) => [...new Set(asArray(list).map((entry) => asInteger(entry, 0, 0, MAX_BOOK_CHAPTERS)).filter((entry) => entry > 0))].sort((left, right) => left - right).slice(0, MAX_CAMPAIGN_CHAPTERS);
+  const include = numbers(source.include);
+  const heldBack = numbers(source.heldBack);
+  const unplaced = asInteger(source.unplaced, 0, 0, 100_000);
+  const notYet = asInteger(source.notYet, 0, 0, 100_000);
+  return { notes, ...(include.length ? { include } : {}), ...(heldBack.length ? { heldBack } : {}), ...(unplaced ? { unplaced } : {}), ...(notYet ? { notYet } : {}) };
+}
+
+/** The campaigns of annotations that are over, as a file says them: the valid ones, the newest `MAX_ANNOTATION_RECORDS`. */
+function normalizeAnnotationRecords(value: unknown): AnnotationsRecord[] | undefined {
+  const records = asArray(value).map((entry): AnnotationsRecord | null => {
+    const source = asRecord(entry);
+    const campaignId = readActivityId(source.campaignId);
+    const startedAt = readMoment(source.startedAt);
+    const endedAt = readMoment(source.endedAt);
+    if (!campaignId || !startedAt || !endedAt) return null;
+    const chapters = asArray(source.chapters).map((chapter) => asInteger(chapter, 0, 0, MAX_BOOK_CHAPTERS)).filter((chapter) => chapter > 0).slice(0, MAX_CAMPAIGN_CHAPTERS);
+    return { campaignId, startedAt, endedAt, notes: asInteger(source.notes, 0, 0, 100_000), handled: asInteger(source.handled, 0, 0, 100_000), chapters, ...(source.cancelled === true ? { cancelled: true } : {}) };
+  }).filter((entry): entry is AnnotationsRecord => entry !== null).slice(-MAX_ANNOTATION_RECORDS);
+  return records.length ? records : undefined;
+}
+
 /** A campaign as a file says it: a reason the engine knows and at least one chapter (each once); anything else is none, and a run goes on with the plan. */
 function normalizeCampaign(value: unknown): RevisionCampaign | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -791,13 +834,16 @@ function normalizeCampaign(value: unknown): RevisionCampaign | undefined {
   // A review of the book without its review is no review: the campaign is none.
   const review = reason === "review-target" ? normalizeReviewCampaign(source.review) : undefined;
   if (reason === "review-target" && !review) return undefined;
+  // A campaign of annotations without its notes is none.
+  const annotations = reason === "annotations" ? normalizeAnnotationsCampaign(source.annotations) : undefined;
+  if (reason === "annotations" && !annotations) return undefined;
   // A review that begins in a book-level round has no chapter yet: the director is asked for the corrections first.
   if (!id || !reason || !createdAt || (!chapters.length && review?.phase !== "book")) return undefined;
   const heldSource = asRecord(source.held);
   const heldAt = readMoment(heldSource.at);
   const held = heldAt ? { at: heldAt, message: readText(heldSource.message, 600) ?? "" } : undefined;
   const cancelledAt = readMoment(source.cancelledAt);
-  return { id, reason, createdAt, ...(note ? { note } : {}), chapters, ...(held ? { held } : {}), ...(cancelledAt ? { cancelledAt } : {}), ...(review ? { review } : {}) };
+  return { id, reason, createdAt, ...(note ? { note } : {}), chapters, ...(held ? { held } : {}), ...(cancelledAt ? { cancelledAt } : {}), ...(review ? { review } : {}), ...(annotations ? { annotations } : {}) };
 }
 
 /** The limit that stopped the run, as a file says it; anything else is none. */
@@ -852,6 +898,7 @@ export function summarizeCampaign(campaign: RevisionCampaign | undefined, option
     current: worked.find((chapter) => chapter.status === "working")?.number ?? null,
     waiting: worked.filter((chapter) => chapter.status === "waiting").map((chapter) => chapter.number),
     ...(campaign.held ? { held: true } : {}),
+    ...(campaign.annotations ? { annotations: { notes: campaign.annotations.notes.length, handled: campaign.annotations.notes.filter((note) => campaign.chapters.some((chapter) => chapter.number === note.chapterNumber && chapter.status === "done")).length, heldBack: campaign.annotations.heldBack ?? [] } } : {}),
     ...(review
       ? {
         review: {
@@ -969,7 +1016,8 @@ function normalizeRevision(value: unknown): RevisionRequest | null {
     targets: Array.isArray(source.targets)
       ? source.targets.map((entry) => {
         const target = asRecord(entry);
-        return { chapterNumber: asInteger(target.chapterNumber, 1, 1, MAX_BOOK_CHAPTERS), sceneNumber: asInteger(target.sceneNumber, 1, 1, 999), instruction: asString(target.instruction) };
+        const noteIds = asArray(target.noteIds).map((id) => readText(id, 64)).filter((id): id is string => Boolean(id)).slice(0, MAX_ANNOTATION_NOTES);
+        return { chapterNumber: asInteger(target.chapterNumber, 1, 1, MAX_BOOK_CHAPTERS), sceneNumber: asInteger(target.sceneNumber, 1, 1, 999), instruction: asString(target.instruction), ...(noteIds.length ? { noteIds } : {}) };
       })
       : null,
     cursor: asInteger(source.cursor, 0, 0, 1_000_000),
@@ -1141,6 +1189,7 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
   const deferredChanges = normalizeDeferredChanges(source.deferredChanges);
   const limitReached = normalizeLimitReached(source.limitReached);
   const reviews = normalizeReviewRecords(source.reviews);
+  const annotationRuns = normalizeAnnotationRecords(source.annotationRuns);
   const design = normalizeDesign(source.design);
   const frozenSince = readMoment(source.frozenSince);
   const frozenSeen = textList(source.frozenSeen, MAX_FROZEN_SEEN);
@@ -1170,6 +1219,7 @@ export function normalizeAutopilotState(value: unknown, now = new Date()): Autop
     ...(deferredChanges ? { deferredChanges } : {}),
     ...(limitReached ? { limitReached } : {}),
     ...(reviews ? { reviews } : {}),
+    ...(annotationRuns ? { annotationRuns } : {}),
     ...(design ? { design } : {}),
     runner: asString(runner.runId)
       ? {

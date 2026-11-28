@@ -122,12 +122,13 @@ export interface PendingFrozenReview {
 /**
  * Why chapters are revised now, in order, before the plan goes on (`RevisionCampaign`): `outline-change`, the author applied the Synopsis to the book,
  * and each chapter the author chose is rewritten to follow its new entry; `review-target`, the author asked to review the finished book again until it
- * reaches a target score, round after round (`AutopilotSession.reviewBook`). A reason is a word of `REVISION_REASONS` and an entry of the handlers of the
+ * reaches a target score, round after round (`AutopilotSession.reviewBook`); `annotations`, the author asked to rewrite the passages they marked while reading
+ * (`AutopilotSession.reviseAnnotations`, the notes of `annotations/`). A reason is a word of `REVISION_REASONS` and an entry of the handlers of the
  * campaigns (`REVISION_REASON_HANDLERS`, `campaign.ts`), which say how its chapters are checked, started, finished, stopped and cancelled.
  */
-export type RevisionReason = "outline-change" | "review-target";
+export type RevisionReason = "outline-change" | "review-target" | "annotations";
 
-export const REVISION_REASONS: readonly RevisionReason[] = ["outline-change", "review-target"];
+export const REVISION_REASONS: readonly RevisionReason[] = ["outline-change", "review-target", "annotations"];
 
 /** What the author chose for a chapter of a campaign: work it now (`follow`), keep it as it is (`keep`), or decide later (`later`). */
 export type RevisionChapterMode = "follow" | "keep" | "later";
@@ -178,6 +179,42 @@ export interface RevisionCampaign {
   cancelledAt?: string;
   /** A review of the book to a target (`review-target`): its policy, the round in progress and what each round over came to. */
   review?: ReviewCampaign;
+  /** The notes of the author this campaign answers (`annotations`). */
+  annotations?: AnnotationsCampaign;
+}
+
+/** One annotation of the author as a campaign works it: where its passage is in the plan and what to ask of the ghostwriter. */
+export interface AnnotationWork {
+  id: string;
+  chapterNumber: number;
+  sceneNumber: number;
+  /** The tag, the passage and the author's note, in words the ghostwriter reads. */
+  instruction: string;
+}
+
+/**
+ * The annotations a campaign of reason `annotations` answers, chapter by chapter in the order of the book. The chapters of the author's (written by hand, or frozen
+ * by the author) are held back unless the author included them (`include`): the autopilot never rewrites them by its own decision. `unplaced` counts the notes whose
+ * scene is not in the plan any more, and `notYet` those of chapters the autopilot has not closed.
+ */
+export interface AnnotationsCampaign {
+  notes: AnnotationWork[];
+  include?: number[];
+  heldBack?: number[];
+  unplaced?: number;
+  notYet?: number;
+}
+
+/** What a campaign of annotations did, as the state remembers it once it is over. */
+export interface AnnotationsRecord {
+  campaignId: string;
+  startedAt: string;
+  endedAt: string;
+  /** The notes the campaign had, and how many of them were answered (their chapter was rewritten and closed again). */
+  notes: number;
+  handled: number;
+  chapters: number[];
+  cancelled?: boolean;
 }
 
 /**
@@ -776,7 +813,7 @@ export interface RevisionRequest {
   instruction: string;
   createdAt: string;
   /** `null` until the director has analyzed the impact. */
-  targets: Array<{ chapterNumber: number; sceneNumber: number; instruction: string }> | null;
+  targets: Array<{ chapterNumber: number; sceneNumber: number; instruction: string; /** The annotations this rewrite answers: closed as handled by the autopilot once the scene is written. */ noteIds?: string[] }> | null;
   cursor: number;
   /** Chapters already rewritten by a revision this one replaced: they are reviewed again too. */
   revisedChapters?: number[];
@@ -1138,6 +1175,8 @@ export interface AutopilotState {
   limitReached?: AutopilotLimitReached;
   /** The reviews of the book that are over, oldest first (at most `MAX_REVIEW_RECORDS`). Absent when there was none. */
   reviews?: ReviewRecord[];
+  /** The campaigns of annotations that are over, oldest first (at most `MAX_ANNOTATION_RECORDS`). Absent when there was none. */
+  annotationRuns?: AnnotationsRecord[];
   /** The design run of the book (`AutopilotDesign`): going on until `endedAt`, then kept for what it says. Absent when the book was never designed by the autopilot. */
   design?: AutopilotDesign;
   runner: AutopilotRunnerInfo | null;
@@ -1462,6 +1501,8 @@ export interface AutopilotCampaignSummary {
   waiting: number[];
   /** The campaign waits for the author (`RevisionCampaign.held`): starting the run releases it. */
   held?: boolean;
+  /** A campaign of annotations: the notes it answers, how many are answered so far (their chapter is done), and the chapters held back for the author. */
+  annotations?: { notes: number; handled: number; heldBack: number[] };
   /**
    * A review of the book: the round in progress and the rounds allowed since the run began (`maxRounds`: absent, no limit), the target, whether the book is
    * being judged, the latest votes (the lowest vote of a chapter of the review, the book's), and the money cap of the book (`options.budgetLimit`; 0: none). In a book-level

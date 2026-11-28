@@ -18,6 +18,7 @@ import {
   serverSupportsGithubConflicts,
   serverSupportsOutlineApply,
   serverSupportsReviewBook,
+  serverSupportsAnnotations,
   serverSupportsReviewPolicy,
   serverSupportsReviewTargets,
   serverSupportsReviewBookRound,
@@ -36,6 +37,7 @@ import {
   type ReviseChaptersRequest,
   type BookCorrectionsRequest,
   type ReviewBookRequest,
+  type ReviseAnnotationsRequest,
   type RevisionCampaignResponse,
   type PairingRequest,
   type PairingResult,
@@ -518,6 +520,19 @@ export class NarrariumServerClient {
       throw new ServerRequestError("This personal server does not know the book-level round of a review (it does not announce the feature autopilot-review-book-round): update the server.", 501, "feature_unavailable");
     }
     return this.request("POST", bookRoute(bookId, "/autopilot/review/corrections"), request);
+  }
+
+  /**
+   * Rewrite the passages the author marked: `POST …/autopilot/annotations` (`ReviseAnnotationsInput`, the engine's `AutopilotSession.reviseAnnotations`). Needs
+   * `SERVER_FEATURE_AUTOPILOT_ANNOTATIONS`, else `feature_unavailable` before anything is sent. A refusal carries the code of the engine's `RevisionCampaignError`.
+   * Nothing is started.
+   */
+  async reviseAnnotations(bookId: string, request: ReviseAnnotationsRequest): Promise<RevisionCampaignResponse> {
+    const info = await this.info();
+    if (!serverSupportsAnnotations(info)) {
+      throw new ServerRequestError("This personal server cannot rewrite the passages you annotated (it does not announce the feature autopilot-annotations): update the server.", 501, "feature_unavailable");
+    }
+    return this.request("POST", bookRoute(bookId, "/autopilot/annotations"), request);
   }
 
   /** Cancel the chapters of the campaign that wait (the one being worked finishes; a review of the book ends with it): `DELETE …/autopilot/campaign`. A server with the campaigns of any reason has it. */

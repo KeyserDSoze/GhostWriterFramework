@@ -28,6 +28,7 @@ import {
   type FrozenWorkItem,
 } from "./frozen.js";
 import { readBrief } from "./brief.js";
+import { createAnnotationsCampaign, readAnnotationNotes, type ReviseAnnotationsInput } from "./annotations.js";
 import { RevisionCampaignError, cancelRevisionCampaign, createReviewCampaign, createRevisionCampaign, decideBookCorrections as decideCorrections, recordRevisionCampaign, type BookCorrectionsDecision, type ReviewBookInput, type ReviseChaptersInput, type RevisionCampaignResult } from "./campaign.js";
 import { createModelMemory, type AiModelMemory } from "../ai/memory.js";
 import { applyLiveAttempt, applyLiveProgress, startLive } from "./live.js";
@@ -852,6 +853,27 @@ export class AutopilotSession {
     if (this.starting) await this.starting.catch(() => undefined);
     if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
     await this.mutate("Autopilot: the author decided about the corrections of the book", (state) => decideCorrections(state, input), { create: false });
+    return this.campaignResult();
+  }
+
+  /**
+   * Rewrite the passages the author marked (`ReviseAnnotationsInput`): the open notes (all, or the ones asked for) of the chapters the autopilot closed, each chapter rewritten
+   * scene by scene as its notes ask, reviewed again and closed, and each note it answered closed as handled by the autopilot, with what it did. The chapters of the author's
+   * are left to the author unless the request includes them. Refused with a `RevisionCampaignError` (`invalid_request`, `not_finished`, `campaign_active`, `nothing_to_review`)
+   * or an `AutopilotBusyError` while a run goes on. Answers as `reviseChapters`; nothing is started.
+   */
+  async reviseAnnotations(input: ReviseAnnotationsInput): Promise<RevisionCampaignResult> {
+    if (this.starting) await this.starting.catch(() => undefined);
+    if (this.running) throw new AutopilotBusyError(this.config.hostLabel);
+    const stored = await readStoredAutopilot(this.config.store);
+    assertStoredStateReadable(stored);
+    if (!stored.state) throw new RevisionCampaignError("not_finished", "This book has no autopilot yet: there is nothing it wrote to rewrite.");
+    const snapshot = await loadBookSnapshot(this.config.store, this.bookCache);
+    const { notes } = await readAnnotationNotes(this.config.store, input);
+    const now = this.now();
+    const campaign = createAnnotationsCampaign({ ...input, notes }, stored.state, snapshot, now);
+    const at = now.toISOString();
+    await this.mutate(`Autopilot: rewrite the passages of ${campaign.annotations!.notes.length === 1 ? "1 note" : `${campaign.annotations!.notes.length} notes`}`, (state) => recordRevisionCampaign(state, createAnnotationsCampaign({ ...input, notes }, state, snapshot, now, campaign.id), at, false), { create: false });
     return this.campaignResult();
   }
 
