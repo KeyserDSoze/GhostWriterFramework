@@ -68,7 +68,7 @@ function attemptEnd(start, extra = {}) {
  * The fake AI, behaving as a streaming provider does: a structured reply is streamed as its JSON in two pieces, a prose reply as its text, and each call
  * reports one attempt. `onCall` may answer a call itself (it returns the response, or throws) before the fake does.
  */
-function streamingAi({ onCall } = {}) {
+function streamingAi({ onCall, window } = {}) {
   const base = createFakeAutopilotAi({ reviewVerdict: () => "approve", scenes: 1, words: 200 });
   return {
     calls: base.calls,
@@ -77,7 +77,7 @@ function streamingAi({ onCall } = {}) {
         const answered = await onCall(request, base);
         if (answered !== undefined) return answered;
       }
-      const start = attemptStart(request);
+      const start = { ...attemptStart(request), ...(window ? { window } : {}) };
       request.onAttempt?.(start);
       const response = await base.complete(request);
       if (request.json && request.onStructuredText) {
@@ -169,6 +169,46 @@ test("each AI call of a task is recorded with its request as sent, its reply as 
   assert.ok(writer, "the scene that was written has its header");
   assert.equal(writer.chapter, 1);
   assert.equal(writer.scene, 1);
+});
+
+test("the record of an attempt keeps the context window its model was judged by, and says whether it is the model's own or the default", async () => {
+  for (const window of [{ tokens: 128_000, source: "default" }, { tokens: 32_000, source: "configured" }]) {
+    const records = new MemoryAiCallStore();
+    await runBook({ calls: records, ai: streamingAi({ window }) });
+    const calls = (await Promise.all((await records.listTasks(bookId, { limit: 200 })).tasks.map((header) => records.readTask(bookId, header.activityId)))).flatMap((task) => task.calls);
+    assert.ok(calls.length >= 3);
+    for (const call of calls) assert.deepEqual(call.attempts[0].window, window);
+  }
+  const plain = new MemoryAiCallStore();
+  await runBook({ calls: plain });
+  const [header] = (await plain.listTasks(bookId, { limit: 1 })).tasks;
+  const [call] = (await plain.readTask(bookId, header.activityId)).calls;
+  assert.equal("window" in call.attempts[0], false, "an engine that did not say leaves it out");
+  const odd = new MemoryAiCallStore();
+  await runBook({ calls: odd, ai: streamingAi({ window: { tokens: -5, source: "default" } }) });
+  const [oddHeader] = (await odd.listTasks(bookId, { limit: 1 })).tasks;
+  assert.equal("window" in (await odd.readTask(bookId, oddHeader.activityId)).calls[0].attempts[0], false, "a figure that is not a window is not kept");
+});
+
+test("a candidate left out for its window records whether the window was the default, and the figures of the window", async () => {
+  const step = (windowDefault) => ({ position: 0, integrationId: "big", integrationName: "Big", provider: "openai", model: "small-model", outcome: "left-out", leftOut: "context-window", promptTokens: 140_000, windowTokens: 118_000, ...(windowDefault ? { windowDefault: true } : {}) });
+  for (const windowDefault of [true, false]) {
+    const records = new MemoryAiCallStore();
+    const ai = { calls: [], async complete(request) {
+      const start = { ...attemptStart(request, 1), leftOut: [step(windowDefault)] };
+      request.onAttempt?.(start);
+      const response = await createFakeAutopilotAi({ reviewVerdict: () => "approve", scenes: 1, words: 200 }).complete(request);
+      request.onAttemptEnd?.(attemptEnd(start, { replyCharacters: JSON.stringify(response.json ?? response.text).length }));
+      return response;
+    } };
+    await runBook({ calls: records, ai });
+    const [header] = (await records.listTasks(bookId, { limit: 1 })).tasks;
+    const [call] = (await records.readTask(bookId, header.activityId)).calls;
+    const skipped = call.attempts.find((attempt) => attempt.outcome === "skipped");
+    assert.ok(skipped, "the candidate that was left out is in the record");
+    assert.equal(skipped.skip.windowTokens, 118_000);
+    assert.equal(skipped.skip.windowDefault, windowDefault ? true : undefined);
+  }
 });
 
 test("the text of a structured step streams: the tail says the JSON so far, with its call, and the reply is kept whole", async () => {

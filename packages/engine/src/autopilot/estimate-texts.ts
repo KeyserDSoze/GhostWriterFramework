@@ -75,9 +75,9 @@ export function estimateTexts(italian: boolean) {
     noModel: (id: EstimateCapability) => (italian
       ? `Nessun modello è configurato per «${capability(id)}»: l'autopilot si fermerebbe al primo passo che lo richiede.`
       : `No model is configured for «${capability(id)}»: the autopilot would stop at the first step that needs it.`),
-    smallWindow: (id: EstimateCapability, model: string, window: number, budget: number, prompt: number, kind: EstimateCallKind, fits: boolean) => (italian
-      ? `«${capability(id)}»: la finestra di ${model} (${count(window)} token) lascia ${count(budget)} token a un prompt; il più grande, nel passo «${step(kind)}», è di circa ${count(prompt)} token${fits ? ": ci sta, ma con poco margine" : ": non ci sta"}.`
-      : `«${capability(id)}»: the window of ${model} (${count(window)} tokens) leaves ${count(budget)} tokens for a prompt; the largest one, in the step «${step(kind)}», is about ${count(prompt)} tokens${fits ? ": it fits, with little room to spare" : ": it does not fit"}.`),
+    smallWindow: (id: EstimateCapability, model: string, window: number, budget: number, prompt: number, kind: EstimateCallKind, fits: boolean, assumed = false) => (italian
+      ? `«${capability(id)}»: la finestra di ${model} (${count(window)} token${assumed ? ", quella predefinita: il modello non ne dichiara una" : ""}) lascia ${count(budget)} token a un prompt; il più grande, nel passo «${step(kind)}», è di circa ${count(prompt)} token${fits ? ": ci sta, ma con poco margine" : ": non ci sta"}.`
+      : `«${capability(id)}»: the window of ${model} (${count(window)} tokens${assumed ? ", the default: the model declares none" : ""}) leaves ${count(budget)} tokens for a prompt; the largest one, in the step «${step(kind)}», is about ${count(prompt)} tokens${fits ? ": it fits, with little room to spare" : ": it does not fit"}.`),
     smallOutput: (id: EstimateCapability, model: string, limit: number, reply: number, kind: EstimateCallKind) => (italian
       ? `«${capability(id)}»: ${model} non può rispondere con più di ${count(limit)} token, e la risposta tipica del passo «${step(kind)}» è di circa ${count(reply)}: verrebbe tagliata.`
       : `«${capability(id)}»: ${model} cannot answer with more than ${count(limit)} tokens, and the typical reply of the step «${step(kind)}» is about ${count(reply)}: it would be cut.`),

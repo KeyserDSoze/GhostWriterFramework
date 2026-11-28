@@ -1,5 +1,5 @@
 import type { AiRuntimeConfig } from "../ai/config.js";
-import { likelyTextTokens, resolveModelTokenBudgets } from "../ai/budget.js";
+import { likelyTextTokens, modelWindow, resolveModelTokenBudgets } from "../ai/budget.js";
 import { normalizePromptCaching } from "../ai/config.js";
 import { servedFromCache } from "../ai/prompt-cache.js";
 import { resolveAiCandidates } from "../ai/router.js";
@@ -218,7 +218,7 @@ export interface EstimateModel {
   model: string;
   provider?: string;
   underlyingModel?: string;
-  /** The window of the model: a prompt and its answer together. Not declared: not checked. */
+  /** The window of the model: a prompt and its answer together. Not declared: the default window (`modelWindow`) is what the prompts are judged by, and the warning says so. */
   maxInputTokens?: number;
   /** The largest answer the model can give. */
   maxOutputTokens?: number;
@@ -370,7 +370,7 @@ interface EstimateWarningBase {
 /** What the interface needs to say something about a run before it starts. A structured warning has a stable `code` and its numbers; the text is only the engine's own wording. */
 export type EstimateWarning =
   | (EstimateWarningBase & { code: "noModel"; capability: EstimateCapability })
-  | (EstimateWarningBase & { code: "smallWindow"; capability: EstimateCapability; model: string; step: EstimateCallKind; window: number; inputBudget: number; typicalPrompt: number })
+  | (EstimateWarningBase & { code: "smallWindow"; capability: EstimateCapability; model: string; step: EstimateCallKind; window: number; inputBudget: number; typicalPrompt: number; /** The model declares no window, so the default one (`modelWindow`) is what the prompt was judged by. */ windowDefault?: true })
   | (EstimateWarningBase & { code: "smallOutput"; capability: EstimateCapability; model: string; step: EstimateCallKind; maxOutputTokens: number; typicalReply: number })
   | (EstimateWarningBase & { code: "noPrice"; capability: EstimateCapability; model: string })
   | (EstimateWarningBase & { code: "noSpeed"; capability: EstimateCapability; model: string })
@@ -690,7 +690,10 @@ function pin(value: unknown, fallback: [number, number], min: number, max: numbe
 
 interface ResolvedModel {
   name: string;
-  window?: number;
+  /** The window the prompts are judged by (`modelWindow`): the model's own, or the default when it declares none. */
+  window: number;
+  /** The window is the default: the model declares none. */
+  windowDefault: boolean;
   maxOutput?: number;
   price?: { input: number; output: number; cached?: number; write?: number };
   /** The model is declared as not caching. */
@@ -718,7 +721,7 @@ function resolveModel(value: unknown): ResolvedModel | null {
   const provider = typeof source.provider === "string" ? source.provider : "";
   const underlying = typeof source.underlyingModel === "string" ? source.underlyingModel : undefined;
   const price = priceOf(source.pricing);
-  const window = positive(source.maxInputTokens);
+  const window = modelWindow({ maxInputTokens: positive(source.maxInputTokens) });
   const maxOutput = positive(source.maxOutputTokens);
   const speed = positive(source.tokensPerSecond);
   const rate = typeof source.cacheHitRate === "number" && Number.isFinite(source.cacheHitRate) ? Math.min(1, Math.max(0, source.cacheHitRate)) : undefined;
@@ -726,7 +729,8 @@ function resolveModel(value: unknown): ResolvedModel | null {
     name,
     noCache: normalizePromptCaching(source.promptCaching) === "unsupported",
     ...(rate !== undefined ? { hitRate: rate } : {}),
-    ...(window ? { window } : {}),
+    window: window.tokens,
+    windowDefault: window.source === "default",
     ...(maxOutput ? { maxOutput } : {}),
     ...(price ? { price } : {}),
     ...(speed ? { speed } : {}),
@@ -1218,8 +1222,8 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
       continue;
     }
     const kinds = ESTIMATE_CALL_KINDS.filter((kind) => CAPABILITY_OF[kind] === capability && highest[kind].calls > 0);
-    if (model.window) {
-      // The window is judged by the most demanding step: the largest prompt against what the engine leaves for a prompt once the step's own reply is reserved.
+    if (kinds.length) {
+      // The window (the model's own, else the default: `modelWindow`) is judged by the most demanding step: the largest prompt against what the engine leaves for a prompt once the step's own reply is reserved.
       let worst: { kind: EstimateCallKind; peak: number; budget: number } | null = null;
       for (const kind of kinds) {
         const peak = Math.round(peakOf(kind));
@@ -1228,7 +1232,7 @@ export function estimateAutopilotRun(input?: EstimateInput | null): EstimateResu
       }
       if (worst && worst.peak * 1.25 > worst.budget) {
         const fits = worst.peak <= worst.budget;
-        warnings.push({ code: "smallWindow", severity: fits ? "warning" : "error", capability, model: model.name, step: worst.kind, window: model.window, inputBudget: worst.budget, typicalPrompt: worst.peak, text: text.smallWindow(capability, model.name, model.window, worst.budget, worst.peak, worst.kind, fits) });
+        warnings.push({ code: "smallWindow", severity: fits ? "warning" : "error", capability, model: model.name, step: worst.kind, window: model.window, inputBudget: worst.budget, typicalPrompt: worst.peak, ...(model.windowDefault ? { windowDefault: true as const } : {}), text: text.smallWindow(capability, model.name, model.window, worst.budget, worst.peak, worst.kind, fits, model.windowDefault) });
       }
     }
     if (model.maxOutput) {

@@ -309,6 +309,7 @@ function skippedReport(step: AiRouteStep): AttemptReport {
       ...(step.why ? { why: step.why } : {}),
       ...(step.promptTokens !== undefined ? { promptTokens: step.promptTokens } : {}),
       ...(step.windowTokens !== undefined ? { windowTokens: step.windowTokens } : {}),
+      ...(step.windowDefault ? { windowDefault: true } : {}),
     },
   };
 }
@@ -325,6 +326,7 @@ function reportOf(index: number, start: FetchAiAttempt, end: FetchAiAttemptEnd, 
     integrationId: end.integrationId,
     endpoint: start.endpoint,
     ...(start.apiVersion ? { apiVersion: start.apiVersion } : {}),
+    ...(start.window ? { window: { tokens: start.window.tokens, source: start.window.source } } : {}),
     ...(start.protocol ? { protocol: start.protocol } : {}),
     stream: start.stream,
     tools: start.tools,

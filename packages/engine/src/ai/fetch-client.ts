@@ -1,7 +1,7 @@
 import { abortError, isAbortError } from "../util/abort.js";
 import { randomId } from "../util/hash.js";
 import { discardBody, release } from "./body.js";
-import { likelyTextTokens } from "./budget.js";
+import { likelyTextTokens, modelWindow, type ModelWindow } from "./budget.js";
 import type { AiPricingConfig, AiRuntimeConfig, AiStreamMode } from "./config.js";
 import { resolveDeadlines, startClock, timeoutMessage, type DeadlineClock, type ExpiredDeadline, type ResolvedDeadlines } from "./deadlines.js";
 import { redactSecrets } from "./redact.js";
@@ -84,6 +84,8 @@ export interface FetchAiAttempt {
   messages: FetchAiMessage[];
   /** The output token limit sent, when there is one. */
   maxOutputTokens?: number;
+  /** The context window this model is judged by, and whether it is the model's own or the default (`modelWindow`). */
+  window?: ModelWindow;
   /** The API version this request carries, for a provider that has one (Azure OpenAI's `api-version`, or `v1`): the model's own, else its integration's (`effectiveApiVersion`). */
   apiVersion?: string;
   /** The request is made through the Responses API (absent: Chat Completions). */
@@ -338,6 +340,7 @@ export function createFetchAi(config: AiRuntimeConfig, options: FetchAiOptions =
             messages: reportedMessages(attempt.built, request),
             ...(attempt.built?.outputLimit ? { maxOutputTokens: attempt.built.outputLimit } : {}),
             ...(attempt.built?.apiVersion ? { apiVersion: attempt.built.apiVersion } : {}),
+            window: modelWindow(candidate),
             ...(destination.protocol ? { protocol: destination.protocol } : {}),
             stream: attempt.built?.stream ?? false,
             tools: attempt.built?.useTools ?? false,

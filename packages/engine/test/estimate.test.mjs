@@ -5,7 +5,7 @@ import { continuitySystemPrompt, SCENE_SUMMARY_TOOL } from "../dist/autopilot/pr
 import { CAPABILITIES, KINDS, MODEL, uniform } from "./estimate-fakes.mjs";
 
 // New exports are read from the namespace so that, before they exist, each test fails on its own.
-const { ESTIMATE_CALL_KINDS, ESTIMATE_CAPABILITIES, ESTIMATE_TYPICAL, createAutopilotState, estimateAutopilotRun, estimateContextFromState, estimateModelsFromConfig, estimateProgressFromChapters, estimateProgressFromState, likelyTextTokens, pickAiRuntimeConfig, resolveModelTokenBudgets, scaleOutputTokens, tokensPerWord } = engine;
+const { DEFAULT_MAX_INPUT_TOKENS, ESTIMATE_CALL_KINDS, ESTIMATE_CAPABILITIES, ESTIMATE_TYPICAL, createAutopilotState, estimateAutopilotRun, estimateContextFromState, estimateModelsFromConfig, estimateProgressFromChapters, estimateProgressFromState, likelyTextTokens, pickAiRuntimeConfig, resolveModelTokenBudgets, scaleOutputTokens, tokensPerWord } = engine;
 
 // The books the interface offers first. Their values are written out here: the tests of the estimate do not depend on the presets.
 const STORY = { brief: { targetChapters: 4, scenesPerChapter: 2, wordsPerScene: 900 }, options: { readers: true, maxReaders: 3, readersOnPlan: false, specialists: true }, maxReviewRounds: 2 };
@@ -676,7 +676,7 @@ test("a window too small for the prompts is said with the window, what the engin
   let roomy = tight;
   while (resolveModelTokenBudgets(roomy, 6000).inputTokens < typical * 1.5) roomy += 64;
   assert.deepEqual(warningsOf(small(roomy), "smallWindow"), [], "a window with room to spare says nothing");
-  assert.deepEqual(warningsOf(small(undefined), "smallWindow"), [], "a window that is not declared is not checked, as the engine does not");
+  assert.deepEqual(warningsOf(small(undefined), "smallWindow"), [], "a window that is not declared is judged by the default, and a prompt of this size fits it");
   assert.deepEqual(warningsOf(small(0), "smallWindow"), []);
   assert.deepEqual(warningsOf(estimate(NOVELLA), "smallWindow"), []);
   // The router asks a structured reply for at least 4096 tokens (`STRUCTURED_OUTPUT_FLOOR`): a window of 8192 leaves 3686 for the prompt, which holds a scene to summarize and not a chapter.
@@ -686,6 +686,30 @@ test("a window too small for the prompts is said with the window, what the engin
   assert.ok(!tooSmall.includes("simple-tasks"), "but a scene to summarize does");
   const floor = warningsOf(estimate(NOVELLA, { models: uniform({ ...MODEL, maxInputTokens: 4096 }) }), "smallWindow").map((warning) => warning.capability);
   assert.ok(floor.includes("simple-tasks"), "a window of 4096 is gone to the 4096 tokens the router asks a structured reply for: nothing is left for the prompt of anything");
+});
+
+test("a model that declares no window is judged by the default one, as the router judges it, and the warning says the window is the default", () => {
+  const huge = { context: { directorWords: 120_000 } };
+  const { maxInputTokens: _declared, ...noWindow } = MODEL;
+  const undeclared = warningsOf(estimate(NOVELLA, { ...huge, models: uniform(noWindow) }), "smallWindow");
+  assert.ok(undeclared.length > 0, "a prompt larger than the default window is warned about even when no window is declared");
+  for (const warning of undeclared) {
+    assert.equal(warning.window, DEFAULT_MAX_INPUT_TOKENS);
+    assert.equal(warning.windowDefault, true);
+    assert.equal(warning.severity, "error", "the router would refuse it");
+    assert.match(warning.text, /the default: the model declares none/);
+    assert.ok(warning.inputBudget < DEFAULT_MAX_INPUT_TOKENS && warning.typicalPrompt > warning.inputBudget, "what the router leaves for a prompt, once the reply and the margin are taken off the default window");
+  }
+  const declared = warningsOf(estimate(NOVELLA, { ...huge, models: uniform({ ...MODEL, maxInputTokens: DEFAULT_MAX_INPUT_TOKENS }) }), "smallWindow");
+  assert.equal(declared.length, undeclared.length, "the same window declared warns the same");
+  for (const warning of declared) {
+    assert.equal(warning.windowDefault, undefined, "a window that is the model's own is not said to be the default");
+    assert.doesNotMatch(warning.text, /default/);
+  }
+  const roomy = warningsOf(estimate(NOVELLA, { ...huge, models: uniform({ ...MODEL, maxInputTokens: 1_000_000 }) }), "smallWindow");
+  assert.deepEqual(roomy, [], "a model with a large window of its own is not held to the default");
+  const italian = estimate(NOVELLA, { ...huge, language: "it", models: uniform(noWindow) });
+  assert.ok(warningsOf(italian, "smallWindow").every((warning) => /quella predefinita/.test(warning.text)));
 });
 
 test("the window is judged by the largest prompt of the capability, in a late chapter of a long book, as the engine would judge it", () => {

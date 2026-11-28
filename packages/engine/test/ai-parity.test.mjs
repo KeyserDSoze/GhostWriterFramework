@@ -681,6 +681,16 @@ test("maxInputTokens: the output reserve counts, and a model without a configure
   assert.equal(huge.route[0].windowDefault, true);
 });
 
+test("maxInputTokens: every attempt reports the window its model is judged by, and whether it is the model's own or the default", async () => {
+  const reported = async (chatModels) => {
+    const attempts = [];
+    await createFetchAi({ aiIntegrations: [integration("a", { chatModels })] }, { fetch: async () => ok("fine"), onAttempt: (attempt) => attempts.push(attempt) }).complete(ASK);
+    return attempts.map((attempt) => attempt.window);
+  };
+  assert.deepEqual(await reported([{ id: "1", name: "m", capabilities: ["default"], maxInputTokens: 32_000 }]), [{ tokens: 32_000, source: "configured" }]);
+  assert.deepEqual(await reported([{ id: "1", name: "m", capabilities: ["default"] }]), [{ tokens: 128_000, source: "default" }]);
+});
+
 test("maxInputTokens: the forced tool's schema counts against the window", async () => {
   const bigSchema = { name: "big", description: "d", parameters: { type: "object", properties: Object.fromEntries(Array.from({ length: 300 }, (_, index) => [`field${index}`, { type: "string", description: "x".repeat(40) }])), required: ["field0"] } };
   const cfg = { aiIntegrations: [integration("a", { chatModels: [{ id: "1", name: "m", capabilities: ["default"], maxInputTokens: 6_000, maxOutputTokens: 200 }] })] };

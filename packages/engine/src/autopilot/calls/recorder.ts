@@ -11,6 +11,7 @@ import {
   aiCallIdOf,
   isSafeAiCallId,
   type AiCallAttempt,
+  type AiCallWindow,
   type AiCallEnd,
   type AiCallHost,
   type AiCallRecord,
@@ -101,6 +102,12 @@ function clip(text: string, characters: number): string {
 
 function number(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** The window of an attempt as it is kept: a whole number of tokens over zero, and whose it is; anything else is not a window. */
+function windowOf(value: AiCallAttempt["window"]): AiCallWindow | null {
+  if (!value || typeof value.tokens !== "number" || !Number.isFinite(value.tokens) || value.tokens < 1) return null;
+  return value.source === "configured" || value.source === "default" ? { tokens: Math.floor(value.tokens), source: value.source } : null;
 }
 
 function flag(value: unknown): boolean | null {
@@ -422,6 +429,7 @@ export class CallRecorder {
       integrationId: this.short(attempt.integrationId),
       endpoint: endpointOrigin(attempt.endpoint),
       ...(typeof attempt.apiVersion === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/.test(attempt.apiVersion) ? { apiVersion: attempt.apiVersion } : {}),
+      ...(windowOf(attempt.window) ? { window: windowOf(attempt.window)! } : {}),
       ...(attempt.protocol === "responses" ? { protocol: "responses" as const } : {}),
       stream: attempt.stream === true,
       tools: attempt.tools === true,
@@ -459,6 +467,7 @@ export class CallRecorder {
       ...(skip.why ? { why: skip.why } : {}),
       ...(promptTokens !== null ? { promptTokens } : {}),
       ...(windowTokens !== null ? { windowTokens } : {}),
+      ...(skip.windowDefault === true ? { windowDefault: true } : {}),
     };
   }
 

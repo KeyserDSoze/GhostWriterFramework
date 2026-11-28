@@ -67,6 +67,14 @@ export interface AiCallSkip {
   /** `context-window`: the tokens the prompt needs (as estimated before sending) and what the model's window leaves for it. */
   promptTokens?: number;
   windowTokens?: number;
+  /** `context-window`: the model's window is not set, and the default was assumed. */
+  windowDefault?: boolean;
+}
+
+/** The context window a model of an attempt is judged by, and whether it is the model's own (`configured`) or the default (`default`): the same words as `modelWindow`. */
+export interface AiCallWindow {
+  tokens: number;
+  source: "configured" | "default";
 }
 
 /** The state of the task that holds calls. `stopped` is a task the author or the autopilot stopped. */
@@ -143,6 +151,8 @@ export interface AiCallAttempt {
   endpoint: string | null;
   /** The API version the request carried (Azure OpenAI's `api-version`, or `v1`). Absent for a provider that has none, and from the records of an engine that did not say. */
   apiVersion?: string;
+  /** The context window of the attempt's model, as the router judged the prompt by it. Absent from the records of an engine that did not say. */
+  window?: AiCallWindow;
   /** The request was made through the Responses API (absent: Chat Completions, and the records of an engine that did not say). */
   protocol?: "responses";
   stream: boolean;
