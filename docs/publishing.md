@@ -50,7 +50,8 @@ This runs:
 
 The repository includes:
 
-- `.github/workflows/ci.yml`
+- `.github/workflows/ci.yml`: the full checks (`checks.yml`) of pull requests and of the pushes that the site deploy does not check
+- `.github/workflows/book-management-system.yml`: the site deploy, by release lane (see `AGENTS.md`), publishing through `pages.yml`
 - `.github/workflows/publish-npm.yml`
 - `.github/workflows/server.yml`: personal server tests on Linux, Windows and macOS
 - `.github/workflows/publish-server-npm.yml`: `narrarium-server` releases

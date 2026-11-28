@@ -160,10 +160,15 @@ To deploy it on GitHub Pages:
 
 The workflow `Deploy Narrarium Site` builds `src/narrarium-site/dist` and uploads it with the official GitHub Pages artifact action.
 
-Every push to `main` that touches the site runs the whole gate (dependency check, unit tests, both E2E suites) before publishing. For a small, already reviewed fix there is a **fast track**: run the workflow by hand with the box checked and it builds and publishes the ref without those checks (the build itself, the patch-note rule and the scaffolder snapshot still apply, and `CI` still runs on the pushed commit):
+Every run of that workflow first chooses a **release lane** (the rules, and when each lane is allowed, are in [AGENTS.md](AGENTS.md#release-lanes)):
+
+- **full** (the default): the site is published after the full checks (dependency policy, the packages, the site's unit and component tests in shards with one coverage gate, the E2E suite in shards, the GitHub Pages basename routing), the same `checks.yml` that `CI` runs for pull requests and for the pushes the deploy does not check;
+- **quick**: a `Fast-Track: <reason>` trailer in the head commit message of a small site fix publishes after the typecheck, the related tests, the production build with its bundle budgets and a smoke subset of the E2E suite (`npm run check:quick` runs the same locally); the full checks run in the same run. The trailer is refused, and the push takes the full lane, for the engine, the server, the packages, workflows and scripts, authentication or security code and dependencies;
+- **express** (manual, no tests): for texts, docs and patch notes, and for a rollback to a commit of `main`:
 
 ```bash
 gh workflow run book-management-system.yml --ref main -f fast_track=true
+gh workflow run book-management-system.yml --ref main -f fast_track=true -f ref=<commit of main>   # rollback
 ```
 
 Bump the site version when readers must get the change: a browser that already has a version keeps its cached files, and the run says so when the version is the one already live. The build also writes `404.html` from `index.html`, so React Router paths such as `/docs/...` and `/app/books` survive direct refreshes on GitHub Pages.
