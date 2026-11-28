@@ -177,7 +177,8 @@ describe("the Studio", () => {
     fireEvent.change(within(dialog).getByLabelText(t("design.dialog.rounds.label")), { target: { value: "4" } });
     fireEvent.click(within(dialog).getByRole("button", { name: t("design.dialog.submit", { count: 8 }) }));
     await waitFor(() => expect(mocks.runtime.start).toHaveBeenCalledTimes(1));
-    expect(mocks.runtime.start).toHaveBeenCalledWith("book-1", { design: { chapters: 8, review: { targetScore: 8.5, maxRounds: 4 } }, options: { readersOnPlan: true, budgetLimit: 0 } });
+    // The reviews of the dialog are on by default: the design is judged on the rubric, chapter by chapter and as a whole, after the pitches.
+    expect(mocks.runtime.start).toHaveBeenCalledWith("book-1", { design: { chapters: 8, review: { targetScore: 8.5, maxRounds: 4 }, workflow: { rubric: true, chapterReview: true, coherence: true, alternatives: 3 } }, options: { readersOnPlan: true, budgetLimit: 0 } });
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 

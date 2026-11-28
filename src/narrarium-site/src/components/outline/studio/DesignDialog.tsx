@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { EstimateLine, OptionalNumberField, useProblemText } from "@/components/autopilot/review/ReviewFields";
 import { useAutopilotActions } from "@/autopilot/useAutopilotActions";
 import { useBookAutopilotView } from "@/autopilot/hooks";
+import { useAutopilotStore } from "@/autopilot/store";
 import { useBookFiles } from "@/autopilot/useBookFiles";
 import { useRunEstimateSources } from "@/autopilot/useRunEstimate";
 import { estimateDesign } from "@/autopilot/runEstimate";
@@ -19,6 +20,8 @@ import { useAutopilotStore } from "@/autopilot/store";
 import { autopilotRoomEstimate } from "@/autopilot/wildcardsEstimate";
 import { useSettingsStore } from "@/store/settingsStore";
 import { defaultDesignChapters, readDesignForm, type DesignForm } from "@/outline/designModel";
+import { WorkflowFields } from "@/components/outline/studio/WorkflowFields";
+import { readWorkflowForm, serverHasDesignReview, workflowFormOf, type WorkflowForm } from "@/outline/designReviewModel";
 import { useMoney } from "@/costs/useMoney";
 import type { BookStructure } from "@/types/book";
 import type { BookEntry } from "@/types/settings";
@@ -75,6 +78,24 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
     setEdited(true);
     setForm((now) => ({ ...now, ...patch }));
   };
+  // What the design does besides designing the chapters: the form is the one the design before it had, else the defaults; the alternatives only for a book whose concept is not made.
+  const serverInfo = useAutopilotStore((store) => store.server.info);
+  const reviewsSupported = book.autopilotHost !== "server" || serverInfo === null || serverHasDesignReview(serverInfo);
+  const alternativesAllowed = !state?.concept.done;
+  const initialWorkflow = useMemo<WorkflowForm>(() => workflowFormOf(state?.design), [state?.design]);
+  const [workflowForm, setWorkflowForm] = useState<WorkflowForm>(initialWorkflow);
+  const [workflowEdited, setWorkflowEdited] = useState(false);
+  useEffect(() => {
+    if (!workflowEdited) setWorkflowForm(initialWorkflow);
+  }, [initialWorkflow, workflowEdited]);
+  useEffect(() => {
+    if (!open) setWorkflowEdited(false);
+  }, [open]);
+  const changeWorkflow = (patch: Partial<WorkflowForm>) => {
+    setWorkflowEdited(true);
+    setWorkflowForm((now) => ({ ...now, ...patch }));
+  };
+  const workflow = readWorkflowForm(workflowForm, { supported: reviewsSupported, alternativesAllowed });
   const reading = readDesignForm(form, entries);
   // The room of the wildcards before the first review (`ReviewPolicy.wildcards.design`): the run's policy, given whole with the switch as the dialog says; never to a personal server that predates it.
   const settings = useSettingsStore((current) => current.settings);
@@ -89,7 +110,7 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
 
   const view = useBookAutopilotView(book.id);
   const inputs = useRunEstimateSources({ book, branch, structure, state, activities: view.snapshot?.activities });
-  const estimate = useMemo(() => (open && chapters > 0 ? estimateDesign(inputs.sources, state, { chapters, maxRounds, readerRounds, readers: form.readers }).estimate : null), [open, chapters, maxRounds, readerRounds, form.readers, inputs.sources, state]);
+  const estimate = useMemo(() => (open && chapters > 0 ? estimateDesign(inputs.sources, state, { chapters, maxRounds, readerRounds, readers: form.readers, ...(workflow.workflow ? { workflow: workflow.workflow } : {}) }).estimate : null), [open, chapters, maxRounds, readerRounds, form.readers, inputs.sources, state, workflow.workflow]);
   const roomVoices = roomBefore?.voices ?? 4;
   const room = roomOn && chapters > 0 ? autopilotRoomEstimate(settings, { voices: roomVoices, chapters }) : null;
   const roomCalls = room ? `${formatCount(room.calls.min)}–${formatCount(room.calls.max)}` : "";
@@ -103,11 +124,11 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
   const spentCurrency = state?.stats.currency || money.display;
   const spent = money.amount(state?.stats.cost ?? 0, state?.stats.currency, { zero: "amount" });
   const running = view.snapshot?.running === true || view.busyInAnotherTab;
-  const canSubmit = reading.valid && chapters > 0 && busy === null && !running;
+  const canSubmit = reading.valid && !workflow.problem && chapters > 0 && busy === null && !running;
 
   const submit = async () => {
     if (!canSubmit) return;
-    const done = await run("start", (runtime, bookId) => runtime.start(bookId, { design: reading.input, options: { readersOnPlan: form.readers, budgetLimit: reading.budgetLimit, ...(roomChange !== undefined ? { review: { wildcards: roomChange } } : {}) } }));
+    const done = await run("start", (runtime, bookId) => runtime.start(bookId, { design: { ...reading.input, ...(workflow.workflow ? { workflow: workflow.workflow } : {}) }, options: { readersOnPlan: form.readers, budgetLimit: reading.budgetLimit, ...(roomChange !== undefined ? { review: { wildcards: roomChange } } : {}) } }));
     if (done) {
       onStarted();
       onClose();
@@ -172,6 +193,8 @@ export default function DesignDialog({ open, onClose, book, branch, structure, s
             onChange={(value) => change({ money: value })}
           />
         </div>
+
+        <WorkflowFields form={workflowForm} onChange={changeWorkflow} supported={reviewsSupported} alternativesAllowed={alternativesAllowed} problem={workflow.problem} />
 
         {estimate && <EstimateLine label={t("design.dialog.estimate")} estimate={estimate} currency={inputs.sources.currency || "USD"} />}
 
