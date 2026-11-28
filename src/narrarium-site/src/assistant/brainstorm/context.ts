@@ -1,4 +1,4 @@
-import { chapterFilePath, clipMiddle, parseMarkdown, type AutopilotState, type ParsedOutline, type PlannedChapter } from "narrarium-engine";
+import { BIBLE_DECISIONS_FILE, chapterFilePath, clipMiddle, decisionsBlock, emptyBibleDecisions, parseMarkdown, readBibleDecisions, type AutopilotState, type BibleDecisions, type ParsedOutline, type PlannedChapter } from "narrarium-engine";
 import { OUTLINE_BRIEF_FILE } from "@/autopilot/outlineBrief";
 import { frozenChapterSlugs, snapshotOf, writtenChapters, type OutlineSnapshot } from "@/outline/outlineModel";
 import { browserOutlineSource, type OutlineSource } from "@/outline/outlineSource";
@@ -47,6 +47,8 @@ export interface BrainstormContext {
   /** The ghostwriters of the book (their slugs): an entry may name one of them. */
   ghostwriters: string[];
   state: AutopilotState | null;
+  /** The decisions and the open questions of the book (`bible/decisions.md`): the locked ones bind Brainstorming too. */
+  decisions: BibleDecisions;
   source: OutlineSource;
 }
 
@@ -55,7 +57,7 @@ const READ_CHAPTERS = 300;
 
 export async function loadBrainstormContext(input: { book: BookEntry; branch: string; structure: BookStructure | undefined; source?: OutlineSource }): Promise<BrainstormContext> {
   const source = input.source ?? browserOutlineSource(input.book, input.branch);
-  const [files, state] = await Promise.all([source.files(), source.readState().catch(() => null)]);
+  const [files, state, decisionFiles] = await Promise.all([source.files(), source.readState().catch(() => null), source.readFiles([BIBLE_DECISIONS_FILE]).catch((): Array<{ path: string; content: string }> => [])]);
   const synopsis = await snapshotOf(files);
   const written = [...writtenChapters(input.structure?.chapters ?? [])].sort(([left], [right]) => left - right);
   const chapterFiles = await source.readFiles(written.slice(0, READ_CHAPTERS).map(([, chapter]) => chapterFilePath(chapter.slug))).catch((): Array<{ path: string; content: string }> => []);
@@ -82,6 +84,7 @@ export async function loadBrainstormContext(input: { book: BookEntry; branch: st
     canon: canonNames(input.structure),
     ghostwriters: (input.structure?.ghostwriters ?? []).map((ghostwriter) => ghostwriter.slug),
     state,
+    decisions: decisionFiles[0] ? readBibleDecisions(decisionFiles[0].content).value : emptyBibleDecisions(),
     source,
   };
 }
@@ -181,6 +184,7 @@ export function brainstormContextText(context: BrainstormContext): string {
       ? `BRIEF: genre ${context.brief.genre || "(none)"}; audience ${context.brief.audience || "(none)"}${context.brief.plot ? `\nChapter-by-chapter plot of the brief (where the entries say nothing):\n${clipMiddle(context.brief.plot, LIMITS.description)}` : ""}`
       : "",
     `GHOSTWRITERS OF THE BOOK (slugs an entry may name; none: the book's own writes it): ${context.ghostwriters.join(", ") || "(none)"}`,
+    decisionsBlock(context.decisions),
     entryLines(outline),
     writtenLines(context.written),
     canonLines(context.canon),

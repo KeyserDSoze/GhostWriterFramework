@@ -497,6 +497,8 @@ export function OutlinePage() {
             {tab === "bible" && (
               <BibleTab
                 bookId={bookId}
+                book={book}
+                branch={branch}
                 source={source}
                 entries={entries}
                 state={editor.autopilot}

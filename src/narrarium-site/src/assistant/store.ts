@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { create } from "zustand";
+import type { DecisionConflict } from "narrarium-engine";
 import type { EntityKind } from "@/narrarium/canon";
 
 export interface AssistantAttachment {
@@ -93,6 +94,10 @@ export type AssistantAction = (
       updates: AssistantFileUpdate[];
       /** A proposal for a page: what the author reviews in place of the files. */
       review?: PageChangesReview;
+      /** What was not applied because it goes against a locked decision of the book (`bible/decisions.md`): the author applies it anyway, or leaves it. Never saved with the chat. */
+      held?: DecisionConflict[];
+      /** The files the held apply was about: «apply it anyway» applies these. */
+      heldPaths?: string[];
     }
   | {
       kind: "undo-file-updates";

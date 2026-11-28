@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { OUTLINE_BRAINSTORM_FILE, OutlineReader, changeOfWritten, chapterFilePath, clipMiddle, designFindingText, designText, outlineDesignGaps, outlinePlanStatus, unescapePromptDataDeep, type BookStore, type OutlineChangeOutcome, type OutlineChapterEntry } from "narrarium-engine";
+import { BIBLE_DECISIONS_FILE, OUTLINE_BRAINSTORM_FILE, OutlineReader, decisionConflicts, sha256Hex, type DecisionConflict, changeOfWritten, chapterFilePath, clipMiddle, designFindingText, designText, outlineDesignGaps, outlinePlanStatus, unescapePromptDataDeep, type BookStore, type OutlineChangeOutcome, type OutlineChapterEntry } from "narrarium-engine";
 import { sourceRevisionFromFiles } from "@/assistant/actionValidation";
 import { composeOutlineProposal, modelOutlineEditSchema, outlineProposalMessage, toOutlineEdits } from "@/assistant/outlineProposal";
 import type { AssistantMessage } from "@/assistant/store";
@@ -7,6 +7,7 @@ import { ensureBuiltinCopilotToolsRegistered } from "@/assistant/tools/builtinTo
 import { isCopilotToolIdEnabled } from "@/assistant/tools/registry";
 import { BRAINSTORM_CANON_SECTIONS, summaryOf, type BrainstormContext } from "@/assistant/brainstorm/context";
 import { matchKey } from "@/lib/matchText";
+import { heldLines } from "@/assistant/decisionHold";
 import { runScopedTool, scopedToolLines, toolData, toolRefused, type ScopedTool, type ScopedToolOutcome } from "@/assistant/scopedTools";
 import { filterEntries } from "@/outline/outlineModel";
 import { BRAINSTORMING_CAPABILITY, type AppSettings } from "@/types/settings";
@@ -19,7 +20,7 @@ import type { SynopsisSections } from "@/assistant/synopsisImport";
  * Copilot: this registry is its own, the Copilot's is never asked, and a call to anything else is refused here, in code, whatever the model writes.
  */
 
-export const BRAINSTORM_TOOL_IDS = ["read_synopsis", "read_synopsis_entry", "read_chapter_summary", "read_canon_entry", "propose_synopsis_edits", "import_synopsis_text", "check_synopsis", "save_brainstorm_notes"] as const;
+export const BRAINSTORM_TOOL_IDS = ["read_synopsis", "read_synopsis_entry", "read_chapter_summary", "read_canon_entry", "propose_synopsis_edits", "import_synopsis_text", "check_synopsis", "save_brainstorm_notes", "propose_bible_decisions"] as const;
 export type BrainstormToolId = (typeof BRAINSTORM_TOOL_IDS)[number];
 
 /** What Brainstorming's tools work on: the context of the request (the book as Brainstorming knows it) and the settings of the author. */
@@ -156,9 +157,20 @@ const proposeSynopsisEdits: BrainstormTool<{ summary?: string; edits: Array<z.in
     const proposal = await composeOutlineProposal(context.synopsis, edits, context.ghostwriters, unescapePromptDataDeep(args.summary ?? "").trim());
     const message = outlineProposalMessage(proposal, { italian, book: context.book, branch: context.branch });
     if (message.action?.kind !== "apply-file-updates") return data("propose_synopsis_edits", `Not proposed: ${message.text}`, message.text);
-    return { tool: "propose_synopsis_edits", kind: "proposal", message, text: `Proposed to the author: ${proposal.changes.length} file(s) of the Synopsis. Nothing is applied until the author confirms.` };
+    const held = heldByDecisions(context, message.action.updates);
+    return {
+      tool: "propose_synopsis_edits",
+      kind: "proposal",
+      message: held.length ? { ...message, text: `${message.text}\n\n${heldLines(held, italian ? "it" : "en").join("\n")}\n${italian ? "Prima di applicarla ti verrà chiesto." : "You will be asked before it is applied."}` } : message,
+      text: `Proposed to the author: ${proposal.changes.length} file(s) of the Synopsis. Nothing is applied until the author confirms.${held.length ? ` WARNING: it goes against a locked decision of the author, which the author will be asked about before anything is applied: ${heldLines(held, "en").join(" ")} Propose something that respects it, or say plainly why it must change.` : ""}`,
+    };
   },
 };
+
+/** What of the files a proposal would write goes against a locked decision of the book (the files as Brainstorming holds them now). */
+function heldByDecisions(context: BrainstormContext, updates: ReadonlyArray<{ path: string; content: string | null }>): DecisionConflict[] {
+  return decisionConflicts(updates.map((update) => ({ path: update.path, before: context.synopsis.files.get(update.path)?.content ?? null, after: update.content })), context.decisions);
+}
 
 const importSynopsisText: BrainstormTool<Record<string, never>> = {
   id: "import_synopsis_text",
@@ -288,7 +300,41 @@ const saveBrainstormNotes: BrainstormTool<{ title?: string; notes: string }> = {
   },
 };
 
-const TOOLS = [readSynopsis, readSynopsisEntry, readChapterSummary, readCanonEntry, proposeSynopsisEdits, importSynopsisText, checkSynopsis, saveBrainstormNotes] as const;
+const decisionFields = z.object({
+  decision: z.string().trim().min(1).max(1_200),
+  reason: z.string().max(1_200).optional(),
+  chapters: z.array(number).max(40).optional(),
+  files: z.array(z.string().max(300)).max(20).optional(),
+  secrets: z.array(z.string().max(120)).max(20).optional(),
+  avoid: z.array(z.string().max(200)).max(20).optional(),
+}).strict();
+
+const proposeBibleDecisions: BrainstormTool<{ decisions?: Array<z.infer<typeof decisionFields>>; questions?: Array<{ question: string; chapters?: number[] }> }> = {
+  id: "propose_bible_decisions",
+  description: "«capture this decision»: what the author settled in this conversation, and the questions it leaves open, added to the log of decisions of the book (bible/decisions.md) when the author confirms. A decision is always proposed OPEN: only the author locks one, in the Bible. Add `chapters`, `files`, `secrets` or `avoid` (phrases it forbids) only when the author said what the decision covers",
+  args: '{"decisions":[{"decision":"…","reason":"…","chapters":[3],"avoid":["…"]}],"questions":[{"question":"…","chapters":[5]}]}',
+  schema: z.object({ decisions: z.array(decisionFields).max(20).optional(), questions: z.array(z.object({ question: z.string().trim().min(1).max(1_200), chapters: z.array(number).max(40).optional() }).strict()).max(20).optional() }).strict(),
+  async run(args, { context, settings, italian }) {
+    if (!synopsisEditsEnabled(settings)) return disabledEdits("propose_bible_decisions");
+    const current = context.synopsis.files.get(BIBLE_DECISIONS_FILE) ?? (await context.source.readFiles([BIBLE_DECISIONS_FILE]))[0];
+    const outcome = (await import("@/assistant/decisionCapture")).decisionCaptureProposal({
+      book: context.book,
+      branch: context.branch,
+      current: current ? { content: current.content, hash: "hash" in current && typeof current.hash === "string" ? current.hash : await sha256Hex(current.content) } : null,
+      by: "brainstorming",
+      italian,
+      request: unescapePromptDataDeep(args),
+      reason: italian ? "Brainstorming: decisioni e domande per la Bibbia" : "Brainstorming: decisions and questions for the Bible",
+      text: (decisions, questions) => (italian
+        ? `Registro nella Bibbia del libro ${decisions} decisioni e ${questions} domande aperte? Le decisioni restano aperte: le blocchi tu. Nulla è scritto finché non lo confermi.`
+        : `Capture ${decisions} decisions and ${questions} open questions in the Bible of the book? The decisions stay open: you lock them. Nothing is written until you confirm.`),
+    });
+    if ("problem" in outcome) return refused("propose_bible_decisions", `Nothing to capture: ${outcome.problem}. Give at least one decision or one question.`);
+    return { tool: "propose_bible_decisions", kind: "proposal", message: outcome.message, text: `Proposed to the author: ${outcome.decisions} decision(s) and ${outcome.questions} open question(s) for the Bible. Nothing is written until the author confirms.` };
+  },
+};
+
+const TOOLS = [readSynopsis, readSynopsisEntry, readChapterSummary, readCanonEntry, proposeSynopsisEdits, importSynopsisText, checkSynopsis, saveBrainstormNotes, proposeBibleDecisions] as const;
 
 /** Brainstorming's registry: these tools, in this order, and nothing else. */
 export const brainstormToolRegistry: ReadonlyMap<string, BrainstormTool<never>> = new Map(TOOLS.map((tool) => [tool.id, tool as unknown as BrainstormTool<never>]));

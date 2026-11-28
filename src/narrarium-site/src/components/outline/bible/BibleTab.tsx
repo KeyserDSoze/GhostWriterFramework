@@ -1,21 +1,34 @@
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { Suspense, lazy, useId, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, BookMarked, Info, Loader2, Save } from "lucide-react";
-import { BIBLE_THEMES_FILE, BIBLE_WORLD_FILE, BookConflictError, designFindingText, serializeBibleThemes, serializeBibleWorld, type AutopilotState, type DesignFinding, type OutlineChapterEntry } from "narrarium-engine";
+import { BookMarked, Loader2 } from "lucide-react";
+import { BIBLE_THEMES_FILE, BIBLE_WORLD_FILE, findingText, serializeBibleThemes, serializeBibleWorld, type AutopilotState, type DesignFinding, type OutlineChapterEntry } from "narrarium-engine";
 import "@/i18n/design";
+import "@/i18n/bibleStudio";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AutoTextarea } from "@/components/ui/auto-textarea";
 import { Button } from "@/components/ui/button";
+import { ChecksSection } from "@/components/outline/bible/ChecksSection";
+import { DecisionsSection } from "@/components/outline/bible/DecisionsSection";
+import { GuidelinesSection } from "@/components/outline/bible/GuidelinesSection";
+import { ThreadsSection } from "@/components/outline/bible/ThreadsSection";
+import { TimelineSection } from "@/components/outline/bible/TimelineSection";
+import { FindingIcon, SaveRow, Section, useBibleSave, useFollowingForm } from "@/components/outline/bible/bibleParts";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useBibleFiles } from "@/components/outline/bible/useBibleFiles";
 import { canonHref, composeBible, type BibleCanonEntry, type BibleData, type BibleSecret, type BibleSection } from "@/outline/bibleModel";
 import type { OutlineSource } from "@/outline/outlineSource";
+import type { BookEntry } from "@/types/settings";
 import { cn } from "@/lib/utils";
+
+const DesignTable = lazy(() => import("@/components/outline/bible/DesignTable"));
 
 export interface BibleTabProps {
   bookId: string;
+  /** The book and its branch: the spoiler check reads the written chapters when the author asks. */
+  book?: BookEntry;
+  branch?: string;
   source: OutlineSource | null;
   entries: readonly OutlineChapterEntry[];
   state: AutopilotState | null;
@@ -25,26 +38,30 @@ export interface BibleTabProps {
   onShowSynopsis: () => void;
 }
 
-const SECTION_IDS = { premise: "bible-premise", themes: "bible-themes", world: "bible-world", cast: "bible-cast", places: "bible-places", factions: "bible-factions", items: "bible-items", secrets: "bible-secrets", checks: "bible-checks" } as const;
+const SECTION_IDS = { premise: "bible-premise", themes: "bible-themes", decisions: "bible-decisions", world: "bible-world", cast: "bible-cast", places: "bible-places", factions: "bible-factions", items: "bible-items", secrets: "bible-secrets", threads: "bible-threads", timeline: "bible-timeline", table: "bible-table", guidelines: "bible-guidelines", checks: "bible-checks" } as const;
+/** The sections whose title is `bibleStudio`'s (the others are `design.bible`'s). */
+const STUDIO_SECTIONS = new Set<keyof typeof SECTION_IDS>(["decisions", "threads", "timeline", "table", "guidelines"]);
+const sectionTitle = (t: (key: string) => string, key: keyof typeof SECTION_IDS) => t(`${STUDIO_SECTIONS.has(key) ? "bibleStudio" : "design.bible"}.sections.${key}`);
 
 /**
  * The Bible: the parts of the book that make its story, composed from its own files and read again when the autopilot or a sync changes them. The themes, the
  * tone and the rules of the world are edited here (`bible/`); every entry of the canon opens its page; the findings of the checks of the design point to their
  * chapter.
  */
-export function BibleTab({ bookId, source, entries, state, refreshKey, onShowEntry, onShowSynopsis }: BibleTabProps) {
+export function BibleTab({ bookId, book, branch = "main", source, entries, state, refreshKey, onShowEntry, onShowSynopsis }: BibleTabProps) {
   const { t, i18n } = useTranslation();
   const { files, failure, reload } = useBibleFiles(source, refreshKey);
   const data = useMemo(() => (files ? composeBible({ files, entries, state }) : null), [files, entries, state]);
   const language = i18n.resolvedLanguage ?? i18n.language;
   const names = useMemo(() => new Map((data?.canon.characters ?? []).flatMap((entry) => [[`character:${entry.slug}`, entry.name], [entry.slug, entry.name]] as const)), [data]);
   const nameOf = (value: string) => names.get(value) ?? value.replace(/^character:/, "");
+  const shownChapters = useMemo(() => new Set(entries.map((entry) => entry.number)), [entries]);
+  const fileMap = useMemo(() => new Map((files ?? []).map((file) => [file.path, file])), [files]);
 
   if (failure === "folder") return <Alert><AlertDescription>{t("design.bible.noFolder")}</AlertDescription></Alert>;
   if (failure === "read" && !data) return <Alert variant="destructive"><AlertDescription className="flex flex-wrap items-center gap-3">{t("design.bible.failed")}<Button size="sm" variant="outline" onClick={reload}>{t("common.retry")}</Button></AlertDescription></Alert>;
   if (!data) return <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("design.bible.loading")}</p>;
 
-  const byChapter = (finding: DesignFinding) => finding.chapter;
   const secretFindings = (slug: string) => data.findings.filter((finding) => finding.secret?.slug === slug);
 
   return (
@@ -55,7 +72,7 @@ export function BibleTab({ bookId, source, entries, state, refreshKey, onShowEnt
         <nav aria-label={t("design.bible.nav")}>
           <ul className="flex flex-wrap gap-x-3 gap-y-1 text-sm">
             {(Object.keys(SECTION_IDS) as Array<keyof typeof SECTION_IDS>).map((key) => (
-              <li key={key}><a href={`#${SECTION_IDS[key]}`} className="inline-flex min-h-6 items-center underline underline-offset-4 [@media(pointer:coarse)]:min-h-11">{t(`design.bible.sections.${key}`)}</a></li>
+              <li key={key}><a href={`#${SECTION_IDS[key]}`} className="inline-flex min-h-6 items-center underline underline-offset-4 [@media(pointer:coarse)]:min-h-11">{sectionTitle(t, key)}</a></li>
             ))}
           </ul>
         </nav>
@@ -71,6 +88,10 @@ export function BibleTab({ bookId, source, entries, state, refreshKey, onShowEnt
 
       <Section id={SECTION_IDS.themes} title={t("design.bible.sections.themes")}>
         <ThemesEditor data={data} source={source} onSaved={reload} />
+      </Section>
+
+      <Section id={SECTION_IDS.decisions} title={t("bibleStudio.sections.decisions")}>
+        <DecisionsSection data={data} source={source} onSaved={reload} />
       </Section>
 
       <Section id={SECTION_IDS.world} title={t("design.bible.sections.world")}>
@@ -92,36 +113,28 @@ export function BibleTab({ bookId, source, entries, state, refreshKey, onShowEnt
           : <ul className="space-y-3">{data.secrets.map((secret) => <li key={secret.path}><SecretCard bookId={bookId} secret={secret} nameOf={nameOf} findings={secretFindings(secret.slug)} language={language} /></li>)}</ul>}
       </Section>
 
+      <Section id={SECTION_IDS.threads} title={t("bibleStudio.sections.threads")}>
+        <ThreadsSection data={data} source={source} onSaved={reload} />
+      </Section>
+
+      <Section id={SECTION_IDS.timeline} title={t("bibleStudio.sections.timeline")}>
+        <TimelineSection data={data} language={language} shownChapters={shownChapters} onShowEntry={onShowEntry} />
+      </Section>
+
+      <Section id={SECTION_IDS.table} title={t("bibleStudio.sections.table")}>
+        <Suspense fallback={null}>
+          <DesignTable entries={entries} findings={data.findings} onShowEntry={onShowEntry} />
+        </Suspense>
+      </Section>
+
+      <Section id={SECTION_IDS.guidelines} title={t("bibleStudio.sections.guidelines")}>
+        <GuidelinesSection data={data} files={fileMap} source={source} onSaved={reload} />
+      </Section>
+
       <Section id={SECTION_IDS.checks} title={t("design.bible.sections.checks")}>
-        <p className="text-xs text-muted-foreground">{t("design.bible.checks.intro")}</p>
-        {data.findings.length === 0
-          ? <p data-bible-checks="none" className="text-sm">{t("design.bible.checks.none")}</p>
-          : (
-            <ul data-bible-checks className="space-y-1.5 text-sm">
-              {data.findings.map((finding, index) => (
-                <li key={`${finding.code}-${index}`} data-design-finding={finding.code} className="flex items-start gap-2">
-                  <FindingIcon finding={finding} />
-                  <span className="min-w-0">
-                    {designFindingText(finding, language)}
-                    {byChapter(finding) && entries.some((entry) => entry.number === finding.chapter) && (
-                      <> <button type="button" className="inline-flex min-h-6 items-center text-xs underline underline-offset-4" onClick={() => onShowEntry(finding.chapter!)}>{t("design.bible.checks.show", { number: finding.chapter })}</button></>
-                    )}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+        <ChecksSection findings={data.findings} language={language} shownChapters={shownChapters} onShowEntry={onShowEntry} book={book} branch={branch} state={state} />
       </Section>
     </div>
-  );
-}
-
-function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
-  return (
-    <section id={id} aria-labelledby={`${id}-title`} className="scroll-mt-20 space-y-3 rounded-2xl border border-layer bg-card p-4 shadow-sm">
-      <h3 id={`${id}-title`} className="text-lg font-semibold">{title}</h3>
-      {children}
-    </section>
   );
 }
 
@@ -141,12 +154,6 @@ function TextBlock({ title, text }: { title: string; text: string }) {
       {plain ? <p className="line-clamp-[12] whitespace-pre-line text-sm text-muted-foreground">{plain}</p> : <p className="text-sm italic text-muted-foreground">{t("design.bible.premise.none")}</p>}
     </div>
   );
-}
-
-function FindingIcon({ finding }: { finding: DesignFinding }) {
-  return finding.severity === "warning"
-    ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-300" aria-hidden="true" />
-    : <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />;
 }
 
 function CanonList({ bookId, entries, empty }: { bookId: string; entries: readonly BibleCanonEntry[]; empty: string }) {
@@ -203,54 +210,24 @@ function SecretCard({ bookId, secret, nameOf, findings, language }: { bookId: st
       {findings.length > 0 && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-2">
           <p className="text-xs font-semibold">{t("design.bible.secret.findings")}</p>
-          <ul className="space-y-1 text-xs">{findings.map((finding, index) => <li key={index} className="flex items-start gap-1.5"><FindingIcon finding={finding} />{designFindingText(finding, language)}</li>)}</ul>
+          <ul className="space-y-1 text-xs">{findings.map((finding, index) => <li key={index} className="flex items-start gap-1.5"><FindingIcon finding={finding} />{findingText(finding, language)}</li>)}</ul>
         </div>
       )}
     </article>
   );
 }
 
-/** Save a file of `bible/`, expecting it as it was read: what changed elsewhere is never overwritten. */
-function useBibleSave(source: OutlineSource | null, onSaved: () => void) {
-  const { t } = useTranslation();
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
-  const save = async (path: string, content: string, expectedHash: string | null, label: string) => {
-    if (!source) return;
-    setBusy(true);
-    setMessage(null);
-    try {
-      await source.commit([{ path, content, expectedHash }], `Bible: ${label}`);
-      setMessage({ tone: "ok", text: t("design.bible.saved") });
-      onSaved();
-    } catch (error) {
-      setMessage({ tone: "error", text: error instanceof BookConflictError ? t("design.bible.conflict") : t("design.bible.saveFailed") });
-    } finally {
-      setBusy(false);
-    }
-  };
-  return { busy, message, save };
-}
-
 const linesOf = (text: string) => text.split("\n").map((line) => line.trim()).filter(Boolean);
-
-/** A form that follows what the file says while the author has not changed it (the autopilot, a sync, another tab may change the file). */
-function useFollowingForm<T>(initial: T): [T, (next: T) => void] {
-  const key = JSON.stringify(initial);
-  const [state, setState] = useState<{ key: string; value: T; edited: boolean }>({ key, value: initial, edited: false });
-  if (state.key !== key && (!state.edited || JSON.stringify(state.value) === key)) setState({ key, value: initial, edited: false });
-  return [state.value, (next) => setState({ key, value: next, edited: true })];
-}
 
 function ThemesEditor({ data, source, onSaved }: { data: BibleData; source: OutlineSource | null; onSaved: () => void }) {
   const { t } = useTranslation();
   const id = useId();
-  const initial = { themes: data.themes.themes.join("\n"), tone: data.themes.tone };
+  const initial = { themes: data.themes.themes.join("\n"), tone: data.themes.tone, audience: data.themes.audience };
   const [form, setForm] = useFollowingForm(initial);
   const { busy, message, save } = useBibleSave(source, onSaved);
-  const changed = form.themes !== initial.themes || form.tone !== initial.tone;
+  const changed = form.themes !== initial.themes || form.tone !== initial.tone || form.audience !== initial.audience;
   return (
-    <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void save(BIBLE_THEMES_FILE, serializeBibleThemes({ themes: linesOf(form.themes), tone: form.tone }, data.themesFile?.content), data.themesFile?.hash ?? null, "themes and tone"); }}>
+    <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void save(BIBLE_THEMES_FILE, serializeBibleThemes({ themes: linesOf(form.themes), tone: form.tone, audience: form.audience }, data.themesFile?.content), data.themesFile?.hash ?? null, "themes and tone"); }}>
       <div className="grid gap-3 md:grid-cols-2">
         <div className="space-y-1">
           <Label htmlFor={`${id}-themes`} className="text-xs font-medium">{t("design.bible.themes.themes")}</Label>
@@ -260,6 +237,11 @@ function ThemesEditor({ data, source, onSaved }: { data: BibleData; source: Outl
         <div className="space-y-1">
           <Label htmlFor={`${id}-tone`} className="text-xs font-medium">{t("design.bible.themes.tone")}</Label>
           <Input id={`${id}-tone`} value={form.tone} disabled={busy} onChange={(event) => setForm({ ...form, tone: event.target.value })} className="h-9" />
+        </div>
+        <div className="space-y-1 md:col-span-2">
+          <Label htmlFor={`${id}-audience`} className="text-xs font-medium">{t("bibleStudio.themes.audience")}</Label>
+          <Input id={`${id}-audience`} aria-describedby={`${id}-audience-hint`} value={form.audience} disabled={busy} onChange={(event) => setForm({ ...form, audience: event.target.value })} className="h-9" />
+          <p id={`${id}-audience-hint`} className="text-xs text-muted-foreground">{t("bibleStudio.themes.audienceHint")}</p>
         </div>
       </div>
       <SaveRow busy={busy} disabled={!changed} label={t("design.bible.themes.save")} message={message} />
@@ -285,11 +267,3 @@ function WorldEditor({ data, source, onSaved }: { data: BibleData; source: Outli
   );
 }
 
-function SaveRow({ busy, disabled, label, message }: { busy: boolean; disabled: boolean; label: string; message: { tone: "ok" | "error"; text: string } | null }) {
-  return (
-    <div className="flex flex-wrap items-center gap-3">
-      <Button type="submit" size="sm" disabled={busy || disabled}>{busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}{label}</Button>
-      <p role="status" className={cn("text-xs", message?.tone === "error" ? "font-medium text-destructive" : "text-muted-foreground")}>{message?.text ?? ""}</p>
-    </div>
-  );
-}

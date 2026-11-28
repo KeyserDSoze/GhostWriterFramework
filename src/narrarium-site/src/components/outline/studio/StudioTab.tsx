@@ -2,8 +2,9 @@ import { Suspense, lazy, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { BookMarked, CheckCircle2, Compass, ListTree, Loader2, Pause, Play, PenLine, Sparkles } from "lucide-react";
-import { OUTLINE_BOOK_FILE, serverSupportsDesign, type AutopilotState, type OutlineChapterEntry } from "narrarium-engine";
+import { OUTLINE_BOOK_FILE, lockedDecisions, openQuestions, serverSupportsDesign, type AutopilotState, type OutlineChapterEntry } from "narrarium-engine";
 import "@/i18n/design";
+import "@/i18n/bibleStudio";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { BrainstormPageButton } from "@/components/assistant/brainstorm/BrainstormLauncher";
@@ -61,12 +62,15 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
   const target = status.kind === "active" || status.kind === "ready" ? (status.target !== undefined ? voteText(status.target) : t("design.studio.status.directorTarget")) : "";
 
   // What the design made: the secrets and the world, read from the book (the Bible's reading).
-  const bible = useBibleFiles(status.kind === "ready" ? source : null, refreshKey);
-  const counts = useMemo(() => {
-    if (!bible.files) return null;
-    const data = composeBible({ files: bible.files, entries, state });
-    return { secrets: data.secrets.length, world: worldEntries(data) };
-  }, [bible.files, entries, state]);
+  const bible = useBibleFiles(source, refreshKey);
+  const data = useMemo(() => (bible.files ? composeBible({ files: bible.files, entries, state }) : null), [bible.files, entries, state]);
+  const counts = useMemo(() => (data ? { secrets: data.secrets.length, world: worldEntries(data) } : null), [data]);
+  const agreed = useMemo(() => (data ? {
+    locked: lockedDecisions(data.decisions).length,
+    questions: openQuestions(data.decisions).length,
+    findings: data.findings.length,
+    warnings: data.findings.filter((finding) => finding.severity === "warning").length,
+  } : null), [data]);
   const chapters = (state?.plan?.chapters ?? []).filter((chapter) => !chapter.imported).length || (status.kind === "ready" ? status.chapters : 0);
   const bookFile = snapshot?.files.get(OUTLINE_BOOK_FILE);
   const approval = designApprovalOf(bookFile?.content);
@@ -171,6 +175,24 @@ export function StudioTab({ book, branch, structure, source, snapshot, state: fi
               </li>
             ))}
           </ol>
+        </section>
+      )}
+
+      {agreed && (
+        <section aria-labelledby="studio-agreed-title" data-studio-agreed className="space-y-2 rounded-2xl border border-layer bg-card p-4 shadow-sm">
+          <h2 id="studio-agreed-title" className="text-base font-semibold">{t("bibleStudio.studio.title")}</h2>
+          {agreed.locked + agreed.questions + agreed.findings === 0
+            ? <p className="text-sm text-muted-foreground">{t("bibleStudio.studio.none")}</p>
+            : (
+              <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                <li data-agreed="locked">{t("bibleStudio.studio.locked", { count: agreed.locked })}</li>
+                <li data-agreed="questions">{t("bibleStudio.studio.questions", { count: agreed.questions })}</li>
+                <li data-agreed="findings">{t("bibleStudio.studio.findings", { count: agreed.findings })}{agreed.warnings > 0 && <> ({t("bibleStudio.studio.warnings", { count: agreed.warnings })})</>}</li>
+              </ul>
+            )}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={() => onShowTab("bible")}><BookMarked className="h-4 w-4" aria-hidden="true" />{t("bibleStudio.studio.open")}</Button>
+          </div>
         </section>
       )}
 

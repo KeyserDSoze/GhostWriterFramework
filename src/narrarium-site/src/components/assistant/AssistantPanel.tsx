@@ -68,6 +68,8 @@ import { hasAssistantActionProvenance, isOutlineProposal, isWholeProposal, OUTLI
 import "@/i18n/outlineCopilot";
 import "@/i18n/pageCopilot";
 import "@/i18n/copilotApply";
+import "@/i18n/bibleStudio";
+import { conflictsOfChanges } from "@/assistant/decisionHold";
 import { pageIdForRoute } from "@/assistant/pages/registry";
 import "@/i18n/localFirst";
 import { FrozenProposalNotice } from "@/components/frozen/FrozenProposalNotice";
@@ -204,7 +206,7 @@ async function outlineWorkingCopy(book: BookEntry, branch: string, journal: { by
   const [{ browserOutlineSource, outlineFilesAt }, { commitWithJournal }] = await Promise.all([import("@/outline/outlineSource"), import("@/outline/outlineJournal")]);
   const source = browserOutlineSource(book, branch);
   // A proposal applied, or taken back, is a series of the journal of the Synopsis too, in the same commit: the author's, or Brainstorming's.
-  return { read: (paths: readonly string[]) => outlineFilesAt(source, paths), commit: (changes: Parameters<typeof commitWithJournal>[1], message: string) => commitWithJournal(source, changes, message, journal) };
+  return { read: (paths: readonly string[]) => outlineFilesAt(source, paths), readOther: async (path: string) => (await source.readFiles([path]))[0]?.content ?? null, commit: (changes: Parameters<typeof commitWithJournal>[1], message: string) => commitWithJournal(source, changes, message, journal) };
 }
 
 // Brainstorming's own parts (the Copilot's mode on the Synopsis page): loaded the first time the panel is in that mode, and only the Synopsis page enters it.
@@ -217,6 +219,9 @@ const BrainstormProposal = lazy(() => brainstormParts().then((module) => ({ defa
 const PageChangesReview = lazy(() => import("@/components/assistant/PageChangesReview"));
 /** The choice between the author's version and the proposal's, for a file that changed after the proposal was made. */
 const ApplyConflict = lazy(() => import("@/components/assistant/ApplyConflict"));
+/** The change a locked decision of the book holds back, and the author's choice. */
+const ApplyHold = lazy(() => import("@/components/assistant/ApplyHold"));
+
 // The parts of the context of a chat shown only when there is something to show (#122): the marker of a compaction, a message that does not fit, the archived messages.
 const contextParts = () => import("@/components/assistant/context/ContextParts");
 const CompactionMarker = lazy(() => contextParts().then((module) => ({ default: module.CompactionMarker })));
@@ -2570,7 +2575,7 @@ export function AssistantPanel() {
     toast({ title: note });
   }
 
-  async function applySelectedFileUpdates(messageIndex: number, selectedPaths?: string[], options: { useProposal?: readonly string[] } = {}) {
+  async function applySelectedFileUpdates(messageIndex: number, selectedPaths?: string[], options: { useProposal?: readonly string[]; confirmLocked?: boolean } = {}) {
     const message = currentSession?.messages[messageIndex];
     if (!message?.action || message.action.kind !== "apply-file-updates") return;
     const action = message.action;
@@ -2602,6 +2607,16 @@ export function AssistantPanel() {
         results[update.path] = { previousContent: current?.content ?? null, appliedHash: update.content === null ? null : await sha256Text(update.content) };
         return { path: update.path, content: update.content, expectedCurrentHash: currentHash };
       }));
+      // A locked decision of the book holds back a change that goes against it: nothing is applied, and the author decides (apply it anyway, or leave it).
+      if (!options.confirmLocked) {
+        const held = await conflictsOfChanges({ token, book, branch, signal, ...(outline ? { read: outline.readOther } : {}), changes: updates.map((update, index) => ({ path: update.path, before: currentFiles[index]?.content ?? null, after: update.content })) });
+        if (!ownsConfirmedMutation(operation)) return;
+        if (held.length) {
+          useAssistantStore.getState().updateMessage(message.id, { action: { ...action, held, heldPaths: updates.map((update) => update.path) } });
+          toast({ title: t("bibleStudio.hold.title"), description: t("bibleStudio.hold.intro"), variant: "destructive" });
+          return;
+        }
+      }
       const messageText = `Apply ${updates.length} Copilot file update${updates.length === 1 ? "" : "s"}`;
       let scriptResult: Awaited<ReturnType<typeof commitCanonicalScriptMutation>> | null = null;
       let delivery: MutationDelivery | undefined;
@@ -3250,6 +3265,17 @@ export function AssistantPanel() {
                   busy={busy}
                   onKeepMine={(path) => keepMineOf(index, path)}
                   onUseProposal={(path) => void applySelectedFileUpdates(index, [path], { useProposal: [path] })}
+                />
+              </Suspense>
+            )}
+            {message.action?.kind === "apply-file-updates" && message.action.held && message.action.held.length > 0 && (
+              <Suspense fallback={null}>
+                <ApplyHold
+                  conflicts={message.action.held}
+                  busy={busy}
+                  language={settings.ui.language}
+                  onApply={() => void applySelectedFileUpdates(index, message.action?.kind === "apply-file-updates" ? message.action.heldPaths : undefined, { confirmLocked: true })}
+                  onLeave={() => useAssistantStore.getState().updateMessage(message.id, { action: { ...message.action!, held: undefined, heldPaths: undefined } as typeof message.action, text: `${message.text}\n\n${t("bibleStudio.hold.left")}` })}
                 />
               </Suspense>
             )}

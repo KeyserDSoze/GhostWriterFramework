@@ -18,7 +18,7 @@ const designIt = {
       nav: "Parti della Bibbia",
       sections: {
         premise: "Progetto della storia e mondo",
-        themes: "Temi e tono",
+        themes: "Temi, tono e pubblico",
         world: "Regole del mondo",
         cast: "Personaggi",
         places: "Luoghi",

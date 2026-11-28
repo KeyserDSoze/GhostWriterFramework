@@ -100,7 +100,7 @@ describe("the Bible composed from the book's files", () => {
     expect(data.canon.characters[0].facts).toEqual([{ key: "story_role", value: "protagonist" }, { key: "arc", value: "From silence to voice" }, { key: "desires", value: "The truth" }]);
     expect(data.canon.characters[0].summary).toBe("A stubborn young glassmaker.");
     expect(worldEntries(data)).toBe(2);
-    expect(data.themes).toEqual({ themes: ["truth"], tone: "Tense", notes: "" });
+    expect(data.themes).toEqual({ themes: ["truth"], tone: "Tense", audience: "", notes: "" });
     expect(data.storyDesign).toContain("Three movements.");
     expect(data.secrets.map((secret) => [secret.slug, secret.revealChapter, secret.planned])).toEqual([["the-wall", 2, true], ["the-letter", undefined, false]]);
     expect(data.secrets[0].ledger.clues).toEqual([{ chapter: 1, note: "Salt in the cellar" }]);

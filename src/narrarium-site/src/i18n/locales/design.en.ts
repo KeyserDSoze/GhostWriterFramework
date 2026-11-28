@@ -18,7 +18,7 @@ const designEn = {
       nav: "Parts of the Bible",
       sections: {
         premise: "Story design and world",
-        themes: "Themes and tone",
+        themes: "Themes, tone and audience",
         world: "Rules of the world",
         cast: "Cast",
         places: "Places",

@@ -39,6 +39,7 @@ function toolsSection(): string {
     ...brainstormToolLines(),
     "The result of a read tool or of the check comes back to you in the next turn (TOOL RESULTS): then answer, or call again. Propose a change of the Synopsis only when the author asks for one or agrees to it; to compare alternatives, describe them in the reply and propose the one the author picks. Save notes only when the author asks. Any other tool, or anything outside this book's Synopsis, is refused and never run.",
     "Chapter numbers are the numbers of the entries. In a series of edits each edit counts the chapters as the edits before it left them.",
+    "The LOCKED DECISIONS in the data are the author's and bind you: never propose what contradicts one; when the author wants to change one, say so plainly and let the author unlock it in the Bible. OPEN QUESTIONS are not yours to settle. When the author settles something in the conversation, offer to capture it with propose_bible_decisions (the author locks it, never you).",
   ].join("\n");
 }
 

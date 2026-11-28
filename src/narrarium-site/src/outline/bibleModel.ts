@@ -1,18 +1,26 @@
 import {
+  BIBLE_DECISIONS_FILE,
   BIBLE_THEMES_FILE,
+  BIBLE_THREADS_FILE,
   BIBLE_WORLD_FILE,
   CONTEXT_FILE,
   STORY_DESIGN_FILE,
-  designChecks,
+  designFindings,
   outlineDesignGaps,
+  readBibleDecisions,
+  readBibleThreads,
+  referencedChapterNumber,
   parseMarkdown,
   readBibleThemes,
   readBibleWorld,
   ledgerChapter,
   readSecretLedger,
   type AutopilotState,
+  type BibleDecisions,
   type BibleThemes,
+  type BibleThreads,
   type BibleWorld,
+  type DesignCheckTimelineEvent,
   type DesignFinding,
   type OutlineChapterEntry,
   type SecretLedger,
@@ -26,7 +34,7 @@ import type { OutlineFile } from "@/outline/outlineModel";
  */
 
 /** The folders of the canon the Bible reads, in the order it shows them. */
-export const BIBLE_FOLDERS = ["characters/", "locations/", "factions/", "items/", "secrets/", "bible/"] as const;
+export const BIBLE_FOLDERS = ["characters/", "locations/", "factions/", "items/", "secrets/", "bible/", "timelines/", "guidelines/"] as const;
 /** The files at the root of the book it reads. */
 export const BIBLE_ROOT_FILES = [STORY_DESIGN_FILE, CONTEXT_FILE] as const;
 
@@ -55,6 +63,21 @@ export interface BibleSecret {
   ledger: SecretLedger;
 }
 
+/** An event of the timeline, as the Bible shows it. */
+export interface BibleTimelineEvent extends DesignCheckTimelineEvent {
+  path: string;
+  /** The first lines of its text. */
+  summary: string;
+}
+
+/** A guideline of the book (`guidelines/`), as the Bible shows it. */
+export interface BibleGuideline {
+  path: string;
+  slug: string;
+  title: string;
+  summary: string;
+}
+
 export interface BibleData {
   storyDesign: string;
   context: string;
@@ -62,6 +85,16 @@ export interface BibleData {
   themesFile?: OutlineFile;
   world: BibleWorld;
   worldFile?: OutlineFile;
+  /** The decisions and the open questions (`bible/decisions.md`), and the problems found reading the file. */
+  decisions: BibleDecisions;
+  decisionsFile?: OutlineFile;
+  decisionsProblems: string[];
+  /** The threads of setup and payoff (`bible/threads.md`). */
+  threads: BibleThreads;
+  threadsFile?: OutlineFile;
+  /** The events of the timeline, in the order of their dates (those without a date last, by title). */
+  timeline: BibleTimelineEvent[];
+  guidelines: BibleGuideline[];
   canon: Record<BibleSection, BibleCanonEntry[]>;
   secrets: BibleSecret[];
   /** The findings of the checks of the design (the secrets and the entries), and the designs that lack a key field. */
@@ -130,12 +163,19 @@ export function composeBible(input: { files: readonly OutlineFile[]; entries: re
   const entries = input.entries.map((entry) => ({ number: entry.number, title: entry.title, ...(entry.design ? { design: entry.design } : {}) }));
   const lastPlanned = (input.state?.plan?.chapters ?? []).reduce((highest, chapter) => Math.max(highest, chapter.number), 0);
   const lastEntry = entries.reduce((highest, entry) => Math.max(highest, entry.number), 0);
+  const threadsFile = byPath.get(BIBLE_THREADS_FILE);
+  const decisionsFile = byPath.get(BIBLE_DECISIONS_FILE);
+  const threads = readBibleThreads(threadsFile?.content).value;
+  const decisions = readBibleDecisions(decisionsFile?.content);
+  const timeline = timelineOf(input.files);
   const findings = [
-    ...designChecks({
+    ...designFindings({
       chapters: entries,
       secrets: secrets.map((secret) => ({ slug: secret.slug, title: secret.title, holders: secret.holders, ledger: secret.ledger, ...(secret.revealChapter ? { revealChapter: secret.revealChapter } : {}), ...(secret.knownFrom ? { knownFromChapter: secret.knownFrom } : {}) })),
       characters: canon.characters.map((entry) => ({ slug: entry.slug, name: entry.name, aliases: aliasesOf(byPath.get(entry.path)) })),
       locations: canon.locations.map((entry) => ({ slug: entry.slug, name: entry.name, aliases: aliasesOf(byPath.get(entry.path)) })),
+      timeline,
+      threads: threads.threads,
       lastChapter: Math.max(lastEntry, lastPlanned),
     }),
     ...outlineDesignGaps(entries),
@@ -149,10 +189,45 @@ export function composeBible(input: { files: readonly OutlineFile[]; entries: re
     ...(themesFile ? { themesFile } : {}),
     world: readBibleWorld(worldFile?.content),
     ...(worldFile ? { worldFile } : {}),
+    decisions: decisions.value,
+    ...(decisionsFile ? { decisionsFile } : {}),
+    decisionsProblems: decisions.problems,
+    threads,
+    ...(threadsFile ? { threadsFile } : {}),
+    timeline,
+    guidelines: guidelinesOf(input.files),
     canon,
     secrets,
     findings,
   };
+}
+
+const dayText = (value: unknown): string => (typeof value === "string" || typeof value === "number" ? String(value).trim() : value instanceof Date && !Number.isNaN(value.getTime()) ? value.toISOString().slice(0, 10) : "");
+
+/** The events of the timeline (`timelines/events/`): the chapter an event is anchored to is `reveal_in`, else `known_from`. */
+function timelineOf(files: readonly OutlineFile[]): BibleTimelineEvent[] {
+  const events: BibleTimelineEvent[] = [];
+  for (const file of files) {
+    if (!/^timelines\/events\/[^/]+\.md$/.test(file.path)) continue;
+    const document = parseMarkdown(file.content);
+    const slug = slugOf(file.path);
+    const date = dayText(document.frontmatter.date);
+    const participants = Array.isArray(document.frontmatter.participants) ? document.frontmatter.participants.filter((item): item is string => typeof item === "string") : [];
+    const chapter = referencedChapterNumber(textOf(document.frontmatter.reveal_in)) ?? referencedChapterNumber(textOf(document.frontmatter.known_from));
+    events.push({ slug, path: file.path, title: textOf(document.frontmatter.title) || textOf(document.frontmatter.name) || slug, ...(date ? { date } : {}), participants, ...(chapter ? { chapter } : {}), summary: summaryOf(document.body) });
+  }
+  return events.sort((left, right) => (left.date && right.date ? left.date.localeCompare(right.date) : left.date ? -1 : right.date ? 1 : 0) || left.title.localeCompare(right.title));
+}
+
+function guidelinesOf(files: readonly OutlineFile[]): BibleGuideline[] {
+  const guidelines: BibleGuideline[] = [];
+  for (const file of files) {
+    if (!/^guidelines\/[^/]+\.md$/.test(file.path)) continue;
+    const document = parseMarkdown(file.content);
+    const slug = slugOf(file.path);
+    guidelines.push({ path: file.path, slug, title: textOf(document.frontmatter.title) || textOf(document.frontmatter.name) || slug, summary: summaryOf(document.body, 400) });
+  }
+  return guidelines.sort((left, right) => left.title.localeCompare(right.title));
 }
 
 function aliasesOf(file: OutlineFile | undefined): string[] {
