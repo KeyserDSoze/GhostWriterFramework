@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BookOpen, Check, CircleArrowUp, Copy, ExternalLink, Fingerprint, KeyRound, Link2, Loader2, PlugZap, RefreshCw, Send, Server, TriangleAlert, Unplug, X } from "lucide-react";
 import {
@@ -28,6 +28,9 @@ import type { ServerConnectionStatus } from "@/autopilot/store";
 import { formatDateTime } from "@/autopilot/format";
 import type { AppSettings, PersonalServerSettings } from "@/types/settings";
 import { cn } from "@/lib/utils";
+
+/** The card that connects the server to GitHub on its own is a chunk of its own: this page asks nothing of it until a server is online. */
+const ServerGitHubCard = lazy(() => import("@/components/settings/ServerGitHubCard"));
 
 const START_COMMAND = "npx narrarium-server";
 const DEFAULT_URL = `http://127.0.0.1:${DEFAULT_SERVER_PORT}`;
@@ -511,6 +514,12 @@ export function PersonalServerSettingsBody({ settings, patchSettings, onSave }: 
             </>
           )}
         </div>
+      )}
+
+      {online && (
+        <Suspense fallback={null}>
+          <ServerGitHubCard />
+        </Suspense>
       )}
 
       {server.status === "online" && (
