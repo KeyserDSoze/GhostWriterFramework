@@ -334,7 +334,10 @@ export async function reconciledAccountData(request: Pick<AccountReconciliationR
   // is resolved, and not with the shell (it is 1.5 KB that nothing else of the shell needs).
   const { mergeAccountAnnotations } = await import("@/annotations/accountTags");
   const annotations = mergeAccountAnnotations(selected.data.settings.annotations, request.local.data.settings.annotations, ...request.remotes.map((remote) => remote.data.settings.annotations));
-  return { ...selected.data, settings: { ...settings, ...(branchMemory ? { branchMemory } : {}), ...(annotations ? { annotations } : {}) } };
+  // Nor are the account's wildcards: every wildcard of every copy, of one its newest version (or its deletion).
+  const { mergeAccountWildcards } = await import("@/wildcards/accountWildcards");
+  const wildcards = mergeAccountWildcards(selected.data.settings.wildcards, request.local.data.settings.wildcards, ...request.remotes.map((remote) => remote.data.settings.wildcards));
+  return { ...selected.data, settings: { ...settings, ...(branchMemory ? { branchMemory } : {}), ...(annotations ? { annotations } : {}), ...(wildcards ? { wildcards } : {}) } };
 }
 
 export async function resolveAccountReconciliation(authoritative: "local" | AccountSyncBackendKind): Promise<void> {

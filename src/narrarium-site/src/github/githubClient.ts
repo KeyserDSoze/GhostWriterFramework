@@ -520,6 +520,14 @@ export async function loadBookStructure(
         return { slug, path: p, name: metaMap[p]?.name ?? generatedNameLabel(slug) ?? slugToTitle(slug) };
       })
       .sort((a, b) => a.name.localeCompare(b.name)),
+    // The names are in the files, which the Wildcards page reads: no request more for them here.
+    wildcards: allPaths
+      .filter((p) => /^wildcards\/[^/]+\.md$/.test(p))
+      .map((p) => {
+        const slug = p.replace(/^wildcards\//, "").replace(/\.md$/i, "");
+        return { slug, path: p, name: slugToTitle(slug) };
+      })
+      .sort((a, b) => a.path.localeCompare(b.path)),
     readerEvaluationFiles: allPaths
       .filter((p) => /^evaluations\/readers\/.+\.md$/.test(p))
       .map((p) => ({ path: p, sha: treeData.tree.find((node) => node.path === p)?.sha ?? "", size: treeData.tree.find((node) => node.path === p)?.size ?? 0 })),

@@ -54,6 +54,7 @@ export const appPages = {
   // The settings of the personal server show the state of the books on it, in the texts of the autopilot.
   SettingsPageWithAutopilotTexts: withAutopilotTranslations(settingsPage),
   StageRoutes: () => import("@/routes/StageRoutes"),
+  WildcardsPage: () => import("@/pages/WildcardsPage"),
   WorkspaceDocPage: () => import("@/pages/WorkspaceDocPage"),
 } satisfies Record<string, () => Promise<object>>;
 

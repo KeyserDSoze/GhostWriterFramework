@@ -44,12 +44,14 @@ const MAX_OUTLINE_UPDATES = 100;
 export const PERSONA_FILE = /^personas\/[^/]+\.md$/;
 /** The files of the ghostwriters: one per ghostwriter, `ghostwriters/<slug>.md`. */
 export const GHOSTWRITER_FILE = /^ghostwriters\/[^/]+\.md$/;
+/** The files of the wildcards: one per wildcard of the book, `wildcards/<slug>.md` (a built-in one has one once the book changes it). */
+export const WILDCARD_FILE = /^wildcards\/[^/]+\.md$/;
 
 /**
  * The files whose proposals are applied whole: the outline (moving an entry rewrites the ones it passes) and the files of a page's batch (readers created,
  * turned off and removed together, as the author reviewed them). Such a proposal may touch up to 100 files, and delete files.
  */
-const WHOLE_PROPOSAL_FILES = [OUTLINE_FILE, PERSONA_FILE, GHOSTWRITER_FILE];
+const WHOLE_PROPOSAL_FILES = [OUTLINE_FILE, PERSONA_FILE, GHOSTWRITER_FILE, WILDCARD_FILE];
 
 function updatesOf(updates: unknown[], files: RegExp): boolean {
   return updates.every((update) => Boolean(update) && typeof update === "object" && typeof (update as { path?: unknown }).path === "string" && files.test((update as { path: string }).path));

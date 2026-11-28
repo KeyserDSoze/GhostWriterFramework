@@ -85,6 +85,7 @@ export const router = createBrowserRouter([
       { path: "books/:bookId/ghostwriters", lazy: appPage("GhostwritersPage") },
       { path: "books/:bookId/evaluation-style", lazy: appPage("EvaluationStylePage") },
       { path: "books/:bookId/simulated-readers", lazy: appPage("ReaderPersonasPage") },
+      { path: "books/:bookId/wildcards", lazy: appPage("WildcardsPage") },
       { path: "books/:bookId/settings", lazy: appPage("BookSettingsPage") },
       { path: "books/:bookId/audit", lazy: appPage("AuditPage") },
       { path: "books/:bookId/canon/:section/:slug", lazy: appPage("CanonEntityPage") },

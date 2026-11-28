@@ -129,19 +129,21 @@ const pageCopilotEn = {
       "autopilot-settings": "Autopilot configuration",
       canon: "Canon",
       assets: "Assets",
+      wildcards: "Wildcards",
     },
     review: {
       title: {
         default: "Proposed changes",
         readers: "Proposed changes to the simulated readers",
+        wildcards: "Proposed changes to the wildcards",
         ghostwriters: "Proposed changes to the ghostwriters",
         director: "Proposed changes to the director",
         "evaluation-style": "Proposed changes to the evaluation style",
         canon: "Proposed changes to this entry",
         outline: "Proposed changes to the Synopsis",
       },
-      item: { default: "Item", readers: "Reader", ghostwriters: "Ghostwriter", director: "Field", "evaluation-style": "Criterion", canon: "Field", outline: "Chapter" },
-      kinds: { default: "the book's default", own: "yours: not replaced" },
+      item: { default: "Item", readers: "Reader", wildcards: "Wildcard", ghostwriters: "Ghostwriter", director: "Field", "evaluation-style": "Criterion", canon: "Field", outline: "Chapter" },
+      kinds: { default: "the book's default", own: "yours: not replaced", provocateur: "Provocateur", sentinel: "Sentinel" },
       includeOptional_one: "Also replace my entry",
       includeOptional_other: "Also replace my {{count}} entries",
       included_one: "Your entry is in the proposal now: it is replaced when you apply it.",
@@ -202,7 +204,7 @@ const pageCopilotEn = {
     tools: {
       "edit-page": {
         name: "Change This Page",
-        description: "Proposes one batch of changes to the page you are on: the simulated readers (several created at once, edited, turned on or off, removed; built-in readers are turned off, never deleted), the ghostwriters (the book's default and the last one are never removed), the director, the evaluation style, or the character, location, faction or item you have open. You see every item with its resulting state, apply the batch in one change, and can undo it.",
+        description: "Proposes one batch of changes to the page you are on: the simulated readers (several created at once, edited, turned on or off, removed; built-in readers are turned off, never deleted), the ghostwriters (the book's default and the last one are never removed), the wildcards (several created at once; built-in ones are turned off in the book, never deleted), the director, the evaluation style, or the character, location, faction or item you have open. You see every item with its resulting state, apply the batch in one change, and can undo it.",
         output: "Reviewable list of every item with its resulting state",
       },
     },

@@ -9,10 +9,10 @@ const LEGACY_UNSAFE_CACHE_PREFIX = "narrarium-settings-cache-v1:";
 export const SAFE_SETTINGS_KEYS = [
   "azureOpenAI", "aiIntegrations", "defaultWritingIntegrationId", "defaultReviewIntegrationId", "taskRouting", "fallbackDisclosure",
   "routingExecution", "aiToolsOnly", "costCurrency", "costRates", "costRelabels", "costBudgets", "ui", "speech", "repository", "deepSearch", "copilotTools", "contextCompaction", "reader", "customActionsSchemaVersion",
-  "customActions", "books", "branchMemory", "annotations",
+  "customActions", "books", "branchMemory", "annotations", "wildcards",
 ] as const;
 
-export const OFFLINE_EDITABLE_SETTINGS_KEYS = ["costCurrency", "costRates", "costRelabels", "costBudgets", "ui", "repository", "reader", "customActions", "copilotTools", "contextCompaction", "speech", "books", "branchMemory", "annotations"] as const;
+export const OFFLINE_EDITABLE_SETTINGS_KEYS = ["costCurrency", "costRates", "costRelabels", "costBudgets", "ui", "repository", "reader", "customActions", "copilotTools", "contextCompaction", "speech", "books", "branchMemory", "annotations", "wildcards"] as const;
 export type OfflineEditableSettingsKey = typeof OFFLINE_EDITABLE_SETTINGS_KEYS[number];
 
 export type SafeSettingsKey = typeof SAFE_SETTINGS_KEYS[number];
@@ -121,8 +121,9 @@ function assertOfflineBooksAllowed(current: AppSettings["books"], next: AppSetti
 
 export function assertOfflineSettingsReplacementAllowed(current: AppSettings, next: AppSettings): void {
   // Which branch a book is on is chosen offline too: the branches live on this device, and the memory of them (names and dates) is no credential.
-  // The tags of the annotations are made offline too, like the annotations themselves: names, marks and instructions, no credential.
-  const fullyEditable = new Set<keyof AppSettings>(["costCurrency", "costRates", "costRelabels", "costBudgets", "ui", "repository", "reader", "customActions", "copilotTools", "branchMemory", "annotations"]);
+  // The tags of the annotations are made offline too, like the annotations themselves: names, marks and instructions, no credential. So are the account's
+  // wildcards: the texts of their files.
+  const fullyEditable = new Set<keyof AppSettings>(["costCurrency", "costRates", "costRelabels", "costBudgets", "ui", "repository", "reader", "customActions", "copilotTools", "branchMemory", "annotations", "wildcards"]);
   const keys = [...new Set([...Object.keys(current), ...Object.keys(next)])] as Array<keyof AppSettings>;
   for (const key of keys) {
     if (same(current[key], next[key])) continue;
@@ -171,6 +172,7 @@ export function projectSafeSettings(settings: AppSettings): SafeSettingsProjecti
     books: settings.books.map(sanitizeBook),
     ...(settings.branchMemory ? { branchMemory: settings.branchMemory } : {}),
     ...(settings.annotations ? { annotations: settings.annotations } : {}),
+    ...(settings.wildcards ? { wildcards: settings.wildcards } : {}),
   };
 }
 

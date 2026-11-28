@@ -18,7 +18,7 @@ const t = (key: string) => i18n.t(key) as string;
 const GROUPS: Array<[string, string[]]> = [
   ["nav.groupBook", [ROOT, `${ROOT}/dashboard`, `${ROOT}/outline`, `${ROOT}/reader`, `${ROOT}/annotations`, `${ROOT}/export`]],
   ["autopilot.title", [`${ROOT}/autopilot`, `${ROOT}/autopilot/settings`]],
-  ["nav.groupProfiles", [`${ROOT}/director`, `${ROOT}/ghostwriters`, `${ROOT}/evaluation-style`, `${ROOT}/simulated-readers`]],
+  ["nav.groupProfiles", [`${ROOT}/director`, `${ROOT}/ghostwriters`, `${ROOT}/evaluation-style`, `${ROOT}/simulated-readers`, `${ROOT}/wildcards`]],
   ["nav.groupTools", [`${ROOT}/audit`, `${ROOT}/research`, `${ROOT}/assets`]],
 ];
 const CANON = ["characters", "locations", "factions", "items", "timelines", "secrets"].map((section) => `${ROOT}#${section}`);
@@ -154,7 +154,7 @@ describe.each<Menu>(["desktop", "mobile"])("the menu of a book (%s)", (menu) => 
     const names = (key: string) => within(group(key)).getAllByRole("link").map((link) => link.textContent?.trim());
     expect(names("nav.groupBook")).toEqual(["Panoramica", "Dashboard", "Sinossi", "Reader", "Appunti", "Esporta"]);
     expect(names("autopilot.title")).toEqual(["In diretta", "Configurazione"]);
-    expect(names("nav.groupProfiles")).toEqual(["Direttore", "Ghostwriter", "Stile di valutazione", "Lettori simulati"]);
+    expect(names("nav.groupProfiles")).toEqual(["Direttore", "Ghostwriter", "Stile di valutazione", "Lettori simulati", "Fuori dal coro"]);
     expect(names("nav.groupTools")).toEqual(["Audit", "Ricerche", "Asset"]);
     expect(screen.getByRole("link", { name: "Impostazioni libro" })).toHaveAttribute("href", `${ROOT}/settings`);
   });

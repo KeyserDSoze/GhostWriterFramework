@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { BookOpen, BookOpenText, ClipboardCheck, Clapperboard, Download, Feather, Images, LayoutDashboard, ListTree, Plane, Search, ShieldAlert, SlidersHorizontal, Users } from "lucide-react";
+import { BookOpen, BookOpenText, ClipboardCheck, Clapperboard, Download, Feather, Images, LayoutDashboard, ListTree, Plane, Search, ShieldAlert, SlidersHorizontal, Sparkles, Users } from "lucide-react";
 import { HighlighterIcon } from "@/components/layout/HighlighterIcon";
 
 /**
@@ -28,7 +28,7 @@ export interface BookMenuGroup {
 
 /**
  * The menu of a book, as the owner chose it: Book (overview, dashboard, outline, reader, annotations, export), Autopilot (live, configuration), Profiles
- * (director, ghostwriters, evaluation style, simulated readers) and Tools (audit, research, assets). The canon and the settings of the book
+ * (director, ghostwriters, evaluation style, simulated readers, wildcards) and Tools (audit, research, assets). The canon and the settings of the book
  * are drawn apart by the sidebar.
  */
 export function bookMenuGroups(bookId: string, { outlineReady = OUTLINE_PAGE_READY }: { outlineReady?: boolean } = {}): BookMenuGroup[] {
@@ -62,6 +62,7 @@ export function bookMenuGroups(bookId: string, { outlineReady = OUTLINE_PAGE_REA
         { labelKey: "ghostwriters.title", href: `${root}/ghostwriters`, icon: Feather },
         { labelKey: "evaluationStyle.title", href: `${root}/evaluation-style`, icon: ClipboardCheck },
         { labelKey: "readerPersonas.title", href: `${root}/simulated-readers`, icon: Users },
+        { labelKey: "nav.wildcards", href: `${root}/wildcards`, icon: Sparkles },
       ],
     },
     {

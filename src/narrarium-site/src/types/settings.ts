@@ -1,6 +1,7 @@
 import { resolveGitHubCredentialValue, type ResolvedGitHubCredential } from "@/github/githubCredentialRuntime";
 import type { AiApiProtocol, AutopilotPresetId } from "narrarium-engine";
 import type { AnnotationAccountSettings } from "@/annotations/accountTags";
+import type { WildcardAccountSettings } from "@/wildcards/accountWildcards";
 
 // ─── Azure OpenAI ────────────────────────────────────────────────────────────
 
@@ -765,6 +766,11 @@ export interface AppSettings {
    * syncs; an older client keeps the field as it is.
    */
   annotations?: AnnotationAccountSettings;
+  /**
+   * The wildcards of the account («Fuori dal coro»), for every book: each the text of its file (`wildcards/<slug>.md`), with tombstones for the deleted
+   * ones. Absent: none of the author's own. An older client keeps the field as it is.
+   */
+  wildcards?: WildcardAccountSettings;
   azureOpenAI: AzureOpenAIConfig;
   aiIntegrations: AIIntegration[];
   defaultWritingIntegrationId?: string;

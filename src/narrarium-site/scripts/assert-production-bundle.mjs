@@ -195,7 +195,12 @@ report.budgets.routes = {
   docs: { rawBytes: 839_000, gzipBytes: 273_000 }, // 830_444/270_211
   // The page of the MCP: the list of the tools of a book's MCP and the texts of its section load with it and with no other page (849_032/274_452 with
   // every tool of the local package and the whole docs page in it, before it was split out of the docs route).
-  mcp: { rawBytes: 794_000, gzipBytes: 254_500 }, // 785_538/251_840
+  // Raised in 0.142.0 (it was 794_000/254_500, and 0.141.0 left the route 793_612/254_184, 388/316 bytes under it): the wildcards put 1_827/446 bytes in it,
+  // which are the specification and the guide of the room in the index of the documents that the public pages carry (their titles and summaries; the summary
+  // of the specification was cut to one sentence before raising) and, in the entry, the entry «Wildcards» of the menu of a book, the two words of the right
+  // click and the Italian name of the Copilot's tool (its description shortened before raising). The page, the dialog, the room, their texts and the
+  // documents themselves load when they are used.
+  mcp: { rawBytes: 796_500, gzipBytes: 255_000 }, // 795_439/254_630
   login: { rawBytes: 940_000, gzipBytes: 292_500 }, // 929_737/289_244
   // Raised in 0.107.0 by the same margin (it was 2_703_000/819_500 for 2_675_530/810_894): the store of the shell follows the text of the step that runs
   // by the engine's own rule (applyLiveProgress, a chunk of 1_568/614 bytes it shares with the autopilot), so that no panel can disagree with the engine.

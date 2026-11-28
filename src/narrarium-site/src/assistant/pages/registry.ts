@@ -20,6 +20,7 @@ const ROUTE_PAGES: Partial<Record<AppRouteContext["kind"], PageId>> = {
   "book-autopilot-settings": "autopilot-settings",
   canon: "canon",
   "book-assets": "assets",
+  "book-wildcards": "wildcards",
 };
 
 /** The sections of the canon whose entries have a page that works with the Copilot: the secrets and the timeline do not. */
@@ -33,6 +34,7 @@ const LOADERS: Partial<Record<PageId, () => Promise<PageCapability>>> = {
   "autopilot-settings": () => import("@/assistant/pages/autopilotSettings").then((module) => module.autopilotSettingsPage),
   canon: () => import("@/assistant/pages/canon").then((module) => module.canonPage),
   assets: () => import("@/assistant/pages/assets").then((module) => module.assetsPage),
+  wildcards: () => import("@/assistant/pages/wildcards").then((module) => module.wildcardsPage),
 };
 
 /** The words that name what a page is about, in English and in Italian: a request that has them, and changes something, is about that page. */
@@ -42,6 +44,7 @@ const PAGE_SUBJECTS: Partial<Record<PageId, RegExp>> = {
   director: /(?<![\p{L}])(?:director|direttore|direttrice|regista|approval score|punteggio di approvazione|red lines|linee rosse)(?![\p{L}])/iu,
   "evaluation-style": /(?<![\p{L}])(?:criteri[oa]?|criterion|evaluation style|stile di valutazione|evaluation method|metodo di valutazione)(?![\p{L}])/iu,
   canon: /(?<![\p{L}])(?:personagg(?:io|i)|characters?|luogh?[io]|locations?|places?|fazion[ei]|factions?|oggett[oi]|items?|scheda|descrizione|description|alias(?:es)?)(?![\p{L}])/iu,
+  wildcards: /(?<![\p{L}])(?:wildcards?|fuori dal coro|provocat(?:ore|ori|rice|rici)|provocateurs?|sentinell[ae]|sentinels?)(?![\p{L}])/iu,
 };
 
 /** The page a request names by its subject: the page the author is on when it does, else the first that it names; `null` when it names none. */

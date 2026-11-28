@@ -98,8 +98,9 @@ afterEach(() => {
 });
 
 describe("the pages of a book that work with the Copilot", () => {
-  it("are found from the address: ghostwriters, director, evaluation style, autopilot configuration, assets, and the canon but its secrets and its timeline", () => {
-    expect(pageIds()).toEqual(["readers", "ghostwriters", "director", "evaluation-style", "autopilot-settings", "canon", "assets"]);
+  it("are found from the address: ghostwriters, director, evaluation style, autopilot configuration, assets, wildcards, and the canon but its secrets and its timeline", () => {
+    expect(pageIds()).toEqual(["readers", "ghostwriters", "director", "evaluation-style", "autopilot-settings", "canon", "assets", "wildcards"]);
+    expect(pageIdForRoute(parseAppRoute("/app/books/book-1/wildcards"))).toBe("wildcards");
     expect(pageIdForRoute(parseAppRoute("/app/books/book-1/ghostwriters"))).toBe("ghostwriters");
     expect(pageIdForRoute(parseAppRoute("/app/books/book-1/director"))).toBe("director");
     expect(pageIdForRoute(parseAppRoute("/app/books/book-1/evaluation-style"))).toBe("evaluation-style");

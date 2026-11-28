@@ -9,7 +9,7 @@ import type { AppSettings, BookEntry } from "@/types/settings";
  */
 
 /** The pages of a book that have a contract with the Copilot. */
-export type PageId = "readers" | "ghostwriters" | "director" | "evaluation-style" | "autopilot-settings" | "canon" | "assets";
+export type PageId = "readers" | "ghostwriters" | "director" | "evaluation-style" | "autopilot-settings" | "canon" | "assets" | "wildcards";
 
 /**
  * What the page shows the author right now that its files do not say (a filter, a selection), as the page publishes it on its root element: `data-copilot-page`

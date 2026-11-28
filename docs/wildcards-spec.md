@@ -1,6 +1,8 @@
-# Wildcards (Fuori dal coro)
+# Wildcards Spec (Fuori dal coro)
 
-The wildcards are a writers' room next to the Director, the Ghostwriters and the simulated Readers. The readers **judge**: they simulate the audience and give a score that the autopilot follows. The wildcards **propose and check**: they give ideas and findings, never a score, and nothing they say is applied by itself. The Director triages what they give in the autopilot (adopted, adapted or rejected, always with the reason), the author decides in a review table (accept or skip, one apply), and the ghostwriters use what was accepted as material.
+The wildcards are a writers' room next to the Director, the Ghostwriters and the simulated Readers: voices that propose and check, never with a score.
+
+The readers **judge**: they simulate the audience and give a score that the autopilot follows. The wildcards **propose and check**: they give ideas and findings, never a score, and nothing they say is applied by itself. The Director triages what they give in the autopilot (adopted, adapted or rejected, always with the reason), the author decides in a review table (accept or skip, one apply), and the ghostwriters use what was accepted as material.
 
 The room lives once in [`narrarium-engine`](../packages/engine/README.md) (`profiles/wildcards.ts` and `wildcards/`): the web app and the personal server call the same code.
 
@@ -73,6 +75,11 @@ Think like an attacker: where would you get in, what would you steal, whom would
 - **The book**: `wildcards/<slug>.md`. A file whose `id` is a built-in one changes it (turn it off, give the Domain Expert a domain); any other is one of the author's own.
 
 The layers are merged in this order, each one changing a wildcard of the layers before it by its `id`: built-in, then the account, then the book. A wildcard file can be exported (the `.md` file) and imported, into the book or into the account.
+
+## In the web app
+
+- **The Wildcards page** (the book's menu, *Profiles*) lists every wildcard with its group, where it comes from (built-in, the account, the book) and its switch, and edits all of it. *Where your changes go* chooses the layer a change is saved in: **This book** (`wildcards/<slug>.md`, what the autopilot uses too) or **All my books** (the account's settings, `settings.wildcards`: the text of each file with when it changed, and a tombstone for a deleted one, so that two devices' copies are merged wildcard by wildcard). *Restore default* removes the layer's change of a built-in wildcard; *Copy to this book* and *Copy to all my books* move a wildcard between the two. *Export* downloads the file (`<slug>.wildcard.md`), *Import* adds files (64 KB at most each) where changes go.
+- **The page-aware Copilot** sees every wildcard on the page and proposes one batch (`propose_wildcard_changes`): wildcards created in one call of the model («create a provocateur who thinks like a hacker»), edited, turned on or off and removed. The batch changes the book's room: a built-in or account wildcard gets a file of its own in the book, and removing it turns it off there; only the book's own wildcards are deleted. The author sees every wildcard with its resulting state, applies the batch in one change and can undo it.
 
 ## What the room gives
 

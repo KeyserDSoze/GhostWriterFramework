@@ -20,6 +20,7 @@ export type AppRouteContext =
   | { kind: "book-ghostwriters"; bookId: string }
   | { kind: "book-evaluation-style"; bookId: string }
   | { kind: "book-simulated-readers"; bookId: string }
+  | { kind: "book-wildcards"; bookId: string }
   | { kind: "reader"; bookId: string }
   | { kind: "book-export"; bookId: string }
   | { kind: "book-settings"; bookId: string }
@@ -103,6 +104,8 @@ export function parseAppRoute(pathname: string): AppRouteContext {
 
   match = /^\/app\/books\/([^/]+)\/simulated-readers$/.exec(clean);
   if (match) return { kind: "book-simulated-readers", bookId: decodeURIComponent(match[1]) };
+  match = /^\/app\/books\/([^/]+)\/wildcards$/.exec(clean);
+  if (match) return { kind: "book-wildcards", bookId: decodeURIComponent(match[1]) };
 
   match = /^\/app\/books\/([^/]+)\/research\/([^/]+)$/.exec(clean);
   if (match) return { kind: "research-detail", bookId: decodeURIComponent(match[1]), researchSlug: decodeURIComponent(match[2]) };
@@ -275,6 +278,9 @@ export async function loadWriterContext(
       case "book-simulated-readers":
         await Promise.all(structure.readerPersonas.map((entry) => pushFile(entry.path)));
         break;
+      case "book-wildcards":
+        await Promise.all((structure.wildcards ?? []).map((entry) => pushFile(entry.path)));
+        break;
       case "book-autopilot":
       case "book-autopilot-settings":
         await pushFile("book.md");
@@ -411,6 +417,8 @@ export function buildContextTitle(
     case "book-evaluation-style": return "Evaluation Style";
     case "book-simulated-readers":
       return "Simulated Readers";
+    case "book-wildcards":
+      return "Wildcards";
     case "chapter-reader-evaluations":
     case "paragraph-reader-evaluations":
       return "Reader Evaluations";
@@ -464,6 +472,8 @@ export function buildContextSummary(
     case "book-evaluation-style": return `Editing evaluation style for ${structure?.title ?? book?.name ?? "book"}.`;
     case "book-simulated-readers":
       return `Managing simulated readers for ${structure?.title ?? book?.name ?? "book"}.`;
+    case "book-wildcards":
+      return `Managing the wildcards («Fuori dal coro», provocateurs and sentinels) for ${structure?.title ?? book?.name ?? "book"}.`;
     case "chapter-reader-evaluations":
       return `Simulated-reader evaluations for chapter ${chapter?.title ?? route.chapterId}.`;
     case "paragraph-reader-evaluations":
@@ -505,7 +515,7 @@ function buildNoteTargetPath(route: AppRouteContext, chapter: Chapter | null): s
   if (route.kind === "chapter" || route.kind === "paragraph" || route.kind === "chapter-workspace" || route.kind === "paragraph-workspace" || route.kind === "chapter-audit" || route.kind === "paragraph-audit") {
     return chapter ? `drafts/${chapter.slug}/notes.md` : null;
   }
-  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-annotations" || route.kind === "book-outline" || route.kind === "book-autopilot" || route.kind === "book-autopilot-settings" || route.kind === "book-director" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-evaluation-style" || route.kind === "book-simulated-readers" || route.kind === "reader" || route.kind === "book-export" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "book-audit" || route.kind === "app-home") {
+  if (route.kind === "book" || route.kind === "book-dashboard" || route.kind === "book-annotations" || route.kind === "book-outline" || route.kind === "book-autopilot" || route.kind === "book-autopilot-settings" || route.kind === "book-director" || route.kind === "book-assets" || route.kind === "book-ghostwriters" || route.kind === "book-evaluation-style" || route.kind === "book-simulated-readers" || route.kind === "book-wildcards" || route.kind === "reader" || route.kind === "book-export" || route.kind === "research" || route.kind === "research-detail" || route.kind === "canon" || route.kind === "book-settings" || route.kind === "book-audit" || route.kind === "app-home") {
     return "notes.md";
   }
   return null;

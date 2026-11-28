@@ -136,6 +136,8 @@ export interface BookStructure {
   ghostwriters: Ghostwriter[];
   /** personas/<slug>.md reader persona overrides and custom profiles */
   readerPersonas: ReaderPersonaFile[];
+  /** wildcards/<slug>.md: the book's wildcards («Fuori dal coro»), changes of built-in ones and the author's own. Absent from a structure made before they existed. */
+  wildcards?: ReaderPersonaFile[];
   /** saved ReaderEvaluation and ReaderEvaluationSummary markdown files */
   readerEvaluationFiles: BookFile[];
   /** Canonical rewrite-from-reader-feedback operation manifest files. */

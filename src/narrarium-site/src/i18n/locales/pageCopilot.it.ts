@@ -129,19 +129,21 @@ const pageCopilotIt = {
       "autopilot-settings": "Configurazione dell'autopilot",
       canon: "Canone",
       assets: "Asset",
+      wildcards: "Fuori dal coro",
     },
     review: {
       title: {
         default: "Modifiche proposte",
         readers: "Modifiche proposte ai lettori simulati",
+        wildcards: "Modifiche proposte ai Fuori dal coro",
         ghostwriters: "Modifiche proposte ai ghostwriter",
         director: "Modifiche proposte al direttore",
         "evaluation-style": "Modifiche proposte allo stile di valutazione",
         canon: "Modifiche proposte a questa voce",
         outline: "Modifiche proposte alla Sinossi",
       },
-      item: { default: "Elemento", readers: "Lettore", ghostwriters: "Ghostwriter", director: "Campo", "evaluation-style": "Criterio", canon: "Campo", outline: "Capitolo" },
-      kinds: { default: "predefinito del libro", own: "tua: non sostituita" },
+      item: { default: "Elemento", readers: "Lettore", wildcards: "Fuori dal coro", ghostwriters: "Ghostwriter", director: "Campo", "evaluation-style": "Criterio", canon: "Campo", outline: "Capitolo" },
+      kinds: { default: "predefinito del libro", own: "tua: non sostituita", provocateur: "Provocatore", sentinel: "Sentinella" },
       names: {
         director: {
           name: "Nome", persona: "Personalità", autonomy: "Autonomia", strictness: "Severità", approvalScore: "Voto di approvazione", maxReviewRounds: "Giri di revisione per capitolo",
@@ -202,7 +204,7 @@ const pageCopilotIt = {
     tools: {
       "edit-page": {
         name: "Modifica questa pagina",
-        description: "Propone un unico insieme di modifiche alla pagina su cui sei: i lettori simulati (anche più d'uno creato alla volta, modificati, accesi o spenti, rimossi; i lettori predefiniti si spengono, non si cancellano mai), i ghostwriter (quello predefinito del libro e l'ultimo non si rimuovono mai), il direttore, lo stile di valutazione, o il personaggio, il luogo, la fazione o l'oggetto che hai aperto. Vedi ogni elemento con il suo stato finale, applichi tutto in una sola modifica e puoi annullarla.",
+        description: "Propone un unico insieme di modifiche alla pagina su cui sei: i lettori simulati (anche più d'uno creato alla volta, modificati, accesi o spenti, rimossi; i lettori predefiniti si spengono, non si cancellano mai), i ghostwriter (quello predefinito del libro e l'ultimo non si rimuovono mai), i Fuori dal coro (anche più d'uno creato alla volta; i predefiniti si spengono nel libro, non si cancellano mai), il direttore, lo stile di valutazione, o il personaggio, il luogo, la fazione o l'oggetto che hai aperto. Vedi ogni elemento con il suo stato finale, applichi tutto in una sola modifica e puoi annullarla.",
         output: "Elenco da rivedere di ogni elemento con il suo stato finale",
       },
     },
